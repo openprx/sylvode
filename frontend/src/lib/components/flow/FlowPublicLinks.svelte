@@ -92,11 +92,11 @@
 	const active = $derived(links.filter((link) => !link.revoked_at));
 </script>
 
-<section class="space-y-2 border-t border-slate-200 pt-4 dark:border-slate-700" data-testid="flow-public-links">
-	<h3 class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+<section class="space-y-2 border-t border-line pt-4" data-testid="flow-public-links">
+	<h3 class="text-xs font-semibold uppercase text-fg-muted">
 		{$t('flow.share.public.title')}
 	</h3>
-	<p class="text-xs text-slate-500 dark:text-slate-400">{$t('flow.share.public.help')}</p>
+	<p class="text-xs text-fg-muted">{$t('flow.share.public.help')}</p>
 	{#if loading}
 		<p class="text-sm text-slate-500">{$t('flow.share.public.loading')}</p>
 	{:else if active.length === 0}
@@ -105,7 +105,7 @@
 		<ul class="space-y-2">
 			{#each active as link (link.id)}
 				<li class="flex items-center justify-between gap-2 text-sm">
-					<span class="font-mono text-xs text-slate-600 dark:text-slate-300">{link.token_prefix}…</span>
+					<span class="font-mono text-xs text-fg-muted">{link.token_prefix}…</span>
 					<button type="button" class="text-xs text-red-600" onclick={() => revoke(link.id)}>
 						{$t('flow.share.public.revoke')}
 					</button>
@@ -126,7 +126,7 @@
 		{busy ? $t('flow.share.public.creating') : $t('flow.share.public.create')}
 	</button>
 	{#if freshToken}
-		<p class="text-xs text-slate-600 dark:text-slate-300">{$t('flow.share.public.tokenOnce')}</p>
+		<p class="text-xs text-fg-muted">{$t('flow.share.public.tokenOnce')}</p>
 		<input readonly class="w-full font-mono text-xs" value={`${typeof location === 'undefined' ? '' : location.origin}/s/${freshToken}`} />
 		<button type="button" class="text-xs text-blue-600" onclick={copyToken}>
 			{copied ? $t('flow.share.public.copied') : $t('flow.share.public.copy')}

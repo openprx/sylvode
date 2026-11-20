@@ -54,7 +54,7 @@
 		</p>
 		<button
 			type="button"
-			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline"
 			data-testid="flow-recovery-download"
 			onclick={ondownload}
 		>
@@ -62,7 +62,7 @@
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline"
 			data-testid="flow-recovery-copy"
 			onclick={oncopy}
 		>
@@ -70,7 +70,7 @@
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline"
 			data-testid="flow-recovery-discard"
 			onclick={ondiscard}
 		>

@@ -99,9 +99,9 @@
 
 <div class="mx-auto max-w-7xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
-		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-xl font-semibold text-fg">
 			{$t('governanceExt.learningTitle')}
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">
@@ -112,13 +112,13 @@
 	{#if stats}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-4">
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('common.total')}</p>
-				<p class="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{stats.total}</p>
+				<p class="mt-1 text-2xl font-semibold text-fg">{stats.total}</p>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.overallAlignmentRate')}</p>
 				<p class="mt-1 text-2xl font-semibold text-emerald-700">
@@ -126,13 +126,13 @@
 				</p>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.recentAlignmentRate')}</p>
 				<p class="mt-1 text-2xl font-semibold text-blue-700">{pct(stats.recent_alignment_rate)}</p>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.improvementTrend')}</p>
 				<p
@@ -145,7 +145,7 @@
 	{/if}
 
 	<div
-		class="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800 md:grid-cols-4"
+		class="grid grid-cols-1 gap-3 rounded-lg border border-line bg-white p-4 dark:bg-slate-800 md:grid-cols-4"
 	>
 		<div>
 			<label for="learning-domain" class="mb-1 block text-sm text-slate-600"
@@ -170,7 +170,7 @@
 	</div>
 
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 	>
 		{#if loading}
 			<p class="text-sm text-slate-500">{$t('common.loading')}</p>
@@ -180,7 +180,7 @@
 			<div class="overflow-x-auto">
 				<table class="min-w-full text-left text-sm">
 					<thead>
-						<tr class="border-b border-slate-200 text-xs text-slate-500 dark:border-slate-700">
+						<tr class="border-b border-line text-xs text-slate-500">
 							<th class="px-2 py-2">{$t('aiAgents.review')}</th>
 							<th class="px-2 py-2">{$t('governance.domainLabel')}</th>
 							<th class="px-2 py-2">{$t('governanceExt.alignment')}</th>
@@ -191,7 +191,7 @@
 					</thead>
 					<tbody>
 						{#each records as record}
-							<tr class="border-b border-slate-100 dark:border-slate-800">
+							<tr class="border-b border-line">
 								<td class="px-2 py-2 text-xs">
 									<a href={`/proposals/${record.proposal_id}`} class="text-blue-600 hover:underline"
 										>{record.review_id}</a
@@ -224,7 +224,7 @@
 		{/if}
 
 		<div
-			class="mt-4 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"
+			class="mt-4 flex items-center justify-between border-t border-line pt-3 text-sm"
 		>
 			<p class="text-slate-500">
 				{$t('governance.pagination', { values: { total, page: pageNum, pages: totalPages || 1 } })}
@@ -251,10 +251,10 @@
 	</div>
 
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 	>
 		<div class="mb-3 flex items-center justify-between">
-			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-sm font-semibold text-fg">
 				{$t('governanceExt.feedbackForReview', { values: { id: feedbackReviewId || '-' } })}
 			</h2>
 			{#if loadingFeedback}
@@ -266,8 +266,8 @@
 		{:else}
 			<div class="space-y-2">
 				{#each feedbackItems as item}
-					<div class="rounded border border-slate-200 p-3 text-xs dark:border-slate-700">
-						<p class="text-slate-700 dark:text-slate-200">{item.lesson_learned || '-'}</p>
+					<div class="rounded border border-line p-3 text-xs">
+						<p class="text-fg">{item.lesson_learned || '-'}</p>
 						<p class="mt-1 text-slate-500">{item.follow_up_improvement || '-'}</p>
 					</div>
 				{/each}

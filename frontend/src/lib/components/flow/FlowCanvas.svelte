@@ -137,15 +137,15 @@
 	let menuElement: HTMLDivElement | undefined = $state();
 	let menuTrigger: HTMLButtonElement | undefined;
 	const toolButton =
-		'inline-flex disabled:opacity-50 min-h-8 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600 aria-expanded:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 dark:aria-expanded:bg-slate-800';
+		'inline-flex disabled:opacity-50 min-h-8 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-fg hover:bg-slate-100 aria-expanded:bg-slate-100 dark:hover:bg-slate-800 dark:aria-expanded:bg-slate-800';
 	const toolIcon =
-		'grid size-8 shrink-0 place-items-center rounded-md hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:opacity-40 dark:hover:bg-slate-800';
+		'grid size-8 shrink-0 place-items-center rounded-md hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-800';
 	const toolInput =
-		'min-w-0 flex-1 rounded-md border border-slate-300 bg-transparent px-2 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-slate-600';
+		'min-w-0 flex-1 rounded-md border border-slate-300 bg-transparent px-2 py-1.5 text-sm dark:border-slate-600';
 	const toolPanel =
-		'absolute right-0 top-full mt-1 max-w-full rounded-lg border border-slate-200 bg-white text-slate-900 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
+		'absolute right-0 top-full mt-1 max-w-full rounded-lg border border-line bg-white text-fg shadow-lg dark:bg-slate-900';
 	const menuClass =
-		'fixed z-50 w-48 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-md border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900';
+		'fixed z-50 w-48 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-md border border-line bg-white p-1 shadow-lg dark:bg-slate-900';
 	const menuItemClass =
 		'block w-full rounded px-3 py-1.5 text-left text-sm hover:bg-slate-100 focus:bg-slate-100 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
 
@@ -786,7 +786,7 @@
 				<li>
 					<button
 						type="button"
-						class="w-full rounded px-2 py-1.5 text-start text-sm break-words hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600 dark:hover:bg-slate-800"
+						class="w-full rounded px-2 py-1.5 text-start text-sm break-words hover:bg-slate-100 dark:hover:bg-slate-800"
 						onclick={() => void jumpToHeading(item.pos)}
 					>
 						<span class="sr-only"
@@ -795,7 +795,7 @@
 						{item.text.trim() || $t('flow.canvas.outline.untitledHeading')}
 					</button>
 					{#if item.children.length}
-						<div class="ms-2 border-s border-slate-200 ps-2 dark:border-slate-700">
+						<div class="ms-2 border-s border-line ps-2">
 							{@render outlineItems(item.children)}
 						</div>
 					{/if}
@@ -895,9 +895,9 @@
 				<div class="flex flex-wrap items-center justify-between gap-x-2">
 					<span
 						id={`flow-find-scope-${objectId}`}
-						class="text-xs text-slate-500 dark:text-slate-400">{$t('flow.canvas.find.scope')}</span
+						class="text-xs text-fg-muted">{$t('flow.canvas.find.scope')}</span
 					>
-					<span role="status" class="text-xs tabular-nums text-slate-600 dark:text-slate-300">
+					<span role="status" class="text-xs tabular-nums text-fg-muted">
 						{#if findQuery.trim()}
 							{found.total
 								? $t('flow.canvas.find.position', { values: found })
@@ -972,7 +972,7 @@
 	{#if dropMessage}<p role="status" class="sr-only">{dropMessage}</p>{/if}
 	{#if peers.length > 0}
 		<ul
-			class="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
+			class="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2 text-xs text-fg-muted"
 			aria-label={$t('flow.presence.listLabel')}
 			data-testid="flow-presence-list"
 		>
@@ -993,7 +993,7 @@
 	{/if}
 	{#if readOnly}
 		<p
-			class="mx-auto mb-3 max-w-3xl text-xs text-slate-500 dark:text-slate-400"
+			class="mx-auto mb-3 max-w-3xl text-xs text-fg-muted"
 			data-testid="flow-canvas-read-only"
 		>
 			{$t('flow.canvas.readOnlyNotice')}
@@ -1009,7 +1009,7 @@
 				<button
 					type="button"
 					data-testid="flow-block-insert"
-					class="grid size-6 place-items-center rounded text-xl leading-none text-slate-600 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300 dark:hover:bg-slate-800"
+					class="grid size-6 place-items-center rounded text-xl leading-none text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
 					aria-label={$t('flow.canvas.slashMenu.insert')}
 					aria-keyshortcuts="Alt+Enter"
 					aria-haspopup="listbox"
@@ -1021,7 +1021,7 @@
 			{#if onCommentBlock}
 				<button
 					type="button"
-					class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+					class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
 					onclick={commentOnHover}
 					aria-label={$t('flow.comments.onBlock')}
 					title={$t('flow.comments.onBlock')}
@@ -1157,7 +1157,7 @@
 			role="toolbar"
 			aria-label="Text formatting"
 			data-testid="flow-format-toolbar"
-			class="fixed z-40 flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			class="fixed z-40 flex flex-wrap items-center gap-1 rounded-lg border border-line bg-white p-1 shadow-lg dark:bg-slate-900"
 			style={`left:${Math.max(8, Math.min(selection.left, typeof window === 'undefined' ? 800 : window.innerWidth - 300))}px;top:${Math.max(8, selection.top - 44)}px`}
 		>
 			{#each ['bold', 'italic', 'strike', 'code'] as mark (mark)}
@@ -1220,7 +1220,7 @@
 	{/if}
 	<div
 		bind:this={host}
-		class="flow-canvas prose prose-slate mx-auto max-w-3xl dark:prose-invert focus:outline-none"
+		class="flow-canvas prose prose-slate mx-auto max-w-3xl dark:prose-invert"
 		data-placeholder={$t('flow.canvas.placeholder')}
 	></div>
 
@@ -1253,11 +1253,11 @@
 		<div
 			bind:this={insertMenu}
 			data-flow-command-popup
-			class="fixed z-50 w-72 max-w-[calc(100vw-1rem)] rounded-md border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			class="fixed z-50 w-72 max-w-[calc(100vw-1rem)] rounded-md border border-line bg-white shadow-lg dark:bg-slate-900"
 			style={`left: ${Math.max(8, Math.min(commandAnchor.left, window.innerWidth - 296))}px; top: ${Math.max(8, Math.min(commandAnchor.top + 4, window.innerHeight - 330))}px`}
 		>
 			{#if addTarget}
-				<div class="px-3 pt-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+				<div class="px-3 pt-2 text-xs font-medium text-fg-muted">
 					{$t(
 						addTarget.blockId == null
 							? 'flow.body.addContent'
@@ -1284,7 +1284,7 @@
 					aria-activedescendant={commandCount ? `${commandListId}-${activeOption}` : undefined}
 					aria-label={$t('flow.canvas.slashMenu.search')}
 					placeholder={$t('flow.canvas.slashMenu.search')}
-					class="w-full rounded-t-md border-b border-slate-200 bg-transparent px-3 py-2 text-sm text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 dark:border-slate-700 dark:text-white"
+					class="w-full rounded-t-md border-b border-line bg-transparent px-3 py-2 text-sm text-slate-900 outline-none dark:text-white"
 				/>
 			{/if}
 			<div
@@ -1299,7 +1299,7 @@
 					{#each filteredOptions as option, index (option.labelKey + String(option.level ?? ''))}
 						<button
 							type="button"
-							class="block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+							class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 							onclick={() => pick(option)}
 							id={`${commandListId}-${index}`}
 							tabindex="-1"
@@ -1319,7 +1319,7 @@
 							tabindex="-1"
 							onmousedown={(event) => event.preventDefault()}
 							aria-selected={activeOption === filteredOptions.length + index}
-							class="block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+							class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 							class:bg-slate-100={activeOption === filteredOptions.length + index}
 							class:dark:bg-slate-800={activeOption === filteredOptions.length + index}
 							onclick={() => pickBody(option.action)}
@@ -1328,13 +1328,13 @@
 
 					{#if filteredBridgeOptions.length > 0}
 						<div
-							class="my-1 border-t border-slate-200 dark:border-slate-700"
+							class="my-1 border-t border-line"
 							role="presentation"
 						></div>
 						{#each filteredBridgeOptions as option, index (option.action)}
 							<button
 								type="button"
-								class="block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+								class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 								onclick={() => pickBridge(option)}
 								id={`${commandListId}-${filteredOptions.length + filteredBody.length + index}`}
 								tabindex="-1"
@@ -1345,7 +1345,7 @@
 								data-testid={`flow-slash-${option.action}`}
 							>
 								<span class="block">{$t(option.labelKey)}</span>
-								<span class="block text-xs text-slate-500 dark:text-slate-400"
+								<span class="block text-xs text-fg-muted"
 									>{$t(option.noteKey)}</span
 								>
 							</button>

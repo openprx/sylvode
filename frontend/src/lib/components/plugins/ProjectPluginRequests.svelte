@@ -76,15 +76,15 @@
 	>
 		<h2 id="plugin-library-requests" class="font-semibold">{$t('plugins.library.requests')}</h2>
 		{#if failed}
-			<p role="alert" class="text-sm text-red-800 dark:text-red-200">
+			<p role="alert" class="text-sm text-danger">
 				{$t('plugins.library.requestsFailed')}
 			</p>
 			<Button variant="secondary" onclick={load}>{$t('plugins.library.retry')}</Button>
 		{:else if !requests.length}
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('plugins.library.noRequests')}</p>
+			<p class="text-sm text-fg-muted">{$t('plugins.library.noRequests')}</p>
 		{/if}
 		{#if requests.length}
-			<ul class="divide-y divide-slate-200 dark:divide-slate-700">
+			<ul class="divide-y divide-line">
 				{#each requests as item (item.source_id)}
 					{@const manifest = asAny(item.manifest)}
 					<li class="space-y-2 py-3">
@@ -178,7 +178,7 @@
 				{/each}
 			</ul>
 		{/if}
-		{#if error}<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t(error)}</p>{/if}
+		{#if error}<p role="alert" class="text-sm text-danger">{$t(error)}</p>{/if}
 		{#if notice}<p role="status" class="text-sm">{$t(notice)}</p>{/if}
 	</section>
 {/if}

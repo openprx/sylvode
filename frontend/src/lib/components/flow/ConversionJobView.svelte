@@ -98,38 +98,38 @@
 
 	const statusClass: Record<string, string> = {
 		started:
-			'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200',
+			'border-amber-300 bg-amber-50 text-warning dark:border-amber-700 dark:bg-amber-950/40',
 		completed:
 			'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200',
 		failed:
-			'border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200'
+			'border-red-300 bg-red-50 text-danger dark:border-red-700 dark:bg-red-950/40'
 	};
 	const statusFallbackClass =
-		'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200';
+		'border-slate-300 bg-slate-50 text-fg dark:border-slate-600 dark:bg-slate-800';
 
 	const buttonPrimary =
-		'min-h-[44px] min-w-[44px] rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 motion-safe:transition-colors dark:focus-visible:ring-offset-slate-900';
+		'min-h-[44px] min-w-[44px] rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 motion-safe:transition-colors';
 	const buttonSecondary =
-		'min-h-[44px] min-w-[44px] rounded-md border border-slate-300 px-4 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800';
+		'min-h-[44px] min-w-[44px] rounded-md border border-slate-300 px-4 text-sm font-medium text-fg hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800';
 	const linkClass =
-		'inline-flex min-h-11 items-center break-all text-blue-700 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-300';
-	const dtClass = 'text-sm text-slate-500 dark:text-slate-400';
-	const ddClass = 'text-sm text-slate-900 dark:text-slate-100';
-	const monoClass = 'break-all font-mono text-xs text-slate-900 dark:text-slate-100';
+		'inline-flex min-h-11 items-center break-all text-blue-700 underline-offset-2 hover:underline dark:text-blue-300';
+	const dtClass = 'text-sm text-fg-muted';
+	const ddClass = 'text-sm text-fg';
+	const monoClass = 'break-all font-mono text-xs text-fg';
 </script>
 
 <Card>
 	<section aria-labelledby="flow-conversion-heading" data-testid="flow-conversion">
 		<h1
 			id="flow-conversion-heading"
-			class="text-lg font-semibold text-slate-900 dark:text-slate-100"
+			class="text-lg font-semibold text-fg"
 		>
 			{$t('flow.bridge.job.heading')}
 		</h1>
-		<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+		<p class="mt-1 text-sm text-fg-muted">
 			{$t('flow.bridge.job.description')}
 		</p>
-		<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+		<p class="mt-2 text-xs text-fg-muted">
 			{$t('flow.bridge.job.jobId')}:
 			<span class="break-all font-mono" data-testid="flow-conversion-job-id">{jobId}</span>
 		</p>
@@ -141,7 +141,7 @@
 		{#if snap}
 			{#if snap.loadState === 'loading'}
 				<p
-					class="mt-6 text-sm text-slate-500 dark:text-slate-400"
+					class="mt-6 text-sm text-fg-muted"
 					data-testid="flow-conversion-loading"
 				>
 					{$t('flow.bridge.job.loading')}
@@ -156,7 +156,7 @@
 				</div>
 			{:else if snap.loadState === 'failed' && snap.loadFailure}
 				<p
-					class="mt-6 text-sm text-red-700 dark:text-red-300"
+					class="mt-6 text-sm text-danger"
 					role="alert"
 					data-testid="flow-conversion-load-error"
 					data-kind={snap.loadFailure.kind}
@@ -167,7 +167,7 @@
 				{@const job = snap.job}
 				{@const errorKey = jobErrorKey(job.error, job.error_reason)}
 				<div class="mt-6 flex flex-wrap items-center gap-3">
-					<span class="text-sm text-slate-500 dark:text-slate-400"
+					<span class="text-sm text-fg-muted"
 						>{$t('flow.bridge.job.statusLabel')}</span
 					>
 					<span
@@ -181,7 +181,7 @@
 					</span>
 					{#if snap.polling && !snap.terminal}
 						<span
-							class="text-sm text-slate-600 dark:text-slate-300"
+							class="text-sm text-fg-muted"
 							data-testid="flow-conversion-polling"
 						>
 							{$t('flow.bridge.job.polling')}
@@ -191,7 +191,7 @@
 
 				{#if snap.pollFailure}
 					<p
-						class="mt-3 text-sm text-amber-800 dark:text-amber-200"
+						class="mt-3 text-sm text-warning"
 						data-testid="flow-conversion-poll-error"
 						data-kind={snap.pollFailure.kind}
 					>
@@ -214,7 +214,7 @@
 							</a>
 							<span class="block {monoClass}">{job.source_object_id}</span>
 						{:else if snap.source.state === 'loading'}
-							<span class="text-slate-500 dark:text-slate-400"
+							<span class="text-fg-muted"
 								>{$t('flow.bridge.job.field.sourceLoading')}</span
 							>
 							<span class="block {monoClass}">{job.source_object_id}</span>
@@ -222,7 +222,7 @@
 							<span class={monoClass} data-testid="flow-conversion-source-id"
 								>{job.source_object_id}</span
 							>
-							<span class="block text-xs text-slate-500 dark:text-slate-400">
+							<span class="block text-xs text-fg-muted">
 								{$t('flow.bridge.job.field.sourceHidden')}
 							</span>
 						{/if}
@@ -250,7 +250,7 @@
 						{#if job.lineage_id}
 							<span class={monoClass}>{job.lineage_id}</span>
 						{:else}
-							<span class="text-sm text-slate-500 dark:text-slate-400"
+							<span class="text-sm text-fg-muted"
 								>{$t('flow.bridge.job.field.lineageNone')}</span
 							>
 						{/if}
@@ -259,7 +259,7 @@
 					<dt class={dtClass}>{$t('flow.bridge.job.field.warnings')}</dt>
 					<dd data-testid="flow-conversion-warnings" data-count={job.warnings.length}>
 						{#if job.warnings.length === 0}
-							<span class="text-sm text-slate-500 dark:text-slate-400"
+							<span class="text-sm text-fg-muted"
 								>{$t('flow.bridge.job.field.warningsNone')}</span
 							>
 						{:else}
@@ -276,7 +276,7 @@
 					{#if errorKey}
 						<dt class={dtClass}>{$t('flow.bridge.job.field.error')}</dt>
 						<dd
-							class="text-sm text-red-700 dark:text-red-300"
+							class="text-sm text-danger"
 							data-testid="flow-conversion-error"
 							data-code={job.error}
 							data-reason={job.error_reason ?? undefined}
@@ -289,13 +289,13 @@
 				<section class="mt-6" aria-labelledby="flow-conversion-targets-heading">
 					<h2
 						id="flow-conversion-targets-heading"
-						class="text-base font-semibold text-slate-900 dark:text-slate-100"
+						class="text-base font-semibold text-fg"
 					>
 						{$t('flow.bridge.job.field.createdTargets')}
 					</h2>
 					{#if snap.targets.length === 0}
 						<p
-							class="mt-2 text-sm text-slate-500 dark:text-slate-400"
+							class="mt-2 text-sm text-fg-muted"
 							data-testid="flow-conversion-targets-empty"
 						>
 							{$t('flow.bridge.job.field.createdTargetsNone')}
@@ -304,7 +304,7 @@
 						<ul class="mt-2 space-y-3" data-testid="flow-conversion-targets">
 							{#each snap.targets as target (target.id)}
 								<li
-									class="rounded-md border border-slate-200 p-3 dark:border-slate-700"
+									class="rounded-md border border-line p-3"
 									data-testid="flow-conversion-target"
 									data-target-id={target.id}
 									data-state={target.state}
@@ -341,7 +341,7 @@
 										<span class="block {monoClass}">{target.id}</span>
 									{:else if target.state === 'loading'}
 										<span class={monoClass}>{target.id}</span>
-										<span class="block text-xs text-slate-500 dark:text-slate-400">
+										<span class="block text-xs text-fg-muted">
 											{$t('flow.bridge.job.field.targetLoading')}
 										</span>
 									{:else}
@@ -358,14 +358,14 @@
 												{$t('flow.bridge.job.action.copyId')}
 											</button>
 										</div>
-										<span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">
+										<span class="mt-1 block text-xs text-fg-muted">
 											{$t('flow.bridge.job.field.targetUnresolved')}
 										</span>
 										{#if copyState?.id === target.id}
 											<span
 												class="mt-1 block text-xs {copyState.ok
-													? 'text-emerald-700 dark:text-emerald-300'
-													: 'text-red-700 dark:text-red-300'}"
+													? 'text-success'
+													: 'text-danger'}"
 												role="status"
 												aria-live="polite"
 											>
@@ -382,10 +382,10 @@
 				</section>
 
 				{#if snap.canRetry || snap.retrying || snap.retryFailure}
-					<div class="mt-6 space-y-3 border-t border-slate-200 pt-4 dark:border-slate-700">
+					<div class="mt-6 space-y-3 border-t border-line pt-4">
 						{#if snap.retryFailure}
 							<p
-								class="text-sm text-red-700 dark:text-red-300"
+								class="text-sm text-danger"
 								role="alert"
 								data-testid="flow-conversion-retry-error"
 								data-kind={snap.retryFailure.kind}
@@ -436,7 +436,7 @@
 	onclose={cancelRetry}
 >
 	<div class="space-y-4" data-testid="flow-conversion-retry-dialog">
-		<p class="text-sm text-slate-700 dark:text-slate-200">
+		<p class="text-sm text-fg">
 			{$t('flow.bridge.job.retry.confirmBody')}
 		</p>
 		<div class="flex flex-wrap justify-end gap-3">

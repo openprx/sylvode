@@ -70,7 +70,7 @@
 	const input =
 		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-slate-900';
 	const button =
-		'min-h-11 rounded-md border border-slate-300 px-3 text-sm focus-visible:ring-2 disabled:opacity-50 dark:border-slate-600';
+		'min-h-11 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-50 dark:border-slate-600';
 	onDestroy(() => {
 		alive = false;
 	});
@@ -339,5 +339,5 @@
 		</div>
 	{/if}
 	{#if busy}<p class="text-sm" role="status">{$t('common.loading')}</p>{/if}
-	{#if error}<p class="text-sm text-red-700 dark:text-red-300" role="alert">{$t(error)}</p>{/if}
+	{#if error}<p class="text-sm text-danger" role="alert">{$t(error)}</p>{/if}
 </section>

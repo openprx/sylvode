@@ -283,10 +283,10 @@
 
 	function getPermissionClass(permission: string): string {
 		if (permission === 'admin') {
-			return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300';
+			return 'bg-red-100 text-danger dark:bg-red-900/30';
 		}
 		if (permission === 'write') {
-			return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300';
+			return 'bg-amber-100 text-warning dark:bg-amber-900/30';
 		}
 		return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
 	}
@@ -312,65 +312,65 @@
 <div class="mx-auto max-w-7xl space-y-6">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div>
-			<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('members.title')}</h1>
-			<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('members.subtitle')}</p>
+			<h1 class="text-2xl font-semibold text-fg">{$t('members.title')}</h1>
+			<p class="mt-1 text-sm text-fg-muted">{$t('members.subtitle')}</p>
 		</div>
 
 		<Button onclick={() => (showInviteModal = true)}>{$t('members.addInternalUser')}</Button>
 	</div>
 
 	<div
-		class="rounded-lg border border-slate-200 dark:border-slate-700 bg-blue-50 p-4 text-sm text-blue-800"
+		class="rounded-lg border border-line bg-blue-50 p-4 text-sm text-blue-800"
 	>
 		{$t('members.roleDescription')}
 	</div>
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
 		>
 			{$t('common.loading')}
 		</div>
 	{:else if members.length === 0}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-10 text-center text-fg-muted"
 		>
 			{$t('members.empty')}
 		</div>
 	{:else}
 		<div
-			class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+			class="overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900"
 		>
 			<div class="overflow-x-auto">
-				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
+				<table class="min-w-full divide-y divide-line">
 					<thead class="bg-slate-50 dark:bg-slate-950">
 						<tr>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.member')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('admin.email')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('admin.role')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.joinedAt')}</th
 							>
 							<th
-								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.actions')}</th
 							>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
+					<tbody class="divide-y divide-line bg-white dark:bg-slate-900">
 						{#each members as member (member.user_id)}
 							<tr>
-								<td class="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100">
+								<td class="px-4 py-3 text-sm font-medium text-fg">
 									<div class="flex items-center gap-1.5">
 										{#if isBotMember(member)}
 											<BotIcon
@@ -381,10 +381,10 @@
 										<span>{member.name || member.user_id}</span>
 									</div>
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+								<td class="px-4 py-3 text-sm text-fg-muted"
 									>{member.email || '-'}</td
 								>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+								<td class="px-4 py-3 text-sm text-fg-muted">
 									{#if isBotMember(member)}
 										<span
 											class="inline-flex rounded-full bg-cyan-100 px-2.5 py-1 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
@@ -399,7 +399,7 @@
 												const target = event.currentTarget as HTMLSelectElement;
 												changeRole(member, target.value as WorkspaceMemberRole);
 											}}
-											class="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:cursor-not-allowed disabled:bg-slate-100 dark:disabled:bg-slate-700"
+											class="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1 text-sm text-fg disabled:cursor-not-allowed disabled:bg-slate-100 dark:disabled:bg-slate-700"
 										>
 											<option value="owner">{$t('roles.owner')}</option>
 											<option value="admin">{$t('roles.admin')}</option>
@@ -407,7 +407,7 @@
 										</select>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+								<td class="px-4 py-3 text-sm text-fg-muted"
 									>{formatDate(member.joined_at)}</td
 								>
 								<td class="px-4 py-3 text-right">
@@ -430,16 +430,16 @@
 	{/if}
 
 	<div
-		class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+		class="overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900"
 	>
 		<div
-			class="flex flex-col gap-3 border-b border-slate-200 dark:border-slate-700 p-4 sm:flex-row sm:items-center sm:justify-between"
+			class="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between"
 		>
 			<div>
-				<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+				<h2 class="text-lg font-semibold text-fg">
 					{$t('members.apiTokensTitle')}
 				</h2>
-				<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+				<p class="mt-1 text-sm text-fg-muted">
 					{$t('members.apiTokensSubtitle')}
 				</p>
 			</div>
@@ -447,60 +447,60 @@
 		</div>
 
 		{#if botsLoading}
-			<div class="p-6 text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+			<div class="p-6 text-sm text-fg-muted">{$t('common.loading')}</div>
 		{:else if bots.length === 0}
-			<div class="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
+			<div class="p-10 text-center text-sm text-fg-muted">
 				{$t('members.apiTokensEmpty')}
 			</div>
 		{:else}
 			<div class="overflow-x-auto">
-				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
+				<table class="min-w-full divide-y divide-line">
 					<thead class="bg-slate-50 dark:bg-slate-950">
 						<tr>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.tokenName')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.tokenPrefix')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.transportSurfaceColumn')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.permissions')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.status')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.lastUsedAt')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.createdAt')}</th
 							>
 							<th
-								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.actions')}</th
 							>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
+					<tbody class="divide-y divide-line bg-white dark:bg-slate-900">
 						{#each bots as bot (bot.id)}
 							<tr>
-								<td class="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100"
+								<td class="px-4 py-3 text-sm font-medium text-fg"
 									>{bot.name}</td
 								>
-								<td class="px-4 py-3 text-sm font-mono text-slate-600 dark:text-slate-300"
+								<td class="px-4 py-3 text-sm font-mono text-fg-muted"
 									>{bot.token_prefix}</td
 								>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+								<td class="px-4 py-3 text-sm text-fg-muted">
 									<span
 										class="inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
 										title={getSurfaceDescription(bot.transport_surface)}
@@ -510,7 +510,7 @@
 										{getSurfaceLabel(bot.transport_surface)}
 									</span>
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+								<td class="px-4 py-3 text-sm text-fg-muted">
 									<div class="flex flex-wrap gap-1.5">
 										{#if bot.permissions.length === 0}
 											<span>-</span>
@@ -528,22 +528,22 @@
 								<td class="px-4 py-3 text-sm">
 									{#if bot.is_active}
 										<span
-											class="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+											class="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-success dark:bg-emerald-900/30"
 										>
 											{$t('members.tokenStatus.active')}
 										</span>
 									{:else}
 										<span
-											class="inline-flex rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300"
+											class="inline-flex rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-fg dark:bg-slate-700"
 										>
 											{$t('members.tokenStatus.disabled')}
 										</span>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+								<td class="px-4 py-3 text-sm text-fg-muted"
 									>{formatDate(bot.last_used_at)}</td
 								>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+								<td class="px-4 py-3 text-sm text-fg-muted"
 									>{formatDate(bot.created_at)}</td
 								>
 								<td class="px-4 py-3 text-right">
@@ -588,13 +588,13 @@
 
 		<div>
 			<label
-				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="mb-1 block text-sm font-medium text-fg"
 				for="inviteRole">{$t('admin.role')}</label
 			>
 			<select
 				id="inviteRole"
 				bind:value={selectedRole}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 			>
 				<option value="member">{$t('roles.member')}</option>
 				<option value="admin">{$t('roles.admin')}</option>
@@ -602,12 +602,12 @@
 		</div>
 
 		<div
-			class="max-h-72 space-y-2 overflow-y-auto rounded-md border border-slate-200 dark:border-slate-700 p-2"
+			class="max-h-72 space-y-2 overflow-y-auto rounded-md border border-line p-2"
 		>
 			{#if searchingUsers}
-				<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('search.searching')}</p>
+				<p class="p-2 text-sm text-fg-muted">{$t('search.searching')}</p>
 			{:else if searchResults.length === 0}
-				<p class="p-2 text-sm text-slate-500 dark:text-slate-400">
+				<p class="p-2 text-sm text-fg-muted">
 					{$t('members.noSearchResults')}
 				</p>
 			{:else}
@@ -616,8 +616,8 @@
 						class="flex items-center justify-between rounded-md px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
 					>
 						<div>
-							<p class="text-sm font-medium text-slate-900 dark:text-slate-100">{user.name}</p>
-							<p class="text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
+							<p class="text-sm font-medium text-fg">{user.name}</p>
+							<p class="text-xs text-fg-muted">{user.email}</p>
 						</div>
 						{#if memberIds.has(user.id)}
 							<Button size="sm" variant="secondary" disabled>{$t('members.added')}</Button>
@@ -659,11 +659,11 @@
 		/>
 
 		<fieldset aria-describedby="tokenSurfaceHint">
-			<legend class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+			<legend class="mb-1 block text-sm font-medium text-fg">
 				{$t('members.transportSurface')}
-				<span class="text-red-600 dark:text-red-400" aria-hidden="true">*</span>
+				<span class="text-danger" aria-hidden="true">*</span>
 			</legend>
-			<p id="tokenSurfaceHint" class="mb-2 text-xs text-slate-500 dark:text-slate-400">
+			<p id="tokenSurfaceHint" class="mb-2 text-xs text-fg-muted">
 				{$t('members.transportSurfaceHint')}
 			</p>
 			<div class="space-y-2">
@@ -681,15 +681,15 @@
 							bind:group={tokenSurface}
 							required
 							aria-describedby={`tokenSurface-${surface}-description`}
-							class="mt-0.5 h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800"
+							class="mt-0.5 h-4 w-4 border-slate-300 text-blue-600 dark:border-slate-600 dark:bg-slate-800"
 						/>
 						<span>
-							<span class="block font-medium text-slate-900 dark:text-slate-100"
+							<span class="block font-medium text-fg"
 								>{$t(surfaceLabelKey(surface))}</span
 							>
 							<span
 								id={`tokenSurface-${surface}-description`}
-								class="block text-xs text-slate-500 dark:text-slate-400"
+								class="block text-xs text-fg-muted"
 								>{$t(surfaceDescriptionKey(surface))}</span
 							>
 						</span>
@@ -699,19 +699,19 @@
 		</fieldset>
 
 		<div>
-			<p class="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+			<p class="mb-2 block text-sm font-medium text-fg">
 				{$t('members.permissions')}
 			</p>
 			<div class="flex flex-wrap gap-2">
 				{#each botPermissionOptions as permission}
 					<label
-						class="inline-flex items-center gap-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300"
+						class="inline-flex items-center gap-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-1.5 text-sm text-fg"
 					>
 						<input
 							type="checkbox"
 							checked={tokenPermissions.includes(permission)}
 							onchange={() => togglePermission(permission)}
-							class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800"
+							class="h-4 w-4 rounded border-slate-300 text-blue-600 dark:border-slate-600 dark:bg-slate-800"
 						/>
 						<span>{$t(`members.permission.${permission}`)}</span>
 					</label>
@@ -721,16 +721,16 @@
 
 		<div>
 			<label
-				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="mb-1 block text-sm font-medium text-fg"
 				for="tokenExpiresAt">{$t('members.expiresAt')}</label
 			>
 			<input
 				id="tokenExpiresAt"
 				type="date"
 				bind:value={tokenExpiresAt}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 			/>
-			<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{$t('members.expiresAtHint')}</p>
+			<p class="mt-1 text-xs text-fg-muted">{$t('members.expiresAtHint')}</p>
 		</div>
 
 		<div class="flex justify-end gap-2 pt-2">
@@ -769,25 +769,25 @@
 			</div>
 
 			<div>
-				<p class="mb-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+				<p class="mb-1 text-sm font-medium text-fg">
 					{$t('members.fullToken')}
 				</p>
 				<code
-					class="block rounded-md bg-slate-100 dark:bg-slate-950 p-3 text-xs sm:text-sm text-slate-900 dark:text-slate-100 break-all"
+					class="block rounded-md bg-slate-100 dark:bg-slate-950 p-3 text-xs sm:text-sm text-fg break-all"
 					>{createdToken.token}</code
 				>
 			</div>
 
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<div>
-					<p class="text-xs text-slate-500 dark:text-slate-400">{$t('members.tokenPrefix')}</p>
-					<p class="text-sm font-mono text-slate-700 dark:text-slate-200">
+					<p class="text-xs text-fg-muted">{$t('members.tokenPrefix')}</p>
+					<p class="text-sm font-mono text-fg">
 						{createdToken.token_prefix}
 					</p>
 				</div>
 				<div>
-					<p class="text-xs text-slate-500 dark:text-slate-400">{$t('common.createdAt')}</p>
-					<p class="text-sm text-slate-700 dark:text-slate-200">
+					<p class="text-xs text-fg-muted">{$t('common.createdAt')}</p>
+					<p class="text-sm text-fg">
 						{formatDate(createdToken.created_at)}
 					</p>
 				</div>

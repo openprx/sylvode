@@ -44,8 +44,8 @@
 <div class="min-h-screen flex items-center justify-center bg-slate-50 px-4 dark:bg-slate-950">
 	<div class="max-w-md w-full space-y-8">
 		<div class="text-center">
-			<h1 class="text-3xl font-bold text-slate-900 dark:text-slate-100">Sylvode</h1>
-			<p class="mt-2 text-sm text-slate-600 dark:text-slate-400">{$t('auth.subtitle')}</p>
+			<h1 class="text-3xl font-semibold text-fg">Sylvode</h1>
+			<p class="mt-2 text-sm text-fg-muted">{$t('auth.subtitle')}</p>
 		</div>
 
 		<form
@@ -54,7 +54,7 @@
 		>
 			<div class="space-y-4">
 				<div>
-					<label for="email" class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+					<label for="email" class="block text-sm font-medium text-fg"
 						>{$t('auth.email')}</label
 					>
 					<input
@@ -62,13 +62,13 @@
 						type="email"
 						bind:value={email}
 						required
-						class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm dark:shadow-slate-900/50 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+						class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-fg dark:border-slate-600 dark:bg-slate-800"
 						placeholder={$t('placeholders.emailPlaceholder')}
 					/>
 				</div>
 
 				<div>
-					<label for="password" class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+					<label for="password" class="block text-sm font-medium text-fg"
 						>{$t('auth.password')}</label
 					>
 					<input
@@ -76,7 +76,7 @@
 						type="password"
 						bind:value={password}
 						required
-						class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm dark:shadow-slate-900/50 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+						class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-fg dark:border-slate-600 dark:bg-slate-800"
 						placeholder={$t('placeholders.passwordPlaceholder')}
 					/>
 				</div>
@@ -85,7 +85,7 @@
 			<button
 				type="submit"
 				disabled={loading}
-				class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm dark:shadow-slate-900/50 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-slate-900 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+				class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
 			>
 				{loading ? $t('auth.loginLoading') : $t('auth.login')}
 			</button>

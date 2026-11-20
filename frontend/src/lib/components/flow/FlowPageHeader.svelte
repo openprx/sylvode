@@ -296,7 +296,7 @@
 			{#if !readOnly}
 				<button
 					type="button"
-					class="appearance-action mt-1 text-sm text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+					class="appearance-action mt-1 text-sm text-slate-500 hover:text-fg"
 					onclick={() => (menu = menu === 'icon' ? null : 'icon')}
 				>
 					{appearance?.icon ? $t('flow.header.changeIcon') : $t('flow.header.addIcon')}
@@ -304,7 +304,7 @@
 			{/if}
 			{#if menu === 'icon' && !readOnly}
 				<div
-					class="absolute z-20 mt-1 w-72 rounded-md border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+					class="absolute z-20 mt-1 w-72 rounded-md border border-line bg-white p-3 shadow-lg dark:bg-slate-900"
 				>
 					<div class="grid grid-cols-8 gap-1">
 						{#each PAGE_EMOJIS as emoji (emoji)}
@@ -360,7 +360,7 @@
 				readonly={readOnly}
 				placeholder={$t('flow.titlePlaceholder')}
 				aria-label={$t('flow.personal.pageTitle')}
-				class="w-full min-w-0 resize-none overflow-hidden border-none bg-transparent text-4xl leading-tight font-semibold text-slate-900 outline-none dark:text-slate-100"
+				class="w-full min-w-0 resize-none overflow-hidden border-none bg-transparent text-4xl leading-tight font-semibold text-fg outline-none"
 			></textarea>
 		</div>
 
@@ -375,7 +375,7 @@
 				</button>
 				{#if menu === 'cover'}
 					<div
-						class="absolute z-20 mt-1 w-80 rounded-md border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+						class="absolute z-20 mt-1 w-80 rounded-md border border-line bg-white p-3 shadow-lg dark:bg-slate-900"
 					>
 						<p class="mb-2 text-xs text-slate-500">{$t('flow.header.gallery')}</p>
 						<div class="grid grid-cols-3 gap-2">

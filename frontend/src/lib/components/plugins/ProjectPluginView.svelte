@@ -151,10 +151,10 @@
 
 {#if view.phase === 'unavailable'}
 	<section class="space-y-3" data-plugin-unavailable>
-		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-lg font-semibold text-fg">
 			{$t('plugins.host.unavailable')}
 		</h1>
-		<p class="text-sm text-slate-600 dark:text-slate-300">{$t('plugins.host.unavailableHint')}</p>
+		<p class="text-sm text-fg-muted">{$t('plugins.host.unavailableHint')}</p>
 		<a href={backHref} class="text-sm text-blue-700 underline dark:text-blue-300"
 			>{$t(from ? 'plugins.host.back' : 'plugins.host.backToProject')}</a
 		>
@@ -177,7 +177,7 @@
 						aria-current={item.key === pluginKey && item.contribution.route === route
 							? 'page'
 							: undefined}
-						class="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 focus-visible:outline-blue-600 aria-[current=page]:bg-slate-100 aria-[current=page]:font-semibold dark:border-slate-600 dark:hover:bg-slate-800 dark:aria-[current=page]:bg-slate-800"
+						class="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 aria-[current=page]:bg-slate-100 aria-[current=page]:font-semibold dark:border-slate-600 dark:hover:bg-slate-800 dark:aria-[current=page]:bg-slate-800"
 						>{item.contribution.label}</a
 					>
 				{/each}
@@ -204,14 +204,14 @@
 				{/if}
 			</nav>
 		{/if}
-		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-lg font-semibold text-fg">
 			{found?.contribution.label ?? pluginKey}
 		</h1>
 		{#if view.notice && view.phase !== 'ready'}
-			<p class="text-sm text-slate-600 dark:text-slate-300" role="status">{$t(view.notice)}</p>
+			<p class="text-sm text-fg-muted" role="status">{$t(view.notice)}</p>
 		{/if}
 		{#if view.phase === 'loading'}
-			<p class="text-sm text-slate-600 dark:text-slate-300" role="status">
+			<p class="text-sm text-fg-muted" role="status">
 				{$t('plugins.host.loading')}
 			</p>
 		{:else if view.phase === 'failed'}

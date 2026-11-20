@@ -54,11 +54,11 @@
 
 <div class="mx-auto max-w-6xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
 		<div class="flex items-center justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+				<h1 class="text-xl font-semibold text-fg">
 					{$t('governanceExt.auditDetailTitle')}
 				</h1>
 				<p class="mt-1 text-sm text-slate-500">{reportId}</p>
@@ -74,34 +74,34 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800"
+			class="rounded-lg border border-line bg-white p-6 text-sm text-slate-500 dark:bg-slate-800"
 		>
 			{$t('common.loading')}
 		</div>
 	{:else if report}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-4">
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.totalDecisions')}</p>
-				<p class="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+				<p class="mt-1 text-2xl font-semibold text-fg">
 					{report.total_proposals}
 				</p>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governance.status.approved')}</p>
 				<p class="mt-1 text-2xl font-semibold text-emerald-700">{report.approved_proposals}</p>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governance.status.rejected')}</p>
 				<p class="mt-1 text-2xl font-semibold text-red-700">{report.rejected_proposals}</p>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governance.status.vetoed')}</p>
 				<p class="mt-1 text-2xl font-semibold text-rose-700">{report.vetoed_proposals}</p>
@@ -110,9 +110,9 @@
 
 		<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h2 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h2 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governanceExt.ratingDistribution')}
 				</h2>
 				<pre class="overflow-auto rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">{jsonText(
@@ -120,9 +120,9 @@
 					)}</pre>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h2 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h2 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governanceExt.aiParticipation')}
 				</h2>
 				<pre class="overflow-auto rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">{jsonText(
@@ -130,9 +130,9 @@
 					)}</pre>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h2 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h2 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governanceExt.domainStats')}
 				</h2>
 				<pre class="overflow-auto rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">{jsonText(
@@ -140,9 +140,9 @@
 					)}</pre>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h2 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h2 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governanceExt.keyInsights')}
 				</h2>
 				<pre class="overflow-auto rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">{jsonText(

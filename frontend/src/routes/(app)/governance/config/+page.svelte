@@ -102,16 +102,16 @@
 
 <div class="mx-auto max-w-4xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
-		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-xl font-semibold text-fg">
 			{$t('governanceConfig.title')}
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">{$t('governanceConfig.subtitle')}</p>
 	</div>
 
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
 		{#if loading}
 			<p class="text-sm text-slate-500">{$t('common.loading')}</p>
@@ -138,7 +138,7 @@
 				</div>
 
 				<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-					<label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+					<label class="flex items-center gap-2 text-sm text-fg">
 						<input
 							id="governance-config-review-required"
 							type="checkbox"

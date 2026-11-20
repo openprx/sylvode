@@ -32,11 +32,11 @@
 		{ id: 'relations', labelKey: 'flow.panel.tabs.relations' }
 	] as const;
 	const button =
-		'min-h-10 rounded-md px-3 text-sm text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-slate-300 dark:hover:bg-slate-800';
+		'min-h-10 rounded-md px-3 text-sm text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800';
 </script>
 
 <div
-	class="flex shrink-0 flex-wrap items-center justify-end gap-1 border-b border-slate-100 bg-white px-3 py-1 dark:border-slate-800 dark:bg-slate-950"
+	class="flex shrink-0 flex-wrap items-center justify-end gap-1 border-b border-line bg-white px-3 py-1 dark:bg-slate-950"
 	data-testid="flow-page-tools"
 >
 	{#if syncState}<FlowSyncIndicator state={syncState} {pending} />{/if}
@@ -67,7 +67,7 @@
 			data-testid="flow-more">{$t('flow.layout.more')} ···</summary
 		>
 		<div
-			class="absolute right-0 z-[45] min-w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			class="absolute right-0 z-[45] min-w-40 rounded-lg border border-line bg-white p-1 shadow-lg dark:bg-slate-900"
 		>
 			{#if onManageSharedBlocks}<button
 					type="button"
@@ -91,7 +91,7 @@
 <dialog
 	bind:this={dialog}
 	onclose={() => (shareOpen = false)}
-	class="m-auto max-h-[85vh] w-[min(92vw,520px)] overflow-auto rounded-xl border border-slate-200 p-0 shadow-xl backdrop:bg-black/30 dark:border-slate-700 dark:bg-slate-900"
+	class="m-auto max-h-[85vh] w-[min(92vw,520px)] overflow-auto rounded-xl border border-line p-0 shadow-xl backdrop:bg-black/30 dark:bg-slate-900"
 	aria-label={$t('flow.panel.tabs.share')}
 	data-testid="flow-share-dialog"
 >

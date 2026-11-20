@@ -120,13 +120,13 @@
 	}
 
 	const itemClass =
-		'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
+		'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-fg hover:bg-slate-100 focus:bg-slate-100 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
 </script>
 
 <button
 	type="button"
 	bind:this={button}
-	class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300 dark:hover:bg-slate-800"
+	class="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
 	aria-haspopup="menu"
 	aria-expanded={open}
 	aria-label={$t('forms.views.viewMenu')}
@@ -161,7 +161,7 @@
 				}}
 			>
 				<label class="block space-y-1">
-					<span class="text-xs font-medium text-slate-600 dark:text-slate-300"
+					<span class="text-xs font-medium text-fg-muted"
 						>{$t('forms.views.renameTitle')}</span
 					>
 					<input
@@ -187,7 +187,7 @@
 			</form>
 		{:else if stage === 'confirm-delete' && view}
 			<div class="space-y-3 p-1" role="alertdialog" aria-labelledby="view-delete-question">
-				<p id="view-delete-question" class="text-sm text-slate-800 dark:text-slate-100">
+				<p id="view-delete-question" class="text-sm text-fg">
 					{isPrivate
 						? $t('forms.views.deletePrivateConfirm', { values: { name: view.name } })
 						: $t('forms.views.deleteConfirm', { values: { name: view.name } })}
@@ -301,7 +301,7 @@
 					type="button"
 					role="menuitem"
 					tabindex="-1"
-					class="{itemClass} text-red-700 dark:text-red-400"
+					class="{itemClass} text-danger"
 					data-view-menu-delete
 					onclick={confirmDelete}
 					><Trash2 class="h-4 w-4" aria-hidden="true" />{$t('forms.views.deleteView')}</button

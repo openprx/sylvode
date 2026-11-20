@@ -345,13 +345,13 @@
 
 			{#if scenarioFields.length > 0}
 				<div
-					class="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950"
+					class="rounded-lg border border-line bg-slate-50 p-4 dark:bg-slate-950"
 				>
 					<div class="mb-3">
-						<p class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<p class="text-sm font-semibold text-fg">
 							{$t('issue.scenarioFields')}
 						</p>
-						<p class="text-xs text-slate-500 dark:text-slate-400">
+						<p class="text-xs text-fg-muted">
 							{scenarioTemplate ? scenarioTemplateName(scenarioTemplate, $t) : ''}
 						</p>
 					</div>
@@ -359,7 +359,7 @@
 						{#each scenarioFields as field (field.key)}
 							<div class={field.type === 'textarea' ? 'sm:col-span-2' : ''}>
 								<label
-									class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+									class="mb-1 block text-sm font-medium text-fg"
 									for={`scenario-field-${field.key}`}
 								>
 									{field.label}{field.required ? ' *' : ''}
@@ -370,7 +370,7 @@
 										value={scenarioFieldValues[field.key] ?? ''}
 										onchange={(event) =>
 											setScenarioFieldValue(field.key, event.currentTarget.value)}
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-blue-400"
+										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 									>
 										<option value="">{$t('issue.selectPlaceholder')}</option>
 										{#each field.options as option}
@@ -383,7 +383,7 @@
 										value={scenarioFieldValues[field.key] ?? ''}
 										oninput={(event) => setScenarioFieldValue(field.key, event.currentTarget.value)}
 										rows="3"
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:ring-blue-400"
+										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:placeholder-slate-500"
 									></textarea>
 								{:else}
 									<input
@@ -391,7 +391,7 @@
 										value={scenarioFieldValues[field.key] ?? ''}
 										oninput={(event) => setScenarioFieldValue(field.key, event.currentTarget.value)}
 										type={field.type === 'number' || field.type === 'date' ? field.type : 'text'}
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:ring-blue-400"
+										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:placeholder-slate-500"
 									/>
 								{/if}
 							</div>
@@ -403,18 +403,18 @@
 			<div class="space-y-2">
 				<div class="flex items-center justify-between">
 					<label
-						class="text-sm font-medium text-slate-700 dark:text-slate-300"
+						class="text-sm font-medium text-fg"
 						for="issueDescription">{$t('issue.description')}</label
 					>
 					<div
-						class="inline-flex rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-0.5"
+						class="inline-flex rounded-md border border-line bg-slate-50 dark:bg-slate-950 p-0.5"
 					>
 						<button
 							type="button"
 							class={`rounded px-2 py-1 text-xs ${
 								descriptionTab === 'edit'
-									? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm dark:shadow-slate-900/50'
-									: 'text-slate-500 hover:text-slate-700 dark:text-slate-300'
+									? 'bg-white dark:bg-slate-900 text-fg'
+									: 'text-fg-muted hover:text-slate-700'
 							}`}
 							onclick={() => (descriptionTab = 'edit')}
 						>
@@ -424,8 +424,8 @@
 							type="button"
 							class={`rounded px-2 py-1 text-xs ${
 								descriptionTab === 'preview'
-									? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm dark:shadow-slate-900/50'
-									: 'text-slate-500 hover:text-slate-700 dark:text-slate-300'
+									? 'bg-white dark:bg-slate-900 text-fg'
+									: 'text-fg-muted hover:text-slate-700'
 							}`}
 							onclick={() => (descriptionTab = 'preview')}
 						>
@@ -438,7 +438,7 @@
 					<textarea
 						id="issueDescription"
 						bind:value={form.description}
-						class="min-h-[220px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500"
+						class="min-h-[220px] w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:placeholder-slate-500"
 						placeholder={$t('issue.descriptionPlaceholder')}
 						onpaste={handleDescriptionPaste}></textarea>
 					<FileUpload
@@ -450,7 +450,7 @@
 					/>
 				{:else}
 					<div
-						class="markdown-body dark:prose-invert min-h-[220px] rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-slate-700 dark:text-slate-300"
+						class="markdown-body dark:prose-invert min-h-[220px] rounded-md border border-line bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-fg"
 					>
 						{#if form.description.trim()}
 							{@html renderMarkdown(form.description)}
@@ -464,13 +464,13 @@
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div>
 					<label
-						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						class="mb-1 block text-sm font-medium text-fg"
 						for="issueStatus">{$t('issue.status')}</label
 					>
 					<select
 						id="issueStatus"
 						bind:value={form.status}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 					>
 						{#each statusSelectOptions as opt (opt.value)}
 							<option value={opt.value}>{opt.label}</option>
@@ -480,13 +480,13 @@
 
 				<div>
 					<label
-						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						class="mb-1 block text-sm font-medium text-fg"
 						for="issuePriority">{$t('issue.priority')}</label
 					>
 					<select
 						id="issuePriority"
 						bind:value={form.priority}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 					>
 						<option value="low">{$t('issue.low')}</option>
 						<option value="medium">{$t('issue.medium')}</option>
@@ -497,13 +497,13 @@
 
 				<div>
 					<label
-						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						class="mb-1 block text-sm font-medium text-fg"
 						for="issueAssignee">{$t('issue.assignee')}</label
 					>
 					<select
 						id="issueAssignee"
 						bind:value={form.assignee_id}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 					>
 						<option value="">{$t('common.unassigned')}</option>
 						{#each members as member (member.user_id)}
@@ -514,13 +514,13 @@
 
 				<div>
 					<label
-						class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+						class="mb-1 block text-sm font-medium text-fg"
 						for="issueSprint">Sprint</label
 					>
 					<select
 						id="issueSprint"
 						bind:value={form.sprint_id}
-						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+						class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 					>
 						<option value="">{$t('issue.noSprint')}</option>
 						{#each sprints as sprint (sprint.id)}
@@ -531,18 +531,18 @@
 			</div>
 
 			<fieldset class="space-y-2">
-				<legend class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+				<legend class="block text-sm font-medium text-fg"
 					>{$t('issue.labels')}</legend
 				>
 				{#if labels.length === 0}
 					<p
-						class="rounded-md border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-slate-500 dark:text-slate-400"
+						class="rounded-md border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-fg-muted"
 					>
 						{$t('issue.noWorkspaceLabels')}
 					</p>
 				{:else}
 					<div
-						class="max-h-36 space-y-1 overflow-y-auto rounded-md border border-slate-200 dark:border-slate-700 p-2"
+						class="max-h-36 space-y-1 overflow-y-auto rounded-md border border-line p-2"
 					>
 						{#each labels as label (label.id)}
 							<label

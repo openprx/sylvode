@@ -231,16 +231,16 @@
 
 {#if loading}
 	<div
-		class="mx-auto max-w-3xl rounded-lg border border-slate-200 bg-white p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-800"
+		class="mx-auto max-w-3xl rounded-lg border border-line bg-white p-8 text-center text-slate-500 dark:bg-slate-800"
 	>
 		{$t('governance.loading')}
 	</div>
 {:else}
 	<div class="mx-auto max-w-3xl">
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+			class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 		>
-			<h1 class="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">
+			<h1 class="mb-4 text-xl font-semibold text-fg">
 				{$t('governance.editTitle')}
 			</h1>
 			<div class="space-y-4">
@@ -329,7 +329,7 @@
 							class={`px-2 py-1 ${
 								contentMode === 'edit'
 									? 'bg-blue-600 text-white'
-									: 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'
+									: 'bg-white text-fg-muted dark:bg-slate-900'
 							}`}
 							onclick={() => (contentMode = 'edit')}>{$t('issue.editMode')}</button
 						>
@@ -339,7 +339,7 @@
 							class={`px-2 py-1 ${
 								contentMode === 'preview'
 									? 'bg-blue-600 text-white'
-									: 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'
+									: 'bg-white text-fg-muted dark:bg-slate-900'
 							}`}
 							onclick={() => (contentMode = 'preview')}>{$t('issue.previewMode')}</button
 						>
@@ -370,7 +370,7 @@
 						</div>
 					{:else}
 						<div
-							class="markdown-body min-h-[280px] rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+							class="markdown-body min-h-[280px] rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-900"
 						>
 							{#if content.trim()}
 								{@html renderMarkdown(content)}

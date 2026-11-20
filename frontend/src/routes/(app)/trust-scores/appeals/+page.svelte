@@ -172,11 +172,11 @@
 
 <div class="mx-auto max-w-6xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 	>
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+				<h1 class="text-xl font-semibold text-fg">
 					{$t('appeals.title')}
 				</h1>
 				<p class="text-sm text-slate-500">{$t('appeals.subtitle')}</p>
@@ -210,18 +210,18 @@
 		{:else}
 			<div class="space-y-2">
 				{#each items as item (item.id)}
-					<div class="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+					<div class="rounded-lg border border-line p-3">
 						<div class="flex flex-wrap items-start justify-between gap-3">
 							<div class="min-w-0 flex-1">
 								<div class="flex items-center gap-2">
-									<span class="font-medium text-slate-900 dark:text-slate-100"
+									<span class="font-medium text-fg"
 										>{$t('appeals.logId', { values: { id: item.log_id } })}</span
 									>
 									<span class={`rounded px-2 py-0.5 text-xs ${statusTone(item.status)}`}
 										>{appealStatusLabel(item.status)}</span
 									>
 								</div>
-								<p class="mt-1 text-sm text-slate-700 dark:text-slate-300">{item.reason}</p>
+								<p class="mt-1 text-sm text-fg">{item.reason}</p>
 								<p class="mt-1 text-xs text-slate-500">
 									{$t('appeals.meta', {
 										values: {

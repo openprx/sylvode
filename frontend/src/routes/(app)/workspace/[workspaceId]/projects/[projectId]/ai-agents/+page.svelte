@@ -223,11 +223,11 @@
 
 <div class="mx-auto max-w-6xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 	>
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+				<h1 class="text-xl font-semibold text-fg">
 					{$t('aiAgents.title')}
 				</h1>
 				<p class="text-sm text-slate-500">
@@ -246,12 +246,12 @@
 		{:else}
 			<div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
 				{#each agents as agent (agent.id)}
-					<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+					<div class="rounded-lg border border-line p-4">
 						<div class="flex items-center justify-between gap-3">
 							<div>
 								<div class="flex items-center gap-2">
 									<span class="text-lg">🤖</span>
-									<h2 class="font-semibold text-slate-900 dark:text-slate-100">{agent.name}</h2>
+									<h2 class="font-semibold text-fg">{agent.name}</h2>
 								</div>
 								<p class="text-xs text-slate-500">{agent.id}</p>
 							</div>
@@ -261,7 +261,7 @@
 							>
 						</div>
 
-						<div class="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-600 dark:text-slate-300">
+						<div class="mt-3 grid grid-cols-2 gap-2 text-sm text-fg-muted">
 							<div>{$t('aiAgents.model')}: {agent.model}</div>
 							<div>{$t('aiAgents.provider')}: {agent.provider}</div>
 							<div>{$t('aiAgents.maxLevel')}: {levelLabel(agent.max_domain_level)}</div>
@@ -284,7 +284,7 @@
 
 						{#if statsMap[agent.id]}
 							<div
-								class="mt-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+								class="mt-3 rounded border border-line bg-slate-50 p-3 text-xs text-fg-muted dark:bg-slate-800"
 							>
 								<div>{$t('aiAgents.statsVotes')}: {statsMap[agent.id].total_votes}</div>
 								<div>{$t('aiAgents.statsComments')}: {statsMap[agent.id].total_comments}</div>
@@ -346,7 +346,7 @@
 		<div>
 			<label
 				for="create-max-level"
-				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="mb-1 block text-sm font-medium text-fg"
 				>{$t('aiAgents.maxLevel')}</label
 			>
 			<select
@@ -367,7 +367,7 @@
 			label={$t('aiAgents.reasonMinLength')}
 			bind:value={createForm.reason_min_length}
 		/>
-		<label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+		<label class="flex items-center gap-2 text-sm text-fg">
 			<input type="checkbox" bind:checked={createForm.can_veto_human_consensus} />
 			{$t('aiAgents.canVetoHumanConsensus')}
 		</label>
@@ -404,7 +404,7 @@
 		<div>
 			<label
 				for="edit-max-level"
-				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="mb-1 block text-sm font-medium text-fg"
 				>{$t('aiAgents.maxLevel')}</label
 			>
 			<select
@@ -425,11 +425,11 @@
 			label={$t('aiAgents.reasonMinLength')}
 			bind:value={editForm.reason_min_length}
 		/>
-		<label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+		<label class="flex items-center gap-2 text-sm text-fg">
 			<input type="checkbox" bind:checked={editForm.can_veto_human_consensus} />
 			{$t('aiAgents.canVetoHumanConsensus')}
 		</label>
-		<label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+		<label class="flex items-center gap-2 text-sm text-fg">
 			<input type="checkbox" bind:checked={editForm.is_active} />
 			{$t('aiAgents.active')}
 		</label>

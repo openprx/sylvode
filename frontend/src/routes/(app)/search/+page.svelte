@@ -109,8 +109,8 @@
 
 <div class="mx-auto max-w-6xl space-y-6">
 	<div>
-		<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('search.title')}</h1>
-		<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('search.helper')}</p>
+		<h1 class="text-2xl font-semibold text-fg">{$t('search.title')}</h1>
+		<p class="mt-1 text-sm text-fg-muted">{$t('search.helper')}</p>
 	</div>
 
 	<form
@@ -118,14 +118,14 @@
 			event.preventDefault();
 			runSearch();
 		}}
-		class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+		class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4"
 	>
 		<div class="flex gap-3">
 			<input
 				type="search"
 				bind:value={query}
 				placeholder={$t('search.placeholder')}
-				class="flex-1 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="flex-1 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500"
 			/>
 			<Button type="submit" loading={searching}>{$t('common.search')}</Button>
 		</div>
@@ -133,13 +133,13 @@
 
 	{#if searching}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
 		>
 			{$t('search.searching')}
 		</div>
 	{:else if query.trim() && results.length === 0}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-10 text-center text-fg-muted"
 		>
 			{$t('search.noResults')}
 		</div>
@@ -147,10 +147,10 @@
 		<div class="space-y-4">
 			{#if issues.length > 0}
 				<section
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4"
 				>
 					<h2
-						class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+						class="text-sm font-semibold uppercase tracking-wide text-fg-muted"
 					>
 						Issues ({issues.length})
 					</h2>
@@ -159,11 +159,11 @@
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
-								class="block rounded-md border border-slate-200 dark:border-slate-700 p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="block rounded-md border border-line p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
 							>
-								<p class="font-medium text-slate-900 dark:text-slate-100">{item.title}</p>
+								<p class="font-medium text-fg">{item.title}</p>
 								{#if item.description}
-									<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+									<p class="mt-1 text-sm text-fg-muted line-clamp-2">
 										{previewText(item.description, 100)}
 									</p>
 								{/if}
@@ -175,10 +175,10 @@
 
 			{#if projects.length > 0}
 				<section
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4"
 				>
 					<h2
-						class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+						class="text-sm font-semibold uppercase tracking-wide text-fg-muted"
 					>
 						Projects ({projects.length})
 					</h2>
@@ -187,11 +187,11 @@
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
-								class="block rounded-md border border-slate-200 dark:border-slate-700 p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="block rounded-md border border-line p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
 							>
-								<p class="font-medium text-slate-900 dark:text-slate-100">{item.name}</p>
+								<p class="font-medium text-fg">{item.name}</p>
 								{#if item.description}
-									<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+									<p class="mt-1 text-sm text-fg-muted line-clamp-2">
 										{previewText(item.description, 100)}
 									</p>
 								{/if}
@@ -203,10 +203,10 @@
 
 			{#if comments.length > 0}
 				<section
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4"
 				>
 					<h2
-						class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+						class="text-sm font-semibold uppercase tracking-wide text-fg-muted"
 					>
 						Comments ({comments.length})
 					</h2>
@@ -215,10 +215,10 @@
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
-								class="block rounded-md border border-slate-200 dark:border-slate-700 p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="block rounded-md border border-line p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
 							>
-								<p class="font-medium text-slate-900 dark:text-slate-100">{$t('issue.comments')}</p>
-								<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+								<p class="font-medium text-fg">{$t('issue.comments')}</p>
+								<p class="mt-1 text-sm text-fg-muted line-clamp-2">
 									{previewText(item.body, 100)}
 								</p>
 							</a>

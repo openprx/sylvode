@@ -187,9 +187,9 @@
 
 <div class="mx-auto max-w-7xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
-		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-xl font-semibold text-fg">
 			{$t('proposalTemplates.title')}
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">{$t('proposalTemplates.subtitle')}</p>
@@ -197,7 +197,7 @@
 
 	<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800 lg:col-span-2"
+			class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800 lg:col-span-2"
 		>
 			<div class="mb-3 flex items-center justify-between gap-3">
 				<div class="flex-1">
@@ -237,7 +237,7 @@
 					{#each templates as item}
 						<div class="rounded-md border border-slate-200 p-3 dark:border-slate-600">
 							<div class="mb-2 flex flex-wrap items-center gap-2">
-								<p class="text-sm font-medium text-slate-900 dark:text-slate-100">{item.name}</p>
+								<p class="text-sm font-medium text-fg">{item.name}</p>
 								<span class="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
 									>{item.template_type}</span
 								>
@@ -287,9 +287,9 @@
 		</div>
 
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 		>
-			<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="mb-3 text-sm font-semibold text-fg">
 				{editingId ? $t('proposalTemplates.editTitle') : $t('proposalTemplates.createTitle')}
 			</h2>
 			<div class="space-y-3">

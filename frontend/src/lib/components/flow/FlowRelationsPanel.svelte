@@ -45,16 +45,16 @@
 	}
 
 	const selectClass =
-		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
+		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800';
 	const linkButtonClass =
-		'min-h-11 rounded-md px-2 text-xs font-medium text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:text-blue-400';
+		'min-h-11 rounded-md px-2 text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400';
 </script>
 
 <div class="space-y-3 text-sm" data-testid="flow-relations-panel">
 	{#if snapshot}
 		<div class="grid grid-cols-2 gap-2">
 			<label class="block">
-				<span class="mb-1 block text-xs text-slate-500 dark:text-slate-400"
+				<span class="mb-1 block text-xs text-fg-muted"
 					>{$t('flow.relations.direction.label')}</span
 				>
 				<select
@@ -69,7 +69,7 @@
 				</select>
 			</label>
 			<label class="block">
-				<span class="mb-1 block text-xs text-slate-500 dark:text-slate-400"
+				<span class="mb-1 block text-xs text-fg-muted"
 					>{$t('flow.relations.type.label')}</span
 				>
 				<select
@@ -88,16 +88,16 @@
 
 		<div aria-live="polite">
 			{#if snapshot.failureKey}
-				<p class="text-red-600 dark:text-red-400" role="alert" data-testid="flow-relations-error">
+				<p class="text-danger" role="alert" data-testid="flow-relations-error">
 					{$t(snapshot.failureKey)}
 				</p>
 				<button type="button" class={linkButtonClass} onclick={() => controller?.reload()}>
 					{$t('flow.relations.retry')}
 				</button>
 			{:else if snapshot.loading && snapshot.rows.length === 0}
-				<p class="text-slate-500 dark:text-slate-400">{$t('flow.relations.loading')}</p>
+				<p class="text-fg-muted">{$t('flow.relations.loading')}</p>
 			{:else if snapshot.loaded && snapshot.rows.length === 0}
-				<p class="text-slate-500 dark:text-slate-400">{$t('flow.relations.empty')}</p>
+				<p class="text-fg-muted">{$t('flow.relations.empty')}</p>
 			{/if}
 		</div>
 
@@ -107,7 +107,7 @@
 					{@const target = relationTarget(row)}
 					{#if row.kind === 'visible' && target}
 						<li
-							class="border-l-2 border-slate-200 pl-3 dark:border-slate-700"
+							class="border-l-2 border-line pl-3"
 							data-testid="flow-relation-row"
 						>
 							<p class="text-xs text-slate-400 dark:text-slate-500">
@@ -118,14 +118,14 @@
 							</p>
 							<a
 								href={resolve('/(app)/flow/[objectId]', { objectId: target })}
-								class="inline-flex min-h-11 items-center font-medium text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400"
+								class="inline-flex min-h-11 items-center font-medium text-blue-600 hover:underline dark:text-blue-400"
 							>
 								{row.title}
 							</a>
 						</li>
 					{:else}
 						<li
-							class="border-l-2 border-dashed border-slate-200 pl-3 text-slate-500 dark:border-slate-700 dark:text-slate-400"
+							class="border-l-2 border-dashed border-line pl-3 text-fg-muted"
 							data-testid="flow-relation-unavailable"
 						>
 							{$t('flow.relations.unavailable')}

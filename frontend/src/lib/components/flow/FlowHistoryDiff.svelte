@@ -28,21 +28,21 @@
 	}
 
 	const opClass: Record<string, string> = {
-		title: 'text-slate-700 dark:text-slate-200',
-		added: 'text-emerald-700 dark:text-emerald-400',
-		removed: 'text-red-700 dark:text-red-400',
-		changed: 'text-amber-700 dark:text-amber-400',
-		moved: 'text-slate-600 dark:text-slate-300'
+		title: 'text-fg',
+		added: 'text-success',
+		removed: 'text-danger',
+		changed: 'text-warning',
+		moved: 'text-fg-muted'
 	};
 </script>
 
 <div class="mt-2 space-y-1 text-xs" data-testid="flow-history-diff" aria-live="polite">
 	{#if result === null}
-		<p class="text-slate-500 dark:text-slate-400">{$t('flow.history.diff.loading')}</p>
+		<p class="text-fg-muted">{$t('flow.history.diff.loading')}</p>
 	{:else if result.status === 'failed'}
-		<p class="text-red-600 dark:text-red-400" role="alert">{$t(result.messageKey)}</p>
+		<p class="text-danger" role="alert">{$t(result.messageKey)}</p>
 	{:else if result.lines.length === 0}
-		<p class="text-slate-500 dark:text-slate-400">{$t('flow.history.diff.empty')}</p>
+		<p class="text-fg-muted">{$t('flow.history.diff.empty')}</p>
 	{:else}
 		<ul class="space-y-1">
 			{#each result.lines as line, index (index)}
@@ -68,7 +68,7 @@
 					{/if}
 					{#each line.properties as property (property.key)}
 						{#if property.key !== 'spans' || property.before !== null || property.after !== null}
-							<span class="block break-words text-slate-500 dark:text-slate-400">
+							<span class="block break-words text-fg-muted">
 								{$t('flow.history.diff.property', {
 									values: {
 										key: property.key,

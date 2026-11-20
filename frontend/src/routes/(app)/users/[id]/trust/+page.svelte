@@ -122,11 +122,11 @@
 
 <div class="mx-auto max-w-6xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 	>
 		<div class="mb-4 flex flex-wrap items-end justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+				<h1 class="text-xl font-semibold text-fg">
 					{$t('trustProfile.title')}
 				</h1>
 				<p class="text-sm text-slate-500">
@@ -138,7 +138,7 @@
 					type="text"
 					bind:value={projectId}
 					placeholder={$t('trustProfile.projectIdPlaceholder')}
-					class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+					class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
 				/>
 				<Button onclick={loadAll} loading={loading || loadingAppeals}>{$t('common.search')}</Button>
 			</div>
@@ -150,19 +150,19 @@
 			<div class="py-8 text-center text-slate-500">{$t('trustProfile.empty')}</div>
 		{:else}
 			<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-				<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700 lg:col-span-1">
+				<div class="rounded-lg border border-line p-4 lg:col-span-1">
 					<div class="text-xs uppercase tracking-wide text-slate-500">
 						{$t('trustProfile.globalSummary')}
 					</div>
-					<div class="mt-2 text-sm text-slate-600 dark:text-slate-300">
+					<div class="mt-2 text-sm text-fg-muted">
 						{$t('trustProfile.userType')}: {userType === 'ai'
 							? $t('trustBoard.typeAi')
 							: $t('trustBoard.typeHuman')}
 					</div>
-					<div class="mt-3 text-3xl font-bold text-slate-900 dark:text-slate-100">
+					<div class="mt-3 text-3xl font-semibold text-fg">
 						{globalScore?.score ?? 0}
 					</div>
-					<div class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+					<div class="mt-1 text-sm text-fg-muted">
 						{$t('trustProfile.weightLabel')}: {(globalScore?.vote_weight ?? 1).toFixed(2)}x
 					</div>
 					<div class="mt-2">
@@ -173,7 +173,7 @@
 					</div>
 				</div>
 
-				<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700 lg:col-span-2">
+				<div class="rounded-lg border border-line p-4 lg:col-span-2">
 					<div class="mb-3 text-xs uppercase tracking-wide text-slate-500">
 						{$t('trustProfile.domainDistribution')}
 					</div>
@@ -184,7 +184,7 @@
 							{#each domainScores as item (item.project_id + item.domain)}
 								<div>
 									<div
-										class="mb-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300"
+										class="mb-1 flex items-center justify-between text-xs text-fg-muted"
 									>
 										<span>{item.domain}</span>
 										<span>{item.score}</span>
@@ -203,20 +203,20 @@
 			</div>
 
 			<div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-				<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
-					<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<div class="rounded-lg border border-line p-4">
+					<h2 class="text-sm font-semibold text-fg">
 						{$t('trustProfile.historyTitle')}
 					</h2>
 					<div class="mt-3 space-y-2">
 						{#each timeline as item (item.project_id + item.domain + item.updated_at)}
-							<div class="rounded border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
+							<div class="rounded border border-line px-3 py-2 text-sm">
 								<div class="flex items-center justify-between gap-2">
-									<div class="font-medium text-slate-900 dark:text-slate-100">{item.domain}</div>
+									<div class="font-medium text-fg">{item.domain}</div>
 									<div class="text-xs text-slate-500">
 										{new Date(item.updated_at).toLocaleString()}
 									</div>
 								</div>
-								<div class="mt-1 text-xs text-slate-600 dark:text-slate-300">
+								<div class="mt-1 text-xs text-fg-muted">
 									{$t('trustProfile.historyMeta', {
 										values: {
 											score: item.score,
@@ -230,8 +230,8 @@
 					</div>
 				</div>
 
-				<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
-					<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<div class="rounded-lg border border-line p-4">
+					<h2 class="text-sm font-semibold text-fg">
 						{$t('trustProfile.changeLogTitle')}
 					</h2>
 					{#if loadingAppeals}
@@ -242,17 +242,17 @@
 						<div class="mt-3 space-y-2">
 							{#each relatedAppeals as item (item.id)}
 								<div
-									class="rounded border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"
+									class="rounded border border-line px-3 py-2 text-sm"
 								>
 									<div class="flex items-center justify-between gap-2">
-										<div class="font-medium text-slate-900 dark:text-slate-100">
+										<div class="font-medium text-fg">
 											{$t('trustProfile.appealWithLog', { values: { id: item.log_id } })}
 										</div>
 										<span class={`rounded px-2 py-0.5 text-xs ${appealTone(item.status)}`}
 											>{appealStatusLabel(item.status)}</span
 										>
 									</div>
-									<p class="mt-1 text-xs text-slate-600 dark:text-slate-300">{item.reason}</p>
+									<p class="mt-1 text-xs text-fg-muted">{item.reason}</p>
 									<p class="mt-1 text-xs text-slate-500">
 										{new Date(item.created_at).toLocaleString()}
 									</p>

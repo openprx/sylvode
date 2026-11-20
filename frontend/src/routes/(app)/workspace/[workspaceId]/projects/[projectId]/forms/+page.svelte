@@ -12613,10 +12613,10 @@
 >
 	{#if !recordEditorOpen}{@render formsSessionNotice()}{/if}
 	<div
-		class="flex flex-col gap-3 border-b border-slate-200 pb-4 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between"
+		class="flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between"
 	>
 		<div>
-			<div class="text-sm text-slate-600 dark:text-slate-400">
+			<div class="text-sm text-fg-muted">
 				<a href="/workspace" class="hover:text-blue-600">{$t('forms.workspace')}</a>
 				<span class="mx-1 text-slate-400">/</span>
 
@@ -12631,7 +12631,7 @@
 				>
 			</div>
 
-			<h1 class="mt-2 text-2xl font-semibold text-slate-950 dark:text-slate-100">
+			<h1 class="mt-2 text-2xl font-semibold text-fg">
 				{$t('forms.title')}
 			</h1>
 		</div>
@@ -12652,37 +12652,37 @@
 
 	{#if loading}
 		<div
-			class="rounded-md border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
+			class="rounded-md border border-line bg-white p-6 text-sm text-fg-muted dark:bg-slate-900"
 		>
 			{$t('forms.loadingForms')}
 		</div>
 	{:else}
 		{#if showCreateForm || forms.length === 0}
 			<section
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 			>
 				<div class="mb-4 flex items-start justify-between gap-4">
 					<div>
-						<h2 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+						<h2 class="text-base font-semibold text-fg">
 							{$t('forms.defineType')}
 						</h2>
 
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-400">
+						<p class="mt-1 text-sm text-fg-muted">
 							{$t('forms.defineTypeDescription')}
 						</p>
 					</div>
 				</div>
 
 				<div
-					class="mb-5 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"
+					class="mb-5 rounded-md border border-line bg-slate-50 p-3 dark:bg-slate-950"
 				>
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div>
-							<h3 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+							<h3 class="text-sm font-semibold text-fg">
 								{$t('forms.templateLibrary')}
 							</h3>
 
-							<p class="text-xs text-slate-500 dark:text-slate-400">
+							<p class="text-xs text-fg-muted">
 								{$t('forms.templateLibraryDescription')}
 							</p>
 						</div>
@@ -12702,24 +12702,24 @@
 						<div class="mt-3 grid gap-2 lg:grid-cols-3">
 							{#each scenarioTemplates as template}
 								<div
-									class="rounded-md border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
+									class="rounded-md border border-line bg-white p-3 dark:bg-slate-900"
 								>
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0">
 											<div class="flex flex-wrap items-center gap-2">
 												<h4
-													class="truncate text-sm font-semibold text-slate-950 dark:text-slate-100"
+													class="truncate text-sm font-semibold text-fg"
 												>
 													{scenarioTemplateName(template, $t)}
 												</h4>
 
 												<span
-													class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+													class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-fg-muted dark:bg-slate-800"
 													>{scenarioTemplateIndustry(template.industry, $t)}</span
 												>
 											</div>
 
-											<p class="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">
+											<p class="mt-1 line-clamp-2 text-xs text-fg-muted">
 												{scenarioTemplateDescription(template, $t)}
 											</p>
 
@@ -12748,7 +12748,7 @@
 							{/each}
 						</div>
 					{:else}
-						<p class="mt-3 text-sm text-slate-500 dark:text-slate-400">
+						<p class="mt-3 text-sm text-fg-muted">
 							{templatesLoading ? $t('common.loading') : $t('forms.noTemplates')}
 						</p>
 					{/if}
@@ -12756,105 +12756,105 @@
 
 				<div class="grid gap-3 md:grid-cols-4">
 					<label class="space-y-1">
-						<span class="text-sm font-medium text-slate-700 dark:text-slate-300"
+						<span class="text-sm font-medium text-fg"
 							>{$t('forms.key')}</span
 						>
 
 						<input
-							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 							bind:value={formDraft.key}
 						/>
 					</label>
 
 					<label class="space-y-1 md:col-span-2">
-						<span class="text-sm font-medium text-slate-700 dark:text-slate-300"
+						<span class="text-sm font-medium text-fg"
 							>{$t('forms.name')}</span
 						>
 
 						<input
-							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 							bind:value={formDraft.name}
 						/>
 					</label>
 
 					<label class="space-y-1">
-						<span class="text-sm font-medium text-slate-700 dark:text-slate-300"
+						<span class="text-sm font-medium text-fg"
 							>{$t('forms.titleTemplate')}</span
 						>
 
 						<input
-							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 							bind:value={formDraft.title_template}
 						/>
 					</label>
 
 					<label class="space-y-1 md:col-span-4">
-						<span class="text-sm font-medium text-slate-700 dark:text-slate-300"
+						<span class="text-sm font-medium text-fg"
 							>{$t('forms.description')}</span
 						>
 
 						<input
-							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 							bind:value={formDraft.description}
 						/>
 					</label>
 				</div>
 
-				<div class="mt-5 rounded-lg border border-slate-200 dark:border-slate-700">
+				<div class="mt-5 rounded-lg border border-line">
 					<div
-						class="flex flex-col gap-2 border-b border-slate-200 px-3 py-3 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between"
+						class="flex flex-col gap-2 border-b border-line px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
 					>
 						<div>
-							<h3 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+							<h3 class="text-sm font-semibold text-fg">
 								{$t('forms.fieldDesigner')}
 							</h3>
 
-							<p class="text-xs text-slate-500 dark:text-slate-400">
+							<p class="text-xs text-fg-muted">
 								{$t('forms.fieldDesignerDescription')}
 							</p>
 						</div>
 
 						<button
 							type="button"
-							class="rounded-md border border-slate-200 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+							class="rounded-md border border-line px-3 py-1.5 text-sm text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 							onclick={addFieldDraft}>{$t('forms.addField')}</button
 						>
 					</div>
 
-					<div class="divide-y divide-slate-100 dark:divide-slate-800">
+					<div class="divide-y divide-line">
 						{#each fieldDrafts as field, index}
 							<div class="grid gap-3 p-3 md:grid-cols-[1fr_1fr_160px_90px_44px]">
 								<label class="space-y-1">
-									<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
+									<span class="text-xs font-medium text-fg-muted"
 										>{$t('forms.fieldKey')}</span
 									>
 
 									<input
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 										placeholder="customer_name"
 										bind:value={field.key}
 									/>
 								</label>
 
 								<label class="space-y-1">
-									<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
+									<span class="text-xs font-medium text-fg-muted"
 										>{$t('forms.fieldLabel')}</span
 									>
 
 									<input
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 										placeholder={$t('forms.fieldLabelPlaceholder')}
 										bind:value={field.label}
 									/>
 								</label>
 
 								<label class="space-y-1">
-									<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
+									<span class="text-xs font-medium text-fg-muted"
 										>{$t('forms.fieldType')}</span
 									>
 
 									<select
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 										bind:value={field.type}
 									>
 										{#each fieldTypeOptions as type}
@@ -12863,7 +12863,7 @@
 									</select>
 								</label>
 
-								<label class="flex items-end gap-2 pb-2 text-sm text-slate-700 dark:text-slate-300">
+								<label class="flex items-end gap-2 pb-2 text-sm text-fg">
 									<input
 										type="checkbox"
 										class="h-4 w-4 rounded border-slate-300 text-blue-600"
@@ -12886,12 +12886,12 @@
 
 								{#if field.type === 'single_select' || field.type === 'multi_select'}
 									<label class="space-y-1 md:col-span-5">
-										<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
+										<span class="text-xs font-medium text-fg-muted"
 											>{$t('forms.optionList')}</span
 										>
 
 										<textarea
-											class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+											class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 											placeholder={$t('forms.optionListPlaceholder')}
 											bind:value={field.optionsText}></textarea>
 									</label>
@@ -12900,19 +12900,19 @@
 								{#if field.type === 'amount'}
 									<div class="grid gap-3 md:col-span-5 md:grid-cols-[160px_120px]">
 										<label class="space-y-1">
-											<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
+											<span class="text-xs font-medium text-fg-muted"
 												>{$t('forms.currency')}</span
 											>
 
 											<input
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm uppercase text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm uppercase text-fg dark:border-slate-600 dark:bg-slate-800"
 												maxlength="3"
 												bind:value={field.currency}
 											/>
 										</label>
 
 										<label class="space-y-1">
-											<span class="text-xs font-medium text-slate-600 dark:text-slate-400"
+											<span class="text-xs font-medium text-fg-muted"
 												>{$t('forms.scale')}</span
 											>
 
@@ -12920,7 +12920,7 @@
 												type="number"
 												min="0"
 												max="8"
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 												bind:value={field.scale}
 											/>
 										</label>
@@ -12931,10 +12931,10 @@
 					</div>
 				</div>
 
-				<div class="mt-4 rounded-lg border border-slate-200 dark:border-slate-700">
+				<div class="mt-4 rounded-lg border border-line">
 					<button
 						type="button"
-						class="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+						class="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 						onclick={() => {
 							if (!showAdvancedSchema) buildSchemaFromDrafts();
 
@@ -12948,13 +12948,13 @@
 					</button>
 
 					{#if showAdvancedSchema}
-						<label class="block space-y-1 border-t border-slate-200 p-3 dark:border-slate-700">
-							<span class="text-sm font-medium text-slate-700 dark:text-slate-300"
+						<label class="block space-y-1 border-t border-line p-3">
+							<span class="text-sm font-medium text-fg"
 								>{$t('forms.schemaJson')}</span
 							>
 
 							<textarea
-								class="h-56 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+								class="h-56 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 								bind:value={formDraft.schemaText}></textarea>
 						</label>
 					{/if}
@@ -12970,16 +12970,16 @@
 
 		{#if forms.length > 0 && !selectedForm}
 			<section
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 				data-form-list-home
 			>
 				<div class="mb-4">
 					<div>
-						<h2 class="text-lg font-semibold text-slate-950 dark:text-slate-100">
+						<h2 class="text-lg font-semibold text-fg">
 							{$t('forms.formListTitle')}
 						</h2>
 
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-400">
+						<p class="mt-1 text-sm text-fg-muted">
 							{$t('forms.formListDescription')}
 						</p>
 					</div>
@@ -12989,7 +12989,7 @@
 					{#each forms as form}
 						<button
 							type="button"
-							class="min-h-40 rounded-lg border border-slate-200 bg-slate-50 p-4 text-left transition-colors hover:border-blue-200 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+							class="min-h-40 rounded-lg border border-line bg-slate-50 p-4 text-left transition-colors hover:border-blue-200 hover:bg-blue-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
 							onclick={() => openForm(form.id)}
 						>
 							<div class="flex items-start justify-between gap-3">
@@ -13000,18 +13000,18 @@
 											aria-hidden="true"
 										/>
 
-										<h3 class="truncate text-base font-semibold text-slate-950 dark:text-slate-100">
+										<h3 class="truncate text-base font-semibold text-fg">
 											{form.name}
 										</h3>
 									</div>
 
-									<p class="mt-1 font-mono text-xs text-slate-500 dark:text-slate-400">
+									<p class="mt-1 font-mono text-xs text-fg-muted">
 										{form.key}
 									</p>
 								</div>
 
 								<span
-									class="rounded bg-white px-2 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+									class="rounded bg-white px-2 py-0.5 text-xs font-medium text-fg-muted ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
 									>{$t('forms.fieldCount', {
 										values: { count: formListFields(form).length }
 									})}</span
@@ -13019,15 +13019,15 @@
 							</div>
 
 							<p
-								class="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-slate-600 dark:text-slate-400"
+								class="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-fg-muted"
 							>
 								{form.description || formFieldSummary(form)}
 							</p>
 
 							<div
-								class="mt-4 flex items-center justify-between gap-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-800"
+								class="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3 text-xs"
 							>
-								<span class="truncate text-slate-500 dark:text-slate-400"
+								<span class="truncate text-fg-muted"
 									>{$t('forms.updatedAt', { values: { date: formatDate(form.updated_at) } })}</span
 								>
 
@@ -13045,18 +13045,18 @@
 			<section class="space-y-4">
 				{#if activeMode === 'data'}
 					<section
-						class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+						class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 						data-form-data-list-toolbar
 					>
 						<div class="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
 							<div>
 								<div class="flex flex-wrap items-center gap-2">
-									<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+									<h3 class="text-base font-semibold text-fg">
 										{$t('forms.recordsList')}
 									</h3>
 
 									<span
-										class="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+										class="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-800"
 									>
 										{#if recordsLoading}
 											{$t('common.loading')}
@@ -13073,7 +13073,7 @@
 
 							<div class="flex flex-wrap items-center gap-1.5">
 								<label
-									class="inline-flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300"
+									class="inline-flex items-center gap-2 text-xs font-medium text-fg-muted"
 								>
 									<span>{$t('forms.dataTableSwitcher')}</span>
 
@@ -13081,7 +13081,7 @@
 										id="form-switcher"
 										value={selectedFormId}
 										onchange={handleFormChange}
-										class="h-8 min-w-40 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+										class="h-8 min-w-40 rounded-md border border-slate-300 bg-white px-2 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
 									>
 										{#each forms as form}
 											<option value={form.id}>{form.name}</option>
@@ -13098,7 +13098,7 @@
 
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
 									onclick={() => handleModeChange('design')}
 								>
 									<TableProperties class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -13107,7 +13107,7 @@
 
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
 									onclick={() => handleModeChange('layout')}
 								>
 									<FileText class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -13116,7 +13116,7 @@
 
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
 									onclick={() => handleModeChange('permissions')}
 								>
 									<Shield class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -13125,7 +13125,7 @@
 
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
 									onclick={() => handleModeChange('importExport')}
 								>
 									<FileUp class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -13136,18 +13136,18 @@
 					</section>
 				{:else}
 					<section
-						class="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+						class="rounded-lg border border-line bg-white dark:bg-slate-900"
 						data-form-config-workbench
 					>
 						<div
-							class="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between"
+							class="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between"
 						>
 							<div>
-								<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+								<h3 class="text-base font-semibold text-fg">
 									{$t('forms.formConfig')}
 								</h3>
 
-								<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+								<p class="mt-1 text-sm text-fg-muted">
 									{$t(`forms.modeContext.${activeMode}`, { values: { name: selectedForm.name } })}
 								</p>
 							</div>
@@ -13164,7 +13164,7 @@
 
 				{#if formPermissions && activeMode !== 'permissions' && activeMode !== 'data'}
 					<section
-						class="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+						class="rounded-md border border-line bg-white px-3 py-2 text-sm dark:bg-slate-900"
 						data-permission-state-summary
 						data-permission-state-mode={activeMode}
 						data-permission-state-scope={memberRecordScopeDraft}
@@ -13173,7 +13173,7 @@
 					>
 						<div class="flex flex-wrap items-center gap-2 text-xs">
 							<span
-								class="inline-flex items-center gap-1 font-medium text-slate-800 dark:text-slate-100"
+								class="inline-flex items-center gap-1 font-medium text-fg"
 							>
 								<Shield class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
 
@@ -13181,21 +13181,21 @@
 							</span>
 
 							<span
-								class="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+								class="rounded-md border border-line bg-slate-50 px-2 py-1 text-fg dark:bg-slate-950"
 								>{$t('forms.recordScope')}: {$t(
 									`forms.recordScopes.${memberRecordScopeDraft}`
 								)}</span
 							>
 
 							<span
-								class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"
+								class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-warning dark:border-amber-900/60 dark:bg-amber-950/30"
 								>{$t('forms.hiddenFieldEffect')}: {permissionFieldList(
 									memberHiddenFieldLabels
 								)}</span
 							>
 
 							<span
-								class="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+								class="rounded-md border border-line bg-slate-50 px-2 py-1 text-fg dark:bg-slate-950"
 								>{$t('forms.lockedFieldEffect')}: {permissionFieldList(
 									memberLockedFieldLabels
 								)}</span
@@ -13206,7 +13206,7 @@
 
 				{#if activeMode === 'permissions'}
 					<section
-						class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+						class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 						data-form-mode="permissions"
 					>
 						<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -13214,12 +13214,12 @@
 								<div class="flex items-center gap-2">
 									<Shield class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
 
-									<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+									<h3 class="text-base font-semibold text-fg">
 										{$t('forms.permissions')}
 									</h3>
 								</div>
 
-								<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+								<p class="mt-1 text-sm text-fg-muted">
 									{$t('forms.permissionsDescription')}
 								</p>
 							</div>
@@ -13230,15 +13230,15 @@
 						</div>
 
 						{#if permissionsLoading}
-							<p class="text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</p>
+							<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 						{:else}
 							<div class="grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)]">
 								<div
-									class="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+									class="rounded-md border border-line bg-slate-50 p-3 text-sm dark:bg-slate-950"
 								>
-									<p class="font-medium text-slate-900 dark:text-slate-100">{$t('roles.member')}</p>
+									<p class="font-medium text-fg">{$t('roles.member')}</p>
 
-									<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+									<p class="mt-1 text-xs text-fg-muted">
 										{$t('forms.memberPermissionHint')}
 									</p>
 								</div>
@@ -13246,7 +13246,7 @@
 								<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
 									{#each formPermissionActions as action}
 										<label
-											class="flex min-h-12 items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-300"
+											class="flex min-h-12 items-center gap-2 rounded-md border border-line px-3 py-2 text-sm text-fg"
 										>
 											<input
 												type="checkbox"
@@ -13267,10 +13267,10 @@
 								</div>
 
 								<label
-									class="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-300"
+									class="rounded-md border border-line px-3 py-2 text-sm text-fg"
 								>
 									<span
-										class="block text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+										class="block text-xs font-medium uppercase text-fg-muted"
 										>{$t('forms.recordScope')}</span
 									>
 
@@ -13278,32 +13278,32 @@
 										value={memberRecordScopeDraft}
 										onchange={(event) =>
 											setMemberRecordScope(selectValue(event) as FormRecordScope)}
-										class="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+										class="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 									>
 										<option value="all">{$t('forms.recordScopeAll')}</option>
 										<option value="owned">{$t('forms.recordScopeOwned')}</option>
 									</select>
 
-									<span class="mt-1 block text-xs text-slate-500 dark:text-slate-400"
+									<span class="mt-1 block text-xs text-fg-muted"
 										>{$t('forms.recordScopeHint')}</span
 									>
 								</label>
 
 								<div
-									class="lg:col-span-2 rounded-md border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"
+									class="lg:col-span-2 rounded-md border border-line px-3 py-2 text-sm"
 								>
 									<div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
 										<div>
-											<p class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
+											<p class="text-xs font-medium uppercase text-fg-muted">
 												{$t('forms.fieldPermissions')}
 											</p>
 
-											<p class="text-xs text-slate-500 dark:text-slate-400">
+											<p class="text-xs text-fg-muted">
 												{$t('forms.fieldPermissionsHint')}
 											</p>
 										</div>
 
-										<div class="flex gap-3 text-xs text-slate-500 dark:text-slate-400">
+										<div class="flex gap-3 text-xs text-fg-muted">
 											<span
 												data-field-read-denied-count={fields.filter(
 													(field) => memberFieldReadDraft[field.key] === false
@@ -13341,11 +13341,11 @@
 										>
 											<div class="flex items-center gap-2">
 												<AlertTriangle
-													class="h-4 w-4 text-amber-600 dark:text-amber-300"
+													class="h-4 w-4 text-warning"
 													aria-hidden="true"
 												/>
 
-												<p class="text-xs font-medium uppercase text-amber-800 dark:text-amber-200">
+												<p class="text-xs font-medium uppercase text-warning">
 													{$t('forms.hiddenFieldEffect')}
 												</p>
 											</div>
@@ -13354,31 +13354,31 @@
 												{permissionFieldList(memberHiddenFieldLabels)}
 											</p>
 
-											<p class="mt-1 text-xs text-amber-700 dark:text-amber-300">
+											<p class="mt-1 text-xs text-warning">
 												{$t('forms.hiddenFieldEffectHint')}
 											</p>
 										</div>
 
 										<div
-											class="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+											class="rounded-md border border-line bg-slate-50 px-3 py-2 dark:bg-slate-950"
 											data-permission-effect-locked-fields={memberLockedFieldLabels.join('|')}
 										>
 											<div class="flex items-center gap-2">
 												<Shield
-													class="h-4 w-4 text-slate-600 dark:text-slate-300"
+													class="h-4 w-4 text-fg-muted"
 													aria-hidden="true"
 												/>
 
-												<p class="text-xs font-medium uppercase text-slate-600 dark:text-slate-300">
+												<p class="text-xs font-medium uppercase text-fg-muted">
 													{$t('forms.lockedFieldEffect')}
 												</p>
 											</div>
 
-											<p class="mt-1 text-xs text-slate-800 dark:text-slate-100">
+											<p class="mt-1 text-xs text-fg">
 												{permissionFieldList(memberLockedFieldLabels)}
 											</p>
 
-											<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+											<p class="mt-1 text-xs text-fg-muted">
 												{$t('forms.lockedFieldEffectHint')}
 											</p>
 										</div>
@@ -13387,7 +13387,7 @@
 									<div class="mt-3 grid gap-2">
 										{#each fields as field}
 											<div
-												class="grid min-h-10 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-300"
+												class="grid min-h-10 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-md border border-line px-3 py-2 text-sm text-fg"
 											>
 												<span class="min-w-0 truncate">{field.label ?? field.key}</span>
 
@@ -13434,7 +13434,7 @@
 
 							{#if formPermissions}
 								<div
-									class="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-950 dark:text-slate-400"
+									class="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-fg-muted dark:bg-slate-950"
 								>
 									{$t('forms.currentEffectiveRole', {
 										values: { role: formPermissions.effective.role }
@@ -13450,7 +13450,7 @@
 					</section>
 				{:else if activeMode === 'importExport'}
 					<section
-						class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+						class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 						data-form-mode="import-export"
 					>
 						<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -13458,7 +13458,7 @@
 								<div class="flex items-center gap-2">
 									<FileUp class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
 
-									<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+									<h3 class="text-base font-semibold text-fg">
 										{$t('forms.modes.importExport')}
 									</h3>
 								</div>
@@ -13473,89 +13473,89 @@
 						<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-slate-200 bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
 								onclick={exportImportTemplate}
 								disabled={!selectedForm || visibleFields.length === 0}
 								data-import-template-export
 								data-import-template-exported={exportedImportTemplate ? 'true' : undefined}
 							>
-								<FileDown class="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-slate-900 dark:text-slate-100"
+								<span class="font-medium text-fg"
 									>{$t('forms.downloadImportTemplate')}</span
 								>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-slate-200 bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
 								onclick={exportCurrentView}
 								disabled={exportingRecords}
 							>
-								<FileDown class="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-slate-900 dark:text-slate-100"
+								<span class="font-medium text-fg"
 									>{$t('forms.exportCurrentView')}</span
 								>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-slate-200 bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
 								onclick={exportCurrentViewJson}
 								disabled={exportingRecords}
 								data-current-view-export-json
 								data-current-view-json-record-count={exportedCurrentViewJsonRecordCount ?? ''}
 							>
-								<FileText class="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+								<FileText class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-slate-900 dark:text-slate-100"
+								<span class="font-medium text-fg"
 									>{$t('forms.exportCurrentViewJson')}</span
 								>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-slate-200 bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
 								onclick={exportAttachmentManifest}
 								disabled={exportingRecords}
 								data-attachment-manifest-export
 								data-attachment-manifest-count={exportedAttachmentManifestCount ?? ''}
 							>
-								<FileDown class="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-slate-900 dark:text-slate-100"
+								<span class="font-medium text-fg"
 									>{$t('forms.exportAttachmentManifest')}</span
 								>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-slate-200 bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
 								onclick={() => void exportAttachmentBundle()}
 								disabled={exportingRecords}
 								data-attachment-bundle-export
 								data-attachment-bundle-count={exportedAttachmentBundleCount ?? ''}
 							>
-								<FileDown class="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-slate-900 dark:text-slate-100"
+								<span class="font-medium text-fg"
 									>{$t('forms.exportAttachmentBundle')}</span
 								>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-slate-200 bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
 								onclick={() => void exportAttachmentPackage()}
 								disabled={exportingRecords}
 								data-attachment-package-export
 								data-attachment-package-count={exportedAttachmentPackageCount ?? ''}
 								data-attachment-package-file-count={exportedAttachmentPackageFileCount ?? ''}
 							>
-								<FileDown class="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-slate-900 dark:text-slate-100"
+								<span class="font-medium text-fg"
 									>{$t('forms.exportAttachmentPackage')}</span
 								>
 							</button>
@@ -13591,7 +13591,7 @@
 						{#if activeMode === 'layout'}
 							<div class="space-y-4">
 								<div
-									class="flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-900"
+									class="flex flex-wrap gap-1 rounded-lg border border-line bg-white p-1 dark:bg-slate-900"
 									data-detail-layout-tabs
 								>
 									{#each detailLayoutModes as mode}
@@ -13599,8 +13599,8 @@
 											type="button"
 											class="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium transition-colors {detailLayoutMode ===
 											mode.key
-												? 'bg-blue-600 text-white shadow-sm dark:bg-blue-500'
-												: 'text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100'}"
+												? 'bg-blue-600 text-white dark:bg-blue-500'
+												: 'text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800'}"
 											aria-current={detailLayoutMode === mode.key ? 'page' : undefined}
 											data-detail-layout-tab={mode.key}
 											onclick={() => (detailLayoutMode = mode.key)}>{$t(mode.labelKey)}</button
@@ -13609,32 +13609,32 @@
 								</div>
 
 								<section
-									class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
 									'header'
 										? ''
 										: 'hidden'}"
 									data-detail-header-builder={selectedForm?.id ?? ''}
 								>
 									<div class="mb-3">
-										<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+										<h3 class="text-base font-semibold text-fg">
 											{$t('forms.detailHeader')}
 										</h3>
 
-										<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+										<p class="mt-1 text-sm text-fg-muted">
 											{$t('forms.detailHeaderDescription')}
 										</p>
 									</div>
 
 									<div class="grid gap-3">
 										<label class="space-y-1">
-											<span class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+											<span class="text-xs font-medium uppercase text-fg-muted"
 												>{$t('forms.detailHeaderSubtitleField')}</span
 											>
 
 											<select
 												value={detailHeaderDraft.subtitleField}
 												disabled={detailHeaderSaving}
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 												data-detail-header-subtitle-field
 												onchange={(event) =>
 													setDetailHeaderDraft({
@@ -13653,14 +13653,14 @@
 										</label>
 
 										<label class="space-y-1">
-											<span class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+											<span class="text-xs font-medium uppercase text-fg-muted"
 												>{$t('forms.detailHeaderBadgeField')}</span
 											>
 
 											<select
 												value={detailHeaderDraft.badgeField}
 												disabled={detailHeaderSaving}
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 												data-detail-header-badge-field
 												onchange={(event) =>
 													setDetailHeaderDraft({
@@ -13689,7 +13689,7 @@
 								</section>
 
 								<section
-									class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
 									'highlights'
 										? ''
 										: 'hidden'}"
@@ -13697,17 +13697,17 @@
 								>
 									<div class="mb-3 flex items-start justify-between gap-3">
 										<div>
-											<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+											<h3 class="text-base font-semibold text-fg">
 												{$t('forms.detailHighlights')}
 											</h3>
 
-											<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+											<p class="mt-1 text-sm text-fg-muted">
 												{$t('forms.detailHighlightsDescription')}
 											</p>
 										</div>
 
 										{#if detailHighlightSaving}
-											<span class="text-xs font-medium text-slate-500 dark:text-slate-400"
+											<span class="text-xs font-medium text-fg-muted"
 												>{$t('common.saving')}</span
 											>
 										{/if}
@@ -13719,7 +13719,7 @@
 											{@const isChecked = highlightIndex >= 0}
 
 											<div
-												class="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-slate-200 px-3 py-2 dark:border-slate-700"
+												class="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-line px-3 py-2"
 												data-detail-highlight-field={field.key}
 												data-detail-highlight-selected={`${field.key}:${isChecked}`}
 											>
@@ -13744,13 +13744,13 @@
 
 												<div class="min-w-0">
 													<div
-														class="truncate text-sm font-medium text-slate-900 dark:text-slate-100"
+														class="truncate text-sm font-medium text-fg"
 													>
 														{fieldLabel(field)}
 													</div>
 
 													<p
-														class="mt-0.5 truncate font-mono text-xs text-slate-500 dark:text-slate-400"
+														class="mt-0.5 truncate font-mono text-xs text-fg-muted"
 													>
 														{field.key}
 													</p>
@@ -13759,7 +13759,7 @@
 												<div class="flex items-center gap-1">
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 														disabled={!isChecked || highlightIndex === 0 || detailHighlightSaving}
 														aria-label={$t('forms.moveHighlightUp')}
 														title={$t('forms.moveHighlightUp')}
@@ -13770,7 +13770,7 @@
 
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 														disabled={!isChecked ||
 															highlightIndex === detailHighlightDraft.fields.length - 1 ||
 															detailHighlightSaving}
@@ -13786,7 +13786,7 @@
 									</div>
 
 									<div class="mt-3 flex items-center justify-between gap-3">
-										<span class="text-xs text-slate-500 dark:text-slate-400"
+										<span class="text-xs text-fg-muted"
 											>{$t('forms.detailHighlightsLimit', {
 												values: { count: detailHighlightDraft.fields.length }
 											})}</span
@@ -13803,31 +13803,31 @@
 								</section>
 
 								<section
-									class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
 									'composition'
 										? ''
 										: 'hidden'}"
 									data-detail-page-composition-builder={selectedForm?.id ?? ''}
 								>
 									<div class="mb-3">
-										<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+										<h3 class="text-base font-semibold text-fg">
 											{$t('forms.detailPageComposition')}
 										</h3>
 
-										<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+										<p class="mt-1 text-sm text-fg-muted">
 											{$t('forms.detailPageCompositionDescription')}
 										</p>
 									</div>
 
 									<label class="space-y-1">
-										<span class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+										<span class="text-xs font-medium uppercase text-fg-muted"
 											>{$t('forms.detailPageWidgetRegion')}</span
 										>
 
 										<select
 											value={detailPageCompositionDraft.widgetRegion}
 											disabled={detailPageCompositionSaving}
-											class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+											class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 											data-detail-page-widget-region
 											onchange={(event) =>
 												(detailPageCompositionDraft = {
@@ -13844,14 +13844,14 @@
 									</label>
 
 									<label class="mt-3 block space-y-1">
-										<span class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+										<span class="text-xs font-medium uppercase text-fg-muted"
 											>{$t('forms.detailPageFieldColumns')}</span
 										>
 
 										<select
 											value={String(detailPageCompositionDraft.fieldColumns)}
 											disabled={detailPageCompositionSaving}
-											class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+											class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 											data-detail-page-field-columns
 											onchange={(event) =>
 												(detailPageCompositionDraft = {
@@ -13880,7 +13880,7 @@
 								</section>
 
 								<section
-									class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
 									'sections'
 										? ''
 										: 'hidden'}"
@@ -13888,11 +13888,11 @@
 								>
 									<div class="mb-3 flex items-start justify-between gap-3">
 										<div>
-											<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+											<h3 class="text-base font-semibold text-fg">
 												{$t('forms.detailLayoutSections')}
 											</h3>
 
-											<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+											<p class="mt-1 text-sm text-fg-muted">
 												{$t('forms.detailLayoutSectionsDescription')}
 											</p>
 										</div>
@@ -13906,7 +13906,7 @@
 									<div class="space-y-3">
 										{#each detailLayoutSectionDrafts as section, sectionIndex}
 											<div
-												class="rounded-md border border-slate-200 p-3 dark:border-slate-700"
+												class="rounded-md border border-line p-3"
 												data-detail-layout-section-row={section.key}
 											>
 												<div
@@ -13914,13 +13914,13 @@
 												>
 													<label class="min-w-0 space-y-1">
 														<span
-															class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.detailLayoutSectionTitle')}</span
 														>
 
 														<input
 															value={section.title}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 															data-detail-layout-section-title={section.key}
 															oninput={(event) =>
 																updateDetailLayoutSectionTitle(
@@ -13934,14 +13934,14 @@
 
 													<label class="space-y-1">
 														<span
-															class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.detailLayoutSectionColumns')}</span
 														>
 
 														<select
 															value={String(section.columns)}
 															disabled={detailLayoutSectionSaving}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 															data-detail-layout-section-columns={section.key}
 															onchange={(event) =>
 																updateDetailLayoutSectionColumns(
@@ -13961,14 +13961,14 @@
 
 													<label class="space-y-1">
 														<span
-															class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.detailLayoutSectionDensity')}</span
 														>
 
 														<select
 															value={section.density}
 															disabled={detailLayoutSectionSaving}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 															data-detail-layout-section-density={section.key}
 															onchange={(event) =>
 																updateDetailLayoutSectionDensity(
@@ -13991,7 +13991,7 @@
 													<div class="flex items-center gap-1">
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 															disabled={sectionIndex === 0 || detailLayoutSectionSaving}
 															aria-label={$t('forms.moveSectionUp')}
 															title={$t('forms.moveSectionUp')}
@@ -14002,7 +14002,7 @@
 
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 															disabled={sectionIndex === detailLayoutSectionDrafts.length - 1 ||
 																detailLayoutSectionSaving}
 															aria-label={$t('forms.moveSectionDown')}
@@ -14014,7 +14014,7 @@
 
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-red-600 hover:bg-red-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-red-950/30"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-red-600 hover:bg-red-50 disabled:opacity-40 dark:hover:bg-red-950/30"
 															disabled={detailLayoutSectionDrafts.length <= 1 ||
 																detailLayoutSectionSaving}
 															aria-label={$t('forms.removeDetailSection')}
@@ -14028,7 +14028,7 @@
 
 												<label class="mb-3 block space-y-1">
 													<span
-														class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+														class="text-xs font-medium uppercase text-fg-muted"
 														>{$t('forms.detailLayoutSectionDescription')}</span
 													>
 
@@ -14037,7 +14037,7 @@
 														rows="2"
 														disabled={detailLayoutSectionSaving}
 														placeholder={$t('forms.detailLayoutSectionDescriptionPlaceholder')}
-														class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+														class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800"
 														data-detail-layout-section-description={section.key}
 														oninput={(event) =>
 															updateDetailLayoutSectionDescription(
@@ -14049,7 +14049,7 @@
 												</label>
 
 												<label
-													class="mb-3 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200"
+													class="mb-3 flex items-center gap-2 text-sm text-fg"
 												>
 													<input
 														type="checkbox"
@@ -14071,7 +14071,7 @@
 
 												<div class="mb-3 grid gap-2 sm:grid-cols-2">
 													<label
-														class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200"
+														class="flex items-center gap-2 text-sm text-fg"
 													>
 														<input
 															type="checkbox"
@@ -14092,7 +14092,7 @@
 													</label>
 
 													<label
-														class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200"
+														class="flex items-center gap-2 text-sm text-fg"
 													>
 														<input
 															type="checkbox"
@@ -14141,12 +14141,12 @@
 															/>
 
 															<div class="min-w-0">
-																<span class="block truncate text-slate-800 dark:text-slate-200"
+																<span class="block truncate text-fg"
 																	>{fieldLabel(field)}</span
 																>
 
 																{#if assignedSectionKey && assignedSectionKey !== section.key}
-																	<span class="text-xs text-slate-500 dark:text-slate-400"
+																	<span class="text-xs text-fg-muted"
 																		>{$t('forms.detailLayoutFieldAssigned')}</span
 																	>
 																{/if}
@@ -14155,7 +14155,7 @@
 															<div class="flex items-center gap-1">
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 																	disabled={fieldIndex <= 0 || detailLayoutSectionSaving}
 																	aria-label={$t('forms.moveFieldUp')}
 																	title={$t('forms.moveFieldUp')}
@@ -14167,7 +14167,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 																	disabled={fieldIndex < 0 ||
 																		fieldIndex === section.fields.length - 1 ||
 																		detailLayoutSectionSaving}
@@ -14198,7 +14198,7 @@
 								</section>
 
 								<section
-									class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
 									'widgets'
 										? ''
 										: 'hidden'}"
@@ -14206,17 +14206,17 @@
 								>
 									<div class="mb-3 flex items-start justify-between gap-3">
 										<div>
-											<h3 class="text-base font-semibold text-slate-950 dark:text-slate-100">
+											<h3 class="text-base font-semibold text-fg">
 												{$t('forms.detailPageWidgets')}
 											</h3>
 
-											<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+											<p class="mt-1 text-sm text-fg-muted">
 												{$t('forms.detailPageWidgetsDescription')}
 											</p>
 										</div>
 
 										{#if detailPageWidgetSaving}
-											<span class="text-xs font-medium text-slate-500 dark:text-slate-400"
+											<span class="text-xs font-medium text-fg-muted"
 												>{$t('common.saving')}</span
 											>
 										{/if}
@@ -14227,7 +14227,7 @@
 											{@const option = detailPageWidgetOption(widget.key)}
 
 											<div
-												class="grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-slate-200 px-3 py-2 dark:border-slate-700"
+												class="grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-line px-3 py-2"
 												data-detail-page-widget-row={widget.key}
 												data-detail-page-widget-enabled={`${widget.key}:${widget.enabled}`}
 											>
@@ -14251,18 +14251,18 @@
 
 												<div class="min-w-0">
 													<div
-														class="truncate text-sm font-medium text-slate-900 dark:text-slate-100"
+														class="truncate text-sm font-medium text-fg"
 													>
 														{$t(option.labelKey)}
 													</div>
 
-													<p class="mt-0.5 text-xs leading-5 text-slate-500 dark:text-slate-400">
+													<p class="mt-0.5 text-xs leading-5 text-fg-muted">
 														{$t(option.descriptionKey)}
 													</p>
 
 													<label class="mt-2 block space-y-1">
 														<span
-															class="text-[11px] font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetCustomTitle')}</span
 														>
 
@@ -14270,7 +14270,7 @@
 															value={widget.title}
 															disabled={detailPageWidgetSaving}
 															placeholder={$t(option.labelKey)}
-															class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+															class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
 															data-detail-page-widget-title={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetTitle(
@@ -14284,7 +14284,7 @@
 
 													<label class="mt-2 block space-y-1">
 														<span
-															class="text-[11px] font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetDescription')}</span
 														>
 
@@ -14293,7 +14293,7 @@
 															disabled={detailPageWidgetSaving}
 															rows="2"
 															placeholder={$t('forms.detailPageWidgetDescriptionPlaceholder')}
-															class="w-full resize-y rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+															class="w-full resize-y rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
 															data-detail-page-widget-description={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetDescription(
@@ -14306,7 +14306,7 @@
 
 													<label class="mt-2 block space-y-1">
 														<span
-															class="text-[11px] font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetLimit')}</span
 														>
 
@@ -14317,7 +14317,7 @@
 															value={widget.limit}
 															disabled={detailPageWidgetSaving}
 															placeholder={$t('forms.detailPageWidgetLimitDefault')}
-															class="w-28 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+															class="w-28 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
 															data-detail-page-widget-limit={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetLimit(
@@ -14331,14 +14331,14 @@
 
 													<label class="mt-2 block space-y-1">
 														<span
-															class="text-[11px] font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetDensity')}</span
 														>
 
 														<select
 															value={widget.density}
 															disabled={detailPageWidgetSaving}
-															class="w-40 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+															class="w-40 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
 															data-detail-page-widget-density={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetDensity(
@@ -14359,7 +14359,7 @@
 													</label>
 
 													<label
-														class="mt-2 inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
+														class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted"
 													>
 														<input
 															type="checkbox"
@@ -14380,7 +14380,7 @@
 													</label>
 
 													<label
-														class="mt-2 inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
+														class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted"
 													>
 														<input
 															type="checkbox"
@@ -14401,7 +14401,7 @@
 													</label>
 
 													<label
-														class="mt-2 inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
+														class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted"
 													>
 														<input
 															type="checkbox"
@@ -14422,7 +14422,7 @@
 													</label>
 
 													<label
-														class="mt-2 inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
+														class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted"
 													>
 														<input
 															type="checkbox"
@@ -14444,7 +14444,7 @@
 
 													<label class="mt-2 block space-y-1">
 														<span
-															class="text-[11px] font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetEmptyText')}</span
 														>
 
@@ -14453,7 +14453,7 @@
 															disabled={detailPageWidgetSaving}
 															rows="2"
 															placeholder={$t('forms.detailPageWidgetEmptyTextPlaceholder')}
-															class="w-full resize-y rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+															class="w-full resize-y rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
 															data-detail-page-widget-empty-text={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetEmptyText(
@@ -14468,7 +14468,7 @@
 												<div class="flex items-center gap-1">
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 														disabled={index === 0 || detailPageWidgetSaving}
 														aria-label={$t('forms.moveWidgetUp')}
 														title={$t('forms.moveWidgetUp')}
@@ -14479,7 +14479,7 @@
 
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 														disabled={index === selectedDetailPageWidgetEntries.length - 1 ||
 															detailPageWidgetSaving}
 														aria-label={$t('forms.moveWidgetDown')}
@@ -14508,14 +14508,14 @@
 									<section class="w-full" data-view-tools-expanded-panel>
 										<div class="space-y-4">
 											<div
-												class="rounded-md border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+												class="rounded-md border border-line bg-white dark:bg-slate-900"
 												data-view-setup
 											>
-												<div class="space-y-2 border-t border-slate-100 p-3 dark:border-slate-800">
+												<div class="space-y-2 border-t border-line p-3">
 													<div class="grid grid-cols-2 gap-2">
 														<label class="space-y-1">
 															<span
-																class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																class="text-xs font-medium uppercase text-fg-muted"
 																>{$t('forms.viewType')}</span
 															>
 
@@ -14716,7 +14716,7 @@
 																		wipLimits:
 																			selectValue(event) === 'kanban' ? viewDraft.wipLimits : {}
 																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 															>
 																<option value="grid">Grid</option>
 																<option value="detail">Detail</option>
@@ -14732,7 +14732,7 @@
 														{#if viewDraft.view_type === 'timeline'}
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineSource')}</span
 																>
 
@@ -14782,7 +14782,7 @@
 																					: viewDraft.timelineSubtitleField
 																		};
 																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="records"
 																		>{$t('forms.timelineSourceRecords')}</option
@@ -14793,7 +14793,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventLayout')}</span
 																>
 
@@ -14805,7 +14805,7 @@
 																			...viewDraft,
 																			timelineEventLayout: timelineEventLayout(selectValue(event))
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="summary"
 																		>{$t('forms.timelineEventLayoutSummary')}</option
@@ -14818,7 +14818,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventType')}</span
 																>
 
@@ -14830,7 +14830,7 @@
 																			...viewDraft,
 																			timelineEventType: selectValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="">{$t('forms.timelineEventTypeAll')}</option>
 
@@ -14842,7 +14842,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventActorFilter')}</span
 																>
 
@@ -14854,7 +14854,7 @@
 																			...viewDraft,
 																			timelineEventActor: selectValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="">{$t('forms.timelineEventActorAll')}</option>
 
@@ -14866,7 +14866,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventAggregateFilter')}</span
 																>
 
@@ -14878,7 +14878,7 @@
 																			...viewDraft,
 																			timelineEventAggregate: selectValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="">{$t('forms.timelineEventAggregateAll')}</option>
 
@@ -14890,7 +14890,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventSearch')}</span
 																>
 
@@ -14902,14 +14902,14 @@
 																			...viewDraft,
 																			timelineEventQuery: inputValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	placeholder={$t('forms.timelineEventSearchPlaceholder')}
 																/>
 															</label>
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventFrom')}</span
 																>
 
@@ -14922,13 +14922,13 @@
 																			...viewDraft,
 																			timelineEventFrom: inputValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																/>
 															</label>
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventTo')}</span
 																>
 
@@ -14941,13 +14941,13 @@
 																			...viewDraft,
 																			timelineEventTo: inputValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																/>
 															</label>
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineTitleField')}</span
 																>
 
@@ -14966,7 +14966,7 @@
 																					: viewDraft.timelineSubtitleField
 																		};
 																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="">{$t('forms.recordTitle')}</option>
 
@@ -14978,7 +14978,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineSubtitleField')}</span
 																>
 
@@ -14990,7 +14990,7 @@
 																			...viewDraft,
 																			timelineSubtitleField: selectValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15004,7 +15004,7 @@
 														{#if viewDraft.view_type === 'card'}
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.cardCoverAspect')}</span
 																>
 
@@ -15015,7 +15015,7 @@
 																			...viewDraft,
 																			cardCoverAspect: viewCardCoverAspect(selectValue(event))
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="auto">{$t('forms.cardCoverAspectAuto')}</option>
 																	<option value="wide">{$t('forms.cardCoverAspectWide')}</option>
@@ -15029,7 +15029,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.cardCoverFit')}</span
 																>
 
@@ -15040,7 +15040,7 @@
 																			...viewDraft,
 																			cardCoverFit: viewCardCoverFit(selectValue(event))
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="cover">{$t('forms.cardCoverFitCover')}</option>
 																	<option value="contain">{$t('forms.cardCoverFitContain')}</option>
@@ -15049,7 +15049,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.cardCoverPosition')}</span
 																>
 
@@ -15060,7 +15060,7 @@
 																			...viewDraft,
 																			cardCoverPosition: viewCardCoverPosition(selectValue(event))
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="top">{$t('forms.cardCoverPositionTop')}</option>
 																	<option value="left">{$t('forms.cardCoverPositionLeft')}</option>
@@ -15073,15 +15073,15 @@
 													</div>
 
 													<div
-														class="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"
+														class="space-y-3 rounded-md border border-line bg-slate-50 p-3 dark:bg-slate-950"
 														data-view-config-panel
 													>
 														<div>
-															<h4 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+															<h4 class="text-sm font-semibold text-fg">
 																{$t('forms.viewRules')}
 															</h4>
 
-															<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+															<p class="mt-1 text-xs text-fg-muted">
 																{$t('forms.viewRulesDescription')}
 															</p>
 														</div>
@@ -15089,7 +15089,7 @@
 														<div class="space-y-2">
 															<div class="flex items-center justify-between gap-3">
 																<h5
-																	class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-semibold uppercase text-fg-muted"
 																>
 																	{$t('forms.filterConditions')}
 																</h5>
@@ -15119,7 +15119,7 @@
 
 															{#if visibleViewDraftFilterGroups().every((group) => group.filters.length === 0)}
 																<p
-																	class="rounded-md border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
+																	class="rounded-md border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-fg-muted dark:border-slate-700 dark:bg-slate-900"
 																>
 																	{$t('forms.noFilterConditions')}
 																</p>
@@ -15139,7 +15139,7 @@
 																<div class="flex flex-wrap items-end gap-2">
 																	<label class="block max-w-xs flex-1 space-y-1">
 																		<span
-																			class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																			class="text-xs font-medium uppercase text-fg-muted"
 																			>{$t('forms.filterGroupLogic')}</span
 																		>
 
@@ -15149,7 +15149,7 @@
 																				updateViewDraftFilterRootLogic(
 																					selectValue(event) as ViewFilterLogic
 																				)}
-																			class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																			class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																		>
 																			<option value="all">{$t('forms.filterGroupsMatchAll')}</option
 																			>
@@ -15172,7 +15172,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionRecordIds(
 																				expressionMatchingRecords
@@ -15191,7 +15191,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionJson(expressionJsonText)}
 																		disabled={!expressionJsonText}
@@ -15208,7 +15208,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionConfigJson(expressionJsonText)}
 																		disabled={!expressionJsonText}
@@ -15225,7 +15225,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionSummary(expressionSummaryText)}
 																		disabled={!expressionSummaryText}
@@ -15242,7 +15242,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionSummary(expressionSummaryText)}
 																		disabled={!expressionSummaryText}
@@ -15259,7 +15259,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			focusViewDraftFilterExpressionRecords(
 																				expressionMatchingRecords
@@ -15274,7 +15274,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionCsv(expressionMatchingRecords)}
 																		disabled={!expressionRecordIdsText}
@@ -15291,7 +15291,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionCsvRecords(
 																				expressionMatchingRecords
@@ -15310,7 +15310,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionJsonRecords(
 																				expressionMatchingRecords
@@ -15329,7 +15329,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionJson(
 																				expressionMatchingRecords
@@ -15352,7 +15352,7 @@
 																{@const groupMatchCount = viewDraftFilterGroupMatchCount(group)}
 
 																<div
-																	class={`space-y-2 rounded-md border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900 ${
+																	class={`space-y-2 rounded-md border border-line bg-white p-2 dark:bg-slate-900 ${
 																		group.disabled
 																			? 'opacity-70 ring-1 ring-amber-300 dark:ring-amber-700'
 																			: ''
@@ -15364,7 +15364,7 @@
 																	<div class="flex flex-wrap items-end gap-2">
 																		<label class="min-w-36 flex-1 space-y-1">
 																			<span
-																				class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																				class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.filterGroup')} {groupIndex + 1}</span
 																			>
 
@@ -15375,7 +15375,7 @@
 																						groupIndex,
 																						selectValue(event) as ViewFilterLogic
 																					)}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																			>
 																				<option value="all">{$t('forms.filterMatchAll')}</option>
 																				<option value="any">{$t('forms.filterMatchAny')}</option>
@@ -15393,7 +15393,7 @@
 																		</Button>
 
 																		<span
-																			class="self-end rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																			class="self-end rounded-md border border-line bg-slate-50 px-2.5 py-2 text-xs font-medium text-fg-muted dark:bg-slate-950"
 																			data-filter-group-match-count={groupIndex + 1}
 																			data-record-count={groupMatchCount ?? ''}
 																		>
@@ -15405,11 +15405,11 @@
 																		</span>
 
 																		<div
-																			class="flex items-center rounded-md border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-700 dark:bg-slate-950"
+																			class="flex items-center rounded-md border border-line bg-slate-50 p-0.5 dark:bg-slate-950"
 																		>
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-slate-500 hover:bg-white hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg dark:hover:bg-slate-800"
 																				onclick={() =>
 																					toggleViewDraftFilterGroupDisabled(groupIndex)}
 																				aria-label={`${
@@ -15434,7 +15434,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																				onclick={() =>
 																					mergeViewDraftFilterGroupWithPrevious(groupIndex)}
 																				disabled={!canMergeViewDraftFilterGroup(groupIndex)}
@@ -15445,7 +15445,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																				onclick={() => duplicateViewDraftFilterGroup(groupIndex)}
 																				disabled={!canDuplicateViewDraftFilterGroup(groupIndex)}
 																				aria-label={`${$t('forms.duplicateFilterGroup')} ${groupIndex + 1}`}
@@ -15455,7 +15455,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																				onclick={() => moveViewDraftFilterGroup(groupIndex, -1)}
 																				disabled={groupIndex === 0}
 																				aria-label={`${$t('forms.moveFilterGroupUp')} ${groupIndex + 1}`}
@@ -15465,7 +15465,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																				onclick={() => moveViewDraftFilterGroup(groupIndex, 1)}
 																				disabled={groupIndex >=
 																					visibleViewDraftFilterGroups().length - 1}
@@ -15478,7 +15478,7 @@
 																		{#if viewDraft.filterGroups.length > 1}
 																			<button
 																				type="button"
-																				class="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-red-300"
+																				class="rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-danger dark:hover:bg-slate-800"
 																				onclick={() => removeViewDraftFilterGroup(groupIndex)}
 																				aria-label={$t('forms.removeFilterGroup')}
 																				data-filter-group-remove={groupIndex + 1}
@@ -15491,7 +15491,7 @@
 																		{@const filterMatchCount = viewDraftFilterMatchCount(filter)}
 
 																		<div
-																			class={`grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-950 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_auto_auto_auto_auto_auto_auto] ${
+																			class={`grid gap-2 rounded-md border border-line bg-slate-50 p-2 dark:bg-slate-950 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_auto_auto_auto_auto_auto_auto] ${
 																				filter.disabled
 																					? 'opacity-70 ring-1 ring-amber-300 dark:ring-amber-700'
 																					: ''
@@ -15502,7 +15502,7 @@
 																		>
 																			<label class="space-y-1">
 																				<span
-																					class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																					class="text-xs font-medium uppercase text-fg-muted"
 																					>{$t('forms.filterField')}
 																					{filterLabelSuffix(groupIndex, filterIndex)}</span
 																				>
@@ -15515,7 +15515,7 @@
 																							{ field: selectValue(event) },
 																							groupIndex
 																						)}
-																					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																				>
 																					<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15527,7 +15527,7 @@
 
 																			<label class="space-y-1">
 																				<span
-																					class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																					class="text-xs font-medium uppercase text-fg-muted"
 																					>{$t('forms.filterOperator')}
 																					{filterLabelSuffix(groupIndex, filterIndex)}</span
 																				>
@@ -15543,7 +15543,7 @@
 																							},
 																							groupIndex
 																						)}
-																					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-950"
+																					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-950"
 																				>
 																					<option value="contains"
 																						>{$t('forms.filterContains')}</option
@@ -15560,13 +15560,13 @@
 
 																			<label class="space-y-1">
 																				<span
-																					class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																					class="text-xs font-medium uppercase text-fg-muted"
 																					>{$t('forms.filterValue')}
 																					{filterLabelSuffix(groupIndex, filterIndex)}</span
 																				>
 
 																				<input
-																					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-950"
+																					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-950"
 																					value={filter.value}
 																					disabled={!filter.field ||
 																						filter.operator === 'not_empty'}
@@ -15580,7 +15580,7 @@
 																			</label>
 
 																			<span
-																				class="self-end rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+																				class="self-end rounded-md border border-line bg-white px-2.5 py-2 text-xs font-medium text-fg-muted dark:bg-slate-900"
 																				data-filter-match-count={`${groupIndex + 1}.${filterIndex + 1}`}
 																				data-record-count={filterMatchCount ?? ''}
 																			>
@@ -15593,7 +15593,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																				class="self-end rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
 																				onclick={() =>
 																					toggleViewDraftFilterDisabled(groupIndex, filterIndex)}
 																				aria-label={`${filter.disabled ? $t('forms.enableFilter') : $t('forms.disableFilter')} ${filterLabelSuffix(groupIndex, filterIndex)}`}
@@ -15612,7 +15612,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-red-300"
+																				class="self-end rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-danger dark:hover:bg-slate-800"
 																				onclick={() =>
 																					removeViewDraftFilter(filterIndex, groupIndex)}
 																				aria-label={$t('forms.removeFilter')}
@@ -15622,7 +15622,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																				class="self-end rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																				onclick={() =>
 																					duplicateViewDraftFilter(groupIndex, filterIndex)}
 																				disabled={hasReachedFilterLimit()}
@@ -15633,7 +15633,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																				class="self-end rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																				onclick={() =>
 																					splitViewDraftFilterToGroup(groupIndex, filterIndex)}
 																				disabled={!canSplitViewDraftFilterToGroup(
@@ -15649,11 +15649,11 @@
 																			>
 
 																			<div
-																				class="self-end flex items-center rounded-md border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-900"
+																				class="self-end flex items-center rounded-md border border-line bg-white p-0.5 dark:bg-slate-900"
 																			>
 																				<button
 																					type="button"
-																					class="rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																					class="rounded p-1.5 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																					onclick={() =>
 																						moveViewDraftFilter(groupIndex, filterIndex, -1)}
 																					disabled={filterIndex === 0}
@@ -15664,7 +15664,7 @@
 
 																				<button
 																					type="button"
-																					class="rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																					class="rounded p-1.5 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																					onclick={() =>
 																						moveViewDraftFilter(groupIndex, filterIndex, 1)}
 																					disabled={filterIndex >= group.filters.length - 1}
@@ -15682,7 +15682,7 @@
 														<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.sortField')}</span
 																>
 
@@ -15690,7 +15690,7 @@
 																	value={viewDraft.sortField}
 																	onchange={(event) =>
 																		(viewDraft = { ...viewDraft, sortField: selectValue(event) })}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15702,7 +15702,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.sortDirection')}</span
 																>
 
@@ -15714,7 +15714,7 @@
 																			...viewDraft,
 																			sortDirection: selectValue(event) as ViewSortDirection
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																>
 																	<option value="asc">{$t('forms.sortAscending')}</option>
 																	<option value="desc">{$t('forms.sortDescending')}</option>
@@ -15723,7 +15723,7 @@
 
 															<label class="space-y-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.groupField')}</span
 																>
 
@@ -15742,7 +15742,7 @@
 																			wipLimits: {}
 																		};
 																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15755,7 +15755,7 @@
 															{#if viewDraft.view_type === 'pivot'}
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotRowField')}</span
 																	>
 
@@ -15773,7 +15773,7 @@
 																						: viewDraft.pivotColumnField
 																			};
 																		}}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15785,7 +15785,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotColumnField')}</span
 																	>
 
@@ -15796,7 +15796,7 @@
 																				...viewDraft,
 																				pivotColumnField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15808,7 +15808,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotValueField')}</span
 																	>
 
@@ -15819,7 +15819,7 @@
 																				...viewDraft,
 																				pivotValueField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15831,7 +15831,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotAggregate')}</span
 																	>
 
@@ -15842,7 +15842,7 @@
 																				...viewDraft,
 																				pivotAggregate: viewPivotAggregate(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="sum">{$t('forms.pivotAggregateSum')}</option>
 																		<option value="count">{$t('forms.pivotAggregateCount')}</option>
@@ -15852,7 +15852,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotTotals')}</span
 																	>
 
@@ -15863,7 +15863,7 @@
 																				...viewDraft,
 																				pivotTotals: viewPivotTotalsMode(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="all">{$t('forms.pivotTotalsAll')}</option>
 																		<option value="rows">{$t('forms.pivotTotalsRows')}</option>
@@ -15875,7 +15875,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotValueDisplay')}</span
 																	>
 
@@ -15886,7 +15886,7 @@
 																				...viewDraft,
 																				pivotValueDisplay: viewPivotValueDisplay(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="value"
 																			>{$t('forms.pivotValueDisplayValue')}</option
@@ -15905,7 +15905,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotSort')}</span
 																	>
 
@@ -15916,7 +15916,7 @@
 																				...viewDraft,
 																				pivotSort: viewPivotSortMode(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="label">{$t('forms.pivotSortLabel')}</option>
 																		<option value="row_total_desc"
@@ -15936,7 +15936,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotRowLimit')}</span
 																	>
 
@@ -15947,7 +15947,7 @@
 																				...viewDraft,
 																				pivotRowLimit: viewPivotRowLimit(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="0">{$t('forms.pivotRowLimitAll')}</option>
 																		<option value="2">{$t('forms.pivotRowLimitTwo')}</option>
@@ -15958,7 +15958,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotColumnLimit')}</span
 																	>
 
@@ -15969,7 +15969,7 @@
 																				...viewDraft,
 																				pivotColumnLimit: viewPivotColumnLimit(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="0">{$t('forms.pivotColumnLimitAll')}</option>
 																		<option value="2">{$t('forms.pivotColumnLimitTwo')}</option>
@@ -15979,7 +15979,7 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
 																>
 																	<input
 																		type="checkbox"
@@ -16002,7 +16002,7 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
 																>
 																	<input
 																		type="checkbox"
@@ -16025,7 +16025,7 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
 																>
 																	<input
 																		type="checkbox"
@@ -16047,7 +16047,7 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
 																>
 																	<input
 																		type="checkbox"
@@ -16072,7 +16072,7 @@
 																		type="button"
 																		disabled={!viewDraft.pivotRowField ||
 																			!viewDraft.pivotColumnField}
-																		class="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+																		class="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-fg hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700"
 																		data-pivot-swap-axes
 																		onclick={swapViewDraftPivotAxes}
 																	>
@@ -16085,7 +16085,7 @@
 															{#if viewDraft.view_type === 'gantt'}
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttStartField')}</span
 																	>
 
@@ -16111,7 +16111,7 @@
 																						: viewDraft.ganttDependencyField
 																			};
 																		}}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16123,7 +16123,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttEndField')}</span
 																	>
 
@@ -16145,7 +16145,7 @@
 																						: viewDraft.ganttDependencyField
 																			};
 																		}}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.ganttNoEndField')}</option>
 
@@ -16157,7 +16157,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttGroupField')}</span
 																	>
 
@@ -16172,7 +16172,7 @@
 																						? ''
 																						: viewDraft.ganttDependencyField
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16184,7 +16184,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttDependencyField')}</span
 																	>
 
@@ -16195,7 +16195,7 @@
 																				...viewDraft,
 																				ganttDependencyField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16207,7 +16207,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttScale')}</span
 																	>
 
@@ -16218,7 +16218,7 @@
 																				...viewDraft,
 																				ganttScale: selectValue(event) as GanttScale
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="day">{$t('forms.ganttScaleDay')}</option>
 																		<option value="week">{$t('forms.ganttScaleWeek')}</option>
@@ -16230,7 +16230,7 @@
 															{#if viewDraft.view_type === 'kanban'}
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.swimlaneField')}</span
 																	>
 
@@ -16241,7 +16241,7 @@
 																				...viewDraft,
 																				swimlaneBy: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16254,7 +16254,7 @@
 
 															<label class="space-y-1 sm:col-span-2 xl:col-span-1">
 																<span
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.dateField')}</span
 																>
 
@@ -16276,7 +16276,7 @@
 																					: viewDraft.calendarResourceBy
 																		};
 																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16289,7 +16289,7 @@
 															{#if viewDraft.view_type === 'calendar'}
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarEndField')}</span
 																	>
 
@@ -16300,7 +16300,7 @@
 																				...viewDraft,
 																				calendarEndField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16312,7 +16312,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarResourceField')}</span
 																	>
 
@@ -16323,7 +16323,7 @@
 																				...viewDraft,
 																				calendarResourceBy: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16335,7 +16335,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarRange')}</span
 																	>
 
@@ -16346,7 +16346,7 @@
 																				...viewDraft,
 																				calendarRange: selectValue(event) as ViewCalendarRange
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="week">{$t('forms.calendarRangeWeek')}</option>
 																		<option value="month">{$t('forms.calendarRangeMonth')}</option>
@@ -16355,14 +16355,14 @@
 
 																<div class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarFocusDate')}</span
 																	>
 
 																	<div class="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-1">
 																		<button
 																			type="button"
-																			class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+																			class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
 																			onclick={() => shiftViewDraftCalendarFocus(-1)}
 																			aria-label={$t('forms.calendarPreviousRange')}
 																			title={$t('forms.calendarPreviousRange')}
@@ -16380,12 +16380,12 @@
 																					...viewDraft,
 																					calendarFocusDate: inputValue(event)
 																				})}
-																			class="min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																			class="min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																		/>
 
 																		<button
 																			type="button"
-																			class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+																			class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
 																			onclick={() => shiftViewDraftCalendarFocus(1)}
 																			aria-label={$t('forms.calendarNextRange')}
 																			title={$t('forms.calendarNextRange')}
@@ -16397,7 +16397,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarRecurrence')}</span
 																	>
 
@@ -16410,7 +16410,7 @@
 																					event
 																				) as ViewCalendarRecurrence
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="none"
 																			>{$t('forms.calendarRecurrenceNone')}</option
@@ -16429,7 +16429,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarDayScope')}</span
 																	>
 
@@ -16440,7 +16440,7 @@
 																				...viewDraft,
 																				calendarDayScope: selectValue(event) as ViewCalendarDayScope
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="all">{$t('forms.calendarDayScopeAll')}</option>
 																		<option value="workweek"
@@ -16451,7 +16451,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarLayout')}</span
 																	>
 
@@ -16462,7 +16462,7 @@
 																				...viewDraft,
 																				calendarLayout: selectValue(event) as ViewCalendarLayout
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="grid">{$t('forms.calendarLayoutGrid')}</option>
 																		<option value="agenda"
@@ -16472,7 +16472,7 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
 																>
 																	<input
 																		type="checkbox"
@@ -16496,13 +16496,13 @@
 															{/if}
 
 															<div
-																class="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-700 lg:col-span-2"
+																class="space-y-2 rounded-md border border-line p-3 lg:col-span-2"
 															>
 																<div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px_auto]">
 																	{#if viewDraft.view_type === 'calendar'}
 																		<label class="space-y-1">
 																			<span
-																				class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																				class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.calendarExceptionRecord')}</span
 																			>
 
@@ -16513,7 +16513,7 @@
 																						...viewDraft,
 																						calendarExceptionRecordId: selectValue(event)
 																					})}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																			>
 																				<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16527,7 +16527,7 @@
 																	{#if viewDraft.view_type === 'card'}
 																		<label class="space-y-1">
 																			<span
-																				class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																				class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.cardFieldLimit')}</span
 																			>
 
@@ -16538,7 +16538,7 @@
 																						...viewDraft,
 																						cardFieldLimit: viewCardFieldLimit(selectValue(event))
 																					})}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																			>
 																				<option value="3">{$t('forms.cardFieldLimitThree')}</option>
 																				<option value="6">{$t('forms.cardFieldLimitSix')}</option>
@@ -16548,7 +16548,7 @@
 																		</label>
 
 																		<label
-																			class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																			class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
 																		>
 																			<input
 																				type="checkbox"
@@ -16571,7 +16571,7 @@
 																		</label>
 
 																		<label
-																			class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																			class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
 																		>
 																			<input
 																				type="checkbox"
@@ -16594,7 +16594,7 @@
 																		</label>
 
 																		<label
-																			class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																			class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
 																		>
 																			<input
 																				type="checkbox"
@@ -16620,7 +16620,7 @@
 																	{#if viewDraft.view_type === 'calendar'}
 																		<label class="space-y-1">
 																			<span
-																				class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																				class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.calendarExceptionDate')}</span
 																			>
 
@@ -16632,7 +16632,7 @@
 																						...viewDraft,
 																						calendarExceptionDate: inputValue(event)
 																					})}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																			/>
 																		</label>
 																	{/if}
@@ -16653,20 +16653,20 @@
 
 																<div class="space-y-1">
 																	<div
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																	>
 																		{$t('forms.calendarExceptions')}
 																	</div>
 
 																	{#if viewDraftCalendarExceptionItems().length === 0}
-																		<p class="text-xs text-slate-500 dark:text-slate-400">
+																		<p class="text-xs text-fg-muted">
 																			{$t('forms.calendarNoExceptions')}
 																		</p>
 																	{:else}
 																		<div class="flex flex-wrap gap-2">
 																			{#each viewDraftCalendarExceptionItems() as exception (`${exception.recordId}:${exception.date}`)}
 																				<span
-																					class="inline-flex max-w-full items-center gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+																					class="inline-flex max-w-full items-center gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs text-fg dark:bg-slate-800"
 																				>
 																					<span class="truncate"
 																						>{exception.label} · {exception.date}</span
@@ -16674,7 +16674,7 @@
 
 																					<button
 																						type="button"
-																						class="rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+																						class="rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-fg dark:hover:bg-slate-700"
 																						onclick={() =>
 																							removeViewDraftCalendarException(
 																								exception.recordId,
@@ -16693,7 +16693,7 @@
 															{#if viewDraft.view_type === 'card'}
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardLayout')}</span
 																	>
 
@@ -16704,7 +16704,7 @@
 																				...viewDraft,
 																				cardLayout: selectValue(event) as CardLayoutMode
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="standard"
 																			>{$t('forms.cardLayoutStandard')}</option
@@ -16717,7 +16717,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardTitleField')}</span
 																	>
 
@@ -16749,7 +16749,7 @@
 																						: viewDraft.cardFieldKeys
 																			};
 																		}}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.recordTitle')}</option>
 
@@ -16761,7 +16761,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardSubtitleField')}</span
 																	>
 
@@ -16776,7 +16776,7 @@
 																						? ''
 																						: viewDraft.cardBadgeField
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16788,7 +16788,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardBadgeField')}</span
 																	>
 
@@ -16799,7 +16799,7 @@
 																				...viewDraft,
 																				cardBadgeField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16811,7 +16811,7 @@
 
 																<label class="space-y-1">
 																	<span
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardCoverField')}</span
 																	>
 
@@ -16822,7 +16822,7 @@
 																				...viewDraft,
 																				cardCoverField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16836,11 +16836,11 @@
 
 														{#if viewDraft.view_type === 'card' && viewDraftCardFields().length > 0}
 															<div
-																class="space-y-2 rounded-md border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
+																class="space-y-2 rounded-md border border-line bg-white p-3 dark:bg-slate-900"
 															>
 																<div>
 																	<h5
-																		class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-semibold uppercase text-fg-muted"
 																	>
 																		{$t('forms.cardFieldOrder')}
 																	</h5>
@@ -16849,20 +16849,20 @@
 																<div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
 																	{#each viewDraftCardFields() as field, fieldIndex}
 																		<div
-																			class="flex min-w-0 items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950"
+																			class="flex min-w-0 items-center justify-between gap-2 rounded-md border border-line bg-slate-50 px-2 py-1.5 text-sm dark:bg-slate-950"
 																			data-card-field-order={`${fieldIndex + 1}:${field.key}`}
 																		>
 																			<span
-																				class="min-w-0 truncate text-slate-700 dark:text-slate-200"
+																				class="min-w-0 truncate text-fg"
 																				>{fieldIndex + 1}. {fieldLabel(field)}</span
 																			>
 
 																			<div
-																				class="flex shrink-0 items-center rounded-md border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-900"
+																				class="flex shrink-0 items-center rounded-md border border-line bg-white p-0.5 dark:bg-slate-900"
 																			>
 																				<button
 																					type="button"
-																					class="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																					class="rounded p-1 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																					disabled={fieldIndex === 0}
 																					onclick={() => moveViewDraftCardField(fieldIndex, -1)}
 																					aria-label={`${$t('forms.moveCardFieldUp')} ${fieldLabel(field)}`}
@@ -16875,7 +16875,7 @@
 
 																				<button
 																					type="button"
-																					class="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																					class="rounded p-1 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																					disabled={fieldIndex >= viewDraftCardFields().length - 1}
 																					onclick={() => moveViewDraftCardField(fieldIndex, 1)}
 																					aria-label={`${$t('forms.moveCardFieldDown')} ${fieldLabel(field)}`}
@@ -16894,16 +16894,16 @@
 
 														{#if viewDraftKanbanWipOptions().length > 0}
 															<div
-																class="space-y-3 rounded-md border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
+																class="space-y-3 rounded-md border border-line bg-white p-3 dark:bg-slate-900"
 															>
 																<div>
 																	<h5
-																		class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-semibold uppercase text-fg-muted"
 																	>
 																		{$t('forms.kanbanWipPolicy')}
 																	</h5>
 
-																	<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+																	<p class="mt-1 text-xs text-fg-muted">
 																		{$t('forms.kanbanWipPolicyDescription')}
 																	</p>
 																</div>
@@ -16912,7 +16912,7 @@
 																	{#each viewDraftKanbanWipOptions() as option}
 																		<label class="space-y-1">
 																			<span
-																				class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																				class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.kanbanWipLimitFor', {
 																					values: { option }
 																				})}</span
@@ -16927,7 +16927,7 @@
 																				value={viewDraft.wipLimits[option] ?? ''}
 																				oninput={(event) =>
 																					setViewDraftWipLimit(option, inputValue(event))}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																			/>
 																		</label>
 																	{/each}
@@ -16939,32 +16939,32 @@
 											</div>
 
 											<details
-												class="rounded-md border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+												class="rounded-md border border-line bg-white dark:bg-slate-900"
 												open
 												data-view-columns-disclosure
 											>
 												<summary
 													class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 marker:hidden"
 												>
-													<span class="text-sm font-semibold text-slate-900 dark:text-slate-100"
+													<span class="text-sm font-semibold text-fg"
 														>{$t('forms.visibleColumns')}</span
 													>
 
-													<span class="text-xs text-slate-500 dark:text-slate-400"
+													<span class="text-xs text-fg-muted"
 														>{$t('forms.selectedColumns', {
 															values: { count: viewDraft.columns.length }
 														})}</span
 													>
 												</summary>
 
-												<div class="border-t border-slate-100 p-3 dark:border-slate-800">
+												<div class="border-t border-line p-3">
 													<div class="mb-2 flex items-center justify-between gap-3">
 														<span
-															class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.visibleColumns')}</span
 														>
 
-														<span class="text-xs text-slate-500 dark:text-slate-400"
+														<span class="text-xs text-fg-muted"
 															>{$t('forms.selectedColumns', {
 																values: { count: viewDraft.columns.length }
 															})}</span
@@ -16974,7 +16974,7 @@
 													<div class="grid gap-2 sm:grid-cols-2">
 														{#each fields.filter((field) => field.visibility?.list !== false) as field}
 															<div
-																class="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+																class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
 															>
 																<input
 																	type="checkbox"
@@ -16994,7 +16994,7 @@
 
 																{#if memberFieldHidden(field)}
 																	<span
-																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
 																		data-view-column-permission-hidden={field.key}
 																		>{$t('forms.fieldHiddenBadge')}</span
 																	>
@@ -17002,7 +17002,7 @@
 
 																{#if memberFieldLocked(field)}
 																	<span
-																		class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																		class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
 																		data-view-column-permission-locked={field.key}
 																		>{$t('forms.fieldLockedBadge')}</span
 																	>
@@ -17062,12 +17062,12 @@
 												<div>
 													<h3
 														id="record-editor-title"
-														class="text-base font-semibold text-slate-950 dark:text-slate-100"
+														class="text-base font-semibold text-fg"
 													>
 														{editingRecordId ? $t('forms.editRecord') : $t('forms.newRecord')}
 													</h3>
 
-													<span class="text-xs text-slate-500 dark:text-slate-400"
+													<span class="text-xs text-fg-muted"
 														>{$t('forms.decimalHint')}</span
 													>
 												</div>
@@ -17081,12 +17081,12 @@
 											{@render formsSessionNotice()}
 											<div class="grid gap-3 md:grid-cols-2">
 												<label class="space-y-1 md:col-span-2">
-													<span class="text-sm font-medium text-slate-700 dark:text-slate-300"
+													<span class="text-sm font-medium text-fg"
 														>{$t('forms.titleOverride')}</span
 													>
 
 													<input
-														class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+														class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 														bind:value={recordTitle}
 														placeholder={selectedForm.title_template}
 													/>
@@ -17109,7 +17109,7 @@
 															: undefined}
 													>
 														<span
-															class="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300"
+															class="flex flex-wrap items-center gap-2 text-sm font-medium text-fg"
 														>
 															<span>{fieldLabel(field)}</span>
 
@@ -17119,7 +17119,7 @@
 
 															{#if memberFieldHidden(field)}
 																<span
-																	class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																	class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium uppercase text-warning dark:bg-amber-950/50"
 																	data-record-edit-permission-hidden={field.key}
 																	>{$t('forms.fieldHiddenBadge')}</span
 																>
@@ -17127,7 +17127,7 @@
 
 															{#if memberFieldLocked(field)}
 																<span
-																	class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																	class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium uppercase text-fg-muted dark:bg-slate-800"
 																	data-record-edit-permission-locked={field.key}
 																	>{$t('forms.fieldLockedBadge')}</span
 																>
@@ -17153,7 +17153,7 @@
 																value={draftString(field.key)}
 																disabled={fieldReadOnlyByCondition(field, recordDraft)}
 																onchange={(event) => setDraftValue(field.key, selectValue(event))}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 															>
 																<option value="">{$t('forms.selectPlaceholder')}</option>
 
@@ -17180,7 +17180,7 @@
 															>
 																{#each recordSelectOptions(field, recordDraft) as option}
 																	<label
-																		class="flex items-start gap-2 text-slate-700 dark:text-slate-300"
+																		class="flex items-start gap-2 text-fg"
 																		data-option-description={optionDescription(field, option) ||
 																			undefined}
 																		data-option-group={optionGroup(field, option) || undefined}
@@ -17212,7 +17212,7 @@
 
 																			{#if optionDescription(field, option)}
 																				<span
-																					class="block text-xs text-slate-500 dark:text-slate-400"
+																					class="block text-xs text-fg-muted"
 																					>{optionDescription(field, option)}</span
 																				>
 																			{/if}
@@ -17226,7 +17226,7 @@
 																disabled={fieldReadOnlyByCondition(field, recordDraft) ||
 																	relationTargetsLoading}
 																onchange={(event) => setDraftValue(field.key, selectValue(event))}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 															>
 																<option value="">
 																	{relationTargetsLoading
@@ -17242,7 +17242,7 @@
 															</select>
 														{:else if fieldType(field) === 'child_table'}
 															<div
-																class="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300"
+																class="rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg-muted dark:bg-slate-800/60"
 																data-child-table-field={field.key}
 															>
 																{$t('forms.childRecords')}
@@ -17253,7 +17253,7 @@
 																disabled={fieldReadOnlyByCondition(field, recordDraft) ||
 																	workspaceMembersLoading}
 																onchange={(event) => setDraftValue(field.key, selectValue(event))}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 															>
 																<option value="">
 																	{workspaceMembersLoading
@@ -17272,7 +17272,7 @@
 																<div class="flex gap-2">
 																	<input
 																		type="url"
-																		class="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																		class="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																		value={attachmentUrl(field)}
 																		placeholder={fieldPlaceholder(field) ||
 																			$t('forms.attachmentUrlPlaceholder')}
@@ -17297,7 +17297,7 @@
 
 																<div class="flex flex-wrap items-center gap-2">
 																	<label
-																		class="inline-flex cursor-pointer items-center rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="inline-flex cursor-pointer items-center rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
 																	>
 																		<FileUp class="mr-2 h-4 w-4" aria-hidden="true" />
 																		{$t('forms.attachmentChooseFile')}
@@ -17315,7 +17315,7 @@
 																	</label>
 
 																	{#if field.attachment?.max_size_mb}
-																		<span class="text-xs text-slate-500 dark:text-slate-400"
+																		<span class="text-xs text-fg-muted"
 																			>{$t('forms.attachmentMaxSizeLabel', {
 																				values: { size: field.attachment.max_size_mb }
 																			})}</span
@@ -17324,7 +17324,7 @@
 																</div>
 
 																{#if !editingRecordId}
-																	<p class="text-xs text-slate-500 dark:text-slate-400">
+																	<p class="text-xs text-fg-muted">
 																		{$t('forms.attachmentSaveRecordFirst')}
 																	</p>
 																{/if}
@@ -17333,7 +17333,7 @@
 																	<img
 																		src={attachmentPreviewUrl(field)}
 																		alt={fieldLabel(field)}
-																		class="h-24 w-full rounded-md border border-slate-200 object-cover dark:border-slate-700"
+																		class="h-24 w-full rounded-md border border-line object-cover"
 																		data-attachment-preview={field.key}
 																	/>
 																{/if}
@@ -17342,32 +17342,32 @@
 																	<div class="space-y-2">
 																		{#each fieldAttachments(field.key) as attachment}
 																			<div
-																				class="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950"
+																				class="flex flex-wrap items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-xs dark:bg-slate-950"
 																				data-attachment-item={attachment.id}
 																			>
 																				{#if attachment.url && attachmentIsPreviewableImage(attachment)}
 																					<img
 																						src={attachmentThumbnailUrl(attachment)}
 																						alt={attachment.file_name}
-																						class="h-12 w-12 shrink-0 rounded border border-slate-200 object-cover dark:border-slate-700"
+																						class="h-12 w-12 shrink-0 rounded border border-line object-cover"
 																						data-attachment-thumbnail={attachment.id}
 																					/>
 																				{:else}
 																					<FileText
-																						class="h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400"
+																						class="h-4 w-4 shrink-0 text-fg-muted"
 																						aria-hidden="true"
 																					/>
 																				{/if}
 
 																				<div class="min-w-0 flex-1">
 																					<div
-																						class="truncate font-medium text-slate-900 dark:text-slate-100"
+																						class="truncate font-medium text-fg"
 																					>
 																						{attachment.file_name}
 																					</div>
 
 																					<div
-																						class="truncate font-mono text-[11px] text-slate-500 dark:text-slate-400"
+																						class="truncate font-mono text-[11px] text-fg-muted"
 																					>
 																						{attachment.content_type || attachment.storage_key}
 																					</div>
@@ -17388,7 +17388,7 @@
 																					<a
 																						href={attachmentSignedUrl(attachment) || undefined}
 																						download={attachment.file_name}
-																						class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+																						class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 																						data-attachment-download={attachment.id}
 																						data-attachment-signed-download={attachmentSignedUrl(
 																							attachment
@@ -17414,7 +17414,7 @@
 															</div>
 														{:else if fieldType(field) === 'textarea' || fieldType(field) === 'rich_text'}
 															<textarea
-																class="min-h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="min-h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																value={draftString(field.key)}
 																placeholder={fieldPlaceholder(field)}
 																readonly={fieldReadOnlyByCondition(field, recordDraft)}
@@ -17474,14 +17474,14 @@
 																		<img
 																			src={signatureImageValue(recordDraft, field.key)}
 																			alt={fieldLabel(field)}
-																			class="h-10 max-w-48 rounded border border-slate-200 bg-white object-contain dark:border-slate-700"
+																			class="h-10 max-w-48 rounded border border-line bg-white object-contain"
 																			data-signature-preview={field.key}
 																		/>
 																	{/if}
 																</div>
 
 																<textarea
-																	class="min-h-16 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																	class="min-h-16 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
 																	value={draftString(field.key)}
 																	placeholder={fieldPlaceholder(field)}
 																	readonly={fieldReadOnlyByCondition(field, recordDraft)}
@@ -17492,7 +17492,7 @@
 														{:else if fieldType(field) === 'autonumber'}
 															<input
 																type="text"
-																class="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-400"
+																class="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-fg-muted dark:border-slate-600 dark:bg-slate-800/60"
 																value={draftString(field.key)}
 																placeholder={$t('forms.autonumberGeneratedAfterSave')}
 																readonly
@@ -17522,7 +17522,7 @@
 																	: ['amount', 'number'].includes(fieldType(field))
 																		? '0.01'
 																		: undefined}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																value={draftString(field.key)}
 																placeholder={fieldPlaceholder(field)}
 																readonly={fieldReadOnlyByCondition(field, recordDraft)}
@@ -17535,13 +17535,13 @@
 														{/if}
 
 														{#if field.help_text}
-															<span class="block text-xs text-slate-500 dark:text-slate-400"
+															<span class="block text-xs text-fg-muted"
 																>{field.help_text}</span
 															>
 														{/if}
 
 														{#if fieldType(field) === 'multi_select' && fieldOptions(field).length > 0}
-															<span class="block text-xs text-slate-500 dark:text-slate-400"
+															<span class="block text-xs text-fg-muted"
 																>{$t('forms.options', {
 																	values: { options: fieldOptions(field).join(', ') }
 																})}</span
@@ -17567,7 +17567,7 @@
 								{/if}
 
 								<section
-									class="w-full min-w-0 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+									class="w-full min-w-0 flex-1 overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900"
 									data-record-list-panel
 									inert={panelMode === 'sheet' && !!panelRecordId}
 								>
@@ -17645,7 +17645,7 @@
 									/>
 									{#if lastDeletedRecord}
 										<div
-											class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-slate-700 dark:bg-amber-950/30 dark:text-amber-100"
+											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
 											data-record-restore-banner={lastDeletedRecord.id}
 										>
 											<span
@@ -17674,7 +17674,7 @@
 
 									{#if focusedRecords.length > 0}
 										<div
-											class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-blue-50 px-4 py-2 text-sm text-blue-900 dark:border-slate-700 dark:bg-blue-950/30 dark:text-blue-100"
+											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-blue-50 px-4 py-2 text-sm text-blue-900 dark:bg-blue-950/30 dark:text-blue-100"
 											data-record-focus={focusedRecords.map((record) => record.id).join('|')}
 										>
 											<span class="min-w-0 truncate">
@@ -17695,14 +17695,14 @@
 									{/if}
 
 									{#if records.length === 0}
-										<div class="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+										<div class="p-8 text-center text-sm text-fg-muted">
 											<FileText class="mx-auto mb-3 h-8 w-8 text-slate-400" aria-hidden="true" />
 
 											{$t('forms.noRecords')}
 										</div>
 									{:else if viewRecords.length === 0}
 										<div
-											class="p-8 text-center text-sm text-slate-500 dark:text-slate-400"
+											class="p-8 text-center text-sm text-fg-muted"
 											data-view-empty-filter
 										>
 											<FileText class="mx-auto mb-3 h-8 w-8 text-slate-400" aria-hidden="true" />
@@ -17750,13 +17750,13 @@
 										<div class="overflow-x-auto p-4" data-view-renderer="gantt">
 											{#if !ganttTimeline.startField}
 												<div
-													class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/50 dark:text-slate-400"
+													class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-fg-muted dark:border-slate-700 dark:bg-slate-950/50"
 												>
 													{$t('forms.ganttConfigureFields')}
 												</div>
 											{:else}
 												<div
-													class="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
+													class="mb-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted"
 												>
 													<span data-gantt-start-field={ganttTimeline.startField.key}
 														>{$t('forms.ganttStartField')}: {fieldLabel(
@@ -17858,33 +17858,33 @@
 
 												{#if ganttTimeline.dates.length === 0}
 													<div
-														class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/50 dark:text-slate-400"
+														class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-fg-muted dark:border-slate-700 dark:bg-slate-950/50"
 													>
 														{$t('forms.noRecords')}
 													</div>
 												{:else}
 													<div
-														class="min-w-[980px] rounded-md border border-slate-200 bg-white text-sm dark:border-slate-700 dark:bg-slate-900"
+														class="min-w-[980px] rounded-md border border-line bg-white text-sm dark:bg-slate-900"
 														data-gantt-scale={ganttTimeline.scale}
 														data-gantt-start={ganttTimeline.dates[0]}
 														data-gantt-end={ganttTimeline.dates[ganttTimeline.dates.length - 1]}
 													>
 														<div
-															class="grid grid-cols-[180px_minmax(0,1fr)] border-b border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950"
+															class="grid grid-cols-[180px_minmax(0,1fr)] border-b border-line bg-slate-50 dark:bg-slate-950"
 														>
 															<div
-																class="px-4 py-3 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+																class="px-4 py-3 text-xs font-semibold uppercase text-fg-muted"
 															>
 																{$t('forms.records')}
 															</div>
 
 															<div
-																class="grid divide-x divide-slate-200 dark:divide-slate-700"
+																class="grid divide-x divide-line"
 																style={`grid-template-columns: repeat(${ganttTimeline.dates.length}, minmax(72px, 1fr));`}
 															>
 																{#each ganttTimeline.dates as date}
 																	<div
-																		class="px-2 py-3 text-center text-xs font-medium text-slate-500 dark:text-slate-400"
+																		class="px-2 py-3 text-center text-xs font-medium text-fg-muted"
 																		data-gantt-date={date}
 																		role="button"
 																		tabindex="0"
@@ -17900,11 +17900,11 @@
 
 														{#each ganttTimeline.lanes as lane}
 															<div
-																class="border-b border-slate-100 last:border-b-0 dark:border-slate-800"
+																class="border-b border-line last:border-b-0"
 																data-gantt-lane={lane.label}
 															>
 																<div
-																	class="bg-slate-50 px-4 py-2 text-xs font-semibold uppercase text-slate-500 dark:bg-slate-950 dark:text-slate-400"
+																	class="bg-slate-50 px-4 py-2 text-xs font-semibold uppercase text-fg-muted dark:bg-slate-950"
 																>
 																	{lane.label}
 																</div>
@@ -17920,17 +17920,17 @@
 
 																{#each lane.tasks as task}
 																	<div
-																		class="grid grid-cols-[180px_minmax(0,1fr)] items-center border-t border-slate-100 dark:border-slate-800"
+																		class="grid grid-cols-[180px_minmax(0,1fr)] items-center border-t border-line"
 																	>
 																		<div class="min-w-0 px-4 py-3">
 																			<div
-																				class="truncate font-medium text-slate-900 dark:text-slate-100"
+																				class="truncate font-medium text-fg"
 																			>
 																				{task.record.title}
 																			</div>
 
 																			<div
-																				class="mt-0.5 text-xs text-slate-500 dark:text-slate-400"
+																				class="mt-0.5 text-xs text-fg-muted"
 																			>
 																				{task.start}{task.end !== task.start
 																					? ` - ${task.end}`
@@ -17973,7 +17973,7 @@
 
 																			{#if ganttTimeline.dependencyField && task.dependencyValue && task.dependencyValue !== '-'}
 																				<div
-																					class="mt-1 truncate text-xs text-slate-500 dark:text-slate-400"
+																					class="mt-1 truncate text-xs text-fg-muted"
 																					data-gantt-dependency={task.record.id}
 																				>
 																					{$t('forms.ganttDependency')}: {task.dependencyValue}
@@ -18002,7 +18002,7 @@
 																			style={`grid-template-columns: repeat(${ganttTimeline.dates.length}, minmax(72px, 1fr));`}
 																		>
 																			<div
-																				class="flex items-center justify-between gap-2 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-opacity dark:bg-emerald-500 dark:text-slate-950"
+																				class="flex items-center justify-between gap-2 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition-opacity dark:bg-emerald-500 dark:text-slate-950"
 																				style={`grid-column: ${task.startOffset + 1} / span ${task.span};`}
 																				draggable="true"
 																				role="button"
@@ -18033,7 +18033,7 @@
 																				{#if ganttTimeline.endField}
 																					<button
 																						type="button"
-																						class="shrink-0 rounded bg-white/20 px-1.5 py-0.5 text-[11px] leading-none text-white hover:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white dark:text-slate-950 dark:focus:ring-slate-950"
+																						class="shrink-0 rounded bg-white/20 px-1.5 py-0.5 text-[11px] leading-none text-white hover:bg-white/30 dark:text-slate-950"
 																						onclick={(event) => {
 																							event.stopPropagation();
 																							extendGanttTaskEnd(task);
@@ -18057,13 +18057,13 @@
 										<div class="overflow-x-auto p-4" data-view-renderer="pivot">
 											{#if !pivotTable.rowField || !pivotTable.columnField || !pivotTable.valueField}
 												<div
-													class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/50 dark:text-slate-400"
+													class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-fg-muted dark:border-slate-700 dark:bg-slate-950/50"
 												>
 													{$t('forms.pivotConfigureFields')}
 												</div>
 											{:else}
 												<div
-													class="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
+													class="mb-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted"
 												>
 													<span data-pivot-row-field={pivotTable.rowField.key}
 														>{$t('forms.pivotRowField')}: {fieldLabel(pivotTable.rowField)}</span
@@ -18231,7 +18231,7 @@
 												<div class="mb-3 flex flex-wrap justify-end gap-2">
 													<button
 														type="button"
-														class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+														class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
 														onclick={copyPivotTableMatrix}
 														data-pivot-copy-table
 														data-pivot-table-copied={copiedPivotTableMatrix ? 'true' : undefined}
@@ -18242,7 +18242,7 @@
 
 													<button
 														type="button"
-														class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+														class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
 														onclick={exportPivotTableMatrixCsv}
 														data-pivot-export-table
 														data-pivot-table-exported={exportedPivotTableMatrix
@@ -18255,10 +18255,10 @@
 												</div>
 
 												<table
-													class="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700"
+													class="min-w-full divide-y divide-line text-sm"
 												>
 													<thead
-														class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-900 dark:text-slate-400"
+														class="bg-slate-50 text-left text-xs uppercase tracking-wide text-fg-muted dark:bg-slate-900"
 													>
 														<tr>
 															<th class="px-4 py-3 font-medium">
@@ -18319,14 +18319,14 @@
 														</tr>
 													</thead>
 
-													<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+													<tbody class="divide-y divide-line">
 														{#each pivotTable.rows as row}
 															<tr
 																class="hover:bg-slate-50 dark:hover:bg-slate-800/70"
 																data-pivot-row={row.label}
 															>
 																<th
-																	class="px-4 py-3 text-left font-medium text-slate-900 dark:text-slate-100"
+																	class="px-4 py-3 text-left font-medium text-fg"
 																>
 																	<div class="flex flex-wrap items-center gap-1.5">
 																		<span>{row.label}</span>
@@ -18353,12 +18353,12 @@
 																	{@const cellValue = row.cells[column.key] ?? 0}
 
 																	<td
-																		class="px-4 py-3 text-right text-slate-700 dark:text-slate-300"
+																		class="px-4 py-3 text-right text-fg"
 																		data-pivot-cell={`${row.label}:${column.label}`}
 																	>
 																		<button
 																			type="button"
-																			class="flex w-full flex-col items-end rounded px-2 py-1 text-right font-medium text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="flex w-full flex-col items-end rounded px-2 py-1 text-right font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
 																			style={pivotCellHeatmapStyle(cellValue, pivotTable)}
 																			onclick={() => selectPivotDrilldown(row, column)}
 																			data-pivot-cell-button={`${row.label}:${column.label}`}
@@ -18378,7 +18378,7 @@
 
 																			{#if pivotTable.showCounts}
 																				<span
-																					class="mt-0.5 text-[11px] font-normal text-slate-500 dark:text-slate-400"
+																					class="mt-0.5 text-[11px] font-normal text-fg-muted"
 																					data-pivot-cell-count={`${row.label}:${column.label}`}
 																					data-record-count={row.cellCounts[column.key] ?? 0}
 																					>{$t('forms.pivotCellRecordCount', {
@@ -18406,7 +18406,7 @@
 
 																		<button
 																			type="button"
-																			class="mt-1 inline-flex items-center rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+																			class="mt-1 inline-flex items-center rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
 																			onclick={() => copyPivotCellValue(row, column, cellValue)}
 																			aria-label={$t('forms.copyPivotCellValue')}
 																			data-pivot-cell-copy={`${row.label}:${column.label}`}
@@ -18421,12 +18421,12 @@
 
 																{#if pivotShowRowTotals(pivotTable.totalsMode)}
 																	<td
-																		class="px-4 py-3 text-right font-semibold text-slate-900 dark:text-slate-100"
+																		class="px-4 py-3 text-right font-semibold text-fg"
 																		data-pivot-row-total={row.label}
 																	>
 																		<button
 																			type="button"
-																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
 																			onclick={() => selectPivotDrilldown(row, null)}
 																			data-pivot-row-total-button={row.label}
 																			>{formatPivotTotalDisplayValue(
@@ -18443,7 +18443,7 @@
 
 													{#if pivotShowColumnTotals(pivotTable.totalsMode)}
 														<tfoot
-															class="bg-slate-50 text-sm font-semibold text-slate-900 dark:bg-slate-900 dark:text-slate-100"
+															class="bg-slate-50 text-sm font-semibold text-fg dark:bg-slate-900"
 														>
 															<tr>
 																<th class="px-4 py-3 text-left">{$t('forms.pivotTotal')}</th>
@@ -18455,7 +18455,7 @@
 																	>
 																		<button
 																			type="button"
-																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
 																			onclick={() => selectPivotDrilldown(null, column)}
 																			data-pivot-column-total-button={column.label}
 																			>{formatPivotTotalDisplayValue(
@@ -18471,7 +18471,7 @@
 																	<td class="px-4 py-3 text-right" data-pivot-grand-total>
 																		<button
 																			type="button"
-																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
 																			onclick={() => selectPivotDrilldown(null, null)}
 																			data-pivot-grand-total-button
 																			>{formatPivotTotalDisplayValue(
@@ -18489,7 +18489,7 @@
 
 												{#if pivotDrilldown}
 													<section
-														class="mt-4 rounded-md border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+														class="mt-4 rounded-md border border-line bg-white p-4 dark:bg-slate-900"
 														data-pivot-drilldown={`${pivotDrilldown.rowLabel}:${pivotDrilldown.columnLabel}`}
 														data-pivot-drilldown-copied={copiedPivotDrilldownKey ===
 														pivotDrilldownKey()
@@ -18508,12 +18508,12 @@
 														<div class="mb-3 flex items-start justify-between gap-3">
 															<div>
 																<h3
-																	class="text-sm font-semibold text-slate-900 dark:text-slate-100"
+																	class="text-sm font-semibold text-fg"
 																>
 																	{$t('forms.pivotDrilldown')}
 																</h3>
 
-																<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+																<p class="mt-1 text-xs text-fg-muted">
 																	{$t('forms.pivotDrilldownFor', {
 																		values: {
 																			row: pivotDrilldown.rowLabel,
@@ -18527,7 +18527,7 @@
 															<div class="flex shrink-0 items-center gap-2">
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
 																	onclick={copyPivotDrilldownRecordIds}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-copy-ids
@@ -18538,7 +18538,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
 																	onclick={exportPivotDrilldownRecordsCsv}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-export-csv
@@ -18553,7 +18553,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
 																	onclick={applyPivotDrilldownFilters}
 																	disabled={!canApplyPivotDrilldownFilters()}
 																	data-pivot-drilldown-apply-filters
@@ -18568,7 +18568,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
 																	onclick={focusPivotDrilldownRecords}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-focus
@@ -18579,7 +18579,7 @@
 
 																<button
 																	type="button"
-																	class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+																	class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
 																	onclick={() => (pivotDrilldown = null)}
 																	aria-label={$t('common.close')}>x</button
 																>
@@ -18587,11 +18587,11 @@
 														</div>
 
 														{#if pivotDrilldownRecords.length === 0}
-															<p class="text-sm text-slate-500 dark:text-slate-400">
+															<p class="text-sm text-fg-muted">
 																{$t('forms.pivotDrilldownEmpty')}
 															</p>
 														{:else}
-															<div class="divide-y divide-slate-100 dark:divide-slate-800">
+															<div class="divide-y divide-line">
 																{#each pivotDrilldownRecords as record}
 																	<div
 																		class="flex items-center justify-between gap-3 py-2"
@@ -18599,13 +18599,13 @@
 																	>
 																		<div class="min-w-0">
 																			<div
-																				class="truncate text-sm font-medium text-slate-900 dark:text-slate-100"
+																				class="truncate text-sm font-medium text-fg"
 																			>
 																				{record.title}
 																			</div>
 
 																			<div
-																				class="mt-0.5 text-xs text-slate-500 dark:text-slate-400"
+																				class="mt-0.5 text-xs text-fg-muted"
 																			>
 																				{record.id}
 																			</div>
@@ -18647,7 +18647,7 @@
 
 																		<button
 																			type="button"
-																			class="shrink-0 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+																			class="shrink-0 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
 																			onclick={() => selectRecord(record)}
 																			data-pivot-drilldown-open={record.id}
 																			>{$t('forms.openRecord')}</button
@@ -18662,7 +18662,7 @@
 										</div>
 									{:else if selectedViewType === 'detail'}
 										<div
-											class="divide-y divide-slate-100 dark:divide-slate-800"
+											class="divide-y divide-line"
 											data-view-renderer="detail"
 										>
 											{#each viewRecords as record}
@@ -18679,7 +18679,7 @@
 																>{record.title}</span
 															>
 
-															<span class="mt-1 block text-xs text-slate-500 dark:text-slate-400"
+															<span class="mt-1 block text-xs text-fg-muted"
 																>{$t('forms.updatedAt', {
 																	values: { date: formatDate(record.updated_at) }
 																})}</span
@@ -18713,7 +18713,7 @@
 																		: 'cursor-default list-none'}
 																>
 																	<h4
-																		class="mb-2 inline text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+																		class="mb-2 inline text-xs font-semibold uppercase text-fg-muted"
 																	>
 																		{section.title}
 																	</h4>
@@ -18721,7 +18721,7 @@
 
 																{#if section.description}
 																	<p
-																		class="mb-3 text-sm text-slate-500 dark:text-slate-400"
+																		class="mb-3 text-sm text-fg-muted"
 																		data-detail-view-section-description={`${record.id}:${section.key}`}
 																	>
 																		{section.description}
@@ -18741,13 +18741,13 @@
 																			data-detail-view-field={`${record.id}:${section.key}:${field.key}`}
 																		>
 																			<dt
-																				class="truncate text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																				class="truncate text-xs font-medium uppercase text-fg-muted"
 																			>
 																				{fieldLabel(field)}
 																			</dt>
 
 																			<dd
-																				class="mt-1 truncate text-sm text-slate-900 dark:text-slate-100"
+																				class="mt-1 truncate text-sm text-fg"
 																			>
 																				<OptionValueBadges
 																					{field}
@@ -18765,7 +18765,7 @@
 										</div>
 									{:else if selectedViewType === 'kanban'}
 										<div class="overflow-x-auto p-4" data-view-renderer="kanban">
-											<div class="mb-3 text-xs text-slate-500 dark:text-slate-400">
+											<div class="mb-3 text-xs text-fg-muted">
 												{$t('forms.viewGroupBy', {
 													values: {
 														field: kanbanGroupField
@@ -18777,10 +18777,10 @@
 
 											{#if kanbanGroupField && kanbanMoveOptions(kanbanGroupField).length > 0}
 												<div
-													class="mb-3 flex min-w-[760px] flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900"
+													class="mb-3 flex min-w-[760px] flex-wrap items-end gap-2 rounded-md border border-line bg-white p-2 dark:bg-slate-900"
 												>
-													<div class="min-w-40 flex-1 text-xs text-slate-600 dark:text-slate-400">
-														<span class="font-medium text-slate-900 dark:text-slate-100"
+													<div class="min-w-40 flex-1 text-xs text-fg-muted">
+														<span class="font-medium text-fg"
 															>{$t('forms.kanbanSelected', {
 																values: { count: selectedKanbanRecords().length }
 															})}</span
@@ -18789,7 +18789,7 @@
 
 													<label class="min-w-56 space-y-1">
 														<span
-															class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+															class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.kanbanBulkTarget', {
 																values: { field: fieldLabel(kanbanGroupField) }
 															})}</span
@@ -18798,7 +18798,7 @@
 														<select
 															value={bulkKanbanTarget}
 															onchange={(event) => (bulkKanbanTarget = selectValue(event))}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 														>
 															<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -18832,7 +18832,7 @@
 												{#each kanbanSwimlaneRows() as swimlane}
 													<section
 														class={kanbanSwimlaneField
-															? 'rounded-lg border border-slate-200 bg-slate-100/70 p-3 dark:border-slate-700 dark:bg-slate-950/40'
+															? 'rounded-lg border border-line bg-slate-100/70 p-3 dark:bg-slate-950/40'
 															: ''}
 														data-kanban-swimlane={kanbanSwimlaneField ? swimlane.label : undefined}
 														data-record-count={swimlane.records.length}
@@ -18841,7 +18841,7 @@
 															<div class="mb-3 flex items-center justify-between gap-3">
 																<div class="min-w-0">
 																	<div
-																		class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="text-xs font-medium uppercase text-fg-muted"
 																	>
 																		{$t('forms.viewSwimlaneBy', {
 																			values: { field: fieldLabel(kanbanSwimlaneField) }
@@ -18849,14 +18849,14 @@
 																	</div>
 
 																	<h4
-																		class="truncate text-sm font-semibold text-slate-900 dark:text-slate-100"
+																		class="truncate text-sm font-semibold text-fg"
 																	>
 																		{swimlane.label}
 																	</h4>
 																</div>
 
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400"
+																	class="rounded bg-white px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-900"
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: swimlane.records.length }
 																	})}</span
@@ -18870,7 +18870,7 @@
 																	class={`rounded-lg border bg-slate-50 transition-colors dark:bg-slate-950/60 ${
 																		kanbanColumnWipExceeded(group.label)
 																			? 'border-amber-300 dark:border-amber-700'
-																			: 'border-slate-200 dark:border-slate-700'
+																			: 'border-line'
 																	}`}
 																	data-record-count={group.records.length}
 																	data-kanban-column={group.label}
@@ -18880,10 +18880,10 @@
 																	ondrop={(event) => handleKanbanDrop(event, group.label)}
 																>
 																	<div
-																		class="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-2 dark:border-slate-700"
+																		class="flex items-center justify-between gap-3 border-b border-line px-3 py-2"
 																	>
 																		<h4
-																			class="truncate text-sm font-semibold text-slate-900 dark:text-slate-100"
+																			class="truncate text-sm font-semibold text-fg"
 																		>
 																			{group.label}
 																		</h4>
@@ -18891,8 +18891,8 @@
 																		<span
 																			class={`rounded px-2 py-0.5 text-xs ${
 																				kanbanColumnWipExceeded(group.label)
-																					? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200'
-																					: 'bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-400'
+																					? 'bg-amber-100 text-warning dark:bg-amber-950/60'
+																					: 'bg-white text-fg-muted dark:bg-slate-900'
 																			}`}
 																			>{kanbanWipLabel(
 																				group.label,
@@ -18904,7 +18904,7 @@
 																	<div class="space-y-2 p-2">
 																		{#each group.records as record}
 																			<article
-																				class={`rounded-md border border-slate-200 bg-white p-3 shadow-sm transition-opacity dark:border-slate-700 dark:bg-slate-900 ${draggingKanbanRecordId === record.id ? 'opacity-60' : ''}`}
+																				class={`rounded-md border border-line bg-white p-3 transition-opacity dark:bg-slate-900 ${draggingKanbanRecordId === record.id ? 'opacity-60' : ''}`}
 																				draggable={Boolean(kanbanGroupField)}
 																				data-kanban-card={record.id}
 																				role="listitem"
@@ -18955,7 +18955,7 @@
 																				<div class="mt-2 space-y-1">
 																					{#each cardFields.slice(0, 3) as field}
 																						<p
-																							class="truncate text-xs text-slate-600 dark:text-slate-400"
+																							class="truncate text-xs text-fg-muted"
 																						>
 																							<span
 																								class="inline-flex items-center gap-1 font-medium"
@@ -18964,7 +18964,7 @@
 
 																								{#if memberFieldHidden(field)}
 																									<span
-																										class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																										class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
 																										data-kanban-card-field-permission-hidden={`${record.id}:${field.key}`}
 																										>{$t('forms.fieldHiddenBadge')}</span
 																									>
@@ -18972,7 +18972,7 @@
 
 																								{#if memberFieldLocked(field)}
 																									<span
-																										class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																										class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
 																										data-kanban-card-field-permission-locked={`${record.id}:${field.key}`}
 																										>{$t('forms.fieldLockedBadge')}</span
 																									>
@@ -19016,7 +19016,7 @@
 																								kanbanGroupField,
 																								selectValue(event)
 																							)}
-																						class="mt-3 w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+																						class="mt-3 w-full rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-fg disabled:opacity-50 dark:bg-slate-950"
 																					>
 																						{#each kanbanMoveOptions(kanbanGroupField) as option}
 																							<option value={option}>{option}</option>
@@ -19036,7 +19036,7 @@
 									{:else if selectedViewType === 'calendar'}
 										<div class="overflow-x-auto p-4" data-view-renderer="calendar">
 											<div
-												class="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"
+												class="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted"
 											>
 												{$t('forms.viewDateBy', {
 													values: {
@@ -19048,7 +19048,7 @@
 
 												{#if calendarDateField && memberFieldHidden(calendarDateField)}
 													<span
-														class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+														class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
 														data-calendar-date-field-permission-hidden={calendarDateField.key}
 														>{$t('forms.fieldHiddenBadge')}</span
 													>
@@ -19056,7 +19056,7 @@
 
 												{#if calendarDateField && memberFieldLocked(calendarDateField)}
 													<span
-														class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+														class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
 														data-calendar-date-field-permission-locked={calendarDateField.key}
 														>{$t('forms.fieldLockedBadge')}</span
 													>
@@ -19094,7 +19094,7 @@
 												{#each calendarResourceRows() as resource}
 													<section
 														class={calendarResourceField
-															? 'rounded-lg border border-slate-200 bg-slate-100/70 p-3 dark:border-slate-700 dark:bg-slate-950/40'
+															? 'rounded-lg border border-line bg-slate-100/70 p-3 dark:bg-slate-950/40'
 															: ''}
 														data-calendar-resource={calendarResourceField
 															? resource.label
@@ -19105,7 +19105,7 @@
 															<div class="mb-3 flex items-center justify-between gap-3">
 																<div class="min-w-0">
 																	<div
-																		class="flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																		class="flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-fg-muted"
 																	>
 																		{$t('forms.viewCalendarResourceBy', {
 																			values: { field: fieldLabel(calendarResourceField) }
@@ -19113,7 +19113,7 @@
 
 																		{#if memberFieldHidden(calendarResourceField)}
 																			<span
-																				class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																				class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-warning dark:bg-amber-950/50"
 																				data-calendar-resource-field-permission-hidden={calendarResourceField.key}
 																				>{$t('forms.fieldHiddenBadge')}</span
 																			>
@@ -19121,7 +19121,7 @@
 
 																		{#if memberFieldLocked(calendarResourceField)}
 																			<span
-																				class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																				class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-fg-muted dark:bg-slate-800"
 																				data-calendar-resource-field-permission-locked={calendarResourceField.key}
 																				>{$t('forms.fieldLockedBadge')}</span
 																			>
@@ -19145,14 +19145,14 @@
 																	</div>
 
 																	<h4
-																		class="truncate text-sm font-semibold text-slate-900 dark:text-slate-100"
+																		class="truncate text-sm font-semibold text-fg"
 																	>
 																		{resource.label}
 																	</h4>
 																</div>
 
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400"
+																	class="rounded bg-white px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-900"
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: resource.records.length }
 																	})}</span
@@ -19170,15 +19170,15 @@
 															>
 																{#each calendarAgendaGroups(resource) as group}
 																	<section
-																		class="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+																		class="rounded-lg border border-line bg-white dark:bg-slate-900"
 																		data-calendar-agenda-date={group.date}
 																		data-record-count={group.records.length}
 																	>
 																		<div
-																			class="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-700"
+																			class="flex items-center justify-between gap-2 border-b border-line px-3 py-2"
 																		>
 																			<h4
-																				class="truncate text-sm font-semibold text-slate-900 dark:text-slate-100"
+																				class="truncate text-sm font-semibold text-fg"
 																			>
 																				{group.label}
 																			</h4>
@@ -19186,7 +19186,7 @@
 																			<div class="flex shrink-0 items-center gap-1">
 																				<button
 																					type="button"
-																					class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																					class="rounded-md p-1.5 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																					onclick={() =>
 																						applyCalendarBucketFilters(group.date, resource)}
 																					disabled={!canApplyCalendarBucketFilters(
@@ -19204,7 +19204,7 @@
 																				>
 
 																				<span
-																					class="rounded bg-slate-50 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-950 dark:text-slate-400"
+																					class="rounded bg-slate-50 px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-950"
 																					>{$t('forms.groupRecordCount', {
 																						values: { count: group.records.length }
 																					})}</span
@@ -19212,7 +19212,7 @@
 																			</div>
 																		</div>
 
-																		<div class="divide-y divide-slate-100 dark:divide-slate-800">
+																		<div class="divide-y divide-line">
 																			{#each group.records as occurrence (occurrence.key)}
 																				{@const record = occurrence.record}
 
@@ -19236,13 +19236,13 @@
 																						: undefined}
 																				>
 																					<div
-																						class="min-w-0 text-xs font-medium text-slate-500 dark:text-slate-400"
+																						class="min-w-0 text-xs font-medium text-fg-muted"
 																					>
 																						<div class="truncate">{occurrence.startDate}</div>
 
 																						{#if occurrence.spanDays > 1}
 																							<div
-																								class="mt-1 truncate text-emerald-700 dark:text-emerald-300"
+																								class="mt-1 truncate text-success"
 																							>
 																								{$t('forms.calendarDateSpan', {
 																									values: {
@@ -19261,12 +19261,12 @@
 																						aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 																					>
 																						<span
-																							class="block truncate text-sm font-semibold text-slate-900 dark:text-slate-100"
+																							class="block truncate text-sm font-semibold text-fg"
 																							>{record.title}</span
 																						>
 
 																						<span
-																							class="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400"
+																							class="mt-0.5 block truncate text-xs text-fg-muted"
 																						>
 																							{visibleFields[0]
 																								? recordDisplay(record, visibleFields[0])
@@ -19300,7 +19300,7 @@
 																					<div class="flex items-center justify-end gap-1">
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																							onclick={() =>
 																								shiftCalendarOccurrence(occurrence, -1)}
 																							disabled={updatingCalendarRecordId === record.id ||
@@ -19318,7 +19318,7 @@
 
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																							onclick={() => shiftCalendarOccurrence(occurrence, 1)}
 																							disabled={updatingCalendarRecordId === record.id ||
 																								!canShiftCalendarOccurrence(occurrence)}
@@ -19335,7 +19335,7 @@
 
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
 																							onclick={() => copyCalendarSchedule(occurrence)}
 																							aria-label={$t('forms.copyCalendarSchedule')}
 																							title={$t('forms.copyCalendarSchedule')}
@@ -19377,7 +19377,7 @@
 															>
 																{#each resource.groups as group}
 																	<section
-																		class="min-h-48 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950/60"
+																		class="min-h-48 rounded-lg border border-line bg-slate-50 dark:bg-slate-950/60"
 																		data-calendar-date={group.date}
 																		data-record-count={group.records.length}
 																		role="list"
@@ -19385,10 +19385,10 @@
 																		ondrop={(event) => handleCalendarDrop(event, group.date)}
 																	>
 																		<div
-																			class="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-700"
+																			class="flex items-center justify-between gap-2 border-b border-line px-3 py-2"
 																		>
 																			<h4
-																				class="truncate text-sm font-semibold text-slate-900 dark:text-slate-100"
+																				class="truncate text-sm font-semibold text-fg"
 																			>
 																				{group.label}
 																			</h4>
@@ -19396,7 +19396,7 @@
 																			<div class="flex shrink-0 items-center gap-1">
 																				<button
 																					type="button"
-																					class="rounded-md p-1.5 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																					class="rounded-md p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																					onclick={() =>
 																						applyCalendarBucketFilters(group.date, resource)}
 																					disabled={!canApplyCalendarBucketFilters(
@@ -19414,7 +19414,7 @@
 																				>
 
 																				<span
-																					class="rounded bg-white px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400"
+																					class="rounded bg-white px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-900"
 																					>{$t('forms.groupRecordCount', {
 																						values: { count: group.records.length }
 																					})}</span
@@ -19427,7 +19427,7 @@
 																				{@const record = occurrence.record}
 
 																				<article
-																					class={`rounded-md border border-slate-200 bg-white p-3 shadow-sm transition-opacity dark:border-slate-700 dark:bg-slate-900 ${draggingCalendarRecordId === record.id ? 'opacity-60' : ''}`}
+																					class={`rounded-md border border-line bg-white p-3 transition-opacity dark:bg-slate-900 ${draggingCalendarRecordId === record.id ? 'opacity-60' : ''}`}
 																					draggable={Boolean(calendarDateField) &&
 																						!occurrence.recurring}
 																					data-calendar-card={record.id}
@@ -19466,7 +19466,7 @@
 																							>
 
 																							<span
-																								class="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400"
+																								class="mt-0.5 block truncate text-xs text-fg-muted"
 																							>
 																								{visibleFields[0]
 																									? recordDisplay(record, visibleFields[0])
@@ -19493,7 +19493,7 @@
 																						<div class="flex shrink-0 items-center gap-1">
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																								class="inline-flex items-center rounded-md p-1 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																								onclick={() =>
 																									shiftCalendarOccurrence(occurrence, -1)}
 																								disabled={updatingCalendarRecordId === record.id ||
@@ -19511,7 +19511,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																								class="inline-flex items-center rounded-md p-1 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
 																								onclick={() =>
 																									shiftCalendarOccurrence(occurrence, 1)}
 																								disabled={updatingCalendarRecordId === record.id ||
@@ -19529,7 +19529,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																								class="inline-flex items-center rounded-md p-1 text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
 																								onclick={() => copyCalendarSchedule(occurrence)}
 																								aria-label={$t('forms.copyCalendarSchedule')}
 																								title={$t('forms.copyCalendarSchedule')}
@@ -19566,7 +19566,7 @@
 																							{#if calendarDateField && ['date', 'datetime'].includes(calendarDateField.type ?? 'text')}
 																								<label class="block space-y-1">
 																									<span
-																										class="text-[11px] font-medium uppercase text-slate-500 dark:text-slate-400"
+																										class="text-[11px] font-medium uppercase text-fg-muted"
 																										>{$t('forms.calendarSeriesDate')}</span
 																									>
 
@@ -19623,14 +19623,14 @@
 																									calendarDateField,
 																									inputValue(event)
 																								)}
-																							class="mt-3 w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+																							class="mt-3 w-full rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-fg disabled:opacity-50 dark:bg-slate-950"
 																						/>
 																					{/if}
 
 																					{#if calendarDateField && calendarEndField && ['date', 'datetime'].includes(calendarEndField.type ?? 'text') && occurrence.startDate === calendarRecordIsoDate(record, calendarDateField)}
 																						<label class="mt-3 block space-y-1">
 																							<span
-																								class="text-[11px] font-medium uppercase text-slate-500 dark:text-slate-400"
+																								class="text-[11px] font-medium uppercase text-fg-muted"
 																								>{$t('forms.calendarEndDate')}</span
 																							>
 
@@ -19672,10 +19672,10 @@
 
 											<article
 												class={selectedCardLayout === 'gallery'
-													? 'overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm ring-1 ring-transparent transition-shadow hover:shadow-md dark:border-slate-700 dark:bg-slate-900'
+													? 'overflow-hidden rounded-lg border border-line bg-white ring-1 ring-transparent transition-shadow hover:shadow-md dark:bg-slate-900'
 													: selectedCardLayout === 'compact' || selectedCardLayout === 'list'
-														? 'overflow-visible rounded-md border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900'
-														: 'overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900'}
+														? 'overflow-visible rounded-md border border-line bg-white dark:bg-slate-900'
+														: 'overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900'}
 												data-card-copied={copiedCardRecordId === record.id ? record.id : undefined}
 												data-card-exported={exportedCardRecordId === record.id
 													? record.id
@@ -19743,15 +19743,15 @@
 													>
 														<span
 															class={selectedCardLayout === 'gallery'
-																? 'block truncate text-base font-semibold text-slate-950 dark:text-slate-100'
+																? 'block truncate text-base font-semibold text-fg'
 																: selectedCardLayout === 'compact' || selectedCardLayout === 'list'
-																	? 'block truncate text-sm font-semibold text-slate-950 dark:text-slate-100'
+																	? 'block truncate text-sm font-semibold text-fg'
 																	: 'block truncate font-medium text-blue-700 dark:text-blue-300'}
 															data-card-title={record.id}>{cardTitle(record)}</span
 														>
 
 														<span
-															class="mt-1 block truncate text-xs text-slate-500 dark:text-slate-400"
+															class="mt-1 block truncate text-xs text-fg-muted"
 															data-card-subtitle={record.id}>{cardSubtitle(record)}</span
 														>
 
@@ -19791,17 +19791,17 @@
 
 														<details class="group relative shrink-0" data-card-menu={record.id}>
 															<summary
-																class="inline-flex cursor-pointer list-none items-center rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																class="inline-flex cursor-pointer list-none items-center rounded-md p-1.5 text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
 																aria-label={$t('forms.cardActions')}
 																><MoreVertical class="h-4 w-4" aria-hidden="true" /></summary
 															>
 
 															<div
-																class="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+																class="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-md border border-line bg-white py-1 text-sm shadow-lg dark:bg-slate-900"
 															>
 																<button
 																	type="button"
-																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																	data-card-action={`${record.id}:open`}
 																	onclick={() => selectRecord(record)}
 																>
@@ -19811,7 +19811,7 @@
 
 																<button
 																	type="button"
-																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																	data-card-action={`${record.id}:copy-id`}
 																	onclick={() => copyRecordId(record)}
 																>
@@ -19821,7 +19821,7 @@
 
 																<button
 																	type="button"
-																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																	data-card-action={`${record.id}:export-record`}
 																	onclick={() => exportCardRecordDetails(record)}
 																>
@@ -19846,9 +19846,9 @@
 
 												<dl
 													class={selectedCardLayout === 'compact'
-														? 'grid gap-x-4 gap-y-1 border-t border-slate-100 px-3 py-2 sm:grid-cols-2 lg:grid-cols-3 dark:border-slate-800'
+														? 'grid gap-x-4 gap-y-1 border-t border-line px-3 py-2 sm:grid-cols-2 lg:grid-cols-3'
 														: selectedCardLayout === 'list'
-															? 'grid gap-x-4 gap-y-1 border-t border-slate-100 px-3 py-2 sm:grid-cols-3 xl:grid-cols-5 dark:border-slate-800'
+															? 'grid gap-x-4 gap-y-1 border-t border-line px-3 py-2 sm:grid-cols-3 xl:grid-cols-5'
 															: 'mt-4 space-y-2 px-4'}
 												>
 													{#each cardDisplayFields(record) as field}
@@ -19862,14 +19862,14 @@
 															<dt
 																class={selectedCardLayout === 'compact' ||
 																selectedCardLayout === 'list'
-																	? 'flex min-w-0 flex-wrap items-center gap-1 text-[10px] font-medium uppercase text-slate-500 dark:text-slate-400'
-																	: 'flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-slate-500 dark:text-slate-400'}
+																	? 'flex min-w-0 flex-wrap items-center gap-1 text-[10px] font-medium uppercase text-fg-muted'
+																	: 'flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-fg-muted'}
 															>
 																<span class="min-w-0 truncate">{fieldLabel(field)}</span>
 
 																{#if memberFieldHidden(field)}
 																	<span
-																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-warning dark:bg-amber-950/50"
 																		data-card-field-permission-hidden={`${record.id}:${field.key}`}
 																		>{$t('forms.fieldHiddenBadge')}</span
 																	>
@@ -19877,7 +19877,7 @@
 
 																{#if memberFieldLocked(field)}
 																	<span
-																		class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																		class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-fg-muted dark:bg-slate-800"
 																		data-card-field-permission-locked={`${record.id}:${field.key}`}
 																		>{$t('forms.fieldLockedBadge')}</span
 																	>
@@ -19900,7 +19900,7 @@
 																{/if}
 															</dt>
 
-															<dd class="truncate text-slate-900 dark:text-slate-100">
+															<dd class="truncate text-fg">
 																<OptionValueBadges {field} value={record.values[field.key]} />
 															</dd>
 														</div>
@@ -19909,18 +19909,18 @@
 
 												{#if cardEditableSelectFields.length > 0}
 													<div
-														class="mt-4 space-y-2 border-t border-slate-100 px-4 py-3 dark:border-slate-800"
+														class="mt-4 space-y-2 border-t border-line px-4 py-3"
 													>
 														{#each cardEditableSelectFields as field}
 															<label class="block space-y-1">
 																<span
-																	class="flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400"
+																	class="flex flex-wrap items-center gap-1.5 text-xs font-medium text-fg-muted"
 																>
 																	<span>{fieldLabel(field)}</span>
 
 																	{#if memberFieldHidden(field)}
 																		<span
-																			class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																			class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
 																			data-card-select-permission-hidden={`${record.id}:${field.key}`}
 																			>{$t('forms.fieldHiddenBadge')}</span
 																		>
@@ -19928,7 +19928,7 @@
 
 																	{#if memberFieldLocked(field)}
 																		<span
-																			class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																			class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
 																			data-card-select-permission-locked={`${record.id}:${field.key}`}
 																			>{$t('forms.fieldLockedBadge')}</span
 																		>
@@ -19958,7 +19958,7 @@
 																	data-card-select={`${record.id}:${field.key}`}
 																	onchange={(event) =>
 																		updateCardRecordSelectField(record, field, selectValue(event))}
-																	class="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+																	class="w-full rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-fg disabled:opacity-50 dark:bg-slate-950"
 																>
 																	{#each kanbanMoveOptions(field) as option}
 																		<option value={option}>{option}</option>
@@ -19993,7 +19993,7 @@
 													{@const collapsed = cardGroupCollapsed(group)}
 
 													<section
-														class="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950/50"
+														class="rounded-lg border border-line bg-slate-50 p-3 dark:bg-slate-950/50"
 														data-card-group={group.label}
 														data-card-group-collapsed={collapsed ? 'true' : 'false'}
 														data-record-count={group.records.length}
@@ -20009,7 +20009,7 @@
 														<div class="mb-3 flex items-center justify-between gap-3">
 															<div class="min-w-0">
 																<div
-																	class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																	class="text-xs font-medium uppercase text-fg-muted"
 																>
 																	{$t('forms.viewGroupBy', {
 																		values: { field: fieldLabel(cardGroupField) }
@@ -20017,7 +20017,7 @@
 																</div>
 
 																<h4
-																	class="truncate text-sm font-semibold text-slate-900 dark:text-slate-100"
+																	class="truncate text-sm font-semibold text-fg"
 																>
 																	{group.label}
 																</h4>
@@ -20025,7 +20025,7 @@
 
 															<div class="flex shrink-0 items-center gap-2">
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400"
+																	class="rounded bg-white px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-900"
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: group.records.length }
 																	})}</span
@@ -20033,7 +20033,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-900"
 																	aria-label={$t('forms.copyCardGroupRecordIds')}
 																	title={$t('forms.copyCardGroupRecordIds')}
 																	disabled={group.records.length === 0}
@@ -20044,7 +20044,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-900"
 																	aria-label={$t('forms.exportCardGroupRecords')}
 																	title={$t('forms.exportCardGroupRecords')}
 																	disabled={group.records.length === 0}
@@ -20055,7 +20055,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-900"
 																	aria-label={$t('forms.focusCardGroupRecords')}
 																	title={$t('forms.focusCardGroupRecords')}
 																	disabled={group.records.length === 0}
@@ -20066,7 +20066,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-900"
 																	aria-label={$t('forms.applyCardGroupFilter')}
 																	title={$t('forms.applyCardGroupFilter')}
 																	disabled={!canApplyCardGroupFilter(group)}
@@ -20081,7 +20081,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg dark:hover:bg-slate-900"
 																	aria-label={collapsed
 																		? $t('forms.expandCardGroup')
 																		: $t('forms.collapseCardGroup')}
@@ -20100,7 +20100,7 @@
 
 														{#if collapsed}
 															<p
-																class="rounded-md border border-dashed border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
+																class="rounded-md border border-dashed border-line bg-white px-3 py-2 text-xs text-fg-muted dark:bg-slate-900"
 															>
 																{$t('forms.cardGroupCollapsed', {
 																	values: { count: group.records.length }
@@ -20130,7 +20130,7 @@
 										</div>
 									{:else}
 										<div
-											class="divide-y divide-slate-100 dark:divide-slate-800"
+											class="divide-y divide-line"
 											data-view-renderer="timeline"
 											data-timeline-source={selectedTimelineSource()}
 											data-timeline-event-layout={selectedTimelineEventLayout()}
@@ -20150,19 +20150,19 @@
 										>
 											{#if selectedTimelineSource() === 'events'}
 												{#if eventsLoading}
-													<div class="px-4 py-6 text-sm text-slate-500 dark:text-slate-400">
+													<div class="px-4 py-6 text-sm text-fg-muted">
 														{$t('common.loading')}
 													</div>
 												{:else if timelineEvents.length === 0}
-													<div class="px-4 py-6 text-sm text-slate-500 dark:text-slate-400">
+													<div class="px-4 py-6 text-sm text-fg-muted">
 														{$t('forms.noRecords')}
 													</div>
 												{:else}
 													<div
-														class="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2 dark:border-slate-800"
+														class="flex items-center justify-between gap-3 border-b border-line px-4 py-2"
 														data-timeline-event-export-toolbar
 													>
-														<div class="min-w-0 text-xs text-slate-500 dark:text-slate-400">
+														<div class="min-w-0 text-xs text-fg-muted">
 															{$t('forms.groupRecordCount', {
 																values: { count: timelineEventRows.length }
 															})}
@@ -20171,7 +20171,7 @@
 														<div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 																disabled={timelineEventRows.length === 0}
 																onclick={() => copyTimelineEventIds(timelineEventRows)}
 																data-timeline-copy-event-ids
@@ -20182,7 +20182,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 																disabled={timelineEventAggregateKeys(timelineEventRows).length ===
 																	0}
 																onclick={() => copyTimelineAggregateIds(timelineEventRows)}
@@ -20194,7 +20194,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 																disabled={timelineEventLinkedRecordIds(timelineEventRows).length ===
 																	0}
 																onclick={() => focusTimelineEventRecords(timelineEventRows)}
@@ -20206,7 +20206,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 																disabled={timelineEventRows.length === 0}
 																onclick={() => exportTimelineEventsJson(timelineEventRows)}
 																data-timeline-export-events-json
@@ -20217,7 +20217,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
 																disabled={timelineEventRows.length === 0}
 																onclick={() => exportTimelineEventsCsv(timelineEventRows)}
 																data-timeline-export-events-csv
@@ -20238,23 +20238,23 @@
 															data-timeline-event-type={event.event_type}
 															data-timeline-event-pinned={pinned ? 'true' : 'false'}
 														>
-															<div class="text-xs text-slate-500 dark:text-slate-400">
+															<div class="text-xs text-fg-muted">
 																{formatDate(event.created_at)}
 															</div>
 
 															<div
-																class="min-w-0 border-l border-slate-200 pl-4 dark:border-slate-700"
+																class="min-w-0 border-l border-line pl-4"
 															>
 																<div class="flex items-start justify-between gap-3">
 																	<div class="min-w-0">
 																		<span
-																			class="block truncate font-medium text-slate-900 dark:text-slate-100"
+																			class="block truncate font-medium text-fg"
 																			data-timeline-event-title={event.id}
 																			>{timelineEventTitle(event)}</span
 																		>
 
 																		<span
-																			class="mt-1 block truncate text-xs text-slate-500 dark:text-slate-400"
+																			class="mt-1 block truncate text-xs text-fg-muted"
 																			data-timeline-event-subtitle={event.id}
 																			>{timelineEventSubtitle(event)}</span
 																		>
@@ -20262,13 +20262,13 @@
 
 																	<div class="flex shrink-0 items-center gap-2">
 																		<span
-																			class="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																			class="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-fg-muted dark:bg-slate-800"
 																			>{event.event_type}</span
 																		>
 
 																		{#if pinned}
 																			<span
-																				class="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																				class="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-warning dark:bg-amber-950/50"
 																				>{$t('forms.timelineEventPinnedBadge')}</span
 																			>
 																		{/if}
@@ -20288,7 +20288,7 @@
 																				: undefined}
 																		>
 																			<summary
-																				class="inline-flex cursor-pointer list-none items-center rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+																				class="inline-flex cursor-pointer list-none items-center rounded-md p-1 text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
 																				aria-label={$t('forms.timelineEventActions')}
 																				><MoreVertical
 																					class="h-4 w-4"
@@ -20297,11 +20297,11 @@
 																			>
 
 																			<div
-																				class="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+																				class="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-md border border-line bg-white py-1 text-sm shadow-lg dark:bg-slate-900"
 																			>
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-slate-800"
 																					disabled={!linkedRecord}
 																					data-timeline-event-action={`${event.id}:open-record`}
 																					onclick={() => {
@@ -20314,7 +20314,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-slate-800"
 																					disabled={!linkedRecord}
 																					data-timeline-event-action={`${event.id}:focus-record`}
 																					onclick={() => focusTimelineEventRecord(event)}
@@ -20325,7 +20325,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																					data-timeline-event-action={`${event.id}:${pinned ? 'unpin-event' : 'pin-event'}`}
 																					onclick={() => toggleTimelineEventPinned(event)}
 																				>
@@ -20338,7 +20338,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																					data-timeline-event-action={`${event.id}:filter-type`}
 																					onclick={() =>
 																						applyTimelineEventQuickFilter(event, 'type')}
@@ -20349,7 +20349,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-slate-800"
 																					disabled={!event.actor_id}
 																					data-timeline-event-action={`${event.id}:filter-actor`}
 																					onclick={() =>
@@ -20361,7 +20361,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																					data-timeline-event-action={`${event.id}:filter-aggregate`}
 																					onclick={() =>
 																						applyTimelineEventQuickFilter(event, 'aggregate')}
@@ -20372,7 +20372,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																					data-timeline-event-action={`${event.id}:filter-day`}
 																					onclick={() => applyTimelineEventDayWindow(event)}
 																				>
@@ -20382,7 +20382,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																					data-timeline-event-action={`${event.id}:copy-event-id`}
 																					onclick={() =>
 																						copyTimelineEventValue(event, event.id, 'event-id')}
@@ -20393,7 +20393,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																					data-timeline-event-action={`${event.id}:copy-aggregate`}
 																					onclick={() =>
 																						copyTimelineEventValue(
@@ -20408,7 +20408,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																					data-timeline-event-action={`${event.id}:copy-details`}
 																					onclick={() =>
 																						copyTimelineEventValue(
@@ -20423,7 +20423,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
 																					data-timeline-event-action={`${event.id}:export-details`}
 																					onclick={() => exportTimelineEventDetails(event)}
 																				>
@@ -20436,28 +20436,28 @@
 																</div>
 
 																<details
-																	class="mt-3 rounded-md border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950/40"
+																	class="mt-3 rounded-md border border-line bg-slate-50 dark:bg-slate-950/40"
 																	data-timeline-event-detail={event.id}
 																	open={selectedTimelineEventLayout() === 'detailed'}
 																>
 																	<summary
-																		class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+																		class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 																	>
 																		<span>{$t('forms.timelineEventDetails')}</span>
 																		<span class="text-slate-400">{event.id}</span>
 																	</summary>
 
 																	<div
-																		class="space-y-3 border-t border-slate-200 p-3 text-xs dark:border-slate-700"
+																		class="space-y-3 border-t border-line p-3 text-xs"
 																	>
 																		<div class="grid gap-2 sm:grid-cols-2">
 																			<div>
-																				<div class="font-medium text-slate-500 dark:text-slate-400">
+																				<div class="font-medium text-fg-muted">
 																					{$t('forms.timelineEventAggregate')}
 																				</div>
 
 																				<div
-																					class="mt-0.5 break-all text-slate-900 dark:text-slate-100"
+																					class="mt-0.5 break-all text-fg"
 																					data-timeline-event-aggregate={event.id}
 																				>
 																					{event.aggregate_type}:{event.aggregate_id}
@@ -20465,12 +20465,12 @@
 																			</div>
 
 																			<div>
-																				<div class="font-medium text-slate-500 dark:text-slate-400">
+																				<div class="font-medium text-fg-muted">
 																					{$t('forms.timelineEventActor')}
 																				</div>
 
 																				<div
-																					class="mt-0.5 break-all text-slate-900 dark:text-slate-100"
+																					class="mt-0.5 break-all text-fg"
 																					data-timeline-event-actor={event.id}
 																				>
 																					{event.actor_id || '-'}
@@ -20481,13 +20481,13 @@
 																		<div class="grid gap-3 lg:grid-cols-3">
 																			<div>
 																				<div
-																					class="mb-1 font-medium text-slate-500 dark:text-slate-400"
+																					class="mb-1 font-medium text-fg-muted"
 																				>
 																					{$t('forms.timelineEventPayload')}
 																				</div>
 
 																				<pre
-																					class="max-h-44 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-slate-800 dark:bg-slate-900 dark:text-slate-100"
+																					class="max-h-44 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-fg dark:bg-slate-900"
 																					data-timeline-event-payload={event.id}>{timelineEventJson(
 																						event.payload
 																					)}</pre>
@@ -20495,13 +20495,13 @@
 
 																			<div>
 																				<div
-																					class="mb-1 font-medium text-slate-500 dark:text-slate-400"
+																					class="mb-1 font-medium text-fg-muted"
 																				>
 																					{$t('forms.timelineEventMetadata')}
 																				</div>
 
 																				<pre
-																					class="max-h-44 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-slate-800 dark:bg-slate-900 dark:text-slate-100"
+																					class="max-h-44 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-fg dark:bg-slate-900"
 																					data-timeline-event-metadata={event.id}>{timelineEventJson(
 																						event.metadata
 																					)}</pre>
@@ -20509,13 +20509,13 @@
 
 																			<div>
 																				<div
-																					class="mb-1 font-medium text-slate-500 dark:text-slate-400"
+																					class="mb-1 font-medium text-fg-muted"
 																				>
 																					{$t('forms.timelineEventSource')}
 																				</div>
 
 																				<pre
-																					class="max-h-44 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-slate-800 dark:bg-slate-900 dark:text-slate-100"
+																					class="max-h-44 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-fg dark:bg-slate-900"
 																					data-timeline-event-source-detail={event.id}>{timelineEventJson(
 																						event.source
 																					)}</pre>
@@ -20530,12 +20530,12 @@
 											{:else}
 												{#each timelineRecords as record}
 													<article class="grid grid-cols-[8rem_minmax(0,1fr)] gap-4 px-4 py-3">
-														<div class="text-xs text-slate-500 dark:text-slate-400">
+														<div class="text-xs text-fg-muted">
 															{formatDate(record.updated_at)}
 														</div>
 
 														<div
-															class="min-w-0 border-l border-slate-200 pl-4 dark:border-slate-700"
+															class="min-w-0 border-l border-line pl-4"
 														>
 															<div class="flex items-start justify-between gap-3">
 																<button
@@ -20553,7 +20553,7 @@
 																		<span class="mt-1 flex flex-wrap items-center gap-1.5">
 																			{#if memberFieldHidden(timelineTitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																					class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
 																					data-timeline-title-permission-hidden={`${record.id}:${timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldHiddenBadge')}</span
 																				>
@@ -20561,7 +20561,7 @@
 
 																			{#if memberFieldLocked(timelineTitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																					class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
 																					data-timeline-title-permission-locked={`${record.id}:${timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldLockedBadge')}</span
 																				>
@@ -20586,7 +20586,7 @@
 																	{/if}
 
 																	<span
-																		class="mt-1 block truncate text-xs text-slate-500 dark:text-slate-400"
+																		class="mt-1 block truncate text-xs text-fg-muted"
 																		data-timeline-subtitle={record.id}
 																		>{timelineSubtitle(record)}</span
 																	>
@@ -20595,7 +20595,7 @@
 																		<span class="mt-1 flex flex-wrap items-center gap-1.5">
 																			{#if memberFieldHidden(timelineSubtitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																					class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
 																					data-timeline-subtitle-permission-hidden={`${record.id}:${timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldHiddenBadge')}</span
 																				>
@@ -20603,7 +20603,7 @@
 
 																			{#if memberFieldLocked(timelineSubtitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																					class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
 																					data-timeline-subtitle-permission-locked={`${record.id}:${timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldLockedBadge')}</span
 																				>
@@ -20643,13 +20643,13 @@
 																	{#each timelineEditableSelectFields as field}
 																		<label class="block space-y-1">
 																			<span
-																				class="flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400"
+																				class="flex flex-wrap items-center gap-1.5 text-xs font-medium text-fg-muted"
 																			>
 																				<span>{fieldLabel(field)}</span>
 
 																				{#if memberFieldHidden(field)}
 																					<span
-																						class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																						class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
 																						data-timeline-select-permission-hidden={`${record.id}:${field.key}`}
 																						>{$t('forms.fieldHiddenBadge')}</span
 																					>
@@ -20657,7 +20657,7 @@
 
 																				{#if memberFieldLocked(field)}
 																					<span
-																						class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																						class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
 																						data-timeline-select-permission-locked={`${record.id}:${field.key}`}
 																						>{$t('forms.fieldLockedBadge')}</span
 																					>
@@ -20691,7 +20691,7 @@
 																						field,
 																						selectValue(event)
 																					)}
-																				class="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+																				class="w-full rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-fg disabled:opacity-50 dark:bg-slate-950"
 																			>
 																				{#each kanbanMoveOptions(field) as option}
 																					<option value={option}>{option}</option>
@@ -20789,25 +20789,25 @@
 
 						{#if activeMode === 'detail'}
 							<aside
-								class="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+								class="rounded-lg border border-line bg-white dark:bg-slate-900"
 								data-record-detail-drawer={selectedRecord?.id ?? ''}
 								data-record-detail-url-record={detailUrlRecordId}
 							>
 								{#if selectedRecord}
-									<div class="border-b border-slate-200 p-4 dark:border-slate-700">
+									<div class="border-b border-line p-4">
 										<div class="flex items-start justify-between gap-3">
 											<div class="min-w-0">
 												<h3
-													class="truncate text-base font-semibold text-slate-950 dark:text-slate-100"
+													class="truncate text-base font-semibold text-fg"
 												>
 													{selectedRecord.title}
 												</h3>
 
-												<p class="mt-1 font-mono text-xs text-slate-500 dark:text-slate-400">
+												<p class="mt-1 font-mono text-xs text-fg-muted">
 													{selectedRecord.id}
 												</p>
 
-												<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+												<p class="mt-2 text-xs text-fg-muted">
 													{$t('forms.updatedAt', {
 														values: { date: formatDate(selectedRecord.updated_at) }
 													})}
@@ -20840,7 +20840,7 @@
 
 												<button
 													type="button"
-													class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+													class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 hover:text-slate-700 dark:hover:bg-slate-800"
 													aria-label={$t('common.close')}
 													onclick={closeRecordDetail}
 													data-record-detail-close={selectedRecord.id}
@@ -20869,7 +20869,7 @@
 									{/if}
 
 									<div
-										class="divide-y divide-slate-100 dark:divide-slate-800"
+										class="divide-y divide-line"
 										data-record-detail-layout={selectedRecord.id}
 									>
 										{#each detailLayoutSections() as section}
@@ -20888,7 +20888,7 @@
 														: 'cursor-default list-none'}
 												>
 													<h4
-														class="mb-3 inline text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+														class="mb-3 inline text-xs font-semibold uppercase text-fg-muted"
 													>
 														{section.title}
 													</h4>
@@ -20896,7 +20896,7 @@
 
 												{#if section.description}
 													<p
-														class="mb-3 text-sm text-slate-500 dark:text-slate-400"
+														class="mb-3 text-sm text-fg-muted"
 														data-record-detail-section-description={`${selectedRecord.id}:${section.key}`}
 													>
 														{section.description}
@@ -20913,13 +20913,13 @@
 															data-record-detail-field={`${selectedRecord.id}:${section.key}:${field.key}`}
 														>
 															<dt
-																class="flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+																class="flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-fg-muted"
 															>
 																<span class="min-w-0 truncate">{fieldLabel(field)}</span>
 
 																{#if memberFieldHidden(field)}
 																	<span
-																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-warning dark:bg-amber-950/50"
 																		data-record-detail-permission-hidden={field.key}
 																		>{$t('forms.fieldHiddenBadge')}</span
 																	>
@@ -20927,7 +20927,7 @@
 
 																{#if memberFieldLocked(field)}
 																	<span
-																		class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																		class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-fg-muted dark:bg-slate-800"
 																		data-record-detail-permission-locked={field.key}
 																		>{$t('forms.fieldLockedBadge')}</span
 																	>
@@ -20951,7 +20951,7 @@
 															</dt>
 
 															<dd
-																class="mt-1 break-words text-sm text-slate-900 dark:text-slate-100"
+																class="mt-1 break-words text-sm text-fg"
 															>
 																{#if fieldType(field) === 'child_table'}
 																	{@const childRecords = childRecordsForRelationField(field)}
@@ -20959,7 +20959,7 @@
 																	{@const childForm = childFormForRelationField(field)}
 
 																	<div
-																		class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700"
+																		class="overflow-hidden rounded-md border border-line"
 																		data-record-detail-child-table-widget={`${selectedRecord.id}:${section.key}:${field.key}`}
 																		data-record-detail-child-table-relation-key={childRelationKeyForField(
 																			field
@@ -20967,18 +20967,18 @@
 																		data-record-detail-child-table-child-form={childForm?.key}
 																	>
 																		<div
-																			class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+																			class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-slate-50 px-3 py-2 dark:bg-slate-950"
 																		>
 																			<div class="min-w-0">
 																				<div
-																					class="truncate text-xs font-semibold uppercase text-slate-600 dark:text-slate-300"
+																					class="truncate text-xs font-semibold uppercase text-fg-muted"
 																					data-record-detail-child-table-title={`${selectedRecord.id}:${field.key}`}
 																				>
 																					{fieldLabel(field)}
 																				</div>
 
 																				<div
-																					class="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400"
+																					class="mt-0.5 text-[11px] text-fg-muted"
 																					data-record-detail-child-table-meta={`${selectedRecord.id}:${field.key}`}
 																				>
 																					{childForm?.name ?? childRelationKeyForField(field)} · {childRelationKeyForField(
@@ -20988,7 +20988,7 @@
 																			</div>
 
 																			<span
-																				class="rounded bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+																				class="rounded bg-white px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
 																				data-record-detail-child-table-count={`${field.key}:${childRecords.length}`}
 																				>{$t('forms.groupRecordCount', {
 																					values: { count: childRecords.length }
@@ -20999,46 +20999,46 @@
 																		{#if childRecords.length > 0}
 																			<div class="overflow-x-auto">
 																				<table
-																					class="min-w-full divide-y divide-slate-200 text-xs dark:divide-slate-700"
+																					class="min-w-full divide-y divide-line text-xs"
 																					data-record-detail-child-table-grid={field.key}
 																				>
 																					<thead class="bg-white dark:bg-slate-900">
 																						<tr>
 																							<th
-																								class="min-w-40 px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
+																								class="min-w-40 px-3 py-2 text-left font-medium text-fg-muted"
 																								>{$t('forms.recordTitle')}</th
 																							>
 
 																							{#each childFields as childField}
 																								<th
-																									class="min-w-32 px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
+																									class="min-w-32 px-3 py-2 text-left font-medium text-fg-muted"
 																									data-record-detail-child-table-column={`${field.key}:${childField.key}`}
 																									>{fieldLabel(childField)}</th
 																								>
 																							{/each}
 
 																							<th
-																								class="w-20 px-3 py-2 text-right font-medium text-slate-600 dark:text-slate-300"
+																								class="w-20 px-3 py-2 text-right font-medium text-fg-muted"
 																								>{$t('common.actions')}</th
 																							>
 																						</tr>
 																					</thead>
 
 																					<tbody
-																						class="divide-y divide-slate-100 dark:divide-slate-800"
+																						class="divide-y divide-line"
 																					>
 																						{#each childRecords as child}
 																							<tr
 																								data-record-detail-child-table-row={`${field.key}:${child.record.id}`}
 																							>
 																								<td
-																									class="px-3 py-2 font-medium text-slate-900 dark:text-slate-100"
+																									class="px-3 py-2 font-medium text-fg"
 																									>{child.record.title}</td
 																								>
 
 																								{#each childFields as childField}
 																									<td
-																										class="max-w-56 px-3 py-2 text-slate-700 dark:text-slate-300"
+																										class="max-w-56 px-3 py-2 text-fg"
 																										data-record-detail-child-table-cell={`${child.record.id}:${childField.key}`}
 																										><span class="line-clamp-2 break-words"
 																											>{displayValue(
@@ -21084,7 +21084,7 @@
 																			</div>
 																		{:else}
 																			<p
-																				class="px-3 py-3 text-sm text-slate-500 dark:text-slate-400"
+																				class="px-3 py-3 text-sm text-fg-muted"
 																				data-record-detail-child-table-empty={field.key}
 																			>
 																				{$t('forms.noChildRecords')}
@@ -21110,7 +21110,7 @@
 												data-record-detail-section={`${selectedRecord.id}:child_tables`}
 											>
 												<h4
-													class="mb-3 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+													class="mb-3 text-xs font-semibold uppercase text-fg-muted"
 												>
 													{$t('forms.childRecords')}
 												</h4>
@@ -21122,7 +21122,7 @@
 														{@const childForm = childFormForRelationField(relationField)}
 
 														<div
-															class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700"
+															class="overflow-hidden rounded-md border border-line"
 															data-record-detail-child-table-widget={`${selectedRecord.id}:child_tables:${relationField.key}`}
 															data-record-detail-child-table-relation-key={childRelationKeyForField(
 																relationField
@@ -21130,18 +21130,18 @@
 															data-record-detail-child-table-child-form={childForm?.key}
 														>
 															<div
-																class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+																class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-slate-50 px-3 py-2 dark:bg-slate-950"
 															>
 																<div class="min-w-0">
 																	<div
-																		class="truncate text-xs font-semibold uppercase text-slate-600 dark:text-slate-300"
+																		class="truncate text-xs font-semibold uppercase text-fg-muted"
 																		data-record-detail-child-table-title={`${selectedRecord.id}:${relationField.key}`}
 																	>
 																		{fieldLabel(relationField)}
 																	</div>
 
 																	<div
-																		class="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400"
+																		class="mt-0.5 text-[11px] text-fg-muted"
 																		data-record-detail-child-table-meta={`${selectedRecord.id}:${relationField.key}`}
 																	>
 																		{childForm?.name ?? childRelationKeyForField(relationField)} · {childRelationKeyForField(
@@ -21151,7 +21151,7 @@
 																</div>
 
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+																	class="rounded bg-white px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
 																	data-record-detail-child-table-count={`${relationField.key}:${childRecords.length}`}
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: childRecords.length }
@@ -21162,44 +21162,44 @@
 															{#if childRecords.length > 0}
 																<div class="overflow-x-auto">
 																	<table
-																		class="min-w-full divide-y divide-slate-200 text-xs dark:divide-slate-700"
+																		class="min-w-full divide-y divide-line text-xs"
 																		data-record-detail-child-table-grid={relationField.key}
 																	>
 																		<thead class="bg-white dark:bg-slate-900">
 																			<tr>
 																				<th
-																					class="min-w-40 px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
+																					class="min-w-40 px-3 py-2 text-left font-medium text-fg-muted"
 																					>{$t('forms.recordTitle')}</th
 																				>
 
 																				{#each childFields as childField}
 																					<th
-																						class="min-w-32 px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
+																						class="min-w-32 px-3 py-2 text-left font-medium text-fg-muted"
 																						data-record-detail-child-table-column={`${relationField.key}:${childField.key}`}
 																						>{fieldLabel(childField)}</th
 																					>
 																				{/each}
 
 																				<th
-																					class="w-20 px-3 py-2 text-right font-medium text-slate-600 dark:text-slate-300"
+																					class="w-20 px-3 py-2 text-right font-medium text-fg-muted"
 																					>{$t('common.actions')}</th
 																				>
 																			</tr>
 																		</thead>
 
-																		<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+																		<tbody class="divide-y divide-line">
 																			{#each childRecords as child}
 																				<tr
 																					data-record-detail-child-table-row={`${relationField.key}:${child.record.id}`}
 																				>
 																					<td
-																						class="px-3 py-2 font-medium text-slate-900 dark:text-slate-100"
+																						class="px-3 py-2 font-medium text-fg"
 																						>{child.record.title}</td
 																					>
 
 																					{#each childFields as childField}
 																						<td
-																							class="max-w-56 px-3 py-2 text-slate-700 dark:text-slate-300"
+																							class="max-w-56 px-3 py-2 text-fg"
 																							data-record-detail-child-table-cell={`${child.record.id}:${childField.key}`}
 																							><span class="line-clamp-2 break-words"
 																								>{displayValue(
@@ -21244,7 +21244,7 @@
 																</div>
 															{:else}
 																<p
-																	class="px-3 py-3 text-sm text-slate-500 dark:text-slate-400"
+																	class="px-3 py-3 text-sm text-fg-muted"
 																	data-record-detail-child-table-empty={relationField.key}
 																>
 																	{$t('forms.noChildRecords')}
@@ -21257,7 +21257,7 @@
 										{/if}
 									</div>
 
-									<div class="border-t border-slate-200 p-4 dark:border-slate-700">
+									<div class="border-t border-line p-4">
 										<div class="mb-5">
 											<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 												<div class="flex items-center gap-2">
@@ -21266,7 +21266,7 @@
 														aria-hidden="true"
 													/>
 
-													<h4 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+													<h4 class="text-sm font-semibold text-fg">
 														{$t('forms.childRecords')}
 													</h4>
 												</div>
@@ -21290,7 +21290,7 @@
 													class="mb-3 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/60 dark:bg-blue-950/30"
 												>
 													<div class="mb-3 flex items-center justify-between gap-3">
-														<h5 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+														<h5 class="text-sm font-semibold text-fg">
 															{childEditor.recordId
 																? $t('forms.editChildRecord')
 																: $t('forms.addChildRecord')}
@@ -21304,12 +21304,12 @@
 
 													<div class="grid gap-3 md:grid-cols-2">
 														<label class="space-y-1 text-sm">
-															<span class="font-medium text-slate-700 dark:text-slate-300"
+															<span class="font-medium text-fg"
 																>{$t('forms.titleOverride')}</span
 															>
 
 															<input
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																value={childEditor.title}
 																oninput={(event) => updateChildTitle(inputValue(event))}
 															/>
@@ -21337,7 +21337,7 @@
 																	? childField.key
 																	: undefined}
 															>
-																<span class="font-medium text-slate-700 dark:text-slate-300">
+																<span class="font-medium text-fg">
 																	{fieldLabel(childField)}
 
 																	{#if childField.required}
@@ -21375,7 +21375,7 @@
 																		)}
 																		onchange={(event) =>
 																			updateChildDraftValue(childField.key, selectValue(event))}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																	>
 																		<option value="">{$t('forms.selectPlaceholder')}</option>
 
@@ -21408,7 +21408,7 @@
 																	>
 																		{#each recordSelectOptions(childField, childEditor.draft) as option}
 																			<label
-																				class="flex items-start gap-2 text-slate-700 dark:text-slate-300"
+																				class="flex items-start gap-2 text-fg"
 																				data-option-description={optionDescription(
 																					childField,
 																					option
@@ -21450,7 +21450,7 @@
 
 																					{#if optionDescription(childField, option)}
 																						<span
-																							class="block text-xs text-slate-500 dark:text-slate-400"
+																							class="block text-xs text-fg-muted"
 																							>{optionDescription(childField, option)}</span
 																						>
 																					{/if}
@@ -21467,7 +21467,7 @@
 																		) || workspaceMembersLoading}
 																		onchange={(event) =>
 																			updateChildDraftValue(childField.key, selectValue(event))}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																	>
 																		<option value="">
 																			{workspaceMembersLoading
@@ -21483,7 +21483,7 @@
 																	</select>
 																{:else if fieldType(childField) === 'textarea' || fieldType(childField) === 'rich_text'}
 																	<textarea
-																		class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																		class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																		value={draftStringFrom(childEditor.draft, childField.key)}
 																		placeholder={fieldPlaceholder(childField)}
 																		readonly={fieldReadOnlyByCondition(
@@ -21581,14 +21581,14 @@
 																						childField.key
 																					)}
 																					alt={fieldLabel(childField)}
-																					class="h-10 max-w-48 rounded border border-slate-200 bg-white object-contain dark:border-slate-700"
+																					class="h-10 max-w-48 rounded border border-line bg-white object-contain"
 																					data-child-signature-preview={childField.key}
 																				/>
 																			{/if}
 																		</div>
 
 																		<textarea
-																			class="min-h-16 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																			class="min-h-16 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
 																			value={draftStringFrom(childEditor.draft, childField.key)}
 																			placeholder={fieldPlaceholder(childField)}
 																			readonly={fieldReadOnlyByCondition(
@@ -21603,7 +21603,7 @@
 																{:else if fieldType(childField) === 'autonumber'}
 																	<input
 																		type="text"
-																		class="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-400"
+																		class="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-fg-muted dark:border-slate-600 dark:bg-slate-800/60"
 																		value={draftStringFrom(childEditor.draft, childField.key)}
 																		placeholder={$t('forms.autonumberGeneratedAfterSave')}
 																		readonly
@@ -21611,7 +21611,7 @@
 																	/>
 																{:else if fieldType(childField) === 'child_table'}
 																	<div
-																		class="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300"
+																		class="rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg-muted dark:bg-slate-800/60"
 																		data-child-table-field={childField.key}
 																	>
 																		{$t('forms.childRecords')}
@@ -21642,7 +21642,7 @@
 																			: ['amount', 'number'].includes(fieldType(childField))
 																				? '0.01'
 																				: undefined}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 																		value={draftStringFrom(childEditor.draft, childField.key)}
 																		placeholder={fieldPlaceholder(childField)}
 																		readonly={fieldReadOnlyByCondition(
@@ -21659,7 +21659,7 @@
 																{/if}
 
 																{#if childField.help_text}
-																	<span class="block text-xs text-slate-500 dark:text-slate-400"
+																	<span class="block text-xs text-fg-muted"
 																		>{childField.help_text}</span
 																	>
 																{/if}
@@ -21688,7 +21688,7 @@
 														{@const childForm = childFormForRelationField(relationField)}
 
 														<section
-															class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700"
+															class="overflow-hidden rounded-md border border-line"
 															data-child-table-grid={relationField.key}
 															data-child-table-relation-key={childRelationKeyForField(
 																relationField
@@ -21696,18 +21696,18 @@
 															data-child-table-child-form={childForm?.key}
 														>
 															<div
-																class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+																class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-slate-50 px-3 py-2 dark:bg-slate-950"
 															>
 																<div class="min-w-0">
 																	<div
-																		class="truncate text-xs font-semibold uppercase text-slate-600 dark:text-slate-300"
+																		class="truncate text-xs font-semibold uppercase text-fg-muted"
 																		data-child-table-grid-title={relationField.key}
 																	>
 																		{fieldLabel(relationField)}
 																	</div>
 
 																	<div
-																		class="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400"
+																		class="mt-0.5 text-[11px] text-fg-muted"
 																		data-child-table-grid-meta={relationField.key}
 																	>
 																		{childForm?.name ?? childRelationKeyForField(relationField)} · {childRelationKeyForField(
@@ -21717,7 +21717,7 @@
 																</div>
 
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+																	class="rounded bg-white px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
 																	data-child-table-grid-count={`${relationField.key}:${childRecords.length}`}
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: childRecords.length }
@@ -21728,44 +21728,44 @@
 															{#if childRecords.length > 0}
 																<div class="overflow-x-auto">
 																	<table
-																		class="min-w-full divide-y divide-slate-200 text-xs dark:divide-slate-700"
+																		class="min-w-full divide-y divide-line text-xs"
 																		data-child-table-grid-table={relationField.key}
 																	>
 																		<thead class="bg-white dark:bg-slate-900">
 																			<tr>
 																				<th
-																					class="min-w-40 px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
+																					class="min-w-40 px-3 py-2 text-left font-medium text-fg-muted"
 																					>{$t('forms.recordTitle')}</th
 																				>
 
 																				{#each childFields as childField}
 																					<th
-																						class="min-w-32 px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
+																						class="min-w-32 px-3 py-2 text-left font-medium text-fg-muted"
 																						data-child-table-grid-column={`${relationField.key}:${childField.key}`}
 																						>{fieldLabel(childField)}</th
 																					>
 																				{/each}
 
 																				<th
-																					class="w-20 px-3 py-2 text-right font-medium text-slate-600 dark:text-slate-300"
+																					class="w-20 px-3 py-2 text-right font-medium text-fg-muted"
 																					>{$t('common.actions')}</th
 																				>
 																			</tr>
 																		</thead>
 
-																		<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+																		<tbody class="divide-y divide-line">
 																			{#each childRecords as child}
 																				<tr
 																					data-child-table-grid-row={`${relationField.key}:${child.record.id}`}
 																				>
 																					<td
-																						class="px-3 py-2 font-medium text-slate-900 dark:text-slate-100"
+																						class="px-3 py-2 font-medium text-fg"
 																						>{child.record.title}</td
 																					>
 
 																					{#each childFields as childField}
 																						<td
-																							class="max-w-56 px-3 py-2 text-slate-700 dark:text-slate-300"
+																							class="max-w-56 px-3 py-2 text-fg"
 																							data-child-table-grid-cell={`${child.record.id}:${childField.key}`}
 																							><span class="line-clamp-2 break-words"
 																								>{displayValue(
@@ -21810,7 +21810,7 @@
 																</div>
 															{:else}
 																<p
-																	class="px-3 py-3 text-sm text-slate-500 dark:text-slate-400"
+																	class="px-3 py-3 text-sm text-fg-muted"
 																	data-child-table-grid-empty={relationField.key}
 																>
 																	{$t('forms.noChildRecords')}
@@ -21821,48 +21821,48 @@
 												</div>
 											{:else if selectedRecordChildren.length > 0}
 												<div
-													class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700"
+													class="overflow-hidden rounded-md border border-line"
 												>
 													<table
-														class="min-w-full divide-y divide-slate-200 text-xs dark:divide-slate-700"
+														class="min-w-full divide-y divide-line text-xs"
 													>
 														<thead class="bg-slate-50 dark:bg-slate-950">
 															<tr>
 																<th
-																	class="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
+																	class="px-3 py-2 text-left font-medium text-fg-muted"
 																	>{$t('forms.recordTitle')}</th
 																>
 
 																<th
-																	class="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
+																	class="px-3 py-2 text-left font-medium text-fg-muted"
 																	>{$t('forms.relationKey')}</th
 																>
 
 																<th
-																	class="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
+																	class="px-3 py-2 text-left font-medium text-fg-muted"
 																	>{$t('forms.fields')}</th
 																>
 
 																<th
-																	class="px-3 py-2 text-right font-medium text-slate-600 dark:text-slate-300"
+																	class="px-3 py-2 text-right font-medium text-fg-muted"
 																	>{$t('common.actions')}</th
 																>
 															</tr>
 														</thead>
 
-														<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+														<tbody class="divide-y divide-line">
 															{#each selectedRecordChildren as child}
 																<tr>
 																	<td
-																		class="px-3 py-2 font-medium text-slate-900 dark:text-slate-100"
+																		class="px-3 py-2 font-medium text-fg"
 																		>{child.record.title}</td
 																	>
 
-																	<td class="px-3 py-2 font-mono text-slate-500 dark:text-slate-400"
+																	<td class="px-3 py-2 font-mono text-fg-muted"
 																		>{child.relation_key}</td
 																	>
 
-																	<td class="px-3 py-2 text-slate-700 dark:text-slate-300">
+																	<td class="px-3 py-2 text-fg">
 																		{#each childRecordFields(child).slice(0, 4) as childField, index}
 																			{#if index > 0}
 																				<span class="mx-1 text-slate-300">/</span>
@@ -21902,7 +21902,7 @@
 													</table>
 												</div>
 											{:else}
-												<p class="text-sm text-slate-500 dark:text-slate-400">
+												<p class="text-sm text-fg-muted">
 													{$t('forms.noChildRecords')}
 												</p>
 											{/if}
@@ -21911,7 +21911,7 @@
 										<div class="mb-3 flex items-center gap-2">
 											<Link class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
 
-											<h4 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+											<h4 class="text-sm font-semibold text-fg">
 												{$t('forms.recordLinks')}
 											</h4>
 										</div>
@@ -21919,20 +21919,20 @@
 										<div class="space-y-2">
 											{#each selectedRecordLinks as item}
 												<div
-													class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+													class="rounded-md border border-line px-3 py-2 text-xs"
 												>
-													<div class="font-medium text-slate-800 dark:text-slate-200">
+													<div class="font-medium text-fg">
 														{item.relation_key} / {item.relation_type}
 													</div>
 
-													<div class="mt-1 truncate font-mono text-slate-500 dark:text-slate-400">
+													<div class="mt-1 truncate font-mono text-fg-muted">
 														{item.target_type}:{item.target_id}
 													</div>
 												</div>
 											{/each}
 
 											{#if selectedRecordLinks.length === 0}
-												<p class="text-sm text-slate-500 dark:text-slate-400">
+												<p class="text-sm text-fg-muted">
 													{$t('forms.noLinkedData')}
 												</p>
 											{/if}
@@ -21940,20 +21940,20 @@
 
 										<div class="mt-3 space-y-2">
 											<input
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 												bind:value={linkDraft.target_id}
 												placeholder={$t('forms.targetPlaceholder')}
 											/>
 
 											<div class="grid grid-cols-2 gap-2">
 												<input
-													class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+													class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 													bind:value={linkDraft.relation_key}
 													placeholder={$t('forms.relationKeyPlaceholder')}
 												/>
 
 												<input
-													class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+													class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 													bind:value={linkDraft.relation_type}
 													placeholder={$t('forms.relationTypePlaceholder')}
 												/>
@@ -21972,7 +21972,7 @@
 										</div>
 
 										<div
-											class="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800"
+											class="mt-4 border-t border-line pt-4"
 											data-record-detail-comments={selectedRecord.id}
 											data-record-detail-comment-count={selectedRecordComments.length}
 										>
@@ -21982,7 +21982,7 @@
 													aria-hidden="true"
 												/>
 
-												<h4 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+												<h4 class="text-sm font-semibold text-fg">
 													{$t('forms.recordComments')}
 												</h4>
 											</div>
@@ -21990,12 +21990,12 @@
 											<div class="space-y-2">
 												{#each selectedRecordComments.slice(0, 5) as comment}
 													<div
-														class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+														class="rounded-md border border-line px-3 py-2 text-xs"
 														data-record-detail-comment={comment.id}
 													>
 														<div class="flex flex-wrap items-center justify-between gap-2">
 															<span
-																class="font-medium text-slate-800 dark:text-slate-200"
+																class="font-medium text-fg"
 																data-record-detail-comment-author={comment.id}
 																>{comment.author_name ||
 																	comment.author_email ||
@@ -22004,14 +22004,14 @@
 															>
 
 															<span
-																class="font-mono text-[11px] text-slate-500 dark:text-slate-400"
+																class="font-mono text-[11px] text-fg-muted"
 																data-record-detail-comment-created={comment.id}
 																>{formatDate(comment.created_at)}</span
 															>
 														</div>
 
 														<p
-															class="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-300"
+															class="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-fg"
 															data-record-detail-comment-body={comment.id}
 														>
 															{comment.body}
@@ -22020,12 +22020,12 @@
 												{/each}
 
 												{#if recordCommentsLoading && selectedRecordComments.length === 0}
-													<p class="text-sm text-slate-500 dark:text-slate-400">
+													<p class="text-sm text-fg-muted">
 														{$t('common.loading')}
 													</p>
 												{:else if selectedRecordComments.length === 0}
 													<p
-														class="text-sm text-slate-500 dark:text-slate-400"
+														class="text-sm text-fg-muted"
 														data-record-detail-comments-empty={selectedRecord.id}
 													>
 														{$t('forms.noRecordComments')}
@@ -22034,7 +22034,7 @@
 
 												<div class="space-y-2 pt-1">
 													<textarea
-														class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+														class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 														bind:value={recordCommentDraft}
 														placeholder={$t('forms.recordCommentPlaceholder')}
 														data-record-detail-comment-input={selectedRecord.id}></textarea>
@@ -22054,7 +22054,7 @@
 
 										{#if selectedRecordAttachmentFields().length > 0}
 											<div
-												class="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800"
+												class="mt-4 border-t border-line pt-4"
 												data-record-detail-attachments={selectedRecord.id}
 												data-record-detail-attachment-count={recordAttachments.filter(
 													(attachment) => !attachment.archived_at
@@ -22066,7 +22066,7 @@
 														aria-hidden="true"
 													/>
 
-													<h4 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+													<h4 class="text-sm font-semibold text-fg">
 														{$t('forms.attachmentConfig')}
 													</h4>
 												</div>
@@ -22077,11 +22077,11 @@
 														{@const valueUrls = selectedRecordAttachmentValueUrls(field)}
 
 														<section
-															class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+															class="rounded-md border border-line px-3 py-2 text-xs"
 															data-record-detail-attachment-field={field.key}
 															data-record-detail-attachment-field-count={`${field.key}:${metadataAttachments.length + valueUrls.length}`}
 														>
-															<div class="mb-2 font-medium text-slate-800 dark:text-slate-200">
+															<div class="mb-2 font-medium text-fg">
 																{fieldLabel(field)}
 															</div>
 
@@ -22102,13 +22102,13 @@
 
 																		<div class="min-w-0 flex-1">
 																			<div
-																				class="truncate font-medium text-slate-700 dark:text-slate-200"
+																				class="truncate font-medium text-fg"
 																			>
 																				{attachment.file_name}
 																			</div>
 
 																			<div
-																				class="truncate font-mono text-[11px] text-slate-500 dark:text-slate-400"
+																				class="truncate font-mono text-[11px] text-fg-muted"
 																				data-record-detail-attachment-url={attachment.id}
 																			>
 																				{attachment.url}
@@ -22129,7 +22129,7 @@
 																		<a
 																			href={attachmentSignedUrl(attachment) || undefined}
 																			download={attachment.file_name}
-																			class="rounded px-2 py-1 font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+																			class="rounded px-2 py-1 font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 																			data-record-detail-attachment-download={attachment.id}
 																			data-record-detail-attachment-signed-download={attachmentSignedUrl(
 																				attachment
@@ -22144,7 +22144,7 @@
 																		data-record-detail-attachment-value={`${field.key}:${url}`}
 																	>
 																		<div
-																			class="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-500 dark:text-slate-400"
+																			class="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-muted"
 																		>
 																			{url}
 																		</div>
@@ -22160,7 +22160,7 @@
 																			>
 																		{:else}
 																			<span
-																				class="rounded px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+																				class="rounded px-2 py-1 text-[11px] font-medium text-warning"
 																				data-record-detail-attachment-value-blocked={field.key}
 																				>{$t('forms.attachmentUrlUnsafe')}</span
 																			>
@@ -22170,7 +22170,7 @@
 
 																{#if metadataAttachments.length === 0 && valueUrls.length === 0}
 																	<p
-																		class="text-sm text-slate-500 dark:text-slate-400"
+																		class="text-sm text-fg-muted"
 																		data-record-detail-attachment-empty={field.key}
 																	>
 																		{$t('forms.noRecordAttachments')}
@@ -22184,7 +22184,7 @@
 										{/if}
 
 										<div
-											class="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800"
+											class="mt-4 border-t border-line pt-4"
 											data-record-detail-event-history={selectedRecord.id}
 											data-record-detail-event-count={selectedRecordEvents.length}
 										>
@@ -22194,7 +22194,7 @@
 													aria-hidden="true"
 												/>
 
-												<h4 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+												<h4 class="text-sm font-semibold text-fg">
 													{$t('forms.timelineSourceEvents')}
 												</h4>
 											</div>
@@ -22202,7 +22202,7 @@
 											<div class="space-y-2">
 												{#each selectedRecordEvents.slice(0, 5) as event}
 													<details
-														class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+														class="rounded-md border border-line px-3 py-2 text-xs"
 														data-record-detail-event={event.id}
 														data-record-detail-event-type={event.event_type}
 													>
@@ -22210,14 +22210,14 @@
 															<div class="flex flex-wrap items-start justify-between gap-2">
 																<div class="min-w-0">
 																	<div
-																		class="truncate font-medium text-slate-800 dark:text-slate-200"
+																		class="truncate font-medium text-fg"
 																		data-record-detail-event-title={event.id}
 																	>
 																		{timelineEventTitle(event)}
 																	</div>
 
 																	<div
-																		class="mt-1 font-mono text-[11px] text-slate-500 dark:text-slate-400"
+																		class="mt-1 font-mono text-[11px] text-fg-muted"
 																		data-record-detail-event-aggregate={event.id}
 																	>
 																		{timelineEventAggregateKey(event)}
@@ -22225,14 +22225,14 @@
 																</div>
 
 																<span
-																	class="rounded bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+																	class="rounded bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-fg-muted dark:bg-slate-800"
 																	data-record-detail-event-created={event.id}
 																	>{formatDate(event.created_at)}</span
 																>
 															</div>
 
 															<div
-																class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400"
+																class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-fg-muted"
 															>
 																<span data-record-detail-event-kind={event.id}
 																	>{event.event_type}</span
@@ -22248,13 +22248,13 @@
 
 														<div class="mt-3 grid gap-2 lg:grid-cols-2">
 															<pre
-																class="max-h-40 overflow-auto rounded bg-slate-50 p-2 font-mono text-[11px] text-slate-600 dark:bg-slate-950 dark:text-slate-300"
+																class="max-h-40 overflow-auto rounded bg-slate-50 p-2 font-mono text-[11px] text-fg-muted dark:bg-slate-950"
 																data-record-detail-event-payload={event.id}>{timelineEventJson(
 																	event.payload
 																)}</pre>
 
 															<pre
-																class="max-h-40 overflow-auto rounded bg-slate-50 p-2 font-mono text-[11px] text-slate-600 dark:bg-slate-950 dark:text-slate-300"
+																class="max-h-40 overflow-auto rounded bg-slate-50 p-2 font-mono text-[11px] text-fg-muted dark:bg-slate-950"
 																data-record-detail-event-source={event.id}>{timelineEventJson(
 																	event.source
 																)}</pre>
@@ -22264,7 +22264,7 @@
 
 												{#if selectedRecordEvents.length === 0}
 													<p
-														class="text-sm text-slate-500 dark:text-slate-400"
+														class="text-sm text-fg-muted"
 														data-record-detail-event-empty={selectedRecord.id}
 													>
 														{$t('forms.noRecordEvents')}
@@ -22274,7 +22274,7 @@
 										</div>
 									</div>
 								{:else}
-									<div class="p-6 text-sm text-slate-500 dark:text-slate-400">
+									<div class="p-6 text-sm text-fg-muted">
 										{$t('forms.selectRecordPrompt')}
 									</div>
 								{/if}
@@ -22310,7 +22310,7 @@
 						? 'rounded-md border border-blue-200 bg-blue-50 p-3 text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-100'
 						: complete
 							? 'rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100'
-							: 'rounded-md border border-slate-200 bg-white p-3 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400'}
+							: 'rounded-md border border-line bg-white p-3 text-fg-muted dark:bg-slate-900'}
 					data-import-step={step}
 					data-import-step-active={current ? 'true' : undefined}
 				>
@@ -22328,13 +22328,13 @@
 			<section class="space-y-3" data-import-wizard-panel="source">
 				<div class="flex flex-wrap items-center justify-between gap-2">
 					<label
-						class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+						class="block text-sm font-medium text-fg"
 						for="form-import-text">{$t('forms.importPayload')}</label
 					>
 
 					<div class="flex flex-wrap items-center gap-2">
 						<label
-							class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+							class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 							for="form-import-file"
 						>
 							<FileUp class="h-3.5 w-3.5" aria-hidden="true" />
@@ -22354,7 +22354,7 @@
 
 						<button
 							type="button"
-							class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+							class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 							onclick={exportImportTemplate}
 							disabled={!selectedForm || visibleFields.length === 0}
 							data-import-template-export
@@ -22367,14 +22367,14 @@
 				</div>
 
 				{#if importedImportFileName}
-					<p class="text-xs text-slate-500 dark:text-slate-400">
+					<p class="text-xs text-fg-muted">
 						{$t('forms.importFileLoadedName', { values: { name: importedImportFileName } })}
 					</p>
 				{/if}
 
 				<textarea
 					id="form-import-text"
-					class="min-h-72 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="min-h-72 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 					value={importText}
 					oninput={(event) => {
 						importText = inputValue(event);
@@ -22384,13 +22384,13 @@
 						refreshImportMappingFromText();
 					}}></textarea>
 
-				<p class="text-xs text-slate-500 dark:text-slate-400">{$t('forms.importPayloadHint')}</p>
+				<p class="text-xs text-fg-muted">{$t('forms.importPayloadHint')}</p>
 			</section>
 		{/if}
 
 		{#if importWizardStep === 'mapping'}
 			<section
-				class="space-y-3 rounded-md border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-700 dark:bg-slate-950/40"
+				class="space-y-3 rounded-md border border-line bg-slate-50/60 p-3 dark:bg-slate-950/40"
 				data-import-wizard-panel="mapping"
 				data-import-mapping-wizard
 				data-import-mapping-applied={importMappingApplied ? 'true' : undefined}
@@ -22400,11 +22400,11 @@
 			>
 				<div class="flex flex-wrap items-center justify-between gap-2">
 					<div>
-						<h3 class="text-sm font-medium text-slate-900 dark:text-slate-100">
+						<h3 class="text-sm font-medium text-fg">
 							{$t('forms.importMapping')}
 						</h3>
 
-						<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+						<p class="mt-1 text-xs text-fg-muted">
 							{$t('forms.importMappingHint')}
 						</p>
 					</div>
@@ -22412,14 +22412,14 @@
 					<div class="flex flex-wrap items-center gap-2">
 						<button
 							type="button"
-							class="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+							class="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 							onclick={saveImportMappingTemplate}
 							data-import-mapping-template-save>{$t('forms.saveImportMappingTemplate')}</button
 						>
 
 						<button
 							type="button"
-							class="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+							class="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 							onclick={restoreImportMappingTemplate}
 							disabled={!importMappingTemplateAvailable}
 							data-import-mapping-template-restore
@@ -22428,7 +22428,7 @@
 
 						<button
 							type="button"
-							class="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+							class="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
 							onclick={applyImportMapping}
 							data-import-mapping-apply>{$t('forms.applyImportMapping')}</button
 						>
@@ -22438,12 +22438,12 @@
 				<div class="grid max-h-[46vh] gap-2 overflow-auto pr-1 sm:grid-cols-2">
 					{#each importMappingHeaders as header, index}
 						<label class="block space-y-1 text-xs" data-import-mapping-row={index}>
-							<span class="font-medium text-slate-600 dark:text-slate-300"
+							<span class="font-medium text-fg-muted"
 								>{header || $t('forms.importUnnamedColumn')}</span
 							>
 
 							<select
-								class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+								class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-900"
 								bind:value={importMappingSelections[index]}
 								onchange={() => {
 									importMappingApplied = false;
@@ -22458,12 +22458,12 @@
 								{/each}
 							</select>
 
-							<span class="font-medium text-slate-600 dark:text-slate-300"
+							<span class="font-medium text-fg-muted"
 								>{$t('forms.importMappingTransform')}</span
 							>
 
 							<select
-								class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+								class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-900"
 								bind:value={importMappingTransforms[index]}
 								onchange={() => {
 									importMappingApplied = false;
@@ -22495,13 +22495,13 @@
 				{#if importPreview}
 					<div class="grid gap-2 sm:grid-cols-3">
 						<div
-							class="rounded-md border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
+							class="rounded-md border border-line bg-white p-3 dark:bg-slate-900"
 						>
-							<p class="text-xs text-slate-500 dark:text-slate-400">
+							<p class="text-xs text-fg-muted">
 								{$t('forms.importTotalRows')}
 							</p>
 
-							<p class="mt-1 text-2xl font-semibold text-slate-950 dark:text-slate-100">
+							<p class="mt-1 text-2xl font-semibold text-fg">
 								{importPreview.total_rows}
 							</p>
 						</div>
@@ -22521,7 +22521,7 @@
 						<div
 							class="rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900/60 dark:bg-red-950/30"
 						>
-							<p class="text-xs text-red-700 dark:text-red-200">{$t('forms.importInvalidRows')}</p>
+							<p class="text-xs text-danger">{$t('forms.importInvalidRows')}</p>
 
 							<p class="mt-1 text-2xl font-semibold text-red-800 dark:text-red-100">
 								{importPreview.invalid_rows}
@@ -22529,15 +22529,15 @@
 						</div>
 					</div>
 
-					<div class="rounded-md border border-slate-200 dark:border-slate-700">
+					<div class="rounded-md border border-line">
 						<div
-							class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 text-sm dark:border-slate-700"
+							class="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2 text-sm"
 						>
-							<span class="font-medium text-slate-900 dark:text-slate-100"
+							<span class="font-medium text-fg"
 								>{$t('forms.importPreview')}</span
 							>
 
-							<span class="text-slate-500 dark:text-slate-400">
+							<span class="text-fg-muted">
 								{$t('forms.importPreviewSummary', {
 									values: {
 										total: importPreview.total_rows,
@@ -22549,9 +22549,9 @@
 						</div>
 
 						<div class="max-h-64 overflow-auto">
-							<table class="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700">
+							<table class="min-w-full divide-y divide-line text-sm">
 								<thead
-									class="bg-slate-50 text-left text-xs font-medium uppercase text-slate-500 dark:bg-slate-950 dark:text-slate-400"
+									class="bg-slate-50 text-left text-xs font-medium uppercase text-fg-muted dark:bg-slate-950"
 								>
 									<tr>
 										<th class="px-3 py-2">{$t('forms.importRow')}</th>
@@ -22561,7 +22561,7 @@
 									</tr>
 								</thead>
 
-								<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+								<tbody class="divide-y divide-line">
 									{#each importPreview.rows as row}
 										<tr>
 											<td class="px-3 py-2 font-mono text-xs text-slate-500">{row.row_number}</td>
@@ -22569,17 +22569,17 @@
 											<td class="px-3 py-2">
 												<span
 													class={row.valid
-														? 'rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-														: 'rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300'}
+														? 'rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-success dark:bg-emerald-950/40'
+														: 'rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-danger dark:bg-red-950/40'}
 													>{row.valid ? $t('forms.importValid') : $t('forms.importInvalid')}</span
 												>
 											</td>
 
-											<td class="max-w-56 truncate px-3 py-2 text-slate-800 dark:text-slate-200"
+											<td class="max-w-56 truncate px-3 py-2 text-fg"
 												>{row.title ?? '-'}</td
 											>
 
-											<td class="px-3 py-2 text-slate-500 dark:text-slate-400"
+											<td class="px-3 py-2 text-fg-muted"
 												>{row.error ?? '-'}</td
 											>
 										</tr>
@@ -22612,7 +22612,7 @@
 		{/if}
 
 		<div
-			class="flex flex-col-reverse gap-2 border-t border-slate-200 pt-3 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between"
+			class="flex flex-col-reverse gap-2 border-t border-line pt-3 sm:flex-row sm:items-center sm:justify-between"
 		>
 			<div class="flex gap-2">
 				{#if importWizardStep !== 'source'}
@@ -22683,10 +22683,10 @@
 			</div>
 		</div>
 
-		<div class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
-			<table class="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700">
+		<div class="overflow-hidden rounded-md border border-line">
+			<table class="min-w-full divide-y divide-line text-sm">
 				<thead
-					class="bg-slate-50 text-left text-xs font-medium uppercase text-slate-500 dark:bg-slate-900 dark:text-slate-400"
+					class="bg-slate-50 text-left text-xs font-medium uppercase text-fg-muted dark:bg-slate-900"
 				>
 					<tr>
 						<th class="px-3 py-2">{$t('forms.changeType')}</th>
@@ -22698,10 +22698,10 @@
 					</tr>
 				</thead>
 
-				<tbody class="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
+				<tbody class="divide-y divide-line bg-white dark:bg-slate-900">
 					{#each pendingDesignerChanges as change}
 						<tr>
-							<td class="px-3 py-2 text-slate-700 dark:text-slate-300">
+							<td class="px-3 py-2 text-fg">
 								{#if change.kind === 'delete'}
 									{$t('forms.changeDelete')}
 								{:else if change.kind === 'rename'}
@@ -22712,16 +22712,16 @@
 							</td>
 
 							<td class="px-3 py-2">
-								<div class="font-medium text-slate-950 dark:text-slate-100">
+								<div class="font-medium text-fg">
 									{change.fieldLabel}
 								</div>
 
-								<div class="font-mono text-xs text-slate-500 dark:text-slate-400">
+								<div class="font-mono text-xs text-fg-muted">
 									{change.fieldKey}
 								</div>
 							</td>
 
-							<td class="px-3 py-2 font-mono text-xs text-slate-600 dark:text-slate-300">
+							<td class="px-3 py-2 font-mono text-xs text-fg-muted">
 								{#if change.to}
 									{change.from} -> {change.to}
 								{:else}
@@ -22729,18 +22729,18 @@
 								{/if}
 							</td>
 
-							<td class="px-3 py-2 text-right font-mono text-slate-700 dark:text-slate-300"
+							<td class="px-3 py-2 text-right font-mono text-fg"
 								>{change.valueCount}</td
 							>
 
-							<td class="px-3 py-2 text-right font-mono text-slate-700 dark:text-slate-300"
+							<td class="px-3 py-2 text-right font-mono text-fg"
 								>{change.dependencyCount}</td
 							>
 
 							<td
 								class="px-3 py-2 text-right font-mono {change.blockingDependencyCount > 0
-									? 'text-red-600 dark:text-red-300'
-									: 'text-slate-700 dark:text-slate-300'}">{change.blockingDependencyCount}</td
+									? 'text-danger'
+									: 'text-fg'}">{change.blockingDependencyCount}</td
 							>
 						</tr>
 					{/each}

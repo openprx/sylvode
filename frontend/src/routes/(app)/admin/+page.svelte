@@ -103,8 +103,8 @@
 <div class="mx-auto max-w-7xl space-y-6">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div>
-			<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('admin.dashboard')}</h1>
-			<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('admin.overview')}</p>
+			<h1 class="text-2xl font-semibold text-fg">{$t('admin.dashboard')}</h1>
+			<p class="mt-1 text-sm text-fg-muted">{$t('admin.overview')}</p>
 		</div>
 		<div class="flex gap-2">
 			<Button variant="secondary" onclick={() => goto('/admin/users')}
@@ -116,38 +116,38 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
 		>
 			{$t('common.loading')}
 		</div>
 	{:else}
 		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
 			<Card>
-				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('admin.totalUsers')}</p>
-				<p class="mt-2 text-3xl font-bold text-slate-900 dark:text-slate-100">{stats.users}</p>
+				<p class="text-sm text-fg-muted">{$t('admin.totalUsers')}</p>
+				<p class="mt-2 text-3xl font-semibold text-fg">{stats.users}</p>
 			</Card>
 			<Card>
-				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('admin.totalWorkspaces')}</p>
-				<p class="mt-2 text-3xl font-bold text-slate-900 dark:text-slate-100">{stats.workspaces}</p>
+				<p class="text-sm text-fg-muted">{$t('admin.totalWorkspaces')}</p>
+				<p class="mt-2 text-3xl font-semibold text-fg">{stats.workspaces}</p>
 			</Card>
 			<Card>
-				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('admin.totalProjects')}</p>
-				<p class="mt-2 text-3xl font-bold text-slate-900 dark:text-slate-100">{stats.projects}</p>
+				<p class="text-sm text-fg-muted">{$t('admin.totalProjects')}</p>
+				<p class="mt-2 text-3xl font-semibold text-fg">{stats.projects}</p>
 			</Card>
 			<Card>
-				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('admin.totalIssues')}</p>
-				<p class="mt-2 text-3xl font-bold text-slate-900 dark:text-slate-100">{stats.issues}</p>
+				<p class="text-sm text-fg-muted">{$t('admin.totalIssues')}</p>
+				<p class="mt-2 text-3xl font-semibold text-fg">{stats.issues}</p>
 			</Card>
 		</div>
 
 		<Card>
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('admin.systemStatus')}
 			</h2>
 			<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
 				{#each statusItems as item}
-					<div class="rounded-md border border-slate-200 dark:border-slate-700 p-3">
-						<p class="text-sm text-slate-500 dark:text-slate-400">{item.label}</p>
+					<div class="rounded-md border border-line p-3">
+						<p class="text-sm text-fg-muted">{item.label}</p>
 						<span
 							class="mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-medium {item.color}"
 						>

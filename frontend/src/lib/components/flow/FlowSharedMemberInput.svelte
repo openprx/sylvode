@@ -54,7 +54,7 @@
 </script>
 
 <section
-	class="mt-6 rounded-lg border border-slate-200 p-4 dark:border-slate-700"
+	class="mt-6 rounded-lg border border-line p-4"
 	aria-label={$t('flow.shared.localDraft')}
 	data-testid="flow-shared-draft"
 >
@@ -67,7 +67,7 @@
 		>
 			<button
 				type="button"
-				class="rounded border px-2 py-1 font-bold"
+				class="rounded border px-2 py-1 font-semibold"
 				disabled={!ready || !editable}
 				aria-label={$t('flow.shared.bold')}
 				title={$t('flow.shared.bold')}
@@ -148,7 +148,7 @@
 		</form>{/if}
 	<div
 		bind:this={host}
-		class="shared-member-input rounded border border-slate-200 p-3 whitespace-pre-wrap focus-within:ring-2 focus-within:ring-blue-500 dark:border-slate-700"
+		class="shared-member-input rounded border border-line p-3 whitespace-pre-wrap focus-within:ring-2 focus-within:ring-blue-500"
 	></div>
 	{#if failed}<p role="alert" class="mt-2 text-sm text-red-600">
 			{$t('flow.shared.editorFailed')}

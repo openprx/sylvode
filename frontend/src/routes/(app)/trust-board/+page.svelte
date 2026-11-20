@@ -80,7 +80,7 @@
 		if (rank === 1) return 'bg-amber-50 border-amber-200';
 		if (rank === 2) return 'bg-slate-50 border-slate-300';
 		if (rank === 3) return 'bg-orange-50 border-orange-200';
-		return 'bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-700';
+		return 'bg-white border-line dark:bg-slate-900';
 	}
 
 	function levelTone(level: string): string {
@@ -136,11 +136,11 @@
 
 <div class="mx-auto max-w-6xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 	>
 		<div class="mb-4 flex flex-wrap items-end justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+				<h1 class="text-xl font-semibold text-fg">
 					{$t('trustBoard.title')}
 				</h1>
 				<p class="text-sm text-slate-500">{$t('trustBoard.subtitle')}</p>
@@ -150,7 +150,7 @@
 					type="text"
 					bind:value={projectId}
 					placeholder={$t('trustBoard.projectIdPlaceholder')}
-					class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+					class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
 				/>
 				<Button onclick={search} {loading}>{$t('common.search')}</Button>
 			</div>
@@ -164,7 +164,7 @@
 					class={`rounded-md px-3 py-1.5 text-sm ${
 						selectedDomain === domain
 							? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-							: 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-100'
+							: 'bg-slate-100 text-fg hover:bg-slate-200 dark:bg-slate-700'
 					}`}
 				>
 					{domain}
@@ -213,11 +213,11 @@
 							<div class="flex items-center gap-4 text-sm">
 								<div class="text-right">
 									<div class="text-xs text-slate-500">{$t('trustBoard.score')}</div>
-									<div class="font-semibold text-slate-900 dark:text-slate-100">{item.score}</div>
+									<div class="font-semibold text-fg">{item.score}</div>
 								</div>
 								<div class="text-right">
 									<div class="text-xs text-slate-500">{$t('trustBoard.weight')}</div>
-									<div class="font-semibold text-slate-900 dark:text-slate-100">
+									<div class="font-semibold text-fg">
 										{item.vote_weight.toFixed(2)}x
 									</div>
 								</div>
@@ -242,7 +242,7 @@
 		{/if}
 
 		<div
-			class="mt-4 flex items-center justify-end gap-2 text-sm text-slate-500 dark:text-slate-300"
+			class="mt-4 flex items-center justify-end gap-2 text-sm text-fg-muted"
 		>
 			<span>{$t('trustBoard.pagination', { values: { total, page, pages: totalPages } })}</span>
 			<Button size="sm" variant="secondary" onclick={prevPage} disabled={loading || page <= 1}

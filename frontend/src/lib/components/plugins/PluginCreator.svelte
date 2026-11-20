@@ -398,14 +398,14 @@
 			>{$t(personal ? 'plugins.library.title' : 'plugins.projectSettings')}</a
 		>
 		<h1 class="text-2xl font-semibold">{$t('plugins.creator.title')}</h1>
-		<p class="text-sm text-slate-600 dark:text-slate-300">
+		<p class="text-sm text-fg-muted">
 			{$t(isUi ? 'plugins.creatorV3.templateHelp' : 'plugins.creator.template')}
 		</p>
 	</header>
 	{#if error}
 		<p
 			role="alert"
-			class="rounded border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-700 dark:text-red-200"
+			class="rounded border border-red-300 px-3 py-2 text-sm text-danger dark:border-red-700"
 		>
 			{$t(error)}
 			{backendMessage}
@@ -432,7 +432,7 @@
 					</select>
 				</label>
 			</div>
-			<p class="text-sm text-slate-600 dark:text-slate-300">
+			<p class="text-sm text-fg-muted">
 				{$t('plugins.creator.origin', { values: { slot: $t(slotLabelKey(origin)) } })}
 				{$t(personal ? 'plugins.library.localDraft' : 'plugins.creator.localDraft')}
 			</p>
@@ -455,7 +455,7 @@
 							{@render uiInput(field, uiDraft[field], (value) => editUi({ [field]: value }))}
 						{/each}
 					</fieldset>
-					<p id="creator-field-help" class="text-xs text-slate-600 dark:text-slate-300">
+					<p id="creator-field-help" class="text-xs text-fg-muted">
 						{$t('plugins.creatorV3.fieldHelp')}
 					</p>
 					<p class="text-sm">{$t('plugins.creatorV3.uiIntro')}</p>
@@ -531,7 +531,7 @@
 							(value) => editUi({ readFields: value }),
 							640
 						)}
-						<p class="text-xs text-slate-600 sm:col-span-2 dark:text-slate-300">
+						<p class="text-xs text-fg-muted sm:col-span-2">
 							{$t('plugins.creatorV3.readHelp')}
 						</p>
 						<label class="flex flex-col gap-1 text-sm">
@@ -563,7 +563,7 @@
 						<legend class="pb-2 text-sm font-semibold">{$t('plugins.creator.package')}</legend>
 						{#each metadata as field (field)}{@render fieldEditor(field)}{/each}
 					</fieldset>
-					<p id="creator-field-help" class="text-xs text-slate-600 dark:text-slate-300">
+					<p id="creator-field-help" class="text-xs text-fg-muted">
 						{$t('plugins.creator.fieldHelp')}
 					</p>
 					<div class="grid gap-3 sm:grid-cols-2">

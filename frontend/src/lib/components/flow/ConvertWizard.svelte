@@ -180,22 +180,22 @@
 	}
 
 	const buttonPrimary =
-		'min-h-[44px] min-w-[44px] rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 motion-safe:transition-colors dark:focus-visible:ring-offset-slate-900';
+		'min-h-[44px] min-w-[44px] rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 motion-safe:transition-colors';
 	const buttonSecondary =
-		'min-h-[44px] min-w-[44px] rounded-md border border-slate-300 px-4 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800';
+		'min-h-[44px] min-w-[44px] rounded-md border border-slate-300 px-4 text-sm font-medium text-fg hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800';
 	const fieldClass =
-		'mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
-	const labelClass = 'block text-sm font-medium text-slate-700 dark:text-slate-300';
-	const dtClass = 'text-slate-500 dark:text-slate-400';
-	const ddClass = 'text-slate-900 dark:text-slate-100';
+		'mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
+	const labelClass = 'block text-sm font-medium text-fg';
+	const dtClass = 'text-fg-muted';
+	const ddClass = 'text-fg';
 </script>
 
 <Card>
 	<section aria-labelledby="flow-convert-heading" data-testid="flow-convert">
-		<h2 id="flow-convert-heading" class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h2 id="flow-convert-heading" class="text-lg font-semibold text-fg">
 			{$t('flow.bridge.convert.heading')}
 		</h2>
-		<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+		<p class="mt-1 text-sm text-fg-muted">
 			{$t('flow.bridge.convert.description')}
 		</p>
 
@@ -205,34 +205,34 @@
 
 		{#if snap}
 			{#if snap.sourceState === 'loading'}
-				<p class="mt-6 text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</p>
+				<p class="mt-6 text-sm text-fg-muted">{$t('common.loading')}</p>
 			{:else if snap.sourceState === 'unsupported'}
 				<div
-					class="mt-6 rounded-md border border-slate-200 p-6 text-center dark:border-slate-700"
+					class="mt-6 rounded-md border border-line p-6 text-center"
 					data-testid="flow-convert-unsupported"
 				>
-					<h3 class="text-base font-semibold text-slate-900 dark:text-slate-100">
+					<h3 class="text-base font-semibold text-fg">
 						{$t('flow.bridge.convert.unsupported.title')}
 					</h3>
-					<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+					<p class="mt-1 text-sm text-fg-muted">
 						{$t('flow.bridge.convert.unsupported.body')}
 					</p>
 				</div>
 			{:else if snap.sourceState === 'not_found'}
 				<div
-					class="mt-6 rounded-md border border-slate-200 p-6 text-center dark:border-slate-700"
+					class="mt-6 rounded-md border border-line p-6 text-center"
 					data-testid="flow-convert-not-found"
 				>
-					<h3 class="text-base font-semibold text-slate-900 dark:text-slate-100">
+					<h3 class="text-base font-semibold text-fg">
 						{$t('flow.bridge.convert.notFound.title')}
 					</h3>
-					<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+					<p class="mt-1 text-sm text-fg-muted">
 						{$t('flow.bridge.convert.notFound.body')}
 					</p>
 				</div>
 			{:else if snap.sourceState === 'failed' && !snap.source}
 				<div class="mt-6 space-y-3" role="alert">
-					<p class="text-sm text-red-700 dark:text-red-300">
+					<p class="text-sm text-danger">
 						{$t('flow.bridge.convert.error.sourceUnavailable')}
 					</p>
 					<button type="button" class={buttonSecondary} onclick={() => wizard.load()}>
@@ -246,10 +246,10 @@
 							<li class="flex-1">
 								<button
 									type="button"
-									class="flex min-h-11 w-full items-center gap-2 rounded-md border px-3 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed {index ===
+									class="flex min-h-11 w-full items-center gap-2 rounded-md border px-3 text-left text-sm disabled:cursor-not-allowed {index ===
 									stepIndex
 										? 'border-blue-500 bg-blue-50 font-semibold text-blue-800 dark:bg-blue-950/40 dark:text-blue-200'
-										: 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'}"
+										: 'border-line text-fg-muted'}"
 									aria-current={index === stepIndex ? 'step' : undefined}
 									disabled={index > stepIndex || snap.previewState === 'running' || snap.committing}
 									onclick={() => wizard.goTo(step)}
@@ -266,7 +266,7 @@
 					<h3
 						bind:this={stepHeading}
 						tabindex="-1"
-						class="text-base font-semibold text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-100"
+						class="text-base font-semibold text-fg"
 						data-testid="flow-convert-step"
 					>
 						{$t('flow.bridge.convert.stepOf', {
@@ -304,7 +304,7 @@
 								</div>
 							</dl>
 							<div
-								class="rounded-md bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+								class="rounded-md bg-slate-50 p-4 text-sm text-fg dark:bg-slate-800"
 							>
 								<p class="font-medium">{$t('flow.bridge.convert.ownership.title')}</p>
 								<ul class="mt-2 list-disc space-y-1 pl-5">
@@ -333,7 +333,7 @@
 										{/each}
 									</select>
 									{#if snap.projects.length === 0}
-										<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+										<p class="mt-1 text-xs text-fg-muted">
 											{$t('flow.bridge.convert.mapping.noProjects')}
 										</p>
 									{/if}
@@ -355,15 +355,15 @@
 										{/each}
 									</select>
 									{#if snap.formsState === 'loading'}
-										<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+										<p class="mt-1 text-xs text-fg-muted">
 											{$t('common.loading')}
 										</p>
 									{:else if snap.formsState === 'failed'}
-										<p class="mt-1 text-xs text-red-700 dark:text-red-300" role="alert">
+										<p class="mt-1 text-xs text-danger" role="alert">
 											{$t('flow.bridge.convert.mapping.formsFailed')}
 										</p>
 									{:else if snap.formsState === 'ready' && snap.forms.length === 0}
-										<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+										<p class="mt-1 text-xs text-fg-muted">
 											{$t('flow.bridge.convert.mapping.noForms')}
 										</p>
 									{/if}
@@ -385,18 +385,18 @@
 									/>
 									<p
 										id="flow-convert-title-hint"
-										class="mt-1 text-xs text-slate-500 dark:text-slate-400"
+										class="mt-1 text-xs text-fg-muted"
 									>
 										{$t('flow.bridge.convert.mapping.recordTitleHint')}
 									</p>
 								</div>
 
-								<p class="text-sm text-slate-600 dark:text-slate-300">
+								<p class="text-sm text-fg-muted">
 									{$t('flow.bridge.convert.mapping.valuesHint')}
 								</p>
 
 								{#if snap.fields.length === 0}
-									<p class="text-sm text-slate-500 dark:text-slate-400">
+									<p class="text-sm text-fg-muted">
 										{$t('flow.bridge.convert.mapping.noFields')}
 									</p>
 								{:else}
@@ -416,7 +416,7 @@
 															<div class="mt-1 flex flex-wrap gap-3">
 																{#each field.options as option (option)}
 																	<label
-																		class="flex min-h-11 items-center gap-2 text-sm text-slate-700 dark:text-slate-200"
+																		class="flex min-h-11 items-center gap-2 text-sm text-fg"
 																	>
 																		<input
 																			type="checkbox"
@@ -494,14 +494,14 @@
 													{/if}
 												{:else}
 													<p class={labelClass}>{field.label}{field.required ? ' *' : ''}</p>
-													<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+													<p class="mt-1 text-xs text-fg-muted">
 														{field.disposition.kind === 'server'
 															? $t('flow.bridge.convert.mapping.serverFilled')
 															: $t('flow.bridge.convert.mapping.unsupportedField')}
 													</p>
 												{/if}
 												{#if problem}
-													<p id={hintId} class="mt-1 text-xs text-red-700 dark:text-red-300">
+													<p id={hintId} class="mt-1 text-xs text-danger">
 														{$t(FIELD_PROBLEM_KEYS[problem])}
 													</p>
 												{/if}
@@ -514,7 +514,7 @@
 					{:else if snap.step === 'preview'}
 						<div class="mt-3 space-y-4" data-testid="flow-convert-preview">
 							{#if snap.previewState === 'running' || snap.refreshingSource}
-								<p class="text-sm text-slate-600 dark:text-slate-300">
+								<p class="text-sm text-fg-muted">
 									{$t('flow.bridge.convert.preview.running')}
 								</p>
 							{/if}
@@ -538,11 +538,11 @@
 									data-kind={snap.previewFailure.kind}
 									data-reason={snap.previewFailure.reason ?? undefined}
 								>
-									<p class="text-sm text-red-800 dark:text-red-200">
+									<p class="text-sm text-danger">
 										{$t(snap.previewFailure.messageKey)}
 									</p>
 									{#if snap.previewFailure.permissionState}
-										<ul class="list-disc space-y-1 pl-5 text-sm text-red-800 dark:text-red-200">
+										<ul class="list-disc space-y-1 pl-5 text-sm text-danger">
 											{#each permissionExplanation(snap.previewFailure.permissionState) as key (key)}
 												<li>{$t(key)}</li>
 											{/each}
@@ -580,7 +580,7 @@
 										</button>
 									</div>
 								{/if}
-								<p class="text-sm text-slate-600 dark:text-slate-300">
+								<p class="text-sm text-fg-muted">
 									{$t('flow.bridge.convert.preview.notCommitted')}
 								</p>
 								<dl class="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
@@ -618,11 +618,11 @@
 								</dl>
 
 								<div>
-									<h4 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+									<h4 class="text-sm font-semibold text-fg">
 										{$t('flow.bridge.convert.preview.permission')}
 									</h4>
 									<ul
-										class="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-200"
+										class="mt-2 list-disc space-y-1 pl-5 text-sm text-fg"
 										data-testid="flow-convert-permission"
 									>
 										{#each permissionExplanation(snap.preview.permission_decision) as key (key)}
@@ -632,7 +632,7 @@
 								</div>
 
 								<div>
-									<h4 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+									<h4 class="text-sm font-semibold text-fg">
 										{$t('flow.bridge.convert.preview.mapping')}
 									</h4>
 									<dl class="mt-2 space-y-1 text-sm">
@@ -654,16 +654,16 @@
 								</div>
 
 								<div>
-									<h4 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+									<h4 class="text-sm font-semibold text-fg">
 										{$t('flow.bridge.convert.preview.warnings')}
 									</h4>
 									{#if snap.warnings.length === 0}
-										<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+										<p class="mt-1 text-sm text-fg-muted">
 											{$t('flow.bridge.convert.preview.noWarnings')}
 										</p>
 									{:else}
 										<ul
-											class="mt-1 list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-200"
+											class="mt-1 list-disc space-y-1 pl-5 text-sm text-warning"
 											data-testid="flow-convert-warnings"
 										>
 											{#each snap.warnings as warning, index (index)}
@@ -728,7 +728,7 @@
 									</button>
 								</div>
 							{:else if secondsLeft !== null}
-								<p class="text-sm text-slate-600 dark:text-slate-300">
+								<p class="text-sm text-fg-muted">
 									{$t('flow.bridge.convert.preview.countdown', {
 										values: { time: formatCountdown(secondsLeft) }
 									})}
@@ -736,7 +736,7 @@
 							{/if}
 
 							<label
-								class="flex min-h-11 items-start gap-3 text-sm text-slate-800 dark:text-slate-100"
+								class="flex min-h-11 items-start gap-3 text-sm text-fg"
 							>
 								<input
 									type="checkbox"
@@ -757,11 +757,11 @@
 									data-kind={snap.commitFailure.kind}
 									data-reason={snap.commitFailure.reason ?? undefined}
 								>
-									<p class="text-sm text-red-800 dark:text-red-200">
+									<p class="text-sm text-danger">
 										{$t(snap.commitFailure.messageKey)}
 									</p>
 									{#if snap.commitFailure.permissionState}
-										<ul class="list-disc space-y-1 pl-5 text-sm text-red-800 dark:text-red-200">
+										<ul class="list-disc space-y-1 pl-5 text-sm text-danger">
 											{#each permissionExplanation(snap.commitFailure.permissionState) as key (key)}
 												<li>{$t(key)}</li>
 											{/each}
@@ -806,7 +806,7 @@
 				</div>
 
 				<div
-					class="mt-6 flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-between dark:border-slate-700"
+					class="mt-6 flex flex-col-reverse gap-3 border-t border-line pt-4 sm:flex-row sm:justify-between"
 				>
 					<button
 						type="button"

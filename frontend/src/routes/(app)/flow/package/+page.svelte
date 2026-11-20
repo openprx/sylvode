@@ -34,7 +34,7 @@
 		<h1 class="text-xl font-semibold">{$t('flow.personal.packages')}</h1>
 		<p class="text-sm text-slate-500">{$t('flow.personal.packageNote')}</p>
 		{#if loading}<p class="text-sm text-slate-500" role="status">{$t('common.loading')}</p>{/if}
-		{#if failed}<p class="text-sm text-red-700 dark:text-red-300" role="alert">
+		{#if failed}<p class="text-sm text-danger" role="alert">
 				{$t('flow.personal.packageAvailabilityFailed')}
 			</p>{/if}
 		{#if readiness.exports}
@@ -44,15 +44,15 @@
 				projects={[]}
 				allowHistory={readiness.historyExports}
 			/>
-		{:else if !loading}<p class="text-sm text-slate-600 dark:text-slate-300">
+		{:else if !loading}<p class="text-sm text-fg-muted">
 				{$t('flow.personal.packageExportUnavailable')}
 			</p>{/if}
 		{#if readiness.imports}
-			{#if readiness.historyImports}<p class="text-sm text-slate-600 dark:text-slate-300">
+			{#if readiness.historyImports}<p class="text-sm text-fg-muted">
 					{$t('flow.personal.packageHistoryReplay')}
 				</p>{/if}
 			<PackageImportWizard {scopeId} projects={[]} allowHistory={readiness.historyImports} />
-		{:else if !loading}<p class="text-sm text-slate-600 dark:text-slate-300">
+		{:else if !loading}<p class="text-sm text-fg-muted">
 				{$t('flow.personal.packageImportUnavailable')}
 			</p>{/if}
 		<button

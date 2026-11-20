@@ -147,9 +147,9 @@
 	}
 
 	const selectClass =
-		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
+		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800';
 	const linkButtonClass =
-		'min-h-11 rounded-md px-2 text-xs font-medium text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:text-blue-400';
+		'min-h-11 rounded-md px-2 text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400';
 </script>
 
 {#if !workspaceId && ready?.canManage && permittedToManage}
@@ -185,9 +185,9 @@
 <div class="space-y-4 text-sm" data-testid="flow-share-panel">
 	<p class="sr-only" aria-live="polite">{liveMessage}</p>
 	{#if !snapshot || snapshot.load.status === 'loading'}
-		<p class="text-slate-500 dark:text-slate-400">{$t('flow.share.loading')}</p>
+		<p class="text-fg-muted">{$t('flow.share.loading')}</p>
 	{:else if snapshot.load.status === 'failed'}
-		<p class="text-red-600 dark:text-red-400" role="alert">
+		<p class="text-danger" role="alert">
 			{$t(snapshot.load.failure.messageKey)}
 		</p>
 		<button type="button" class={linkButtonClass} onclick={() => controller?.load()}>
@@ -196,17 +196,17 @@
 	{:else if ready}
 		<dl class="space-y-2">
 			<div class="flex items-center justify-between gap-2">
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.share.yourAccess')}</dt>
+				<dt class="text-fg-muted">{$t('flow.share.yourAccess')}</dt>
 				<dd
-					class="font-medium text-slate-900 dark:text-slate-100"
+					class="font-medium text-fg"
 					data-testid="flow-share-effective"
 				>
 					{$t(shareLevelKey(ready.view.effective_level))}
 				</dd>
 			</div>
 			<div class="flex items-center justify-between gap-2">
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.share.inheritance.label')}</dt>
-				<dd class="text-slate-700 dark:text-slate-200" data-testid="flow-share-inheritance">
+				<dt class="text-fg-muted">{$t('flow.share.inheritance.label')}</dt>
+				<dd class="text-fg" data-testid="flow-share-inheritance">
 					{ready.view.inherit_from_parent
 						? $t('flow.share.inheritance.on')
 						: $t('flow.share.inheritance.off')}
@@ -215,13 +215,13 @@
 		</dl>
 
 		{#if !ready.canManage || !permittedToManage}
-			<p class="text-slate-500 dark:text-slate-400" data-testid="flow-share-restricted">
+			<p class="text-fg-muted" data-testid="flow-share-restricted">
 				{$t('flow.share.restricted')}
 			</p>
 		{:else}
 			<button
 				type="button"
-				class="min-h-11 w-full rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+				class="min-h-11 w-full rounded-md border border-slate-300 px-3 text-sm font-medium text-fg hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
 				disabled={busy}
 				onclick={() =>
 					run({ kind: 'inheritance', inherit_from_parent: !ready.view.inherit_from_parent })}
@@ -234,21 +234,21 @@
 			<section aria-labelledby="flow-share-inherited">
 				<h3
 					id="flow-share-inherited"
-					class="mb-2 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+					class="mb-2 text-xs font-semibold uppercase text-fg-muted"
 				>
 					{$t('flow.share.inheritedHeading')}
 				</h3>
 				{#if ready.view.inherited.length === 0}
-					<p class="text-slate-500 dark:text-slate-400">{$t('flow.share.inheritedEmpty')}</p>
+					<p class="text-fg-muted">{$t('flow.share.inheritedEmpty')}</p>
 				{:else}
 					<ul class="space-y-1" data-testid="flow-share-inherited">
 						{#each ready.view.inherited as grant (`${grant.object_id}:${grant.principal_kind}:${grant.principal_id}`)}
 							<li class="flex items-center justify-between gap-2">
-								<span class="truncate text-slate-700 dark:text-slate-200">
+								<span class="truncate text-fg">
 									{nameOf(grant.principal_kind, grant.principal_id)}
 									<span class="text-xs text-slate-400">· {kindLabel(grant.principal_kind)}</span>
 								</span>
-								<span class="text-slate-500 dark:text-slate-400"
+								<span class="text-fg-muted"
 									>{$t(shareLevelKey(grant.level))}</span
 								>
 							</li>
@@ -260,18 +260,18 @@
 			<section aria-labelledby="flow-share-explicit">
 				<h3
 					id="flow-share-explicit"
-					class="mb-2 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+					class="mb-2 text-xs font-semibold uppercase text-fg-muted"
 				>
 					{$t('flow.share.explicitHeading')}
 				</h3>
 				{#if ready.view.items.length === 0}
-					<p class="text-slate-500 dark:text-slate-400">{$t('flow.share.explicitEmpty')}</p>
+					<p class="text-fg-muted">{$t('flow.share.explicitEmpty')}</p>
 				{:else}
 					<ul class="space-y-2" data-testid="flow-share-explicit">
 						{#each ready.view.items as grant (`${grant.principal_kind}:${grant.principal_id}`)}
 							{@const name = nameOf(grant.principal_kind, grant.principal_id)}
 							<li class="flex flex-col gap-1" data-testid="flow-share-grant">
-								<span class="truncate text-slate-700 dark:text-slate-200">
+								<span class="truncate text-fg">
 									{name}
 									<span class="text-xs text-slate-400">· {kindLabel(grant.principal_kind)}</span>
 								</span>
@@ -325,12 +325,12 @@
 			<section aria-labelledby="flow-share-add" class="space-y-2">
 				<h3
 					id="flow-share-add"
-					class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
+					class="text-xs font-semibold uppercase text-fg-muted"
 				>
 					{$t('flow.share.add.heading')}
 				</h3>
 				<label class="block">
-					<span class="mb-1 block text-xs text-slate-500 dark:text-slate-400"
+					<span class="mb-1 block text-xs text-fg-muted"
 						>{$t('flow.share.add.subject')}</span
 					>
 					<select
@@ -362,7 +362,7 @@
 					</select>
 				</label>
 				<label class="block">
-					<span class="mb-1 block text-xs text-slate-500 dark:text-slate-400"
+					<span class="mb-1 block text-xs text-fg-muted"
 						>{$t('flow.share.add.level')}</span
 					>
 					<select
@@ -378,7 +378,7 @@
 				</label>
 				<button
 					type="button"
-					class="min-h-11 w-full rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50"
+					class="min-h-11 w-full rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
 					disabled={busy || addPrincipal === ''}
 					onclick={submitAdd}
 				>
@@ -388,7 +388,7 @@
 
 			{#if pending && pending.phase === 'failed' && pending.preview === null && pending.failure}
 				<div class="space-y-1" role="alert">
-					<p class="text-red-600 dark:text-red-400">{$t(pending.failure.messageKey)}</p>
+					<p class="text-danger">{$t(pending.failure.messageKey)}</p>
 					{#if pending.failure.retryable}
 						<button type="button" class={linkButtonClass} onclick={confirmChange}
 							>{$t('flow.share.retry')}</button
@@ -401,7 +401,7 @@
 			{/if}
 
 			{#if snapshot.receipt}
-				<p class="text-xs text-slate-500 dark:text-slate-400" data-testid="flow-share-receipt">
+				<p class="text-xs text-fg-muted" data-testid="flow-share-receipt">
 					{$t('flow.share.receipt', {
 						values: { count: snapshot.receipt.changes.affected.length }
 					})}
@@ -417,7 +417,7 @@
 <Modal open={dialogOpen} title={$t('flow.share.confirm.title')} onclose={cancelChange}>
 	{#if pending}
 		<div
-			class="space-y-3 text-sm text-slate-700 dark:text-slate-300"
+			class="space-y-3 text-sm text-fg"
 			data-testid="flow-share-confirm"
 		>
 			{#if pending.phase === 'previewing'}
@@ -456,15 +456,15 @@
 				<p>{$t('flow.share.confirm.unknownAffected')}</p>
 			{/if}
 			{#if pending.selfLockout}
-				<p class="font-medium text-red-600 dark:text-red-400" role="alert">
+				<p class="font-medium text-danger" role="alert">
 					{$t('flow.share.confirm.selfLockout')}
 				</p>
 				<label
-					class="flex min-h-11 cursor-pointer items-center gap-3 text-slate-900 dark:text-slate-100"
+					class="flex min-h-11 cursor-pointer items-center gap-3 text-fg"
 				>
 					<input
 						type="checkbox"
-						class="h-5 w-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+						class="h-5 w-5"
 						checked={pending.acknowledged}
 						disabled={pending.phase === 'previewing' || pending.phase === 'submitting'}
 						onchange={onAcknowledge}
@@ -473,25 +473,25 @@
 					<span>{$t('flow.share.confirm.acknowledge')}</span>
 				</label>
 			{/if}
-			<p class="text-xs text-slate-500 dark:text-slate-400">
+			<p class="text-xs text-fg-muted">
 				{$t('flow.share.confirm.previewNote')}
 			</p>
 			{#if pending.phase === 'failed' && pending.failure}
-				<p class="text-red-600 dark:text-red-400" role="alert">{$t(pending.failure.messageKey)}</p>
+				<p class="text-danger" role="alert">{$t(pending.failure.messageKey)}</p>
 			{/if}
 		</div>
 	{/if}
 	{#snippet footer()}
 		<button
 			type="button"
-			class="min-h-11 rounded-md px-4 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 dark:text-slate-200 dark:hover:bg-slate-700"
+			class="min-h-11 rounded-md px-4 text-sm font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
 			onclick={cancelChange}
 		>
 			{$t('common.cancel')}
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded-md bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-800"
+			class="min-h-11 rounded-md bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
 			disabled={!permittedToManage ||
 				!pending ||
 				pending.phase === 'previewing' ||

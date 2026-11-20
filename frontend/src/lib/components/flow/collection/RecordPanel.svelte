@@ -88,25 +88,25 @@
 {#if panel}
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<aside
-		class="flex w-full flex-col border-slate-200 bg-white lg:w-96 lg:shrink-0 lg:border-l dark:border-slate-800 dark:bg-slate-950"
+		class="flex w-full flex-col border-line bg-white lg:w-96 lg:shrink-0 lg:border-l dark:bg-slate-950"
 		aria-labelledby={headingId}
 		data-testid="record-panel"
 		data-record-id={panel.recordId}
 		onkeydown={onKeydown}
 	>
 		<header
-			class="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2 dark:border-slate-800"
+			class="flex items-center justify-between gap-2 border-b border-line px-4 py-2"
 		>
 			<h2
 				id={headingId}
-				class="truncate text-base font-semibold text-slate-900 dark:text-slate-100"
+				class="truncate text-base font-semibold text-fg"
 			>
 				{$t('flow.record.title')}
 			</h2>
 			{#if !standalone}
 				<button
 					type="button"
-					class="min-h-11 min-w-11 rounded text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300 dark:hover:bg-slate-800"
+					class="min-h-11 min-w-11 rounded text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
 					aria-label={$t('flow.record.close')}
 					data-testid="record-panel-close"
 					onclick={() => controller.closePanel()}>✕</button
@@ -162,7 +162,7 @@
 						<div class="space-y-1" data-testid="record-panel-field" data-field-id={field.fieldId}>
 							<label
 								for={editorId}
-								class="block text-xs font-medium text-slate-600 dark:text-slate-300"
+								class="block text-xs font-medium text-fg-muted"
 							>
 								{field.label}
 							</label>
@@ -181,7 +181,7 @@
 									<div class="flex items-center gap-2">
 										<button
 											type="button"
-											class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
+											class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
 											disabled={!canEdit ||
 												panel.contextReviewRequired ||
 												status?.state === 'saving'}
@@ -191,11 +191,11 @@
 										>
 										<button
 											type="button"
-											class="min-h-11 rounded px-3 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+											class="min-h-11 rounded px-3 text-sm text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
 											onclick={() => controller.cancelDraft(panel.recordId, field.fieldId)}
 											>{$t('flow.record.discard')}</button
 										>
-										<span class="text-xs text-amber-700 dark:text-amber-300"
+										<span class="text-xs text-warning"
 											>{$t('flow.record.unsaved')}</span
 										>
 									</div>
@@ -215,7 +215,7 @@
 									/>
 								</div>{/if}
 							{#if status && status.state !== 'saving'}
-								<p class="text-xs text-red-600 dark:text-red-400" role="alert">
+								<p class="text-xs text-danger" role="alert">
 									{status.state === 'conflict'
 										? $t('flow.collection.cell.conflict')
 										: $t(status.key)}
@@ -227,7 +227,7 @@
 			</section>
 
 			<section
-				class="space-y-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800"
+				class="space-y-2 border-t border-line px-4 py-3"
 				aria-label={$t('flow.record.body')}
 			>
 				{#if panel.bodyWithheld}
@@ -235,7 +235,7 @@
 						{$t('flow.record.body')}
 					</h3>
 					<p
-						class="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600 dark:border-slate-600 dark:text-slate-300"
+						class="rounded border border-dashed border-slate-300 p-3 text-sm text-fg-muted dark:border-slate-600"
 						data-testid="record-panel-body-withheld"
 					>
 						{$t('flow.record.bodyWithheld')}
@@ -249,7 +249,7 @@
 					</label>
 					<textarea
 						id={`record-body-${panel.recordId}`}
-						class="min-h-40 w-full rounded border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+						class="min-h-40 w-full rounded border border-slate-300 bg-white p-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
 						placeholder={$t('flow.record.bodyPlaceholder')}
 						value={bodyValue}
 						readonly={!canEdit}
@@ -259,7 +259,7 @@
 					<div class="flex flex-wrap items-center gap-2">
 						<button
 							type="button"
-							class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
+							class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
 							disabled={!canEdit ||
 								panel.contextReviewRequired ||
 								bodyDraft === undefined ||
@@ -271,7 +271,7 @@
 						{#if bodyDraft !== undefined}
 							<button
 								type="button"
-								class="min-h-11 rounded px-3 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+								class="min-h-11 rounded px-3 text-sm text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
 								onclick={() => controller.discardBodyDraft(panel.recordId)}
 								>{$t('flow.record.discard')}</button
 							>
@@ -284,7 +284,7 @@
 							{:else if panel.bodyStatus?.state === 'error'}
 								<span class="text-red-600">{$t(panel.bodyStatus.key)}</span>
 							{:else if bodyDraft !== undefined}
-								<span class="text-amber-700 dark:text-amber-300">{$t('flow.record.unsaved')}</span>
+								<span class="text-warning">{$t('flow.record.unsaved')}</span>
 							{:else}
 								{$t('flow.record.bodySaved')}
 							{/if}
@@ -294,7 +294,7 @@
 			</section>
 
 			<section
-				class="space-y-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800"
+				class="space-y-2 border-t border-line px-4 py-3"
 				aria-label={$t('flow.record.archive')}
 			>
 				{#if !canArchive}<p class="text-xs text-slate-500">
@@ -303,21 +303,21 @@
 					<div class="space-y-2" role="group" aria-labelledby={`record-archive-${panel.recordId}`}>
 						<p
 							id={`record-archive-${panel.recordId}`}
-							class="text-sm text-slate-700 dark:text-slate-200"
+							class="text-sm text-fg"
 						>
 							{$t('flow.record.archiveConfirmBody')}
 						</p>
 						<div class="flex flex-wrap items-center gap-2">
 							<button
 								type="button"
-								class="min-h-11 rounded bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
+								class="min-h-11 rounded bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
 								disabled={archiveBusy || !canArchive}
 								data-testid="record-panel-archive-confirm"
 								onclick={() => void archive()}>{$t('flow.record.archiveConfirm')}</button
 							>
 							<button
 								type="button"
-								class="min-h-11 rounded px-3 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+								class="min-h-11 rounded px-3 text-sm text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
 								disabled={archiveBusy || !canArchive}
 								onclick={() => {
 									archiveConfirming = false;
@@ -329,12 +329,12 @@
 				{:else}
 					<button
 						type="button"
-						class="min-h-11 rounded px-3 text-sm text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-red-300 dark:hover:bg-red-950"
+						class="min-h-11 rounded px-3 text-sm text-danger hover:bg-red-50 dark:hover:bg-red-950"
 						data-testid="record-panel-archive"
 						onclick={() => (archiveConfirming = true)}>{$t('flow.record.archive')}</button
 					>
 				{/if}
-				<p class="text-xs text-red-600 dark:text-red-400" aria-live="polite">
+				<p class="text-xs text-danger" aria-live="polite">
 					{#if archiveBusy}
 						<span class="text-slate-500">{$t('flow.record.archiving')}</span>
 					{:else if archiveErrorKey}

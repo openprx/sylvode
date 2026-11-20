@@ -38,7 +38,7 @@
 </script>
 
 <section
-	class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-700 dark:bg-slate-900"
+	class="rounded-lg border border-line bg-white p-4 sm:p-6 dark:bg-slate-900"
 	aria-labelledby="flow-ops-health-heading"
 	data-testid="flow-ops-health"
 >
@@ -46,13 +46,13 @@
 		<div class="flex flex-wrap items-center gap-3">
 			<h2
 				id="flow-ops-health-heading"
-				class="text-lg font-semibold text-slate-900 dark:text-slate-100"
+				class="text-lg font-semibold text-fg"
 			>
 				{$t('flow.operations.health.heading')}
 			</h2>
 			{#if health}
 				<span
-					class={`rounded-full px-3 py-1 text-xs font-semibold ${health.status === 'healthy' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200'}`}
+					class={`rounded-full px-3 py-1 text-xs font-semibold ${health.status === 'healthy' ? 'bg-emerald-100 text-success dark:bg-emerald-950/50' : 'bg-amber-100 text-warning dark:bg-amber-950/50'}`}
 					data-testid="flow-ops-health-status"
 				>
 					{$t(statusKey(HEALTH_STATUS_KEYS, health.status))}
@@ -62,7 +62,7 @@
 		<div class="flex flex-wrap gap-2">
 			<button
 				type="button"
-				class="min-h-11 rounded-md border border-slate-300 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+				class="min-h-11 rounded-md border border-slate-300 px-4 text-sm font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
 				disabled={snapshot.loading}
 				onclick={onrefresh}
 			>
@@ -71,7 +71,7 @@
 			{#if snapshot.paused}
 				<button
 					type="button"
-					class="min-h-11 rounded-md border border-blue-300 px-4 text-sm font-medium text-blue-700 hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
+					class="min-h-11 rounded-md border border-blue-300 px-4 text-sm font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
 					onclick={onresume}
 					data-testid="flow-ops-health-resume"
 				>
@@ -80,7 +80,7 @@
 			{:else}
 				<button
 					type="button"
-					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
 					onclick={onpause}
 					data-testid="flow-ops-health-pause"
 				>
@@ -90,7 +90,7 @@
 		</div>
 	</div>
 
-	<p class="mt-2 text-xs text-slate-500 dark:text-slate-400" role="status" aria-live="polite">
+	<p class="mt-2 text-xs text-fg-muted" role="status" aria-live="polite">
 		{#if snapshot.paused}
 			{$t('flow.operations.health.paused')}
 		{:else}
@@ -103,7 +103,7 @@
 
 	{#if snapshot.stale}
 		<p
-			class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+			class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-warning dark:border-amber-800 dark:bg-amber-950/30"
 			role="alert"
 			data-testid="flow-ops-health-stale"
 		>
@@ -111,7 +111,7 @@
 		</p>
 	{:else if !health && snapshot.failure}
 		<p
-			class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+			class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-danger dark:border-red-900 dark:bg-red-950/30"
 			role="alert"
 		>
 			{$t('flow.operations.health.loadFailed')}
@@ -122,7 +122,7 @@
 	{#if health}
 		{#if health.status !== 'healthy'}
 			<p
-				class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+				class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-warning dark:border-amber-800 dark:bg-amber-950/30"
 				data-testid="flow-ops-health-degraded"
 			>
 				{$t('flow.operations.health.degradedNotice')}
@@ -133,52 +133,52 @@
 			data-testid="flow-ops-health-metrics"
 		>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">
+				<dt class="text-fg-muted">
 					{$t('flow.operations.health.connections')}
 				</dt>
 				<dd
-					class="mt-1 font-mono text-slate-900 dark:text-slate-100"
+					class="mt-1 font-mono text-fg"
 					data-testid="flow-ops-health-connections"
 				>
 					{health.connections}
 				</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">
+				<dt class="text-fg-muted">
 					{$t('flow.operations.health.acceptRate')}
 				</dt>
-				<dd class="mt-1 font-mono text-slate-900 dark:text-slate-100">
+				<dd class="mt-1 font-mono text-fg">
 					{rate(health.accept_rate)}
 				</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">
+				<dt class="text-fg-muted">
 					{$t('flow.operations.health.rejectRate')}
 				</dt>
-				<dd class="mt-1 font-mono text-slate-900 dark:text-slate-100">
+				<dd class="mt-1 font-mono text-fg">
 					{rate(health.reject_rate)}
 				</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">
+				<dt class="text-fg-muted">
 					{$t('flow.operations.health.queueDepth')}
 				</dt>
-				<dd class="mt-1 font-mono text-slate-900 dark:text-slate-100">{health.queue_depth}</dd>
+				<dd class="mt-1 font-mono text-fg">{health.queue_depth}</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">
+				<dt class="text-fg-muted">
 					{$t('flow.operations.health.oldestJobAge')}
 				</dt>
-				<dd class="mt-1 font-mono text-slate-900 dark:text-slate-100">
+				<dd class="mt-1 font-mono text-fg">
 					{seconds(health.oldest_job_age)}
 				</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">
+				<dt class="text-fg-muted">
 					{$t('flow.operations.health.storageBytes')}
 				</dt>
 				<dd
-					class="mt-1 font-mono text-slate-900 dark:text-slate-100"
+					class="mt-1 font-mono text-fg"
 					data-testid="flow-ops-health-storage"
 				>
 					{$t('flow.operations.bytes', { values: { n: health.storage_bytes } })}
@@ -188,52 +188,52 @@
 
 		<div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
 			<div
-				class={`rounded-md border p-4 ${alert ? 'border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30' : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50'}`}
+				class={`rounded-md border p-4 ${alert ? 'border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30' : 'border-line bg-slate-50 dark:bg-slate-800/50'}`}
 				data-testid="flow-ops-dead-letter"
 				data-alert={alert ? 'true' : 'false'}
 			>
 				<h3
-					class={`text-sm font-semibold ${alert ? 'text-red-800 dark:text-red-200' : 'text-slate-900 dark:text-slate-100'}`}
+					class={`text-sm font-semibold ${alert ? 'text-danger' : 'text-fg'}`}
 				>
 					{$t('flow.operations.health.deadLetter.heading')}
 				</h3>
 				<dl class="mt-2 grid grid-cols-2 gap-2 text-sm">
-					<dt class="text-slate-600 dark:text-slate-300">
+					<dt class="text-fg-muted">
 						{$t('flow.operations.health.deadLetter.total')}
 					</dt>
 					<dd class="font-mono" data-testid="flow-ops-dead-letter-total">
 						{deadLetterTotal(health)}
 					</dd>
-					<dt class="text-slate-600 dark:text-slate-300">
+					<dt class="text-fg-muted">
 						{$t('flow.operations.health.deadLetter.dispatchFailed')}
 					</dt>
 					<dd class="font-mono">{health.dead_letter.dispatch_failed}</dd>
-					<dt class="text-slate-600 dark:text-slate-300">
+					<dt class="text-fg-muted">
 						{$t('flow.operations.health.deadLetter.deliveryFailed')}
 					</dt>
 					<dd class="font-mono">{health.dead_letter.delivery_failed}</dd>
-					<dt class="text-slate-600 dark:text-slate-300">
+					<dt class="text-fg-muted">
 						{$t('flow.operations.health.deadLetter.oldestFailedAge')}
 					</dt>
 					<dd class="font-mono">{seconds(health.dead_letter.oldest_failed_age)}</dd>
 				</dl>
 				{#if !alert}
-					<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+					<p class="mt-2 text-xs text-fg-muted">
 						{$t('flow.operations.health.deadLetter.clear')}
 					</p>
 				{/if}
 			</div>
 			<div
-				class="rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50"
+				class="rounded-md border border-line bg-slate-50 p-4 dark:bg-slate-800/50"
 				data-testid="flow-ops-cancelled"
 			>
-				<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h3 class="text-sm font-semibold text-fg">
 					{$t('flow.operations.health.cancelled.heading')}
 				</h3>
 				<p class="mt-2 font-mono text-sm" data-testid="flow-ops-cancelled-count">
 					{health.delivery_cancelled}
 				</p>
-				<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+				<p class="mt-2 text-xs text-fg-muted">
 					{$t('flow.operations.health.cancelled.note')}
 				</p>
 			</div>

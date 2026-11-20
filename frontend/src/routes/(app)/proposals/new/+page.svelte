@@ -351,9 +351,9 @@
 
 <div class="mx-auto max-w-3xl">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
-		<h1 class="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="mb-4 text-xl font-semibold text-fg">
 			{$t('governance.createTitle')}
 		</h1>
 		<div class="space-y-4">
@@ -493,14 +493,14 @@
 				>
 					<button
 						type="button"
-						class={`px-2 py-1 ${contentMode === 'edit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'}`}
+						class={`px-2 py-1 ${contentMode === 'edit' ? 'bg-blue-600 text-white' : 'bg-white text-fg-muted dark:bg-slate-900'}`}
 						onclick={() => (contentMode = 'edit')}
 					>
 						{$t('issue.editMode')}
 					</button>
 					<button
 						type="button"
-						class={`px-2 py-1 ${contentMode === 'preview' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'}`}
+						class={`px-2 py-1 ${contentMode === 'preview' ? 'bg-blue-600 text-white' : 'bg-white text-fg-muted dark:bg-slate-900'}`}
 						onclick={() => (contentMode = 'preview')}
 					>
 						{$t('issue.previewMode')}
@@ -532,7 +532,7 @@
 					</div>
 				{:else}
 					<div
-						class="markdown-body min-h-[280px] rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+						class="markdown-body min-h-[280px] rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-900"
 					>
 						{#if content.trim()}
 							{@html renderMarkdown(content)}

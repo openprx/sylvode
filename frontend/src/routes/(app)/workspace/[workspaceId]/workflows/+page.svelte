@@ -285,8 +285,8 @@
 <div class="mx-auto max-w-5xl space-y-6 p-6">
 	<div class="flex items-center justify-between">
 		<div>
-			<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('workflow.title')}</h1>
-			<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+			<h1 class="text-2xl font-semibold text-fg">{$t('workflow.title')}</h1>
+			<p class="mt-1 text-sm text-fg-muted">
 				{$t('workflow.subtitle')}
 			</p>
 		</div>
@@ -295,13 +295,13 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
 		>
 			{$t('workflow.loading')}
 		</div>
 	{:else if workflows.length === 0}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-10 text-center text-fg-muted"
 		>
 			{$t('workflow.noWorkflows')}
 		</div>
@@ -312,7 +312,7 @@
 					<div class="flex items-start justify-between gap-4">
 						<div class="min-w-0 flex-1">
 							<div class="flex items-center gap-2 flex-wrap">
-								<span class="text-lg font-semibold text-slate-900 dark:text-slate-100"
+								<span class="text-lg font-semibold text-fg"
 									>{wf.name}</span
 								>
 								{#if wf.is_system_default}
@@ -323,16 +323,16 @@
 									</span>
 								{:else}
 									<span
-										class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+										class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-slate-100 text-fg dark:bg-slate-800"
 									>
 										{$t('workflow.custom')}
 									</span>
 								{/if}
 							</div>
 							{#if wf.description}
-								<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{wf.description}</p>
+								<p class="mt-1 text-sm text-fg-muted">{wf.description}</p>
 							{/if}
-							<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+							<p class="mt-1 text-xs text-fg-muted">
 								{$t('workflow.stateCount', { values: { count: wf.state_count } })}
 							</p>
 						</div>
@@ -382,14 +382,14 @@
 		/>
 		<div class="space-y-1">
 			<label
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="block text-sm font-medium text-fg"
 				for="create-wf-description"
 			>
 				{$t('workflow.description')}
 			</label>
 			<textarea
 				id="create-wf-description"
-				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500 resize-y"
 				placeholder={$t('workflow.descriptionPlaceholder')}
 				bind:value={createForm.description}
 				rows={3}></textarea>
@@ -421,14 +421,14 @@
 		/>
 		<div class="space-y-1">
 			<label
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="block text-sm font-medium text-fg"
 				for="edit-wf-description"
 			>
 				{$t('workflow.description')}
 			</label>
 			<textarea
 				id="edit-wf-description"
-				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500 resize-y"
 				placeholder={$t('workflow.descriptionPlaceholder')}
 				bind:value={editForm.description}
 				rows={3}></textarea>
@@ -454,37 +454,37 @@
 	{#if managingWorkflow}
 		<div class="space-y-4">
 			{#if managingWorkflow.states.length === 0}
-				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('workflow.noStates')}</p>
+				<p class="text-sm text-fg-muted">{$t('workflow.noStates')}</p>
 			{:else}
-				<div class="overflow-x-auto rounded-md border border-slate-200 dark:border-slate-700">
+				<div class="overflow-x-auto rounded-md border border-line">
 					<table class="w-full text-left text-sm">
 						<thead>
 							<tr class="bg-slate-50 dark:bg-slate-950">
 								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-slate-500 dark:text-slate-400 w-10"
+									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted w-10"
 								></th>
 								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-slate-500 dark:text-slate-400 w-8"
+									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted w-8"
 									>{$t('workflow.color')}</th
 								>
 								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
 									>{$t('workflow.stateKey')}</th
 								>
 								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
 									>{$t('workflow.displayName')}</th
 								>
 								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
 									>{$t('workflow.category')}</th
 								>
 								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted"
 									>{$t('workflow.flags')}</th
 								>
 								<th
-									class="px-3 py-2 text-xs font-medium uppercase text-slate-500 dark:text-slate-400 text-right"
+									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted text-right"
 									>{$t('workflow.actions')}</th
 								>
 							</tr>
@@ -492,7 +492,7 @@
 						<tbody>
 							{#each managingWorkflow.states as state, idx (state.id)}
 								<tr
-									class={`border-b border-slate-200 dark:border-slate-700 transition-colors ${draggingStateId === state.id ? 'opacity-40' : ''} ${dropTargetIdx === idx ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-white dark:bg-slate-900'}`}
+									class={`border-b border-line transition-colors ${draggingStateId === state.id ? 'opacity-40' : ''} ${dropTargetIdx === idx ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-white dark:bg-slate-900'}`}
 									draggable={true}
 									ondragstart={() => handleDragStart(state.id)}
 									ondragend={handleDragEnd}
@@ -512,13 +512,13 @@
 											style={`background-color: ${state.color ?? '#94a3b8'}`}
 										></span>
 									</td>
-									<td class="px-3 py-2 font-mono text-slate-500 dark:text-slate-400">{state.key}</td
+									<td class="px-3 py-2 font-mono text-fg-muted">{state.key}</td
 									>
-									<td class="px-3 py-2 text-slate-900 dark:text-slate-100">{state.display_name}</td>
+									<td class="px-3 py-2 text-fg">{state.display_name}</td>
 									<td class="px-3 py-2">
 										{#if state.category === 'done'}
 											<span
-												class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300"
+												class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-green-100 text-success dark:bg-green-900/50"
 											>
 												{$t('workflow.categoryDone')}
 											</span>
@@ -534,7 +534,7 @@
 										<div class="flex gap-1 flex-wrap">
 											{#if state.is_initial}
 												<span
-													class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300"
+													class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-100 text-warning dark:bg-amber-900/50"
 												>
 													{$t('workflow.initial')}
 												</span>
@@ -572,7 +572,7 @@
 			{/if}
 
 			{#if statesReadOnly}
-				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('workflow.statesReadOnly')}</p>
+				<p class="text-sm text-fg-muted">{$t('workflow.statesReadOnly')}</p>
 			{:else if !showStateForm}
 				<div>
 					<Button variant="secondary" size="sm" onclick={openAddStateForm}
@@ -581,16 +581,16 @@
 				</div>
 			{:else}
 				<div
-					class="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-4 space-y-3"
+					class="rounded-md border border-line bg-slate-50 dark:bg-slate-950 p-4 space-y-3"
 				>
-					<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+					<h3 class="text-sm font-semibold text-fg">
 						{editingState ? $t('workflow.editState') : $t('workflow.addState')}
 					</h3>
 					<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 						{#if !editingState}
 							<div class="space-y-1">
 								<label
-									class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+									class="block text-sm font-medium text-fg"
 									for="state-key"
 								>
 									{$t('workflow.stateKey')} <span class="text-red-500">*</span>
@@ -600,13 +600,13 @@
 									type="text"
 									placeholder={$t('workflow.stateKeyPlaceholder')}
 									bind:value={stateForm.key}
-									class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+									class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400"
 								/>
 							</div>
 						{/if}
 						<div class="space-y-1">
 							<label
-								class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+								class="block text-sm font-medium text-fg"
 								for="state-display-name"
 							>
 								{$t('workflow.displayName')} <span class="text-red-500">*</span>
@@ -616,12 +616,12 @@
 								type="text"
 								placeholder={$t('workflow.displayNamePlaceholder')}
 								bind:value={stateForm.display_name}
-								class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+								class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400"
 							/>
 						</div>
 						<div class="space-y-1">
 							<label
-								class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+								class="block text-sm font-medium text-fg"
 								for="state-category"
 							>
 								{$t('workflow.category')}
@@ -629,7 +629,7 @@
 							<select
 								id="state-category"
 								bind:value={stateForm.category}
-								class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+								class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 							>
 								<option value="active">{$t('workflow.categoryActive')}</option>
 								<option value="done">{$t('workflow.categoryDone')}</option>
@@ -637,7 +637,7 @@
 						</div>
 						<div class="space-y-1">
 							<label
-								class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+								class="block text-sm font-medium text-fg"
 								for="state-color"
 							>
 								{$t('workflow.color')}
@@ -646,28 +646,28 @@
 								id="state-color"
 								type="color"
 								bind:value={stateForm.color}
-								class="block h-9 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-1 py-1 cursor-pointer focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+								class="block h-9 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-1 py-1 cursor-pointer"
 							/>
 						</div>
 					</div>
 					<div class="flex gap-4">
 						<label
-							class="inline-flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer"
+							class="inline-flex items-center gap-2 text-sm text-fg cursor-pointer"
 						>
 							<input
 								type="checkbox"
 								bind:checked={stateForm.is_initial}
-								class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+								class="h-4 w-4 rounded border-slate-300 text-blue-600"
 							/>
 							{$t('workflow.isInitial')}
 						</label>
 						<label
-							class="inline-flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer"
+							class="inline-flex items-center gap-2 text-sm text-fg cursor-pointer"
 						>
 							<input
 								type="checkbox"
 								bind:checked={stateForm.is_terminal}
-								class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+								class="h-4 w-4 rounded border-slate-300 text-blue-600"
 							/>
 							{$t('workflow.isTerminal')}
 						</label>

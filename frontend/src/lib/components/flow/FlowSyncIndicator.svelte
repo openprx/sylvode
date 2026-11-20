@@ -34,7 +34,7 @@
 </script>
 
 <div
-	class="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+	class="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1 text-xs font-medium text-fg-muted dark:bg-slate-900"
 	role="status"
 	aria-live="polite"
 	data-testid="flow-sync-indicator"

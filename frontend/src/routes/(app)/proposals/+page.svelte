@@ -113,11 +113,11 @@
 
 <div class="mx-auto max-w-6xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 	>
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+				<h1 class="text-xl font-semibold text-fg">
 					{$t('governance.title')}
 				</h1>
 				<p class="text-sm text-slate-500">{$t('governance.subtitle')}</p>
@@ -134,7 +134,7 @@
 			<select
 				bind:value={statusFilter}
 				onchange={applyFilters}
-				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
 			>
 				<option value="all">{$t('governance.status.all')}</option>
 				<option value="draft">{$t('governance.status.draft')}</option>
@@ -148,7 +148,7 @@
 			<select
 				bind:value={typeFilter}
 				onchange={applyFilters}
-				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
 			>
 				<option value="all">{$t('governance.type.all')}</option>
 				<option value="feature">{$t('governance.type.feature')}</option>
@@ -162,12 +162,12 @@
 				bind:value={domainFilter}
 				onkeydown={(e) => e.key === 'Enter' && applyFilters()}
 				placeholder={$t('governance.domainPlaceholder')}
-				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
 			/>
 			<select
 				bind:value={sort}
 				onchange={applyFilters}
-				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
 			>
 				<option value="created_at:desc">{$t('governance.sort.createdDesc')}</option>
 				<option value="created_at:asc">{$t('governance.sort.createdAsc')}</option>
@@ -194,10 +194,10 @@
 					<button
 						type="button"
 						onclick={() => goto(`/proposals/${item.id}`)}
-						class="rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
+						class="rounded-lg border border-line bg-white p-4 text-left transition hover:shadow-md dark:bg-slate-900"
 					>
 						<div class="mb-2 flex items-start justify-between gap-2">
-							<h2 class="line-clamp-2 text-base font-semibold text-slate-900 dark:text-slate-100">
+							<h2 class="line-clamp-2 text-base font-semibold text-fg">
 								{item.title}
 							</h2>
 							<span class={`rounded px-2 py-0.5 text-xs font-medium ${statusTone(item.status)}`}
@@ -221,7 +221,7 @@
 		{/if}
 
 		<div
-			class="flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"
+			class="flex items-center justify-between border-t border-line pt-3 text-sm"
 		>
 			<p class="text-slate-500">
 				{$t('governance.pagination', { values: { total, page, pages: totalPages } })}
@@ -231,14 +231,14 @@
 					type="button"
 					onclick={() => goPage(page - 1)}
 					disabled={page <= 1 || loading}
-					class="rounded-md border border-slate-300 px-3 py-1 text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"
+					class="rounded-md border border-slate-300 px-3 py-1 text-fg disabled:opacity-50 dark:border-slate-600"
 					>{$t('governance.prevPage')}</button
 				>
 				<button
 					type="button"
 					onclick={() => goPage(page + 1)}
 					disabled={page >= totalPages || loading}
-					class="rounded-md border border-slate-300 px-3 py-1 text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"
+					class="rounded-md border border-slate-300 px-3 py-1 text-fg disabled:opacity-50 dark:border-slate-600"
 					>{$t('governance.nextPage')}</button
 				>
 			</div>

@@ -465,9 +465,9 @@
 	}
 
 	const iconButton =
-		'inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100';
+		'inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-slate-100 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-slate-800';
 	const menuItem =
-		'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
+		'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-fg hover:bg-slate-100 focus:bg-slate-100 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -- links are full record page paths built by the caller -->
@@ -482,7 +482,7 @@
 	aria-busy={status === 'loading' ? 'true' : undefined}
 	{inert}
 	tabindex="-1"
-	class="record-panel flex flex-col border-slate-200 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 {mode ===
+	class="record-panel flex flex-col border-line bg-white text-fg dark:bg-slate-900 {mode ===
 	'sheet'
 		? 'sheet fixed inset-0 z-50'
 		: mode === 'overlay'
@@ -506,7 +506,7 @@
 			aria-valuemin={MIN_WIDTH}
 			aria-valuemax={maxWidth}
 			tabindex="0"
-			class="group absolute inset-y-0 -start-1 z-10 flex w-2 cursor-col-resize justify-center focus-visible:outline-none"
+			class="group absolute inset-y-0 -start-1 z-10 flex w-2 cursor-col-resize justify-center"
 			data-record-panel-resize
 			onkeydown={onSeparatorKey}
 			onpointerdown={onSeparatorPointerDown}
@@ -519,7 +519,7 @@
 	{/if}
 
 	<div
-		class="flex min-h-12 flex-wrap items-center gap-1 border-b border-slate-200 px-3 py-2 dark:border-slate-700"
+		class="flex min-h-12 flex-wrap items-center gap-1 border-b border-line px-3 py-2"
 		data-record-panel-toolbar
 	>
 		<button
@@ -542,7 +542,7 @@
 		>
 		{#if position && inView}
 			<span
-				class="px-1 text-xs tabular-nums text-slate-500 dark:text-slate-400"
+				class="px-1 text-xs tabular-nums text-fg-muted"
 				data-record-panel-position
 				>{$t('forms.recordPanel.position', {
 					values: { index: position.index, total: position.total }
@@ -553,7 +553,7 @@
 		{#if canEdit && record && status === 'ready'}
 			<button
 				type="button"
-				class="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 px-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+				class="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 px-2.5 text-sm font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
 				data-record-panel-edit
 				onclick={onedit}
 			>
@@ -667,7 +667,7 @@
 					type="button"
 					role="menuitem"
 					tabindex="-1"
-					class="{menuItem} text-red-700 dark:text-red-400"
+					class="{menuItem} text-danger"
 					data-record-panel-delete
 					onclick={() => runMenu(ondelete)}
 					><Trash2 class="h-4 w-4" aria-hidden="true" />{$t('forms.recordPanel.delete')}</button
@@ -679,7 +679,7 @@
 	<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
 		{#if !online}
 			<p
-				class="border-b border-slate-200 px-4 py-1.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400"
+				class="border-b border-line px-4 py-1.5 text-xs text-fg-muted"
 			>
 				{$t('forms.recordPanel.offline')}
 			</p>
@@ -692,7 +692,7 @@
 				<span>{$t('forms.recordPanel.notInView')}</span>
 				<button
 					type="button"
-					class="min-h-6 font-medium underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-blue-500"
+					class="min-h-6 font-medium underline underline-offset-2"
 					onclick={onshowall}>{$t('forms.recordPanel.showInAll')}</button
 				>
 			</div>
@@ -739,7 +739,7 @@
 					{$t('forms.recordPanel.loadError')}
 				</h2>
 				{#if errorMessage}
-					<p class="text-sm text-slate-500 dark:text-slate-400">{errorMessage}</p>
+					<p class="text-sm text-fg-muted">{errorMessage}</p>
 				{/if}
 				<button
 					type="button"
@@ -780,14 +780,14 @@
 							id={headingId}
 							tabindex="-1"
 							bind:this={heading}
-							class="text-base font-semibold leading-snug break-words focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+							class="text-base font-semibold leading-snug break-words"
 							style="display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;"
 							title={record.title}
 						>
 							{record.title}
 						</h2>
 						<div
-							class="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
+							class="flex flex-wrap items-center gap-2 text-xs text-fg-muted"
 						>
 							{#if identifier}
 								<span
@@ -797,7 +797,7 @@
 								>
 								<button
 									type="button"
-									class="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-slate-800"
+									class="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
 									aria-label={$t('forms.recordPanel.copyIdentifier')}
 									title={$t('forms.recordPanel.copyIdentifier')}
 									onclick={() => void copyValue('identifier', identifier.copy)}
@@ -817,7 +817,7 @@
 								/>
 							{/if}
 						</div>
-						<p class="text-xs text-slate-500 dark:text-slate-400" data-record-panel-subtitle>
+						<p class="text-xs text-fg-muted" data-record-panel-subtitle>
 							{#if header.subtitle && hasValue(header.subtitle)}
 								<FieldValue
 									field={header.subtitle}
@@ -842,14 +842,14 @@
 
 					{#if header.highlights.length > 0}
 						<dl
-							class="grid gap-x-4 gap-y-3 border-y border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/40 {wide
+							class="grid gap-x-4 gap-y-3 border-y border-line bg-slate-50 px-4 py-3 dark:bg-slate-800/40 {wide
 								? 'grid-cols-2'
 								: 'grid-cols-1'}"
 							data-record-panel-highlights
 						>
 							{#each header.highlights as field (field.key)}
 								<div class="min-w-0">
-									<dt class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
+									<dt class="text-xs font-medium uppercase text-fg-muted">
 										{fieldLabel(field)}
 									</dt>
 									<dd class="mt-0.5 text-base font-semibold">
@@ -869,7 +869,7 @@
 					{/if}
 
 					{#if noValues}
-						<div class="space-y-2 px-4 py-4 text-sm text-slate-500 dark:text-slate-400">
+						<div class="space-y-2 px-4 py-4 text-sm text-fg-muted">
 							<p>{$t('forms.recordPanel.noValues')}</p>
 							{#if canEdit}
 								<button
@@ -882,7 +882,7 @@
 					{:else}
 						{#each visibleSections as entry (entry.section.key)}
 							<details
-								class="group/section border-b border-slate-200 dark:border-slate-700"
+								class="group/section border-b border-line"
 								open={!entry.section.collapsible || !entry.section.defaultCollapsed}
 								data-record-panel-section={`${record.id}:${entry.section.key}`}
 								ontoggle={(event) => {
@@ -891,7 +891,7 @@
 								}}
 							>
 								<summary
-									class="flex min-h-10 list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-slate-600 uppercase marker:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300 {entry
+									class="flex min-h-10 list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase marker:hidden focus-visible:-outline-offset-2 {entry
 										.section.collapsible
 										? 'cursor-pointer'
 										: 'cursor-default'}"
@@ -917,7 +917,7 @@
 											data-field-type={field.type ?? 'text'}
 										>
 											<dt
-												class="pt-0.5 text-xs font-medium text-slate-500 uppercase break-words dark:text-slate-400 {wide
+												class="pt-0.5 text-xs font-medium text-fg-muted uppercase break-words {wide
 													? ''
 													: 'col-start-1 row-start-1'}"
 											>
@@ -938,13 +938,13 @@
 												{/if}
 												{#each badges as badge (badge)}
 													<span
-														class="ms-1 rounded bg-slate-100 px-1 text-[10px] text-slate-600 normal-case dark:bg-slate-800 dark:text-slate-300"
+														class="ms-1 rounded bg-slate-100 px-1 text-[10px] text-fg-muted normal-case dark:bg-slate-800"
 														>{badge}</span
 													>
 												{/each}
 											</dt>
 											<dd
-												class="min-w-0 text-sm text-slate-900 dark:text-slate-100 {wide
+												class="min-w-0 text-sm text-fg {wide
 													? ''
 													: 'col-span-2'}"
 											>
@@ -964,14 +964,14 @@
 														/>
 													{:else}
 														<div
-															class="overflow-x-auto rounded-md border border-slate-200 dark:border-slate-700"
+															class="overflow-x-auto rounded-md border border-line"
 														>
 															<table
 																class="w-full text-xs"
 																data-record-panel-child-table={field.key}
 															>
 																<thead
-																	class="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+																	class="bg-slate-50 text-fg-muted dark:bg-slate-800"
 																>
 																	<tr>
 																		<th class="px-2 py-1.5 text-start font-medium"
@@ -984,7 +984,7 @@
 																		{/each}
 																	</tr>
 																</thead>
-																<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+																<tbody class="divide-y divide-line">
 																	{#each table.rows.slice(0, 5) as child (child.record.id)}
 																		<tr>
 																			<td class="max-w-40 truncate px-2 py-1.5"
@@ -1030,7 +1030,7 @@
 											{#if copy}
 												<button
 													type="button"
-													class="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 hover:bg-slate-100 focus:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-slate-800 {wide
+													class="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 hover:bg-slate-100 focus:opacity-100 dark:hover:bg-slate-800 {wide
 														? ''
 														: 'col-start-2 row-start-1'}"
 													aria-label={$t('forms.recordPanel.copyField', {
@@ -1056,13 +1056,13 @@
 
 					{#if plugins.enabled}
 						<details
-							class="border-b border-slate-200 dark:border-slate-700"
+							class="border-b border-line"
 							open={appsOpen}
 							data-record-panel-apps
 							ontoggle={(event) => (appsOpen = (event.currentTarget as HTMLDetailsElement).open)}
 						>
 							<summary
-								class="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-slate-600 uppercase marker:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300"
+								class="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase marker:hidden focus-visible:-outline-offset-2"
 							>
 								<ChevronRight
 									class="h-3.5 w-3.5 transition-transform {appsOpen
@@ -1102,11 +1102,11 @@
 					{/if}
 
 					<details
-						class="border-b border-slate-200 dark:border-slate-700"
+						class="border-b border-line"
 						data-record-panel-details
 					>
 						<summary
-							class="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-slate-600 uppercase marker:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300"
+							class="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase marker:hidden focus-visible:-outline-offset-2"
 						>
 							<ChevronRight
 								class="details-chevron h-3.5 w-3.5 transition-transform rtl:-scale-x-100"
@@ -1117,30 +1117,30 @@
 						<dl
 							class="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 pb-4 text-sm"
 						>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.created')}
 							</dt>
 							<dd>{formatInstant(record.created_at)}</dd>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.createdBy')}
 							</dt>
 							<dd>{record.created_by ? memberName(record.created_by) : '—'}</dd>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.updated')}
 							</dt>
 							<dd>{formatInstant(record.updated_at)}</dd>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.updatedByLabel')}
 							</dt>
 							<dd>{record.updated_by ? memberName(record.updated_by) : '—'}</dd>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.recordId')}
 							</dt>
 							<dd class="flex min-w-0 items-center gap-1">
 								<span class="truncate font-mono text-xs" dir="ltr">{record.id}</span>
 								<button
 									type="button"
-									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-slate-800"
+									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
 									aria-label={$t('forms.recordPanel.copyId')}
 									onclick={() => void copyValue('record-id', record?.id ?? null)}
 								>
@@ -1173,7 +1173,7 @@
 			aria-modal="true"
 			aria-label={$t('forms.recordPanel.previewTitle')}
 			tabindex="-1"
-			class="relative flex max-h-full max-w-full flex-col items-center gap-3 focus:outline-none"
+			class="relative flex max-h-full max-w-full flex-col items-center gap-3"
 			data-record-panel-preview
 			onkeydown={onPreviewKey}
 		>

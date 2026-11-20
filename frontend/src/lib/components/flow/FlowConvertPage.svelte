@@ -81,7 +81,7 @@
 	<div class="mx-auto max-w-3xl space-y-4">
 		<h1 class="text-xl font-semibold">{$t('flow.createForm.convertTitle')}</h1>
 		{#if sourceTitle}<p class="text-sm font-medium">{sourceTitle}</p>{/if}
-		<p class="text-sm text-slate-600 dark:text-slate-300">{$t('flow.personal.destinationNote')}</p>
+		<p class="text-sm text-fg-muted">{$t('flow.personal.destinationNote')}</p>
 		{#if loading}<p role="status">{$t('common.loading')}</p>
 		{:else if failed}<p role="alert">{$t('flow.personal.conversionAvailabilityFailed')}</p>
 			<button
@@ -93,7 +93,7 @@
 		{:else if availability.mode === 'unavailable'}
 			<p
 				role="status"
-				class="text-sm text-slate-600 dark:text-slate-300"
+				class="text-sm text-fg-muted"
 				data-testid="flow-conversion-unavailable"
 			>
 				{$t('flow.personal.conversionUnavailable')}

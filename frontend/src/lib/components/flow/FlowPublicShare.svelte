@@ -70,7 +70,7 @@
 	{#if status === 'loading'}
 		<p class="mx-auto max-w-3xl px-4 py-10 text-slate-500">{$t('flow.publicShare.loading')}</p>
 	{:else if status === 'missing'}
-		<p class="mx-auto max-w-3xl px-4 py-10 text-slate-700 dark:text-slate-200">
+		<p class="mx-auto max-w-3xl px-4 py-10 text-fg">
 			{$t('flow.publicShare.missing')}
 		</p>
 	{:else}
@@ -100,7 +100,7 @@
 			{:else if iconUrl}
 				<img src={iconUrl} alt="" class="h-16 w-16 rounded object-cover" />
 			{/if}
-			<h1 class="mb-6 text-4xl font-semibold text-slate-900 dark:text-slate-100">
+			<h1 class="mb-6 text-4xl font-semibold text-fg">
 				{title || $t('flow.publicShare.untitled')}
 			</h1>
 			<p class="text-xs text-slate-500">{$t('flow.publicShare.readOnly')}</p>
@@ -179,7 +179,7 @@
 					</div>
 				{:else if block.kind === 'embed'}
 					<p
-						class="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-500 dark:border-slate-700"
+						class="rounded-md border border-line px-3 py-2 text-sm text-slate-500"
 					>
 						{$t('flow.publicShare.embed')}
 					</p>

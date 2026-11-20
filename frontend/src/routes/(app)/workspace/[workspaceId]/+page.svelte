@@ -36,9 +36,9 @@
 	const cards = $derived(workspaceHomeCards($flowFeatureStore[workspaceId] === true, isAdmin));
 
 	const linkClass =
-		'inline-flex min-h-11 items-center rounded-md text-sm font-medium text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-300';
+		'inline-flex min-h-11 items-center rounded-md text-sm font-medium text-blue-700 hover:underline dark:text-blue-300';
 	const cardClass =
-		'flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-800';
+		'flex flex-col gap-3 rounded-lg border border-line bg-white p-6 dark:bg-slate-800';
 
 	async function load() {
 		view = 'loading';
@@ -64,7 +64,7 @@
 <div class="mx-auto max-w-6xl space-y-6">
 	{#if view === 'loading'}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white p-6 text-fg-muted dark:bg-slate-900"
 			role="status"
 			aria-live="polite"
 		>
@@ -86,13 +86,13 @@
 		</div>
 	{:else if view === 'failed'}
 		<div
-			class="flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-6 text-red-800 dark:border-red-500/40 dark:bg-red-500/20 dark:text-red-300"
+			class="flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-6 text-danger dark:border-red-500/40 dark:bg-red-500/20"
 			role="alert"
 		>
 			<p>{$t('workspace.home.loadFailed')}</p>
 			<button
 				type="button"
-				class="min-h-11 self-start rounded-md border border-red-300 px-4 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-700"
+				class="min-h-11 self-start rounded-md border border-red-300 px-4 text-sm font-medium dark:border-red-700"
 				onclick={() => void load()}
 			>
 				{$t('common.retry')}
@@ -102,7 +102,7 @@
 		<header class="space-y-2">
 			<div class="flex flex-wrap items-center gap-3">
 				<h1
-					class="text-2xl font-bold break-words text-slate-900 dark:text-slate-100"
+					class="text-2xl font-semibold break-words text-fg"
 					data-testid="workspace-home-name"
 				>
 					{workspace.name}
@@ -116,12 +116,12 @@
 					</span>
 				{/if}
 			</div>
-			<p class="text-sm text-slate-500 dark:text-slate-400">
+			<p class="text-sm text-fg-muted">
 				{$t('workspace.home.slugLabel')}:
 				<code class="font-mono" data-testid="workspace-home-slug">{workspace.slug}</code>
 			</p>
 			{#if workspace.description}
-				<p class="text-slate-600 dark:text-slate-300">{workspace.description}</p>
+				<p class="text-fg-muted">{workspace.description}</p>
 			{/if}
 		</header>
 
@@ -131,12 +131,12 @@
 		>
 			<div class={cardClass} data-testid="workspace-home-projects">
 				<div class="flex items-baseline justify-between gap-3">
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{$t('workspace.home.projectsTitle')}
 					</h2>
 					{#if !projectsFailed}
 						<span
-							class="text-sm text-slate-500 dark:text-slate-400"
+							class="text-sm text-fg-muted"
 							data-testid="workspace-home-project-total"
 						>
 							{$t('workspace.home.projectTotal', { values: { count: projectTotal } })}
@@ -144,7 +144,7 @@
 					{/if}
 				</div>
 				{#if projectsFailed}
-					<p class="text-sm text-red-700 dark:text-red-300" role="alert">
+					<p class="text-sm text-danger" role="alert">
 						{$t('workspace.home.projectsLoadFailed')}
 					</p>
 				{:else if recent.length === 0}
@@ -165,7 +165,7 @@
 						</EmptyState>
 					</div>
 				{:else}
-					<h3 class="text-sm font-medium text-slate-600 dark:text-slate-300">
+					<h3 class="text-sm font-medium text-fg-muted">
 						{$t('workspace.home.recentProjects')}
 					</h3>
 					<ul class="space-y-1" data-testid="workspace-home-recent">
@@ -196,11 +196,11 @@
 
 			{#if cards.flow !== 'hidden'}
 				<div class={cardClass} data-testid="workspace-home-flow">
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{$t('workspace.home.flowTitle')}
 					</h2>
 					{#if cards.flow === 'open'}
-						<p class="text-sm text-slate-600 dark:text-slate-300">
+						<p class="text-sm text-fg-muted">
 							{$t('workspace.home.flowOpenBody')}
 						</p>
 						<a
@@ -210,7 +210,7 @@
 							{$t('workspace.home.flowOpen')}
 						</a>
 					{:else}
-						<p class="text-sm text-slate-600 dark:text-slate-300">
+						<p class="text-sm text-fg-muted">
 							{$t('workspace.home.flowDisabledBody')}
 						</p>
 						<a
@@ -225,7 +225,7 @@
 
 			{#if cards.admin}
 				<div class={cardClass} data-testid="workspace-home-admin">
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{$t('workspace.home.adminTitle')}
 					</h2>
 					<ul class="space-y-1">

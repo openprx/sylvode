@@ -82,7 +82,7 @@
 			</p>
 		{:else if !remote}<div
 				role="status"
-				class="rounded border border-slate-200 p-4 text-sm dark:border-slate-700"
+				class="rounded border border-line p-4 text-sm"
 			>
 				<p>
 					{viewState.loadError === 'failed'
@@ -172,7 +172,7 @@
 				</p>{/if}
 			{#if viewState.draft?.ack}<div
 					role="status"
-					class="mt-4 rounded border border-slate-200 p-3 text-sm dark:border-slate-700"
+					class="mt-4 rounded border border-line p-3 text-sm"
 				>
 					<p>
 						{viewState.draft.ack.newerContent

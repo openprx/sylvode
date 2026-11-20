@@ -58,7 +58,7 @@
 </script>
 
 <section
-	class="not-prose my-4 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700"
+	class="not-prose my-4 overflow-hidden rounded-lg border border-line"
 	data-testid="flow-embedded-collection"
 	data-collection-id={collectionId}
 	data-block-id={blockId}
@@ -67,13 +67,13 @@
 	})}
 >
 	<header
-		class="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 dark:border-slate-700 dark:bg-slate-900"
+		class="flex items-center gap-3 border-b border-line bg-slate-50 px-4 py-2 dark:bg-slate-900"
 	>
-		<h3 class="flex-1 truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+		<h3 class="flex-1 truncate text-sm font-semibold text-fg">
 			{$viewState.collection?.title || $t('flow.nav.untitled')}
 		</h3>
 		<a
-			class="inline-flex min-h-11 items-center rounded px-3 text-sm font-medium text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-300"
+			class="inline-flex min-h-11 items-center rounded px-3 text-sm font-medium text-blue-700 hover:underline dark:text-blue-300"
 			href={resolve('/(app)/flow/[objectId]', { objectId: collectionId })}
 			data-testid="flow-embedded-collection-open"
 		>

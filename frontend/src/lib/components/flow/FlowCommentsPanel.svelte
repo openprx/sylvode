@@ -268,13 +268,13 @@
 
 <div class="space-y-3 text-sm" data-testid="flow-comments">
 	{#if loading && items.length === 0}
-		<p class="text-slate-500 dark:text-slate-400">{$t('flow.comments.loading')}</p>
+		<p class="text-fg-muted">{$t('flow.comments.loading')}</p>
 	{:else if visibleRoots.length === 0}
-		<p class="text-slate-500 dark:text-slate-400">{$t('flow.comments.empty')}</p>
+		<p class="text-fg-muted">{$t('flow.comments.empty')}</p>
 	{:else}
 		<ul class="space-y-3">
 			{#each visibleRoots as comment (comment.id)}
-				<li class="rounded-md border border-slate-200 p-2 dark:border-slate-700">
+				<li class="rounded-md border border-line p-2">
 					{#if comment.anchor_status === 'orphaned'}<p
 							class="mb-1 text-xs text-slate-500"
 							data-comment-anchor-status="orphaned"
@@ -283,7 +283,7 @@
 						</p>{/if}
 					{#if editingId === comment.id}
 						<textarea
-							class="min-h-16 w-full rounded-md border border-slate-300 bg-white p-2 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+							class="min-h-16 w-full rounded-md border border-slate-300 bg-white p-2 text-fg dark:border-slate-600 dark:bg-slate-800"
 							bind:value={editBody}
 							readonly={!actions(comment).edit}></textarea>
 						<button
@@ -294,7 +294,7 @@
 						>
 						<button type="button" onclick={() => (editingId = null)}>{$t('common.cancel')}</button>
 					{:else}
-						<p class="whitespace-pre-wrap text-slate-800 dark:text-slate-100">{comment.body}</p>
+						<p class="whitespace-pre-wrap text-fg">{comment.body}</p>
 						{#if comment.resolved_at}
 							<p class="text-xs text-slate-500">{$t('flow.comments.resolved')}</p>
 						{/if}
@@ -324,10 +324,10 @@
 						{/if}
 					{/if}
 					{#if repliesOf(comment.id).length > 0}
-						<ul class="mt-2 space-y-2 border-l border-slate-200 pl-3 dark:border-slate-700">
+						<ul class="mt-2 space-y-2 border-l border-line pl-3">
 							{#each repliesOf(comment.id) as reply (reply.id)}
 								<li>
-									<p class="whitespace-pre-wrap text-slate-800 dark:text-slate-100">{reply.body}</p>
+									<p class="whitespace-pre-wrap text-fg">{reply.body}</p>
 									{#if reply.anchor_status === 'orphaned'}<p
 											class="text-xs text-slate-500"
 											data-comment-anchor-status="orphaned"
@@ -382,13 +382,13 @@
 	<label class="relative block">
 		<span class="mb-1 block text-xs text-slate-500">{$t('flow.comments.body')}</span>
 		<textarea
-			class="min-h-16 w-full rounded-md border border-slate-300 bg-white p-2 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+			class="min-h-16 w-full rounded-md border border-slate-300 bg-white p-2 text-fg dark:border-slate-600 dark:bg-slate-800"
 			bind:value={body}
 			readonly={!canComment}
 			oninput={onBodyInput}></textarea>
 		{#if mentionOpen && canComment}
 			<ul
-				class="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-md border border-slate-200 bg-white shadow dark:border-slate-700 dark:bg-slate-900"
+				class="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-md border border-line bg-white shadow dark:bg-slate-900"
 				role="listbox"
 				aria-label={$t('flow.comments.mention')}
 			>
@@ -430,6 +430,6 @@
 		{$t('flow.comments.submit')}
 	</button>
 	{#if failureKey}
-		<p class="text-red-600 dark:text-red-400" role="alert">{$t(failureKey)}</p>
+		<p class="text-danger" role="alert">{$t(failureKey)}</p>
 	{/if}
 </div>

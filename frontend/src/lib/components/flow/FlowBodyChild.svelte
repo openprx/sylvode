@@ -41,7 +41,7 @@
 </script>
 
 <div
-	class="my-2 rounded-md border border-slate-200 px-3 py-2 dark:border-slate-700"
+	class="my-2 rounded-md border border-line px-3 py-2"
 	data-testid="flow-body-child-page"
 	data-child-id={publicView ? undefined : childId}
 	data-state={publicView ? 'restricted' : childState}
