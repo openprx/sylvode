@@ -182,8 +182,8 @@ test("ordinary global user creates, reopens, searches and exports personal Flow 
   try {
     const page = await signIn(ownerContext, owner);
     await page.goto("/my-work");
-    await expect(page.getByTestId("global-flow-link")).toBeVisible();
-    await page.getByTestId("global-flow-link").click();
+    await expect(page.locator('a[data-rail-destination="flow"]')).toBeVisible();
+    await page.locator('a[data-rail-destination="flow"]').click();
     await expect(page).toHaveURL(/\/flow$/);
     await page.getByTestId("flow-nav-new").click();
     const createResponse = page.waitForResponse(
