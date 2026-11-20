@@ -231,6 +231,10 @@ pub async fn create_comment(
 
     let mention_user_ids = normalize_mentions(req.mentions, user_id);
 
+    // A connected application may not mention an agent: that would start its task. Refused before
+    // the comment is written.
+    crate::oauth::delegated::refuse_agent_dispatch(&state.db, &mention_user_ids).await?;
+
     let comment_id = Uuid::new_v4();
     let now = platform::timestamp::Timestamp::now();
 

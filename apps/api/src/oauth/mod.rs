@@ -6,8 +6,10 @@
 
 pub mod audit;
 pub mod authorize;
+pub mod delegated;
 pub mod error;
 pub mod grants;
+pub mod internal;
 pub mod metadata;
 pub mod rate;
 pub mod redirect;
@@ -20,6 +22,8 @@ pub mod validate;
 
 #[cfg(test)]
 mod db_tests;
+#[cfg(test)]
+mod delegated_tests;
 #[cfg(test)]
 mod hygiene_tests;
 #[cfg(test)]

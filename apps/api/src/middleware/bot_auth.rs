@@ -27,9 +27,12 @@ use sha2::{Digest, Sha256};
 use std::time::Instant;
 use uuid::Uuid;
 
+/// Re-exported so the delegated branch (under `oauth/`, which must not name Flow modules) can name
+/// the surface type that `BotAuthContext` already exposes.
+pub use crate::flow::event_origin::EventSurface;
 use crate::{
     error::ApiError,
-    flow::event_origin::EventSurface,
+    oauth::{delegated, tokens::TokenKind, validate::TokenSource},
     response::OperationResponseMeta,
     routes::auth::{extract_bearer_token, extract_cookie_token},
 };
@@ -136,6 +139,13 @@ fn credential_bound_surface(attribution: McpAttribution<'_>, registered: &str) -
             "bot credential is not valid for the presented transport".to_string(),
         )),
     }
+}
+
+/// The tool a request forwarded by the MCP server names, validated like a bot's. Used by the
+/// delegated branch only, and only for a request that arrived under the forwarding credential.
+/// Conflicting duplicate attribution headers are an error, as on the bot path.
+pub(crate) fn forwarded_tool_name(headers: &axum::http::HeaderMap) -> Result<Option<String>, ApiError> {
+    Ok(operation_tool_name(mcp_attribution(headers)?))
 }
 
 fn operation_tool_name(attribution: McpAttribution<'_>) -> Option<String> {
@@ -378,6 +388,25 @@ pub async fn require_workspace_access_from_auth(
     bot: Option<&BotAuthContext>,
     workspace_id: Uuid,
 ) -> Result<(Uuid, String, bool), ApiError> {
+    // A delegated request works in the grant's workspace only, as a plain `member` whatever the
+    // user's stored role is: administration is never reachable through a connected application.
+    // The membership row is read again here, so removal takes effect on the next request.
+    if let Some(delegated) = delegated::current() {
+        if delegated.workspace_id != workspace_id {
+            return Err(ApiError::Forbidden("outside the connected workspace".to_string()));
+        }
+        state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+                vec![workspace_id.into(), delegated.user_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| ApiError::NotFound("workspace not found or access denied".to_string()))?;
+        return Ok((delegated.user_id, "member".to_string(), false));
+    }
+
     if let Some(bot_ctx) = bot {
         if bot_ctx.workspace_id != workspace_id {
             return Err(ApiError::Forbidden("bot not authorized for this workspace".to_string()));
@@ -437,7 +466,13 @@ pub async fn bot_or_user_auth_middleware(
 ) -> Result<Response, ApiError> {
     let started = Instant::now();
     let mut operation_context = None;
-    let token = extract_bearer_token(req.headers())
+    let header_token = extract_bearer_token(req.headers());
+    let token_source = if header_token.is_some() {
+        TokenSource::Header
+    } else {
+        TokenSource::Cookie
+    };
+    let token = header_token
         .or_else(|| extract_cookie_token(req.headers(), "access_token"))
         .ok_or_else(|| ApiError::Unauthorized("missing access token".to_string()))?;
 
@@ -549,6 +584,11 @@ pub async fn bot_or_user_auth_middleware(
             exp: 0,
             sv: 0,
         });
+    } else if token.starts_with(TokenKind::Access.prefix()) {
+        // ── Delegated path: an `sva_` access token issued to a connected application. Reached
+        // only after the bot prefix has failed to claim the token; a delegated token is never
+        // handed to the JWT verifier below, and neither older kind is ever handed to this branch.
+        return Ok(delegated::handle(&state, req, next, &token, token_source).await);
     } else {
         // ── JWT path. Live sessions are re-checked against users.session_version. ──
         let jwt = JwtManager::new(

@@ -47,6 +47,29 @@ pub struct NotificationListData {
     pub unread_count: i64,
 }
 
+/// The extra predicate that limits notification statements for a connected application, and its
+/// values, or `None` for every other caller.
+///
+/// A delegated request sees the user's notifications of the grant's workspace; a grant limited to
+/// some projects further requires the notification to belong to one of them, directly or through
+/// its work item. A notification whose project cannot be found is visible to a grant for all
+/// projects only. `alias` is the notification table's alias with its dot (or empty) and
+/// `first_param` the number of the first placeholder the fragment may use.
+fn delegated_scope(alias: &str, first_param: usize) -> Option<(String, Vec<sea_orm::Value>)> {
+    let context = crate::oauth::delegated::current()?;
+    let mut sql = format!(" AND {alias}workspace_id = ${first_param}");
+    let mut values: Vec<sea_orm::Value> = vec![context.workspace_id.into()];
+    if let crate::oauth::scopes::ProjectScope::Selected(ids) = &context.projects {
+        let ids_param = first_param + 1;
+        sql = format!(
+            "{sql} AND ({alias}related_project_id = ANY(${ids_param}) \
+             OR {alias}related_issue_id IN (SELECT w.id FROM work_items w WHERE w.project_id = ANY(${ids_param})))"
+        );
+        values.push(ids.to_vec().into());
+    }
+    Some((sql, values))
+}
+
 /// GET /api/v1/notifications
 pub async fn list_notifications(
     State(state): State<AppState>,
@@ -60,11 +83,15 @@ pub async fn list_notifications(
     let offset = (page - 1) * per_page;
     let unread_only = query.unread_only.unwrap_or(false);
 
+    let (count_scope, count_scope_values) = delegated_scope("", 2).unwrap_or_default();
+    let mut count_values: Vec<sea_orm::Value> = vec![user_id.into()];
+    count_values.extend(count_scope_values);
+
     // Get total count
     let count_query = if unread_only {
-        "SELECT COUNT(*) as count FROM notifications WHERE user_id = $1 AND is_read = false"
+        format!("SELECT COUNT(*) as count FROM notifications WHERE user_id = $1 AND is_read = false{count_scope}")
     } else {
-        "SELECT COUNT(*) as count FROM notifications WHERE user_id = $1"
+        format!("SELECT COUNT(*) as count FROM notifications WHERE user_id = $1{count_scope}")
     };
 
     let count_result = state
@@ -72,7 +99,7 @@ pub async fn list_notifications(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             count_query,
-            vec![user_id.into()],
+            count_values.clone(),
         ))
         .await?
         .ok_or_else(|| ApiError::Internal)?;
@@ -84,8 +111,8 @@ pub async fn list_notifications(
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT COUNT(*) as count FROM notifications WHERE user_id = $1 AND is_read = false",
-            vec![user_id.into()],
+            format!("SELECT COUNT(*) as count FROM notifications WHERE user_id = $1 AND is_read = false{count_scope}"),
+            count_values,
         ))
         .await?
         .ok_or_else(|| ApiError::Internal)?;
@@ -93,34 +120,29 @@ pub async fn list_notifications(
     let unread_count: i64 = unread_result.try_get("", "count")?;
 
     // Get notifications
-    let list_query = if unread_only {
+    let (list_scope, list_scope_values) = delegated_scope("n.", 4).unwrap_or_default();
+    let unread_clause = if unread_only { " AND n.is_read = false" } else { "" };
+    let list_query = format!(
         "SELECT n.id, n.user_id, n.type as notification_type, n.title, n.content, n.link,
                 n.related_issue_id, n.related_comment_id, n.related_project_id,
                 n.is_read, n.created_at, n.read_at,
                 i.title as issue_title
          FROM notifications n
          LEFT JOIN work_items i ON n.related_issue_id = i.id
-         WHERE n.user_id = $1 AND n.is_read = false
+         WHERE n.user_id = $1{unread_clause}{list_scope}
          ORDER BY n.created_at DESC
          LIMIT $2 OFFSET $3"
-    } else {
-        "SELECT n.id, n.user_id, n.type as notification_type, n.title, n.content, n.link,
-                n.related_issue_id, n.related_comment_id, n.related_project_id,
-                n.is_read, n.created_at, n.read_at,
-                i.title as issue_title
-         FROM notifications n
-         LEFT JOIN work_items i ON n.related_issue_id = i.id
-         WHERE n.user_id = $1
-         ORDER BY n.created_at DESC
-         LIMIT $2 OFFSET $3"
-    };
+    );
+    let mut list_values: Vec<sea_orm::Value> =
+        vec![user_id.into(), i64::from(per_page).into(), i64::from(offset).into()];
+    list_values.extend(list_scope_values);
 
     let notifications_result = state
         .db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             list_query,
-            vec![user_id.into(), i64::from(per_page).into(), i64::from(offset).into()],
+            list_values,
         ))
         .await?;
 
@@ -160,12 +182,16 @@ pub async fn get_unread_count(
 ) -> Result<impl IntoResponse, ApiError> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
 
+    let (scope_sql, scope_values) = delegated_scope("", 2).unwrap_or_default();
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
+    values.extend(scope_values);
+
     let unread_result = state
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT COUNT(*) as count FROM notifications WHERE user_id = $1 AND is_read = false",
-            vec![user_id.into()],
+            format!("SELECT COUNT(*) as count FROM notifications WHERE user_id = $1 AND is_read = false{scope_sql}"),
+            values,
         ))
         .await?
         .ok_or_else(|| ApiError::Internal)?;
@@ -210,12 +236,19 @@ pub async fn mark_all_read(
 
     let now = platform::timestamp::Timestamp::now();
 
+    // Marking everything read through a connected application reaches the grant's notifications only.
+    let (scope_sql, scope_values) = delegated_scope("", 3).unwrap_or_default();
+    let mut values: Vec<sea_orm::Value> = vec![now.into(), user_id.into()];
+    values.extend(scope_values);
+
     state
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE notifications SET is_read = true, read_at = $1 WHERE user_id = $2 AND is_read = false",
-            vec![now.into(), user_id.into()],
+            format!(
+                "UPDATE notifications SET is_read = true, read_at = $1 WHERE user_id = $2 AND is_read = false{scope_sql}"
+            ),
+            values,
         ))
         .await?;
 
