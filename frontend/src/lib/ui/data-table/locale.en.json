@@ -3,30 +3,14 @@
 		"dataTable": {
 			"selectAll": "Select all rows on this page",
 			"selectRow": "Select {title}",
-			"selectedOne": "1 row selected",
-			"selectedMany": "{count} rows selected",
+			"selected": {
+				"one": "{count} row selected",
+				"other": "{count} rows selected"
+			},
 			"sortBy": "Sort by {column}",
 			"actions": "Actions",
 			"loading": "Loading",
 			"empty": "Empty",
-			"state": {
-				"empty": { "title": "Nothing here yet", "body": "Items you add appear here." },
-				"noResults": {
-					"title": "Nothing matches these filters",
-					"body": "Change or clear the filters to see more."
-				},
-				"failed": {
-					"title": "Could not load the rows",
-					"body": "The server did not respond. Your filters are kept."
-				},
-				"offline": {
-					"title": "You are offline",
-					"body": "What was loaded before is still shown. Your draft is kept."
-				},
-				"clearFilters": "Clear filters",
-				"retry": "Retry",
-				"retryConnection": "Retry connection"
-			},
 			"sampleName": "Name",
 			"sampleOwner": "Owner",
 			"sampleAmount": "Amount",

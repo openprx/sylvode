@@ -1,14 +1,13 @@
 <script lang="ts" generics="T">
-	import { t } from 'svelte-i18n';
+	import { locale, t } from 'svelte-i18n';
+	import '../foundations/visually-hidden.css';
+	import { plural } from '../foundations/plural';
 	import type { Snippet } from 'svelte';
 	import ArrowUp from '@lucide/svelte/icons/arrow-up';
 	import ArrowDown from '@lucide/svelte/icons/arrow-down';
 	import ArrowUpDown from '@lucide/svelte/icons/arrow-up-down';
-	import Inbox from '@lucide/svelte/icons/inbox';
-	import SearchX from '@lucide/svelte/icons/search-x';
-	import CircleAlert from '@lucide/svelte/icons/circle-alert';
-	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import Checkbox from '../checkbox/Checkbox.svelte';
+	import StateBlock from '../state-block/StateBlock.svelte';
 	import { tooltip } from '../tooltip/tooltip';
 	import { isTruncated } from '../context-line/context-line';
 	import {
@@ -42,6 +41,10 @@
 		state?: TableState;
 		stateAction?: () => void;
 		stateActionLabel?: string;
+		/** Plural object name for the empty and failed wording ("projects"); generic without it. */
+		thing?: string;
+		/** Number of applied filters, for the no-results sentence. */
+		filterCount?: number;
 		density?: 'comfortable' | 'compact';
 		/** Row shown in the side panel: same marker as selected, plus aria-current. */
 		currentId?: string | null;
@@ -70,6 +73,8 @@
 		state: tableState = 'ready',
 		stateAction,
 		stateActionLabel,
+		thing,
+		filterCount,
 		density = 'comfortable',
 		currentId = null,
 		selectable = false,
@@ -167,15 +172,6 @@
 		cutText[key] = cell && isTruncated(cell) ? (cell.textContent ?? '').trim() : '';
 	}
 
-	const stateButtonLabel = $derived(
-		tableState === 'noResults'
-			? (stateActionLabel ?? $t('ui.dataTable.state.clearFilters'))
-			: tableState === 'failed'
-				? (stateActionLabel ?? $t('ui.dataTable.state.retry'))
-				: tableState === 'offline'
-					? (stateActionLabel ?? $t('ui.dataTable.state.retryConnection'))
-					: stateActionLabel
-	);
 	const cellKey = (row: T, column: Column<T>) => `${rowId(row)}:${column.id}`;
 </script>
 
@@ -217,17 +213,13 @@
 {/snippet}
 
 {#snippet selectBox(row: T)}
-	<!-- Checkbox keeps its own change handler, so the change event is read as it bubbles. -->
-	<span
-		class="box"
-		role="presentation"
-		onchange={(e) => {
-			changeRow(e, rowId(row), shiftOnClick);
-			shiftOnClick = false;
-		}}
-	>
+	<span class="box" role="presentation">
 		<Checkbox
 			checked={selected.has(rowId(row))}
+			onchange={(e) => {
+				changeRow(e, rowId(row), shiftOnClick);
+				shiftOnClick = false;
+			}}
 			aria-label={$t('ui.dataTable.selectRow', { values: { title: titleName(row) } })}
 			onclick={(e) => (shiftOnClick = e.shiftKey)}
 			onkeydown={(e) => rowKeydown(e, rowId(row))}
@@ -236,23 +228,15 @@
 {/snippet}
 
 {#snippet stateBlock()}
-	<div
-		class="state"
-		role={tableState === 'failed' ? 'alert' : 'status'}
+	<StateBlock
+		kind={tableState === 'failed'
+			? 'loadFailed'
+			: (tableState as 'empty' | 'noResults' | 'offline')}
+		{thing}
+		count={filterCount}
+		action={stateAction ? { label: stateActionLabel, run: stateAction } : undefined}
 		data-table-state={tableState}
-	>
-		<span class="state-glyph">
-			{#if tableState === 'empty'}<Inbox size={24} aria-hidden="true" />
-			{:else if tableState === 'noResults'}<SearchX size={24} aria-hidden="true" />
-			{:else if tableState === 'offline'}<WifiOff size={24} aria-hidden="true" />
-			{:else}<CircleAlert size={24} aria-hidden="true" />{/if}
-		</span>
-		<p class="state-title">{$t(`ui.dataTable.state.${tableState}.title`)}</p>
-		<p class="state-body">{$t(`ui.dataTable.state.${tableState}.body`)}</p>
-		{#if stateButtonLabel && stateAction}
-			<button type="button" class="state-action" onclick={stateAction}>{stateButtonLabel}</button>
-		{/if}
-	</div>
+	/>
 {/snippet}
 
 <div
@@ -264,11 +248,8 @@
 	onkeydown={onKeydown}
 	role="presentation"
 >
-	<div class="sr-only" role="status">
-		{#if selectedCount === 1}{$t('ui.dataTable.selectedOne')}{:else if selectedCount > 1}{$t(
-				'ui.dataTable.selectedMany',
-				{ values: { count: selectedCount } }
-			)}{/if}
+	<div class="ui-sr-only" role="status">
+		{#if selectedCount > 0}{plural($t, 'ui.dataTable.selected', selectedCount, $locale)}{/if}
 	</div>
 
 	{#if twoLine}
@@ -334,8 +315,9 @@
 					<tr>
 						{#if selectable}
 							<th scope="col" class="check-cell frozen" style:left="0px">
-								<span class="box" role="presentation" onchange={changeAll}>
+								<span class="box" role="presentation">
 									<Checkbox
+										onchange={changeAll}
 										checked={header === 'all'}
 										indeterminate={header === 'some'}
 										disabled={ids.length === 0}
@@ -371,7 +353,7 @@
 							</th>
 						{/each}
 						{#if rowActions}<th scope="col"
-								><span class="sr-only">{$t('ui.dataTable.actions')}</span></th
+								><span class="ui-sr-only">{$t('ui.dataTable.actions')}</span></th
 							>{/if}
 					</tr>
 				</thead>
@@ -423,15 +405,6 @@
 </div>
 
 <style>
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		margin: -1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
-	}
 	.ui-data-table {
 		position: relative;
 		min-width: 0;
@@ -668,50 +641,6 @@
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
-	}
-	.state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: var(--rf-space-3);
-		padding: var(--rf-space-9) var(--rf-space-6);
-		text-align: center;
-	}
-	.state-glyph {
-		color: var(--rf-secondary);
-	}
-	.state-title {
-		margin: 0;
-		font-size: var(--rf-size-body);
-		font-weight: var(--rf-weight-semibold);
-	}
-	.state-body {
-		margin: 0;
-		color: var(--rf-secondary);
-		font-size: var(--rf-size-secondary);
-	}
-	.state-action {
-		height: var(--rf-control-height);
-		margin-top: var(--rf-space-3);
-		padding: 0 var(--rf-space-5);
-		border: var(--rf-border-width) solid var(--rf-text);
-		border-radius: var(--rf-radius-button);
-		background: var(--rf-surface-white);
-		color: var(--rf-text);
-		font: inherit;
-		font-size: var(--rf-size-button);
-		font-weight: var(--rf-weight-medium);
-		cursor: pointer;
-	}
-	.state-action:hover {
-		background: var(--rf-hover);
-	}
-	.state-action:active {
-		background: var(--rf-pressed);
-	}
-	.state-action:focus-visible {
-		outline: var(--rf-border-width-focus) solid var(--rf-focus);
-		outline-offset: -1px;
 	}
 	.footer {
 		padding: var(--rf-space-4) var(--rf-density-cell-pad);

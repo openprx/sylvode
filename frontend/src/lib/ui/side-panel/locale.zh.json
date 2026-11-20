@@ -9,12 +9,8 @@
 			"resize": "调整面板宽度",
 			"unsaved": "有未保存的更改",
 			"loading": "正在加载",
-			"failed": "无法加载此记录。",
-			"forbidden": "你没有访问此记录的权限，请联系项目管理员。",
-			"missing": "此记录已不存在，可能已被删除。",
 			"changed": "此记录已在别处更改。",
 			"offline": "当前处于离线状态，显示的是已加载的内容。",
-			"retry": "重试",
 			"refresh": "刷新",
 			"sampleIdentifier": "LEAD-128",
 			"sampleTitle": "Northwind 采购订单",
@@ -27,7 +23,10 @@
 			"sampleRow": "行",
 			"sampleMenu": "复制",
 			"firstRecord": "已是第一条记录",
-			"lastRecord": "已是最后一条记录"
+			"lastRecord": "已是最后一条记录",
+			"thisRecord": "此记录",
+			"record": "记录",
+			"forbiddenBody": "请联系项目管理员为你开通此记录的访问权限。"
 		}
 	}
 }
