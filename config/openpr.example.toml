@@ -240,3 +240,60 @@ transport = "stdio"
 # present its caller's own bot token, and the process holds no identity of its own to fall back
 # to, so an unauthenticated caller can reach nothing but /health.
 # bind_addr = "127.0.0.1:8090"
+
+# Delegated access (OAuth). Set all three or none: a partial set refuses to start and names what
+# is missing. Without them this server accepts workspace bot tokens only and answers 401 to a
+# delegated `sva_` token.
+#   oauth_issuer           The issuer of the authorization server; equal to [oauth] issuer.
+#   oauth_resource         The URL that receives JSON-RPC posts, as a client reaches it; equal to
+#                          [oauth] mcp_resource.
+#   oauth_forward_secret   The credential this server presents to the API when it forwards a
+#                          delegated token; equal to [oauth] internal_forward_secret. At least 32
+#                          bytes. Never logged.
+# oauth_issuer = "https://sylvode.example.com"
+# oauth_resource = "https://sylvode.example.com/mcp"
+# oauth_forward_secret = "replace_with_at_least_32_random_bytes"
+
+
+# ---------------------------------------------------------------------------------------------
+# [oauth] — authorization server for the API and the MCP server. Optional; off by default.
+#
+# Without `issuer` the feature does not exist: the discovery documents answer 404 and no
+# delegated token is accepted. With it, Sylvode lets the registered client (Ramflux) obtain
+# short-lived, revocable access to one workspace on behalf of a signed-in person, who chooses the
+# workspace, the projects and the access on a consent page. Only the issuer is required.
+# ---------------------------------------------------------------------------------------------
+[oauth]
+# The public origin of this Sylvode, exactly as clients reach the web UI: an https URL with no
+# path, for example "https://sylvode.example.com". It appears byte for byte in the metadata and in
+# every authorization response.
+# issuer = "https://sylvode.example.com"
+
+# Identifier of the API as a protected resource. Default: "<issuer>/api".
+# api_resource = "https://sylvode.example.com/api"
+
+# Identifier of the MCP server as a protected resource, the URL that receives JSON-RPC posts.
+# Required, together with internal_forward_secret, when the MCP server serves delegated callers;
+# must equal [mcp] oauth_resource.
+# mcp_resource = "https://sylvode.example.com/mcp"
+
+# Credential the MCP server presents when it forwards a delegated token to the API. At least 32
+# bytes; must equal [mcp] oauth_forward_secret. Never logged.
+# internal_forward_secret = "replace_with_at_least_32_random_bytes"
+
+# Local development only: allow an http issuer on 127.0.0.1 or [::1]. Refused for any other host.
+# allow_insecure_loopback_issuer = false
+
+# Lifetimes and limits. Defaults shown; the accepted range is in brackets.
+# access_token_ttl_seconds = 600              # [60, 3600]
+# refresh_token_idle_days = 30                # [1, 90] unused refresh tokens expire
+# grant_max_lifetime_days = 365               # [1, 730] a connection ends after this, always
+# authorization_code_ttl_seconds = 60         # [10, 600]
+# max_active_grants_per_user_client = 10      # [1, 50]
+# event_feed_retention_days = 7               # [1, 30]
+# event_backfill_max_events = 1000            # [100, 10000]
+# event_backfill_max_age_hours = 72           # [1, 168]
+# max_streams_per_process = 2000              # [10, 20000]
+
+# Origins allowed to embed Sylvode views in a frame (cross-origin embedding). Default: none.
+# embed_frame_ancestors = []
