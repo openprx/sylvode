@@ -192,7 +192,7 @@
       "reason": "stable_identifier",
       "repo": "sylvode",
       "paths": [
-        "frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte"
+        "frontend/src/lib/forms/state/import.ts"
       ],
       "pattern": "openpr:forms:import-mapping:",
       "explanation": "The browser localStorage key under which users' saved import column mappings live; renaming it silently discards every saved mapping."
