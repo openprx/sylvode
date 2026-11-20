@@ -170,7 +170,14 @@ pub fn decode_replay_diff_result(bytes: &[u8]) -> io::Result<ReplayDiffResult> {
 /// What the child reports back on a run that completes without being killed by a ceiling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    Success { snapshot: Vec<u8> },
+    /// `window_cpu_us` is the process CPU time (`CLOCK_PROCESS_CPUTIME_ID`, microseconds) the
+    /// worker spent between opening and closing its metered window. Telemetry only: it never
+    /// influences a verdict. `None` when the worker did not measure it (the diff operation, an
+    /// unreadable clock) or when an older worker produced the outcome.
+    Success {
+        snapshot: Vec<u8>,
+        window_cpu_us: Option<u64>,
+    },
     Rejected(CollabError),
 }
 
@@ -216,9 +223,18 @@ fn static_str_from(value: &str) -> &'static str {
 pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     match outcome {
-        Outcome::Success { snapshot } => {
+        Outcome::Success {
+            snapshot,
+            window_cpu_us,
+        } => {
             buf.push(TAG_SUCCESS);
             write_field(&mut buf, snapshot)?;
+            // Optional trailing field: absent when `None`, so the payload stays byte-identical to
+            // the pre-telemetry encoding and a decoder that predates the field (which ignores
+            // trailing bytes) still reads it.
+            if let Some(micros) = window_cpu_us {
+                write_u64(&mut buf, *micros)?;
+            }
         }
         Outcome::Rejected(CollabError::EmptyInput { input }) => {
             buf.push(TAG_EMPTY_INPUT);
@@ -287,7 +303,16 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
     match tag_byte {
         TAG_SUCCESS => {
             let snapshot = read_field(&mut cursor, MAX_RESPONSE_PAYLOAD_BYTES)?;
-            Ok(Outcome::Success { snapshot })
+            // An outcome written before the telemetry field existed ends here.
+            let window_cpu_us = if cursor.is_empty() {
+                None
+            } else {
+                Some(read_u64(&mut cursor)?)
+            };
+            Ok(Outcome::Success {
+                snapshot,
+                window_cpu_us,
+            })
         }
         TAG_EMPTY_INPUT => {
             let input = read_str(&mut cursor, 64)?;
@@ -394,12 +419,44 @@ mod tests {
 
     #[test]
     fn success_outcome_round_trips() {
-        let outcome = Outcome::Success {
-            snapshot: b"exported snapshot bytes".to_vec(),
-        };
-        let payload = encode_outcome(&outcome).expect("encode succeeds");
-        let decoded = decode_outcome(&payload).expect("decode succeeds");
-        assert_eq!(decoded, outcome);
+        for window_cpu_us in [None, Some(0), Some(13_980)] {
+            let outcome = Outcome::Success {
+                snapshot: b"exported snapshot bytes".to_vec(),
+                window_cpu_us,
+            };
+            let payload = encode_outcome(&outcome).expect("encode succeeds");
+            let decoded = decode_outcome(&payload).expect("decode succeeds");
+            assert_eq!(decoded, outcome);
+        }
+    }
+
+    #[test]
+    fn success_outcome_without_the_telemetry_field_decodes_as_none() {
+        // The exact bytes an outcome had before `window_cpu_us` existed: tag, length, snapshot.
+        let mut legacy = vec![TAG_SUCCESS];
+        write_field(&mut legacy, b"old snapshot").expect("write succeeds");
+        assert_eq!(
+            decode_outcome(&legacy).expect("legacy outcome decodes"),
+            Outcome::Success {
+                snapshot: b"old snapshot".to_vec(),
+                window_cpu_us: None,
+            }
+        );
+        // `None` encodes to precisely those bytes, so old hosts keep reading new workers.
+        let encoded = encode_outcome(&Outcome::Success {
+            snapshot: b"old snapshot".to_vec(),
+            window_cpu_us: None,
+        })
+        .expect("encode succeeds");
+        assert_eq!(encoded, legacy);
+    }
+
+    #[test]
+    fn success_outcome_with_a_truncated_telemetry_field_is_rejected() {
+        let mut payload = vec![TAG_SUCCESS];
+        write_field(&mut payload, b"snap").expect("write succeeds");
+        payload.extend_from_slice(&[1, 2, 3]);
+        assert!(decode_outcome(&payload).is_err());
     }
 
     #[test]
