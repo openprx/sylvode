@@ -1,0 +1,33 @@
+{
+	"surface": {
+		"embed": {
+			"invalidLink": "这个嵌入地址无效。",
+			"harness": {
+				"title": "嵌入测试台",
+				"intro": "以其他应用的方式，在 340、480、600 像素和全宽的框架中承载同一个界面。",
+				"missing": "请使用 surface=record 以及现有记录的 w、p、r 参数打开此页面。",
+				"theme": "主题",
+				"themeLight": "浅色",
+				"themeDark": "深色",
+				"density": "密度",
+				"densityComfortable": "舒适",
+				"densityCompact": "紧凑",
+				"frameFull": "全宽",
+				"frameWidth": "{width} 像素框架",
+				"widthLabel": "框架宽度（像素）",
+				"hostTitle": "宿主标题",
+				"hostOrigin": "来源",
+				"hostContext": "上下文",
+				"hostActions": "操作",
+				"hostNoActions": "暂无操作",
+				"hostTip": "提示",
+				"hostClosed": "框架请求关闭",
+				"hostOpened": "请求打开",
+				"hostDirty": "有未保存的输入",
+				"widthClass": "宽度级别",
+				"logTitle": "从框架收到的消息",
+				"logEmpty": "尚未收到消息。"
+			}
+		}
+	}
+}
