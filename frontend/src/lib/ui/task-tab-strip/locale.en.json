@@ -1,0 +1,37 @@
+{
+	"ui": {
+		"taskTabStrip": {
+			"openTasks": "Open tasks",
+			"reorderHint": "Use Alt+Shift+Left or Right to move the focused tab, Delete to close it.",
+			"moved": "{title} moved to position {position} of {total}.",
+			"unsaved": "unsaved changes",
+			"unsavedShort": "Unsaved changes",
+			"updated": "new changes",
+			"close": "Close {title}",
+			"allTabs": "Show all {count} tabs",
+			"tabCount": "{count} tabs",
+			"openTabs": "{count} open tabs",
+			"closeSaved": "Close all saved tabs",
+			"closeTab": "Close",
+			"closeOthers": "Close other saved tabs",
+			"moveLeft": "Move left",
+			"moveRight": "Move right",
+			"tabMenu": "Tab actions",
+			"discardTitle": "Discard changes in “{title}”?",
+			"discardBody": "Your unsaved input in this tab is lost. Saved content is not affected.",
+			"keep": "Keep",
+			"discardClose": "Discard and close",
+			"closeOneTitle": "Close one to continue",
+			"closeOneBody": "All {count} tabs have unsaved changes. Opening “{title}” needs one free tab.",
+			"cancelOpening": "Cancel opening",
+			"escape": "Esc",
+			"sampleForm": "Customer form",
+			"sampleFlow": "Quarterly planning with a very long title that has to be cut",
+			"sampleProject": "Acme Website",
+			"sampleIssues": "Issues",
+			"sampleDraft": "Draft notes",
+			"sampleLoading": "Flow",
+			"state": "State"
+		}
+	}
+}

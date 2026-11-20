@@ -1,0 +1,17 @@
+{
+	"ui": {
+		"contextLine": {
+			"label": "Location",
+			"showHidden": "Show {count} hidden locations",
+			"noAccess": "{label}, you do not have access",
+			"restricted": "Restricted page",
+			"unavailable": "Unavailable",
+			"loading": "Loading location",
+			"sampleProject": "Acme Website",
+			"sampleForms": "Forms",
+			"sampleSection": "Customers",
+			"sampleGroup": "Leads",
+			"sampleCurrent": "Northwind order"
+		}
+	}
+}

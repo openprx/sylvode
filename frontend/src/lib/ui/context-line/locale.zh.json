@@ -1,0 +1,17 @@
+{
+	"ui": {
+		"contextLine": {
+			"label": "位置",
+			"showHidden": "显示 {count} 个已隐藏的位置",
+			"noAccess": "{label}，你没有访问权限",
+			"restricted": "受限页面",
+			"unavailable": "不可用",
+			"loading": "正在加载位置",
+			"sampleProject": "Acme 官网",
+			"sampleForms": "表单",
+			"sampleSection": "客户",
+			"sampleGroup": "线索",
+			"sampleCurrent": "Northwind 订单"
+		}
+	}
+}
