@@ -10,6 +10,10 @@
 //! 2. Load the base document -- also unmetered: it is already-validated state this process is
 //!    only rehydrating, analogous to how the calibration host excludes `fork()` itself from its
 //!    window.
+//!    The load is followed by `LoroCollabEngine::prewarm_for_writes`, still unmetered: it forces the
+//!    decoded state of the base's block list, alias map, order map and placement tree and builds
+//!    the root key index, work the import of an update would otherwise do inside the window. It
+//!    reaches no verdict and never sees the update.
 //! 3. Write `host::RESPONSE_MARKER_BYTE` to stdout and flush -- the unmetered setup phase is now
 //!    over. This is the signal `isolation::host::read_response_two_phase` uses to start its own
 //!    independent `decode_apply_wall_ms_max` watchdog from the *right* moment (the metered window
@@ -105,6 +109,10 @@ fn main() {
             respond_and_exit(&wire::Outcome::Rejected(err));
         }
     };
+
+    // Still setup: materialise the trusted base's containers that an update would otherwise make
+    // the metered import decode. No verdict is reached here and nothing depends on the update.
+    base_engine.prewarm_for_writes();
 
     write_marker_or_exit();
     respond_and_exit(&decode_apply_check_and_export(base_engine, &update));

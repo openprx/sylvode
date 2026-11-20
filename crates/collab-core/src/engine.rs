@@ -101,6 +101,24 @@ const META_KIND: &str = "kind";
 const META_TEXT: &str = "text";
 const META_PROPERTY_PREFIX: &str = "prop:";
 
+/// The containers [`LoroCollabEngine::prewarm_parts`] materialises, as a set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrewarmParts(u8);
+
+impl PrewarmParts {
+    pub(crate) const BLOCK_LIST: Self = Self(1);
+    pub(crate) const ALIASES: Self = Self(2);
+    pub(crate) const ORDER: Self = Self(4);
+    pub(crate) const STRUCTURE_TREE: Self = Self(8);
+    pub(crate) const ALL: Self = Self(15);
+    #[cfg(test)]
+    pub(crate) const NONE: Self = Self(0);
+
+    const fn has(self, part: Self) -> bool {
+        self.0 & part.0 != 0
+    }
+}
+
 pub struct LoroCollabEngine {
     doc: LoroDoc,
     tree: LoroTree,
@@ -1270,6 +1288,56 @@ impl LoroCollabEngine {
         crate::floor_guard::refuse_shadow_roots(&self.doc)
     }
 
+    /// Materialises, ahead of a write, the parts of the *trusted base* that the import of a client
+    /// update would otherwise build inside the metered window: the root key index (the first root
+    /// lookup lists the keys of a lazily loaded store), and the decoded state of the three
+    /// containers a block insert touches, the root block list (`doc.children`), the alias map and
+    /// the structure placement tree.
+    ///
+    /// Loro decodes the full state of every container an import changes, so without this the
+    /// first import of a block insert costs O(page); the reads below are the public ones that
+    /// force that decode (`LoroList::get_id_at`, `LoroMap::get_last_editor`, `LoroTree::roots`).
+    /// Handler reads such as `get`, `len` and `get_value` do not, which is why a pin test checks
+    /// the effect on the allocation of the next import instead of trusting the call.
+    ///
+    /// It is a pure function of the document it is called on: it reads only reserved roots that
+    /// exist (a read registers nothing, see `editor_structure::root_container`), writes nothing,
+    /// reaches no verdict and never sees an update. It must run before the update is known to the
+    /// engine, outside the metered window. A failed root read is not reported: it only means that
+    /// less was materialised, and the window repeats the same read and refuses by itself.
+    pub fn prewarm_for_writes(&self) {
+        self.prewarm_parts(PrewarmParts::ALL);
+    }
+
+    /// [`Self::prewarm_for_writes`] for a chosen set of containers. The root key index is always
+    /// built, by the first root lookup.
+    pub(crate) fn prewarm_parts(&self, parts: PrewarmParts) {
+        use crate::reserved_roots::{ALIASES, DOC, ORDER, TREE};
+        // The first lookup builds the root index; the later ones reuse it.
+        let root = crate::editor_structure::root_map(&self.doc, DOC);
+        if parts.has(PrewarmParts::BLOCK_LIST)
+            && let Ok(Some(root)) = root
+            && let Some(ValueOrContainer::Container(Container::List(list))) = root.get("children")
+        {
+            let _ = list.get_id_at(0);
+        }
+        if parts.has(PrewarmParts::ALIASES)
+            && let Ok(Some(aliases)) = crate::editor_structure::root_map(&self.doc, ALIASES)
+        {
+            let _ = aliases.get_last_editor("");
+        }
+        if parts.has(PrewarmParts::ORDER)
+            && let Ok(Some(order)) = crate::editor_structure::root_map(&self.doc, ORDER)
+        {
+            let _ = order.get_last_editor("");
+        }
+        if parts.has(PrewarmParts::STRUCTURE_TREE)
+            && let Ok(Some(Container::Tree(tree))) = crate::editor_structure::reserved_root(&self.doc, TREE)
+        {
+            let _ = tree.roots();
+        }
+    }
+
     /// Imports `update` and refuses an update that takes the editor-model floor from 5 to below 5
     /// (`editor_model_floor_downgrade`), without walking the document in the common case.
     ///
@@ -1474,6 +1542,8 @@ fn encode_frontier_entries(entries: &BTreeMap<u64, i32>) -> Vec<u8> {
 mod floor_equivalence_tests;
 #[cfg(test)]
 mod placement_session_tests;
+#[cfg(test)]
+mod prewarm_tests;
 #[cfg(test)]
 mod read_side_effect_tests;
 #[cfg(test)]
