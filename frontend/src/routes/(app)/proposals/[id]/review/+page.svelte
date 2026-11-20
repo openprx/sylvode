@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { proposalsApi, type Proposal } from '#lib/api/proposals.js';
@@ -165,7 +166,7 @@
 			<StateBlock
 				kind="notFound"
 				place={$t('governance.place')}
-				action={{ run: () => goto('/proposals') }}
+				action={{ run: () => goto(resolve('/(app)/proposals')) }}
 				data-testid="proposal-review-not-found"
 			/>
 		{:else}

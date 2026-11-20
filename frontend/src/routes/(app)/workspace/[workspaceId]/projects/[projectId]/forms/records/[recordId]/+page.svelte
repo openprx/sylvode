@@ -618,7 +618,13 @@
 					kind="notFound"
 					place={$t('workbench.forms').toLowerCase()}
 					action={{
-						run: () => void goto(`/workspace/${workspaceId}/projects/${projectId}/forms`)
+						run: () =>
+							void goto(
+								resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/forms', {
+									workspaceId,
+									projectId
+								})
+							)
 					}}
 					data-durable-record-detail-error=""
 				/>

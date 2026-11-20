@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -328,7 +329,7 @@
 		{#if projectMissing}
 			<p class="text-center text-sm">
 				<a
-					href={`/workspace/${workspaceId}/projects`}
+					href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId })}
 					class="font-medium text-fg underline"
 					data-testid="cycles-back-to-projects"
 				>
@@ -593,19 +594,19 @@
 </div>
 
 {#snippet createFooter()}
-		<button
-			onclick={() => (showCreateModal = false)}
-			class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
-		>
-			{$t('common.cancel')}
-		</button>
-		<button
-			onclick={submitCreate}
-			disabled={saving}
-			class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
-		>
-			{saving ? $t('common.creating') : $t('common.create')}
-		</button>
+	<button
+		onclick={() => (showCreateModal = false)}
+		class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
+	>
+		{$t('common.cancel')}
+	</button>
+	<button
+		onclick={submitCreate}
+		disabled={saving}
+		class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
+	>
+		{saving ? $t('common.creating') : $t('common.create')}
+	</button>
 {/snippet}
 
 <Modal
@@ -667,22 +668,22 @@
 </Modal>
 
 {#snippet editFooter()}
-		<button
-			onclick={() => {
-				showEditModal = false;
-				editingSprint = null;
-			}}
-			class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
-		>
-			{$t('common.cancel')}
-		</button>
-		<button
-			onclick={submitEdit}
-			disabled={saving}
-			class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
-		>
-			{saving ? $t('common.saving') : $t('common.save')}
-		</button>
+	<button
+		onclick={() => {
+			showEditModal = false;
+			editingSprint = null;
+		}}
+		class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
+	>
+		{$t('common.cancel')}
+	</button>
+	<button
+		onclick={submitEdit}
+		disabled={saving}
+		class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
+	>
+		{saving ? $t('common.saving') : $t('common.save')}
+	</button>
 {/snippet}
 
 <Modal
