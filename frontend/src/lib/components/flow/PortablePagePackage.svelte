@@ -35,7 +35,7 @@
 	let openPageLink = $state<HTMLAnchorElement | null>(null);
 	const id = $props.id();
 	const action =
-		'min-h-11 rounded-md border border-slate-300 px-3 text-sm font-medium text-fg hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800';
+		'min-h-11 rounded-control border border-fg bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line';
 
 	async function prepareExport() {
 		if (pending || !exportReady) return;
@@ -198,7 +198,7 @@
 		</p>{/if}
 	{#if exported}
 		<div
-			class="space-y-2 rounded-md border border-line p-3"
+			class="space-y-2 rounded-card border border-line p-3"
 			data-testid="flow-portable-export-review"
 		>
 			<h3 class="font-medium">{$t('flow.portablePackage.exportReview')}</h3>
@@ -222,7 +222,7 @@
 					disabled={!!pending}
 					onchange={chooseFile}
 					data-testid="flow-portable-file"
-					class="block w-full min-w-0 text-sm file:mr-2 file:min-h-11 file:rounded file:border-0 file:bg-slate-100 file:px-2 dark:file:bg-slate-800 dark:file:text-white"
+					class="block w-full min-w-0 text-sm file:mr-2 file:min-h-11 file:rounded file:border-0 file:bg-surface file:px-2"
 					aria-describedby={`${id}-destination`}
 				/>
 			</label>
@@ -232,7 +232,7 @@
 			{#if pending === 'read'}<p role="status">{$t('flow.portablePackage.reading')}</p>{/if}
 			{#if imported}
 				<div
-					class="space-y-2 rounded-md border border-line p-3"
+					class="space-y-2 rounded-card border border-line p-3"
 					data-testid="flow-portable-import-review"
 				>
 					<h3
@@ -265,7 +265,7 @@
 				<a
 					bind:this={openPageLink}
 					data-testid="flow-portable-open"
-					class="inline-block py-2 text-blue-700 underline dark:text-blue-300"
+					class="inline-block py-2 text-fg underline"
 					href={page.params.workspaceId
 						? resolve('/(app)/workspace/[workspaceId]/flow/[objectId]', {
 								workspaceId: page.params.workspaceId,

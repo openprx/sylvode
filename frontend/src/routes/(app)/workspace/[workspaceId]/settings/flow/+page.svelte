@@ -177,7 +177,7 @@
 
 	{#if view === 'loading'}
 		<div
-			class="rounded-lg border border-line bg-white p-6 text-fg-muted dark:bg-slate-900"
+			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
 			role="status"
 			aria-live="polite"
 		>
@@ -193,7 +193,7 @@
 		</div>
 	{:else if view === 'failed'}
 		<div
-			class="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-danger dark:border-red-900 dark:bg-red-950/30"
+			class="rounded-card border border-line bg-danger-soft p-6 text-sm text-danger"
 			role="alert"
 		>
 			{$t(loadErrorKey)}
@@ -264,7 +264,7 @@
 
 		{#if errorKey}
 			<div
-				class="flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-danger sm:flex-row sm:items-center sm:justify-between dark:border-red-900 dark:bg-red-950/30"
+				class="flex flex-col gap-3 rounded-card border border-line bg-danger-soft p-4 text-sm text-danger sm:flex-row sm:items-center sm:justify-between"
 				role="alert"
 			>
 				<span>{$t(errorKey)}</span>
@@ -272,7 +272,7 @@
 					{@const intent = retryIntent}
 					<button
 						type="button"
-						class="min-h-11 rounded-md border border-red-300 px-4 text-sm font-medium dark:border-red-700"
+						class="min-h-11 rounded-control border border-danger px-4 text-sm font-medium"
 						onclick={() => void run(intent)}
 					>
 						{$t('flow.settings.retry')}
@@ -296,7 +296,7 @@
 				{#if feature.flow_enabled}
 					<button
 						type="button"
-						class="min-h-11 shrink-0 rounded-md bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 motion-safe:transition-colors"
+						class="min-h-11 shrink-0 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-control motion-safe:transition-colors"
 						disabled={saving}
 						onclick={requestDisable}
 					>
@@ -305,7 +305,7 @@
 				{:else}
 					<button
 						type="button"
-						class="min-h-11 shrink-0 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 motion-safe:transition-colors"
+						class="min-h-11 shrink-0 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors"
 						disabled={saving}
 						onclick={requestEnable}
 					>
@@ -332,7 +332,7 @@
 					</label>
 					<select
 						id="flow-default-member-level"
-						class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+						class="mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm"
 						bind:value={selectedLevel}
 						disabled={saving}
 					>
@@ -343,7 +343,7 @@
 				</div>
 				<button
 					type="button"
-					class="min-h-11 shrink-0 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 motion-safe:transition-colors"
+					class="min-h-11 shrink-0 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors"
 					disabled={saving || selectedLevel === feature.default_member_level}
 					onclick={requestLevelChange}
 				>
@@ -364,7 +364,7 @@
 				</div>
 				<a
 					href={resolve('/(app)/workspace/[workspaceId]/settings/flow/package', { workspaceId })}
-					class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-md border border-blue-300 px-4 text-sm font-medium text-blue-700 hover:bg-blue-50 motion-safe:transition-colors dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
+					class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-control border border-fg px-4 text-sm font-medium text-fg hover:bg-surface motion-safe:transition-colors"
 				>
 					{$t('flow.settings.package.open')}
 				</a>
@@ -383,7 +383,7 @@
 				</div>
 				<a
 					href={resolve('/(app)/workspace/[workspaceId]/settings/flow/operations', { workspaceId })}
-					class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-md border border-blue-300 px-4 text-sm font-medium text-blue-700 hover:bg-blue-50 motion-safe:transition-colors dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
+					class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-control border border-fg px-4 text-sm font-medium text-fg hover:bg-surface motion-safe:transition-colors"
 				>
 					{$t('flow.settings.operations.open')}
 				</a>
@@ -418,14 +418,14 @@
 	{#snippet footer()}
 		<button
 			type="button"
-			class="min-h-11 rounded-md px-4 text-sm font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
+			class="min-h-11 rounded-control px-4 text-sm font-medium text-fg hover:bg-surface"
 			onclick={cancelDialogs}
 		>
 			{$t('common.cancel')}
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded-md bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+			class="min-h-11 rounded-control bg-danger px-4 text-sm font-medium text-on-danger rf-filled disabled:bg-surface disabled:text-control"
 			disabled={!acknowledged}
 			onclick={confirmPending}
 		>
@@ -463,14 +463,14 @@
 	{#snippet footer()}
 		<button
 			type="button"
-			class="min-h-11 rounded-md px-4 text-sm font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
+			class="min-h-11 rounded-control px-4 text-sm font-medium text-fg hover:bg-surface"
 			onclick={cancelDialogs}
 		>
 			{$t('common.cancel')}
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+			class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 			disabled={!acknowledged}
 			onclick={confirmPending}
 		>

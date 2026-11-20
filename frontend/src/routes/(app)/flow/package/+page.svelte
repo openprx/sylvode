@@ -32,8 +32,8 @@
 <div class="flex-1 overflow-y-auto p-4 md:p-6">
 	<div class="mx-auto max-w-3xl space-y-6">
 		<h1 class="text-xl font-semibold">{$t('flow.personal.packages')}</h1>
-		<p class="text-sm text-slate-500">{$t('flow.personal.packageNote')}</p>
-		{#if loading}<p class="text-sm text-slate-500" role="status">{$t('common.loading')}</p>{/if}
+		<p class="text-sm text-fg-muted">{$t('flow.personal.packageNote')}</p>
+		{#if loading}<p class="text-sm text-fg-muted" role="status">{$t('common.loading')}</p>{/if}
 		{#if failed}<p class="text-sm text-danger" role="alert">
 				{$t('flow.personal.packageAvailabilityFailed')}
 			</p>{/if}
@@ -57,7 +57,7 @@
 			</p>{/if}
 		<button
 			type="button"
-			class="min-h-11 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-50 dark:border-slate-700"
+			class="min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
 			onclick={refreshReadiness}
 			disabled={loading}>{$t('flow.personal.packageCheckAvailability')}</button
 		>

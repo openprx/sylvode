@@ -98,28 +98,28 @@
 	</h3>
 	<p class="text-xs text-fg-muted">{$t('flow.share.public.help')}</p>
 	{#if loading}
-		<p class="text-sm text-slate-500">{$t('flow.share.public.loading')}</p>
+		<p class="text-sm text-fg-muted">{$t('flow.share.public.loading')}</p>
 	{:else if active.length === 0}
-		<p class="text-sm text-slate-500">{$t('flow.share.public.empty')}</p>
+		<p class="text-sm text-fg-muted">{$t('flow.share.public.empty')}</p>
 	{:else}
 		<ul class="space-y-2">
 			{#each active as link (link.id)}
 				<li class="flex items-center justify-between gap-2 text-sm">
 					<span class="font-mono text-xs text-fg-muted">{link.token_prefix}…</span>
-					<button type="button" class="text-xs text-red-600" onclick={() => revoke(link.id)}>
+					<button type="button" class="text-xs text-danger" onclick={() => revoke(link.id)}>
 						{$t('flow.share.public.revoke')}
 					</button>
 				</li>
 			{/each}
 		</ul>
 	{/if}
-	<label class="block text-xs text-slate-500">
+	<label class="block text-xs text-fg-muted">
 		{$t('flow.share.public.expiry')}
-		<input type="datetime-local" class="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-2 dark:border-slate-600 dark:bg-slate-800" bind:value={expiry} />
+		<input type="datetime-local" class="mt-1 min-h-11 w-full rounded-control border border-input px-2 bg-field" bind:value={expiry} />
 	</label>
 	<button
 		type="button"
-		class="min-h-11 w-full rounded-md bg-blue-600 px-3 text-sm font-medium text-white disabled:opacity-50"
+		class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 		disabled={busy}
 		onclick={create}
 	>
@@ -128,11 +128,11 @@
 	{#if freshToken}
 		<p class="text-xs text-fg-muted">{$t('flow.share.public.tokenOnce')}</p>
 		<input readonly class="w-full font-mono text-xs" value={`${typeof location === 'undefined' ? '' : location.origin}/s/${freshToken}`} />
-		<button type="button" class="text-xs text-blue-600" onclick={copyToken}>
+		<button type="button" class="text-xs text-fg underline" onclick={copyToken}>
 			{copied ? $t('flow.share.public.copied') : $t('flow.share.public.copy')}
 		</button>
 	{/if}
 	{#if failureKey}
-		<p class="text-red-600" role="alert">{$t(failureKey)}</p>
+		<p class="text-danger" role="alert">{$t(failureKey)}</p>
 	{/if}
 </section>

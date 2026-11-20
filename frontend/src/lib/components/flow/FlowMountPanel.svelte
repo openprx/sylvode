@@ -220,8 +220,7 @@
 			if (current === generation) busy = false;
 		}
 	}
-	const field =
-		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-slate-900';
+	const field = 'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm';
 </script>
 
 <section
@@ -230,9 +229,9 @@
 	data-testid="flow-mounts"
 >
 	<h3 id={`${uid}-title`} class="text-sm font-semibold">{$t('flow.mounts.title')}</h3>
-	<p class="text-xs text-slate-500">{$t('flow.mounts.ownership')}</p>
+	<p class="text-xs text-fg-muted">{$t('flow.mounts.ownership')}</p>
 	{#if loading}<p role="status">{$t('flow.mounts.loading')}</p>
-	{:else if !enabled && !failed}<p class="text-sm text-slate-500">{$t('flow.mounts.disabled')}</p>
+	{:else if !enabled && !failed}<p class="text-sm text-fg-muted">{$t('flow.mounts.disabled')}</p>
 	{:else if enabled}
 		<ul class="space-y-2">
 			{#each mounts as mount (mount.id)}
@@ -297,7 +296,7 @@
 						<p>{$t('flow.mounts.confirm')}</p>
 						<button
 							type="button"
-							class="min-h-11 px-2 text-red-700"
+							class="min-h-11 px-2 text-danger"
 							disabled={busy}
 							onclick={() => remove(mount.id)}>{$t('flow.mounts.remove')}</button
 						>
@@ -317,7 +316,7 @@
 							}}>{$t('flow.mounts.remove')}</button
 						>{/if}
 				</li>
-			{:else}<li class="text-sm text-slate-500">{$t('flow.mounts.empty')}</li>{/each}
+			{:else}<li class="text-sm text-fg-muted">{$t('flow.mounts.empty')}</li>{/each}
 		</ul>
 		<form class="space-y-3" onsubmit={create} aria-busy={busy}>
 			<label class="block text-sm" for={`${uid}-workspace`}>{$t('flow.mounts.workspace')}</label>
@@ -355,7 +354,7 @@
 			>
 			<button
 				type="submit"
-				class="min-h-11 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-50"
+				class="min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
 				disabled={busy || !workspaceId || placed || projectLoading}
 				>{$t('flow.mounts.create')}</button
 			>
@@ -363,7 +362,7 @@
 			{#if projectLoading}<p role="status">{$t('common.loading')}</p>{/if}
 		</form>
 	{/if}
-	{#if failed}<div role="alert" class="text-sm text-red-700">
+	{#if failed}<div role="alert" class="text-sm text-danger">
 			<p>{$t('flow.mounts.failed')}</p>
 			<button type="button" class="min-h-11 underline" disabled={busy} onclick={load}
 				>{$t('flow.mounts.retry')}</button

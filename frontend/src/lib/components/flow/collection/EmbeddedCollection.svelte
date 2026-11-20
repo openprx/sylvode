@@ -58,7 +58,7 @@
 </script>
 
 <section
-	class="not-prose my-4 overflow-hidden rounded-lg border border-line"
+	class="not-prose my-4 overflow-hidden rounded-card border border-line"
 	data-testid="flow-embedded-collection"
 	data-collection-id={collectionId}
 	data-block-id={blockId}
@@ -66,14 +66,12 @@
 		values: { title: $viewState.collection?.title ?? '' }
 	})}
 >
-	<header
-		class="flex items-center gap-3 border-b border-line bg-slate-50 px-4 py-2 dark:bg-slate-900"
-	>
+	<header class="flex items-center gap-3 border-b border-line bg-nav px-4 py-2">
 		<h3 class="flex-1 truncate text-sm font-semibold text-fg">
 			{$viewState.collection?.title || $t('flow.nav.untitled')}
 		</h3>
 		<a
-			class="inline-flex min-h-11 items-center rounded px-3 text-sm font-medium text-blue-700 hover:underline dark:text-blue-300"
+			class="inline-flex min-h-11 items-center rounded px-3 text-sm font-medium text-fg underline"
 			href={resolve('/(app)/flow/[objectId]', { objectId: collectionId })}
 			data-testid="flow-embedded-collection-open"
 		>
@@ -81,9 +79,9 @@
 		</a>
 	</header>
 	{#if unsupported}
-		<p class="p-4 text-sm text-slate-500">{$t('flow.canvas.unsupported')}</p>
+		<p class="p-4 text-sm text-fg-muted">{$t('flow.canvas.unsupported')}</p>
 	{:else if $viewState.status === 'error'}
-		<p class="p-4 text-sm text-red-600" role="alert">
+		<p class="p-4 text-sm text-danger" role="alert">
 			{$t($viewState.errorKey ?? 'flow.collection.loadFailed')}
 		</p>
 	{:else if tableComponent && $viewState.collection}
@@ -92,6 +90,6 @@
 			<Table {controller} snapshot={$viewState} {scopeId} />
 		</div>
 	{:else}
-		<p class="p-4 text-sm text-slate-500" aria-live="polite">{$t('common.loading')}</p>
+		<p class="p-4 text-sm text-fg-muted" aria-live="polite">{$t('common.loading')}</p>
 	{/if}
 </section>

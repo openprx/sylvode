@@ -198,11 +198,7 @@
 
 <svelte:window onresize={resizeTitle} />
 
-<header
-	class="flow-page-header bg-white dark:bg-slate-950"
-	data-testid="flow-page-header"
-	data-scope-id={scopeId}
->
+<header class="flow-page-header bg-canvas" data-testid="flow-page-header" data-scope-id={scopeId}>
 	{#if cover}
 		<div
 			class="relative h-48 w-full overflow-hidden"
@@ -273,7 +269,7 @@
 	<div class="mx-auto w-full max-w-3xl px-6 pt-6 sm:px-8 2xl:px-16">
 		{#if crumbs.length > 0}
 			<nav
-				class="mb-3 flex flex-wrap items-center gap-1 text-sm text-slate-500"
+				class="mb-3 flex flex-wrap items-center gap-1 text-sm text-fg-muted"
 				aria-label={$t('flow.header.breadcrumbs')}
 			>
 				{#each crumbs as crumb, index (crumb.id)}
@@ -296,7 +292,7 @@
 			{#if !readOnly}
 				<button
 					type="button"
-					class="appearance-action mt-1 text-sm text-slate-500 hover:text-fg"
+					class="appearance-action mt-1 text-sm text-fg-muted hover:text-fg"
 					onclick={() => (menu = menu === 'icon' ? null : 'icon')}
 				>
 					{appearance?.icon ? $t('flow.header.changeIcon') : $t('flow.header.addIcon')}
@@ -304,20 +300,20 @@
 			{/if}
 			{#if menu === 'icon' && !readOnly}
 				<div
-					class="absolute z-20 mt-1 w-72 rounded-md border border-line bg-white p-3 shadow-lg dark:bg-slate-900"
+					class="absolute z-20 mt-1 w-72 rounded-float border border-overlay-line bg-overlay p-3 shadow-overlay"
 				>
 					<div class="grid grid-cols-8 gap-1">
 						{#each PAGE_EMOJIS as emoji (emoji)}
 							<button
 								type="button"
-								class="rounded p-1 text-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+								class="rounded p-1 text-xl hover:bg-surface"
 								onclick={() => save(withAppearance({ icon: { kind: 'emoji', emoji } }))}
 							>
 								{emoji}
 							</button>
 						{/each}
 					</div>
-					<label class="mt-2 block text-xs text-slate-500">
+					<label class="mt-2 block text-xs text-fg-muted">
 						{$t('flow.header.uploadIcon')}
 						<input
 							class="mt-1 block w-full text-sm"
@@ -329,7 +325,7 @@
 					{#if appearance?.icon}
 						<button
 							type="button"
-							class="mt-2 text-xs text-slate-500"
+							class="mt-2 text-xs text-fg-muted"
 							onclick={() => save(withAppearance({ icon: null }))}
 						>
 							{$t('flow.header.removeIcon')}
@@ -368,16 +364,16 @@
 			<div class="relative mt-2">
 				<button
 					type="button"
-					class="appearance-action text-sm text-slate-500 hover:text-slate-800"
+					class="appearance-action text-sm text-fg-muted hover:text-fg"
 					onclick={() => (menu = menu === 'cover' ? null : 'cover')}
 				>
 					{cover ? $t('flow.header.changeCover') : $t('flow.header.addCover')}
 				</button>
 				{#if menu === 'cover'}
 					<div
-						class="absolute z-20 mt-1 w-80 rounded-md border border-line bg-white p-3 shadow-lg dark:bg-slate-900"
+						class="absolute z-20 mt-1 w-80 rounded-float border border-overlay-line bg-overlay p-3 shadow-overlay"
 					>
-						<p class="mb-2 text-xs text-slate-500">{$t('flow.header.gallery')}</p>
+						<p class="mb-2 text-xs text-fg-muted">{$t('flow.header.gallery')}</p>
 						<div class="grid grid-cols-3 gap-2">
 							{#each COVER_GALLERIES as entry (entry.id)}
 								<button
@@ -394,7 +390,7 @@
 								></button>
 							{/each}
 						</div>
-						<label class="mt-2 block text-xs text-slate-500">
+						<label class="mt-2 block text-xs text-fg-muted">
 							{$t('flow.header.uploadCover')}
 							<input
 								class="mt-1 block w-full text-sm"
@@ -406,7 +402,7 @@
 						{#if cover}
 							<button
 								type="button"
-								class="mt-2 text-xs text-slate-500"
+								class="mt-2 text-xs text-fg-muted"
 								onclick={() => save(withAppearance({ cover: null }))}
 							>
 								{$t('flow.header.removeCover')}
@@ -417,7 +413,7 @@
 			</div>
 		{/if}
 		{#if failureKey}
-			<p class="mt-2 text-sm text-red-600" role="alert">{$t(failureKey)}</p>
+			<p class="mt-2 text-sm text-danger" role="alert">{$t(failureKey)}</p>
 		{/if}
 	</div>
 </header>

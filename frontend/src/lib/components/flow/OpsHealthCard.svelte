@@ -38,21 +38,18 @@
 </script>
 
 <section
-	class="rounded-lg border border-line bg-white p-4 sm:p-6 dark:bg-slate-900"
+	class="rounded-card border border-line bg-raised p-4 sm:p-6"
 	aria-labelledby="flow-ops-health-heading"
 	data-testid="flow-ops-health"
 >
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="flex flex-wrap items-center gap-3">
-			<h2
-				id="flow-ops-health-heading"
-				class="text-lg font-semibold text-fg"
-			>
+			<h2 id="flow-ops-health-heading" class="text-lg font-semibold text-fg">
 				{$t('flow.operations.health.heading')}
 			</h2>
 			{#if health}
 				<span
-					class={`rounded-full px-3 py-1 text-xs font-semibold ${health.status === 'healthy' ? 'bg-emerald-100 text-success dark:bg-emerald-950/50' : 'bg-amber-100 text-warning dark:bg-amber-950/50'}`}
+					class={`rounded-full px-3 py-1 text-xs font-semibold ${health.status === 'healthy' ? 'bg-surface text-fg' : 'bg-warning-soft text-warning'}`}
 					data-testid="flow-ops-health-status"
 				>
 					{$t(statusKey(HEALTH_STATUS_KEYS, health.status))}
@@ -62,7 +59,7 @@
 		<div class="flex flex-wrap gap-2">
 			<button
 				type="button"
-				class="min-h-11 rounded-md border border-slate-300 px-4 text-sm font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+				class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line"
 				disabled={snapshot.loading}
 				onclick={onrefresh}
 			>
@@ -71,7 +68,7 @@
 			{#if snapshot.paused}
 				<button
 					type="button"
-					class="min-h-11 rounded-md border border-blue-300 px-4 text-sm font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
+					class="min-h-11 rounded-control border border-fg px-4 text-sm font-medium text-fg hover:bg-surface"
 					onclick={onresume}
 					data-testid="flow-ops-health-resume"
 				>
@@ -80,7 +77,7 @@
 			{:else}
 				<button
 					type="button"
-					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface"
 					onclick={onpause}
 					data-testid="flow-ops-health-pause"
 				>
@@ -103,7 +100,7 @@
 
 	{#if snapshot.stale}
 		<p
-			class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-warning dark:border-amber-800 dark:bg-amber-950/30"
+			class="mt-3 rounded-card border border-line bg-warning-soft p-3 text-sm text-warning"
 			role="alert"
 			data-testid="flow-ops-health-stale"
 		>
@@ -111,7 +108,7 @@
 		</p>
 	{:else if !health && snapshot.failure}
 		<p
-			class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-danger dark:border-red-900 dark:bg-red-950/30"
+			class="mt-3 rounded-card border border-line bg-danger-soft p-3 text-sm text-danger"
 			role="alert"
 		>
 			{$t('flow.operations.health.loadFailed')}
@@ -122,7 +119,7 @@
 	{#if health}
 		{#if health.status !== 'healthy'}
 			<p
-				class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-warning dark:border-amber-800 dark:bg-amber-950/30"
+				class="mt-3 rounded-card border border-line bg-warning-soft p-3 text-sm text-warning"
 				data-testid="flow-ops-health-degraded"
 			>
 				{$t('flow.operations.health.degradedNotice')}
@@ -136,10 +133,7 @@
 				<dt class="text-fg-muted">
 					{$t('flow.operations.health.connections')}
 				</dt>
-				<dd
-					class="mt-1 font-mono text-fg"
-					data-testid="flow-ops-health-connections"
-				>
+				<dd class="mt-1 font-mono text-fg" data-testid="flow-ops-health-connections">
 					{health.connections}
 				</dd>
 			</div>
@@ -177,10 +171,7 @@
 				<dt class="text-fg-muted">
 					{$t('flow.operations.health.storageBytes')}
 				</dt>
-				<dd
-					class="mt-1 font-mono text-fg"
-					data-testid="flow-ops-health-storage"
-				>
+				<dd class="mt-1 font-mono text-fg" data-testid="flow-ops-health-storage">
 					{$t('flow.operations.bytes', { values: { n: health.storage_bytes } })}
 				</dd>
 			</div>
@@ -188,13 +179,11 @@
 
 		<div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
 			<div
-				class={`rounded-md border p-4 ${alert ? 'border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30' : 'border-line bg-slate-50 dark:bg-slate-800/50'}`}
+				class={`rounded-card border p-4 ${alert ? 'border-line bg-danger-soft' : 'border-line bg-nav'}`}
 				data-testid="flow-ops-dead-letter"
 				data-alert={alert ? 'true' : 'false'}
 			>
-				<h3
-					class={`text-sm font-semibold ${alert ? 'text-danger' : 'text-fg'}`}
-				>
+				<h3 class={`text-sm font-semibold ${alert ? 'text-danger' : 'text-fg'}`}>
 					{$t('flow.operations.health.deadLetter.heading')}
 				</h3>
 				<dl class="mt-2 grid grid-cols-2 gap-2 text-sm">
@@ -223,10 +212,7 @@
 					</p>
 				{/if}
 			</div>
-			<div
-				class="rounded-md border border-line bg-slate-50 p-4 dark:bg-slate-800/50"
-				data-testid="flow-ops-cancelled"
-			>
+			<div class="rounded-card border border-line bg-surface p-4" data-testid="flow-ops-cancelled">
 				<h3 class="text-sm font-semibold text-fg">
 					{$t('flow.operations.health.cancelled.heading')}
 				</h3>
