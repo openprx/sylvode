@@ -114,17 +114,17 @@
 </script>
 
 <figure
-	class="my-3 rounded-lg border border-line p-3"
+	class="my-3 rounded-card border border-line p-3"
 	data-testid="flow-body-asset"
 	data-asset-kind={kind}
 	data-asset-id={assetId}
 	data-state={status}
 >
 	{#if kind === 'image'}
-		{#if status === 'loading'}<p role="status" class="text-sm text-slate-500">
+		{#if status === 'loading'}<p role="status" class="text-sm text-fg-muted">
 				{$t('flow.body.loadingImage')}
 			</p>
-		{:else if status === 'error'}<div role="status" class="text-sm text-slate-500">
+		{:else if status === 'error'}<div role="status" class="text-sm text-fg-muted">
 				<span>{$t('flow.body.unavailableImage')}</span><button
 					type="button"
 					class="ml-2 underline"
@@ -151,14 +151,14 @@
 			disabled={status === 'loading'}
 			onclick={download}
 			data-testid="flow-body-file-download">📎 {name || $t('flow.body.file')}</button
-		>{#if status === 'error'}<p role="status" class="text-sm text-red-600">
+		>{#if status === 'error'}<p role="status" class="text-sm text-danger">
 				{$t('flow.body.downloadFailed')}
 			</p>{/if}{/if}
-	{#if caption}<figcaption class="mt-2 whitespace-pre-wrap text-sm text-slate-500">
+	{#if caption}<figcaption class="mt-2 whitespace-pre-wrap text-sm text-fg-muted">
 			{caption}
 		</figcaption>{/if}
 	{#if onReplace || onDetails || onContinue}<div
-			class="mt-2 flex flex-wrap gap-3 text-xs text-slate-500"
+			class="mt-2 flex flex-wrap gap-3 text-xs text-fg-muted"
 		>
 			{#if onReplace}<button type="button" onclick={onReplace}>{$t('flow.body.replace')}</button
 				>{/if}

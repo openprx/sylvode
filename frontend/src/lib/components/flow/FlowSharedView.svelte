@@ -61,23 +61,23 @@
 <svelte:head><title>{$t('flow.shared.blocks')}</title></svelte:head>
 <main class="mx-auto w-full max-w-4xl px-6 py-8" data-testid="flow-shared-view">
 	<h1 class="text-xl font-semibold">{$t('flow.shared.blocks')}</h1>
-	{#if supported === null}<p role="status" class="mt-4 text-sm text-slate-500">
+	{#if supported === null}<p role="status" class="mt-4 text-sm text-fg-muted">
 			{$t('common.loading')}
 		</p>
-	{:else if !supported}<p role="status" class="mt-4 text-sm text-slate-500">
+	{:else if !supported}<p role="status" class="mt-4 text-sm text-fg-muted">
 			{$t('flow.shared.unavailableFeature')}
 		</p>
 	{:else}
-		<div class="mt-2 mb-5 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+		<div class="mt-2 mb-5 flex flex-wrap items-center justify-between gap-3 text-sm text-fg-muted">
 			<p>{$t('flow.shared.scopeNotice')}</p>
 			<button
 				type="button"
-				class="rounded border px-3 py-1 disabled:opacity-40"
+				class="rounded border px-3 py-1 disabled:text-control disabled:hover:bg-transparent"
 				disabled={viewState.loading || viewState.draft?.phase === 'saving'}
 				onclick={() => session?.refresh(context)}>{$t('flow.shared.refresh')}</button
 			>
 		</div>
-		{#if viewState.loading && !remote}<p role="status" class="text-sm text-slate-500">
+		{#if viewState.loading && !remote}<p role="status" class="text-sm text-fg-muted">
 				{$t('common.loading')}
 			</p>
 		{:else if !remote}<div
@@ -101,7 +101,7 @@
 		{:else}
 			{#if remote.display_context}<nav
 					aria-label={$t('flow.shared.targetLocation')}
-					class="mb-3 flex flex-wrap gap-2 text-sm text-slate-500"
+					class="mb-3 flex flex-wrap gap-2 text-sm text-fg-muted"
 				>
 					<a
 						href={resolve('/(app)/workspace/[workspaceId]', {
@@ -117,7 +117,7 @@
 							class="underline">{remote.display_context.project_name}</a
 						>{/if}
 				</nav>{/if}
-			<p class="mb-4 text-xs text-slate-500" data-testid="flow-shared-permission">
+			<p class="mb-4 text-xs text-fg-muted" data-testid="flow-shared-permission">
 				{remote.effective_permission === 'edit'
 					? remote.projection.members.some((member) => 'text' in member.content)
 						? $t('flow.shared.canEditLimited')
@@ -131,7 +131,7 @@
 			/>
 			{#if viewState.issue}<div
 					role="status"
-					class="mt-4 rounded border border-amber-300 p-3 text-sm"
+					class="mt-4 rounded border border-warning p-3 text-sm"
 				>
 					<p>
 						{viewState.issue === 'structure'
@@ -150,7 +150,7 @@
 				</div>{/if}
 			{#if viewState.draft?.phase === 'conflict'}<section
 					role="alert"
-					class="mt-4 rounded border border-amber-400 p-4 text-sm"
+					class="mt-4 rounded border border-warning p-4 text-sm"
 					data-testid="flow-shared-conflict"
 				>
 					<p>{$t('flow.shared.conflict')}</p>
@@ -166,7 +166,7 @@
 					</div>
 				</section>{:else if viewState.draft?.phase === 'failed'}<p
 					role="alert"
-					class="mt-3 text-sm text-red-600"
+					class="mt-3 text-sm text-danger"
 				>
 					{$t('flow.shared.saveFailed')}
 				</p>{/if}

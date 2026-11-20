@@ -112,7 +112,7 @@
 			data-testid="flow-import-report-counts"
 		>
 			{#each IMPORT_REPORT_COUNT_KEYS as key (key)}
-				<div class="rounded-md border border-line p-3">
+				<div class="rounded-card border border-line p-3">
 					<dt class="text-fg-muted">{$t(IMPORT_COUNT_LABEL_KEYS[key])}</dt>
 					<dd
 						class="mt-1 text-xl font-semibold text-fg"
@@ -156,7 +156,7 @@
 			</table>
 			<ul class="mt-3 space-y-2 md:hidden">
 				{#each objectRows as [source, target] (source)}
-					<li class="rounded-md border border-line p-3 text-xs">
+					<li class="rounded-card border border-line p-3 text-xs">
 						<p class="text-fg-muted">
 							{$t('flow.import.report.sourceObject')}
 						</p>

@@ -147,9 +147,9 @@
 	}
 
 	const selectClass =
-		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800';
+		'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm text-fg';
 	const linkButtonClass =
-		'min-h-11 rounded-md px-2 text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400';
+		'min-h-11 rounded-control px-2 text-xs font-medium text-fg underline disabled:text-control disabled:hover:bg-transparent';
 </script>
 
 {#if !workspaceId && ready?.canManage && permittedToManage}
@@ -165,7 +165,7 @@
 		>
 		<input
 			id="flow-share-recipient-query"
-			class="min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 dark:bg-slate-900"
+			class="min-h-11 w-full rounded-control border border-input bg-field px-2"
 			bind:value={recipientQuery}
 			minlength="3"
 			maxlength="256"
@@ -176,7 +176,7 @@
 			class="min-h-11 px-2 underline"
 			disabled={recipientQuery.trim().length < 3}>{$t('flow.personal.search')}</button
 		>
-		{#if directoryError}<p role="alert" class="text-sm text-red-700">
+		{#if directoryError}<p role="alert" class="text-sm text-danger">
 				{$t('flow.personal.recipientSearchFailed')}
 			</p>{/if}
 	</form>
@@ -221,7 +221,7 @@
 		{:else}
 			<button
 				type="button"
-				class="min-h-11 w-full rounded-md border border-slate-300 px-3 text-sm font-medium text-fg hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+				class="min-h-11 w-full rounded-control border border-fg bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line"
 				disabled={busy}
 				onclick={() =>
 					run({ kind: 'inheritance', inherit_from_parent: !ready.view.inherit_from_parent })}
@@ -246,7 +246,7 @@
 							<li class="flex items-center justify-between gap-2">
 								<span class="truncate text-fg">
 									{nameOf(grant.principal_kind, grant.principal_id)}
-									<span class="text-xs text-slate-400">· {kindLabel(grant.principal_kind)}</span>
+									<span class="text-xs text-fg-muted">· {kindLabel(grant.principal_kind)}</span>
 								</span>
 								<span class="text-fg-muted"
 									>{$t(shareLevelKey(grant.level))}</span
@@ -273,7 +273,7 @@
 							<li class="flex flex-col gap-1" data-testid="flow-share-grant">
 								<span class="truncate text-fg">
 									{name}
-									<span class="text-xs text-slate-400">· {kindLabel(grant.principal_kind)}</span>
+									<span class="text-xs text-fg-muted">· {kindLabel(grant.principal_kind)}</span>
 								</span>
 								<div class="flex items-center gap-2">
 									<select
@@ -378,7 +378,7 @@
 				</label>
 				<button
 					type="button"
-					class="min-h-11 w-full rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+					class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 					disabled={busy || addPrincipal === ''}
 					onclick={submitAdd}
 				>
@@ -484,14 +484,14 @@
 	{#snippet footer()}
 		<button
 			type="button"
-			class="min-h-11 rounded-md px-4 text-sm font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
+			class="min-h-11 rounded-control px-4 text-sm font-medium text-fg hover:bg-surface"
 			onclick={cancelChange}
 		>
 			{$t('common.cancel')}
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded-md bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+			class="min-h-11 rounded-control bg-danger px-4 text-sm font-medium text-on-danger rf-filled disabled:bg-surface disabled:text-control"
 			disabled={!permittedToManage ||
 				!pending ||
 				pending.phase === 'previewing' ||

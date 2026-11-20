@@ -376,13 +376,13 @@
 	}
 
 	const linkButtonClass =
-		'min-h-11 text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400';
+		'min-h-11 text-xs font-medium text-fg underline disabled:text-control disabled:hover:bg-transparent';
 	const selectClass =
-		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800';
+		'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm text-fg';
 </script>
 
 <aside
-	class="flex w-full shrink-0 flex-col gap-4 border-t border-line bg-white p-4 lg:w-full lg:border-l lg:border-t-0 dark:bg-slate-900"
+	class="flex w-full shrink-0 flex-col gap-4 border-t border-line bg-canvas p-4 lg:w-full lg:border-l lg:border-t-0"
 	aria-label={$t('flow.panel.title')}
 >
 	<p class="sr-only" aria-live="polite">{liveMessage}</p>
@@ -391,7 +391,7 @@
 			<h2 class="font-semibold">{$t(TAB_KEYS[selectedTool])}</h2>
 			<button
 				type="button"
-				class="min-h-11 min-w-11 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+				class="min-h-11 min-w-11 rounded hover:bg-surface"
 				aria-label={$t('common.close')}
 				onclick={onclose}>✕</button
 			>
@@ -413,7 +413,7 @@
 					tabindex={activeTab === tab ? 0 : -1}
 					class={`min-h-11 border-b-2 px-1 text-xs font-medium ${
 						activeTab === tab
-							? 'border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-300'
+							? 'border-fg text-fg'
 							: 'border-transparent text-fg-muted hover:text-fg'
 					}`}
 					onclick={() => selectTab(tab)}
@@ -445,7 +445,7 @@
 						</code>
 						<button
 							type="button"
-							class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+							class="text-xs font-medium text-fg underline"
 							onclick={copyReference}
 						>
 							{$t('flow.panel.copyReference')}
@@ -467,12 +467,12 @@
 			{#if conversionAvailability( { ...object, permitted_actions: currentActions ? [...currentActions] : undefined } ).mode !== 'unavailable'}
 				<a
 					href={resolve('/(app)/flow/[objectId]/convert', { objectId: object.id })}
-					class="flex min-h-11 items-center justify-center rounded-md border border-slate-300 px-3 text-sm font-medium text-fg hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800"
+					class="flex min-h-11 items-center justify-center rounded-control border border-fg bg-raised px-3 text-sm font-medium text-fg hover:bg-surface"
 					data-testid="flow-panel-convert"
 				>
 					{$t('flow.bridge.convert.panelAction')}
 				</a>
-			{:else}<p class="text-xs text-slate-500" role="status">
+			{:else}<p class="text-xs text-fg-muted" role="status">
 					{$t('flow.personal.conversionUnavailable')}
 				</p>{/if}
 		{/if}
@@ -502,11 +502,11 @@
 			<h2 class="text-sm font-semibold text-fg">
 				{$t('flow.panel.export.heading')}
 			</h2>
-			{#if (object.minimum_editor_model ?? 1) >= 5}<p class="text-xs text-slate-500">
+			{#if (object.minimum_editor_model ?? 1) >= 5}<p class="text-xs text-fg-muted">
 					{$t('flow.body.referenceExportOnly')}
 				</p>
 				{#if !formats.includes('package') && !((portablePackagesReady || portableGraphReady) && portablePackageAvailable)}<p
-						class="text-xs text-slate-500"
+						class="text-xs text-fg-muted"
 					>
 						{$t('flow.body.rawPackageUnavailable')}
 					</p>{/if}{/if}
@@ -546,7 +546,7 @@
 			{/if}
 			{#if exportFormat === 'package' && formats.includes('package')}
 				<p
-					class="my-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+					class="my-3 rounded-card border border-line bg-warning-soft p-3 text-sm text-fg"
 					data-testid="flow-object-package-history-notice"
 				>
 					{$t('flow.package.snapshotHistoryNotice')}
@@ -554,7 +554,7 @@
 			{/if}
 			<button
 				type="button"
-				class="min-h-11 w-full rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+				class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 				disabled={exporting || formats.length === 0 || exportState.job?.polling === true}
 				aria-describedby={formats.length === 0 ? 'flow-panel-export-unavailable' : undefined}
 				onclick={startExport}
@@ -657,7 +657,7 @@
 			{#if !object.workspace_id && currentActions?.includes('manage')}
 				{#if object.object_type !== 'record' || object.record_context_supported === true}<FlowMountPanel
 						objectId={object.id}
-					/>{:else}<p class="text-sm text-slate-500">
+					/>{:else}<p class="text-sm text-fg-muted">
 						{$t('flow.personal.recordContextUnavailable')}
 					</p>{/if}
 			{/if}
@@ -690,7 +690,7 @@
 			{$t('flow.history.title')}
 		</h2>
 		{#if object.historical_asset_reads_supported === false && (object.minimum_editor_model ?? 1) >= 5}<p
-				class="mb-3 text-xs text-slate-500"
+				class="mb-3 text-xs text-fg-muted"
 			>
 				{$t('flow.body.historyPreviewUnavailable')}
 			</p>{/if}
@@ -740,7 +740,7 @@
 						<p class="text-fg">
 							{formatSummary(entry.semantic_summary)}
 						</p>
-						<p class="text-xs text-slate-400 dark:text-slate-500">
+						<p class="text-xs text-fg-muted">
 							{$t('flow.history.entry', {
 								values: {
 									actor: entry.actor ?? $t('flow.history.actorUnknown'),
