@@ -3624,6 +3624,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0107_flow_block_registration_progress.sql",
         include_str!("../../../migrations/0107_flow_block_registration_progress.sql"),
     ),
+    (
+        "0108_flow_block_checkpoint_digest.sql",
+        include_str!("../../../migrations/0108_flow_block_checkpoint_digest.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4170,6 +4174,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0107_flow_block_registration_progress.sql",
         SchemaProbe::Column("flow_block_checkpoints", "pending_registrations"),
+    ),
+    (
+        "0108_flow_block_checkpoint_digest.sql",
+        SchemaProbe::Column("flow_block_checkpoints", "registry_digest"),
     ),
 ];
 
@@ -4732,6 +4740,7 @@ mod tests {
                 "0105_token_bot_entity_type.sql",
                 "0106_flow_capabilities_default_on.sql",
                 "0107_flow_block_registration_progress.sql",
+                "0108_flow_block_checkpoint_digest.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
