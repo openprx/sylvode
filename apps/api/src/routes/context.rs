@@ -106,18 +106,27 @@ pub async fn get_project_context(
     let resources = load_resources(&state, project_id).await?;
     let governance = load_governance(&state, project_id).await?;
     let workflow = load_workflow(&state, project_id).await?;
-    let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
     let agent_policy = build_agent_policy(&project, project_type.as_ref(), governance.as_ref());
 
-    Ok(ApiResponse::success(json!({
+    let mut context = json!({
         "project": project,
         "project_type": project_type,
         "resources": resources,
         "governance": governance,
         "workflow": workflow,
-        "recent_decisions": decisions,
         "agent_policy": agent_policy,
-    })))
+    });
+    // Decisions are workspace-wide (a decision has no project of its own), so a connected
+    // application, whose grant may cover only some projects, gets none: no scope of the first
+    // release covers decisions, and the field is left out rather than sent empty, which would
+    // read as "no decisions".
+    if crate::oauth::delegated::current().is_none()
+        && let Some(object) = context.as_object_mut()
+    {
+        let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
+        object.insert("recent_decisions".to_owned(), json!(decisions));
+    }
+    Ok(ApiResponse::success(context))
 }
 
 pub async fn get_project_governance_context(
@@ -130,14 +139,20 @@ pub async fn get_project_governance_context(
     ensure_project_context_access(&state, &claims, bot.as_ref().map(|b| &b.0), &project).await?;
     let governance = load_governance(&state, project_id).await?;
     let workflow = load_workflow(&state, project_id).await?;
-    let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
-
-    Ok(ApiResponse::success(json!({
+    let mut context = json!({
         "project_id": project_id,
         "governance": governance,
         "workflow": workflow,
-        "recent_decisions": decisions,
-    })))
+    });
+    // Same rule as the project context: workspace-wide decisions are not shown to a connected
+    // application.
+    if crate::oauth::delegated::current().is_none()
+        && let Some(object) = context.as_object_mut()
+    {
+        let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
+        object.insert("recent_decisions".to_owned(), json!(decisions));
+    }
+    Ok(ApiResponse::success(context))
 }
 
 pub async fn get_project_agent_policy(
