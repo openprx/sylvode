@@ -81,7 +81,7 @@
 	beforeNavigate((navigation) => {
 		captureTask();
 		if (navigation.to && !workbench.canOpen(navigation.to.url.href)) {
-			workbench.showLimit();
+			workbench.block(navigation.to.url.href);
 			navigation.cancel();
 		}
 	});

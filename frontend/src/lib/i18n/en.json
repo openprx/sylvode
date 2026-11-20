@@ -4454,17 +4454,9 @@
 		}
 	},
 	"workbench": {
-		"openTasks": "Open tasks",
 		"forms": "Forms",
 		"project": "Project",
 		"projects": "Projects",
-		"close": "Close tab {title}",
-		"unsaved": "Unsaved changes",
-		"updated": "New changes",
-		"limit": "Eight tabs are open. Save and close a tab before opening another.",
-		"closeDirty": "Close this tab?",
-		"closeDirtyBody": "This tab has unsaved input. Closing discards its in-memory draft.",
-		"discardClose": "Discard and close",
 		"leaveDirty": "There is unsaved input. Signing out discards in-memory drafts. Continue?",
 		"restoredLimit": "Opened your link and restored up to eight tabs.",
 		"conflictBody": "The server has changes. Your draft was kept; review before saving again.",
@@ -4472,9 +4464,9 @@
 		"remoteValue": "Server:",
 		"reviewRetry": "Review current values and keep my changes",
 		"resourceUnavailable": "This resource is unavailable or access changed. Your draft is kept.",
-		"reorderHint": "Drag tabs to reorder, or press Alt+Shift+Left/Right.",
-		"moved": "{title} moved to position {position} of {total}.",
-		"sharedBlock": "Shared blocks"
+		"sharedBlock": "Shared blocks",
+		"droppedTab": "“{title}” was closed to open “{next}”.",
+		"reopen": "Reopen"
 	},
 	"plugins": {
 		"projectSettings": "Project settings · Plugins",
