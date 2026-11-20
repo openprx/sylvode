@@ -7,7 +7,7 @@
 
 {#if entries.length > 0}
 	<ul
-		class="my-3 space-y-1 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+		class="my-3 space-y-1 rounded-card border border-line bg-warning-soft p-3 text-sm text-fg"
 		data-testid="flow-package-export-warnings"
 		role="status"
 	>

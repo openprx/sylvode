@@ -1,0 +1,24 @@
+{
+	"ui": {
+		"form": {
+			"required": "（必填）",
+			"optional": "（选填）",
+			"reason": {
+				"prefix": "请填写",
+				"separator": "、",
+				"last": "和",
+				"more": "等 {n} 项",
+				"suffix": "后才能{action}。"
+			},
+			"sample": {
+				"title": "标题",
+				"due": "截止日期",
+				"owner": "负责人",
+				"titleError": "请输入不超过 200 个字符的标题。",
+				"action": "创建记录",
+				"status": "状态",
+				"labels": "标签"
+			}
+		}
+	}
+}

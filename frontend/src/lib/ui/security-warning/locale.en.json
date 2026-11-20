@@ -1,0 +1,12 @@
+{
+	"ui": {
+		"securityWarning": {
+			"sample": {
+				"title": "This key can read every project",
+				"body": "Anyone with the key can act as you until it is revoked.",
+				"dangerTitle": "This action cannot be undone",
+				"dangerBody": "The key stops working at once and cannot be restored."
+			}
+		}
+	}
+}

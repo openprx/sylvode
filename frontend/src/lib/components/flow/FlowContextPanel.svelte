@@ -376,13 +376,13 @@
 	}
 
 	const linkButtonClass =
-		'min-h-11 text-xs font-medium text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:text-blue-400';
+		'min-h-11 text-xs font-medium text-fg underline disabled:text-fg-muted disabled:hover:bg-transparent';
 	const selectClass =
-		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
+		'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm text-fg';
 </script>
 
 <aside
-	class="flex w-full shrink-0 flex-col gap-4 border-t border-slate-200 bg-white p-4 lg:w-full lg:border-l lg:border-t-0 dark:border-slate-800 dark:bg-slate-900"
+	class="flex w-full shrink-0 flex-col gap-4 border-t border-line bg-canvas p-4 lg:w-full lg:border-l lg:border-t-0"
 	aria-label={$t('flow.panel.title')}
 >
 	<p class="sr-only" aria-live="polite">{liveMessage}</p>
@@ -391,7 +391,7 @@
 			<h2 class="font-semibold">{$t(TAB_KEYS[selectedTool])}</h2>
 			<button
 				type="button"
-				class="min-h-11 min-w-11 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+				class="min-h-11 min-w-11 rounded hover:bg-surface"
 				aria-label={$t('common.close')}
 				onclick={onclose}>✕</button
 			>
@@ -400,7 +400,7 @@
 		<div
 			role="tablist"
 			aria-label={$t('flow.panel.tabs.label')}
-			class="grid grid-cols-5 gap-1 border-b border-slate-200 dark:border-slate-700"
+			class="grid grid-cols-5 gap-1 border-b border-line"
 		>
 			{#each TABS as tab (tab)}
 				<button
@@ -411,10 +411,10 @@
 					aria-selected={activeTab === tab}
 					aria-controls={`${panelId}-${tab}`}
 					tabindex={activeTab === tab ? 0 : -1}
-					class={`min-h-11 border-b-2 px-1 text-xs font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+					class={`min-h-11 border-b-2 px-1 text-xs font-medium ${
 						activeTab === tab
-							? 'border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-300'
-							: 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+							? 'border-fg text-fg'
+							: 'border-transparent text-fg-muted hover:text-fg'
 					}`}
 					onclick={() => selectTab(tab)}
 					onkeydown={onTabKeydown}
@@ -433,19 +433,19 @@
 		class="space-y-6"
 	>
 		<div>
-			<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="mb-3 text-sm font-semibold text-fg">
 				{$t('flow.panel.title')}
 			</h2>
 			<dl class="space-y-2 text-sm">
 				<div class="flex items-center justify-between gap-2">
-					<dt class="text-slate-500 dark:text-slate-400">{$t('flow.panel.objectId')}</dt>
+					<dt class="text-fg-muted">{$t('flow.panel.objectId')}</dt>
 					<dd class="flex items-center gap-2">
-						<code class="truncate text-xs text-slate-600 dark:text-slate-300" title={object.id}>
+						<code class="truncate text-xs text-fg-muted" title={object.id}>
 							{object.id.slice(0, 8)}…
 						</code>
 						<button
 							type="button"
-							class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+							class="text-xs font-medium text-fg underline"
 							onclick={copyReference}
 						>
 							{$t('flow.panel.copyReference')}
@@ -453,12 +453,12 @@
 					</dd>
 				</div>
 				<div class="flex items-center justify-between">
-					<dt class="text-slate-500 dark:text-slate-400">{$t('flow.panel.created')}</dt>
-					<dd class="text-slate-700 dark:text-slate-200">{formatTime(object.created_at)}</dd>
+					<dt class="text-fg-muted">{$t('flow.panel.created')}</dt>
+					<dd class="text-fg">{formatTime(object.created_at)}</dd>
 				</div>
 				<div class="flex items-center justify-between">
-					<dt class="text-slate-500 dark:text-slate-400">{$t('flow.panel.updated')}</dt>
-					<dd class="text-slate-700 dark:text-slate-200">{formatTime(object.updated_at)}</dd>
+					<dt class="text-fg-muted">{$t('flow.panel.updated')}</dt>
+					<dd class="text-fg">{formatTime(object.updated_at)}</dd>
 				</div>
 			</dl>
 		</div>
@@ -467,12 +467,12 @@
 			{#if conversionAvailability( { ...object, permitted_actions: currentActions ? [...currentActions] : undefined } ).mode !== 'unavailable'}
 				<a
 					href={resolve('/(app)/flow/[objectId]/convert', { objectId: object.id })}
-					class="flex min-h-11 items-center justify-center rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+					class="flex min-h-11 items-center justify-center rounded-control border border-fg bg-raised px-3 text-sm font-medium text-fg hover:bg-surface"
 					data-testid="flow-panel-convert"
 				>
 					{$t('flow.bridge.convert.panelAction')}
 				</a>
-			{:else}<p class="text-xs text-slate-500" role="status">
+			{:else}<p class="text-xs text-fg-muted" role="status">
 					{$t('flow.personal.conversionUnavailable')}
 				</p>{/if}
 		{/if}
@@ -499,21 +499,20 @@
 		{/if}
 
 		<div class="space-y-3 text-sm" data-testid="flow-panel-export">
-			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-sm font-semibold text-fg">
 				{$t('flow.panel.export.heading')}
 			</h2>
-			{#if (object.minimum_editor_model ?? 1) >= 5}<p class="text-xs text-slate-500">
+			{#if (object.minimum_editor_model ?? 1) >= 5}<p class="text-xs text-fg-muted">
 					{$t('flow.body.referenceExportOnly')}
 				</p>
 				{#if !formats.includes('package') && !((portablePackagesReady || portableGraphReady) && portablePackageAvailable)}<p
-						class="text-xs text-slate-500"
+						class="text-xs text-fg-muted"
 					>
 						{$t('flow.body.rawPackageUnavailable')}
 					</p>{/if}{/if}
 			{#if formats.length > 0}
 				<label class="block">
-					<span class="mb-1 block text-xs text-slate-500 dark:text-slate-400"
-						>{$t('flow.panel.export.formatLabel')}</span
+					<span class="mb-1 block text-xs text-fg-muted">{$t('flow.panel.export.formatLabel')}</span
 					>
 					<select
 						aria-label={$t('flow.panel.export.formatLabel')}
@@ -526,17 +525,17 @@
 						{/each}
 					</select>
 				</label>
-				<label class="flex min-h-11 items-center gap-3 text-slate-700 dark:text-slate-200">
+				<label class="flex min-h-11 items-center gap-3 text-fg">
 					<input
 						type="checkbox"
-						class="h-5 w-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+						class="h-5 w-5"
 						bind:checked={includeHistory}
 						disabled={exporting || exportFormat !== 'package' || !historyExportSupported}
 						aria-describedby="flow-panel-export-history-hint"
 					/>
 					<span>{$t('flow.panel.export.includeHistory')}</span>
 				</label>
-				<p id="flow-panel-export-history-hint" class="text-xs text-slate-500 dark:text-slate-400">
+				<p id="flow-panel-export-history-hint" class="text-xs text-fg-muted">
 					{$t(
 						historyExportSupported
 							? 'flow.panel.export.historyPackageOnly'
@@ -546,7 +545,7 @@
 			{/if}
 			{#if exportFormat === 'package' && formats.includes('package')}
 				<p
-					class="my-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+					class="my-3 rounded-card border border-line bg-warning-soft p-3 text-sm text-fg"
 					data-testid="flow-object-package-history-notice"
 				>
 					{$t('flow.package.snapshotHistoryNotice')}
@@ -554,7 +553,7 @@
 			{/if}
 			<button
 				type="button"
-				class="min-h-11 w-full rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50"
+				class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				disabled={exporting || formats.length === 0 || exportState.job?.polling === true}
 				aria-describedby={formats.length === 0 ? 'flow-panel-export-unavailable' : undefined}
 				onclick={startExport}
@@ -566,18 +565,14 @@
 						: $t('flow.panel.export.start')}
 			</button>
 			{#if formats.length === 0}
-				<p
-					id="flow-panel-export-unavailable"
-					class="text-xs text-slate-500 dark:text-slate-400"
-					role="status"
-				>
+				<p id="flow-panel-export-unavailable" class="text-xs text-fg-muted" role="status">
 					{$t(exportUnavailableKey)}
 				</p>
 			{/if}
 			{#if exportState.job}
 				{@const view = exportState.job}
 				<div class="space-y-1" data-testid="flow-panel-export-job" data-job-id={view.jobId}>
-					<p class="text-slate-700 dark:text-slate-200">
+					<p class="text-fg">
 						{$t('flow.export.status.label')}:
 						<span data-testid="flow-panel-export-status">
 							{view.job
@@ -589,9 +584,9 @@
 							warnings={view.job.warnings}
 						/>{/if}
 					{#if view.failure}
-						<p class="text-red-600 dark:text-red-400" role="alert">{$t(view.failure.messageKey)}</p>
+						<p class="text-danger" role="alert">{$t(view.failure.messageKey)}</p>
 					{:else if exportJobErrorKey(view.job)}
-						<p class="text-red-600 dark:text-red-400" role="alert">
+						<p class="text-danger" role="alert">
 							{$t(exportJobErrorKey(view.job) ?? 'flow.panel.export.failed')}
 						</p>
 					{/if}
@@ -609,7 +604,7 @@
 				</div>
 			{/if}
 			{#if exportFailureKey}
-				<p class="text-red-600 dark:text-red-400" role="alert">{$t(exportFailureKey)}</p>
+				<p class="text-danger" role="alert">{$t(exportFailureKey)}</p>
 			{/if}
 		</div>
 	</div>
@@ -621,7 +616,7 @@
 		data-tab-label="flow-panel-tab-comments"
 		hidden={activeTab !== 'comments'}
 	>
-		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="mb-3 text-sm font-semibold text-fg">
 			{$t('flow.comments.title')}
 		</h2>
 		{#if visited.comments}
@@ -644,7 +639,7 @@
 		data-tab-label="flow-panel-tab-share"
 		hidden={activeTab !== 'share'}
 	>
-		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="mb-3 text-sm font-semibold text-fg">
 			{$t('flow.share.title')}
 		</h2>
 		{#if visited.share}
@@ -657,7 +652,7 @@
 			{#if !object.workspace_id && currentActions?.includes('manage')}
 				{#if object.object_type !== 'record' || object.record_context_supported === true}<FlowMountPanel
 						objectId={object.id}
-					/>{:else}<p class="text-sm text-slate-500">
+					/>{:else}<p class="text-sm text-fg-muted">
 						{$t('flow.personal.recordContextUnavailable')}
 					</p>{/if}
 			{/if}
@@ -671,7 +666,7 @@
 		data-tab-label="flow-panel-tab-relations"
 		hidden={activeTab !== 'relations'}
 	>
-		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="mb-3 text-sm font-semibold text-fg">
 			{$t('flow.relations.title')}
 		</h2>
 		{#if visited.relations}
@@ -686,16 +681,16 @@
 		data-tab-label="flow-panel-tab-history"
 		hidden={activeTab !== 'history'}
 	>
-		<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="mb-3 text-sm font-semibold text-fg">
 			{$t('flow.history.title')}
 		</h2>
 		{#if object.historical_asset_reads_supported === false && (object.minimum_editor_model ?? 1) >= 5}<p
-				class="mb-3 text-xs text-slate-500"
+				class="mb-3 text-xs text-fg-muted"
 			>
 				{$t('flow.body.historyPreviewUnavailable')}
 			</p>{/if}
 		{#if historyFailure}
-			<p role="alert" class="text-sm text-red-700 dark:text-red-300">{$t(historyFailure)}</p>
+			<p role="alert" class="text-sm text-danger">{$t(historyFailure)}</p>
 			<button type="button" class={linkButtonClass} onclick={() => loadHistory()}
 				>{$t('flow.mounts.retry')}</button
 			>
@@ -720,14 +715,14 @@
 				{$t('flow.history.restoreWait')}
 			</p>{/if}
 		{#if historyLoading && history.length === 0}
-			<p class="text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</p>
+			<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 		{:else if history.length === 0}
-			<p class="text-sm text-slate-500 dark:text-slate-400">{$t('flow.history.empty')}</p>
+			<p class="text-sm text-fg-muted">{$t('flow.history.empty')}</p>
 		{:else}
 			<ul class="space-y-3" data-testid="flow-history-list">
 				{#each history as entry (entry.seq)}
 					<li
-						class="border-l-2 border-slate-200 pl-3 text-sm dark:border-slate-700"
+						class="border-l-2 border-line pl-3 text-sm"
 						data-testid="flow-history-entry"
 						data-version-seq={entry.seq}
 					>
@@ -735,12 +730,12 @@
 							{$t('flow.history.versionLabel', { values: { version: entry.seq } })}
 						</p>
 						{#if entry.message}
-							<p class="text-slate-800 dark:text-slate-100">{entry.message}</p>
+							<p class="text-fg">{entry.message}</p>
 						{/if}
-						<p class="text-slate-700 dark:text-slate-200">
+						<p class="text-fg">
 							{formatSummary(entry.semantic_summary)}
 						</p>
-						<p class="text-xs text-slate-400 dark:text-slate-500">
+						<p class="text-xs text-fg-muted">
 							{$t('flow.history.entry', {
 								values: {
 									actor: entry.actor ?? $t('flow.history.actorUnknown'),
@@ -803,7 +798,7 @@
 				{/each}
 			</ul>
 			{#if restoreFailureKey}
-				<p class="text-sm text-red-600 dark:text-red-400" role="alert">{$t(restoreFailureKey)}</p>
+				<p class="text-sm text-danger" role="alert">{$t(restoreFailureKey)}</p>
 			{/if}
 			{#if nextBeforeSeq}
 				<button

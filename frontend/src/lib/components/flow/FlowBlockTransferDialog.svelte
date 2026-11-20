@@ -249,13 +249,13 @@
 			>
 				{#each pages as page (page.id)}<button
 						type="button"
-						class="block w-full rounded px-2 py-2 text-left text-sm hover:bg-slate-100"
+						class="block w-full rounded px-2 py-2 text-left text-sm hover:bg-surface"
 						aria-pressed={targetId === page.id}
 						disabled={blocked || loadingTarget}
 						onclick={() => target(page)}>{page.title || $t('flow.nav.untitled')}</button
-					>{/each}{#if searching}<p role="status" class="text-sm text-slate-500">
+					>{/each}{#if searching}<p role="status" class="text-sm text-fg-muted">
 						{$t('common.loading')}
-					</p>{:else if !pages.length}<p class="text-sm text-slate-500">
+					</p>{:else if !pages.length}<p class="text-sm text-fg-muted">
 						{$t('flow.transfer.noTargets')}
 					</p>{/if}
 			</div>
@@ -309,7 +309,7 @@
 				</section>{/if}
 			<button
 				type="button"
-				class="rounded border px-3 py-2 text-sm disabled:opacity-40"
+				class="rounded border px-3 py-2 text-sm disabled:text-fg-muted disabled:hover:bg-transparent"
 				data-testid="flow-transfer-review"
 				disabled={!targetId || blocked || loadingTarget || snapshot.phase === 'preparing'}
 				onclick={prepare}
@@ -329,7 +329,7 @@
 								{block.text || $t('flow.transfer.block')}
 							</li>{/each}
 					</ol>
-					<p class="text-xs text-slate-500">
+					<p class="text-xs text-fg-muted">
 						{$t('flow.transfer.assetsAndShares', {
 							values: {
 								assets: snapshot.review.assetCount,
@@ -338,16 +338,13 @@
 						})}
 					</p>
 					{#if kind === 'copy' || snapshot.review.affectedShareCount > 0}
-						<p
-							class="text-sm text-slate-700 dark:text-slate-200"
-							data-testid="flow-transfer-share-impact"
-						>
+						<p class="text-sm text-fg" data-testid="flow-transfer-share-impact">
 							{$t(
 								kind === 'copy' ? 'flow.transfer.copyShareImpact' : 'flow.transfer.moveShareImpact'
 							)}
 						</p>
 					{/if}
-					<p class="text-sm text-amber-700">
+					<p class="text-sm text-warning">
 						{kind === 'copy'
 							? $t('flow.transfer.copyUndoBoundary')
 							: $t('flow.transfer.moveUndoBoundary')}
@@ -359,7 +356,7 @@
 					>
 					<button
 						type="button"
-						class="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-40"
+						class="rounded bg-primary rf-filled px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted"
 						data-testid="flow-transfer-commit"
 						disabled={blocked || !consent || snapshot.phase !== 'prepared'}
 						onclick={() => runtime.operation.commit(consent)}
@@ -371,7 +368,7 @@
 		{/if}
 		{#if blocked}<section
 				role="status"
-				class="space-y-2 rounded border border-amber-300 p-3 text-sm"
+				class="space-y-2 rounded border border-warning p-3 text-sm"
 				data-testid="flow-transfer-pending"
 			>
 				<p>{$t('flow.transfer.pending')}</p>
@@ -427,6 +424,6 @@
 				class="text-sm underline"
 				onclick={() => runtime.operation.cancel()}>{$t('flow.transfer.cancelPrepared')}</button
 			>{/if}
-		{#if error}<p role="alert" class="text-sm text-red-600">{error}</p>{/if}
+		{#if error}<p role="alert" class="text-sm text-danger">{error}</p>{/if}
 	</div>
 </Modal>

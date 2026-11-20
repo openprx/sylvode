@@ -31,13 +31,16 @@ import {
 	OUTBOX_DB
 } from './support/collab-fakes';
 import {
+	PRESENCE_COLORS,
 	PRESENCE_MIN_INTERVAL_MS,
 	PresenceThrottle,
 	RemotePresenceMap,
 	buildPresencePayload,
 	parsePresencePayload,
 	presenceColor,
-	presencePayloadBytes
+	presenceInk,
+	presencePayloadBytes,
+	contrastRatio
 } from '../src/lib/flow/presence';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -262,6 +265,18 @@ suite.check('the canvas and the editor never put a peer value into a style unche
 			/safePresenceColor\(/.test(source),
 			`${label} renders colours through safePresenceColor`
 		);
+	}
+});
+
+suite.check('the label on every presence hue, and on any peer colour, is at least 4.5:1', () => {
+	for (const color of PRESENCE_COLORS) {
+		const ratio = contrastRatio(presenceInk(color), color);
+		assert(ratio >= 4.5, `${color}: ${ratio.toFixed(2)}`);
+	}
+	// A peer may send any #rrggbb; walk the grey axis and the primaries as the hard cases.
+	for (let v = 0; v <= 255; v += 5) {
+		const hex = `#${v.toString(16).padStart(2, '0').repeat(3)}`;
+		assert(contrastRatio(presenceInk(hex), hex) >= 4.5, hex);
 	}
 });
 

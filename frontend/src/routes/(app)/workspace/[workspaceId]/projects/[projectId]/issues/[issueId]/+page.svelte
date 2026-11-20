@@ -13,6 +13,7 @@
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
 	import { authStore } from '#lib/stores/auth.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { renderMarkdown } from '#lib/utils/markdown.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import {
@@ -485,7 +486,14 @@
 			return;
 		}
 
-		if (!confirm(get(t)('issue.deleteConfirm'))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('issue.deleteTitle'),
+				body: get(t)('issue.deleteBody'),
+				confirmLabel: get(t)('issue.deleteAction')
+			}))
+		) {
 			return;
 		}
 
@@ -870,7 +878,14 @@
 		if (commentBusyId) {
 			return;
 		}
-		if (!confirm(get(t)('issue.commentDeleteConfirm'))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('issue.commentDeleteTitle'),
+				body: get(t)('issue.commentDeleteBody'),
+				confirmLabel: get(t)('issue.commentDeleteAction')
+			}))
+		) {
 			return;
 		}
 
@@ -992,10 +1007,8 @@
 
 <div class="mx-auto max-w-7xl pb-44 md:pb-0">
 	{#if loading}
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10"
-		>
-			<div class="flex items-center justify-center gap-3 text-slate-500 dark:text-slate-400">
+		<div class="rounded-card border border-line bg-raised p-10">
+			<div class="flex items-center justify-center gap-3 text-fg-muted">
 				<svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
 					<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"
 					></circle>
@@ -1006,30 +1019,26 @@
 			</div>
 		</div>
 	{:else if !issue}
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
-		>
+		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
 			{$t('issue.notFound')}
 		</div>
 	{:else}
 		<div class="space-y-4">
 			<div
-				class="flex flex-col gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:flex-row sm:items-center sm:justify-between"
+				class="flex flex-col gap-3 rounded-card border border-line bg-raised p-4 sm:flex-row sm:items-center sm:justify-between"
 			>
-				<div class="text-sm text-slate-600 dark:text-slate-300">
-					<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
-					<span class="mx-1 text-slate-400">/</span>
-					<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600"
+				<div class="text-sm text-fg-muted">
+					<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+					<span class="mx-1 text-fg-muted">/</span>
+					<a href="/workspace/{workspaceId}/projects" class="hover:underline"
 						>{$t('project.title')}</a
 					>
-					<span class="mx-1 text-slate-400">/</span>
-					<a href="/workspace/{workspaceId}/projects/{projectId}/issues" class="hover:text-blue-600"
+					<span class="mx-1 text-fg-muted">/</span>
+					<a href="/workspace/{workspaceId}/projects/{projectId}/issues" class="hover:underline"
 						>{$t('issue.list')}</a
 					>
-					<span class="mx-1 text-slate-400">/</span>
-					<span class="font-medium text-slate-900 dark:text-slate-100"
-						>{formatIssueCode(issue)}</span
-					>
+					<span class="mx-1 text-fg-muted">/</span>
+					<span class="font-medium text-fg">{formatIssueCode(issue)}</span>
 				</div>
 				<div class="flex flex-wrap gap-2">
 					<Button variant="ghost" size="sm" onclick={toggleIssueEditMode}>
@@ -1051,10 +1060,8 @@
 
 			<div class="grid grid-cols-1 gap-4 lg:grid-cols-10">
 				<div class="space-y-4 lg:col-span-7">
-					<div
-						class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
-					>
-						<p class="mb-2 text-xs font-mono text-slate-500 dark:text-slate-400">
+					<div class="rounded-card border border-line bg-raised p-5">
+						<p class="mb-2 text-xs font-mono text-fg-muted">
 							{formatIssueCode(issue)}
 						</p>
 						{#if issue.proposal_id || issue.governance_exempt}
@@ -1062,14 +1069,14 @@
 								{#if issue.proposal_id}
 									<a
 										href={`/proposals/${issue.proposal_id}`}
-										class="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700"
+										class="inline-flex items-center rounded-full border bg-surface px-2 py-0.5 text-xs font-medium text-fg"
 									>
 										{$t('issue.sourceProposal')}: {issue.proposal_id}
 									</a>
 								{/if}
 								{#if issue.governance_exempt}
 									<span
-										class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
+										class="inline-flex items-center rounded-full border bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning"
 										title={issue.governance_exempt_reason || ''}
 									>
 										{$t('issue.governanceExempt')}
@@ -1100,10 +1107,8 @@
 									onupload={handleDescriptionUpload}
 								/>
 								{#if existingIssueAttachments.length > 0}
-									<div
-										class="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-									>
-										<p class="mb-1 font-medium text-slate-700 dark:text-slate-200">
+									<div class="rounded-control border border-line bg-surface px-3 py-2 text-sm">
+										<p class="mb-1 font-medium text-fg">
 											{$t('issue.existingAttachments')}
 										</p>
 										<div class="space-y-1">
@@ -1112,7 +1117,7 @@
 													href={attachment.url}
 													target="_blank"
 													rel="noreferrer"
-													class="block truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+													class="block truncate text-fg underline"
 												>
 													{attachment.isImage ? '🖼️' : '📎'}
 													{attachment.filename}
@@ -1131,20 +1136,16 @@
 								</div>
 							</div>
 						{:else}
-							<h1 class="mb-4 text-2xl font-bold text-slate-900 dark:text-slate-100">
+							<h1 class="mb-4 text-2xl font-semibold text-fg">
 								{issue.title}
 							</h1>
-							<div
-								class="rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900"
-							>
+							<div class="rounded-control border border-line bg-surface p-4">
 								{#if issue.description?.trim()}
-									<div
-										class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
-									>
+									<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
 										{@html renderMarkdown(issue.description)}
 									</div>
 								{:else}
-									<p class="text-sm text-slate-500 dark:text-slate-400">
+									<p class="text-sm text-fg-muted">
 										{$t('issue.noDescriptionPreview')}
 									</p>
 								{/if}
@@ -1152,24 +1153,22 @@
 						{/if}
 					</div>
 
-					<div
-						class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
-					>
-						<h2 class="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<div class="rounded-card border border-line bg-raised p-5">
+						<h2 class="mb-4 text-lg font-semibold text-fg">
 							{$t('issue.comments')}（{comments.length}）
 						</h2>
 						<div class="space-y-4">
 							{#if comments.length === 0}
-								<p class="text-sm text-slate-500 dark:text-slate-400">{$t('issue.noComments')}</p>
+								<p class="text-sm text-fg-muted">{$t('issue.noComments')}</p>
 							{:else}
 								{#each comments as comment (comment.id)}
-									<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+									<div class="rounded-card border border-line p-4">
 										<div class="mb-2 flex items-start justify-between gap-3">
 											<div>
-												<p class="text-sm font-medium text-slate-900 dark:text-slate-100">
+												<p class="text-sm font-medium text-fg">
 													{comment.author_name || comment.user_id}
 												</p>
-												<p class="text-xs text-slate-500 dark:text-slate-400">
+												<p class="text-xs text-fg-muted">
 													{formatDate(comment.created_at)}
 												</p>
 											</div>
@@ -1197,25 +1196,23 @@
 											<div class="space-y-2 relative">
 												{#if showEditMentionDropdown && filteredEditMentionMembers.length > 0}
 													<div
-														class="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800"
+														class="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-float border border-line bg-overlay shadow-overlay"
 													>
 														{#each filteredEditMentionMembers as member (member.user_id)}
 															<button
-																class="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700"
+																class="w-full px-3 py-2 text-left text-sm hover:bg-surface"
 																onclick={() => selectEditMention(member)}
 															>
 																<span class="font-medium inline-flex items-center gap-1">
 																	{#if isBotMember(member)}
 																		<BotIcon
-																			class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300"
+																			class="h-3.5 w-3.5 text-fg-muted"
 																			title={$t('admin.botBadge')}
 																		/>
 																	{/if}
 																	<span>{member.name}</span>
 																</span>
-																<span class="ml-1 text-slate-400 dark:text-slate-400"
-																	>{member.email}</span
-																>
+																<span class="ml-1 text-fg-muted">{member.email}</span>
 															</button>
 														{/each}
 													</div>
@@ -1240,9 +1237,7 @@
 												</div>
 											</div>
 										{:else}
-											<div
-												class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
-											>
+											<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
 												{@html renderCommentContent(comment.content)}
 											</div>
 										{/if}
@@ -1254,9 +1249,7 @@
 				</div>
 
 				<div class="space-y-4 lg:col-span-3">
-					<div
-						class="space-y-3 rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
-					>
+					<div class="space-y-3 rounded-card border border-line bg-raised p-5">
 						<Select
 							label={$t('common.status')}
 							options={statusOptions}
@@ -1279,12 +1272,12 @@
 							disabled={updatingField !== null}
 						/>
 						<div class="space-y-1">
-							<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+							<p class="text-sm font-medium text-fg">
 								{$t('issue.sprint')}
 							</p>
 							{#if currentSprintName && currentSprintName !== $t('issue.noSprint')}
 								<span
-									class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium bg-indigo-50 text-indigo-700 border border-indigo-200"
+									class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium bg-surface text-fg border"
 								>
 									<svg class="mr-1.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 										<path
@@ -1297,19 +1290,17 @@
 									{currentSprintName}
 								</span>
 							{:else}
-								<span class="text-sm text-slate-400">{$t('issue.noLinkedSprint')}</span>
+								<span class="text-sm text-fg-muted">{$t('issue.noLinkedSprint')}</span>
 							{/if}
 						</div>
 
 						<div class="space-y-2">
-							<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+							<p class="text-sm font-medium text-fg">
 								{$t('issue.labels')}
 							</p>
 							<div class="flex flex-wrap gap-2">
 								{#if issueLabels.length === 0}
-									<span class="text-xs text-slate-500 dark:text-slate-400"
-										>{$t('issue.noLabels')}</span
-									>
+									<span class="text-xs text-fg-muted">{$t('issue.noLabels')}</span>
 								{:else}
 									{#each issueLabels as label (label.id)}
 										<Tag
@@ -1348,7 +1339,7 @@
 									<input
 										type="color"
 										bind:value={newLabelColor}
-										class="h-9 w-12 rounded border border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
+										class="h-9 w-12 rounded border border-input bg-field"
 									/>
 									<Button
 										size="sm"
@@ -1363,32 +1354,30 @@
 						</div>
 					</div>
 
-					<div
-						class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
-					>
-						<h3 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+					<div class="rounded-card border border-line bg-raised p-5">
+						<h3 class="mb-3 text-sm font-semibold text-fg">
 							{$t('issue.activity')}
 						</h3>
 						<div class="space-y-3">
 							{#if activities.length === 0}
-								<p class="text-xs text-slate-500 dark:text-slate-400">{$t('issue.noActivity')}</p>
+								<p class="text-xs text-fg-muted">{$t('issue.noActivity')}</p>
 							{:else}
 								{#each activities as activity, index (activity.id)}
 									<div class="flex items-start gap-3 py-2">
 										<div class="flex min-h-10 flex-col items-center">
-											<div class="h-2 w-2 rounded-full bg-blue-500"></div>
+											<div class="h-2 w-2 rounded-full bg-fg-muted"></div>
 											<div
-												class="w-0.5 flex-1 bg-slate-200 dark:bg-slate-700"
+												class="w-0.5 flex-1 bg-line"
 												class:opacity-0={index === activities.length - 1}
 											></div>
 										</div>
 										<div>
-											<p class="text-sm text-slate-700 dark:text-slate-300">
+											<p class="text-sm text-fg">
 												<span class="font-medium">{getActivityAuthor(activity)}</span>
 												{' '}
 												{formatActivity(activity)}
 											</p>
-											<p class="text-xs text-slate-400 dark:text-slate-400">
+											<p class="text-xs text-fg-muted">
 												{formatDate(activity.created_at)}
 											</p>
 										</div>
@@ -1401,30 +1390,27 @@
 			</div>
 
 			<div
-				class="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 p-3 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 md:static md:z-auto md:border-0 md:bg-transparent md:p-0"
+				class="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-canvas/95 p-3 backdrop-blur md:static md:z-auto md:border-0 md:bg-transparent md:p-0"
 			>
 				<div
-					class="relative mx-auto max-w-7xl rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-800 md:p-4"
+					class="relative mx-auto max-w-7xl rounded-card border border-line bg-raised p-3 md:p-4"
 				>
 					{#if showMentionDropdown && filteredMentionMembers.length > 0}
 						<div
-							class="absolute bottom-full left-3 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800"
+							class="absolute bottom-full left-3 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-float border border-line bg-overlay shadow-overlay"
 						>
 							{#each filteredMentionMembers as member (member.user_id)}
 								<button
-									class="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700"
+									class="w-full px-3 py-2 text-left text-sm hover:bg-surface"
 									onclick={() => selectMention(member)}
 								>
 									<span class="font-medium inline-flex items-center gap-1">
 										{#if isBotMember(member)}
-											<BotIcon
-												class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300"
-												title={$t('admin.botBadge')}
-											/>
+											<BotIcon class="h-3.5 w-3.5 text-fg-muted" title={$t('admin.botBadge')} />
 										{/if}
 										<span>{member.name}</span>
 									</span>
-									<span class="ml-1 text-slate-400 dark:text-slate-400">{member.email}</span>
+									<span class="ml-1 text-fg-muted">{member.email}</span>
 								</button>
 							{/each}
 						</div>

@@ -1,0 +1,23 @@
+{
+	"ui": {
+		"toast": {
+			"region": "Notifications",
+			"notification": "Notification",
+			"dismiss": "Dismiss notification",
+			"undo": "Undo",
+			"open": "Open",
+			"retry": "Retry",
+			"restoring": "Restoring",
+			"actionAvailable": "{message}, {action} available",
+			"sampleResult": "Record “Northwind order” created in Leads.",
+			"sampleDeleted": "Deleted “Northwind order”.",
+			"sampleUndoFailed": "Could not restore “Northwind order”. The server did not respond.",
+			"showResult": "Show result",
+			"showUndo": "Show undo",
+			"showNeutral": "Show notice",
+			"sampleNeutral": "Export finished.",
+			"undoCalls": "Undo calls: {count}",
+			"field": "Text field"
+		}
+	}
+}

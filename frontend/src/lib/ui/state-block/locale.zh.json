@@ -1,0 +1,68 @@
+{
+	"states": {
+		"empty": {
+			"title": "还没有{thing}",
+			"body": "添加的{thing}会显示在这里。",
+			"titleGeneric": "这里还没有内容",
+			"bodyGeneric": "添加的内容会显示在这里。"
+		},
+		"loading": {
+			"label": "正在加载{thing}"
+		},
+		"noResults": {
+			"title": "没有符合筛选条件的结果",
+			"body": {
+				"other": "已应用 {count} 个筛选条件。"
+			},
+			"action": "清除筛选"
+		},
+		"noSearchResults": {
+			"title": "没有与“{query}”相关的结果",
+			"action": "清除搜索"
+		},
+		"offline": {
+			"title": "当前处于离线状态",
+			"body": "仍显示之前加载的内容，草稿已保留。",
+			"action": "重试连接"
+		},
+		"loadFailed": {
+			"title": "无法加载{thing}",
+			"titleGeneric": "无法加载内容",
+			"body": "服务器没有响应，筛选条件已保留。",
+			"action": "重试"
+		},
+		"forbidden": {
+			"title": "你没有访问权限",
+			"body": "请联系{role}为你开通“{place}”的访问权限。",
+			"bodyGeneric": "请联系有访问权限的人将你加入。"
+		},
+		"notFound": {
+			"title": "此{object}已不存在",
+			"titleGeneric": "此项已不存在",
+			"body": "可能已被删除或移动。",
+			"action": "返回{place}"
+		},
+		"expired": {
+			"title": "此确认已失效",
+			"body": "查看后请求已变化，未执行任何操作，请重新核对。",
+			"action": "重新核对"
+		},
+		"identityChanged": {
+			"title": "你已切换为其他账号",
+			"body": "其他账号的草稿不会在此显示。",
+			"action": "重新加载"
+		}
+	},
+	"ui": {
+		"stateBlock": {
+			"sample": {
+				"thing": "项目",
+				"object": "项目",
+				"create": "新建项目",
+				"grantor": "管理员",
+				"place": "Northwind 工作区",
+				"query": "发票"
+			}
+		}
+	}
+}

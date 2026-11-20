@@ -262,41 +262,41 @@
 	}
 </script>
 
-{#if !canComment}<p class="mb-3 text-xs text-slate-500" role="status">
+{#if !canComment}<p class="mb-3 text-xs text-fg-muted" role="status">
 		{$t('flow.personal.commentsReadOnly')}
 	</p>{/if}
 
 <div class="space-y-3 text-sm" data-testid="flow-comments">
 	{#if loading && items.length === 0}
-		<p class="text-slate-500 dark:text-slate-400">{$t('flow.comments.loading')}</p>
+		<p class="text-fg-muted">{$t('flow.comments.loading')}</p>
 	{:else if visibleRoots.length === 0}
-		<p class="text-slate-500 dark:text-slate-400">{$t('flow.comments.empty')}</p>
+		<p class="text-fg-muted">{$t('flow.comments.empty')}</p>
 	{:else}
 		<ul class="space-y-3">
 			{#each visibleRoots as comment (comment.id)}
-				<li class="rounded-md border border-slate-200 p-2 dark:border-slate-700">
+				<li class="rounded-card border border-line p-2">
 					{#if comment.anchor_status === 'orphaned'}<p
-							class="mb-1 text-xs text-slate-500"
+							class="mb-1 text-xs text-fg-muted"
 							data-comment-anchor-status="orphaned"
 						>
 							{$t('flow.comments.anchorUnavailable')}
 						</p>{/if}
 					{#if editingId === comment.id}
 						<textarea
-							class="min-h-16 w-full rounded-md border border-slate-300 bg-white p-2 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+							class="min-h-16 w-full rounded-control border border-input bg-field p-2 text-fg"
 							bind:value={editBody}
 							readonly={!actions(comment).edit}></textarea>
 						<button
 							type="button"
-							class="mr-2 text-blue-600"
+							class="mr-2 text-fg underline"
 							disabled={busy || !actions(comment).edit}
 							onclick={() => saveEdit(comment.id)}>{$t('flow.comments.save')}</button
 						>
 						<button type="button" onclick={() => (editingId = null)}>{$t('common.cancel')}</button>
 					{:else}
-						<p class="whitespace-pre-wrap text-slate-800 dark:text-slate-100">{comment.body}</p>
+						<p class="whitespace-pre-wrap text-fg">{comment.body}</p>
 						{#if comment.resolved_at}
-							<p class="text-xs text-slate-500">{$t('flow.comments.resolved')}</p>
+							<p class="text-xs text-fg-muted">{$t('flow.comments.resolved')}</p>
 						{/if}
 						{#if canComment}
 							<div class="mt-1 flex flex-wrap gap-2 text-xs">
@@ -324,12 +324,12 @@
 						{/if}
 					{/if}
 					{#if repliesOf(comment.id).length > 0}
-						<ul class="mt-2 space-y-2 border-l border-slate-200 pl-3 dark:border-slate-700">
+						<ul class="mt-2 space-y-2 border-l border-line pl-3">
 							{#each repliesOf(comment.id) as reply (reply.id)}
 								<li>
-									<p class="whitespace-pre-wrap text-slate-800 dark:text-slate-100">{reply.body}</p>
+									<p class="whitespace-pre-wrap text-fg">{reply.body}</p>
 									{#if reply.anchor_status === 'orphaned'}<p
-											class="text-xs text-slate-500"
+											class="text-xs text-fg-muted"
 											data-comment-anchor-status="orphaned"
 										>
 											{$t('flow.comments.anchorUnavailable')}
@@ -349,9 +349,9 @@
 		</ul>
 	{/if}
 	{#if truncated}
-		<p class="text-xs text-slate-500">{$t('flow.comments.truncated')}</p>
+		<p class="text-xs text-fg-muted">{$t('flow.comments.truncated')}</p>
 	{/if}
-	{#if replyTo}<p role="status" class="text-xs text-slate-500">
+	{#if replyTo}<p role="status" class="text-xs text-fg-muted">
 			{$t('flow.comments.replyingInThread')} · {#if items.find((item) => item.id === replyTo)?.anchor_status === 'orphaned'}{$t(
 					'flow.comments.anchorUnavailable'
 				)}{/if}<button type="button" class="ms-2 underline" onclick={() => (replyTo = null)}
@@ -360,7 +360,7 @@
 		</p>{/if}
 
 	{#if anchor}
-		<p class="text-xs text-slate-500">
+		<p class="text-xs text-fg-muted">
 			{$t('flow.comments.anchored')}
 			<button type="button" class="ml-2 underline" onclick={() => (anchor = null)}
 				>{$t('flow.comments.clearAnchor')}</button
@@ -380,30 +380,30 @@
 		</div>
 	{/if}
 	<label class="relative block">
-		<span class="mb-1 block text-xs text-slate-500">{$t('flow.comments.body')}</span>
+		<span class="mb-1 block text-xs text-fg-muted">{$t('flow.comments.body')}</span>
 		<textarea
-			class="min-h-16 w-full rounded-md border border-slate-300 bg-white p-2 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+			class="min-h-16 w-full rounded-control border border-input bg-field p-2 text-fg"
 			bind:value={body}
 			readonly={!canComment}
 			oninput={onBodyInput}></textarea>
 		{#if mentionOpen && canComment}
 			<ul
-				class="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-md border border-slate-200 bg-white shadow dark:border-slate-700 dark:bg-slate-900"
+				class="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-float border border-overlay-line bg-overlay shadow-overlay"
 				role="listbox"
 				aria-label={$t('flow.comments.mention')}
 			>
 				{#if people.length === 0}
-					<li class="px-2 py-1 text-xs text-slate-500">{$t('flow.comments.noPeople')}</li>
+					<li class="px-2 py-1 text-xs text-fg-muted">{$t('flow.comments.noPeople')}</li>
 				{/if}
 				{#each people as person (person.user_id)}
 					<li>
 						<button
 							type="button"
-							class="block w-full px-2 py-1 text-left hover:bg-slate-100 dark:hover:bg-slate-800"
+							class="block w-full px-2 py-1 text-left hover:bg-surface"
 							onclick={() => pickPerson(person)}
 						>
 							{person.name || person.user_id}
-							<span class="text-xs text-slate-500"
+							<span class="text-xs text-fg-muted"
 								>{person.kind === 'guest'
 									? $t('flow.comments.guest')
 									: $t('flow.comments.member')}</span
@@ -417,19 +417,19 @@
 	{#if picked.length > 0}
 		<ul class="flex flex-wrap gap-1 text-xs">
 			{#each picked as person (person.user_id)}
-				<li class="rounded bg-slate-100 px-2 py-1 dark:bg-slate-800">@{person.name}</li>
+				<li class="rounded bg-surface px-2 py-1">@{person.name}</li>
 			{/each}
 		</ul>
 	{/if}
 	<button
 		type="button"
-		class="min-h-11 rounded-md bg-blue-600 px-3 text-white disabled:opacity-50"
+		class="min-h-11 rounded-control bg-primary rf-filled px-3 text-on-primary disabled:bg-surface disabled:text-fg-muted"
 		disabled={busy || !canComment || body.trim() === ''}
 		onclick={submit}
 	>
 		{$t('flow.comments.submit')}
 	</button>
 	{#if failureKey}
-		<p class="text-red-600 dark:text-red-400" role="alert">{$t(failureKey)}</p>
+		<p class="text-danger" role="alert">{$t(failureKey)}</p>
 	{/if}
 </div>

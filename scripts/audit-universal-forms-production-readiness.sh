@@ -362,7 +362,7 @@ contains "source-build image uses non-root user" "$SOURCE_DOCKERFILE" "USER appu
 contains "frontend image builds with frozen lockfile" "$FRONTEND_DOCKERFILE" "bun install --frozen-lockfile"
 contains "frontend image runs nginx" "$FRONTEND_DOCKERFILE" "nginx"
 contains "acceptance script uses resolved Bun for frontend check" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run check'
-contains "acceptance script uses resolved Bun for frontend smoke" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-ui'
+contains "acceptance script uses resolved Bun for frontend smoke" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-page-interactions'
 contains "acceptance script resolves common Bun install path" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" '$HOME/.bun/bin'
 contains "UI artifact collector uses Bun for frontend build" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "FRONTEND_BUN"
 contains "UI artifact collector uses Bun for frontend smoke" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "FRONTEND_BUN"
@@ -512,7 +512,7 @@ contains "runbook documents signature lifecycle summary" "$PRODUCTION_DOC" "sign
 contains "runbook documents signature workflow verification decision" "$PRODUCTION_DOC" "signature_workflow_verification.status=verified"
 contains "runbook includes connector smoke" "$PRODUCTION_DOC" "scripts/smoke-webhook-generic-consumer.sh"
 contains "runbook includes WASM smoke" "$PRODUCTION_DOC" "scripts/smoke-wasm-plugin-runtime.sh"
-contains "runbook includes frontend smoke" "$PRODUCTION_DOC" "bun run smoke:forms-ui"
+contains "runbook includes frontend smoke" "$PRODUCTION_DOC" "bun run smoke:forms-page-interactions"
 contains "runbook includes project template frontend smoke" "$PRODUCTION_DOC" "bun run smoke:project-template"
 contains "runbook includes template work item frontend smoke" "$PRODUCTION_DOC" "bun run smoke:template-work-items"
 contains "runbook includes UI review gallery verification" "$PRODUCTION_DOC" "scripts/verify-universal-forms-ui-review-gallery.sh"

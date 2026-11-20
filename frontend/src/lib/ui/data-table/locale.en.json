@@ -1,0 +1,23 @@
+{
+	"ui": {
+		"dataTable": {
+			"selectAll": "Select all rows on this page",
+			"selectRow": "Select {title}",
+			"selected": {
+				"one": "{count} row selected",
+				"other": "{count} rows selected"
+			},
+			"sortBy": "Sort by {column}",
+			"actions": "Actions",
+			"loading": "Loading",
+			"empty": "Empty",
+			"sampleName": "Name",
+			"sampleOwner": "Owner",
+			"sampleAmount": "Amount",
+			"sampleStatus": "Status",
+			"sampleRowAction": "Open row actions",
+			"sampleOpened": "Opened: {title}",
+			"sampleFooter": "3 rows"
+		}
+	}
+}

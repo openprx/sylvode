@@ -1,0 +1,13 @@
+{
+	"ui": {
+		"tipBar": {
+			"sample": {
+				"neutral": "Changes are saved on this device only.",
+				"success": "Saved. Everyone in the project can see it now.",
+				"warning": "Reconnecting. Your last change is kept until it is sent.",
+				"danger": "The change was not saved.",
+				"action": "Retry"
+			}
+		}
+	}
+}

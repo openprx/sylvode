@@ -137,17 +137,17 @@
 	let menuElement: HTMLDivElement | undefined = $state();
 	let menuTrigger: HTMLButtonElement | undefined;
 	const toolButton =
-		'inline-flex disabled:opacity-50 min-h-8 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600 aria-expanded:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 dark:aria-expanded:bg-slate-800';
+		'inline-flex disabled:text-fg-muted disabled:hover:bg-transparent min-h-8 items-center justify-center gap-1.5 rounded-control px-2 text-xs font-medium text-fg hover:bg-surface aria-expanded:bg-surface';
 	const toolIcon =
-		'grid size-8 shrink-0 place-items-center rounded-md hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:opacity-40 dark:hover:bg-slate-800';
+		'grid size-8 shrink-0 place-items-center rounded-control hover:bg-surface disabled:text-fg-muted disabled:hover:bg-transparent';
 	const toolInput =
-		'min-w-0 flex-1 rounded-md border border-slate-300 bg-transparent px-2 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-slate-600';
+		'min-w-0 flex-1 rounded-control border border-input bg-transparent px-2 py-1.5 text-sm';
 	const toolPanel =
-		'absolute right-0 top-full mt-1 max-w-full rounded-lg border border-slate-200 bg-white text-slate-900 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
+		'absolute right-0 top-full mt-1 max-w-full rounded-float border border-overlay-line bg-overlay text-fg shadow-overlay';
 	const menuClass =
-		'fixed z-50 w-48 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-md border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900';
+		'fixed z-50 w-48 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-float border border-overlay-line bg-overlay p-1 shadow-overlay';
 	const menuItemClass =
-		'block w-full rounded px-3 py-1.5 text-left text-sm hover:bg-slate-100 focus:bg-slate-100 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
+		'block w-full rounded px-3 py-1.5 text-left text-sm hover:bg-surface focus:bg-surface';
 
 	$effect(() => {
 		if (readOnly) {
@@ -775,7 +775,7 @@
 			data-placement={pointerDrop.placement}
 			data-operation={pointerDrop.copy ? 'copy' : 'move'}
 			data-target-block-id={pointerDrop.targetId}
-			class="pointer-events-none absolute z-30 rounded border-2 border-blue-500 bg-blue-100/20"
+			class="pointer-events-none absolute z-30 rounded border-2 border-fg bg-fg/10"
 			style={`top:${pointerDrop.top}px;left:${pointerDrop.left}px;width:${pointerDrop.width}px;height:${pointerDrop.height}px`}
 			aria-hidden="true"
 		></div>{/if}
@@ -786,7 +786,7 @@
 				<li>
 					<button
 						type="button"
-						class="w-full rounded px-2 py-1.5 text-start text-sm break-words hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600 dark:hover:bg-slate-800"
+						class="w-full rounded px-2 py-1.5 text-start text-sm break-words hover:bg-surface"
 						onclick={() => void jumpToHeading(item.pos)}
 					>
 						<span class="sr-only"
@@ -795,7 +795,7 @@
 						{item.text.trim() || $t('flow.canvas.outline.untitledHeading')}
 					</button>
 					{#if item.children.length}
-						<div class="ms-2 border-s border-slate-200 ps-2 dark:border-slate-700">
+						<div class="ms-2 border-s border-line ps-2">
 							{@render outlineItems(item.children)}
 						</div>
 					{/if}
@@ -808,7 +808,7 @@
 		class="sticky top-0 z-40 mx-auto mb-2 max-w-3xl"
 		data-testid="flow-page-tools"
 	>
-		<div class="flex flex-wrap justify-end gap-0.5 bg-white py-0.5 dark:bg-slate-950">
+		<div class="flex flex-wrap justify-end gap-0.5 bg-canvas py-0.5">
 			<button
 				type="button"
 				class={toolButton}
@@ -893,11 +893,10 @@
 					>
 				</div>
 				<div class="flex flex-wrap items-center justify-between gap-x-2">
-					<span
-						id={`flow-find-scope-${objectId}`}
-						class="text-xs text-slate-500 dark:text-slate-400">{$t('flow.canvas.find.scope')}</span
+					<span id={`flow-find-scope-${objectId}`} class="text-xs text-fg-muted"
+						>{$t('flow.canvas.find.scope')}</span
 					>
-					<span role="status" class="text-xs tabular-nums text-slate-600 dark:text-slate-300">
+					<span role="status" class="text-xs tabular-nums text-fg-muted">
 						{#if findQuery.trim()}
 							{found.total
 								? $t('flow.canvas.find.position', { values: found })
@@ -950,7 +949,7 @@
 	</div>
 	{#if plainPasteArmed}<div
 			role="status"
-			class="mx-auto mb-2 flex max-w-3xl items-center gap-2 text-xs text-slate-500"
+			class="mx-auto mb-2 flex max-w-3xl items-center gap-2 text-xs text-fg-muted"
 		>
 			<span>{$t('flow.canvas.plainPasteHint')}</span><button
 				type="button"
@@ -961,7 +960,7 @@
 
 	{#if inputError}<div
 			role="alert"
-			class="mx-auto mb-3 flex max-w-3xl items-center gap-2 rounded border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900"
+			class="mx-auto mb-3 flex max-w-3xl items-center gap-2 rounded border border-line bg-warning-soft p-2 text-sm text-fg"
 		>
 			<span class="flex-1">{$t('flow.canvas.editNotApplied')}</span><button
 				type="button"
@@ -972,7 +971,7 @@
 	{#if dropMessage}<p role="status" class="sr-only">{dropMessage}</p>{/if}
 	{#if peers.length > 0}
 		<ul
-			class="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
+			class="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2 text-xs text-fg-muted"
 			aria-label={$t('flow.presence.listLabel')}
 			data-testid="flow-presence-list"
 		>
@@ -992,24 +991,21 @@
 		</ul>
 	{/if}
 	{#if readOnly}
-		<p
-			class="mx-auto mb-3 max-w-3xl text-xs text-slate-500 dark:text-slate-400"
-			data-testid="flow-canvas-read-only"
-		>
+		<p class="mx-auto mb-3 max-w-3xl text-xs text-fg-muted" data-testid="flow-canvas-read-only">
 			{$t('flow.canvas.readOnlyNotice')}
 		</p>
 	{/if}
 	{#if hoverHandle && (!readOnly || onCommentBlock || onTransferBlock)}
 		<div
 			data-flow-block-controls
-			class="absolute z-20 flex items-center gap-0.5 rounded bg-white dark:bg-slate-950"
+			class="absolute z-20 flex items-center gap-0.5 rounded bg-overlay"
 			style={`top: ${hoverHandle.top}px;left:${hoverHandle.left}px`}
 		>
 			{#if !readOnly}
 				<button
 					type="button"
 					data-testid="flow-block-insert"
-					class="grid size-6 place-items-center rounded text-xl leading-none text-slate-600 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300 dark:hover:bg-slate-800"
+					class="grid size-6 place-items-center rounded text-xl leading-none text-fg-muted hover:bg-surface"
 					aria-label={$t('flow.canvas.slashMenu.insert')}
 					aria-keyshortcuts="Alt+Enter"
 					aria-haspopup="listbox"
@@ -1021,7 +1017,7 @@
 			{#if onCommentBlock}
 				<button
 					type="button"
-					class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+					class="rounded p-1 text-fg-muted hover:bg-surface hover:text-fg"
 					onclick={commentOnHover}
 					aria-label={$t('flow.comments.onBlock')}
 					title={$t('flow.comments.onBlock')}
@@ -1041,7 +1037,7 @@
 			{#if !readOnly}
 				<button
 					type="button"
-					class="rounded p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+					class="rounded p-1 text-fg-muted hover:bg-surface"
 					draggable="false"
 					style="touch-action:none"
 					ondragstart={(event) => event.preventDefault()}
@@ -1082,7 +1078,7 @@
 			onkeydown={onMenuKeyDown}
 			tabindex="-1"
 		>
-			<p class="px-3 py-2 text-xs text-slate-500">{$t('flow.canvas.cutShareNotice')}</p>
+			<p class="px-3 py-2 text-xs text-fg-muted">{$t('flow.canvas.cutShareNotice')}</p>
 			{#each [...(onShareBlock ? ['share block'] : []), ...(onTransferBlock ? [...(canMoveToPage ? ['move to page'] : []), 'copy to page'] : []), 'select', 'copy', 'cut', 'duplicate', 'move up', 'move down', 'nest', 'outdent', 'paste plain text', 'add image', 'add file', 'new child page', 'link page', 'delete'] as action (action)}
 				<button
 					type="button"
@@ -1157,13 +1153,13 @@
 			role="toolbar"
 			aria-label="Text formatting"
 			data-testid="flow-format-toolbar"
-			class="fixed z-40 flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			class="fixed z-40 flex flex-wrap items-center gap-1 rounded-float border border-overlay-line bg-overlay p-1 shadow-overlay"
 			style={`left:${Math.max(8, Math.min(selection.left, typeof window === 'undefined' ? 800 : window.innerWidth - 300))}px;top:${Math.max(8, selection.top - 44)}px`}
 		>
 			{#each ['bold', 'italic', 'strike', 'code'] as mark (mark)}
 				<button
 					type="button"
-					class="rounded px-2 py-1 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+					class="rounded px-2 py-1 text-sm hover:bg-surface"
 					aria-label={mark}
 					aria-pressed={selection.marks.includes(mark)}
 					onmousedown={(event) => event.preventDefault()}
@@ -1180,7 +1176,7 @@
 			<button
 				type="button"
 				aria-label="Link"
-				class="rounded px-2 py-1 text-sm hover:bg-slate-100"
+				class="rounded px-2 py-1 text-sm hover:bg-surface"
 				onmousedown={(event) => event.preventDefault()}
 				onclick={() => {
 					linkOpen = !linkOpen;
@@ -1213,14 +1209,14 @@
 							linkOpen = false;
 						}}>×</button
 					>
-					{#if linkError}<span role="alert" class="text-xs text-red-600">{linkError}</span>{/if}
+					{#if linkError}<span role="alert" class="text-xs text-danger">{linkError}</span>{/if}
 				</form>
 			{/if}
 		</div>
 	{/if}
 	<div
 		bind:this={host}
-		class="flow-canvas prose prose-slate mx-auto max-w-3xl dark:prose-invert focus:outline-none"
+		class="flow-canvas prose prose-slate mx-auto max-w-3xl"
 		data-placeholder={$t('flow.canvas.placeholder')}
 	></div>
 
@@ -1253,11 +1249,11 @@
 		<div
 			bind:this={insertMenu}
 			data-flow-command-popup
-			class="fixed z-50 w-72 max-w-[calc(100vw-1rem)] rounded-md border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			class="fixed z-50 w-72 max-w-[calc(100vw-1rem)] rounded-float border border-overlay-line bg-overlay shadow-overlay"
 			style={`left: ${Math.max(8, Math.min(commandAnchor.left, window.innerWidth - 296))}px; top: ${Math.max(8, Math.min(commandAnchor.top + 4, window.innerHeight - 330))}px`}
 		>
 			{#if addTarget}
-				<div class="px-3 pt-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+				<div class="px-3 pt-2 text-xs font-medium text-fg-muted">
 					{$t(
 						addTarget.blockId == null
 							? 'flow.body.addContent'
@@ -1284,7 +1280,7 @@
 					aria-activedescendant={commandCount ? `${commandListId}-${activeOption}` : undefined}
 					aria-label={$t('flow.canvas.slashMenu.search')}
 					placeholder={$t('flow.canvas.slashMenu.search')}
-					class="w-full rounded-t-md border-b border-slate-200 bg-transparent px-3 py-2 text-sm text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 dark:border-slate-700 dark:text-white"
+					class="w-full rounded-t-md border-b border-line bg-transparent px-3 py-2 text-sm text-fg outline-none"
 				/>
 			{/if}
 			<div
@@ -1294,19 +1290,18 @@
 				aria-label={$t('flow.canvas.slashMenu.insert')}
 			>
 				{#if filteredOptions.length === 0 && filteredBody.length === 0 && filteredBridgeOptions.length === 0}
-					<p class="px-3 py-2 text-sm text-slate-400">{$t('flow.canvas.slashMenu.empty')}</p>
+					<p class="px-3 py-2 text-sm text-fg-muted">{$t('flow.canvas.slashMenu.empty')}</p>
 				{:else}
 					{#each filteredOptions as option, index (option.labelKey + String(option.level ?? ''))}
 						<button
 							type="button"
-							class="block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+							class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface"
 							onclick={() => pick(option)}
 							id={`${commandListId}-${index}`}
 							tabindex="-1"
 							onmousedown={(event) => event.preventDefault()}
 							role="option"
-							class:bg-slate-100={activeOption === index}
-							class:dark:bg-slate-800={activeOption === index}
+							class:bg-surface={activeOption === index}
 							aria-selected={activeOption === index}
 						>
 							{$t(option.labelKey)}
@@ -1319,22 +1314,18 @@
 							tabindex="-1"
 							onmousedown={(event) => event.preventDefault()}
 							aria-selected={activeOption === filteredOptions.length + index}
-							class="block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
-							class:bg-slate-100={activeOption === filteredOptions.length + index}
-							class:dark:bg-slate-800={activeOption === filteredOptions.length + index}
+							class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface"
+							class:bg-surface={activeOption === filteredOptions.length + index}
 							onclick={() => pickBody(option.action)}
 							data-testid={`flow-slash-${option.action}`}>{$t(option.labelKey)}</button
 						>{/each}
 
 					{#if filteredBridgeOptions.length > 0}
-						<div
-							class="my-1 border-t border-slate-200 dark:border-slate-700"
-							role="presentation"
-						></div>
+						<div class="my-1 border-t border-line" role="presentation"></div>
 						{#each filteredBridgeOptions as option, index (option.action)}
 							<button
 								type="button"
-								class="block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+								class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface"
 								onclick={() => pickBridge(option)}
 								id={`${commandListId}-${filteredOptions.length + filteredBody.length + index}`}
 								tabindex="-1"
@@ -1345,9 +1336,7 @@
 								data-testid={`flow-slash-${option.action}`}
 							>
 								<span class="block">{$t(option.labelKey)}</span>
-								<span class="block text-xs text-slate-500 dark:text-slate-400"
-									>{$t(option.noteKey)}</span
-								>
+								<span class="block text-xs text-fg-muted">{$t(option.noteKey)}</span>
 							</button>
 						{/each}
 					{/if}
@@ -1359,13 +1348,14 @@
 
 <style>
 	.flow-canvas :global(.flow-find-match) {
-		background-color: #fef08a;
-		color: #422006;
+		background-color: var(--rf-warning-bg);
+		color: var(--rf-text);
 		border-radius: 2px;
 	}
 	.flow-canvas :global(.flow-find-current) {
-		background-color: #fdba74;
-		outline: 1px solid #9a3412;
+		background-color: var(--rf-warning-bg);
+		color: var(--rf-text);
+		outline: 2px solid var(--rf-warning);
 	}
 
 	:global(.flow-canvas .ProseMirror) {
@@ -1374,9 +1364,14 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
+	/* Keyboard focus ring around the whole editing region, outside its edge so no text is covered. */
+	:global(.flow-canvas .ProseMirror:focus-visible) {
+		outline: var(--rf-border-width-focus) solid var(--rf-focus);
+		outline-offset: 4px;
+	}
 	:global(.flow-canvas .ProseMirror p:first-child:last-child:empty::before) {
 		content: attr(data-placeholder);
-		color: var(--color-slate-400);
+		color: var(--rf-secondary);
 		pointer-events: none;
 	}
 	:global(.flow-canvas [data-indent]) {
@@ -1392,13 +1387,10 @@
 		left: 0.25rem;
 	}
 	:global(.flow-canvas pre) {
-		background: var(--color-slate-100);
-		border-radius: 0.375rem;
+		background: var(--rf-surface);
+		border-radius: var(--rf-radius-card);
 		padding: 0.75rem;
 		overflow-x: auto;
-	}
-	:global(.dark .flow-canvas pre) {
-		background: var(--color-slate-900);
 	}
 	:global(.flow-canvas .flow-presence-caret) {
 		position: relative;
@@ -1418,7 +1410,7 @@
 		padding: 0 0.25rem;
 		font-size: 0.7rem;
 		line-height: 1.2rem;
-		color: white;
+		color: var(--flow-presence-ink, white);
 		user-select: none;
 	}
 	:global(.flow-canvas .flow-presence-avatar::after) {
@@ -1453,10 +1445,10 @@
 	}
 	:global(.flow-canvas .flow-todo-item[data-checked='true']) {
 		text-decoration: line-through;
-		color: var(--color-slate-500);
+		color: var(--rf-secondary);
 	}
 	:global(.flow-canvas blockquote) {
-		border-left: 3px solid var(--color-slate-300);
+		border-left: 3px solid var(--rf-secondary);
 		padding-left: 1rem;
 	}
 	:global(.flow-canvas .flow-toggle::before) {
@@ -1467,7 +1459,7 @@
 		content: '▸ ';
 	}
 	:global(.flow-canvas a) {
-		color: var(--color-blue-600);
+		color: var(--rf-text);
 		text-decoration: underline;
 	}
 </style>
