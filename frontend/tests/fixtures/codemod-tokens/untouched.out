@@ -1,0 +1,4 @@
+<script lang="ts">
+	const x = $state(0);
+</script>
+<div class="flex items-center gap-2 bg-slate-50 dark:bg-slate-900 text-sm rounded-md"></div>
