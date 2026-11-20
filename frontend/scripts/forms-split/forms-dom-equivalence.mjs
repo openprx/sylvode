@@ -41,6 +41,18 @@ const FIXED_TIME = '2026-05-31T12:00:00.000Z';
 const HEIGHT = 900;
 const READY_TIMEOUT_MS = 15_000;
 
+// Software rasterisation with fixed text rendering: GPU raster and subpixel text positioning
+// produced single-pixel differences between identical runs.
+const RASTER_ARGS = [
+	'--disable-gpu',
+	'--disable-gpu-rasterization',
+	'--disable-lcd-text',
+	'--font-render-hinting=none',
+	'--force-color-profile=srgb',
+	'--disable-partial-raster',
+	'--disable-threaded-scrolling'
+];
+
 const FREEZE_CSS = `*, *::before, *::after {
 	animation: none !important;
 	transition: none !important;
@@ -501,7 +513,11 @@ async function capture(flags) {
 	let failed = 0;
 	let browser;
 	try {
-		browser = await playwright.chromium.launch({ executablePath: CHROMIUM_BIN, headless: true });
+		browser = await playwright.chromium.launch({
+			executablePath: CHROMIUM_BIN,
+			headless: true,
+			args: RASTER_ARGS
+		});
 		for (const state of states) {
 			const result = await captureState(browser, baseUrl, state, outDir);
 			if (result.skipped) {
