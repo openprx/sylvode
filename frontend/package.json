@@ -16,6 +16,8 @@
 		"smoke:template-work-items": "node scripts/smoke-template-work-items.mjs",
 		"smoke:forms-record-list": "node scripts/smoke-forms-record-list.mjs",
 		"smoke:forms-page-interactions": "node scripts/smoke-forms-page-interactions.mjs",
+		"smoke:plugin-creator-review": "node scripts/smoke-plugin-creator-review.mjs",
+		"test:plugin-creator-review-focus": "bun test tests/plugin-creator-review-focus.test.ts",
 		"test:forms-page": "node scripts/run-forms-page-tests.mjs",
 		"test:record-values": "bun tests/record-values-roundtrip.test.ts",
 		"test:markdown-sanitize": "bun tests/markdown-sanitize.test.ts",
