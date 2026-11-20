@@ -269,6 +269,11 @@ name.
 - **Webhook receiver: macOS build.** The receiver no longer fails the build on macOS and other
   non-Linux targets with a dead-code error (`Leader::ExitedUnreaped` is built only on Linux).
   This failure also broke the standalone 0.3.53 release.
+- **A Page edit while a reader lease is missing is refused as such.** It is now refused with
+  `feature_disabled` (`scope_runtime_not_ready`) on every surface, as the runbook states, instead
+  of `server_draining`/`contention`. Other typed refusals raised while a content write is staged
+  (for example a policy refusal on a child reference) also reach the caller at once instead of
+  being retried and reported as contention.
 
 ### Security
 

@@ -756,6 +756,19 @@ enum LockedOutcome {
     /// ([`run_locked_phase`]) and must not travel any further, because the only thing left to do
     /// with it is put it on a wire that `error-mapping-v1.md` forbids echoing it onto.
     DeterministicRefusal,
+    /// The staging phase refused this update for a domain reason (a typed `ApiError` other than
+    /// `server_draining`): a missing reader lease, a policy refusal on a child reference, an
+    /// invalid registry input. Rolled back, nothing written. Like [`Self::DeterministicRefusal`],
+    /// it leaves the bounded-rebase loop at once and carries its real cause to the caller, because
+    /// the head is fixed under the row lock and the same refusal would repeat on every attempt.
+    Refused(ApiError),
+}
+
+/// A refusal the staging logic decided, as opposed to a database or internal failure that a
+/// fresh attempt might not repeat. Only those two (and `server_draining`) keep the retry
+/// behaviour.
+const fn is_domain_refusal(err: &ApiError) -> bool {
+    !matches!(err, ApiError::Database(_) | ApiError::Internal) && !matches!(err.kind(), ApiErrorKind::ServerDraining(_))
 }
 
 /// What [`stage_locked_writes`] concluded, before `COMMIT` is issued.
@@ -1107,6 +1120,10 @@ async fn run_locked_phase(
                 );
                 return LockedOutcome::DeterministicRefusal;
             }
+            if is_domain_refusal(&err) {
+                tracing::info!(kind = ?err.kind(), "collab write: locked phase refused the update, not retrying");
+                return LockedOutcome::Refused(err);
+            }
             tracing::warn!(
                 error = %err,
                 sqlstate = ?err.database_sqlstate(),
@@ -1348,6 +1365,9 @@ mod probe_isolation_tests {
 /// back as `Ok(AcceptOutcome::Rejected(..))` carrying that verdict, because the surfaces above
 /// need the frozen `code`/`recoverable`/`write_state` triple and cannot re-derive it from an
 /// `ApiError`.
+/// The exception is a typed refusal decided while staging (a missing reader lease, a policy
+/// refusal on a child reference): it leaves the loop on its first occurrence as `Err`, which every
+/// surface already renders as itself (`feature_disabled`, `policy_rejected`, ...).
 // `_permit` is intentionally held for the entire bounded-rebase loop below, not dropped as soon
 // as it is last read: releasing it between rebase attempts would let a second writer for the same
 // document interleave mid-retry, which is exactly what the coordinator exists to prevent.
@@ -1651,6 +1671,7 @@ pub async fn accept_update_model(
                     WriteState::NotApplied,
                 ));
             }
+            LockedOutcome::Refused(err) => return Err(err),
             LockedOutcome::NotApplied(reason) => {
                 if attempts >= MAX_REBASE_ATTEMPTS {
                     return Ok(contention(Some(request.update_id), reason, WriteState::NotApplied));
@@ -2421,6 +2442,104 @@ mod database_tests {
         assert_eq!(count_collab_updates(&state, document_id, accepted_id).await, 1);
 
         scratch.drop_self().await;
+    }
+
+    /// A typed refusal raised while staging (here a missing reader lease) leaves the bounded-rebase
+    /// loop on its first occurrence: exactly one locked phase runs, not `MAX_REBASE_ATTEMPTS`, and
+    /// the caller gets the typed error rather than `server_draining`/`contention`.
+    #[tokio::test]
+    async fn a_missing_reader_lease_refusal_runs_one_locked_phase_and_never_contention() {
+        use crate::error::ApiErrorKind;
+        use crate::flow::scope_runtime::fixture::{clear_readers, register_reader};
+        let scratch = scratch_or_skip!("refused-single-locked-phase");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
+        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let snapshot = document_snapshot(&state, document_id).await;
+        let (update_bytes, _engine) = a_valid_update_against(&snapshot);
+        let checked_epoch = authz::read_epoch(&state.db, workspace_id).await.expect("epoch reads");
+
+        clear_readers(&state.db).await;
+        register_reader(&state.db, "api", true).await;
+
+        let cache = WarmCache::new();
+        let coordinator = DocumentCoordinator::new();
+        let registry = SessionRegistry::new();
+        let snapshot_advancer = SnapshotAdvancer::new();
+        let probe = super::LockedPhaseProbe::new(document_id);
+        let outcome = probe
+            .scope(accept_update(
+                &state.db,
+                &cache,
+                &coordinator,
+                &registry,
+                &snapshot_advancer,
+                10,
+                None,
+                UpdateRequest {
+                    origin: crate::flow::event_origin::CommandOrigin::first_request_from(
+                        crate::flow::event_origin::EventSurface::Rest,
+                    ),
+                    document_id,
+                    update_id: Uuid::new_v4(),
+                    bytes: update_bytes,
+                    idempotency_key: None,
+                    event_idempotency_key: None,
+                    origin_client_id: Some("test-client".to_string()),
+                    message: None,
+                    actor_id: owner_id,
+                    actor_is_bot: false,
+                    workspace_id,
+                    checked_epoch,
+                    expected_frontier: None,
+                },
+            ))
+            .await;
+
+        let err = match outcome {
+            Err(err) => err,
+            Ok(AcceptOutcome::Rejected(rejected)) => {
+                panic!("expected the typed refusal as an error, got a rejection: {rejected:?}")
+            }
+            Ok(AcceptOutcome::Accepted(_)) => panic!("a content write must be refused with only the api lease"),
+        };
+        assert_eq!(err.kind(), ApiErrorKind::FeatureDisabled, "unexpected refusal: {err:?}");
+        assert!(
+            format!("{err:?}").contains("scope_runtime_not_ready"),
+            "unexpected refusal: {err:?}"
+        );
+        assert_eq!(
+            probe.take_samples().len(),
+            1,
+            "a refusal that cannot change must not be spent {MAX_REBASE_ATTEMPTS} times"
+        );
+
+        scratch.drop_self().await;
+    }
+
+    /// Classification of a staging error: domain refusals leave the loop, database, internal and
+    /// `server_draining` errors keep the retry path. Needs no database.
+    #[test]
+    fn only_decided_refusals_leave_the_rebase_loop() {
+        use sea_orm::DbErr;
+
+        use crate::error::{ApiError, ApiErrorKind, ServerDrainingReason};
+
+        assert!(super::is_domain_refusal(&ApiError::typed_with_details(
+            ApiErrorKind::FeatureDisabled,
+            "not ready",
+            serde_json::json!({"reason": "scope_runtime_not_ready"}),
+        )));
+        assert!(super::is_domain_refusal(&ApiError::invalid_update("bad input")));
+        assert!(!super::is_domain_refusal(&ApiError::Internal));
+        assert!(!super::is_domain_refusal(&ApiError::Database(DbErr::Custom(
+            "lock timeout".to_string()
+        ))));
+        assert!(!super::is_domain_refusal(&ApiError::server_draining(
+            ServerDrainingReason::Contention,
+            200,
+            "busy",
+        )));
     }
 
     /// Submits one logical write through `submit` the way a contract-compliant client does and
@@ -4633,6 +4752,16 @@ mod database_tests {
                 assert_eq!(
                     head_after, head_before,
                     "the locked phase refused deterministically, but the canonical head moved"
+                );
+            }
+            super::LockedOutcome::Refused(err) => {
+                assert_eq!(
+                    rows, 0,
+                    "the locked phase refused with {err:?}, but the update is in collab_updates"
+                );
+                assert_eq!(
+                    head_after, head_before,
+                    "the locked phase refused with {err:?}, but the canonical head moved"
                 );
             }
             super::LockedOutcome::NotApplied(reason) => {
