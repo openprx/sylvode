@@ -1,6 +1,12 @@
+@layer rf-tokens, theme, base, components, utilities;
+
 @import 'tailwindcss';
 
 @import 'tw-animate-css';
+
+/* Design tokens (--rf-*). Kept in the lowest cascade layer so that its base focus rules cannot
+   override any existing utility. */
+@import './tokens.css' layer(rf-tokens);
 
 @custom-variant dark (&:is(.dark *));
 
@@ -132,4 +138,152 @@ html.dark {
 
 html.dark .prose img {
 	opacity: 0.9;
+}
+
+/*
+ * Redesign foundations (additive only).
+ *
+ * Self-hosted faces. Declared but not applied: --font-sans and --font-mono are left alone until
+ * the global switch, so no existing element changes its font.
+ */
+@font-face {
+	font-family: 'Hanken Grotesk';
+	font-style: normal;
+	font-weight: 100 900;
+	font-display: swap;
+	src: url('/fonts/hanken-grotesk-latin-wght-normal.woff2') format('woff2');
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+		U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: 'Hanken Grotesk';
+	font-style: normal;
+	font-weight: 100 900;
+	font-display: swap;
+	src: url('/fonts/hanken-grotesk-latin-ext-wght-normal.woff2') format('woff2');
+	unicode-range:
+		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+		U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+@font-face {
+	font-family: 'Hanken Grotesk';
+	font-style: normal;
+	font-weight: 100 900;
+	font-display: swap;
+	src: url('/fonts/hanken-grotesk-vietnamese-wght-normal.woff2') format('woff2');
+	unicode-range:
+		U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301,
+		U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+
+@font-face {
+	font-family: 'JetBrains Mono';
+	font-style: normal;
+	font-weight: 100 800;
+	font-display: swap;
+	src: url('/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2');
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+		U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: 'JetBrains Mono';
+	font-style: normal;
+	font-weight: 100 800;
+	font-display: swap;
+	src: url('/fonts/jetbrains-mono-latin-ext-wght-normal.woff2') format('woff2');
+	unicode-range:
+		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+		U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+/*
+ * Semantic utilities of the design specification (7.3), role-named, backed by the --rf-* tokens.
+ * Not included on purpose until the global switch:
+ *   --font-sans, --font-mono         (would change every existing element)
+ *   --radius-xs ... --radius-xl      (would redefine rounded-sm ... rounded-xl)
+ *   --color-primary, --color-input, --color-chart-1, --color-chart-2
+ *                                    (already defined above through the shadcn variables)
+ *   hover, pressed, categorical and motion tokens (proposed, not approved)
+ * `@theme inline` emits a utility only where a class uses it, so this block alone changes no
+ * existing rule.
+ */
+@theme inline {
+	/* grounds */
+	--color-canvas: var(--rf-bg);
+	--color-nav: var(--rf-nav);
+	--color-rail: var(--rf-rail);
+	--color-surface: var(--rf-surface);
+	--color-raised: var(--rf-surface-white);
+	--color-selected: var(--rf-selected);
+	--color-overlay: var(--rf-overlay);
+	--color-overlay-line: var(--rf-overlay-border);
+	--color-field: var(--rf-input);
+	--color-scrim: var(--rf-scrim);
+
+	/* text, lines, actions */
+	--color-fg: var(--rf-text);
+	--color-fg-muted: var(--rf-secondary);
+	--color-control: var(--rf-control);
+	--color-line: var(--rf-line);
+	--color-line-strong: var(--rf-line-strong);
+	--color-on-primary: var(--rf-on-primary);
+	--color-focus: var(--rf-focus);
+	--color-badge: var(--rf-badge);
+	--color-on-badge: var(--rf-on-badge);
+	--color-tooltip: var(--rf-tooltip);
+	--color-on-tooltip: var(--rf-on-tooltip);
+
+	/* semantic */
+	--color-success: var(--rf-success);
+	--color-success-soft: var(--rf-success-bg);
+	--color-on-success: var(--rf-on-success);
+	--color-warning: var(--rf-warning);
+	--color-warning-soft: var(--rf-warning-bg);
+	--color-danger: var(--rf-danger);
+	--color-danger-soft: var(--rf-danger-bg);
+	--color-on-danger: var(--rf-on-danger);
+
+	/* identity */
+	--color-avatar: var(--rf-avatar-person);
+	--color-on-avatar: var(--rf-on-avatar-person);
+	--color-agent: var(--rf-agent-av);
+	--color-on-agent: var(--rf-on-agent-av);
+
+	/* type: size and line height together */
+	--text-caption: var(--rf-size-caption);
+	--text-caption--line-height: var(--rf-leading-caption);
+	--text-meta: var(--rf-size-meta);
+	--text-meta--line-height: var(--rf-leading-meta);
+	--text-support: var(--rf-size-secondary);
+	--text-support--line-height: var(--rf-leading-secondary);
+	--text-label: var(--rf-size-button);
+	--text-label--line-height: var(--rf-leading-button);
+	--text-body: var(--rf-size-body);
+	--text-body--line-height: var(--rf-leading-body);
+	--text-body-tight: var(--rf-size-body);
+	--text-body-tight--line-height: var(--rf-leading-body-tight);
+	--text-subhead: var(--rf-size-subheading);
+	--text-subhead--line-height: var(--rf-leading-subheading);
+	--text-title: var(--rf-size-title);
+	--text-title--line-height: var(--rf-leading-title);
+	--text-page: var(--rf-size-page);
+	--text-page--line-height: var(--rf-leading-page);
+	--text-metric: var(--rf-size-metric);
+
+	/* semantic radius names (the numeric scale is untouched) */
+	--radius-control: var(--rf-radius-button);
+	--radius-card: var(--rf-radius-card);
+	--radius-float: var(--rf-radius-dialog);
+
+	/* elevation, for things that float */
+	--shadow-overlay: var(--rf-shadow-overlay);
+	--shadow-modal: var(--rf-shadow-modal);
+	--shadow-sheet: var(--rf-shadow-sheet);
 }
