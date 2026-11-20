@@ -10,6 +10,7 @@
 	import { trustApi } from '#lib/api/trust.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { projectOptionsStore } from '#lib/stores/project-options.js';
+	import { projectPath } from '#lib/shell/redirects.js';
 	import { groupProjectOptionsByWorkspace } from '#lib/utils/project-options.js';
 
 	type MetricValue = number;
@@ -73,6 +74,10 @@
 	const groupedProjectOptions = $derived.by(() => groupProjectOptionsByWorkspace(projectOptions));
 	const auditReportsHref = $derived.by(() => {
 		if (selectedProjectId) {
+			const project = projectOptions.find((item) => item.id === selectedProjectId);
+			if (project) {
+				return projectPath(project.workspace_id, project.id, 'audit-reports');
+			}
 			return `/projects/${selectedProjectId}/audit-reports`;
 		}
 		return '/workspace';
