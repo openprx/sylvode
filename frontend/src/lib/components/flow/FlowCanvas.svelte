@@ -1364,6 +1364,11 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
+	/* Keyboard focus ring around the whole editing region, outside its edge so no text is covered. */
+	:global(.flow-canvas .ProseMirror:focus-visible) {
+		outline: var(--rf-border-width-focus) solid var(--rf-focus);
+		outline-offset: 4px;
+	}
 	:global(.flow-canvas .ProseMirror p:first-child:last-child:empty::before) {
 		content: attr(data-placeholder);
 		color: var(--rf-secondary);

@@ -356,7 +356,7 @@
 				readonly={readOnly}
 				placeholder={$t('flow.titlePlaceholder')}
 				aria-label={$t('flow.personal.pageTitle')}
-				class="w-full min-w-0 resize-none overflow-hidden border-none bg-transparent text-4xl leading-tight font-semibold text-fg outline-none"
+				class="page-title w-full min-w-0 resize-none overflow-hidden border-none bg-transparent text-4xl leading-tight font-semibold text-fg"
 			></textarea>
 		</div>
 
@@ -419,6 +419,11 @@
 </header>
 
 <style>
+	/* Keyboard ring on the title, outside its edge so the text is not covered (the global rule draws it inside). */
+	.page-title:focus-visible {
+		outline: var(--rf-border-width-focus) solid var(--rf-focus);
+		outline-offset: 2px;
+	}
 	@media (hover: hover) and (pointer: fine) {
 		.appearance-action {
 			opacity: 0;
