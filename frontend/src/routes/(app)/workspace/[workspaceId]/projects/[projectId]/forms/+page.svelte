@@ -187,7 +187,9 @@
 
 	import FormCreatePanel from '#lib/components/forms/page/FormCreatePanel.svelte';
 
-	// forms-split slot W1-03
+	import FormDataToolbar from '#lib/components/forms/page/FormDataToolbar.svelte';
+	import FormConfigHeader from '#lib/components/forms/page/FormConfigHeader.svelte';
+	import PermissionStateSummary from '#lib/components/forms/page/PermissionStateSummary.svelte';
 
 	// forms-split slot W1-04
 
@@ -707,159 +709,13 @@
 		{#if s.forms.length > 0 && s.selectedForm}
 			<section class="space-y-4">
 				{#if s.activeMode === 'data'}
-					<section
-						class="rounded-card border border-line bg-raised p-4"
-						data-form-data-list-toolbar
-					>
-						<div class="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-							<div>
-								<div class="flex flex-wrap items-center gap-2">
-									<h3 class="text-base font-semibold text-fg">
-										{$t('forms.recordsList')}
-									</h3>
-
-									<span class="rounded-control bg-surface px-2 py-0.5 text-xs text-fg-muted">
-										{#if s.recordsLoading}
-											{$t('common.loading')}
-										{:else if s.viewRecords.length === s.records.length}
-											{$t('forms.rows', { values: { count: s.records.length } })}
-										{:else}
-											{$t('forms.filteredRows', {
-												values: { visible: s.viewRecords.length, total: s.records.length }
-											})}
-										{/if}
-									</span>
-								</div>
-							</div>
-
-							<div class="flex flex-wrap items-center gap-1.5">
-								<label class="inline-flex items-center gap-2 text-xs font-medium text-fg-muted">
-									<span>{$t('forms.dataTableSwitcher')}</span>
-
-									<select
-										id="form-switcher"
-										value={s.selectedFormId}
-										onchange={handleFormChange}
-										class="h-8 min-w-40 rounded-control border border-input bg-field px-2 text-xs text-fg"
-									>
-										{#each s.forms as form}
-											<option value={form.id}>{form.name}</option>
-										{/each}
-									</select>
-								</label>
-
-								<Button size="sm" onclick={openRecordCreateDrawer}>
-									<Plus class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-									{$t('forms.newRecordAction')}
-								</Button>
-
-								<FormPluginToolbar
-									workspaceId={s.workspaceId}
-									projectId={s.projectId}
-									form={s.selectedForm}
-								/>
-
-								<button
-									type="button"
-									class="inline-flex h-8 items-center rounded-control border border-input px-2.5 text-xs font-medium text-fg hover:bg-surface"
-									onclick={() => handleModeChange('design')}
-								>
-									<TableProperties class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-									{$t('forms.modes.design')}
-								</button>
-
-								<button
-									type="button"
-									class="inline-flex h-8 items-center rounded-control border border-input px-2.5 text-xs font-medium text-fg hover:bg-surface"
-									onclick={() => handleModeChange('layout')}
-								>
-									<FileText class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-									{$t('forms.modes.layout')}
-								</button>
-
-								<button
-									type="button"
-									class="inline-flex h-8 items-center rounded-control border border-input px-2.5 text-xs font-medium text-fg hover:bg-surface"
-									onclick={() => handleModeChange('permissions')}
-								>
-									<Shield class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-									{$t('forms.modes.permissions')}
-								</button>
-
-								<button
-									type="button"
-									class="inline-flex h-8 items-center rounded-control border border-input px-2.5 text-xs font-medium text-fg hover:bg-surface"
-									onclick={() => handleModeChange('importExport')}
-								>
-									<FileUp class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-									{$t('forms.modes.importExport')}
-								</button>
-							</div>
-						</div>
-					</section>
+					<FormDataToolbar />
 				{:else}
-					<section class="rounded-card border border-line bg-raised" data-form-config-workbench>
-						<div
-							class="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between"
-						>
-							<div>
-								<h3 class="text-base font-semibold text-fg">
-									{$t('forms.formConfig')}
-								</h3>
-
-								<p class="mt-1 text-sm text-fg-muted">
-									{$t(`forms.modeContext.${s.activeMode}`, {
-										values: { name: s.selectedForm.name }
-									})}
-								</p>
-							</div>
-
-							<Button size="sm" variant="secondary" onclick={() => handleModeChange('data')}>
-								<ChevronLeft class="mr-2 h-4 w-4" aria-hidden="true" />
-								{$t('forms.backToRecords')}
-							</Button>
-						</div>
-
-						<FormWorkflowTabs activeMode={s.activeMode} onModeChange={handleModeChange} />
-					</section>
+					<FormConfigHeader />
 				{/if}
 
 				{#if s.formPermissions && s.activeMode !== 'permissions' && s.activeMode !== 'data'}
-					<section
-						class="rounded-card border border-line bg-raised px-3 py-2 text-sm"
-						data-permission-state-summary
-						data-permission-state-mode={s.activeMode}
-						data-permission-state-scope={s.memberRecordScopeDraft}
-						data-permission-state-hidden-fields={s.memberHiddenFieldLabels.join('|')}
-						data-permission-state-locked-fields={s.memberLockedFieldLabels.join('|')}
-					>
-						<div class="flex flex-wrap items-center gap-2 text-xs">
-							<span class="inline-flex items-center gap-1 font-medium text-fg">
-								<Shield class="h-4 w-4 text-fg-muted" aria-hidden="true" />
-
-								{$t('forms.permissionState')}
-							</span>
-
-							<span class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
-								>{$t('forms.recordScope')}: {$t(
-									`forms.recordScopes.${s.memberRecordScopeDraft}`
-								)}</span
-							>
-
-							<span
-								class="rounded-control border border-line bg-warning-soft px-2 py-1 text-warning"
-								>{$t('forms.hiddenFieldEffect')}: {permissionFieldList(
-									s.memberHiddenFieldLabels
-								)}</span
-							>
-
-							<span class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
-								>{$t('forms.lockedFieldEffect')}: {permissionFieldList(
-									s.memberLockedFieldLabels
-								)}</span
-							>
-						</div>
-					</section>
+					<PermissionStateSummary />
 				{/if}
 
 				{#if s.activeMode === 'permissions'}
