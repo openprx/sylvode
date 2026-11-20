@@ -475,7 +475,7 @@ try {
 		await check('open a card', async () => {
 			await page.locator(`[data-card-title="${id}"]`).click();
 			await page.waitForSelector('[data-record-panel-status]');
-			assert(page.url().includes(`record=${id}`), 'the URL does not name the opened record');
+			await page.waitForFunction((record) => location.search.includes(`record=${record}`), id);
 		});
 		await check('the actions menu opens and an action runs', async () => {
 			await page.goBack();
