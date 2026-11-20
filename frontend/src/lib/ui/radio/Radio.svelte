@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { HTMLInputAttributes } from 'svelte/elements';
+	import { composeHandlers } from '../foundations/compose';
 	import { useRadioGroup } from './radio-context';
 
 	interface Props extends Omit<HTMLInputAttributes, 'class' | 'type' | 'children' | 'value'> {
@@ -9,15 +10,17 @@
 		children?: Snippet;
 	}
 
-	let { value, label, children, disabled = false, ...rest }: Props = $props();
+	let { value, label, children, disabled = false, onchange: onChange, ...rest }: Props = $props();
 
 	const group = useRadioGroup();
 	const isDisabled = $derived(disabled || (group?.disabled() ?? false));
 	const checked = $derived(group?.value() === value);
 
-	function onchange() {
-		group?.select(value);
-	}
+	/** The group selection runs first, then the caller's handler. */
+	const onchange = composeHandlers<Event & { currentTarget: EventTarget & HTMLInputElement }>(
+		() => group?.select(value),
+		() => onChange
+	);
 </script>
 
 <label class="ui-radio" class:disabled={isDisabled}>

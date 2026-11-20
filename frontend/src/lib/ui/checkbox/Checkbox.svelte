@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { HTMLInputAttributes } from 'svelte/elements';
+	import { composeHandlers } from '../foundations/compose';
 	import Check from '@lucide/svelte/icons/check';
 	import Minus from '@lucide/svelte/icons/minus';
 
@@ -18,6 +19,7 @@
 		label,
 		children,
 		disabled = false,
+		onchange: onChange,
 		...rest
 	}: Props = $props();
 
@@ -27,9 +29,11 @@
 		if (input) input.indeterminate = indeterminate;
 	});
 
-	function onchange() {
-		indeterminate = false;
-	}
+	/** The internal handler runs first, then the caller's, so neither replaces the other. */
+	const onchange = composeHandlers<Event & { currentTarget: EventTarget & HTMLInputElement }>(
+		() => (indeterminate = false),
+		() => onChange
+	);
 </script>
 
 <label class="ui-check" class:disabled>
