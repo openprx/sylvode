@@ -1473,6 +1473,8 @@ fn encode_frontier_entries(entries: &BTreeMap<u64, i32>) -> Vec<u8> {
 #[cfg(test)]
 mod floor_equivalence_tests;
 #[cfg(test)]
+mod placement_session_tests;
+#[cfg(test)]
 mod read_side_effect_tests;
 #[cfg(test)]
 mod reserved_root_tests;
