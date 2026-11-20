@@ -768,7 +768,7 @@ enum LockedOutcome {
 /// fresh attempt might not repeat. Only those two (and `server_draining`) keep the retry
 /// behaviour.
 const fn is_domain_refusal(err: &ApiError) -> bool {
-    !matches!(err, ApiError::Database(_) | ApiError::Internal) && !matches!(err.kind(), ApiErrorKind::ServerDraining(_))
+    !err.is_database_failure() && !err.is_internal_failure() && !matches!(err.kind(), ApiErrorKind::ServerDraining(_))
 }
 
 /// What [`stage_locked_writes`] concluded, before `COMMIT` is issued.
