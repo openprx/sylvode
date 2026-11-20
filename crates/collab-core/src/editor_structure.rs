@@ -16,13 +16,53 @@ fn value(map: &LoroMap, key: &str) -> Option<String> {
         _ => None,
     }
 }
-/// The root container `name` of exactly type `kind`, or `None` when no such root exists. Reads by
-/// typed container id. The library registers an empty root of that type on such a read; the
-/// frontier and the semantic hash do not change. `LoroDoc::get_by_str_path` must not be used for
+/// The root container `name` of exactly type `kind`, or `None` when no such root exists. The read
+/// changes nothing: no root is registered, so `get_deep_value`, snapshots and exports are the
+/// same afterwards.
+///
+/// Loro treats every root id as existing (`has_container` is true for it), and a typed getter
+/// (`get_container`, `get_map`, ...) registers an empty root of that type when the document has
+/// none, which shows up in `get_deep_value`, in snapshot bytes and in the list of roots (the
+/// frontier and the semantic hash do not change). So the typed getter is only called once the
+/// root is known to exist:
+///
+/// 1. `LoroDoc::get_value` lists the registered roots by name (the shallow value, O(roots)). A name
+///    that is absent has no root of any type: `None`.
+/// 2. The listed root is of type `kind`: it exists, and the typed getter finds it registered.
+/// 3. The listed root is of another type. The shallow value shows one root per name, so a root of
+///    `kind` may still exist beside it; the document is a fork-and-compare away from knowing
+///    (O(document), only for a document that has a same-named root of another type): the typed
+///    getter runs on a fork, and the root exists exactly when that did not change the fork's
+///    snapshot.
+///
+/// The typed id is what makes the read exact. `LoroDoc::get_by_str_path` must not be used for
 /// roots: it picks among all roots with that name, of any type, so a second root of another type
 /// could make two readers of one document disagree.
 pub(crate) fn root_container(doc: &LoroDoc, name: &str, kind: ContainerType) -> Option<Container> {
-    doc.get_container(ContainerID::new_root(name, kind))
+    let LoroValue::Map(roots) = doc.get_value() else {
+        return None;
+    };
+    let id = ContainerID::new_root(name, kind);
+    match roots.get(name) {
+        None => return None,
+        Some(LoroValue::Container(ContainerID::Root { container_type, .. })) if *container_type == kind => {}
+        Some(_) => {
+            let fork = doc.fork();
+            let before = fork.export(loro::ExportMode::Snapshot).ok()?;
+            fork.get_container(id.clone())?;
+            if fork.export(loro::ExportMode::Snapshot).ok()? != before {
+                return None;
+            }
+        }
+    }
+    doc.get_container(id)
+}
+/// [`root_container`] when the root is a map.
+pub(crate) fn root_map(doc: &LoroDoc, name: &str) -> Option<LoroMap> {
+    match root_container(doc, name, ContainerType::Map) {
+        Some(Container::Map(map)) => Some(map),
+        _ => None,
+    }
 }
 pub fn physical(doc: &LoroDoc) -> Result<Vec<LoroMap>, CollabError> {
     let Some(Container::Map(root)) = root_container(doc, "doc", ContainerType::Map) else {

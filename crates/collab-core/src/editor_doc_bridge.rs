@@ -32,7 +32,19 @@ fn children(map: &LoroMap) -> Option<LoroList> {
     }
 }
 fn root_children(doc: &LoroDoc) -> Option<LoroList> {
-    children(&doc.get_map("doc"))
+    children(&crate::editor_structure::root_map(doc, "doc")?)
+}
+const ALIASES: &str = "flow_editor_aliases";
+/// The alias map, read without registering it: `None` when the document has none.
+fn aliases_map(doc: &LoroDoc) -> Option<LoroMap> {
+    crate::editor_structure::root_map(doc, ALIASES)
+}
+/// Whether the alias map holds `id` (tombstones included). A read: registers nothing.
+pub fn has_alias_entry(doc: &LoroDoc, id: &str) -> bool {
+    aliases_map(doc).is_some_and(|aliases| aliases.get(id).is_some())
+}
+fn alias_target(doc: &LoroDoc, id: &str) -> Option<String> {
+    string(&aliases_map(doc)?, id)
 }
 fn supported(kind: &str) -> bool {
     matches!(
@@ -161,8 +173,11 @@ fn is_dependency(attributes: &Value) -> bool {
         .iter()
         .any(|key| attributes.get(*key).is_some())
 }
-fn reverse_aliases(aliases: &LoroMap) -> std::collections::BTreeMap<String, String> {
+fn reverse_aliases(aliases: Option<&LoroMap>) -> std::collections::BTreeMap<String, String> {
     let mut reverse = std::collections::BTreeMap::new();
+    let Some(aliases) = aliases else {
+        return reverse;
+    };
     for key in aliases.keys() {
         if let Some(cid) = string(aliases, key.as_ref()) {
             reverse.entry(cid).or_insert_with(|| key.to_string());
@@ -252,12 +267,15 @@ fn read_blocks(
     let Some(list) = root_children(doc) else {
         return Ok(None);
     };
-    let aliases = doc.get_map("flow_editor_aliases");
-    if aliases.len() > crate::limits::DOCUMENT_BLOCK_COUNT_MAX {
+    let aliases = aliases_map(doc);
+    if aliases
+        .as_ref()
+        .is_some_and(|aliases| aliases.len() > crate::limits::DOCUMENT_BLOCK_COUNT_MAX)
+    {
         return Err(invalid("editor_block_alias_limit_exceeded"));
     }
     let reverse_aliases = if collect_values {
-        reverse_aliases(&aliases)
+        reverse_aliases(aliases.as_ref())
     } else {
         std::collections::BTreeMap::new()
     };
@@ -343,11 +361,14 @@ pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAnd
     let Some(list) = root_children(doc) else {
         return Ok(None);
     };
-    let aliases = doc.get_map("flow_editor_aliases");
-    if aliases.len() > crate::limits::DOCUMENT_BLOCK_COUNT_MAX {
+    let aliases = aliases_map(doc);
+    if aliases
+        .as_ref()
+        .is_some_and(|aliases| aliases.len() > crate::limits::DOCUMENT_BLOCK_COUNT_MAX)
+    {
         return Err(invalid("editor_block_alias_limit_exceeded"));
     }
-    let reverse_aliases = reverse_aliases(&aliases);
+    let reverse_aliases = reverse_aliases(aliases.as_ref());
     // The current reader's placement error is reported only if the legacy reader succeeds.
     let placements = crate::editor_structure::placements(doc);
     let index = match &placements {
@@ -420,7 +441,7 @@ pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAnd
 /// Resolve only live top-level editor maps. Tombstoned aliases cannot resurrect blocks.
 pub fn resolve_editor_block_id(doc: &LoroDoc, id: &str) -> Option<String> {
     let list = root_children(doc)?;
-    let canonical = string(&doc.get_map("flow_editor_aliases"), id).unwrap_or_else(|| id.to_owned());
+    let canonical = alias_target(doc, id).unwrap_or_else(|| id.to_owned());
     if crate::editor_structure::placements(doc)
         .ok()?
         .is_some_and(|entries| !entries.iter().any(|entry| entry.cid == canonical))
@@ -720,12 +741,11 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
         if id.is_empty() || id.len() > 256 || id.starts_with("cid:") {
             return Err(invalid("editor_block_invalid_logical_id"));
         }
-        let aliases = doc.get_map("flow_editor_aliases");
-        if aliases.get(id.as_ref()).is_some() {
+        if has_alias_entry(doc, id.as_ref()) {
             return Err(CollabError::DuplicateNode { id: id.to_string() });
         }
         if list.len() >= crate::limits::DOCUMENT_BLOCK_COUNT_MAX
-            || aliases.len() >= crate::limits::DOCUMENT_BLOCK_COUNT_MAX
+            || aliases_map(doc).is_some_and(|aliases| aliases.len() >= crate::limits::DOCUMENT_BLOCK_COUNT_MAX)
         {
             return Err(invalid("editor_block_alias_limit_exceeded"));
         }
@@ -747,7 +767,7 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
         if indexed {
             crate::editor_structure::insert(doc, &attached.id().to_string(), parent_cid.as_deref(), *index as usize)?;
         }
-        aliases
+        doc.get_map(ALIASES)
             .insert(id.as_ref(), attached.id().to_string())
             .map_err(|e| invalid(&e.to_string()))?;
         return Ok(true);
@@ -758,7 +778,7 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
     else {
         return Ok(false);
     };
-    let canonical = string(&doc.get_map("flow_editor_aliases"), id.as_ref()).unwrap_or_else(|| id.to_string());
+    let canonical = alias_target(doc, id.as_ref()).unwrap_or_else(|| id.to_string());
     let mut target = None;
     for i in 0..list.len() {
         if let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(i)
@@ -769,7 +789,7 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
         }
     }
     let Some((position, map)) = target else {
-        if doc.get_map("flow_editor_aliases").get(id.as_ref()).is_some() {
+        if has_alias_entry(doc, id.as_ref()) {
             return Err(CollabError::UnknownNode { id: id.to_string() });
         }
         return Ok(false);
@@ -923,8 +943,7 @@ pub fn insert_atom(
     attributes: &Value,
 ) -> Result<String, CollabError> {
     crate::editor_media::validate(kind, attributes)?;
-    if id.is_empty() || id.len() > 256 || id.starts_with("cid:") || doc.get_map("flow_editor_aliases").get(id).is_some()
-    {
+    if id.is_empty() || id.len() > 256 || id.starts_with("cid:") || has_alias_entry(doc, id) {
         return Err(invalid("editor_block_invalid_or_duplicate_logical_id"));
     }
     let list = root_children(doc).ok_or_else(|| invalid("editor_doc_required"))?;
