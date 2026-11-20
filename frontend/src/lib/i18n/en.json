@@ -779,6 +779,7 @@
 		"loadFailed": "Failed to load proposals",
 		"empty": "No proposals yet",
 		"notFound": "Proposal not found",
+		"place": "proposals",
 		"filter": "Filter",
 		"domainPlaceholder": "Filter by domain, e.g. api",
 		"status": {

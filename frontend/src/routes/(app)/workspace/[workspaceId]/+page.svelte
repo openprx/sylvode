@@ -70,7 +70,7 @@
 			{$t('common.loading')}
 		</div>
 	{:else if view === 'not_found'}
-		<div data-testid="workspace-home-not-found" role="status" aria-live="polite" class="space-y-4">
+		<div data-testid="workspace-home-not-found" role="alert" class="space-y-4">
 			<EmptyState
 				icon="office"
 				title={$t('workspace.home.notFoundTitle')}
@@ -80,6 +80,13 @@
 					<a href={resolve('/(app)/workspace')} class={linkClass}
 						>{$t('workspace.home.backToList')}</a
 					>
+					<button
+						type="button"
+						class="min-h-11 rounded-control border px-4 text-sm font-medium"
+						onclick={() => void load()}
+					>
+						{$t('common.retry')}
+					</button>
 				{/snippet}
 			</EmptyState>
 		</div>

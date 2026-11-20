@@ -779,6 +779,7 @@
 		"loadFailed": "加载提案失败",
 		"empty": "暂无提案",
 		"notFound": "提案不存在",
+		"place": "提案",
 		"filter": "筛选",
 		"domainPlaceholder": "域筛选，如 api",
 		"status": {

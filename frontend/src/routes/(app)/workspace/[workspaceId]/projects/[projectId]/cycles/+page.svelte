@@ -13,6 +13,8 @@
 		type UpdateSprintData
 	} from '#lib/api/sprints.js';
 	import ProgressBar from '#lib/components/ProgressBar.svelte';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
+	import { isMissingResult } from '#lib/utils/api-helpers.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
@@ -25,6 +27,7 @@
 	let sprints = $state<Sprint[]>([]);
 	let projectIssues = $state<Issue[]>([]);
 	let errorMessage = $state('');
+	let projectMissing = $state(false);
 
 	let showCreateModal = $state(false);
 	let showEditModal = $state(false);
@@ -92,6 +95,7 @@
 	async function loadData() {
 		loading = true;
 		errorMessage = '';
+		projectMissing = false;
 
 		const [sprintsResponse, issuesResponse] = await Promise.all([
 			sprintsApi.list(projectId),
@@ -100,6 +104,7 @@
 
 		if (sprintsResponse.code !== 0) {
 			errorMessage = sprintsResponse.message;
+			projectMissing = isMissingResult(sprintsResponse);
 			sprints = [];
 		} else if (sprintsResponse.data) {
 			sprints = sprintsResponse.data.items ?? [];
@@ -313,15 +318,23 @@
 			{$t('cycles.loading')}
 		</div>
 	{:else if errorMessage}
-		<div class="rounded-card border bg-danger-soft p-6 text-center">
-			<p class="mb-3 text-sm text-danger">{errorMessage}</p>
-			<button
-				onclick={loadData}
-				class="rounded-control bg-danger-soft px-4 py-2 text-sm text-danger"
-			>
-				{$t('common.retry')}
-			</button>
-		</div>
+		<StateBlock
+			kind="loadFailed"
+			message={errorMessage}
+			action={{ run: () => void loadData() }}
+			data-testid="cycles-load-failed"
+		/>
+		{#if projectMissing}
+			<p class="text-center text-sm">
+				<a
+					href={`/workspace/${workspaceId}/projects`}
+					class="font-medium text-fg underline"
+					data-testid="cycles-back-to-projects"
+				>
+					{$t('workbench.projects')}
+				</a>
+			</p>
+		{/if}
 	{:else}
 		<section class="space-y-3">
 			<h2 class="text-lg font-semibold text-fg">
