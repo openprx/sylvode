@@ -16,6 +16,7 @@ import { isTopLayer, openLayerCount, pushLayer } from './layers';
 import { mergeMessages } from './messages';
 import { computePosition } from './position';
 import { nextRovingIndex } from './roving';
+import { portalTarget } from './portal';
 
 const suite = new Suite('ui-foundations');
 
@@ -297,5 +298,40 @@ suite.check(
 		assertEqual(seen.length >= 4, true, 'it heard the open and the close');
 	}
 );
+
+// Portal target: inside an open modal <dialog> (top layer), else the themed container, else body.
+type Found = Pick<Element, 'closest'>;
+const marker = (name: string) => ({ name }) as unknown as HTMLElement;
+const origin = (found: Record<string, HTMLElement>): Found => ({
+	closest: ((selector: string) => found[selector] ?? null) as Element['closest']
+});
+suite.check('portal: a layer opened inside a modal dialog mounts in that dialog', () => {
+	const dialog = marker('dialog');
+	const themed = marker('themed');
+	const target = portalTarget(
+		origin({ 'dialog[open]': dialog, '.dark, [data-theme]': themed }),
+		() => marker('body')
+	);
+	assertEqual(target, dialog, 'the open dialog wins over the themed container');
+});
+suite.check('portal: without a dialog the themed container, then the body', () => {
+	const themed = marker('themed');
+	const body = marker('body');
+	assertEqual(
+		portalTarget(origin({ '.dark, [data-theme]': themed }), () => body),
+		themed,
+		'themed container'
+	);
+	assertEqual(
+		portalTarget(origin({}), () => body),
+		body,
+		'body'
+	);
+	assertEqual(
+		portalTarget(null, () => body),
+		body,
+		'no origin'
+	);
+});
 
 finish(suite.result());
