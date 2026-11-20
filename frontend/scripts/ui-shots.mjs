@@ -15,6 +15,10 @@
 // read-only API calls. When the environment has none, the route is recorded as
 // `skipped: no issue in the environment` in scan.json and counted in the summary line.
 //
+// The proposal, user-trust, AI-participant and public-share routes resolve their ids the same way
+// (first proposal, the session's own user, first AI participant). A share token is shown only
+// once when a link is created, so UI_SHOTS_SHARE must supply it; otherwise that route is skipped.
+//
 // Browser: the locally installed open-source Chromium, headless (CHROMIUM_BIN overrides the path).
 // Credentials: read at run time from the environment (P3X_U1_EMAIL, P3X_U1_PASSWORD) or from the
 // env file named by UI_SHOTS_ENV_FILE. They are never printed or written anywhere.
@@ -61,9 +65,18 @@ export const ROUTES = [
 	{ name: 'governance-audit-logs', path: '/governance/audit-logs' },
 	{ name: 'proposals', path: '/proposals' },
 	{ name: 'proposals-new', path: '/proposals/new' },
+	{ name: 'proposal-detail', path: '/proposals/{proposal}' },
+	{ name: 'proposal-edit', path: '/proposals/{proposal}/edit' },
+	{ name: 'proposal-chain', path: '/proposals/{proposal}/chain' },
+	{ name: 'proposal-veto', path: '/proposals/{proposal}/veto' },
+	{ name: 'proposal-review', path: '/proposals/{proposal}/review' },
 	{ name: 'proposal-templates', path: '/proposal-templates' },
 	{ name: 'impact-reviews', path: '/impact-reviews' },
 	{ name: 'trust-board', path: '/trust-board' },
+	{ name: 'trust-appeals', path: '/trust-scores/appeals' },
+	{ name: 'user-trust', path: '/users/{me}/trust' },
+	{ name: 'agent-learning', path: '/ai-agents/{agent}/learning' },
+	{ name: 'shared-block', path: '/shared-blocks/{share}' },
 	{ name: 'decisions-analytics', path: '/decisions/analytics' },
 	{ name: 'admin', path: '/admin' },
 	{ name: 'admin-users', path: '/admin/users' },
@@ -105,7 +118,12 @@ export const SKIP_REASONS = {
 	issue_ws: 'no issue in the environment',
 	issue_project: 'no issue in the environment',
 	ws: 'no workspace in the environment',
-	project: 'no project in the environment'
+	project: 'no project in the environment',
+	proposal: 'no proposal in the environment',
+	me: 'no signed-in user id in the session',
+	agent: 'no AI participant in the environment',
+	share:
+		'no public share link: a share token is shown once when the link is created and the API lists only its prefix (set UI_SHOTS_SHARE to a token)'
 };
 
 // The raw palette utilities and `dark:` variants of the legacy language (plan section 4).
@@ -197,8 +215,13 @@ async function findIssue(api, token, workspaces) {
 	return null;
 }
 
-async function resolvePlaceholders(api, token) {
+async function resolvePlaceholders(api, token, user) {
 	const found = {};
+	if (user?.id) found.me = String(user.id);
+	if (process.env.UI_SHOTS_SHARE) found.share = encodeURIComponent(process.env.UI_SHOTS_SHARE);
+	const proposals = await apiJson(api, token, '/api/v1/proposals?per_page=1');
+	const proposal = (proposals?.items ?? proposals ?? [])[0];
+	if (proposal?.id) found.proposal = String(proposal.id);
 	const workspaces = await apiJson(api, token, '/api/v1/workspaces');
 	const workspaceList = workspaces?.items ?? workspaces ?? [];
 	const workspace = workspaceList[0];
@@ -208,6 +231,14 @@ async function resolvePlaceholders(api, token) {
 		const list = projects?.items ?? projects ?? [];
 		const project = list.find((p) => / A$/.test(p.name)) ?? list[0];
 		if (project) found.project = project.id;
+		for (const candidate of list.slice(0, 40)) {
+			const agents = await apiJson(api, token, `/api/v1/projects/${candidate.id}/ai-participants`);
+			const agent = (agents?.items ?? agents ?? [])[0];
+			if (agent?.id) {
+				found.agent = String(agent.id);
+				break;
+			}
+		}
 	}
 	Object.assign(
 		found,
@@ -253,7 +284,7 @@ async function capture(flags) {
 	if (!existsSync(executablePath)) throw new Error(`Chromium not found at ${executablePath}`);
 
 	const session = await signIn(api, user);
-	const values = await resolvePlaceholders(api, session.tokens.access_token);
+	const values = await resolvePlaceholders(api, session.tokens.access_token, session.user);
 	await mkdir(out, { recursive: true });
 
 	const browser = await chromium.launch({ executablePath, headless: true });
