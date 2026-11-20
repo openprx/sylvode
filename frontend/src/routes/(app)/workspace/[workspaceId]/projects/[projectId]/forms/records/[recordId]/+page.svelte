@@ -16,6 +16,7 @@
 		Workflow
 	} from '@lucide/svelte';
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import {
@@ -41,7 +42,9 @@
 	import type { FieldDisplayContext } from '#lib/forms/field-display.js';
 	import { flowLineageView } from '#lib/forms/flow-lineage.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { isMissingResult } from '#lib/utils/api-helpers.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import { safeImageUrl, safeLinkUrl } from '#lib/utils/safe-url.js';
 	import { locale, t } from 'svelte-i18n';
 
@@ -64,6 +67,8 @@
 	const recordId = requireRouteParam(page.params.recordId, 'recordId');
 	let loading = $state(true);
 	let errorMessage = $state('');
+	/** The record is gone or hidden (403/404), as opposed to a failed request. */
+	let recordMissing = $state(false);
 	let record = $state<FormRecordDetail | null>(null);
 	let form = $state<UniversalForm | null>(null);
 	const pluginRecordInRoute = $derived(
@@ -496,9 +501,13 @@
 	async function loadDetail() {
 		loading = true;
 		errorMessage = '';
+		recordMissing = false;
 		const recordResponse = await formsApi.getRecord(recordId);
 		if (recordResponse.code !== 0 || !recordResponse.data) {
 			errorMessage = recordResponse.message;
+			recordMissing = isMissingResult(recordResponse);
+			// A missing record is announced in the tip slot; a failed request by the block's own alert.
+			if (recordMissing) toast.error(errorMessage);
 			loading = false;
 			return;
 		}
@@ -604,12 +613,23 @@
 				{$t('common.loading')}
 			</div>
 		{:else if errorMessage}
-			<div
-				class="rounded-card border border-danger bg-danger-soft p-6 text-sm text-danger"
-				data-durable-record-detail-error
-			>
-				{errorMessage}
-			</div>
+			{#if recordMissing}
+				<StateBlock
+					kind="notFound"
+					place={$t('workbench.forms').toLowerCase()}
+					action={{
+						run: () => void goto(`/workspace/${workspaceId}/projects/${projectId}/forms`)
+					}}
+					data-durable-record-detail-error=""
+				/>
+			{:else}
+				<StateBlock
+					kind="loadFailed"
+					message={errorMessage}
+					action={{ run: () => void loadDetail() }}
+					data-durable-record-detail-error=""
+				/>
+			{/if}
 		{:else if record && form}
 			<header
 				class="border-b border-line pb-5"

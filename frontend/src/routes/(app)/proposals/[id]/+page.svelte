@@ -23,6 +23,8 @@
 		type ReviewStatus
 	} from '#lib/api/impact-reviews.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { isMissingResult } from '#lib/utils/api-helpers.js';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { renderMarkdown } from '#lib/utils/markdown.js';
 	import {
@@ -41,6 +43,9 @@
 	const proposalId = $derived(page.params.id || '');
 
 	let loading = $state(true);
+	/** Why the proposal did not load: gone or hidden (`missing`) or a failed request (`failed`). */
+	let loadFailure = $state<'missing' | 'failed' | null>(null);
+	let loadFailureMessage = $state('');
 	let proposal = $state<Proposal | null>(null);
 	let decisionId = $state('');
 	let tally = $state({ yes: 0, no: 0, abstain: 0 });
@@ -124,6 +129,7 @@
 			return;
 		}
 		loading = true;
+		loadFailure = null;
 		const [detailRes, commentsRes, linksRes] = await Promise.all([
 			proposalsApi.get(proposalId),
 			proposalsApi.listComments(proposalId),
@@ -131,8 +137,12 @@
 		]);
 
 		if (detailRes.code !== 0 || !detailRes.data) {
-			toast.error(detailRes.message || get(t)('governance.notFound'));
-			goto('/proposals');
+			loadFailureMessage = detailRes.message || get(t)('governance.notFound');
+			loadFailure = isMissingResult(detailRes) ? 'missing' : 'failed';
+			// A missing proposal is announced in the tip slot; a failed request by the block's own alert.
+			if (loadFailure === 'missing') toast.error(loadFailureMessage);
+			proposal = null;
+			loading = false;
 			return;
 		}
 
@@ -675,6 +685,24 @@
 		class="mx-auto max-w-6xl rounded-card border border-line bg-raised p-8 text-center text-fg-muted"
 	>
 		{$t('governance.loading')}
+	</div>
+{:else if loadFailure === 'missing'}
+	<div class="mx-auto max-w-6xl">
+		<StateBlock
+			kind="notFound"
+			place={$t('governance.place')}
+			action={{ run: () => goto('/proposals') }}
+			data-testid="proposal-detail-not-found"
+		/>
+	</div>
+{:else if loadFailure === 'failed'}
+	<div class="mx-auto max-w-6xl">
+		<StateBlock
+			kind="loadFailed"
+			message={loadFailureMessage}
+			action={{ run: () => void loadAll() }}
+			data-testid="proposal-detail-load-failed"
+		/>
 	</div>
 {:else if proposal}
 	<div class="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-3">
