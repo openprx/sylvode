@@ -266,9 +266,7 @@
 			role="button"
 			tabindex="0"
 			class={`rounded-control border-2 border-dashed px-4 py-6 text-center transition ${
-				dragActive
-					? 'border-fg bg-surface'
-					: 'border-input bg-surface'
+				dragActive ? 'border-fg bg-surface' : 'border-input bg-surface'
 			}`}
 			onclick={openFilePicker}
 			ondragover={handleDragOver}
@@ -294,14 +292,10 @@
 	{#if pendingUploads.length > 0}
 		<div class="space-y-2">
 			{#each pendingUploads as pending (pending.id)}
-				<div
-					class="rounded-control border border-line bg-raised px-3 py-2 text-sm"
-				>
+				<div class="rounded-control border border-line bg-raised px-3 py-2 text-sm">
 					<div class="mb-1 flex items-center justify-between gap-3">
 						<span class="truncate text-fg">{pending.filename}</span>
-						<span class="text-xs text-fg-muted"
-							>{$t('issue.uploading')} {pending.progress}%</span
-						>
+						<span class="text-xs text-fg-muted">{$t('issue.uploading')} {pending.progress}%</span>
 					</div>
 					<div class="h-2 w-full overflow-hidden rounded bg-surface">
 						<div

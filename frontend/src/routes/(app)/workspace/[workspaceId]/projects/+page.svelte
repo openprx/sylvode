@@ -383,9 +383,7 @@
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"
 				></path>
 			</svg>
-			<span class="font-medium text-fg"
-				>{workspace?.name || $t('common.loading')}</span
-			>
+			<span class="font-medium text-fg">{workspace?.name || $t('common.loading')}</span>
 		</nav>
 
 		<div class="flex items-center justify-between">
@@ -512,10 +510,7 @@
 						<div
 							class="mb-4 flex min-h-16 items-center gap-3 rounded-card border bg-surface px-3 py-3 text-fg"
 						>
-							<TableProperties
-								class="h-5 w-5 shrink-0 text-fg-muted"
-								aria-hidden="true"
-							/>
+							<TableProperties class="h-5 w-5 shrink-0 text-fg-muted" aria-hidden="true" />
 							<div class="min-w-0">
 								<p class="text-sm font-semibold">{$t('project.formsProjectHome')}</p>
 								<p class="mt-0.5 line-clamp-2 text-xs leading-5 text-fg">
@@ -525,9 +520,7 @@
 						</div>
 					{:else}
 						<div class="mb-4 grid grid-cols-4 gap-2">
-							<div
-								class="rounded-card bg-surface px-2 py-2 text-center text-fg-muted"
-							>
+							<div class="rounded-card bg-surface px-2 py-2 text-center text-fg-muted">
 								<div class="text-base font-semibold">{getIssueCount(project, 'backlog')}</div>
 								<div class="text-[11px] font-medium">{$t('workflow.backlog')}</div>
 							</div>
@@ -638,9 +631,8 @@
 			hint={$t('project.keyHint')}
 		/>
 		<div class="space-y-1">
-			<label
-				class="block text-sm font-medium text-fg"
-				for="create-project-description">{$t('project.description')}</label
+			<label class="block text-sm font-medium text-fg" for="create-project-description"
+				>{$t('project.description')}</label
 			>
 			<textarea
 				id="create-project-description"
@@ -701,9 +693,8 @@
 			maxlength={100}
 		/>
 		<div class="space-y-1">
-			<label
-				class="block text-sm font-medium text-fg"
-				for="edit-project-description">{$t('project.description')}</label
+			<label class="block text-sm font-medium text-fg" for="edit-project-description"
+				>{$t('project.description')}</label
 			>
 			<textarea
 				id="edit-project-description"
@@ -715,10 +706,7 @@
 			<p class="text-xs text-fg-muted text-right">{editForm.description.length}/350</p>
 		</div>
 		<div class="space-y-1">
-			<label
-				class="block text-sm font-medium text-fg"
-				for="edit-project-workflow"
-			>
+			<label class="block text-sm font-medium text-fg" for="edit-project-workflow">
 				Workflow
 			</label>
 			<select

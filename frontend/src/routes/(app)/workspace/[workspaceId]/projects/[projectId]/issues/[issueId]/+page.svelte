@@ -1007,9 +1007,7 @@
 
 <div class="mx-auto max-w-7xl pb-44 md:pb-0">
 	{#if loading}
-		<div
-			class="rounded-card border border-line bg-raised p-10"
-		>
+		<div class="rounded-card border border-line bg-raised p-10">
 			<div class="flex items-center justify-center gap-3 text-fg-muted">
 				<svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
 					<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"
@@ -1021,9 +1019,7 @@
 			</div>
 		</div>
 	{:else if !issue}
-		<div
-			class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
 			{$t('issue.notFound')}
 		</div>
 	{:else}
@@ -1042,9 +1038,7 @@
 						>{$t('issue.list')}</a
 					>
 					<span class="mx-1 text-fg-muted">/</span>
-					<span class="font-medium text-fg"
-						>{formatIssueCode(issue)}</span
-					>
+					<span class="font-medium text-fg">{formatIssueCode(issue)}</span>
 				</div>
 				<div class="flex flex-wrap gap-2">
 					<Button variant="ghost" size="sm" onclick={toggleIssueEditMode}>
@@ -1066,9 +1060,7 @@
 
 			<div class="grid grid-cols-1 gap-4 lg:grid-cols-10">
 				<div class="space-y-4 lg:col-span-7">
-					<div
-						class="rounded-card border border-line bg-raised p-5"
-					>
+					<div class="rounded-card border border-line bg-raised p-5">
 						<p class="mb-2 text-xs font-mono text-fg-muted">
 							{formatIssueCode(issue)}
 						</p>
@@ -1115,9 +1107,7 @@
 									onupload={handleDescriptionUpload}
 								/>
 								{#if existingIssueAttachments.length > 0}
-									<div
-										class="rounded-control border border-line bg-surface px-3 py-2 text-sm"
-									>
+									<div class="rounded-control border border-line bg-surface px-3 py-2 text-sm">
 										<p class="mb-1 font-medium text-fg">
 											{$t('issue.existingAttachments')}
 										</p>
@@ -1149,13 +1139,9 @@
 							<h1 class="mb-4 text-2xl font-semibold text-fg">
 								{issue.title}
 							</h1>
-							<div
-								class="rounded-control border border-line bg-surface p-4"
-							>
+							<div class="rounded-control border border-line bg-surface p-4">
 								{#if issue.description?.trim()}
-									<div
-										class="prose prose-sm max-w-none markdown-body text-sm text-fg"
-									>
+									<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
 										{@html renderMarkdown(issue.description)}
 									</div>
 								{:else}
@@ -1167,9 +1153,7 @@
 						{/if}
 					</div>
 
-					<div
-						class="rounded-card border border-line bg-raised p-5"
-					>
+					<div class="rounded-card border border-line bg-raised p-5">
 						<h2 class="mb-4 text-lg font-semibold text-fg">
 							{$t('issue.comments')}（{comments.length}）
 						</h2>
@@ -1228,9 +1212,7 @@
 																	{/if}
 																	<span>{member.name}</span>
 																</span>
-																<span class="ml-1 text-fg-muted"
-																	>{member.email}</span
-																>
+																<span class="ml-1 text-fg-muted">{member.email}</span>
 															</button>
 														{/each}
 													</div>
@@ -1255,9 +1237,7 @@
 												</div>
 											</div>
 										{:else}
-											<div
-												class="prose prose-sm max-w-none markdown-body text-sm text-fg"
-											>
+											<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
 												{@html renderCommentContent(comment.content)}
 											</div>
 										{/if}
@@ -1269,9 +1249,7 @@
 				</div>
 
 				<div class="space-y-4 lg:col-span-3">
-					<div
-						class="space-y-3 rounded-card border border-line bg-raised p-5"
-					>
+					<div class="space-y-3 rounded-card border border-line bg-raised p-5">
 						<Select
 							label={$t('common.status')}
 							options={statusOptions}
@@ -1322,9 +1300,7 @@
 							</p>
 							<div class="flex flex-wrap gap-2">
 								{#if issueLabels.length === 0}
-									<span class="text-xs text-fg-muted"
-										>{$t('issue.noLabels')}</span
-									>
+									<span class="text-xs text-fg-muted">{$t('issue.noLabels')}</span>
 								{:else}
 									{#each issueLabels as label (label.id)}
 										<Tag
@@ -1378,9 +1354,7 @@
 						</div>
 					</div>
 
-					<div
-						class="rounded-card border border-line bg-raised p-5"
-					>
+					<div class="rounded-card border border-line bg-raised p-5">
 						<h3 class="mb-3 text-sm font-semibold text-fg">
 							{$t('issue.activity')}
 						</h3>
@@ -1432,10 +1406,7 @@
 								>
 									<span class="font-medium inline-flex items-center gap-1">
 										{#if isBotMember(member)}
-											<BotIcon
-												class="h-3.5 w-3.5 text-fg-muted"
-												title={$t('admin.botBadge')}
-											/>
+											<BotIcon class="h-3.5 w-3.5 text-fg-muted" title={$t('admin.botBadge')} />
 										{/if}
 										<span>{member.name}</span>
 									</span>

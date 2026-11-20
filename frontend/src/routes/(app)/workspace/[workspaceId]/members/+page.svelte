@@ -339,28 +339,20 @@
 		<Button onclick={() => (showInviteModal = true)}>{$t('members.addInternalUser')}</Button>
 	</div>
 
-	<div
-		class="rounded-card border border-line bg-surface p-4 text-sm text-fg"
-	>
+	<div class="rounded-card border border-line bg-surface p-4 text-sm text-fg">
 		{$t('members.roleDescription')}
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else if members.length === 0}
-		<div
-			class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
 			{$t('members.empty')}
 		</div>
 	{:else}
-		<div
-			class="overflow-hidden rounded-card border border-line bg-raised"
-		>
+		<div class="overflow-hidden rounded-card border border-line bg-raised">
 			<div class="overflow-x-auto">
 				<table class="min-w-full divide-y divide-line">
 					<thead class="bg-nav">
@@ -393,17 +385,12 @@
 								<td class="px-4 py-3 text-sm font-medium text-fg">
 									<div class="flex items-center gap-1.5">
 										{#if isBotMember(member)}
-											<BotIcon
-												class="h-4 w-4 text-fg-muted"
-												title={$t('admin.botBadge')}
-											/>
+											<BotIcon class="h-4 w-4 text-fg-muted" title={$t('admin.botBadge')} />
 										{/if}
 										<span>{member.name || member.user_id}</span>
 									</div>
 								</td>
-								<td class="px-4 py-3 text-sm text-fg-muted"
-									>{member.email || '-'}</td
-								>
+								<td class="px-4 py-3 text-sm text-fg-muted">{member.email || '-'}</td>
 								<td class="px-4 py-3 text-sm text-fg-muted">
 									{#if isBotMember(member)}
 										<span
@@ -427,9 +414,7 @@
 										</select>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-fg-muted"
-									>{formatDate(member.joined_at)}</td
-								>
+								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(member.joined_at)}</td>
 								<td class="px-4 py-3 text-right">
 									<Button
 										variant="danger"
@@ -449,9 +434,7 @@
 		</div>
 	{/if}
 
-	<div
-		class="overflow-hidden rounded-card border border-line bg-raised"
-	>
+	<div class="overflow-hidden rounded-card border border-line bg-raised">
 		<div
 			class="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between"
 		>
@@ -514,12 +497,8 @@
 					<tbody class="divide-y divide-line bg-raised">
 						{#each bots as bot (bot.id)}
 							<tr>
-								<td class="px-4 py-3 text-sm font-medium text-fg"
-									>{bot.name}</td
-								>
-								<td class="px-4 py-3 text-sm font-mono text-fg-muted"
-									>{bot.token_prefix}</td
-								>
+								<td class="px-4 py-3 text-sm font-medium text-fg">{bot.name}</td>
+								<td class="px-4 py-3 text-sm font-mono text-fg-muted">{bot.token_prefix}</td>
 								<td class="px-4 py-3 text-sm text-fg-muted">
 									<span
 										class="inline-flex rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-fg"
@@ -560,12 +539,8 @@
 										</span>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-fg-muted"
-									>{formatDate(bot.last_used_at)}</td
-								>
-								<td class="px-4 py-3 text-sm text-fg-muted"
-									>{formatDate(bot.created_at)}</td
-								>
+								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(bot.last_used_at)}</td>
+								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(bot.created_at)}</td>
 								<td class="px-4 py-3 text-right">
 									<Button
 										variant="danger"
@@ -607,9 +582,8 @@
 		</form>
 
 		<div>
-			<label
-				class="mb-1 block text-sm font-medium text-fg"
-				for="inviteRole">{$t('admin.role')}</label
+			<label class="mb-1 block text-sm font-medium text-fg" for="inviteRole"
+				>{$t('admin.role')}</label
 			>
 			<select
 				id="inviteRole"
@@ -621,9 +595,7 @@
 			</select>
 		</div>
 
-		<div
-			class="max-h-72 space-y-2 overflow-y-auto rounded-control border border-line p-2"
-		>
+		<div class="max-h-72 space-y-2 overflow-y-auto rounded-control border border-line p-2">
 			{#if searchingUsers}
 				<p class="p-2 text-sm text-fg-muted">{$t('search.searching')}</p>
 			{:else if searchResults.length === 0}
@@ -632,9 +604,7 @@
 				</p>
 			{:else}
 				{#each searchResults as user (user.id)}
-					<div
-						class="flex items-center justify-between rounded-control px-2 py-2 hover:bg-surface"
-					>
+					<div class="flex items-center justify-between rounded-control px-2 py-2 hover:bg-surface">
 						<div>
 							<p class="text-sm font-medium text-fg">{user.name}</p>
 							<p class="text-xs text-fg-muted">{user.email}</p>
@@ -704,12 +674,8 @@
 							class="mt-0.5 h-4 w-4 border-input accent-primary"
 						/>
 						<span>
-							<span class="block font-medium text-fg"
-								>{$t(surfaceLabelKey(surface))}</span
-							>
-							<span
-								id={`tokenSurface-${surface}-description`}
-								class="block text-xs text-fg-muted"
+							<span class="block font-medium text-fg">{$t(surfaceLabelKey(surface))}</span>
+							<span id={`tokenSurface-${surface}-description`} class="block text-xs text-fg-muted"
 								>{$t(surfaceDescriptionKey(surface))}</span
 							>
 						</span>
@@ -740,9 +706,8 @@
 		</div>
 
 		<div>
-			<label
-				class="mb-1 block text-sm font-medium text-fg"
-				for="tokenExpiresAt">{$t('members.expiresAt')}</label
+			<label class="mb-1 block text-sm font-medium text-fg" for="tokenExpiresAt"
+				>{$t('members.expiresAt')}</label
 			>
 			<input
 				id="tokenExpiresAt"
@@ -792,8 +757,7 @@
 				<p class="mb-1 text-sm font-medium text-fg">
 					{$t('members.fullToken')}
 				</p>
-				<code
-					class="block rounded-control bg-surface p-3 text-xs sm:text-sm text-fg break-all"
+				<code class="block rounded-control bg-surface p-3 text-xs sm:text-sm text-fg break-all"
 					>{createdToken.token}</code
 				>
 			</div>

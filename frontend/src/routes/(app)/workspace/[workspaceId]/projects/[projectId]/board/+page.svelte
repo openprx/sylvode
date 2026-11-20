@@ -328,15 +328,12 @@
 </script>
 
 <div class="mx-auto max-w-7xl space-y-6">
-	<div
-		class="rounded-card border border-line bg-raised p-4 sm:p-5"
-	>
+	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
 			<div class="text-sm text-fg-muted">
 				<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects" class="hover:underline"
-					>{$t('project.title')}</a
+				<a href="/workspace/{workspaceId}/projects" class="hover:underline">{$t('project.title')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
 				<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:underline"
@@ -355,10 +352,7 @@
 						values: { sprint: sprintNameMap[sprintFilterId] ?? sprintFilterId }
 					})}</span
 				>
-				<a
-					href="/workspace/{workspaceId}/projects/{projectId}/board"
-					class="text-fg underline"
-				>
+				<a href="/workspace/{workspaceId}/projects/{projectId}/board" class="text-fg underline">
 					{$t('board.clearFilter')}
 				</a>
 			</div>
@@ -374,9 +368,8 @@
 				/>
 			</div>
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="priorityFilter">{$t('common.priority')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="priorityFilter"
+					>{$t('common.priority')}</label
 				>
 				<select
 					id="priorityFilter"
@@ -391,9 +384,8 @@
 				</select>
 			</div>
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="assigneeFilter">{$t('common.assignee')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="assigneeFilter"
+					>{$t('common.assignee')}</label
 				>
 				<select
 					id="assigneeFilter"
@@ -427,15 +419,11 @@
 	{#if loading}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
 			{#each columns as column}
-				<div
-					class="rounded-card border border-line bg-surface p-3"
-				>
+				<div class="rounded-card border border-line bg-surface p-3">
 					<div class="mb-3 h-5 w-24 animate-pulse rounded bg-surface"></div>
 					<div class="space-y-3">
 						{#each Array(2) as _, index (`${column}-${index}`)}
-							<div
-								class="h-24 animate-pulse rounded-control border border-line bg-raised"
-							></div>
+							<div class="h-24 animate-pulse rounded-control border border-line bg-raised"></div>
 						{/each}
 					</div>
 				</div>
@@ -446,9 +434,7 @@
 			{#each columns as column}
 				<div
 					class={`rounded-card border p-3 transition-colors ${
-						dropTargetStatus === column
-							? 'border-fg bg-surface'
-							: 'border-line bg-surface'
+						dropTargetStatus === column ? 'border-fg bg-surface' : 'border-line bg-surface'
 					}`}
 					role="region"
 					ondragover={handleDragOver}
@@ -460,9 +446,7 @@
 						<h2 class="text-sm font-semibold text-fg">
 							{getColumnName(column)}
 						</h2>
-						<span
-							class="rounded-full bg-surface px-2 py-1 text-xs text-fg-muted"
-						>
+						<span class="rounded-full bg-surface px-2 py-1 text-xs text-fg-muted">
 							{getIssuesByStatus(column).length}
 						</span>
 					</div>
@@ -526,18 +510,13 @@
 									<div class="flex items-center justify-between gap-2">
 										<div class="flex items-center gap-2">
 											<Badge kind="priority" value={issue.priority} />
-											<span class="font-mono text-xs text-fg-muted"
-												>{getIssueCode(issue)}</span
-											>
+											<span class="font-mono text-xs text-fg-muted">{getIssueCode(issue)}</span>
 										</div>
 										{#if issue.assignee_id}
 											<div class="flex items-center gap-1.5">
 												<Avatar userId={issue.assignee_id} />
 												{#if isBotAssignee(issue.assignee_id)}
-													<BotIcon
-														class="h-3.5 w-3.5 text-fg-muted"
-														title={$t('admin.botBadge')}
-													/>
+													<BotIcon class="h-3.5 w-3.5 text-fg-muted" title={$t('admin.botBadge')} />
 												{/if}
 											</div>
 										{/if}

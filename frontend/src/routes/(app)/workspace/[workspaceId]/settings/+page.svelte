@@ -102,9 +102,7 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else}

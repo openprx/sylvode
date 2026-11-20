@@ -101,14 +101,10 @@
 		</Button>
 	</header>
 
-	<section
-		class="rounded-card border border-line bg-raised p-4"
-	>
+	<section class="rounded-card border border-line bg-raised p-4">
 		<div class="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto] md:items-end">
 			<div>
-				<label
-					for="operation-bot-filter"
-					class="mb-1 block text-sm font-medium text-fg"
+				<label for="operation-bot-filter" class="mb-1 block text-sm font-medium text-fg"
 					>{$t('connections.bot')}</label
 				>
 				<Input
@@ -118,9 +114,7 @@
 				/>
 			</div>
 			<div>
-				<label
-					for="operation-tool-filter"
-					class="mb-1 block text-sm font-medium text-fg"
+				<label for="operation-tool-filter" class="mb-1 block text-sm font-medium text-fg"
 					>{$t('connections.tool')}</label
 				>
 				<Input
@@ -130,9 +124,7 @@
 				/>
 			</div>
 			<div>
-				<label
-					for="operation-outcome-filter"
-					class="mb-1 block text-sm font-medium text-fg"
+				<label for="operation-outcome-filter" class="mb-1 block text-sm font-medium text-fg"
 					>{$t('connections.result')}</label
 				>
 				<select
@@ -154,9 +146,7 @@
 		</div>
 	</section>
 
-	<section
-		class="overflow-hidden rounded-card border border-line bg-raised"
-	>
+	<section class="overflow-hidden rounded-card border border-line bg-raised">
 		{#if loading}
 			<div class="p-8 text-center text-sm text-fg-muted">
 				{$t('common.loading')}
@@ -201,8 +191,7 @@
 								</td>
 
 								<td class="px-4 py-3">
-									<span
-										class="rounded bg-surface px-2 py-1 font-mono text-xs text-fg"
+									<span class="rounded bg-surface px-2 py-1 font-mono text-xs text-fg"
 										>{log.surface}</span
 									>
 								</td>
@@ -222,8 +211,7 @@
 											{log.business_code} · {log.error_message || '-'}
 										</div>{/if}
 								</td>
-								<td
-									class="whitespace-nowrap px-4 py-3 text-right tabular-nums text-fg"
+								<td class="whitespace-nowrap px-4 py-3 text-right tabular-nums text-fg"
 									>{log.duration_ms} ms</td
 								>
 							</tr>

@@ -53,9 +53,7 @@
 </svelte:head>
 
 <div class="mx-auto max-w-6xl space-y-4">
-	<div
-		class="rounded-card border border-line bg-raised p-5"
-	>
+	<div class="rounded-card border border-line bg-raised p-5">
 		<div class="flex items-center justify-between gap-3">
 			<div>
 				<h1 class="text-xl font-semibold text-fg">
@@ -73,45 +71,33 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else if report}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-4">
-			<div
-				class="rounded-card border border-line bg-raised p-4"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<p class="text-xs text-fg-muted">{$t('governanceExt.totalDecisions')}</p>
 				<p class="mt-1 text-2xl font-semibold text-fg">
 					{report.total_proposals}
 				</p>
 			</div>
-			<div
-				class="rounded-card border border-line bg-raised p-4"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<p class="text-xs text-fg-muted">{$t('governance.status.approved')}</p>
 				<p class="mt-1 text-2xl font-semibold text-success">{report.approved_proposals}</p>
 			</div>
-			<div
-				class="rounded-card border border-line bg-raised p-4"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<p class="text-xs text-fg-muted">{$t('governance.status.rejected')}</p>
 				<p class="mt-1 text-2xl font-semibold text-danger">{report.rejected_proposals}</p>
 			</div>
-			<div
-				class="rounded-card border border-line bg-raised p-4"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<p class="text-xs text-fg-muted">{$t('governance.status.vetoed')}</p>
 				<p class="mt-1 text-2xl font-semibold text-danger">{report.vetoed_proposals}</p>
 			</div>
 		</div>
 
 		<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-			<div
-				class="rounded-card border border-line bg-raised p-4"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<h2 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governanceExt.ratingDistribution')}
 				</h2>
@@ -119,9 +105,7 @@
 						report.rating_distribution
 					)}</pre>
 			</div>
-			<div
-				class="rounded-card border border-line bg-raised p-4"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<h2 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governanceExt.aiParticipation')}
 				</h2>
@@ -129,9 +113,7 @@
 						report.ai_participation_stats
 					)}</pre>
 			</div>
-			<div
-				class="rounded-card border border-line bg-raised p-4"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<h2 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governanceExt.domainStats')}
 				</h2>
@@ -139,9 +121,7 @@
 						report.domain_stats
 					)}</pre>
 			</div>
-			<div
-				class="rounded-card border border-line bg-raised p-4"
-			>
+			<div class="rounded-card border border-line bg-raised p-4">
 				<h2 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governanceExt.keyInsights')}
 				</h2>
