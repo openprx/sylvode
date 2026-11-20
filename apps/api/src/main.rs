@@ -3103,6 +3103,12 @@ fn embedded_git_dirty(value: &str) -> Option<bool> {
 }
 
 #[cfg(test)]
+mod delegated_router_tests;
+
+#[cfg(test)]
+mod legacy_auth_characterization_tests;
+
+#[cfg(test)]
 mod build_info_tests {
     use super::{embedded_build_info, embedded_git_dirty};
     use std::path::Path;
