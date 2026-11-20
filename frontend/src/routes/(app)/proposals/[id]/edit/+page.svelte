@@ -385,7 +385,7 @@
 						type="button"
 						onclick={submit}
 						disabled={saving}
-						class="rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+						class="rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 					>
 						{saving ? $t('common.saving') : $t('governance.saveDraft')}
 					</button>

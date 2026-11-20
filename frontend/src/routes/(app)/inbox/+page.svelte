@@ -213,7 +213,7 @@
 				<button
 					onclick={markAllRead}
 					disabled={unreadNotifications.length === 0 || markingAll}
-					class="rounded-control bg-primary px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control"
+					class="rounded-control bg-primary px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				>
 					{markingAll ? $t('common.processing') : $t('notification.markAllRead')}
 				</button>
@@ -313,14 +313,14 @@
 								<button
 									onclick={() => markRead(item.id)}
 									disabled={operatingId === item.id}
-									class="rounded-control border px-3 py-1.5 text-sm text-fg hover:bg-surface disabled:bg-surface disabled:text-control"
+									class="rounded-control border px-3 py-1.5 text-sm text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								>
 									{operatingId === item.id ? $t('common.processing') : $t('notification.markRead')}
 								</button>
 								<button
 									onclick={() => deleteNotification(item.id)}
 									disabled={operatingId === item.id}
-									class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-control"
+									class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 								>
 									{$t('common.delete')}
 								</button>
@@ -382,7 +382,7 @@
 								<button
 									onclick={() => deleteNotification(item.id)}
 									disabled={operatingId === item.id}
-									class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-control"
+									class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 								>
 									{$t('common.delete')}
 								</button>
