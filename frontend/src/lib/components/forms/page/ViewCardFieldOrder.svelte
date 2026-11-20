@@ -6,7 +6,6 @@
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
 
 	const fp = getFormsPageContext();
-	const s = fp.state;
 	const { viewDraftCardFields, moveViewDraftCardField } = fp.viewDraft;
 </script>
 
