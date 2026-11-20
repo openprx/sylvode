@@ -1275,6 +1275,10 @@ async fn execute_document_update(
                 &request,
                 &prepared,
                 crate::config::runtime().flow.dispatch_max_attempts,
+                crate::flow::block_registry::RegistrationAllowance::within(
+                    std::time::Instant::now(),
+                    write::LOCKED_PHASE_STAGING_BUDGET,
+                ),
             )
             .await?
             {
@@ -2992,6 +2996,10 @@ async fn create_collection_embed(
             &request,
             &prepared,
             crate::config::runtime().flow.dispatch_max_attempts,
+            crate::flow::block_registry::RegistrationAllowance::within(
+                std::time::Instant::now(),
+                write::LOCKED_PHASE_STAGING_BUDGET,
+            ),
         )
         .await?;
         let write::StagedOutcome::Ready(staged) = staged else {
