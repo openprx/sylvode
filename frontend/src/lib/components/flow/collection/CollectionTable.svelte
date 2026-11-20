@@ -208,7 +208,7 @@
 			oncancel={() => cancel(row.recordId, field.fieldId)}
 		/>
 	{:else if draft !== null}
-		<span class="truncate text-amber-800 dark:text-amber-200" data-cell-draft="true">
+		<span class="truncate text-warning" data-cell-draft="true">
 			{Array.isArray(draft)
 				? draft.join(', ')
 				: typeof draft === 'boolean'
@@ -224,7 +224,7 @@
 		<span
 			class="ml-1 shrink-0 text-xs {status.state === 'saving'
 				? 'text-slate-500'
-				: 'text-red-600 dark:text-red-400'}"
+				: 'text-danger'}"
 			data-cell-status={status.state}
 		>
 			{status.state === 'saving'
@@ -240,14 +240,14 @@
 	<ul class="space-y-3 p-4" data-testid="collection-cards" aria-label={snapshot.collection?.title}>
 		{#each rows as row (row.recordId)}
 			<li
-				class="rounded-lg border border-slate-200 p-3 dark:border-slate-700"
+				class="rounded-lg border border-line p-3"
 				data-testid="collection-card"
 				data-record-id={row.recordId}
 			>
 				<dl class="space-y-1">
 					{#each fields as field (field.fieldId)}
 						<div class="flex min-w-0 gap-2 text-sm">
-							<dt class="w-28 shrink-0 truncate text-slate-500 dark:text-slate-400">
+							<dt class="w-28 shrink-0 truncate text-fg-muted">
 								{field.label}
 							</dt>
 							<dd class="flex min-w-0 flex-1 items-center">{@render cell(row, field)}</dd>
@@ -256,7 +256,7 @@
 				</dl>
 				<button
 					type="button"
-					class="mt-2 min-h-11 w-full rounded border border-slate-300 px-3 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600"
+					class="mt-2 min-h-11 w-full rounded border border-slate-300 px-3 text-sm font-medium dark:border-slate-600"
 					onclick={() => void controller.openPanel(row.recordId)}
 				>
 					{$t('flow.collection.table.openRecord')}
@@ -295,7 +295,7 @@
 			<div
 				role="row"
 				aria-rowindex={1}
-				class="sticky top-0 z-10 grid border-b border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+				class="sticky top-0 z-10 grid border-b border-line bg-slate-50 dark:bg-slate-900"
 				style:grid-template-columns={gridTemplate}
 			>
 				<div role="columnheader" class="px-2 py-2 text-xs text-slate-500">
@@ -304,13 +304,13 @@
 				{#each fields as field (field.fieldId)}
 					<div
 						role="columnheader"
-						class="relative flex items-center px-2 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300"
+						class="relative flex items-center px-2 py-2 text-xs font-semibold text-fg-muted"
 						data-field-id={field.fieldId}
 					>
 						<span class="truncate">{field.label}</span>
 						<button
 							type="button"
-							class="absolute top-0 right-0 h-full w-3 cursor-col-resize touch-none focus:outline-none focus-visible:bg-blue-500"
+							class="absolute top-0 right-0 h-full w-3 cursor-col-resize touch-none focus-visible:bg-blue-500"
 							aria-label={$t('flow.collection.table.resize', { values: { field: field.label } })}
 							data-testid="collection-column-resize"
 							onpointerdown={(event) => startResize(event, field)}
@@ -328,7 +328,7 @@
 				<div
 					role="row"
 					aria-rowindex={rowIndex + 2}
-					class="grid border-b border-slate-100 dark:border-slate-800"
+					class="grid border-b border-line"
 					style:grid-template-columns={gridTemplate}
 					style:height={`${ROW_HEIGHT}px`}
 					data-testid="collection-row"
@@ -338,7 +338,7 @@
 						role="gridcell"
 						id={cellId(rowIndex, 0)}
 						tabindex={active[0] === rowIndex && active[1] === 0 ? 0 : -1}
-						class="flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+						class="flex items-center justify-center"
 						onkeydown={(event) => onCellKeydown(event, rowIndex, 0)}
 						onfocus={() => (active = [rowIndex, 0])}
 					>
@@ -357,7 +357,7 @@
 							id={cellId(rowIndex, fieldIndex + 1)}
 							tabindex={active[0] === rowIndex && active[1] === fieldIndex + 1 ? 0 : -1}
 							aria-readonly={!isEditableField(field)}
-							class="flex min-w-0 items-center overflow-hidden px-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset"
+							class="flex min-w-0 items-center overflow-hidden px-2"
 							data-field-id={field.fieldId}
 							onkeydown={(event) => onCellKeydown(event, rowIndex, fieldIndex + 1)}
 							onfocus={() => (active = [rowIndex, fieldIndex + 1])}
@@ -380,11 +380,11 @@
 {/if}
 
 <div
-	class="flex flex-wrap items-center gap-3 border-t border-slate-200 px-4 py-2 dark:border-slate-700"
+	class="flex flex-wrap items-center gap-3 border-t border-line px-4 py-2"
 >
 	<button
 		type="button"
-		class="min-h-11 rounded px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-slate-800"
+		class="min-h-11 rounded px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-slate-800"
 		disabled={creating}
 		data-testid="collection-new-record"
 		onclick={() => void createRecord()}

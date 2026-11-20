@@ -339,7 +339,7 @@
 					</p>
 					{#if kind === 'copy' || snapshot.review.affectedShareCount > 0}
 						<p
-							class="text-sm text-slate-700 dark:text-slate-200"
+							class="text-sm text-fg"
 							data-testid="flow-transfer-share-impact"
 						>
 							{$t(

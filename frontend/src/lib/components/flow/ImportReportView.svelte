@@ -34,19 +34,19 @@
 	<Card>
 		<dl class="grid grid-cols-1 gap-4 text-sm md:grid-cols-2">
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.import.report.statusLabel')}</dt>
+				<dt class="text-fg-muted">{$t('flow.import.report.statusLabel')}</dt>
 				<dd
-					class="mt-1 font-medium text-slate-900 dark:text-slate-100"
+					class="mt-1 font-medium text-fg"
 					data-testid="flow-import-report-status"
 				>
 					{statusLabel(report.status)}
 				</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">
+				<dt class="text-fg-muted">
 					{$t('flow.import.report.conflictPolicy')}
 				</dt>
-				<dd class="mt-1 text-slate-900 dark:text-slate-100">
+				<dd class="mt-1 text-fg">
 					{report.conflict_policy === 'reject_existing' ||
 					report.conflict_policy === 'reuse_import_lineage'
 						? $t(CONFLICT_POLICY_KEYS[report.conflict_policy])
@@ -54,8 +54,8 @@
 				</dd>
 			</div>
 			<div class="md:col-span-2">
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.package.sourceProvenance')}</dt>
-				<dd class="mt-1 break-all font-mono text-xs text-slate-900 dark:text-slate-100">
+				<dt class="text-fg-muted">{$t('flow.package.sourceProvenance')}</dt>
+				<dd class="mt-1 break-all font-mono text-xs text-fg">
 					{#if report.source_scope_id}<span class="block"
 							>{$t('flow.package.sourceScope')}: {report.source_scope_id}</span
 						>{/if}
@@ -69,34 +69,34 @@
 				</dd>
 			</div>
 			<div class="md:col-span-2">
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.import.packageSha256')}</dt>
-				<dd class="mt-1 break-all font-mono text-xs text-slate-900 dark:text-slate-100">
+				<dt class="text-fg-muted">{$t('flow.import.packageSha256')}</dt>
+				<dd class="mt-1 break-all font-mono text-xs text-fg">
 					{report.package_sha256}
 				</dd>
 			</div>
 			<div class="md:col-span-2">
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.import.mappingHash')}</dt>
-				<dd class="mt-1 break-all font-mono text-xs text-slate-900 dark:text-slate-100">
+				<dt class="text-fg-muted">{$t('flow.import.mappingHash')}</dt>
+				<dd class="mt-1 break-all font-mono text-xs text-fg">
 					{report.mapping_hash}
 				</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.import.report.startedAt')}</dt>
-				<dd class="mt-1 text-slate-900 dark:text-slate-100">{formatTime(report.started_at)}</dd>
+				<dt class="text-fg-muted">{$t('flow.import.report.startedAt')}</dt>
+				<dd class="mt-1 text-fg">{formatTime(report.started_at)}</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.import.report.finishedAt')}</dt>
-				<dd class="mt-1 text-slate-900 dark:text-slate-100">{formatTime(report.finished_at)}</dd>
+				<dt class="text-fg-muted">{$t('flow.import.report.finishedAt')}</dt>
+				<dd class="mt-1 text-fg">{formatTime(report.finished_at)}</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.import.report.actor')}</dt>
-				<dd class="mt-1 break-all font-mono text-xs text-slate-900 dark:text-slate-100">
+				<dt class="text-fg-muted">{$t('flow.import.report.actor')}</dt>
+				<dd class="mt-1 break-all font-mono text-xs text-fg">
 					{report.actor}
 				</dd>
 			</div>
 			<div>
-				<dt class="text-slate-500 dark:text-slate-400">{$t('flow.import.report.auditEvent')}</dt>
-				<dd class="mt-1 break-all font-mono text-xs text-slate-900 dark:text-slate-100">
+				<dt class="text-fg-muted">{$t('flow.import.report.auditEvent')}</dt>
+				<dd class="mt-1 break-all font-mono text-xs text-fg">
 					{report.audit_event_id}
 				</dd>
 			</div>
@@ -104,7 +104,7 @@
 	</Card>
 
 	<Card>
-		<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="text-lg font-semibold text-fg">
 			{$t('flow.import.report.countsHeading')}
 		</h2>
 		<dl
@@ -112,10 +112,10 @@
 			data-testid="flow-import-report-counts"
 		>
 			{#each IMPORT_REPORT_COUNT_KEYS as key (key)}
-				<div class="rounded-md border border-slate-200 p-3 dark:border-slate-700">
-					<dt class="text-slate-500 dark:text-slate-400">{$t(IMPORT_COUNT_LABEL_KEYS[key])}</dt>
+				<div class="rounded-md border border-line p-3">
+					<dt class="text-fg-muted">{$t(IMPORT_COUNT_LABEL_KEYS[key])}</dt>
 					<dd
-						class="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100"
+						class="mt-1 text-xl font-semibold text-fg"
 						data-testid={`flow-import-report-count-${key}`}
 					>
 						{report.counts[key] ?? 0}
@@ -126,28 +126,28 @@
 	</Card>
 
 	<Card>
-		<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="text-lg font-semibold text-fg">
 			{$t('flow.import.report.objectMappingHeading')}
 		</h2>
 		{#if objectRows.length === 0}
-			<p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
+			<p class="mt-2 text-sm text-fg-muted">
 				{$t('flow.import.preview.none')}
 			</p>
 		{:else}
 			<table class="mt-3 hidden w-full text-left text-sm md:table">
 				<thead>
-					<tr class="border-b border-slate-200 dark:border-slate-700">
-						<th scope="col" class="py-2 pr-4 font-medium text-slate-600 dark:text-slate-300">
+					<tr class="border-b border-line">
+						<th scope="col" class="py-2 pr-4 font-medium text-fg-muted">
 							{$t('flow.import.report.sourceObject')}
 						</th>
-						<th scope="col" class="py-2 font-medium text-slate-600 dark:text-slate-300">
+						<th scope="col" class="py-2 font-medium text-fg-muted">
 							{$t('flow.import.report.targetObject')}
 						</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each objectRows as [source, target] (source)}
-						<tr class="border-b border-slate-100 dark:border-slate-800">
+						<tr class="border-b border-line">
 							<td class="break-all py-2 pr-4 font-mono text-xs">{source}</td>
 							<td class="break-all py-2 font-mono text-xs">{target}</td>
 						</tr>
@@ -156,12 +156,12 @@
 			</table>
 			<ul class="mt-3 space-y-2 md:hidden">
 				{#each objectRows as [source, target] (source)}
-					<li class="rounded-md border border-slate-200 p-3 text-xs dark:border-slate-700">
-						<p class="text-slate-500 dark:text-slate-400">
+					<li class="rounded-md border border-line p-3 text-xs">
+						<p class="text-fg-muted">
 							{$t('flow.import.report.sourceObject')}
 						</p>
 						<p class="break-all font-mono">{source}</p>
-						<p class="mt-2 text-slate-500 dark:text-slate-400">
+						<p class="mt-2 text-fg-muted">
 							{$t('flow.import.report.targetObject')}
 						</p>
 						<p class="break-all font-mono">{target}</p>
@@ -172,11 +172,11 @@
 	</Card>
 
 	<Card>
-		<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="text-lg font-semibold text-fg">
 			{$t('flow.import.report.detachedHeading')}
 		</h2>
 		{#if report.detached_references.length === 0}
-			<p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
+			<p class="mt-2 text-sm text-fg-muted">
 				{$t('flow.import.preview.none')}
 			</p>
 		{:else}
@@ -184,11 +184,11 @@
 				{#each report.detached_references as reference (reference)}<li>{reference}</li>{/each}
 			</ul>
 		{/if}
-		<h2 class="mt-6 text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="mt-6 text-lg font-semibold text-fg">
 			{$t('flow.import.preview.warnings')}
 		</h2>
 		{#if report.warnings.length === 0}
-			<p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
+			<p class="mt-2 text-sm text-fg-muted">
 				{$t('flow.import.preview.none')}
 			</p>
 		{:else}

@@ -666,7 +666,7 @@
 
 {#if loading}
 	<div
-		class="mx-auto max-w-6xl rounded-lg border border-slate-200 bg-white p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-800"
+		class="mx-auto max-w-6xl rounded-lg border border-line bg-white p-8 text-center text-slate-500 dark:bg-slate-800"
 	>
 		{$t('governance.loading')}
 	</div>
@@ -674,10 +674,10 @@
 	<div class="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-3">
 		<div class="space-y-4 lg:col-span-2">
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 			>
 				<div class="mb-3 flex items-start justify-between gap-3">
-					<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">{proposal.title}</h1>
+					<h1 class="text-xl font-semibold text-fg">{proposal.title}</h1>
 					<span class={`rounded px-2 py-1 text-xs font-medium ${statusTone(proposal.status)}`}
 						>{statusLabel(proposal.status)}</span
 					>
@@ -719,9 +719,9 @@
 			</div>
 
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 			>
-				<h2 class="mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100">
+				<h2 class="mb-3 text-lg font-semibold text-fg">
 					{$t('governance.discussion')}
 				</h2>
 				<div class="space-y-3">
@@ -739,7 +739,7 @@
 										/>
 									{:else}
 										<div
-											class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-100"
+											class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-fg dark:bg-slate-700"
 										>
 											{commentAvatarText(comment)}
 										</div>
@@ -753,7 +753,7 @@
 									</div>
 								</div>
 								<div
-									class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
+									class="prose prose-sm max-w-none markdown-body text-sm text-fg dark:prose-invert"
 								>
 									{@html renderCommentContent(comment.content)}
 								</div>
@@ -764,7 +764,7 @@
 				<div class="relative mt-3 space-y-2">
 					{#if showMentionDropdown && filteredMentionCandidates.length > 0}
 						<div
-							class="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800"
+							class="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-line bg-white shadow-lg dark:bg-slate-800"
 						>
 							{#each filteredMentionCandidates as member (member.id)}
 								<button
@@ -786,7 +786,7 @@
 							class={`px-2 py-1 ${
 								newCommentMode === 'edit'
 									? 'bg-blue-600 text-white'
-									: 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'
+									: 'bg-white text-fg-muted dark:bg-slate-900'
 							}`}
 							onclick={() => (newCommentMode = 'edit')}>{$t('issue.editMode')}</button
 						>
@@ -796,7 +796,7 @@
 							class={`px-2 py-1 ${
 								newCommentMode === 'preview'
 									? 'bg-blue-600 text-white'
-									: 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'
+									: 'bg-white text-fg-muted dark:bg-slate-900'
 							}`}
 							onclick={() => (newCommentMode = 'preview')}>{$t('issue.previewMode')}</button
 						>
@@ -812,11 +812,11 @@
 							onpaste={handleCommentPaste}></textarea>
 					{:else}
 						<div
-							class="min-h-24 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+							class="min-h-24 rounded-md border border-line bg-slate-50 px-3 py-2 dark:bg-slate-900"
 						>
 							{#if newComment.trim()}
 								<div
-									class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
+									class="prose prose-sm max-w-none markdown-body text-sm text-fg dark:prose-invert"
 								>
 									{@html renderMarkdown(newComment)}
 								</div>
@@ -852,10 +852,10 @@
 			</div>
 
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 			>
 				<div class="mb-3 flex items-center justify-between gap-3">
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{$t('impactReview.title')}
 					</h2>
 					<a
@@ -984,9 +984,9 @@
 
 		<div class="space-y-4">
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h3 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h3 class="mb-3 text-sm font-semibold text-fg">
 					{$t('governance.actions')}
 				</h3>
 				<div class="space-y-2">
@@ -1035,9 +1035,9 @@
 			</div>
 
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h3 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governance.voting')}
 				</h3>
 				<div class="mb-2 grid grid-cols-3 gap-2 text-xs">
@@ -1081,7 +1081,7 @@
 					<button
 						type="button"
 						onclick={withdrawVote}
-						class="mt-2 w-full rounded border border-slate-300 px-2 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-900"
+						class="mt-2 w-full rounded border border-slate-300 px-2 py-2 text-xs text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-900"
 						>{$t('governance.withdrawVote')}</button
 					>
 				{:else}
@@ -1090,9 +1090,9 @@
 			</div>
 
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h3 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governance.issueLinks')}
 				</h3>
 				<div class="space-y-2">
@@ -1146,13 +1146,13 @@
 			</div>
 
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h3 class="mb-2 text-sm font-semibold text-fg">
 					{$t('governance.decisions.title')}
 				</h3>
 				{#if decisionId}
-					<p class="text-xs text-slate-600 dark:text-slate-300">
+					<p class="text-xs text-fg-muted">
 						{$t('governance.decisions.linkedDecision', { values: { id: decisionId } })}
 					</p>
 				{:else}

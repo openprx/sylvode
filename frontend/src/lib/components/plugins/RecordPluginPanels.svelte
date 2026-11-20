@@ -394,7 +394,7 @@
 
 {#if details.length || notice || slot.frame || active || v3Items.length}
 	<section
-		class="space-y-2 border-b border-slate-200 p-4 dark:border-slate-700"
+		class="space-y-2 border-b border-line p-4"
 		aria-labelledby={componentId}
 	>
 		<div class="flex flex-wrap items-center justify-between gap-2">
@@ -404,7 +404,7 @@
 			{#if projectId}<PluginPreferenceMenu {projectId} items={v3Items} />{/if}
 		</div>
 		{#if notice}
-			<p class="text-sm text-slate-600 dark:text-slate-300" role="status">{$t(notice)}</p>
+			<p class="text-sm text-fg-muted" role="status">{$t(notice)}</p>
 		{/if}
 		{#if details.length}
 			<ul class="flex flex-wrap gap-2" data-plugin-slot="form.record.detail">
@@ -463,7 +463,7 @@
 						type="button"
 						bind:this={closeButton}
 						onclick={() => close()}
-						class="rounded-md px-2 py-1 text-sm underline focus-visible:outline-blue-600"
+						class="rounded-md px-2 py-1 text-sm underline"
 						>{$t('plugins.closePanel')}</button
 					>
 				</div>
@@ -487,7 +487,7 @@
 						/>
 					{/key}
 				{:else}
-					<p class="px-3 pb-2 text-sm text-slate-600 dark:text-slate-300" role="status">
+					<p class="px-3 pb-2 text-sm text-fg-muted" role="status">
 						{$t('plugins.host.loading')}
 					</p>
 				{/if}
@@ -499,7 +499,7 @@
 <dialog
 	bind:this={confirmation}
 	aria-labelledby={`${componentId}-confirm`}
-	class="max-w-md rounded-lg border border-slate-300 bg-white p-5 text-slate-900 shadow-xl backdrop:bg-slate-950/50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+	class="max-w-md rounded-lg border border-slate-300 bg-white p-5 text-fg shadow-xl backdrop:bg-slate-950/50 dark:border-slate-700 dark:bg-slate-900"
 	onclose={() => confirming.settle(false)}
 >
 	<h3 id={`${componentId}-confirm`} class="text-base font-semibold">

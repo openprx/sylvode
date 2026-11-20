@@ -212,9 +212,9 @@
 	}
 
 	const selectClass =
-		'mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
+		'mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-fg dark:border-slate-600 dark:bg-slate-900';
 	const buttonClass =
-		'inline-flex min-h-11 items-center rounded-md px-4 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50';
+		'inline-flex min-h-11 items-center rounded-md px-4 text-sm font-medium disabled:opacity-50';
 </script>
 
 <div class="sr-only" aria-live="polite" data-testid="flow-page-blocks-live">{announcement}</div>
@@ -227,7 +227,7 @@
 					<EmbeddedCollection {scopeId} collectionId={card.collectionId} blockId={card.blockId} />
 				{:else}
 					<section
-						class="not-prose my-4 rounded border border-slate-200 p-4 text-sm text-slate-500 dark:border-slate-700"
+						class="not-prose my-4 rounded border border-line p-4 text-sm text-slate-500"
 						data-testid="flow-hidden-collection"
 					>
 						{$t('flow.pageOnly.embedHidden')}
@@ -240,10 +240,10 @@
 					data-status={card.provisional.status}
 					aria-busy="true"
 				>
-					<p class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+					<p class="text-sm font-semibold text-fg">
 						{card.provisional.title}
 					</p>
-					<p class="text-xs text-slate-500 dark:text-slate-400">
+					<p class="text-xs text-fg-muted">
 						{$t('flow.canvas.slashMenu.collectionPending')}
 					</p>
 				</section>
@@ -256,16 +256,16 @@
 				/>
 			{:else}
 				<article
-					class="not-prose my-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 p-4 dark:border-slate-700"
+					class="not-prose my-3 flex flex-wrap items-center gap-2 rounded-lg border border-line p-4"
 					data-testid="flow-bridge-card-unavailable"
 					data-reference-id={card.referenceId}
 				>
-					<p class="flex-1 text-sm text-slate-500 dark:text-slate-400">
+					<p class="flex-1 text-sm text-fg-muted">
 						{$t('flow.bridge.card.unavailable')}
 					</p>
 					<button
 						type="button"
-						class="{buttonClass} text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
+						class="{buttonClass} text-danger hover:bg-red-50 dark:hover:bg-red-950"
 						onclick={() => askRemove(card.referenceId)}
 					>
 						{$t('flow.bridge.card.remove')}
@@ -324,10 +324,10 @@
 	onclose={() => (collectionOpen = false)}
 >
 	<form class="space-y-4" onsubmit={submitCollection} data-testid="flow-slash-collection-dialog">
-		<p class="text-sm text-slate-600 dark:text-slate-300">
+		<p class="text-sm text-fg-muted">
 			{$t('flow.canvas.slashMenu.collectionNote')}
 		</p>
-		<label class="block text-sm font-medium text-slate-700 dark:text-slate-200">
+		<label class="block text-sm font-medium text-fg">
 			{$t('flow.canvas.slashMenu.collectionTitleLabel')}
 			<input
 				class={selectClass}
@@ -342,7 +342,7 @@
 		<div class="flex justify-end gap-2">
 			<button
 				type="button"
-				class="{buttonClass} text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+				class="{buttonClass} text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
 				onclick={() => (collectionOpen = false)}
 			>
 				{$t('common.cancel')}
@@ -375,7 +375,7 @@
 		data-testid="flow-slash-forms-dialog"
 		data-mode={formsMode}
 	>
-		<p class="text-sm text-slate-600 dark:text-slate-300" data-testid="flow-slash-forms-note">
+		<p class="text-sm text-fg-muted" data-testid="flow-slash-forms-note">
 			{$t(
 				formsMode === 'embed'
 					? 'flow.canvas.slashMenu.embedNote'
@@ -383,7 +383,7 @@
 			)}
 		</p>
 		{#if pickerSnap}
-			<label class="block text-sm font-medium text-slate-700 dark:text-slate-200">
+			<label class="block text-sm font-medium text-fg">
 				{$t('flow.bridge.card.picker.project')}
 				<select
 					class={selectClass}
@@ -402,7 +402,7 @@
 				<p class="text-sm text-slate-500">{$t('flow.bridge.card.picker.noProjects')}</p>
 			{/if}
 			{#if pickerSnap.projectId}
-				<label class="block text-sm font-medium text-slate-700 dark:text-slate-200">
+				<label class="block text-sm font-medium text-fg">
 					{$t('flow.bridge.card.picker.form')}
 					<select
 						class={selectClass}
@@ -424,7 +424,7 @@
 				{/if}
 			{/if}
 			{#if pickerSnap.formId}
-				<label class="block text-sm font-medium text-slate-700 dark:text-slate-200">
+				<label class="block text-sm font-medium text-fg">
 					{$t('flow.bridge.card.picker.record')}
 					<select
 						class={selectClass}
@@ -459,7 +459,7 @@
 		<div class="flex justify-end gap-2">
 			<button
 				type="button"
-				class="{buttonClass} text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+				class="{buttonClass} text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
 				onclick={() => (formsOpen = false)}
 			>
 				{$t('common.cancel')}
@@ -490,14 +490,14 @@
 	onclose={() => (removingId = null)}
 >
 	<div class="space-y-4" data-testid="flow-bridge-remove-dialog">
-		<p class="text-sm text-slate-700 dark:text-slate-200">{$t('flow.bridge.card.removeBody')}</p>
+		<p class="text-sm text-fg">{$t('flow.bridge.card.removeBody')}</p>
 		{#if removeFailure}
 			<p class="text-sm text-red-600" role="alert">{$t(removeFailure.key)}</p>
 		{/if}
 		<div class="flex justify-end gap-2">
 			<button
 				type="button"
-				class="{buttonClass} text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+				class="{buttonClass} text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
 				onclick={() => (removingId = null)}
 			>
 				{$t('common.cancel')}

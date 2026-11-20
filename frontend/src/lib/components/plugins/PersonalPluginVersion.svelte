@@ -175,7 +175,7 @@
 			<h3 class="break-words font-semibold">
 				{item.manifest.name} <span class="text-sm font-normal">v{item.manifest.version}</span>
 			</h3>
-			<p class="text-sm text-slate-600 dark:text-slate-300">
+			<p class="text-sm text-fg-muted">
 				{item.manifest.key} · {item.manifest.publisher}
 			</p>
 		</div>
@@ -296,14 +296,14 @@
 		{:else if panelState === 'loading'}
 			<p role="status" class="text-sm">{$t('plugins.loadingPanel')}</p>
 		{:else if panelState === 'error'}
-			<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t('plugins.loadFailed')}</p>
+			<p role="alert" class="text-sm text-danger">{$t('plugins.loadFailed')}</p>
 		{/if}
 	{/if}
 
-	<div class="space-y-3 border-t border-slate-200 pt-3 dark:border-slate-700">
+	<div class="space-y-3 border-t border-line pt-3">
 		<h4 class="text-sm font-semibold">{$t('plugins.library.projectUse')}</h4>
 		{#if item.project_links.length}
-			<ul class="divide-y divide-slate-200 dark:divide-slate-700">
+			<ul class="divide-y divide-line">
 				{#each item.project_links as link (link.project_id)}
 					{@const project = projects.find((entry) => entry.id === link.project_id)}
 					<li class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
@@ -366,7 +366,7 @@
 				{/each}
 			</ul>
 		{:else}
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('plugins.library.noProjectUse')}</p>
+			<p class="text-sm text-fg-muted">{$t('plugins.library.noProjectUse')}</p>
 		{/if}
 		{#if canConnect.length && !item.archived_at}
 			<div class="flex flex-wrap items-end gap-2">
@@ -393,6 +393,6 @@
 			</div>
 		{/if}
 	</div>
-	{#if error}<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t(error)}</p>{/if}
+	{#if error}<p role="alert" class="text-sm text-danger">{$t(error)}</p>{/if}
 	{#if notice}<p role="status" class="text-sm">{$t(notice)}</p>{/if}
 </article>

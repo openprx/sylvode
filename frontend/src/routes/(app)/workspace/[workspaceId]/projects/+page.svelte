@@ -377,21 +377,21 @@
 
 <div class="mx-auto max-w-7xl">
 	<div class="mb-6">
-		<nav class="mb-4 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+		<nav class="mb-4 flex items-center gap-2 text-sm text-fg-muted">
 			<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
 			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"
 				></path>
 			</svg>
-			<span class="font-medium text-slate-900 dark:text-slate-100"
+			<span class="font-medium text-fg"
 				>{workspace?.name || $t('common.loading')}</span
 			>
 		</nav>
 
 		<div class="flex items-center justify-between">
 			<div>
-				<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('project.title')}</h1>
-				<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+				<h1 class="text-2xl font-semibold text-fg">{$t('project.title')}</h1>
+				<p class="mt-1 text-sm text-fg-muted">
 					{$t('project.count', { values: { count: filteredProjects.length } })}
 				</p>
 			</div>
@@ -424,14 +424,14 @@
 				type="search"
 				placeholder={$t('project.searchPlaceholder')}
 				bind:value={searchQuery}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-2 pl-10 pr-4 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 shadow-sm dark:shadow-slate-900/50 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-2 pl-10 pr-4 text-fg placeholder:text-slate-400 dark:placeholder-slate-500"
 			/>
 		</div>
 	</div>
 
 	{#if loading}
 		<div class="flex items-center justify-center py-12">
-			<div class="text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+			<div class="text-fg-muted">{$t('common.loading')}</div>
 		</div>
 	{:else if error}
 		<div class="rounded-md border border-red-200 bg-red-50 p-4">
@@ -453,14 +453,14 @@
 		<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 			{#each filteredProjects as project}
 				<article
-					class="group rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm dark:shadow-slate-900/50 transition-all hover:-translate-y-0.5 hover:shadow-md dark:shadow-slate-900/50"
+					class="group rounded-xl border border-line bg-white dark:bg-slate-900 p-5 transition-all hover:-translate-y-0.5 hover:shadow-md"
 				>
 					<div class="mb-3 flex items-start justify-between gap-3">
 						<div class="min-w-0">
 							<button
 								type="button"
 								onclick={() => goToProject(project)}
-								class="truncate text-left text-lg font-semibold text-slate-900 dark:text-slate-100 transition-colors hover:text-blue-600"
+								class="truncate text-left text-lg font-semibold text-fg transition-colors hover:text-blue-600"
 							>
 								{project.name}
 							</button>
@@ -504,7 +504,7 @@
 						</div>
 					</div>
 
-					<p class="mb-4 min-h-10 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+					<p class="mb-4 min-h-10 text-sm text-fg-muted line-clamp-2">
 						{project.description || $t('project.noDescription')}
 					</p>
 
@@ -526,7 +526,7 @@
 					{:else}
 						<div class="mb-4 grid grid-cols-4 gap-2">
 							<div
-								class="rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-2 text-center text-slate-600 dark:text-slate-300"
+								class="rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-2 text-center text-fg-muted"
 							>
 								<div class="text-base font-semibold">{getIssueCount(project, 'backlog')}</div>
 								<div class="text-[11px] font-medium">{$t('workflow.backlog')}</div>
@@ -549,11 +549,11 @@
 					<div class="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
 						<a
 							href={projectHref(project)}
-							class="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-300 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+							class="inline-flex items-center rounded-md border border-line px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
 						>
 							{isFormsProject(project) ? $t('project.openForms') : $t('project.openProject')}
 						</a>
-						<span class="text-xs text-slate-500 dark:text-slate-400"
+						<span class="text-xs text-fg-muted"
 							>{$t('project.updatedAt')} {formatRelativeTime(project.updated_at)}</span
 						>
 					</div>
@@ -577,7 +577,7 @@
 		class="space-y-5"
 	>
 		<div class="space-y-2">
-			<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+			<p class="text-sm font-medium text-fg">
 				{$t('project.projectType')}
 			</p>
 			<div class="grid gap-3 md:grid-cols-2">
@@ -588,18 +588,18 @@
 						onclick={() => selectProjectType(item.key)}
 						class="min-h-32 rounded-lg border p-4 text-left transition-colors {createForm.type_key ===
 						item.key
-							? 'border-blue-500 bg-blue-50 shadow-sm dark:border-blue-400 dark:bg-blue-950/30'
-							: 'border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-900 dark:hover:bg-slate-800'}"
+							? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/30'
+							: 'border-line bg-white hover:border-blue-200 hover:bg-slate-50 dark:bg-slate-900 dark:hover:border-blue-900 dark:hover:bg-slate-800'}"
 					>
 						<div class="flex items-start justify-between gap-3">
 							<div class="min-w-0">
 								<div class="flex items-center gap-2">
 									<Icon class="h-5 w-5 text-blue-600 dark:text-blue-300" />
-									<p class="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+									<p class="truncate text-sm font-semibold text-fg">
 										{getProjectTypeName(item.key)}
 									</p>
 								</div>
-								<p class="mt-3 line-clamp-3 text-xs leading-5 text-slate-600 dark:text-slate-300">
+								<p class="mt-3 line-clamp-3 text-xs leading-5 text-fg-muted">
 									{projectTypeDescription(item, $t)}
 								</p>
 							</div>
@@ -611,7 +611,7 @@
 				{/each}
 			</div>
 			{#if selectedProjectType}
-				<p class="text-xs text-slate-500 dark:text-slate-400">
+				<p class="text-xs text-fg-muted">
 					{$t('project.projectTypeBoundary')}
 				</p>
 			{/if}
@@ -639,12 +639,12 @@
 		/>
 		<div class="space-y-1">
 			<label
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="block text-sm font-medium text-fg"
 				for="create-project-description">{$t('project.description')}</label
 			>
 			<textarea
 				id="create-project-description"
-				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 shadow-sm dark:shadow-slate-900/50 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 resize-y"
+				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500 resize-y"
 				placeholder={$t('project.descriptionPlaceholder')}
 				bind:value={createForm.description}
 				maxlength={350}
@@ -702,12 +702,12 @@
 		/>
 		<div class="space-y-1">
 			<label
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="block text-sm font-medium text-fg"
 				for="edit-project-description">{$t('project.description')}</label
 			>
 			<textarea
 				id="edit-project-description"
-				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 shadow-sm dark:shadow-slate-900/50 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 resize-y"
+				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500 resize-y"
 				placeholder={$t('project.descriptionPlaceholder')}
 				bind:value={editForm.description}
 				maxlength={350}
@@ -716,7 +716,7 @@
 		</div>
 		<div class="space-y-1">
 			<label
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="block text-sm font-medium text-fg"
 				for="edit-project-workflow"
 			>
 				Workflow
@@ -724,7 +724,7 @@
 			<select
 				id="edit-project-workflow"
 				bind:value={editForm.workflow_id}
-				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 			>
 				<option value="">{$t('workflow.useWorkspaceDefault')}</option>
 				{#each availableWorkflows as wf (wf.id)}
@@ -732,7 +732,7 @@
 				{/each}
 			</select>
 		</div>
-		<div class="text-sm text-slate-500 dark:text-slate-400">
+		<div class="text-sm text-fg-muted">
 			<strong>{$t('project.note')}:</strong>
 			{$t('project.keyImmutable', { values: { key: editingProject?.key } })}
 		</div>
@@ -754,7 +754,7 @@
 
 <Modal bind:open={showDeleteModal} title={$t('project.deleteProject')}>
 	<div class="space-y-4">
-		<p class="text-slate-700 dark:text-slate-300">
+		<p class="text-fg">
 			{$t('project.deleteConfirm', {
 				values: { name: deletingProject?.name, key: deletingProject?.key }
 			})}

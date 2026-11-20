@@ -96,9 +96,9 @@
 	}
 
 	const inputClass =
-		'min-h-11 rounded border border-slate-300 bg-white px-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
+		'min-h-11 rounded border border-slate-300 bg-white px-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900';
 	const iconButton =
-		'min-h-11 min-w-11 rounded text-sm hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-30 dark:hover:bg-slate-800';
+		'min-h-11 min-w-11 rounded text-sm hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800';
 </script>
 
 <section
@@ -108,7 +108,7 @@
 >
 	{#if message}
 		<p
-			class="text-sm text-red-700 dark:text-red-300"
+			class="text-sm text-danger"
 			role="alert"
 			data-error-code={message.code ?? ''}
 		>
@@ -117,7 +117,7 @@
 	{/if}
 
 	<div class="space-y-2">
-		<h3 class="text-sm font-semibold text-slate-800 dark:text-slate-100">
+		<h3 class="text-sm font-semibold text-fg">
 			{$t('flow.collection.schema.fields')}
 		</h3>
 		<ul class="space-y-2">
@@ -180,7 +180,7 @@
 					>
 					<button
 						type="button"
-						class="min-h-11 rounded px-3 text-sm text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
+						class="min-h-11 rounded px-3 text-sm text-danger hover:bg-red-50 dark:hover:bg-red-950"
 						disabled={snapshot.schemaBusy}
 						onclick={async () => report(await controller.archiveField(field.fieldId))}
 						>{$t('flow.collection.schema.archive')}</button
@@ -195,7 +195,7 @@
 				void addField();
 			}}
 		>
-			<label class="flex flex-col text-xs text-slate-600 dark:text-slate-300">
+			<label class="flex flex-col text-xs text-fg-muted">
 				{$t('flow.collection.schema.newFieldLabel')}
 				<input
 					class="{inputClass} w-44"
@@ -203,7 +203,7 @@
 					data-testid="collection-new-field-label"
 				/>
 			</label>
-			<label class="flex flex-col text-xs text-slate-600 dark:text-slate-300">
+			<label class="flex flex-col text-xs text-fg-muted">
 				{$t('flow.collection.schema.fieldType')}
 				<select class={inputClass} bind:value={newType} data-testid="collection-new-field-type">
 					{#each CREATABLE_FIELD_TYPES as type (type)}
@@ -212,7 +212,7 @@
 				</select>
 			</label>
 			{#if newType === 'select' || newType === 'multi_select'}
-				<label class="flex flex-col text-xs text-slate-600 dark:text-slate-300">
+				<label class="flex flex-col text-xs text-fg-muted">
 					{$t('flow.collection.schema.options')}
 					<input
 						class="{inputClass} w-56"
@@ -232,7 +232,7 @@
 	</div>
 
 	<div class="space-y-2">
-		<h3 class="text-sm font-semibold text-slate-800 dark:text-slate-100">
+		<h3 class="text-sm font-semibold text-fg">
 			{$t('flow.collection.schema.views')}
 		</h3>
 		<ul class="space-y-2">
@@ -277,11 +277,11 @@
 				void addView();
 			}}
 		>
-			<label class="flex flex-col text-xs text-slate-600 dark:text-slate-300">
+			<label class="flex flex-col text-xs text-fg-muted">
 				{$t('flow.collection.schema.newViewName')}
 				<input class="{inputClass} w-44" bind:value={newViewName} />
 			</label>
-			<label class="flex flex-col text-xs text-slate-600 dark:text-slate-300">
+			<label class="flex flex-col text-xs text-fg-muted">
 				{$t('flow.collection.schema.viewKind')}
 				<select class={inputClass} bind:value={newViewKind}>
 					<option value="table">{$t('flow.collection.view.table')}</option>

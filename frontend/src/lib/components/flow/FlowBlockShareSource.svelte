@@ -450,7 +450,7 @@
 								<div class="flex flex-wrap gap-3">
 									<button
 										type="button"
-										class="min-h-11 text-red-700 underline dark:text-red-300"
+										class="min-h-11 text-danger underline"
 										disabled={draft.busy}
 										onclick={() => lifecycle(share.share_id, 'revoke')}
 										>{$t('flow.shared.revokeSource')}</button

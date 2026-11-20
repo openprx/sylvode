@@ -134,7 +134,7 @@
 </script>
 
 {#if enabled}<section
-		class="mt-6 rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
+		class="mt-6 rounded-lg border border-line bg-white p-5 dark:bg-slate-900"
 		aria-label={$t('flow.shared.sharedHere')}
 		data-testid="flow-shared-target-list"
 	>
@@ -155,13 +155,13 @@
 			</p>{/if}
 		<ul class="space-y-3">
 			{#each items.slice(0, limit) as item (item.share_id)}<li
-					class="rounded border border-slate-200 p-3 dark:border-slate-700"
+					class="rounded border border-line p-3"
 					data-share-id={item.share_id}
 				>
 					<!-- href resolves the app route and appends only target UUID query parameters. -->
 					<!-- eslint-disable svelte/no-navigation-without-resolve -->
 					<a
-						class="block rounded focus-visible:outline-2 focus-visible:outline-blue-500"
+						class="block rounded"
 						href={resolve('/(app)/shared-blocks/[shareId]', { shareId: item.share_id }) +
 							'?' +
 							new SvelteURLSearchParams({

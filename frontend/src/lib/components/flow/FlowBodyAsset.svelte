@@ -114,7 +114,7 @@
 </script>
 
 <figure
-	class="my-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700"
+	class="my-3 rounded-lg border border-line p-3"
 	data-testid="flow-body-asset"
 	data-asset-kind={kind}
 	data-asset-id={assetId}

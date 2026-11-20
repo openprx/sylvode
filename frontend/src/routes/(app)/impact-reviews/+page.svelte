@@ -111,16 +111,16 @@
 
 <div class="mx-auto max-w-6xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
-		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-xl font-semibold text-fg">
 			{$t('impactReview.listTitle')}
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">{$t('impactReview.listSubtitle')}</p>
 	</div>
 
 	<div
-		class="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800 md:grid-cols-4"
+		class="grid grid-cols-1 gap-3 rounded-lg border border-line bg-white p-4 dark:bg-slate-800 md:grid-cols-4"
 	>
 		<div>
 			<label for="impact-review-project" class="mb-1 block text-sm text-slate-600"
@@ -186,7 +186,7 @@
 	</div>
 
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 	>
 		{#if loading}
 			<p class="text-sm text-slate-500">{$t('common.loading')}</p>
@@ -240,7 +240,7 @@
 		{/if}
 
 		<div
-			class="mt-4 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"
+			class="mt-4 flex items-center justify-between border-t border-line pt-3 text-sm"
 		>
 			<p class="text-slate-500">
 				{$t('governance.pagination', { values: { total, page, pages: totalPages || 1 } })}

@@ -36,7 +36,7 @@
 	>
 		{$t('flow.shared.unavailable')}
 	</p>{:else if excerpt}<p
-		class="mt-1 line-clamp-2 whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-300"
+		class="mt-1 line-clamp-2 whitespace-pre-wrap text-sm text-fg-muted"
 	>
 		{excerpt}
 	</p>{/if}

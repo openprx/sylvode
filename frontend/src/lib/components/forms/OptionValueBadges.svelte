@@ -101,8 +101,8 @@
 		{#each items as item}
 			<span
 				class={optionColor(item)
-					? 'inline-flex max-w-full items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-slate-800 ring-1 ring-[color:var(--option-color)]/30 dark:text-slate-100'
-					: 'inline-flex max-w-full items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200'}
+					? 'inline-flex max-w-full items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-fg ring-1 ring-[color:var(--option-color)]/30'
+					: 'inline-flex max-w-full items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-fg dark:bg-slate-800'}
 				style={optionColor(item)
 					? `${optionStyle(item)} background-color: color-mix(in srgb, var(--option-color) 16%, transparent);`
 					: undefined}

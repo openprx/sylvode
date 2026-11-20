@@ -134,13 +134,13 @@
 	}
 
 	const optionClass =
-		'flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-slate-700 dark:text-slate-200';
+		'flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-fg';
 </script>
 
 <button
 	type="button"
 	bind:this={button}
-	class="inline-flex h-8 max-w-[18rem] items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-slate-900 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-100 dark:hover:bg-slate-800"
+	class="inline-flex h-8 max-w-[18rem] items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 	aria-haspopup="listbox"
 	aria-expanded={open}
 	aria-label={`${$t('forms.views.switcherLabel')}: ${currentName}`}
@@ -149,7 +149,7 @@
 	onclick={() => (open ? close() : void show())}
 	onkeydown={onButtonKey}
 >
-	<CurrentIcon class="h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+	<CurrentIcon class="h-4 w-4 shrink-0 text-fg-muted" aria-hidden="true" />
 	<span class="max-w-[24ch] truncate">{currentName}</span>
 	{#if modified}
 		<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true"></span>
@@ -186,13 +186,13 @@
 		tabindex="0"
 		aria-label={$t('forms.views.switcherLabel')}
 		aria-activedescendant={options[activeIndex] ? optionId(options[activeIndex].id) : undefined}
-		class="space-y-0.5 focus:outline-none"
+		class="space-y-0.5"
 		onkeydown={onListKey}
 	>
 		{#each groups as group (group.key)}
 			{#if group.label}
 				<div
-					class="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-slate-500 uppercase dark:text-slate-400"
+					class="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-fg-muted uppercase"
 					role="presentation"
 				>
 					{group.label}
@@ -217,7 +217,7 @@
 					onmouseenter={() => (activeIndex = index)}
 					onkeydown={onListKey}
 				>
-					<Icon class="h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+					<Icon class="h-4 w-4 shrink-0 text-fg-muted" aria-hidden="true" />
 					<span class="min-w-0 flex-1 truncate" title={option.name}>{option.name}</span>
 					{#if view && viewIsPrivate(view)}
 						<Lock class="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
@@ -240,14 +240,14 @@
 		{/each}
 	</div>
 	{#if canCreate}
-		<div class="mt-1 border-t border-slate-200 pt-1 dark:border-slate-700">
+		<div class="mt-1 border-t border-line pt-1">
 			{#if creating}
 				<div role="group" aria-label={$t('forms.views.newView')} class="space-y-0.5">
 					{#each CREATABLE_VIEW_TYPES as type (type)}
 						{@const Icon = VIEW_TYPE_ICONS[type]}
 						<button
 							type="button"
-							class="{optionClass} hover:bg-slate-100 focus-visible:bg-slate-100 focus-visible:outline-none dark:hover:bg-slate-800 dark:focus-visible:bg-slate-800"
+							class="{optionClass} hover:bg-slate-100 focus-visible:bg-slate-100 dark:hover:bg-slate-800 dark:focus-visible:bg-slate-800"
 							data-view-new-type={type}
 							onclick={() => {
 								close();
@@ -263,7 +263,7 @@
 			{:else}
 				<button
 					type="button"
-					class="{optionClass} hover:bg-slate-100 focus-visible:bg-slate-100 focus-visible:outline-none dark:hover:bg-slate-800 dark:focus-visible:bg-slate-800"
+					class="{optionClass} hover:bg-slate-100 focus-visible:bg-slate-100 dark:hover:bg-slate-800 dark:focus-visible:bg-slate-800"
 					aria-expanded={creating}
 					data-view-new
 					onclick={async () => {

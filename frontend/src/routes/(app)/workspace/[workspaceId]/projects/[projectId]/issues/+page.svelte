@@ -277,10 +277,10 @@
 
 <div class="mx-auto max-w-7xl space-y-6">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-4 sm:p-5 dark:bg-slate-800"
 	>
 		<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-			<div class="text-sm text-slate-600 dark:text-slate-400">
+			<div class="text-sm text-fg-muted">
 				<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
 				<span class="mx-1 text-slate-400">/</span>
 				<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600"
@@ -291,11 +291,11 @@
 					>{$t('project.detail')}</a
 				>
 				<span class="mx-1 text-slate-400">/</span>
-				<span class="font-medium text-slate-900 dark:text-slate-100">{$t('issue.list')}</span>
+				<span class="font-medium text-fg">{$t('issue.list')}</span>
 			</div>
 			<button
 				type="button"
-				class="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm dark:shadow-slate-900/50 transition hover:bg-blue-700"
+				class="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
 				onclick={() => (showCreateModal = true)}>+ {$t('issue.create')}</button
 			>
 		</div>
@@ -303,7 +303,7 @@
 		<div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
 			<div class="xl:col-span-2">
 				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					for="keyword">{$t('common.search')}</label
 				>
 				<input
@@ -312,19 +312,19 @@
 					bind:value={keyword}
 					oninput={resetPageAndLoad}
 					placeholder={$t('issue.searchPlaceholder')}
-					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 				/>
 			</div>
 			<div>
 				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					for="statusFilter">{$t('common.status')}</label
 				>
 				<select
 					id="statusFilter"
 					bind:value={statusFilter}
 					onchange={resetPageAndLoad}
-					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 				>
 					<option value="all">{$t('issue.all')}</option>
 					{#if workflowStates.length > 0}
@@ -341,14 +341,14 @@
 			</div>
 			<div>
 				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					for="priorityFilter">{$t('common.priority')}</label
 				>
 				<select
 					id="priorityFilter"
 					bind:value={priorityFilter}
 					onchange={resetPageAndLoad}
-					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 				>
 					<option value="all">{$t('issue.all')}</option>
 					<option value="low">{$t('issue.low')}</option>
@@ -359,14 +359,14 @@
 			</div>
 			<div>
 				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					for="assigneeFilter">{$t('common.assignee')}</label
 				>
 				<select
 					id="assigneeFilter"
 					bind:value={assigneeFilter}
 					onchange={resetPageAndLoad}
-					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 				>
 					<option value="all">{$t('issue.all')}</option>
 					{#each assigneeOptions as assigneeId}
@@ -377,7 +377,7 @@
 			<div class="relative" bind:this={labelFilterContainer}>
 				<span
 					id={labelFilterLabelId}
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					>{$t('common.label')}</span
 				>
 				<button
@@ -385,7 +385,7 @@
 					aria-expanded={showLabelFilterDropdown}
 					aria-haspopup="listbox"
 					aria-labelledby={labelFilterLabelId}
-					class="flex w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="flex w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 					onclick={(event) => {
 						event.stopPropagation();
 						showLabelFilterDropdown = !showLabelFilterDropdown;
@@ -404,13 +404,13 @@
 				</button>
 				{#if showLabelFilterDropdown}
 					<div
-						class="absolute z-20 mt-1 w-full rounded-md border border-slate-200 bg-white p-2 shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800"
+						class="absolute z-20 mt-1 w-full rounded-md border border-line bg-white p-2 shadow-lg dark:bg-slate-800"
 					>
-						<p class="mb-2 px-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+						<p class="mb-2 px-2 text-xs font-medium text-fg-muted">
 							{$t('common.label')}
 						</p>
 						{#if workspaceLabels.length === 0}
-							<p class="px-2 py-1 text-xs text-slate-500 dark:text-slate-400">
+							<p class="px-2 py-1 text-xs text-fg-muted">
 								{$t('issue.noWorkspaceLabels')}
 							</p>
 						{:else}
@@ -446,7 +446,7 @@
 			</div>
 			<div>
 				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					for="sortBy">{$t('issue.sortBy')}</label
 				>
 				<div class="flex gap-2">
@@ -454,7 +454,7 @@
 						id="sortBy"
 						bind:value={sortBy}
 						onchange={resetPageAndLoad}
-						class="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+						class="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 					>
 						<option value="updated_at">{$t('common.updatedAt')}</option>
 						<option value="created_at">{$t('common.createdAt')}</option>
@@ -464,7 +464,7 @@
 					<select
 						bind:value={sortOrder}
 						onchange={resetPageAndLoad}
-						class="rounded-md border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+						class="rounded-md border border-slate-300 bg-white px-2 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 					>
 						<option value="desc">{$t('common.desc')}</option>
 						<option value="asc">{$t('common.asc')}</option>
@@ -476,7 +476,7 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+			class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 		>
 			<div class="space-y-3">
 				{#each Array(5) as _, index (`skeleton-${index}`)}
@@ -486,41 +486,41 @@
 		</div>
 	{:else if issues.length === 0}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-12 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white p-12 text-center text-fg-muted dark:bg-slate-800"
 		>
 			{$t('issue.noMatched')}
 		</div>
 	{:else}
 		<div
-			class="overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800"
+			class="overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-800"
 		>
 			<div class="hidden overflow-x-auto md:block">
-				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
+				<table class="min-w-full divide-y divide-line">
 					<thead class="bg-slate-50 dark:bg-slate-900">
 						<tr>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('issue.title')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.status')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.priority')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.assignee')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.updatedAt')}</th
 							>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-slate-200 bg-white dark:divide-slate-700 dark:bg-slate-800">
+					<tbody class="divide-y divide-line bg-white dark:bg-slate-800">
 						{#each issues as issue (issue.id)}
 							<tr
 								class="cursor-pointer hover:bg-slate-50 dark:bg-slate-950 dark:hover:bg-slate-700"
@@ -528,10 +528,10 @@
 							>
 								<td class="px-4 py-3">
 									<div class="space-y-1">
-										<p class="text-sm font-medium text-slate-900 dark:text-slate-100">
+										<p class="text-sm font-medium text-fg">
 											{issue.title}
 										</p>
-										<p class="font-mono text-xs text-slate-500 dark:text-slate-400">
+										<p class="font-mono text-xs text-fg-muted">
 											{formatIssueCode(issue)}
 										</p>
 										{#if issue.labels?.length}
@@ -580,7 +580,7 @@
 													title={$t('admin.botBadge')}
 												/>
 											{/if}
-											<span class="text-xs text-slate-600 dark:text-slate-400"
+											<span class="text-xs text-fg-muted"
 												>{memberNameMap[issue.assignee_id] ||
 													issue.assignee_id.substring(0, 8)}</span
 											>
@@ -589,7 +589,7 @@
 										<span class="text-xs text-slate-400">{$t('common.unassigned')}</span>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-400"
+								<td class="px-4 py-3 text-sm text-fg-muted"
 									>{formatDate(issue.updated_at)}</td
 								>
 							</tr>
@@ -598,7 +598,7 @@
 				</table>
 			</div>
 
-			<div class="divide-y divide-slate-200 dark:divide-slate-700 md:hidden">
+			<div class="divide-y divide-line md:hidden">
 				{#each issues as issue (issue.id)}
 					<button
 						class="w-full space-y-2 p-4 text-left hover:bg-slate-50 dark:bg-slate-950 dark:hover:bg-slate-700"
@@ -606,8 +606,8 @@
 					>
 						<div class="flex items-start justify-between gap-3">
 							<div>
-								<p class="text-sm font-medium text-slate-900 dark:text-slate-100">{issue.title}</p>
-								<p class="font-mono text-xs text-slate-500 dark:text-slate-400">
+								<p class="text-sm font-medium text-fg">{issue.title}</p>
+								<p class="font-mono text-xs text-fg-muted">
 									{formatIssueCode(issue)}
 								</p>
 								{#if issue.labels?.length}
@@ -656,7 +656,7 @@
 											title={$t('admin.botBadge')}
 										/>
 									{/if}
-									<span class="text-xs text-slate-600 dark:text-slate-400"
+									<span class="text-xs text-fg-muted"
 										>{memberNameMap[issue.assignee_id] || issue.assignee_id.substring(0, 8)}</span
 									>
 								</div>
@@ -664,7 +664,7 @@
 								<span class="text-xs text-slate-400">{$t('common.unassigned')}</span>
 							{/if}
 						</div>
-						<p class="text-xs text-slate-500 dark:text-slate-400">
+						<p class="text-xs text-fg-muted">
 							{$t('project.updatedAt')}
 							{formatDate(issue.updated_at)}
 						</p>
@@ -675,7 +675,7 @@
 
 		{#if totalPages > 1}
 			<div class="mt-6 flex items-center justify-between px-2">
-				<span class="text-sm text-slate-500 dark:text-slate-400"
+				<span class="text-sm text-fg-muted"
 					>{$t('issue.pagination', {
 						values: { total, current: currentPage, pages: totalPages }
 					})}</span

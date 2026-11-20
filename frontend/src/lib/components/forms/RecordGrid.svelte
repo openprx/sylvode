@@ -99,8 +99,8 @@
 	const fieldLabel = (field: FormField) => field.label?.trim() || field.key.replaceAll('_', ' ');
 
 	const toneClass: Record<GridBadge['tone'], string> = {
-		amber: 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200',
-		slate: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+		amber: 'bg-amber-100 text-warning dark:bg-amber-950/50',
+		slate: 'bg-slate-100 text-fg-muted dark:bg-slate-800',
 		blue: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-200',
 		cyan: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200'
 	};
@@ -198,7 +198,7 @@
 	}
 
 	const headerButton =
-		'inline-flex min-h-6 items-center gap-1 rounded text-start font-medium hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:hover:text-slate-100';
+		'inline-flex min-h-6 items-center gap-1 rounded text-start font-medium hover:text-fg';
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -- title links are full record page paths built by the caller -->
@@ -217,13 +217,13 @@
 <div class="overflow-x-auto" data-view-renderer="grid">
 	<p id="record-table-hint" class="sr-only">{$t('forms.recordPanel.tableHint')}</p>
 	<table
-		class="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700"
+		class="min-w-full divide-y divide-line text-sm"
 		aria-describedby="record-table-hint"
 	>
 		<thead class="bg-slate-50 dark:bg-slate-950">
 			<tr>
 				<th
-					class="w-56 px-4 py-3 text-start font-medium text-slate-600 dark:text-slate-300"
+					class="w-56 px-4 py-3 text-start font-medium text-fg-muted"
 					aria-sort={ariaSort('title')}
 				>
 					<button
@@ -237,7 +237,7 @@
 				{#each fields as field (field.key)}
 					{@const sortable = sortableKeys.includes(field.key)}
 					<th
-						class="px-4 py-3 text-start font-medium text-slate-600 dark:text-slate-300"
+						class="px-4 py-3 text-start font-medium text-fg-muted"
 						aria-sort={sortable ? ariaSort(field.key) : undefined}
 					>
 						<div class="flex flex-wrap items-center gap-1.5">
@@ -263,12 +263,12 @@
 						</div>
 					</th>
 				{/each}
-				<th class="px-4 py-3 text-end font-medium text-slate-600 dark:text-slate-300"
+				<th class="px-4 py-3 text-end font-medium text-fg-muted"
 					>{$t('common.actions')}</th
 				>
 			</tr>
 		</thead>
-		<tbody bind:this={tbody} class="divide-y divide-slate-100 dark:divide-slate-800">
+		<tbody bind:this={tbody} class="divide-y divide-line">
 			{#each records as record (record.id)}
 				{@const selected = record.id === currentId}
 				<tr
@@ -288,7 +288,7 @@
 						{/if}
 						<a
 							href={recordHref(record.id)}
-							class="rounded-sm font-medium text-blue-700 hover:text-blue-800 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-blue-300"
+							class="rounded-sm font-medium text-blue-700 hover:text-blue-800 hover:underline dark:text-blue-300"
 							tabindex={record.id === rovingId ? 0 : -1}
 							aria-controls="record-panel"
 							aria-expanded={selected}
@@ -301,7 +301,7 @@
 						</div>
 					</td>
 					{#each fields as field (field.key)}
-						<td class="max-w-64 px-4 py-3 text-slate-700 dark:text-slate-300">
+						<td class="max-w-64 px-4 py-3 text-fg">
 							<div class="flex min-w-0 flex-wrap items-center gap-1.5">
 								<span class="min-w-0 max-w-full truncate"
 									><FieldValue
@@ -354,10 +354,10 @@
 
 {#if pageCount > 1}
 	<div
-		class="flex flex-col gap-2 border-t border-slate-200 px-4 py-3 text-sm dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between"
+		class="flex flex-col gap-2 border-t border-line px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
 		data-record-pagination
 	>
-		<span class="text-slate-500 dark:text-slate-400">
+		<span class="text-fg-muted">
 			{$t('forms.recordPageLabel', { values: { page, total: pageCount, count: total } })}
 		</span>
 		<div class="flex items-center gap-2">

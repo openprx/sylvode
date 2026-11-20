@@ -155,7 +155,7 @@
 	>
 		{#each jobsState.uploads as upload (upload.job.key)}{@const job = upload.job}
 			<div
-				class="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700"
+				class="rounded-md border border-line p-3 text-sm"
 				data-testid="flow-body-upload-job"
 				data-state={upload.state.phase}
 			>
@@ -197,7 +197,7 @@
 			</div>{/each}
 		{#each jobsState.children as child (child.job.id)}{@const job = child.job}
 			<div
-				class="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700"
+				class="rounded-md border border-line p-3 text-sm"
 				data-testid="flow-body-child-job"
 				data-state={child.state.phase}
 			>

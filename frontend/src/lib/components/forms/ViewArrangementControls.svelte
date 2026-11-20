@@ -131,7 +131,7 @@
 	}
 
 	const toolButton =
-		'inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-200 dark:hover:bg-slate-800';
+		'inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800';
 	const control =
 		'h-8 rounded-md border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-slate-800';
 </script>
@@ -193,7 +193,7 @@
 >
 	<div class="space-y-2 p-1">
 		{#if advanced}
-			<p class="text-sm text-slate-600 dark:text-slate-300">
+			<p class="text-sm text-fg-muted">
 				{$t('forms.views.advancedFiltersInUse')}
 			</p>
 		{:else}
@@ -206,14 +206,14 @@
 							aria-checked={filterLogic === value}
 							class="h-7 rounded-md px-2 text-xs font-medium {filterLogic === value
 								? 'bg-blue-600 text-white'
-								: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'}"
+								: 'bg-slate-100 text-fg dark:bg-slate-800'}"
 							onclick={() => onfilters(filters, value as 'all' | 'any')}>{label}</button
 						>
 					{/each}
 				</div>
 			{/if}
 			{#if filters.length === 0}
-				<p class="text-sm text-slate-500 dark:text-slate-400">{$t('forms.views.noFilters')}</p>
+				<p class="text-sm text-fg-muted">{$t('forms.views.noFilters')}</p>
 			{/if}
 			{#each filters as filter, index (index)}
 				<div class="flex flex-wrap items-center gap-1.5" data-view-filter-row={index}>
@@ -264,10 +264,10 @@
 				><Plus class="h-4 w-4" aria-hidden="true" />{$t('forms.views.addCondition')}</button
 			>
 		{/if}
-		<div class="border-t border-slate-200 pt-2 dark:border-slate-700">
+		<div class="border-t border-line pt-2">
 			<button
 				type="button"
-				class="h-8 rounded-md px-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+				class="h-8 rounded-md px-2 text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 				data-view-filter-advanced
 				onclick={() => {
 					open = null;
@@ -288,7 +288,7 @@
 >
 	<div class="space-y-2 p-1">
 		<label class="block space-y-1">
-			<span class="text-xs font-medium text-slate-600 dark:text-slate-300"
+			<span class="text-xs font-medium text-fg-muted"
 				>{$t('forms.views.sortField')}</span
 			>
 			<select
@@ -316,7 +316,7 @@
 					class="h-8 flex-1 rounded-md px-2 text-sm font-medium disabled:opacity-50 {sort?.direction ===
 					value
 						? 'bg-blue-600 text-white'
-						: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'}"
+						: 'bg-slate-100 text-fg dark:bg-slate-800'}"
 					data-view-sort-direction={value}
 					onclick={() => sort && onsort({ field: sort.field, direction: value as 'asc' | 'desc' })}
 					>{label}</button
@@ -326,7 +326,7 @@
 		{#if sort}
 			<button
 				type="button"
-				class="h-8 rounded-md px-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+				class="h-8 rounded-md px-2 text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 				onclick={() => onsort(null)}>{$t('forms.views.clear')}</button
 			>
 		{/if}
@@ -345,7 +345,7 @@
 		<div class="flex gap-1 pb-1">
 			<button
 				type="button"
-				class="h-7 rounded-md px-2 text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+				class="h-7 rounded-md px-2 text-xs text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 				onclick={() => oncolumns(orderedColumns.filter((key) => !hiddenByPermission.has(key)))}
 				>{$t('forms.views.showAll')}</button
 			>

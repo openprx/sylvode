@@ -466,11 +466,11 @@
 
 <div class="mx-auto max-w-7xl space-y-6">
 	<section
-		class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-xl border border-line bg-white p-5 dark:bg-slate-800"
 	>
 		<div class="flex items-start justify-between gap-4">
 			<div>
-				<h1 class="text-2xl font-semibold text-slate-900 dark:text-slate-100">
+				<h1 class="text-2xl font-semibold text-fg">
 					{$t('governanceCenter.title')}
 				</h1>
 				<p class="mt-1 text-sm text-slate-500">{$t('governanceCenter.subtitle')}</p>
@@ -484,7 +484,7 @@
 						id="governance-center-project"
 						bind:value={selectedProjectId}
 						onchange={handleProjectChange}
-						class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+						class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
 					>
 						{#each groupedProjectOptions as group}
 							<optgroup label={group.workspaceName}>
@@ -501,10 +501,10 @@
 		<div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
 			{#each overviewMetrics as metric}
 				<div
-					class="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900"
+					class="rounded-xl border border-line bg-slate-50 p-4 dark:bg-slate-900"
 				>
 					<p class="text-xs uppercase tracking-wide text-slate-500">{$t(metric.labelKey)}</p>
-					<p class="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+					<p class="mt-2 text-2xl font-semibold text-fg">
 						{loading ? '...' : formatMetricValue(metric)}
 					</p>
 					{#if metric.hintKey}
@@ -523,7 +523,7 @@
 			{#each coreModules as module}
 				<a
 					href={module.href}
-					class="group rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
+					class="group rounded-xl border border-line bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-800"
 				>
 					<div class="flex items-start justify-between gap-3">
 						<div>
@@ -692,7 +692,7 @@
 									</svg>
 								{/if}
 							</span>
-							<h3 class="mt-3 text-base font-semibold text-slate-900 dark:text-slate-100">
+							<h3 class="mt-3 text-base font-semibold text-fg">
 								{$t(module.titleKey)}
 							</h3>
 							<p class="mt-1 text-sm text-slate-500">{$t(module.descriptionKey)}</p>
@@ -705,7 +705,7 @@
 							{/if}
 						</div>
 						<span
-							class="text-lg text-slate-400 transition group-hover:text-slate-700 dark:group-hover:text-slate-300"
+							class="text-lg text-slate-400 transition group-hover:text-fg"
 							>→</span
 						>
 					</div>
@@ -722,7 +722,7 @@
 			{#each reviewModules as module}
 				<a
 					href={module.href}
-					class={`group rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-800 ${
+					class={`group rounded-xl border border-line bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-800 ${
 						module.disabled ? 'pointer-events-none opacity-60' : ''
 					}`}
 				>
@@ -893,7 +893,7 @@
 									</svg>
 								{/if}
 							</span>
-							<h3 class="mt-3 text-base font-semibold text-slate-900 dark:text-slate-100">
+							<h3 class="mt-3 text-base font-semibold text-fg">
 								{$t(module.titleKey)}
 							</h3>
 							<p class="mt-1 text-sm text-slate-500">{$t(module.descriptionKey)}</p>
@@ -911,7 +911,7 @@
 							{/if}
 						</div>
 						<span
-							class="text-lg text-slate-400 transition group-hover:text-slate-700 dark:group-hover:text-slate-300"
+							class="text-lg text-slate-400 transition group-hover:text-fg"
 							>→</span
 						>
 					</div>
@@ -928,7 +928,7 @@
 			{#each systemModules as module}
 				<a
 					href={module.href}
-					class="group rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
+					class="group rounded-xl border border-line bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-800"
 				>
 					<div class="flex items-start justify-between gap-3">
 						<div>
@@ -1097,7 +1097,7 @@
 									</svg>
 								{/if}
 							</span>
-							<h3 class="mt-3 text-base font-semibold text-slate-900 dark:text-slate-100">
+							<h3 class="mt-3 text-base font-semibold text-fg">
 								{$t(module.titleKey)}
 							</h3>
 							<p class="mt-1 text-sm text-slate-500">{$t(module.descriptionKey)}</p>
@@ -1110,7 +1110,7 @@
 							{/if}
 						</div>
 						<span
-							class="text-lg text-slate-400 transition group-hover:text-slate-700 dark:group-hover:text-slate-300"
+							class="text-lg text-slate-400 transition group-hover:text-fg"
 							>→</span
 						>
 					</div>

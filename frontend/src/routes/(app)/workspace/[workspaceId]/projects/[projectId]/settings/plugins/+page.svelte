@@ -317,7 +317,7 @@
 	{#if error}
 		<p
 			role="alert"
-			class="rounded border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-700 dark:text-red-200"
+			class="rounded border border-red-300 px-3 py-2 text-sm text-danger dark:border-red-700"
 		>
 			{$t(error)}{#if backendMessage}
 				{backendMessage}{/if}
@@ -438,7 +438,7 @@
 									{$t('plugins.publisher', { values: { publisher: item.manifest.publisher } })}
 								</p>
 								{#if item.installed_at}
-									<p class="text-xs text-slate-600 dark:text-slate-300">
+									<p class="text-xs text-fg-muted">
 										{$t('plugins.installedAt', {
 											values: {
 												date: new Intl.DateTimeFormat($locale || 'en', {
@@ -528,7 +528,7 @@
 								</div>
 							{:else}
 								<div class="flex flex-wrap items-center gap-2 text-sm">
-									<p class="text-slate-600 dark:text-slate-300">
+									<p class="text-fg-muted">
 										{$t('plugins.layoutV3.resetHelp')}
 									</p>
 									<Button
@@ -546,7 +546,7 @@
 							<fieldset class="space-y-2 rounded border border-slate-300 p-3 dark:border-slate-700">
 								<legend class="px-1 text-sm font-medium">{$t('plugins.grantAccess')}</legend>
 								{#if isV3(item.manifest)}
-									<p class="text-sm text-slate-600 dark:text-slate-300">
+									<p class="text-sm text-fg-muted">
 										{$t('plugins.layoutV3.grantsHelp')}
 									</p>
 									{#each grantOptionsV3(item.manifest) as option (option.grant)}

@@ -198,14 +198,14 @@
 
 <div class="mx-auto max-w-7xl space-y-6">
 	<div
-		class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5"
+		class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4 sm:p-5"
 	>
 		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div>
-				<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">
+				<h1 class="text-2xl font-semibold text-fg">
 					{$t('notification.title')}
 				</h1>
-				<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+				<p class="mt-1 text-sm text-fg-muted">
 					{$t('notification.unreadReadCount', {
 						values: { unread: unreadNotifications.length, read: readNotifications.length }
 					})}
@@ -221,7 +221,7 @@
 				</button>
 				<button
 					type="button"
-					class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm text-slate-600 dark:text-slate-300"
+					class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm text-fg-muted"
 					disabled
 				>
 					{$t('common.settings')}
@@ -232,7 +232,7 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-8 text-center text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-8 text-center text-fg-muted"
 		>
 			<div
 				class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"
@@ -252,7 +252,7 @@
 		</div>
 	{:else if notifications.length === 0}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-12 text-center"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-12 text-center"
 		>
 			<div class="mb-3 flex justify-center text-slate-400">
 				<svg class="h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -264,16 +264,16 @@
 					></path>
 				</svg>
 			</div>
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('notification.noNotifications')}</p>
+			<p class="text-sm text-fg-muted">{$t('notification.noNotifications')}</p>
 		</div>
 	{:else}
 		<section class="space-y-3">
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('notification.unread')} ({unreadNotifications.length})
 			</h2>
 			{#if unreadNotifications.length === 0}
 				<div
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 text-sm text-slate-500 dark:text-slate-400"
+					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-5 text-sm text-fg-muted"
 				>
 					{$t('notification.noUnread')}
 				</div>
@@ -281,14 +281,14 @@
 				<div class="space-y-3">
 					{#each unreadNotifications as item (item.id)}
 						<div
-							class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5"
+							class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4 sm:p-5"
 						>
 							<div class="flex items-start justify-between gap-3">
 								<div class="flex min-w-0 gap-3">
 									<span class="mt-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500"
 									></span>
 									<div
-										class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+										class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 dark:bg-slate-800 text-fg-muted"
 									>
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path
@@ -300,15 +300,15 @@
 										</svg>
 									</div>
 									<div class="min-w-0">
-										<p class="font-medium text-slate-900 dark:text-slate-100">
+										<p class="font-medium text-fg">
 											{getNotificationTitle(item)}
 										</p>
-										<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+										<p class="mt-1 text-sm text-fg-muted">
 											{getNotificationContent(item)}
 										</p>
 									</div>
 								</div>
-								<span class="shrink-0 text-xs text-slate-500 dark:text-slate-400"
+								<span class="shrink-0 text-xs text-fg-muted"
 									>{formatRelativeTime(item.created_at)}</span
 								>
 							</div>
@@ -316,7 +316,7 @@
 								{#if item.related_issue_id}
 									<button
 										onclick={() => goToIssue(item)}
-										class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+										class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm text-fg hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
 									>
 										{$t('notification.viewIssue')}
 									</button>
@@ -343,12 +343,12 @@
 		</section>
 
 		<section class="space-y-3">
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('notification.read')} ({readNotifications.length})
 			</h2>
 			{#if readNotifications.length === 0}
 				<div
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 text-sm text-slate-500 dark:text-slate-400"
+					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-5 text-sm text-fg-muted"
 				>
 					{$t('notification.noRead')}
 				</div>
@@ -356,12 +356,12 @@
 				<div class="space-y-3">
 					{#each readNotifications as item (item.id)}
 						<div
-							class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5 opacity-80"
+							class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4 sm:p-5 opacity-80"
 						>
 							<div class="flex items-start justify-between gap-3">
 								<div class="flex min-w-0 gap-3">
 									<div
-										class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+										class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 dark:bg-slate-800 text-fg-muted"
 									>
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path
@@ -373,15 +373,15 @@
 										</svg>
 									</div>
 									<div class="min-w-0">
-										<p class="font-medium text-slate-900 dark:text-slate-100">
+										<p class="font-medium text-fg">
 											{getNotificationTitle(item)}
 										</p>
-										<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+										<p class="mt-1 text-sm text-fg-muted">
 											{getNotificationContent(item)}
 										</p>
 									</div>
 								</div>
-								<span class="shrink-0 text-xs text-slate-500 dark:text-slate-400"
+								<span class="shrink-0 text-xs text-fg-muted"
 									>{formatRelativeTime(item.created_at)}</span
 								>
 							</div>
@@ -389,7 +389,7 @@
 								{#if item.related_issue_id}
 									<button
 										onclick={() => goToIssue(item)}
-										class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+										class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm text-fg hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
 									>
 										{$t('notification.viewIssue')}
 									</button>

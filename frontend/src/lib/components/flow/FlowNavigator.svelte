@@ -935,7 +935,7 @@
 </script>
 
 <nav
-	class="flex h-full w-full shrink-0 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950"
+	class="flex h-full w-full shrink-0 flex-col border-r border-line bg-slate-50 dark:bg-slate-950"
 	aria-label={$t('flow.nav.title')}
 >
 	<a
@@ -944,19 +944,19 @@
 					workspaceId: integrationWorkspaceId
 				})
 			: resolve('/(app)/flow/package')}
-		class="block min-h-11 px-3 py-2 text-sm text-slate-600 underline dark:text-slate-300"
+		class="block min-h-11 px-3 py-2 text-sm text-fg-muted underline"
 		>{$t('flow.personal.packages')}</a
 	>
 	<div
-		class="flex items-center justify-between border-b border-slate-200 p-3 dark:border-slate-800"
+		class="flex items-center justify-between border-b border-line p-3"
 	>
-		<span class="text-sm font-semibold text-slate-900 dark:text-slate-100"
+		<span class="text-sm font-semibold text-fg"
 			>{$t('flow.nav.title')}</span
 		>
 		<div class="relative flex items-center gap-1">
 			<button
 				type="button"
-				class="min-h-11 min-w-11 rounded px-2 text-slate-500 hover:bg-slate-200 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-slate-800"
+				class="min-h-11 min-w-11 rounded px-2 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800"
 				aria-label={$t('flow.personal.refreshNavigator')}
 				title={$t('flow.personal.refreshNavigator')}
 				disabled={refreshingNavigator}
@@ -966,7 +966,7 @@
 			<button
 				type="button"
 				bind:this={newMenuButton}
-				class="flex min-h-11 min-w-11 items-center justify-center rounded text-slate-600 hover:bg-slate-200 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+				class="flex min-h-11 min-w-11 items-center justify-center rounded text-fg-muted hover:bg-slate-200 hover:text-fg disabled:opacity-50 dark:hover:bg-slate-800"
 				onclick={toggleNewMenu}
 				disabled={creatingParentId !== undefined}
 				aria-haspopup="menu"
@@ -998,7 +998,7 @@
 				></div>
 				<div
 					bind:this={newMenuEl}
-					class="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+					class="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-line bg-white py-1 text-sm shadow-lg dark:bg-slate-900"
 					role="menu"
 					tabindex="-1"
 					aria-label={$t('flow.nav.newMenu')}
@@ -1007,7 +1007,7 @@
 					<button
 						type="button"
 						role="menuitem"
-						class="block min-h-11 w-full px-3 text-left text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+						class="block min-h-11 w-full px-3 text-left text-fg hover:bg-slate-100 focus:bg-slate-100 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
 						onclick={chooseNewPage}
 					>
 						{$t('flow.nav.newPage')}
@@ -1016,7 +1016,7 @@
 						<button
 							type="button"
 							role="menuitem"
-							class="block min-h-11 w-full px-3 text-left text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+							class="block min-h-11 w-full px-3 text-left text-fg hover:bg-slate-100 focus:bg-slate-100 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
 							onclick={chooseNewCollection}
 						>
 							{$t('flow.nav.createCollection.menuItem')}
@@ -1028,10 +1028,10 @@
 	</div>
 
 	<p
-		class="border-b border-slate-200 px-3 py-1 text-xs dark:border-slate-800 {lagState.kind ===
+		class="border-b border-line px-3 py-1 text-xs {lagState.kind ===
 		'lagging'
-			? 'text-amber-700 dark:text-amber-300'
-			: 'text-slate-500 dark:text-slate-400'}"
+			? 'text-warning'
+			: 'text-fg-muted'}"
 		role="status"
 		aria-live="polite"
 		data-testid="flow-lag-badge"
@@ -1048,7 +1048,7 @@
 		{/if}
 	</p>
 
-	<div class="border-b border-slate-200 p-2 dark:border-slate-800">
+	<div class="border-b border-line p-2">
 		<input
 			type="search"
 			role="combobox"
@@ -1064,12 +1064,12 @@
 			aria-activedescendant={searchOpen && searchState.activeIndex >= 0
 				? searchOptionId(searchState.activeIndex)
 				: undefined}
-			class="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+			class="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-fg dark:border-slate-700 dark:bg-slate-900"
 			data-testid="flow-search-input"
 		/>
 		{#if searchOpen}
 			<label
-				class="mt-1 flex min-h-11 items-center gap-2 text-xs text-slate-600 dark:text-slate-400"
+				class="mt-1 flex min-h-11 items-center gap-2 text-xs text-fg-muted"
 			>
 				<input
 					type="checkbox"
@@ -1086,12 +1086,12 @@
 		{#if searchOpen}
 			<div data-testid="flow-search-panel">
 				{#if searchState.status === 'pending' || searchState.status === 'loading'}
-					<p class="p-2 text-sm text-slate-500 dark:text-slate-400">
+					<p class="p-2 text-sm text-fg-muted">
 						{$t('flow.search.searching')}
 					</p>
 				{:else if searchState.status === 'error' && searchState.failureKey}
 					<p
-						class="p-2 text-sm text-red-600 dark:text-red-400"
+						class="p-2 text-sm text-danger"
 						role="alert"
 						data-testid="flow-search-error"
 						data-error-code={searchState.failureCode ?? ''}
@@ -1099,13 +1099,13 @@
 						{$t(searchState.failureKey)}
 					</p>
 				{:else if searchState.status === 'ready' && searchState.rows.length === 0}
-					<p class="p-2 text-sm text-slate-500 dark:text-slate-400" data-testid="flow-search-empty">
+					<p class="p-2 text-sm text-fg-muted" data-testid="flow-search-empty">
 						{$t('flow.search.empty')}
 					</p>
 				{/if}
 				{#if searchState.status === 'ready' && searchState.frontierStale}
 					<p
-						class="px-2 pb-1 text-xs text-amber-700 dark:text-amber-300"
+						class="px-2 pb-1 text-xs text-warning"
 						data-testid="flow-search-frontier-stale"
 					>
 						{$t('flow.search.frontierStale', { values: { lag: searchState.frontierLag } })}
@@ -1128,7 +1128,7 @@
 							class={`min-h-11 cursor-pointer rounded px-2 py-1.5 text-sm ${
 								index === searchState.activeIndex
 									? 'bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-100'
-									: 'text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800'
+									: 'text-fg hover:bg-slate-200 dark:hover:bg-slate-800'
 							}`}
 							onclick={() => openSearchRow(index)}
 							onmousemove={() => {
@@ -1141,7 +1141,7 @@
 								<span class="flex-1 truncate font-medium"
 									>{row.title || $t('flow.nav.untitled')}</span
 								>
-								<span class="shrink-0 text-xs text-slate-500 dark:text-slate-400"
+								<span class="shrink-0 text-xs text-fg-muted"
 									>{$t(
 										row.objectType === 'collection'
 											? 'flow.search.type.collection'
@@ -1152,7 +1152,7 @@
 								>
 								{#if row.stale}
 									<span
-										class="shrink-0 rounded bg-amber-100 px-1 text-xs text-amber-800 dark:bg-amber-900/50 dark:text-amber-200"
+										class="shrink-0 rounded bg-amber-100 px-1 text-xs text-warning dark:bg-amber-900/50"
 										data-testid="flow-search-stale"
 										title={$t('flow.search.staleHint', { values: { lag: row.lag } })}
 									>
@@ -1161,7 +1161,7 @@
 								{/if}
 							</span>
 							{#if row.snippet.length > 0}
-								<span class="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400"
+								<span class="mt-0.5 block truncate text-xs text-fg-muted"
 									>{#each row.snippet as segment, segmentIndex (segmentIndex)}{#if segment.match}<mark
 												class="bg-yellow-200 text-inherit dark:bg-yellow-700/60"
 												>{segment.text}</mark
@@ -1178,11 +1178,11 @@
 				</p>
 			</div>
 		{:else if !navRenderer}
-			<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('flow.canvas.unsupported')}</p>
+			<p class="p-2 text-sm text-fg-muted">{$t('flow.canvas.unsupported')}</p>
 		{:else if loading}
-			<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('flow.nav.loading')}</p>
+			<p class="p-2 text-sm text-fg-muted">{$t('flow.nav.loading')}</p>
 		{:else if tree.length === 0}
-			<div class="p-3 text-sm text-slate-500 dark:text-slate-400">
+			<div class="p-3 text-sm text-fg-muted">
 				<p class="mb-2">{$t('flow.nav.empty')}</p>
 				<button
 					type="button"
@@ -1208,7 +1208,7 @@
 						class={`group flex cursor-pointer items-center gap-1 rounded px-2 py-1.5 text-sm outline-none ${
 							selectedObjectId === node.object.id
 								? 'bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-100'
-								: 'text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800'
+								: 'text-fg hover:bg-slate-200 dark:hover:bg-slate-800'
 						} ${liftedId === node.object.id ? 'ring-2 ring-amber-400' : ''} ${
 							focusedId === node.object.id ? 'ring-2 ring-blue-400' : ''
 						}`}
@@ -1242,7 +1242,7 @@
 						<span class="truncate">{node.object.title || $t('flow.nav.untitled')}</span>
 						{#if node.object.object_type === 'collection'}
 							<span
-								class="ml-auto shrink-0 text-xs text-slate-500 dark:text-slate-400"
+								class="ml-auto shrink-0 text-xs text-fg-muted"
 								data-testid="flow-nav-collection-badge">{$t('flow.nav.collectionBadge')}</span
 							>
 						{/if}
@@ -1265,7 +1265,7 @@
 		{/if}
 		{#if placements.length > 0}
 			<section
-				class="mt-3 border-t border-slate-200 pt-2 dark:border-slate-800"
+				class="mt-3 border-t border-line pt-2"
 				aria-labelledby="flow-placements-heading"
 				data-testid="flow-nav-placements"
 			>
@@ -1294,7 +1294,7 @@
 									draggable={false}
 									aria-current={selectedObjectId === placement.objectId ? 'page' : undefined}
 									title={$t('flow.mounts.nonOwningHint')}
-									class="flex min-h-11 items-center gap-2 rounded text-slate-700 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300"
+									class="flex min-h-11 items-center gap-2 rounded text-fg hover:underline"
 								>
 									<FlowObjectIcon objectId={placement.objectId} appearance={placement.appearance} />
 									<span class="min-w-0 flex-1 truncate"
@@ -1339,10 +1339,10 @@
 				{$t(navigatorFailureKey)}
 			</p>{/if}
 
-		<div class="mt-3 border-t border-slate-200 pt-2 dark:border-slate-800" data-testid="flow-trash">
+		<div class="mt-3 border-t border-line pt-2" data-testid="flow-trash">
 			<button
 				type="button"
-				class="flex min-h-11 w-full items-center px-2 text-left text-sm text-slate-600 dark:text-slate-300"
+				class="flex min-h-11 w-full items-center px-2 text-left text-sm text-fg-muted"
 				aria-expanded={trashOpen}
 				onclick={() => {
 					trashOpen = !trashOpen;
@@ -1429,7 +1429,7 @@
 		}}
 	></div>
 	<div
-		class="fixed z-50 w-48 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+		class="fixed z-50 w-48 rounded-md border border-line bg-white py-1 text-sm shadow-lg dark:bg-slate-900"
 		style={`left: ${contextMenuPos.x}px; top: ${contextMenuPos.y}px`}
 		role="menu"
 		tabindex="-1"
@@ -1444,7 +1444,7 @@
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			class="block w-full px-3 py-1.5 text-left text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 			onclick={() => moveRelative(contextMenuFor!, 'before')}
 		>
 			{$t('flow.nav.contextMenu.moveBefore')}
@@ -1452,7 +1452,7 @@
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			class="block w-full px-3 py-1.5 text-left text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 			onclick={() => moveRelative(contextMenuFor!, 'after')}
 		>
 			{$t('flow.nav.contextMenu.moveAfter')}
@@ -1460,7 +1460,7 @@
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			class="block w-full px-3 py-1.5 text-left text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 			disabled={!integrationWorkspaceId &&
 				!personalMoveAllowed(
 					objects.find((object) => object.id === contextMenuFor)?.object_type,
@@ -1473,7 +1473,7 @@
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			class="block w-full px-3 py-1.5 text-left text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 			disabled={!integrationWorkspaceId &&
 				!personalMoveAllowed(
 					objects.find((object) => object.id === contextMenuFor)?.object_type,
@@ -1497,13 +1497,13 @@
 {#if moveInsideFor}
 	<div class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4">
 		<div
-			class="w-full max-w-sm rounded-md border border-slate-200 bg-white p-4 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+			class="w-full max-w-sm rounded-md border border-line bg-white p-4 shadow-lg dark:bg-slate-900"
 			role="dialog"
 			aria-labelledby="flow-move-inside-title"
 		>
 			<h2
 				id="flow-move-inside-title"
-				class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100"
+				class="mb-3 text-sm font-semibold text-fg"
 			>
 				{$t('flow.nav.move.title')}
 			</h2>
@@ -1515,7 +1515,7 @@
 						<li>
 							<button
 								type="button"
-								class="w-full rounded-md px-2 py-1.5 text-left text-sm text-slate-800 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-800"
+								class="w-full rounded-md px-2 py-1.5 text-left text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 								onclick={() => {
 									const sourceId = moveInsideFor;
 									moveInsideFor = null;

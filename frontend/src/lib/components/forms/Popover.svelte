@@ -125,8 +125,8 @@
 		aria-labelledby={labelledby}
 		tabindex="-1"
 		class={sheet
-			? 'sv-popover fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-auto rounded-t-xl border-t border-slate-200 bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:ring-1 dark:ring-slate-700'
-			: 'sv-popover fixed z-50 max-h-[min(70dvh,32rem)] max-w-[calc(100vw-2rem)] overflow-auto rounded-lg border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900 dark:ring-1 dark:ring-slate-700'}
+			? 'sv-popover fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-auto rounded-t-xl border-t border-line bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-xl dark:bg-slate-900 dark:ring-1 dark:ring-slate-700'
+			: 'sv-popover fixed z-50 max-h-[min(70dvh,32rem)] max-w-[calc(100vw-2rem)] overflow-auto rounded-lg border border-line bg-white p-2 shadow-xl dark:bg-slate-900 dark:ring-1 dark:ring-slate-700'}
 		{style}
 		data-popover={testId}
 		onkeydown={onKeydown}

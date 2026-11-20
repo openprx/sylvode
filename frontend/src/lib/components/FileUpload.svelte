@@ -255,7 +255,7 @@
 	{#if compact}
 		<button
 			type="button"
-			class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+			class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-700"
 			onclick={openFilePicker}
 		>
 			<span aria-hidden="true">📎</span>
@@ -281,10 +281,10 @@
 				}
 			}}
 		>
-			<p class="text-sm font-medium text-slate-700 dark:text-slate-200">
+			<p class="text-sm font-medium text-fg">
 				📎 {$t('issue.addAttachments')}
 			</p>
-			<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{$t('issue.dragFilesHere')}</p>
+			<p class="mt-1 text-xs text-fg-muted">{$t('issue.dragFilesHere')}</p>
 			<p class="mt-1 text-xs text-slate-400 dark:text-slate-500">
 				{$t('issue.maxFileSizeHint', { values: { size: Math.floor(maxSize / (1024 * 1024)) } })}
 			</p>
@@ -295,11 +295,11 @@
 		<div class="space-y-2">
 			{#each pendingUploads as pending (pending.id)}
 				<div
-					class="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+					class="rounded-md border border-line bg-white px-3 py-2 text-sm dark:bg-slate-900"
 				>
 					<div class="mb-1 flex items-center justify-between gap-3">
-						<span class="truncate text-slate-700 dark:text-slate-200">{pending.filename}</span>
-						<span class="text-xs text-slate-500 dark:text-slate-400"
+						<span class="truncate text-fg">{pending.filename}</span>
+						<span class="text-xs text-fg-muted"
 							>{$t('issue.uploading')} {pending.progress}%</span
 						>
 					</div>
@@ -318,7 +318,7 @@
 		<div class="grid gap-2 sm:grid-cols-2">
 			{#each value as file (file.url)}
 				<div
-					class="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+					class="flex items-start gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm dark:bg-slate-900"
 				>
 					<div class="pt-0.5" aria-hidden="true">
 						{file.mimeType.startsWith('image/') ? '🖼️' : '📄'}
@@ -332,11 +332,11 @@
 						>
 							{file.filename}
 						</a>
-						<p class="text-xs text-slate-500 dark:text-slate-400">{formatBytes(file.size)}</p>
+						<p class="text-xs text-fg-muted">{formatBytes(file.size)}</p>
 					</div>
 					<button
 						type="button"
-						class="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
+						class="rounded p-1 text-fg-muted hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
 						aria-label={$t('issue.removeAttachment')}
 						onclick={() => removeAttachment(file)}
 					>

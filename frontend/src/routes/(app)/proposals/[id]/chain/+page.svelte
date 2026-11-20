@@ -74,9 +74,9 @@
 
 <div class="mx-auto max-w-6xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
-		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-xl font-semibold text-fg">
 			{$t('governanceExt.chainTitle')}
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">{$t('governanceExt.chainSubtitle')}</p>
@@ -84,15 +84,15 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800"
+			class="rounded-lg border border-line bg-white p-6 text-sm text-slate-500 dark:bg-slate-800"
 		>
 			{$t('common.loading')}
 		</div>
 	{:else if noLinkedIssues}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-800"
+			class="rounded-lg border border-line bg-white p-6 dark:bg-slate-800"
 		>
-			<p class="text-sm text-slate-600 dark:text-slate-300">
+			<p class="text-sm text-fg-muted">
 				{$t('governanceExt.chainEmptyNoLinkedIssues')}
 			</p>
 			<div class="mt-4">
@@ -106,11 +106,11 @@
 		</div>
 	{:else if data}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+			class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 		>
 			<div class="mb-4 flex items-center justify-between gap-3">
 				<div>
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{data.proposal.title}
 					</h2>
 					<p class="mt-1 text-xs text-slate-500">{data.proposal.id}</p>
@@ -149,9 +149,9 @@
 		<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 			<div class="space-y-4 lg:col-span-2">
 				<div
-					class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+					class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 				>
-					<h3 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+					<h3 class="mb-3 text-sm font-semibold text-fg">
 						{$t('governanceExt.timeline')}
 					</h3>
 					<div class="space-y-2">
@@ -160,13 +160,13 @@
 						{:else}
 							{#each events as event}
 								<div
-									class="flex gap-2 rounded-md border border-slate-200 p-3 dark:border-slate-700"
+									class="flex gap-2 rounded-md border border-line p-3"
 								>
 									<span class={`rounded px-2 py-0.5 text-xs ${eventTone(event.event_type)}`}
 										>{event.event_type}</span
 									>
 									<div class="min-w-0 flex-1 text-xs">
-										<p class="text-slate-700 dark:text-slate-200">{event.description}</p>
+										<p class="text-fg">{event.description}</p>
 										<p class="mt-1 text-slate-500">
 											{new Date(event.timestamp).toLocaleString()} · {event.actor || '-'}
 										</p>
@@ -180,9 +180,9 @@
 
 			<div class="space-y-4">
 				<div
-					class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+					class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 				>
-					<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+					<h3 class="mb-2 text-sm font-semibold text-fg">
 						{$t('governanceExt.votes')}
 					</h3>
 					<p class="text-xs text-slate-500">
@@ -190,7 +190,7 @@
 					</p>
 					<div class="mt-2 max-h-72 space-y-2 overflow-auto">
 						{#each data.votes as vote}
-							<div class="rounded border border-slate-200 px-2 py-1 text-xs dark:border-slate-700">
+							<div class="rounded border border-line px-2 py-1 text-xs">
 								<p>{vote.voter_id} · {vote.choice}</p>
 								<p class="text-slate-500">{new Date(vote.voted_at).toLocaleString()}</p>
 							</div>
@@ -199,9 +199,9 @@
 				</div>
 
 				<div
-					class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+					class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 				>
-					<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+					<h3 class="mb-2 text-sm font-semibold text-fg">
 						{$t('governanceExt.feedbackProposals')}
 					</h3>
 					{#if data.feedback_proposals.length === 0}
@@ -211,9 +211,9 @@
 							{#each data.feedback_proposals as feedback}
 								<a
 									href={`/proposals/${feedback.proposal_id}`}
-									class="block rounded border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900"
+									class="block rounded border border-line px-2 py-1 text-xs hover:bg-slate-50 dark:hover:bg-slate-900"
 								>
-									<p class="font-medium text-slate-700 dark:text-slate-200">{feedback.title}</p>
+									<p class="font-medium text-fg">{feedback.title}</p>
 									<p class="text-slate-500">{feedback.link_type}</p>
 								</a>
 							{/each}

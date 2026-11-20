@@ -194,17 +194,17 @@
 <div class="mx-auto max-w-5xl space-y-4">
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900"
+			class="rounded-lg border border-line bg-white p-6 text-slate-500 dark:bg-slate-900"
 		>
 			{$t('common.loading')}
 		</div>
 	{:else if proposal && vetoMissing}
 		<div
-			class="rounded-lg border border-slate-200 bg-white px-6 py-14 dark:border-slate-700 dark:bg-slate-900"
+			class="rounded-lg border border-line bg-white px-6 py-14 dark:bg-slate-900"
 		>
 			<div class="mx-auto flex max-w-md flex-col items-center text-center">
 				<div
-					class="flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300"
+					class="flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-fg-muted dark:bg-slate-800"
 				>
 					<svg
 						class="h-7 w-7"
@@ -224,10 +224,10 @@
 						></path>
 					</svg>
 				</div>
-				<p class="mt-4 text-base font-medium text-slate-900 dark:text-slate-100">
+				<p class="mt-4 text-base font-medium text-fg">
 					{$t('vetoDetail.empty')}
 				</p>
-				<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">{$t('vetoDetail.emptyHint')}</p>
+				<p class="mt-1 text-sm text-fg-muted">{$t('vetoDetail.emptyHint')}</p>
 				<div class="mt-5">
 					<Button variant="secondary" onclick={() => goto(`/proposals/${proposalId}`)}
 						>{$t('vetoDetail.backToProposal')}</Button
@@ -237,17 +237,17 @@
 		</div>
 	{:else if !proposal || !vetoEvent}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900"
+			class="rounded-lg border border-line bg-white p-6 text-slate-500 dark:bg-slate-900"
 		>
 			{$t('vetoDetail.empty')}
 		</div>
 	{:else}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+			class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 		>
 			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 				<div>
-					<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+					<h1 class="text-xl font-semibold text-fg">
 						{$t('vetoDetail.title')}
 					</h1>
 					<p class="text-sm text-slate-500">{proposal.title}</p>
@@ -257,7 +257,7 @@
 				>
 			</div>
 
-			<div class="grid grid-cols-1 gap-3 text-sm text-slate-700 dark:text-slate-300 md:grid-cols-2">
+			<div class="grid grid-cols-1 gap-3 text-sm text-fg md:grid-cols-2">
 				<div>
 					<p>
 						<span class="text-slate-500">{$t('vetoDetail.vetoer')}:</span>
@@ -286,17 +286,17 @@
 			</div>
 
 			<div
-				class="mt-3 rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+				class="mt-3 rounded border border-line bg-slate-50 p-3 text-sm text-fg dark:bg-slate-800"
 			>
-				<div class="font-medium text-slate-900 dark:text-slate-100">{$t('vetoDetail.reason')}</div>
+				<div class="font-medium text-fg">{$t('vetoDetail.reason')}</div>
 				<p class="mt-1 whitespace-pre-wrap">{vetoEvent.reason}</p>
 			</div>
 		</div>
 
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+			class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 		>
-			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-sm font-semibold text-fg">
 				{$t('vetoDetail.escalationTitle')}
 			</h2>
 			{#if hasEscalation}
@@ -310,7 +310,7 @@
 						<div class="mt-1 text-xl font-semibold">{vetoEvent.escalation_votes.upheld}</div>
 					</div>
 					<div
-						class="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+						class="rounded border border-line bg-slate-50 p-3 text-sm text-fg dark:bg-slate-800"
 					>
 						<div class="text-xs uppercase tracking-wide">{$t('vetoDetail.voteProgress')}</div>
 						<div class="mt-1 text-xl font-semibold">
@@ -344,9 +344,9 @@
 		</div>
 
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+			class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 		>
-			<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-sm font-semibold text-fg">
 				{$t('vetoDetail.authorActions')}
 			</h2>
 			<div class="mt-3 flex flex-wrap gap-2">

@@ -131,13 +131,13 @@
 					style={`width: ${progress}%;`}
 				></div>
 			</div>
-			<p class="text-xs text-slate-500 dark:text-slate-400">{$t('search.searching')} {progress}%</p>
+			<p class="text-xs text-fg-muted">{$t('search.searching')} {progress}%</p>
 		</div>
 	{/if}
 
 	{#if previewUrl}
 		<div
-			class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-2"
+			class="overflow-hidden rounded-md border border-line bg-slate-50 dark:bg-slate-950 p-2"
 		>
 			{#if isImageUploadMime(previewMimeType)}
 				<img

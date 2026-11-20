@@ -65,7 +65,7 @@
 </script>
 
 <div
-	class="flex flex-wrap items-center gap-x-1 gap-y-2 border-b border-slate-200 px-3 py-2 dark:border-slate-700"
+	class="flex flex-wrap items-center gap-x-1 gap-y-2 border-b border-line px-3 py-2"
 	data-view-bar
 >
 	<ViewSwitcher
@@ -115,7 +115,7 @@
 	<span class="flex-1"></span>
 	{#if props.modified}
 		<span
-			class="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300"
+			class="inline-flex items-center gap-1.5 text-xs font-medium text-warning"
 			data-view-modified
 			><span class="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true"></span>{$t(
 				'forms.views.modified'
@@ -123,15 +123,15 @@
 		>
 		<button
 			type="button"
-			class="h-8 rounded-md px-2 text-sm text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-slate-200 dark:hover:bg-slate-800"
+			class="h-8 rounded-md px-2 text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 			data-view-reset
 			onclick={props.onreset}>{$t('forms.views.reset')}</button
 		>
 	{:else if props.undoAvailable}
-		<span class="text-xs text-slate-500 dark:text-slate-400">{$t('forms.views.resetDone')}</span>
+		<span class="text-xs text-fg-muted">{$t('forms.views.resetDone')}</span>
 		<button
 			type="button"
-			class="h-8 rounded-md px-2 text-sm font-medium text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300 dark:hover:bg-blue-950/40"
+			class="h-8 rounded-md px-2 text-sm font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
 			data-view-undo-reset
 			onclick={props.onundo}>{$t('forms.views.undo')}</button
 		>
@@ -140,9 +140,9 @@
 		<button
 			type="button"
 			bind:this={saveButton}
-			class="h-8 rounded-md px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 {props.modified
+			class="h-8 rounded-md px-3 text-sm font-medium {props.modified
 				? 'bg-blue-600 text-white hover:bg-blue-700'
-				: 'border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800'}"
+				: 'border border-slate-300 text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800'}"
 			aria-haspopup="dialog"
 			aria-expanded={props.saveOpen}
 			data-view-save-as
@@ -180,7 +180,7 @@
 {/if}
 {#if props.partialNotice}
 	<p
-		class="border-b border-slate-200 bg-slate-50 px-4 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300"
+		class="border-b border-line bg-slate-50 px-4 py-1.5 text-xs text-fg-muted dark:bg-slate-800/50"
 		data-view-partial-filter
 	>
 		{props.partialNotice}

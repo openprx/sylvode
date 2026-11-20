@@ -31,15 +31,15 @@
 	data-flow-scroll-owner
 	aria-busy={busy}
 >
-	<h1 class="break-words text-2xl font-semibold text-slate-900 dark:text-slate-100">
+	<h1 class="break-words text-2xl font-semibold text-fg">
 		{object.title || $t('flow.nav.untitled')}
 	</h1>
 	<div
-		class="my-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-900"
+		class="my-5 rounded-lg border border-line bg-slate-50 p-4 text-sm dark:bg-slate-900"
 		role="status"
 	>
 		<p class="font-medium">{$t('flow.legacyEditor.title')}</p>
-		<p class="mt-1 text-slate-600 dark:text-slate-300">
+		<p class="mt-1 text-fg-muted">
 			{$t(
 				object.editor_state === 'unsupported'
 					? 'flow.legacyEditor.unsupported'
@@ -64,10 +64,10 @@
 			disabled={busy}>{$t('flow.legacyEditor.refresh')}</button
 		>
 	</div>
-	{#if error}<p class="mb-4 text-sm text-red-700 dark:text-red-300" role="alert">
+	{#if error}<p class="mb-4 text-sm text-danger" role="alert">
 			{$t(flowErrorI18nKey(error))}
 		</p>{/if}
-	<div class="space-y-4 text-slate-900 dark:text-slate-100">
+	<div class="space-y-4 text-fg">
 		{#each blocks as block (block.id)}
 			<div style={`margin-left:${block.indent * 1.5}rem`}>
 				{#if block.kind === 'image' || block.kind === 'attachment'}<FlowBodyAsset

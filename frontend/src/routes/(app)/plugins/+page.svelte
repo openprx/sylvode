@@ -99,7 +99,7 @@
 	<header class="flex flex-wrap items-start justify-between gap-3">
 		<div>
 			<h1 class="text-2xl font-semibold">{$t('plugins.library.title')}</h1>
-			<p class="mt-2 text-sm text-slate-600 dark:text-slate-300">{$t('plugins.library.summary')}</p>
+			<p class="mt-2 text-sm text-fg-muted">{$t('plugins.library.summary')}</p>
 		</div>
 		<div class="flex flex-wrap gap-2">
 			<Button
@@ -157,7 +157,7 @@
 					<Button loading={importBusy} onclick={saveImport}>{$t('plugins.library.save')}</Button>
 				</div>
 			{/if}
-			{#if importError}<p role="alert" class="text-sm text-red-800 dark:text-red-200">
+			{#if importError}<p role="alert" class="text-sm text-danger">
 					{$t(importError)}
 				</p>{/if}
 			{#if importNotice}<p role="status" class="text-sm">{$t(importNotice)}</p>{/if}
@@ -168,7 +168,7 @@
 		<section aria-labelledby="personal-drafts" class="space-y-2">
 			<h2 id="personal-drafts" class="font-semibold">{$t('plugins.library.drafts')}</h2>
 			<ul
-				class="divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white px-4 dark:divide-slate-700 dark:border-slate-700 dark:bg-slate-900"
+				class="divide-y divide-line rounded-lg border border-slate-300 bg-white px-4 dark:border-slate-700 dark:bg-slate-900"
 			>
 				{#each drafts as entry (`${entry.templateId}:${entry.id}`)}
 					<li class="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
@@ -191,12 +191,12 @@
 	<section class="space-y-3" aria-labelledby="saved-personal-versions">
 		<h2 id="saved-personal-versions" class="font-semibold">{$t('plugins.library.versions')}</h2>
 		{#if error}
-			<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t(error)}</p>
+			<p role="alert" class="text-sm text-danger">{$t(error)}</p>
 			<Button variant="secondary" onclick={refresh}>{$t('plugins.library.retry')}</Button>
 		{:else if loading}
 			<p role="status" class="text-sm">{$t('common.loading')}</p>
 		{:else if !packages.length}
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('plugins.library.empty')}</p>
+			<p class="text-sm text-fg-muted">{$t('plugins.library.empty')}</p>
 		{/if}
 		{#each packages as item (item.id)}
 			<PersonalPluginVersion {item} {projects} onChanged={refresh} />

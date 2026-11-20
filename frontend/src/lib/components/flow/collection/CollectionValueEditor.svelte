@@ -42,7 +42,7 @@
 	}
 
 	const inputClass =
-		'min-h-11 w-full rounded border border-slate-300 bg-white px-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
+		'min-h-11 w-full rounded border border-slate-300 bg-white px-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900';
 
 	const selected = $derived(Array.isArray(value) ? (value as readonly string[]) : []);
 
@@ -143,7 +143,7 @@
 		{#each field.options as option (option)}
 			<button
 				type="button"
-				class="min-h-11 rounded border px-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 {selected.includes(
+				class="min-h-11 rounded border px-2 text-sm {selected.includes(
 					option
 				)
 					? 'border-blue-500 bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-100'

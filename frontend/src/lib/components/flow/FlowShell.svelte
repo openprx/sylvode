@@ -71,10 +71,10 @@
 
 {#if !data.flowEnabled}
 	<div class="flex h-full min-h-[60vh] flex-col items-center justify-center gap-2 p-8 text-center">
-		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-lg font-semibold text-fg">
 			{$t(failureCopy.title)}
 		</h1>
-		<p class="max-w-md text-sm text-slate-500 dark:text-slate-400">
+		<p class="max-w-md text-sm text-fg-muted">
 			{$t(failureCopy.body)}
 		</p>
 		<button
@@ -90,12 +90,12 @@
 			: 'h-[calc(100vh-4rem)]'} flex-col overflow-hidden"
 	>
 		<div
-			class="flow-nav-mobile shrink-0 border-b border-slate-200 p-2 dark:border-slate-800"
+			class="flow-nav-mobile shrink-0 border-b border-line p-2"
 			hidden={data.navigationEnabled === false}
 		>
 			<button
 				type="button"
-				class="inline-flex min-h-[44px] min-w-[44px] items-center gap-2 rounded-md px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-200 dark:hover:bg-slate-800"
+				class="inline-flex min-h-[44px] min-w-[44px] items-center gap-2 rounded-md px-3 text-sm font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
 				aria-expanded={navOpen}
 				aria-controls="flow-navigator-drawer"
 				data-testid="flow-nav-toggle"

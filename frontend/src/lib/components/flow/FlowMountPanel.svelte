@@ -225,7 +225,7 @@
 </script>
 
 <section
-	class="mt-6 space-y-3 border-t border-slate-200 pt-4 dark:border-slate-700"
+	class="mt-6 space-y-3 border-t border-line pt-4"
 	aria-labelledby={`${uid}-title`}
 	data-testid="flow-mounts"
 >
@@ -369,10 +369,10 @@
 				>{$t('flow.mounts.retry')}</button
 			>
 		</div>{/if}
-	{#if denied}<p role="alert" class="text-sm text-red-700 dark:text-red-300">
+	{#if denied}<p role="alert" class="text-sm text-danger">
 			{$t('flow.mounts.permissionRequired')}
 		</p>{/if}
-	{#if conflict}<p role="alert" class="text-sm text-red-700 dark:text-red-300">
+	{#if conflict}<p role="alert" class="text-sm text-danger">
 			{$t('flow.mounts.accessChanged')}
 		</p>{/if}
 	<p role="status" class="text-sm">{announcement}</p>

@@ -131,10 +131,10 @@
 
 <div class="mx-auto max-w-4xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
 		<div class="mb-2 flex items-center justify-between gap-3">
-			<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+			<h1 class="text-xl font-semibold text-fg">
 				{$t('impactReview.title')}
 			</h1>
 			<a href={`/proposals/${proposalId}`} class="text-sm text-blue-600 hover:underline"
@@ -145,7 +145,7 @@
 	</div>
 
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
 		{#if loading}
 			<p class="text-sm text-slate-500">{$t('common.loading')}</p>

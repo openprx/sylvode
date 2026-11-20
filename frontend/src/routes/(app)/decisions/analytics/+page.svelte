@@ -58,16 +58,16 @@
 
 <div class="mx-auto max-w-7xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
-		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-xl font-semibold text-fg">
 			{$t('governanceExt.analyticsTitle')}
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">{$t('governanceExt.analyticsSubtitle')}</p>
 	</div>
 
 	<div
-		class="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800 md:grid-cols-4"
+		class="grid grid-cols-1 gap-3 rounded-lg border border-line bg-white p-4 dark:bg-slate-800 md:grid-cols-4"
 	>
 		<div>
 			<label for="analytics-project" class="mb-1 block text-sm text-slate-600"
@@ -122,22 +122,22 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800"
+			class="rounded-lg border border-line bg-white p-6 text-sm text-slate-500 dark:bg-slate-800"
 		>
 			{$t('common.loading')}
 		</div>
 	{:else if analytics}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-4">
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.totalDecisions')}</p>
-				<p class="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+				<p class="mt-1 text-2xl font-semibold text-fg">
 					{analytics.overview.total_decisions}
 				</p>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.passRate')}</p>
 				<p class="mt-1 text-2xl font-semibold text-emerald-700">
@@ -145,15 +145,15 @@
 				</p>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.avgCycleHours')}</p>
-				<p class="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+				<p class="mt-1 text-2xl font-semibold text-fg">
 					{(analytics.overview.avg_cycle_hours ?? 0).toFixed(1)}h
 				</p>
 			</div>
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
 				<p class="text-xs text-slate-500">{$t('governanceExt.vetoedCount')}</p>
 				<p class="mt-1 text-2xl font-semibold text-rose-700">{analytics.overview.vetoed_count}</p>
@@ -161,9 +161,9 @@
 		</div>
 
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+			class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 		>
-			<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="mb-3 text-sm font-semibold text-fg">
 				{$t('governanceExt.approvalChart')}
 			</h2>
 			<div class="space-y-2 text-xs">
@@ -220,15 +220,15 @@
 
 		<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h2 class="mb-3 text-sm font-semibold text-fg">
 					{$t('governanceExt.byType')}
 				</h2>
 				<div class="overflow-x-auto">
 					<table class="min-w-full text-left text-xs">
 						<thead>
-							<tr class="border-b border-slate-200 text-slate-500 dark:border-slate-700">
+							<tr class="border-b border-line text-slate-500">
 								<th class="px-2 py-2">{$t('governance.typeLabel')}</th>
 								<th class="px-2 py-2">{$t('common.total')}</th>
 								<th class="px-2 py-2">{$t('governanceExt.passRate')}</th>
@@ -237,7 +237,7 @@
 						</thead>
 						<tbody>
 							{#each analytics.by_type as row}
-								<tr class="border-b border-slate-100 dark:border-slate-800">
+								<tr class="border-b border-line">
 									<td class="px-2 py-2">{row.proposal_type}</td>
 									<td class="px-2 py-2">{row.total_decisions}</td>
 									<td class="px-2 py-2">{pct(row.pass_rate)}</td>
@@ -250,15 +250,15 @@
 			</div>
 
 			<div
-				class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 			>
-				<h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<h2 class="mb-3 text-sm font-semibold text-fg">
 					{$t('governanceExt.byDomain')}
 				</h2>
 				<div class="overflow-x-auto">
 					<table class="min-w-full text-left text-xs">
 						<thead>
-							<tr class="border-b border-slate-200 text-slate-500 dark:border-slate-700">
+							<tr class="border-b border-line text-slate-500">
 								<th class="px-2 py-2">{$t('governance.domainLabel')}</th>
 								<th class="px-2 py-2">{$t('common.total')}</th>
 								<th class="px-2 py-2">{$t('governanceExt.passRate')}</th>
@@ -267,7 +267,7 @@
 						</thead>
 						<tbody>
 							{#each analytics.by_domain as row}
-								<tr class="border-b border-slate-100 dark:border-slate-800">
+								<tr class="border-b border-line">
 									<td class="px-2 py-2">{row.domain}</td>
 									<td class="px-2 py-2">{row.total_decisions}</td>
 									<td class="px-2 py-2">{pct(row.pass_rate)}</td>

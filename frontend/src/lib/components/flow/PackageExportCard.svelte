@@ -128,10 +128,10 @@
 
 <Card>
 	<section aria-labelledby="flow-export-heading" data-testid="flow-export">
-		<h2 id="flow-export-heading" class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h2 id="flow-export-heading" class="text-lg font-semibold text-fg">
 			{$t('flow.export.heading')}
 		</h2>
-		<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('flow.export.description')}</p>
+		<p class="mt-1 text-sm text-fg-muted">{$t('flow.export.description')}</p>
 		<p
 			class="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
 			data-testid="flow-package-history-notice"
@@ -144,10 +144,10 @@
 		</p>
 
 		<fieldset class="mt-4 space-y-2" disabled={submitting}>
-			<legend class="text-sm font-medium text-slate-900 dark:text-slate-100"
+			<legend class="text-sm font-medium text-fg"
 				>{$t('flow.package.kindsLabel')}</legend
 			>
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('flow.package.kindsNotice')}</p>
+			<p class="text-sm text-fg-muted">{$t('flow.package.kindsNotice')}</p>
 			<div class="flex flex-wrap gap-4">
 				<label class="flex min-h-11 items-center gap-2"
 					><input type="checkbox" bind:group={objectTypes} value="page" />{$t(
@@ -160,7 +160,7 @@
 					)}</label
 				>
 			</div>
-			{#if objectTypes.length === 0}<p class="text-sm text-red-700 dark:text-red-300" role="alert">
+			{#if objectTypes.length === 0}<p class="text-sm text-danger" role="alert">
 					{$t('flow.package.kindRequired')}
 				</p>{/if}
 		</fieldset>
@@ -168,13 +168,13 @@
 			<div>
 				<label
 					for="flow-export-project"
-					class="block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="block text-sm font-medium text-fg"
 				>
 					{$t('flow.export.scopeLabel')}
 				</label>
 				<select
 					id="flow-export-project"
-					class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
 					bind:value={projectId}
 					disabled={submitting}
 				>
@@ -185,11 +185,11 @@
 				</select>
 			</div>
 			<label
-				class="flex min-h-11 cursor-pointer items-center gap-3 self-end text-sm text-slate-900 dark:text-slate-100"
+				class="flex min-h-11 cursor-pointer items-center gap-3 self-end text-sm text-fg"
 			>
 				<input
 					type="checkbox"
-					class="h-5 w-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+					class="h-5 w-5"
 					bind:checked={includeHistory}
 					disabled={submitting || !allowHistory}
 				/>
@@ -203,7 +203,7 @@
 		<div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
 			<button
 				type="button"
-				class="min-h-11 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 motion-safe:transition-colors dark:focus-visible:ring-offset-slate-900"
+				class="min-h-11 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 motion-safe:transition-colors"
 				disabled={submitting || objectTypes.length === 0}
 				onclick={startExport}
 			>
@@ -213,7 +213,7 @@
 
 		{#if failure}
 			<div
-				class="mt-4 flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+				class="mt-4 flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-danger sm:flex-row sm:items-center sm:justify-between dark:border-red-900 dark:bg-red-950/30"
 				role="alert"
 				data-testid="flow-export-error"
 			>
@@ -221,7 +221,7 @@
 				{#if failure.retryable}
 					<button
 						type="button"
-						class="min-h-11 rounded-md border border-red-300 px-4 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-700"
+						class="min-h-11 rounded-md border border-red-300 px-4 text-sm font-medium dark:border-red-700"
 						onclick={startExport}
 					>
 						{$t('flow.package.retry')}
@@ -232,24 +232,24 @@
 
 		{#if downloadFailure}
 			<div
-				class="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+				class="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-danger dark:border-red-900 dark:bg-red-950/30"
 				role="alert"
 			>
 				{$t(downloadFailure.messageKey, { values: downloadFailure.values })}
 			</div>
 		{/if}
 
-		<h3 class="mt-6 text-sm font-semibold text-slate-900 dark:text-slate-100">
+		<h3 class="mt-6 text-sm font-semibold text-fg">
 			{$t('flow.export.recentHeading')}
 		</h3>
 		{#if jobs.length === 0}
-			<p class="mt-2 text-sm text-slate-500 dark:text-slate-400">{$t('flow.export.recentEmpty')}</p>
+			<p class="mt-2 text-sm text-fg-muted">{$t('flow.export.recentEmpty')}</p>
 		{:else}
 			<ul class="mt-2 space-y-3" data-testid="flow-export-jobs">
 				{#each jobs as view (view.jobId)}
 					{@const job = view.job}
 					<li
-						class="rounded-md border border-slate-200 p-4 text-sm dark:border-slate-700"
+						class="rounded-md border border-line p-4 text-sm"
 						data-testid="flow-export-job"
 						data-job-id={view.jobId}
 					>
@@ -259,17 +259,17 @@
 							/>{/if}
 						<dl class="grid grid-cols-1 gap-2 md:grid-cols-2">
 							<div>
-								<dt class="text-slate-500 dark:text-slate-400">{$t('flow.export.jobId')}</dt>
-								<dd class="break-all font-mono text-xs text-slate-900 dark:text-slate-100">
+								<dt class="text-fg-muted">{$t('flow.export.jobId')}</dt>
+								<dd class="break-all font-mono text-xs text-fg">
 									{view.jobId}
 								</dd>
 							</div>
 							<div>
-								<dt class="text-slate-500 dark:text-slate-400">{$t('flow.export.status.label')}</dt>
-								<dd class="text-slate-900 dark:text-slate-100" data-testid="flow-export-status">
+								<dt class="text-fg-muted">{$t('flow.export.status.label')}</dt>
+								<dd class="text-fg" data-testid="flow-export-status">
 									{job ? statusLabel(job.status) : $t('flow.export.status.loading')}
 									{#if view.polling}
-										<span class="text-slate-500 dark:text-slate-400">
+										<span class="text-fg-muted">
 											{$t('flow.export.polling')}
 										</span>
 									{/if}
@@ -277,27 +277,27 @@
 							</div>
 							{#if job && job.status !== 'failed'}
 								<div class="md:col-span-2">
-									<dt class="text-slate-500 dark:text-slate-400">{$t('flow.export.checksum')}</dt>
+									<dt class="text-fg-muted">{$t('flow.export.checksum')}</dt>
 									<dd
-										class="break-all font-mono text-xs text-slate-900 dark:text-slate-100"
+										class="break-all font-mono text-xs text-fg"
 										data-testid="flow-export-checksum"
 									>
 										{job.checksum}
 									</dd>
 								</div>
 								<div>
-									<dt class="text-slate-500 dark:text-slate-400">{$t('flow.export.size')}</dt>
-									<dd class="text-slate-900 dark:text-slate-100">{formatBytes(job.size)}</dd>
+									<dt class="text-fg-muted">{$t('flow.export.size')}</dt>
+									<dd class="text-fg">{formatBytes(job.size)}</dd>
 								</div>
 								<div>
-									<dt class="text-slate-500 dark:text-slate-400">{$t('flow.export.expiresAt')}</dt>
-									<dd class="text-slate-900 dark:text-slate-100">{formatTime(job.expires_at)}</dd>
+									<dt class="text-fg-muted">{$t('flow.export.expiresAt')}</dt>
+									<dd class="text-fg">{formatTime(job.expires_at)}</dd>
 								</div>
 							{/if}
 						</dl>
 						{#if view.failure}
 							<p
-								class="mt-2 text-sm text-red-700 dark:text-red-300"
+								class="mt-2 text-sm text-danger"
 								role="alert"
 								data-testid="flow-export-job-error"
 							>
@@ -308,7 +308,7 @@
 							{@const finished = job}
 							<button
 								type="button"
-								class="mt-3 min-h-11 rounded-md border border-blue-300 px-4 text-sm font-medium text-blue-700 hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
+								class="mt-3 min-h-11 rounded-md border border-blue-300 px-4 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
 								disabled={downloading !== null}
 								onclick={() => void download(finished)}
 							>

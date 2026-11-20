@@ -86,23 +86,23 @@
 
 <div class="mx-auto max-w-5xl space-y-6">
 	<div>
-		<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">
+		<h1 class="text-2xl font-semibold text-fg">
 			{$t('workspace.settingsTitle')}
 		</h1>
-		<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+		<p class="mt-1 text-sm text-fg-muted">
 			{$t('workspace.settingsSubtitle')}
 		</p>
 	</div>
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
 		>
 			{$t('common.loading')}
 		</div>
 	{:else}
 		<Card>
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('workspace.basicInfo')}
 			</h2>
 			<div class="mt-4 grid grid-cols-1 gap-4">
@@ -121,10 +121,10 @@
 		</Card>
 
 		<Card>
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('workspace.labelManagement')}
 			</h2>
-			<p class="mt-2 text-sm text-slate-600 dark:text-slate-300">
+			<p class="mt-2 text-sm text-fg-muted">
 				{$t('workspace.labelManagementDesc')}
 			</p>
 			<div class="mt-4">
@@ -137,10 +137,10 @@
 		<Card>
 			<div class="flex items-center justify-between">
 				<div>
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{$t('workflow.settingsTitle')}
 					</h2>
-					<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+					<p class="mt-1 text-sm text-fg-muted">
 						{$t('workflow.settingsDesc')}
 					</p>
 				</div>
@@ -154,10 +154,10 @@
 			<Card>
 				<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<div>
-						<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+						<h2 class="text-lg font-semibold text-fg">
 							{$t('flow.settings.entry.title')}
 						</h2>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+						<p class="mt-1 text-sm text-fg-muted">
 							{$t('flow.settings.entry.description')}
 						</p>
 					</div>
@@ -173,7 +173,7 @@
 
 		<Card>
 			<h2 class="text-lg font-semibold text-red-700">{$t('workspace.dangerZone')}</h2>
-			<p class="mt-2 text-sm text-slate-600 dark:text-slate-300">{$t('workspace.deleteDesc')}</p>
+			<p class="mt-2 text-sm text-fg-muted">{$t('workspace.deleteDesc')}</p>
 			<div class="mt-4">
 				<Button variant="danger" loading={deleting} onclick={handleDeleteWorkspace}
 					>{$t('workspace.deleteWorkspace')}</Button

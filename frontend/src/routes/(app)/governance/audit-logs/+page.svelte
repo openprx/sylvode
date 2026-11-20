@@ -90,16 +90,16 @@
 
 <div class="mx-auto max-w-7xl space-y-4">
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 	>
-		<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-xl font-semibold text-fg">
 			{$t('governanceAuditLogs.title')}
 		</h1>
 		<p class="mt-1 text-sm text-slate-500">{$t('governanceAuditLogs.subtitle')}</p>
 	</div>
 
 	<div
-		class="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800 md:grid-cols-6"
+		class="grid grid-cols-1 gap-3 rounded-lg border border-line bg-white p-4 dark:bg-slate-800 md:grid-cols-6"
 	>
 		<div class="md:col-span-2">
 			<label for="audit-log-project" class="mb-1 block text-sm text-slate-600"
@@ -176,7 +176,7 @@
 	</div>
 
 	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
 	>
 		{#if loading}
 			<p class="text-sm text-slate-500">{$t('common.loading')}</p>
@@ -186,7 +186,7 @@
 			<div class="overflow-x-auto">
 				<table class="min-w-full text-left text-sm">
 					<thead>
-						<tr class="border-b border-slate-200 text-xs text-slate-500 dark:border-slate-700">
+						<tr class="border-b border-line text-xs text-slate-500">
 							<th class="px-2 py-2">ID</th>
 							<th class="px-2 py-2">{$t('common.createdAt')}</th>
 							<th class="px-2 py-2">{$t('governanceAuditLogs.action')}</th>
@@ -198,7 +198,7 @@
 					</thead>
 					<tbody>
 						{#each logs as item}
-							<tr class="border-b border-slate-100 align-top dark:border-slate-800">
+							<tr class="border-b border-line align-top">
 								<td class="px-2 py-2 text-xs text-slate-500">{item.id}</td>
 								<td class="px-2 py-2 text-xs text-slate-500"
 									>{new Date(item.created_at).toLocaleString()}</td
@@ -227,7 +227,7 @@
 		{/if}
 
 		<div
-			class="mt-4 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"
+			class="mt-4 flex items-center justify-between border-t border-line pt-3 text-sm"
 		>
 			<p class="text-slate-500">
 				{$t('governance.pagination', { values: { total, page, pages: totalPages || 1 } })}

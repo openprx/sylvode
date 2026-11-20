@@ -993,9 +993,9 @@
 <div class="mx-auto max-w-7xl pb-44 md:pb-0">
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-10"
 		>
-			<div class="flex items-center justify-center gap-3 text-slate-500 dark:text-slate-400">
+			<div class="flex items-center justify-center gap-3 text-fg-muted">
 				<svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
 					<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"
 					></circle>
@@ -1007,16 +1007,16 @@
 		</div>
 	{:else if !issue}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-10 text-center text-fg-muted"
 		>
 			{$t('issue.notFound')}
 		</div>
 	{:else}
 		<div class="space-y-4">
 			<div
-				class="flex flex-col gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:flex-row sm:items-center sm:justify-between"
+				class="flex flex-col gap-3 rounded-lg border border-line bg-white dark:bg-slate-900 p-4 sm:flex-row sm:items-center sm:justify-between"
 			>
-				<div class="text-sm text-slate-600 dark:text-slate-300">
+				<div class="text-sm text-fg-muted">
 					<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
 					<span class="mx-1 text-slate-400">/</span>
 					<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600"
@@ -1027,7 +1027,7 @@
 						>{$t('issue.list')}</a
 					>
 					<span class="mx-1 text-slate-400">/</span>
-					<span class="font-medium text-slate-900 dark:text-slate-100"
+					<span class="font-medium text-fg"
 						>{formatIssueCode(issue)}</span
 					>
 				</div>
@@ -1052,9 +1052,9 @@
 			<div class="grid grid-cols-1 gap-4 lg:grid-cols-10">
 				<div class="space-y-4 lg:col-span-7">
 					<div
-						class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+						class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 					>
-						<p class="mb-2 text-xs font-mono text-slate-500 dark:text-slate-400">
+						<p class="mb-2 text-xs font-mono text-fg-muted">
 							{formatIssueCode(issue)}
 						</p>
 						{#if issue.proposal_id || issue.governance_exempt}
@@ -1101,9 +1101,9 @@
 								/>
 								{#if existingIssueAttachments.length > 0}
 									<div
-										class="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+										class="rounded-md border border-line bg-slate-50 px-3 py-2 text-sm dark:bg-slate-900"
 									>
-										<p class="mb-1 font-medium text-slate-700 dark:text-slate-200">
+										<p class="mb-1 font-medium text-fg">
 											{$t('issue.existingAttachments')}
 										</p>
 										<div class="space-y-1">
@@ -1131,20 +1131,20 @@
 								</div>
 							</div>
 						{:else}
-							<h1 class="mb-4 text-2xl font-bold text-slate-900 dark:text-slate-100">
+							<h1 class="mb-4 text-2xl font-semibold text-fg">
 								{issue.title}
 							</h1>
 							<div
-								class="rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900"
+								class="rounded-md border border-line bg-slate-50 p-4 dark:bg-slate-900"
 							>
 								{#if issue.description?.trim()}
 									<div
-										class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
+										class="prose prose-sm max-w-none markdown-body text-sm text-fg dark:prose-invert"
 									>
 										{@html renderMarkdown(issue.description)}
 									</div>
 								{:else}
-									<p class="text-sm text-slate-500 dark:text-slate-400">
+									<p class="text-sm text-fg-muted">
 										{$t('issue.noDescriptionPreview')}
 									</p>
 								{/if}
@@ -1153,23 +1153,23 @@
 					</div>
 
 					<div
-						class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+						class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 					>
-						<h2 class="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">
+						<h2 class="mb-4 text-lg font-semibold text-fg">
 							{$t('issue.comments')}（{comments.length}）
 						</h2>
 						<div class="space-y-4">
 							{#if comments.length === 0}
-								<p class="text-sm text-slate-500 dark:text-slate-400">{$t('issue.noComments')}</p>
+								<p class="text-sm text-fg-muted">{$t('issue.noComments')}</p>
 							{:else}
 								{#each comments as comment (comment.id)}
-									<div class="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+									<div class="rounded-lg border border-line p-4">
 										<div class="mb-2 flex items-start justify-between gap-3">
 											<div>
-												<p class="text-sm font-medium text-slate-900 dark:text-slate-100">
+												<p class="text-sm font-medium text-fg">
 													{comment.author_name || comment.user_id}
 												</p>
-												<p class="text-xs text-slate-500 dark:text-slate-400">
+												<p class="text-xs text-fg-muted">
 													{formatDate(comment.created_at)}
 												</p>
 											</div>
@@ -1197,7 +1197,7 @@
 											<div class="space-y-2 relative">
 												{#if showEditMentionDropdown && filteredEditMentionMembers.length > 0}
 													<div
-														class="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800"
+														class="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-line bg-white shadow-lg dark:bg-slate-800"
 													>
 														{#each filteredEditMentionMembers as member (member.user_id)}
 															<button
@@ -1213,7 +1213,7 @@
 																	{/if}
 																	<span>{member.name}</span>
 																</span>
-																<span class="ml-1 text-slate-400 dark:text-slate-400"
+																<span class="ml-1 text-fg-muted"
 																	>{member.email}</span
 																>
 															</button>
@@ -1241,7 +1241,7 @@
 											</div>
 										{:else}
 											<div
-												class="prose prose-sm max-w-none markdown-body text-sm text-slate-700 dark:prose-invert dark:text-slate-300"
+												class="prose prose-sm max-w-none markdown-body text-sm text-fg dark:prose-invert"
 											>
 												{@html renderCommentContent(comment.content)}
 											</div>
@@ -1255,7 +1255,7 @@
 
 				<div class="space-y-4 lg:col-span-3">
 					<div
-						class="space-y-3 rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+						class="space-y-3 rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 					>
 						<Select
 							label={$t('common.status')}
@@ -1279,7 +1279,7 @@
 							disabled={updatingField !== null}
 						/>
 						<div class="space-y-1">
-							<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+							<p class="text-sm font-medium text-fg">
 								{$t('issue.sprint')}
 							</p>
 							{#if currentSprintName && currentSprintName !== $t('issue.noSprint')}
@@ -1302,12 +1302,12 @@
 						</div>
 
 						<div class="space-y-2">
-							<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+							<p class="text-sm font-medium text-fg">
 								{$t('issue.labels')}
 							</p>
 							<div class="flex flex-wrap gap-2">
 								{#if issueLabels.length === 0}
-									<span class="text-xs text-slate-500 dark:text-slate-400"
+									<span class="text-xs text-fg-muted"
 										>{$t('issue.noLabels')}</span
 									>
 								{:else}
@@ -1364,14 +1364,14 @@
 					</div>
 
 					<div
-						class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
+						class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
 					>
-						<h3 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<h3 class="mb-3 text-sm font-semibold text-fg">
 							{$t('issue.activity')}
 						</h3>
 						<div class="space-y-3">
 							{#if activities.length === 0}
-								<p class="text-xs text-slate-500 dark:text-slate-400">{$t('issue.noActivity')}</p>
+								<p class="text-xs text-fg-muted">{$t('issue.noActivity')}</p>
 							{:else}
 								{#each activities as activity, index (activity.id)}
 									<div class="flex items-start gap-3 py-2">
@@ -1383,12 +1383,12 @@
 											></div>
 										</div>
 										<div>
-											<p class="text-sm text-slate-700 dark:text-slate-300">
+											<p class="text-sm text-fg">
 												<span class="font-medium">{getActivityAuthor(activity)}</span>
 												{' '}
 												{formatActivity(activity)}
 											</p>
-											<p class="text-xs text-slate-400 dark:text-slate-400">
+											<p class="text-xs text-fg-muted">
 												{formatDate(activity.created_at)}
 											</p>
 										</div>
@@ -1401,14 +1401,14 @@
 			</div>
 
 			<div
-				class="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 p-3 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 md:static md:z-auto md:border-0 md:bg-transparent md:p-0"
+				class="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-white/95 p-3 backdrop-blur dark:bg-slate-900/95 md:static md:z-auto md:border-0 md:bg-transparent md:p-0"
 			>
 				<div
-					class="relative mx-auto max-w-7xl rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-800 md:p-4"
+					class="relative mx-auto max-w-7xl rounded-lg border border-line bg-white p-3 dark:bg-slate-800 md:p-4"
 				>
 					{#if showMentionDropdown && filteredMentionMembers.length > 0}
 						<div
-							class="absolute bottom-full left-3 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-800"
+							class="absolute bottom-full left-3 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-lg border border-line bg-white shadow-lg dark:bg-slate-800"
 						>
 							{#each filteredMentionMembers as member (member.user_id)}
 								<button
@@ -1424,7 +1424,7 @@
 										{/if}
 										<span>{member.name}</span>
 									</span>
-									<span class="ml-1 text-slate-400 dark:text-slate-400">{member.email}</span>
+									<span class="ml-1 text-fg-muted">{member.email}</span>
 								</button>
 							{/each}
 						</div>

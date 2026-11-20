@@ -89,11 +89,11 @@
 		<div>
 			<div class="flex items-center gap-2">
 				<Activity class="h-6 w-6 text-cyan-700 dark:text-cyan-300" aria-hidden="true" />
-				<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">
+				<h1 class="text-2xl font-semibold text-fg">
 					{$t('connections.title')}
 				</h1>
 			</div>
-			<p class="mt-1 text-sm text-slate-600 dark:text-slate-400">{$t('connections.subtitle')}</p>
+			<p class="mt-1 text-sm text-fg-muted">{$t('connections.subtitle')}</p>
 		</div>
 		<Button variant="secondary" onclick={() => loadLogs()} disabled={loading}>
 			<RefreshCw class="mr-2 h-4 w-4" aria-hidden="true" />
@@ -102,13 +102,13 @@
 	</header>
 
 	<section
-		class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
 	>
 		<div class="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto] md:items-end">
 			<div>
 				<label
 					for="operation-bot-filter"
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					>{$t('connections.bot')}</label
 				>
 				<Input
@@ -120,7 +120,7 @@
 			<div>
 				<label
 					for="operation-tool-filter"
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					>{$t('connections.tool')}</label
 				>
 				<Input
@@ -132,13 +132,13 @@
 			<div>
 				<label
 					for="operation-outcome-filter"
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					>{$t('connections.result')}</label
 				>
 				<select
 					id="operation-outcome-filter"
 					bind:value={outcomeFilter}
-					class="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
 				>
 					<option value="">{$t('connections.allResults')}</option>
 					<option value="ok">{$t('connections.resultOk')}</option>
@@ -155,21 +155,21 @@
 	</section>
 
 	<section
-		class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900"
+		class="overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900"
 	>
 		{#if loading}
-			<div class="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+			<div class="p-8 text-center text-sm text-fg-muted">
 				{$t('common.loading')}
 			</div>
 		{:else if logs.length === 0}
-			<div class="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+			<div class="p-8 text-center text-sm text-fg-muted">
 				{$t('connections.noOperationLogs')}
 			</div>
 		{:else}
 			<div class="overflow-x-auto">
-				<table class="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700">
+				<table class="min-w-full divide-y divide-line text-sm">
 					<thead
-						class="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+						class="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-fg-muted dark:bg-slate-800"
 					>
 						<tr>
 							<th class="px-4 py-3">{$t('connections.time')}</th>
@@ -180,18 +180,18 @@
 							<th class="px-4 py-3 text-right">{$t('connections.duration')}</th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-slate-200 dark:divide-slate-700">
+					<tbody class="divide-y divide-line">
 						{#each logs as log (log.id)}
 							<tr class="align-top hover:bg-slate-50/70 dark:hover:bg-slate-800/60">
-								<td class="whitespace-nowrap px-4 py-3 text-slate-600 dark:text-slate-300"
+								<td class="whitespace-nowrap px-4 py-3 text-fg-muted"
 									>{formatDate(log.created_at)}</td
 								>
 								<td class="px-4 py-3">
-									<div class="font-medium text-slate-900 dark:text-slate-100">{botLabel(log)}</div>
+									<div class="font-medium text-fg">{botLabel(log)}</div>
 									<div class="font-mono text-xs text-slate-400">{log.bot_id.slice(0, 8)}</div>
 								</td>
 								<td class="px-4 py-3">
-									<div class="font-mono text-xs font-medium text-slate-800 dark:text-slate-200">
+									<div class="font-mono text-xs font-medium text-fg">
 										{log.tool_name || $t('connections.directRest')}
 									</div>
 									<div class="mt-1 max-w-md truncate font-mono text-xs text-slate-400">
@@ -202,7 +202,7 @@
 
 								<td class="px-4 py-3">
 									<span
-										class="rounded bg-slate-100 px-2 py-1 font-mono text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+										class="rounded bg-slate-100 px-2 py-1 font-mono text-xs text-fg dark:bg-slate-800"
 										>{log.surface}</span
 									>
 								</td>
@@ -223,7 +223,7 @@
 										</div>{/if}
 								</td>
 								<td
-									class="whitespace-nowrap px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300"
+									class="whitespace-nowrap px-4 py-3 text-right tabular-nums text-fg"
 									>{log.duration_ms} ms</td
 								>
 							</tr>
@@ -235,7 +235,7 @@
 	</section>
 
 	<div class="flex items-center justify-between">
-		<span class="text-sm text-slate-500 dark:text-slate-400"
+		<span class="text-sm text-fg-muted"
 			>{$t('connections.page', { values: { page: pageIndex + 1 } })}</span
 		>
 		<div class="flex gap-2">

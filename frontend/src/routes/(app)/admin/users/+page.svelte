@@ -306,14 +306,14 @@
 <div class="mx-auto max-w-7xl space-y-6">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div>
-			<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('admin.users')}</h1>
-			<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('admin.usersSubtitle')}</p>
+			<h1 class="text-2xl font-semibold text-fg">{$t('admin.users')}</h1>
+			<p class="mt-1 text-sm text-fg-muted">{$t('admin.usersSubtitle')}</p>
 		</div>
 		<Button onclick={openCreateModal}>{$t('admin.createUser')}</Button>
 	</div>
 
 	<div
-		class="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 lg:grid-cols-4"
+		class="grid grid-cols-1 gap-3 rounded-lg border border-line bg-white dark:bg-slate-900 p-4 lg:grid-cols-4"
 	>
 		<div class="lg:col-span-2">
 			<Input
@@ -325,13 +325,13 @@
 		</div>
 		<div>
 			<label
-				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="mb-1 block text-sm font-medium text-fg"
 				for="roleFilter">{$t('admin.role')}</label
 			>
 			<select
 				id="roleFilter"
 				bind:value={roleFilter}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 			>
 				<option value="all">{$t('issue.all')}</option>
 				<option value="admin">{$t('roles.admin')}</option>
@@ -340,13 +340,13 @@
 		</div>
 		<div>
 			<label
-				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="mb-1 block text-sm font-medium text-fg"
 				for="statusFilter">{$t('admin.status')}</label
 			>
 			<select
 				id="statusFilter"
 				bind:value={statusFilter}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 			>
 				<option value="all">{$t('issue.all')}</option>
 				<option value="active">{$t('admin.active')}</option>
@@ -357,31 +357,31 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
 		>
 			{$t('common.loading')}
 		</div>
 	{:else if filteredUsers.length === 0}
 		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
+			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-10 text-center text-fg-muted"
 		>
 			{$t('admin.noMatchedUsers')}
 		</div>
 	{:else}
 		<div
-			class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+			class="overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900"
 		>
 			<div class="space-y-3 p-3 md:hidden">
 				{#each filteredUsers as user (user.id)}
 					<div
-						class="rounded-lg border border-slate-200 dark:border-slate-700 p-4 {isBot(user)
+						class="rounded-lg border border-line p-4 {isBot(user)
 							? 'bg-cyan-50 dark:bg-cyan-900/20'
 							: 'bg-white dark:bg-slate-900'}"
 					>
 						<div class="flex items-start justify-between gap-3">
 							<div class="min-w-0">
 								<p
-									class="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5"
+									class="text-sm font-semibold text-fg flex items-center gap-1.5"
 								>
 									{#if isBot(user)}
 										<BotIcon
@@ -391,10 +391,10 @@
 									{/if}
 									<span>{user.name}</span>
 								</p>
-								<p class="mt-1 break-all text-sm text-slate-600 dark:text-slate-300">
+								<p class="mt-1 break-all text-sm text-fg-muted">
 									{user.email}
 								</p>
-								<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+								<p class="mt-1 text-xs text-fg-muted">
 									{$t('common.createdAt')}
 									{formatDate(user.created_at)}
 								</p>
@@ -409,7 +409,7 @@
 							</span>
 						</div>
 						<div
-							class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
+							class="mt-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted"
 						>
 							<span>{$t('admin.role')}：{user.role}</span>
 							{#if isBot(user)}
@@ -442,39 +442,39 @@
 				{/each}
 			</div>
 			<div class="hidden overflow-x-auto md:block">
-				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
+				<table class="min-w-full divide-y divide-line">
 					<thead class="bg-slate-50 dark:bg-slate-950">
 						<tr>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('admin.name')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('admin.email')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('admin.role')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.createdAt')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('admin.status')}</th
 							>
 							<th
-								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.actions')}</th
 							>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
+					<tbody class="divide-y divide-line bg-white dark:bg-slate-900">
 						{#each filteredUsers as user (user.id)}
 							<tr class={isBot(user) ? 'bg-cyan-50/70 dark:bg-cyan-900/10' : ''}>
-								<td class="px-4 py-3 text-sm text-slate-900 dark:text-slate-100">
+								<td class="px-4 py-3 text-sm text-fg">
 									<div class="flex items-center gap-1.5">
 										{#if isBot(user)}
 											<BotIcon
@@ -485,8 +485,8 @@
 										<span>{user.name}</span>
 									</div>
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{user.email}</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+								<td class="px-4 py-3 text-sm text-fg-muted">{user.email}</td>
+								<td class="px-4 py-3 text-sm text-fg-muted">
 									<div class="flex items-center gap-2">
 										<span>{user.role}</span>
 										{#if isBot(user)}
@@ -498,7 +498,7 @@
 										{/if}
 									</div>
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
+								<td class="px-4 py-3 text-sm text-fg-muted"
 									>{formatDate(user.created_at)}</td
 								>
 								<td class="px-4 py-3 text-sm">
@@ -550,13 +550,13 @@
 	>
 		<div>
 			<label
-				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+				class="mb-1 block text-sm font-medium text-fg"
 				for="entityType">{$t('admin.entityType')}</label
 			>
 			<select
 				id="entityType"
 				bind:value={entityType}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 			>
 				<option value="human">{$t('admin.human')}</option>
 				<option value="bot">{$t('admin.bot')}</option>
@@ -576,13 +576,13 @@
 		{#if entityType === 'bot'}
 			<div>
 				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					for="agentType">{$t('admin.agentType')}</label
 				>
 				<select
 					id="agentType"
 					bind:value={agentType}
-					class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+					class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 				>
 					<option value="openclaw">{$t('agentTypes.openclaw')}</option>
 					<option value="webhook">{$t('agentTypes.webhook')}</option>
@@ -590,8 +590,8 @@
 				</select>
 			</div>
 
-			<div class="space-y-3 rounded-md border border-slate-200 dark:border-slate-700 p-3">
-				<p class="text-sm font-medium text-slate-700 dark:text-slate-300">
+			<div class="space-y-3 rounded-md border border-line p-3">
+				<p class="text-sm font-medium text-fg">
 					{$t('admin.agentConfig')}
 				</p>
 				{#if agentType === 'openclaw'}
@@ -663,13 +663,13 @@
 			<Input type="email" label={$t('admin.email')} bind:value={editForm.email} required />
 			<div>
 				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					for="editRole">{$t('admin.role')}</label
 				>
 				<select
 					id="editRole"
 					bind:value={editForm.role}
-					class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+					class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
 				>
 					<option value="user">{$t('roles.user')}</option>
 					<option value="admin">{$t('roles.admin')}</option>
@@ -694,7 +694,7 @@
 			}}
 			class="space-y-4"
 		>
-			<div class="text-sm text-slate-600 dark:text-slate-300">
+			<div class="text-sm text-fg-muted">
 				{$t('common.user')}：{passwordUser.email}
 			</div>
 			<Input

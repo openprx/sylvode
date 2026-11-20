@@ -115,7 +115,7 @@
 				</div>{/if}
 			{#if read.effective_permission === 'edit' && onEdit && 'text' in content}<button
 					type="button"
-					class="mt-1 rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 focus-visible:outline"
+					class="mt-1 rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100"
 					onclick={() => onEdit?.(row.member)}>{$t('flow.shared.editMember')}</button
 				>{/if}
 		</article>

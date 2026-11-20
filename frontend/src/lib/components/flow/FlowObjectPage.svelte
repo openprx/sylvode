@@ -764,12 +764,12 @@
 {/snippet}
 {#if loadError}
 	<div class="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-lg font-semibold text-fg">
 			{loadError.code === 'not_found'
 				? $t('flow.route.notFoundTitle')
 				: $t('flow.route.disabledTitle')}
 		</h1>
-		<p class="max-w-md text-sm text-slate-500 dark:text-slate-400">
+		<p class="max-w-md text-sm text-fg-muted">
 			{$t(flowErrorI18nKey(loadError))}
 		</p>
 	</div>
@@ -809,9 +809,9 @@
 {:else if collectionObject}
 	{@const routeScopeId = collectionObject.scope_id}
 	<div
-		class="flex items-center justify-between border-b border-slate-200 px-6 py-3 dark:border-slate-800"
+		class="flex items-center justify-between border-b border-line px-6 py-3"
 	>
-		<h1 class="flex-1 truncate text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="flex-1 truncate text-lg font-semibold text-fg">
 			{collectionObject.object_type === 'record'
 				? collectionObject.title || $t('flow.collection.record.untitled')
 				: collectionObject.title || $t('flow.nav.untitled')}
@@ -837,9 +837,9 @@
 	</div>
 {:else if unsupportedObject}
 	<div
-		class="flex items-center justify-between border-b border-slate-200 px-6 py-3 dark:border-slate-800"
+		class="flex items-center justify-between border-b border-line px-6 py-3"
 	>
-		<h1 class="flex-1 truncate text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="flex-1 truncate text-lg font-semibold text-fg">
 			{unsupportedObject.title || $t('flow.nav.untitled')}
 		</h1>
 	</div>
@@ -849,7 +849,7 @@
 			data-testid="flow-object-unsupported"
 			data-object-type={unsupportedObject.object_type}
 		>
-			<p class="text-sm text-slate-500 dark:text-slate-400">
+			<p class="text-sm text-fg-muted">
 				{$t(
 					unsupportedObject.object_type === 'record'
 						? 'flow.personal.recordContextUnavailable'
@@ -861,7 +861,7 @@
 	</div>
 {:else if !entry}
 	<div class="flex flex-1 items-center justify-center p-8">
-		<p class="text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</p>
+		<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 	</div>
 {:else}
 	<FlowPageToolbar
@@ -1009,7 +1009,7 @@
 				{/key}
 			{:else}
 				<div class="flex flex-1 items-center justify-center p-8 text-center">
-					<p class="text-sm text-slate-500 dark:text-slate-400">{$t('flow.canvas.unsupported')}</p>
+					<p class="text-sm text-fg-muted">{$t('flow.canvas.unsupported')}</p>
 				</div>
 			{/if}
 		</div>

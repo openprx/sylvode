@@ -349,7 +349,7 @@
 <svelte:window onmessage={onWindowMessage} />
 
 {#if stage === 'verifying' || stage === 'opening'}
-	<p class="px-3 pb-2 text-sm text-slate-600 dark:text-slate-300" role="status">
+	<p class="px-3 pb-2 text-sm text-fg-muted" role="status">
 		{$t(legacy ? 'plugins.loadingPanel' : 'plugins.host.loading')}
 	</p>
 {/if}
