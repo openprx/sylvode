@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { t } from 'svelte-i18n';
+	import '../foundations/visually-hidden.css';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import { markingWord, type Marking } from './field-state';
 
@@ -36,7 +37,7 @@
 </script>
 
 <div class="ui-form-field">
-	<label class="label" class:hidden={labelHidden} for={id} id="{id}-label"
+	<label class="label" class:ui-sr-only={labelHidden} for={id} id="{id}-label"
 		>{label}{#if word}<span class="word">&nbsp;{$t(`ui.form.${word}`)}</span>{/if}</label
 	>
 	{@render children({
@@ -65,14 +66,6 @@
 		font-size: var(--rf-size-secondary);
 		line-height: var(--rf-leading-secondary);
 		color: var(--rf-secondary);
-	}
-	.label.hidden {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
 	}
 	.message {
 		display: flex;

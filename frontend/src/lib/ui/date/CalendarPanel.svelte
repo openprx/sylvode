@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
+	import '../foundations/visually-hidden.css';
 	import { t, locale } from 'svelte-i18n';
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -278,7 +279,7 @@
 		</button>
 	</div>
 	<!-- Repeats the month and year to assistive technology when the view changes. -->
-	<h2 class="sr-only" id="{id}-heading" aria-live="polite">{heading}</h2>
+	<h2 class="ui-sr-only" id="{id}-heading" aria-live="polite">{heading}</h2>
 
 	{#if view === 'days'}
 		<table class="grid" role="grid" aria-labelledby="{id}-heading" onkeydown={onGridKeydown}>
@@ -321,7 +322,7 @@
 									onpointerleave={() => (hover = null)}
 								>
 									<span class="num" aria-hidden="true">{partsOf(date).day}</span>
-									<span class="sr-only">
+									<span class="ui-sr-only">
 										{fullDateLabel(
 											date,
 											$locale
@@ -638,14 +639,6 @@
 		color: var(--rf-secondary);
 		font-size: var(--rf-size-meta);
 		line-height: var(--rf-leading-meta);
-	}
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
 	}
 	@media (pointer: coarse) {
 		.panel {

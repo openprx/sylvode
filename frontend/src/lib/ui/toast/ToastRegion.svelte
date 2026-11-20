@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { fade } from 'svelte/transition';
+	import '../foundations/visually-hidden.css';
 	import Info from '@lucide/svelte/icons/info';
 	import CircleCheck from '@lucide/svelte/icons/circle-check';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import X from '@lucide/svelte/icons/x';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+	import { onModalChange } from '../foundations/modal';
 	import { portal } from '../foundations/portal';
 	import type { Toasts } from './toast-store';
 	import { isEditableElement, isRegionKey, isUndoKey, type ToastItem } from './toast-queue';
@@ -46,6 +48,9 @@
 			items.live = store.announcement;
 		});
 	});
+
+	// New toasts wait while a dialog is open and appear when the last one closes.
+	$effect(() => onModalChange((open) => toasts.holdWhileModal(open)));
 
 	$effect(() => {
 		const onVisibility = () => toasts.setDocumentHidden(document.visibilityState === 'hidden');
@@ -110,7 +115,7 @@
 	data-ui="toast-region"
 	use:portal
 >
-	<div class="live" role="status" aria-live="polite" aria-atomic="true" data-toast-live>
+	<div class="ui-sr-only" role="status" aria-live="polite" aria-atomic="true" data-toast-live>
 		{#key items.live.seq}{items.live.text}{/key}
 	</div>
 	{#each items.list as item (item.id)}
@@ -172,10 +177,8 @@
 
 <style>
 	.ui-toast-region {
-		/* Proposed token --rf-z-toast: above panels (20) and the scrim (40), below menus (50). */
-		--ui-z-toast: 45;
 		position: fixed;
-		z-index: var(--ui-z-toast);
+		z-index: var(--rf-z-toast);
 		inset-inline-end: 24px;
 		bottom: 24px;
 		display: flex;
@@ -187,15 +190,6 @@
 	}
 	.ui-toast-region.hosted {
 		position: absolute;
-	}
-	.live {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		margin: -1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
 	}
 	.card {
 		pointer-events: auto;

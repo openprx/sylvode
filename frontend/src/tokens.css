@@ -213,8 +213,13 @@
   --rf-z-sticky: 10;
   --rf-z-panel: 20;
   --rf-z-scrim: 40;
+  --rf-z-toast: 45;                         /* toast region: above the scrim, below overlays */
   --rf-z-overlay: 50;
   --rf-z-tooltip: 60;
+
+  /* PROPOSED: layout and type additions used by lib/ui components. */
+  --rf-layout-header-compact: 56px;         /* page header in its compact (sticky or narrow) form; the file's header is 88px */
+  --rf-leading-metric: 1.25;                /* line height of the 32px metric figure */
 }
 
 .dark,

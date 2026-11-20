@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { locale, t } from 'svelte-i18n';
+	import '../foundations/visually-hidden.css';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import Button from '../button/Button.svelte';
 	import {
@@ -86,7 +87,7 @@
 			{/if}
 		</div>
 	{/if}
-	<span class="sr-only" role="status" aria-live="polite">{announcement}</span>
+	<span class="ui-sr-only" role="status" aria-live="polite">{announcement}</span>
 </div>
 
 <style>
@@ -144,16 +145,5 @@
 	}
 	.message :global(.glyph) {
 		flex: none;
-	}
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		margin: -1px;
-		padding: 0;
-		overflow: hidden;
-		clip: rect(0 0 0 0);
-		white-space: nowrap;
-		border: 0;
 	}
 </style>
