@@ -180,6 +180,46 @@
 		timelineEventDetailsJson
 	} from '#lib/forms/views/timeline-events.js';
 
+	import FormsSessionNotice from '#lib/components/forms/page/FormsSessionNotice.svelte';
+
+	// forms-split slot W1-01
+
+	// forms-split slot W1-02
+
+	// forms-split slot W1-03
+
+	// forms-split slot W1-04
+
+	// forms-split slot W1-05
+
+	// forms-split slot W1-06
+
+	// forms-split slot W1-07
+
+	// forms-split slot W1-08
+
+	// forms-split slot W1-09
+
+	// forms-split slot W1-10
+
+	// forms-split slot W1-11
+
+	// forms-split slot W1-12
+
+	// forms-split slot W1-13
+
+	// forms-split slot W1-14
+
+	// forms-split slot W1-15
+
+	// forms-split slot W1-16
+
+	// forms-split slot W1-17
+
+	// forms-split slot W1-18
+
+	// forms-split slot W2-01
+
 	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
 	const recordEditorAction = taskEditorAction();
 	const fp = new FormsPage({ workbench, recordEditorAction });
@@ -637,84 +677,6 @@
 	});
 </script>
 
-{#snippet formsSessionNotice()}
-	{#if s.formsSessionRefreshFailed}
-		<p
-			class="rounded border border-line bg-warning-soft p-3 text-sm"
-			role="status"
-			data-testid="task-refresh-stale"
-		>
-			{$t('forms.session.refreshFailed')}
-		</p>
-	{/if}
-	{#if s.formsSessionRemoteChanged || s.formsSessionConflict}
-		<section
-			class="rounded border border-line bg-warning-soft p-3 text-sm"
-			role="status"
-			data-testid="task-remote-change"
-		>
-			<p>{$t('forms.session.remoteChanged')}</p>
-			{#if s.formsSessionConflict}<p data-testid="task-conflict">
-					{$t('forms.session.conflict')}
-				</p>{/if}
-			<div class="mt-2 flex gap-2">
-				<button
-					type="button"
-					class="rounded border px-3 py-1"
-					data-testid="task-review"
-					onclick={() => {
-						s.formsSessionReview = !s.formsSessionReview;
-					}}>{$t('forms.session.review')}</button
-				>
-				<button
-					type="button"
-					class="rounded border px-3 py-1"
-					data-testid="task-reload"
-					onclick={() => {
-						void reloadFormsSession();
-					}}>{$t('forms.session.reload')}</button
-				>
-			</div>
-			{#if s.formsSessionReview}
-				<div class="mt-3 space-y-2" data-testid="task-review-content">
-					{#if s.formsSessionRemoteRecord}
-						<table class="w-full text-left">
-							<thead
-								><tr
-									><th>{$t('forms.session.field')}</th><th>{$t('forms.session.mine')}</th><th
-										>{$t('forms.session.server')}</th
-									></tr
-								></thead
-							><tbody>
-								<tr
-									><th>Title</th><td class="whitespace-pre-wrap">{s.recordTitle}</td><td
-										class="whitespace-pre-wrap">{s.formsSessionRemoteRecord.title}</td
-									></tr
-								>
-								{#each Object.entries(s.recordDraft) as [key, value]}<tr
-										><th>{key}</th><td class="whitespace-pre-wrap">{formsReviewText(value)}</td><td
-											class="whitespace-pre-wrap"
-											>{formsReviewText(s.formsSessionRemoteRecord.values[key])}</td
-										></tr
-									>{/each}
-							</tbody>
-						</table>
-					{/if}
-					<p>{$t('forms.session.reviewReadOnly')}</p>
-					<button
-						type="button"
-						class="rounded border px-3 py-1"
-						data-testid="task-keep-draft"
-						onclick={() => {
-							s.formsSessionReview = false;
-						}}>{$t('forms.session.keepDraft')}</button
-					>
-				</div>
-			{/if}
-		</section>
-	{/if}
-{/snippet}
-
 <svelte:window onkeydown={handleGlobalKeydown} />
 <div class="sr-only" role="status" aria-live="polite" data-record-live-region>{s.liveMessage}</div>
 
@@ -725,7 +687,7 @@
 	aria-busy={s.formsSessionTransitioning}
 	inert={s.formsSessionTransitioning}
 >
-	{#if !s.recordEditorOpen}{@render formsSessionNotice()}{/if}
+	{#if !s.recordEditorOpen}<FormsSessionNotice />{/if}
 	<div
 		class="flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between"
 	>
@@ -5022,7 +4984,7 @@
 												</Button>
 											</div>
 
-											{@render formsSessionNotice()}
+											<FormsSessionNotice />
 											<div class="grid gap-3 md:grid-cols-2">
 												<label class="space-y-1 md:col-span-2">
 													<span class="text-sm font-medium text-fg"
