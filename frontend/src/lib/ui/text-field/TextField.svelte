@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { HTMLInputAttributes } from 'svelte/elements';
+	import { t } from 'svelte-i18n';
 	import { uid } from '../foundations/ids';
+	import { markingWord, type Marking } from '../form/field-state';
 
 	interface Props extends Omit<HTMLInputAttributes, 'class' | 'children'> {
 		/** Visible label above the box; the label is never placed inside the field. */
@@ -11,6 +13,10 @@
 		helper?: string;
 		/** Error message; replaces the helper line and marks the field invalid. */
 		error?: string;
+		/** This field's kind, for the marking word; same rule as `form/Field.svelte`. */
+		requirement?: Marking;
+		/** What the form marks (the minority kind); without it no word is shown. */
+		marking?: Marking;
 		/** Trailing 16px glyph or control inside the box. */
 		trailing?: Snippet;
 	}
@@ -25,15 +31,20 @@
 		disabled = false,
 		readonly = false,
 		required = false,
+		requirement,
+		marking,
 		...rest
 	}: Props = $props();
 
 	const messageId = $derived(`${id}-message`);
 	const message = $derived(error ?? helper);
+	const word = $derived(markingWord(requirement, marking));
 </script>
 
 <div class="ui-field">
-	<label class="label" for={id}>{label}</label>
+	<label class="label" for={id}
+		>{label}{#if word}<span class="word">&nbsp;{$t(`ui.form.${word}`)}</span>{/if}</label
+	>
 	<div class="box" class:invalid={!!error} class:disabled class:readonly>
 		<input
 			{...rest}
@@ -41,7 +52,7 @@
 			bind:value
 			{disabled}
 			{readonly}
-			{required}
+			required={required || requirement === 'required'}
 			aria-invalid={error ? 'true' : undefined}
 			aria-describedby={message ? messageId : undefined}
 			data-ui="text-field"
