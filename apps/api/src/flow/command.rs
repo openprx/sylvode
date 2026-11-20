@@ -1826,10 +1826,11 @@ pub(crate) fn map_collab_error(err: &CollabError) -> ApiError {
 /// so it is exactly the case `semantic_patch_operations_max` exists to bound. That full list is
 /// checked with [`collab_core::limits::check_operation_batch_count`] *before* a single operation
 /// is applied to `engine` — `limits-v1.md`'s "reject the whole patch atomically, never a partial
-/// prefix" — then each operation is checked with [`collab_core::limits::check_operation`] against
-/// the snapshot immediately before it (so a `create_node` that would make a second `create_node`
-/// in the same batch exceed `container_count`, for example, is still caught) right before it is
-/// applied. `engine` here is always a fresh, request-local fork (`hydrate_and_apply`'s caller in
+/// prefix" — then each operation is checked with [`collab_core::limits::check_operation`]'s
+/// decision against the state immediately before it (so a `create_node` that would make a second
+/// `create_node` in the same batch exceed `container_count`, for example, is still caught) right
+/// before it is applied. The state comes from one snapshot kept current by
+/// [`collab_core::limits::OperationTracker`], not from a snapshot per operation. `engine` here is always a fresh, request-local fork (`hydrate_and_apply`'s caller in
 /// `execute_content_command`) that is simply dropped on any `Err` return — a batch-count or
 /// per-operation rejection therefore never reaches `engine.export_from`/`write::accept_update`, so
 /// it can never advance a document head or produce a business event/`event_dispatch` row.
@@ -1863,6 +1864,8 @@ fn apply_content_command(
     payload: &Value,
 ) -> Result<(), ApiError> {
     let mut mark_edits = None;
+    // The page's state before any operation of this command, when a step already read it.
+    let mut seed = None;
     let ops: Vec<Operation> = match kind {
         ContentCommandType::SetTitle => {
             let payload: SetTitlePayload = parse_payload("set_title", payload)?;
@@ -1999,6 +2002,8 @@ fn apply_content_command(
                         text: inserted.to_owned(),
                     });
                 }
+                // Nothing has been applied yet: this is the state the first operation sees.
+                seed = Some(existing);
             }
             for (key, value) in payload.properties {
                 ops.push(Operation::SetProperty {
@@ -2043,14 +2048,10 @@ fn apply_content_command(
     collab_core::limits::check_operation_batch_count(ops.len(), &limits)
         .map_err(|violation| map_collab_error(&CollabError::from(violation)))?;
 
-    for op in ops {
-        let snapshot = engine.semantic_snapshot().map_err(|err| map_collab_error(&err))?;
-        collab_core::limits::check_operation(&snapshot, &op, &limits)
-            .map_err(|violation| map_collab_error(&CollabError::from(violation)))?;
-        engine
-            .apply_content_operation(&op)
-            .map_err(|err| map_collab_error(&err))?;
-    }
+    // One snapshot for the whole batch (the one `update_block` already took, when it took one):
+    // the tracker keeps the limit aggregates current as operations apply, with the decisions,
+    // the failing operation and the reported numbers of a fresh snapshot before each operation.
+    collab_core::limits::apply_operations_checked(engine, &ops, &limits, seed).map_err(|err| map_collab_error(&err))?;
     if let Some((id, edits)) = mark_edits {
         engine
             .apply_page_marks(&id, &edits)
