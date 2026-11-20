@@ -213,7 +213,7 @@
 				<button
 					onclick={markAllRead}
 					disabled={unreadNotifications.length === 0 || markingAll}
-					class="rounded-control bg-primary px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted"
+					class="rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				>
 					{markingAll ? $t('common.processing') : $t('notification.markAllRead')}
 				</button>

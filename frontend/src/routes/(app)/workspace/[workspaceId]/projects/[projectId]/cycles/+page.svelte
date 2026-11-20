@@ -298,7 +298,7 @@
 			</div>
 			<button
 				onclick={openCreateModal}
-				class="rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary"
+				class="rounded-control rf-filled bg-primary px-4 py-2 text-sm font-medium text-on-primary"
 			>
 				+ {$t('cycles.create')}
 			</button>
@@ -404,7 +404,7 @@
 								</button>
 								<button
 									onclick={() => updateSprintStatus(sprint, 'completed')}
-									class="rounded-control bg-primary px-3 py-1.5 text-sm text-on-primary"
+									class="rounded-control rf-filled bg-primary px-3 py-1.5 text-sm text-on-primary"
 								>
 									{$t('cycles.completeSprint')}
 								</button>
@@ -492,7 +492,7 @@
 								</button>
 								<button
 									onclick={() => updateSprintStatus(sprint, 'active')}
-									class="rounded-control bg-primary px-3 py-1.5 text-sm text-on-primary"
+									class="rounded-control rf-filled bg-primary px-3 py-1.5 text-sm text-on-primary"
 								>
 									{$t('cycles.startSprint')}
 								</button>
@@ -644,7 +644,7 @@
 				<button
 					onclick={submitCreate}
 					disabled={saving}
-					class="rounded-control bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
+					class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 				>
 					{saving ? $t('common.creating') : $t('common.create')}
 				</button>
@@ -720,7 +720,7 @@
 				<button
 					onclick={submitEdit}
 					disabled={saving}
-					class="rounded-control bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
+					class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 				>
 					{saving ? $t('common.saving') : $t('common.save')}
 				</button>

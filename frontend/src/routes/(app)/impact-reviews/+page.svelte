@@ -174,7 +174,7 @@
 			<button
 				type="button"
 				onclick={onSearch}
-				class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+				class="w-full rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 			>
 				{$t('common.search')}
 			</button>

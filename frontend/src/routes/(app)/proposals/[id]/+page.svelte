@@ -784,7 +784,9 @@
 						<button
 							type="button"
 							class={`px-2 py-1 ${
-								newCommentMode === 'edit' ? 'bg-primary text-on-primary' : 'bg-raised text-fg-muted'
+								newCommentMode === 'edit'
+									? 'rf-filled bg-primary text-on-primary'
+									: 'bg-raised text-fg-muted'
 							}`}
 							onclick={() => (newCommentMode = 'edit')}>{$t('issue.editMode')}</button
 						>
@@ -793,7 +795,7 @@
 							type="button"
 							class={`px-2 py-1 ${
 								newCommentMode === 'preview'
-									? 'bg-primary text-on-primary'
+									? 'rf-filled bg-primary text-on-primary'
 									: 'bg-raised text-fg-muted'
 							}`}
 							onclick={() => (newCommentMode = 'preview')}>{$t('issue.previewMode')}</button
@@ -834,7 +836,7 @@
 						<button
 							type="button"
 							onclick={addComment}
-							class="rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+							class="rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 							disabled={!newComment.trim()}
 						>
 							{$t('governance.commentSubmit')}
@@ -860,7 +862,7 @@
 						<button
 							type="button"
 							onclick={createImpactReview}
-							class="mt-3 rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+							class="mt-3 rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 						>
 							{$t('impactReview.create')}
 						</button>
@@ -958,7 +960,7 @@
 							<button
 								type="button"
 								onclick={saveImpactReview}
-								class="rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+								class="rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 								disabled={impactSaving}
 							>
 								{impactSaving ? $t('common.saving') : $t('common.save')}
@@ -990,7 +992,7 @@
 						<button
 							type="button"
 							onclick={actSubmit}
-							class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+							class="w-full rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 							>{$t('governance.submitDiscussion')}</button
 						>
 					{/if}
@@ -998,7 +1000,7 @@
 						<button
 							type="button"
 							onclick={actStartVoting}
-							class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+							class="w-full rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 							>{$t('governance.startVoting')}</button
 						>
 					{/if}
@@ -1009,7 +1011,7 @@
 						<button
 							type="button"
 							onclick={actArchive}
-							class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+							class="w-full rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 							>{$t('governance.archiveAction')}</button
 						>
 					{/if}
@@ -1045,7 +1047,7 @@
 						<button
 							type="button"
 							onclick={() => vote('yes')}
-							class="rounded bg-primary px-2 py-2 text-xs text-on-primary"
+							class="rounded rf-filled bg-primary px-2 py-2 text-xs text-on-primary"
 							>{$t('governance.voteButton.yes')}</button
 						>
 						<button
@@ -1099,7 +1101,7 @@
 							<button
 								type="button"
 								onclick={searchIssues}
-								class="rounded-control bg-primary px-3 py-1 text-xs text-on-primary"
+								class="rounded-control rf-filled bg-primary px-3 py-1 text-xs text-on-primary"
 								>{$t('common.search')}</button
 							>
 						</div>
@@ -1115,7 +1117,7 @@
 										<button
 											type="button"
 											onclick={() => linkIssue(issue.id)}
-											class="rounded bg-primary px-2 py-1 text-on-primary"
+											class="rounded rf-filled bg-primary px-2 py-1 text-on-primary"
 											>{$t('governance.select')}</button
 										>
 									</div>

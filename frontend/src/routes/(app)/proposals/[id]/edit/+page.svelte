@@ -325,7 +325,9 @@
 						<button
 							type="button"
 							class={`px-2 py-1 ${
-								contentMode === 'edit' ? 'bg-primary text-on-primary' : 'bg-raised text-fg-muted'
+								contentMode === 'edit'
+									? 'rf-filled bg-primary text-on-primary'
+									: 'bg-raised text-fg-muted'
 							}`}
 							onclick={() => (contentMode = 'edit')}>{$t('issue.editMode')}</button
 						>
@@ -333,7 +335,9 @@
 						<button
 							type="button"
 							class={`px-2 py-1 ${
-								contentMode === 'preview' ? 'bg-primary text-on-primary' : 'bg-raised text-fg-muted'
+								contentMode === 'preview'
+									? 'rf-filled bg-primary text-on-primary'
+									: 'bg-raised text-fg-muted'
 							}`}
 							onclick={() => (contentMode = 'preview')}>{$t('issue.previewMode')}</button
 						>
@@ -385,7 +389,7 @@
 						type="button"
 						onclick={submit}
 						disabled={saving}
-						class="rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
+						class="rounded-control rf-filled bg-primary px-4 py-2 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 					>
 						{saving ? $t('common.saving') : $t('governance.saveDraft')}
 					</button>

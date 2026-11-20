@@ -351,7 +351,7 @@
 					<button
 						type="button"
 						onclick={submitForm}
-						class="flex-1 rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+						class="flex-1 rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 						disabled={saving}
 					>
 						{saving ? $t('common.saving') : $t('common.save')}

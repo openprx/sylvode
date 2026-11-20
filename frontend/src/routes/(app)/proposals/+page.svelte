@@ -122,7 +122,7 @@
 			</div>
 			<a
 				href="/proposals/new"
-				class="inline-flex items-center rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary"
+				class="inline-flex items-center rounded-control rf-filled bg-primary px-4 py-2 text-sm font-medium text-on-primary"
 			>
 				{$t('governance.createAction')}
 			</a>
@@ -177,7 +177,7 @@
 			<button
 				type="button"
 				onclick={applyFilters}
-				class="rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+				class="rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 				>{$t('governance.filter')}</button
 			>
 		</div>

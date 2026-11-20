@@ -161,7 +161,7 @@
 					onclick={() => (selectedDomain = domain)}
 					class={`rounded-control px-3 py-1.5 text-sm ${
 						selectedDomain === domain
-							? 'bg-primary text-on-primary'
+							? 'rf-filled bg-primary text-on-primary'
 							: 'bg-surface text-fg hover:bg-surface'
 					}`}
 				>
@@ -238,9 +238,7 @@
 			</div>
 		{/if}
 
-		<div
-			class="mt-4 flex items-center justify-end gap-2 text-sm text-fg-muted"
-		>
+		<div class="mt-4 flex items-center justify-end gap-2 text-sm text-fg-muted">
 			<span>{$t('trustBoard.pagination', { values: { total, page, pages: totalPages } })}</span>
 			<Button size="sm" variant="secondary" onclick={prevPage} disabled={loading || page <= 1}
 				>{$t('trustBoard.prevPage')}</Button
