@@ -78,11 +78,7 @@
 </script>
 
 {#if !groupField}
-	<div
-		class="p-6 text-sm text-fg-muted"
-		data-testid="collection-board-disabled"
-		role="note"
-	>
+	<div class="p-6 text-sm text-fg-muted" data-testid="collection-board-disabled" role="note">
 		{$t('flow.collection.board.needsSelect')}
 	</div>
 {:else}
@@ -96,9 +92,8 @@
 	>
 		{#each columns as column, index (column.value ?? '')}
 			<section
-				class="flex w-72 shrink-0 flex-col rounded-lg border bg-slate-50 dark:bg-slate-900 {dropTarget ===
-				index
-					? 'border-blue-500'
+				class="flex w-72 shrink-0 flex-col rounded-card border bg-surface {dropTarget === index
+					? 'border-fg'
 					: 'border-line'}"
 				aria-label={columnLabel(column)}
 				data-testid="collection-board-column"
@@ -115,11 +110,11 @@
 				<header class="flex items-center justify-between gap-2 px-3 py-2">
 					<h3 class="truncate text-sm font-semibold text-fg">
 						{columnLabel(column)}
-						<span class="ml-1 text-xs font-normal text-slate-500">{column.rows.length}</span>
+						<span class="ml-1 text-xs font-normal text-fg-muted">{column.rows.length}</span>
 					</h3>
 					<button
 						type="button"
-						class="min-h-11 min-w-11 rounded text-lg text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-slate-800"
+						class="min-h-11 min-w-11 rounded text-lg text-fg hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
 						aria-label={$t('flow.collection.board.newInColumn', {
 							values: { column: columnLabel(column) }
 						})}
@@ -135,8 +130,7 @@
 				>
 					{#each column.rows as row (row.recordId)}
 						<li
-							class="rounded-md border border-line bg-white p-2 dark:bg-slate-800 {dragging ===
-							row.recordId
+							class="rounded-card border border-line bg-raised p-2 {dragging === row.recordId
 								? 'opacity-50'
 								: ''}"
 							draggable="true"
@@ -169,14 +163,14 @@
 							<div class="mt-1 flex items-center justify-end gap-1">
 								<button
 									type="button"
-									class="mr-auto min-h-11 rounded px-2 text-sm text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-slate-700"
+									class="mr-auto min-h-11 rounded px-2 text-sm text-fg hover:bg-surface"
 									data-testid="collection-board-open"
 									onclick={() => void controller.openPanel(row.recordId)}
 									>{$t('flow.collection.table.openRecord')}</button
 								>
 								<button
 									type="button"
-									class="min-h-11 min-w-11 rounded text-sm hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-700"
+									class="min-h-11 min-w-11 rounded text-sm hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
 									aria-label={$t('flow.collection.board.moveLeft')}
 									disabled={index === 0}
 									data-testid="collection-board-move-left"
@@ -184,7 +178,7 @@
 								>
 								<button
 									type="button"
-									class="min-h-11 min-w-11 rounded text-sm hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-700"
+									class="min-h-11 min-w-11 rounded text-sm hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
 									aria-label={$t('flow.collection.board.moveRight')}
 									disabled={index === columns.length - 1}
 									data-testid="collection-board-move-right"
@@ -201,7 +195,7 @@
 		<div class="px-4 pb-4">
 			<button
 				type="button"
-				class="min-h-11 rounded border border-slate-300 px-3 text-sm dark:border-slate-600"
+				class="min-h-11 rounded border border-fg px-3 text-sm bg-raised"
 				disabled={snapshot.loadingRecords}
 				onclick={() => void controller.loadMore()}>{$t('flow.collection.table.loadMore')}</button
 			>

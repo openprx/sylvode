@@ -95,23 +95,18 @@
 		if (report(await controller.renameView(viewId, name))) delete viewNames[viewId];
 	}
 
-	const inputClass =
-		'min-h-11 rounded border border-slate-300 bg-white px-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900';
+	const inputClass = 'min-h-11 rounded border border-input bg-field px-2 text-sm text-fg';
 	const iconButton =
-		'min-h-11 min-w-11 rounded text-sm hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800';
+		'min-h-11 min-w-11 rounded text-sm hover:bg-surface disabled:text-control disabled:hover:bg-transparent';
 </script>
 
 <section
-	class="space-y-4 border-b border-amber-200 bg-amber-50/60 px-4 py-3 dark:border-amber-900 dark:bg-amber-950/30"
+	class="space-y-4 border-b border-line bg-warning-soft px-4 py-3"
 	aria-label={$t('flow.collection.schema.title')}
 	data-testid="collection-schema-editor"
 >
 	{#if message}
-		<p
-			class="text-sm text-danger"
-			role="alert"
-			data-error-code={message.code ?? ''}
-		>
+		<p class="text-sm text-danger" role="alert" data-error-code={message.code ?? ''}>
 			{$t(message.key)}
 		</p>
 	{/if}
@@ -158,7 +153,7 @@
 						/>
 						<button
 							type="button"
-							class="min-h-11 rounded border border-slate-300 px-3 text-sm dark:border-slate-600"
+							class="min-h-11 rounded border border-fg px-3 text-sm bg-raised"
 							disabled={optionText[field.fieldId] === undefined || snapshot.schemaBusy}
 							onclick={() => void saveOptions(field)}
 							>{$t('flow.collection.schema.saveOptions')}</button
@@ -180,7 +175,7 @@
 					>
 					<button
 						type="button"
-						class="min-h-11 rounded px-3 text-sm text-danger hover:bg-red-50 dark:hover:bg-red-950"
+						class="min-h-11 rounded px-3 text-sm text-danger hover:bg-danger-soft"
 						disabled={snapshot.schemaBusy}
 						onclick={async () => report(await controller.archiveField(field.fieldId))}
 						>{$t('flow.collection.schema.archive')}</button
@@ -224,7 +219,7 @@
 			{/if}
 			<button
 				type="submit"
-				class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+				class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 				disabled={snapshot.schemaBusy}
 				data-testid="collection-add-field">{$t('flow.collection.schema.addField')}</button
 			>
@@ -248,7 +243,7 @@
 						}}
 						onblur={() => void renameView(view.viewId, view.name)}
 					/>
-					<span class="text-xs text-slate-500">
+					<span class="text-xs text-fg-muted">
 						{view.kind === 'board'
 							? $t('flow.collection.view.board')
 							: $t('flow.collection.view.table')}
@@ -290,7 +285,7 @@
 			</label>
 			<button
 				type="submit"
-				class="min-h-11 rounded border border-slate-300 px-3 text-sm font-medium dark:border-slate-600"
+				class="min-h-11 rounded border border-fg bg-raised px-3 text-sm font-medium"
 				disabled={snapshot.schemaBusy}>{$t('flow.collection.schema.addView')}</button
 			>
 		</form>
