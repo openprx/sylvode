@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { workspacesApi } from '#lib/api/workspaces.js';
 	import { authStore } from '#lib/stores/auth.js';
+	import { roving } from '#lib/ui/foundations/roving.js';
 	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import { isWorkspaceAdminRole, type WorkspaceRole } from '#lib/workspace/home.js';
 	import { WorkspaceRoleTracker } from '#lib/workspace/role.js';
@@ -49,6 +50,8 @@
 		class:narrow-only={shell !== null}
 		aria-label={$t('shell.destinations.agents')}
 		data-agents-lists
+		data-shell-list
+		use:roving={{ selector: '[data-nav-row]', orientation: 'vertical', loop: false }}
 	>
 		<AgentsLists {scope} url={page.url} {workspaceAdmin} {data} />
 	</nav>
