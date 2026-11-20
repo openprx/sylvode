@@ -154,9 +154,7 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-lg border border-line bg-white p-6 text-fg-muted dark:bg-slate-800"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else}
@@ -183,7 +181,7 @@
 				>
 				<select
 					id="language"
-					class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+					class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					onchange={(e) => setLocale((e.target as HTMLSelectElement).value)}
 					value={$locale}
 				>
@@ -197,7 +195,7 @@
 				>
 				<select
 					id="theme"
-					class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+					class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					onchange={handleThemeChange}
 					value={currentTheme}
 				>
