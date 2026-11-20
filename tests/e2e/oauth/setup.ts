@@ -1,0 +1,268 @@
+// Creates what the suite needs, through the API, as the instance administrator. Idempotent.
+//
+//   node tests/e2e/oauth/setup.ts
+//
+// Creates or finds: users A and B, the bot user, the workspace (name starts with "qa-p4-"), the
+// members (A member, B admin, bot member), projects P1 and P2, the bot as an AI participant of
+// both projects, and one work item in each project. Refuses a non-loopback host unless
+// OAUTH_E2E_ALLOW_NON_LOOPBACK=1. Prints ids only; never a password or a token.
+
+import { loadConfig, NAME_PREFIX, type Account, type Config, ConfigError } from './config.ts';
+import { call } from './lib/http.ts';
+import { redactor } from './lib/redact.ts';
+import { Recorder } from './lib/record.ts';
+import { envelopeData, FirstParty, itemsOf } from './lib/sv.ts';
+import { asRecord, check, errorMessage, str } from './lib/util.ts';
+
+async function ensureUser(
+	admin: FirstParty,
+	rec: Recorder,
+	body: {
+		name: string;
+		email: string;
+		password?: string;
+		entity_type?: string;
+		agent_type?: string;
+	}
+): Promise<string> {
+	const found = itemsOf(
+		await admin.data(
+			rec,
+			`find ${body.email}`,
+			'GET',
+			`/api/v1/admin/users?search=${encodeURIComponent(body.email)}&limit=20`
+		)
+	).map(asRecord);
+	const existing = found.find((u) => str(u?.email)?.toLowerCase() === body.email.toLowerCase());
+	const existingId = str(existing?.id);
+	if (existingId !== undefined) {
+		log(`user ${body.email}: exists`);
+		return existingId;
+	}
+	const created = asRecord(
+		await admin.data(rec, `create ${body.email}`, 'POST', '/api/v1/admin/users', {
+			role: 'user',
+			...body
+		})
+	);
+	const id = str(created?.id);
+	check(id !== undefined, `creating ${body.email} returned no id`);
+	log(`user ${body.email}: created`);
+	return id;
+}
+
+function log(line: string): void {
+	process.stdout.write(`${line}\n`);
+}
+
+async function ensureLogin(
+	cfg: Config,
+	role: string,
+	account: Account,
+	rec: Recorder
+): Promise<void> {
+	const res = await new FirstParty(cfg, role, account).loginWith(rec, account.password);
+	check(
+		res.status === 200 && asRecord(res.json)?.code === 0,
+		`${role} cannot sign in with the configured password (HTTP ${res.status}); the account exists with another password`
+	);
+}
+
+export async function runSetup(cfg: Config): Promise<void> {
+	const rec = new Recorder();
+	const admin = new FirstParty(cfg, 'admin', cfg.admin);
+	redactor.register(cfg.userA.password, 'password:userA');
+	redactor.register(cfg.userB.password, 'password:userB');
+	await admin.login(rec); // fails clearly when the administrator account is wrong
+
+	const userA = await ensureUser(admin, rec, {
+		name: 'QA P4 user A',
+		email: cfg.userA.email,
+		password: cfg.userA.password
+	});
+	const userB = await ensureUser(admin, rec, {
+		name: 'QA P4 user B',
+		email: cfg.userB.email,
+		password: cfg.userB.password
+	});
+	const bot = await ensureUser(admin, rec, {
+		name: cfg.botName,
+		email: cfg.botEmail,
+		entity_type: 'bot',
+		agent_type: 'custom'
+	});
+	await ensureLogin(cfg, 'userA', cfg.userA, rec);
+	await ensureLogin(cfg, 'userB', cfg.userB, rec);
+
+	// Workspace, owned by the administrator who creates it.
+	const workspaces = itemsOf(
+		await admin.data(rec, 'list workspaces', 'GET', '/api/v1/workspaces')
+	).map(asRecord);
+	let workspaceId = str(workspaces.find((w) => str(w?.name) === cfg.workspaceName)?.id);
+	if (workspaceId === undefined) {
+		const created = asRecord(
+			await admin.data(rec, 'create the workspace', 'POST', '/api/v1/workspaces', {
+				name: cfg.workspaceName,
+				slug: cfg.workspaceSlug
+			})
+		);
+		workspaceId = str(created?.id);
+		log(`workspace ${cfg.workspaceName}: created`);
+	} else {
+		log(`workspace ${cfg.workspaceName}: exists`);
+	}
+	check(workspaceId !== undefined, 'no workspace id');
+	check(cfg.workspaceName.startsWith(NAME_PREFIX), 'the workspace name lost its prefix');
+
+	// Members: A member, B admin, the bot a member.
+	const members = itemsOf(
+		await admin.data(
+			rec,
+			'list members',
+			'GET',
+			`/api/v1/workspaces/${workspaceId}/members?per_page=100`
+		)
+	).map(asRecord);
+	for (const [who, id, role] of [
+		['A', userA, 'member'],
+		['B', userB, 'admin'],
+		['the bot', bot, 'member']
+	] as const) {
+		const current = str(members.find((m) => str(m?.user_id) === id)?.role);
+		if (current === undefined) {
+			await admin.data(rec, `add ${who}`, 'POST', `/api/v1/workspaces/${workspaceId}/members`, {
+				user_id: id,
+				role
+			});
+			log(`member ${who}: added as ${role}`);
+		} else if (who === 'B' && current !== 'admin' && current !== 'owner') {
+			await admin.data(
+				rec,
+				'make B an admin',
+				'PATCH',
+				`/api/v1/workspaces/${workspaceId}/members/${id}`,
+				{ role: 'admin' }
+			);
+			log('member B: promoted to admin');
+		} else {
+			log(`member ${who}: ${current}`);
+		}
+	}
+
+	// Projects, the bot's AI participant registration, and one work item each.
+	const projects = itemsOf(
+		await admin.data(
+			rec,
+			'list projects',
+			'GET',
+			`/api/v1/workspaces/${workspaceId}/projects?per_page=100`
+		)
+	).map(asRecord);
+	const ids: Record<string, string> = {};
+	for (const [label, key, name] of [
+		['P1', cfg.p1Key, cfg.p1Name],
+		['P2', cfg.p2Key, cfg.p2Name]
+	] as const) {
+		let id = str(projects.find((p) => str(p?.key) === key)?.id);
+		if (id === undefined) {
+			const created = asRecord(
+				await admin.data(
+					rec,
+					`create ${label}`,
+					'POST',
+					`/api/v1/workspaces/${workspaceId}/projects`,
+					{ key, name }
+				)
+			);
+			id = str(created?.id);
+			log(`project ${label} (${key}): created`);
+		} else {
+			log(`project ${label} (${key}): exists`);
+		}
+		check(id !== undefined, `no id for ${label}`);
+		ids[label] = id;
+
+		const participant = await admin.request(
+			rec,
+			`register the bot in ${label}`,
+			'POST',
+			`/api/v1/projects/${id}/ai-participants`,
+			{
+				id: bot,
+				name: cfg.botName,
+				model: 'qa-p4',
+				provider: 'qa-p4',
+				capabilities: []
+			}
+		);
+		const body = asRecord(participant.json);
+		if (body?.code === 0) log(`bot in ${label}: registered`);
+		else if (participant.status === 200 && body?.code === 409)
+			log(`bot in ${label}: already registered`);
+		else
+			log(
+				`bot in ${label}: registration answered HTTP ${participant.status}, code ${String(body?.code)} (${str(body?.message) ?? ''})`
+			);
+
+		const listed = itemsOf(
+			await admin.data(
+				rec,
+				`list items of ${label}`,
+				'GET',
+				`/api/v1/projects/${id}/issues?per_page=50&search=qa-p4-seed`
+			)
+		).map(asRecord);
+		if (listed.some((item) => str(item?.title)?.startsWith('qa-p4-seed') === true)) {
+			log(`work item in ${label}: exists`);
+		} else {
+			envelopeData(
+				await admin.request(
+					rec,
+					`create the item of ${label}`,
+					'POST',
+					`/api/v1/projects/${id}/issues`,
+					{ title: `qa-p4-seed-${label.toLowerCase()}` }
+				),
+				`create the item of ${label}`
+			);
+			log(`work item in ${label}: created`);
+		}
+	}
+
+	// Readiness hints.
+	const as = await call({
+		rec,
+		label: 'authorization server metadata',
+		method: 'GET',
+		url: `${cfg.uiOrigin}/.well-known/oauth-authorization-server`
+	});
+	log(
+		`authorization server metadata at the UI origin: HTTP ${as.status}${as.status === 200 ? '' : ' (see DEPLOY-NOTES.md)'}`
+	);
+	log('');
+	log('ids (not secrets):');
+	log(`  workspace  ${workspaceId}`);
+	log(`  P1         ${ids.P1}`);
+	log(`  P2         ${ids.P2}`);
+	log(`  user A     ${userA}`);
+	log(`  user B     ${userB}`);
+	log(`  bot        ${bot}`);
+}
+
+async function main(): Promise<void> {
+	let cfg: Config;
+	try {
+		cfg = loadConfig(process.env, 'setup');
+	} catch (error) {
+		process.stderr.write(`${error instanceof ConfigError ? error.message : errorMessage(error)}\n`);
+		process.exit(2);
+	}
+	try {
+		await runSetup(cfg);
+	} catch (error) {
+		process.stderr.write(`setup failed: ${redactor.text(errorMessage(error))}\n`);
+		process.exit(1);
+	}
+}
+
+if (process.argv[1] !== undefined && import.meta.filename === process.argv[1]) await main();
