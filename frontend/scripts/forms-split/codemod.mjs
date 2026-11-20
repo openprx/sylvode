@@ -2,6 +2,7 @@
 // Codemod for the forms page split (FORMS-PAGE-DECOMPOSITION.md, section 4).
 //
 //   node scripts/forms-split/codemod.mjs lift      W0-C: state, types and constants leave the page
+//   node scripts/forms-split/codemod.mjs modules   W0-D: functions and deriveds leave the page
 //
 // The tool parses the page script with the TypeScript compiler and resolves every identifier with
 // the type checker (`getSymbolAtLocation`), so a local variable that happens to share a name with a
@@ -28,6 +29,15 @@ const ROUTE = join(
 );
 const LIB_FORMS = join(FE, 'src/lib/forms');
 const MAPPING = JSON.parse(readFileSync(join(HERE, 'mapping.json'), 'utf8'));
+
+let PHASE = 'lift';
+/** function name -> { path, kind, property, class } from the mapping table. */
+const FN_MODULE = new Map();
+for (const [path, entry] of Object.entries(MAPPING.modules)) {
+	for (const fn of entry.functions) {
+		FN_MODULE.set(fn.name, { path, line: fn.line, ...entry });
+	}
+}
 
 class Abort extends Error {}
 const fail = (message) => {
@@ -276,14 +286,16 @@ function localModuleOf(info) {
 	if (info.kind === 'function' && MAPPING.earlyPure[info.name]) {
 		return `#lib/forms/${MAPPING.earlyPure[info.name]}.js`;
 	}
+	if (PHASE === 'modules' && info.kind === 'function') {
+		const target = FN_MODULE.get(info.name);
+		if (target?.kind === 'pure') return `#lib/forms/${target.path}.js`;
+	}
 	return null;
 }
 
-/** Import statements for the needs of one generated file; `self` is its own module path. */
-function buildImports(needs, self) {
-	const lines = [];
-	const byFrom = new Map();
-	const local = new Map();
+/** Import entries of one generated file: { from, form, name, imported, typeOnly }. */
+function needsToEntries(needs, self) {
+	const entries = [];
 	const sorted = [...needs].sort((a, b) => {
 		const ia = a.info.kind === 'import' ? a.info.index : Infinity;
 		const ib = b.info.kind === 'import' ? b.info.index : Infinity;
@@ -292,41 +304,123 @@ function buildImports(needs, self) {
 	for (const need of sorted) {
 		const { info } = need;
 		if (info.kind === 'import') {
-			if (!byFrom.has(info.from)) byFrom.set(info.from, []);
-			byFrom.get(info.from).push(need);
+			if (info.from === self) continue;
+			entries.push({
+				from: info.from,
+				form: info.form,
+				name: info.name,
+				imported: info.imported ?? info.name,
+				typeOnly: need.typeOnly || info.typeOnly,
+				local: false
+			});
 		} else {
-			const from = localModuleOf(info);
+			const from = info.aliasOf ? '#lib/forms/detail-layout.js' : localModuleOf(info);
 			if (!from) fail(`${info.name} (${info.kind}) cannot be imported by a generated file`);
 			if (from === self) continue;
-			if (!local.has(from)) local.set(from, []);
-			local.get(from).push(need);
+			entries.push({
+				from,
+				form: 'named',
+				name: info.name,
+				imported: info.aliasOf ?? info.name,
+				typeOnly: info.kind === 'type',
+				local: true
+			});
 		}
 	}
-	for (const [from, list] of byFrom) {
+	return entries;
+}
+
+/** Import statements of a file from its entries (equal entries are merged). */
+function emitImports(entries) {
+	const lines = [];
+	const merged = new Map();
+	for (const entry of entries) {
+		const key = `${entry.from}|${entry.form}|${entry.name}`;
+		const seen = merged.get(key);
+		if (seen) seen.typeOnly = seen.typeOnly && entry.typeOnly;
+		else merged.set(key, { ...entry });
+	}
+	const byFrom = new Map();
+	const local = new Map();
+	for (const entry of merged.values()) {
+		const groups = entry.local ? local : byFrom;
+		if (!groups.has(entry.from)) groups.set(entry.from, []);
+		groups.get(entry.from).push(entry);
+	}
+	const emit = (from, list) => {
 		const named = [];
-		for (const { info, typeOnly } of list) {
-			const isType = typeOnly || info.typeOnly;
-			if (info.form === 'default')
-				lines.push(`import ${isType ? 'type ' : ''}${info.name} from '${from}';`);
-			else if (info.form === 'namespace') {
-				lines.push(`import ${isType ? 'type ' : ''}* as ${info.name} from '${from}';`);
+		for (const entry of list) {
+			if (entry.form === 'default') {
+				lines.push(`import ${entry.typeOnly ? 'type ' : ''}${entry.name} from '${from}';`);
+			} else if (entry.form === 'namespace') {
+				lines.push(`import ${entry.typeOnly ? 'type ' : ''}* as ${entry.name} from '${from}';`);
 			} else {
-				const spec = info.imported === info.name ? info.name : `${info.imported} as ${info.name}`;
-				named.push(`${isType ? 'type ' : ''}${spec}`);
+				const spec =
+					entry.imported === entry.name ? entry.name : `${entry.imported} as ${entry.name}`;
+				named.push({ spec, typeOnly: entry.typeOnly });
 			}
 		}
 		if (named.length) {
-			const allType = named.every((spec) => spec.startsWith('type '));
-			const specs = allType ? named.map((spec) => spec.slice(5)) : named;
+			const allType = named.every((n) => n.typeOnly);
+			const specs = named.map((n) => (allType || !n.typeOnly ? n.spec : `type ${n.spec}`));
 			lines.push(`import ${allType ? 'type ' : ''}{ ${specs.join(', ')} } from '${from}';`);
 		}
-	}
-	for (const [from, list] of [...local].sort((a, b) => a[0].localeCompare(b[0]))) {
-		const allType = list.every((need) => need.info.kind === 'type');
-		const names = list.map((need) => need.info.name);
-		lines.push(`import ${allType ? 'type ' : ''}{ ${names.join(', ')} } from '${from}';`);
-	}
+	};
+	for (const [from, list] of byFrom) emit(from, list);
+	for (const [from, list] of [...local].sort((a, b) => a[0].localeCompare(b[0]))) emit(from, list);
 	return lines.join('\n');
+}
+
+/** Import statements for the needs of one generated file; `self` is its own module path. */
+function buildImports(needs, self) {
+	return emitImports(needsToEntries(needs, self));
+}
+
+/** The imports of an existing generated file as entries (used to extend it). */
+function parseImportEntries(text) {
+	const sf = ts.createSourceFile('x.ts', text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
+	const entries = [];
+	let last = 0;
+	for (const st of sf.statements) {
+		if (!ts.isImportDeclaration(st)) continue;
+		last = st.end;
+		const clause = st.importClause;
+		const from = st.moduleSpecifier.text;
+		const stmtType = Boolean(clause.isTypeOnly);
+		if (clause.name) {
+			entries.push({
+				from,
+				form: 'default',
+				name: clause.name.text,
+				imported: 'default',
+				typeOnly: stmtType,
+				local: false
+			});
+		}
+		const nb = clause.namedBindings;
+		if (nb && ts.isNamespaceImport(nb)) {
+			entries.push({
+				from,
+				form: 'namespace',
+				name: nb.name.text,
+				imported: nb.name.text,
+				typeOnly: stmtType,
+				local: false
+			});
+		} else if (nb) {
+			for (const el of nb.elements) {
+				entries.push({
+					from,
+					form: 'named',
+					name: el.name.text,
+					imported: el.propertyName?.text ?? el.name.text,
+					typeOnly: stmtType || el.isTypeOnly,
+					local: from.startsWith('#lib/forms/')
+				});
+			}
+		}
+	}
+	return { entries, end: last, sf };
 }
 
 // --- markup ----------------------------------------------------------------------------------
@@ -929,6 +1023,776 @@ export function getFormsPageContext(): FormsPage {
 	};
 }
 
+// --- modules (W0-D) --------------------------------------------------------------------------
+
+const RUNES = new Set([
+	'$state',
+	'$derived',
+	'$effect',
+	'$props',
+	'$bindable',
+	'$inspect',
+	'$host'
+]);
+const I18N_MODULE = '#lib/forms/i18n.js';
+const STATE_MODULE = '#lib/forms/state/forms-page-state.svelte.js';
+const CONTROLLER_MODULE = '#lib/forms/state/controller.js';
+const STATE_FILE = join(LIB_FORMS, 'state/forms-page-state.svelte.ts');
+
+function localEntry(from, name, typeOnly = false) {
+	return { from, form: 'named', name, imported: name, typeOnly, local: true };
+}
+
+function moduleFile(path) {
+	return join(LIB_FORMS, `${path}.ts`);
+}
+
+/**
+ * Rewrites the references inside `node` for a unit that moves to `ctx`
+ * ({ kind: 'controller', path } | { kind: 'state' } | { kind: 'pure', path }).
+ * Returns the edits (offsets in the page script), the import needs and the helpers used.
+ */
+function rewriteUnit(page, node, ctx, label, captures = []) {
+	const { sf } = page;
+	const edits = [];
+	const refs = [];
+	const uses = {
+		translate: false,
+		currentLocale: false,
+		authUser: false,
+		stateType: false,
+		snapshot: false
+	};
+	const flags = { workbenchAlias: false };
+	const captured = new Map(); // derived name -> statement the local is inserted before
+	const nodeStart = node.getStart(sf);
+	const replace = (n, text) => edits.push({ start: n.getStart(sf), end: n.end, text });
+	const bad = (message) => fail(`${label}: ${message}`);
+
+	(function walk(n) {
+		if (ts.isTypeQueryNode(n) && ts.isQualifiedName(n.exprName)) {
+			const q = n.exprName;
+			if (ts.isIdentifier(q.left) && q.left.text === 's' && refInfo(page, q.left)?.name === 's') {
+				uses.stateType = true;
+				edits.push({
+					start: n.getStart(sf),
+					end: n.end,
+					text: `FormsPageState['${q.right.text}']`
+				});
+				return;
+			}
+		}
+		if (ts.isIdentifier(n)) {
+			identifier(n);
+			return;
+		}
+		ts.forEachChild(n, walk);
+	})(node);
+
+	function identifier(n) {
+		const shorthand = ts.isShorthandPropertyAssignment(n.parent) && n.parent.name === n;
+		const put = (text) => replace(n, shorthand ? `${n.text}: ${text}` : text);
+		if (n.text.startsWith('$')) {
+			if (
+				n.text === '$state' &&
+				ts.isPropertyAccessExpression(n.parent) &&
+				n.parent.name.text === 'snapshot'
+			) {
+				// Runes only compile in .svelte.ts: controllers call the state class's snapshot helper.
+				if (ctx.kind === 'pure') return bad('pure code calls $state.snapshot');
+				if (ctx.kind === 'controller') {
+					uses.snapshot = true;
+					edits.push({ start: n.parent.getStart(sf), end: n.parent.end, text: 'this.s.snapshot' });
+				}
+				return;
+			}
+			if (RUNES.has(n.text)) {
+				if (ctx.kind !== 'state') bad(`the rune ${n.text} outside the state class`);
+				return;
+			}
+			if (n.text === '$t') {
+				uses.translate = true;
+				return put('translate');
+			}
+			if (n.text === '$locale') {
+				uses.currentLocale = true;
+				return put('currentLocale()');
+			}
+			if (n.text === '$authStore') {
+				if (ctx.kind !== 'state') bad('$authStore outside the state class');
+				uses.authUser = true;
+				return put('authUser.current');
+			}
+			return bad(`unsupported store reference ${n.text}`);
+		}
+		const info = refInfo(page, n);
+		if (!info || info.decl.name === n) return;
+		const typeOnly = inTypePosition(n);
+		switch (info.kind) {
+			case 'import':
+				refs.push({ info, typeOnly });
+				return;
+			case 'function': {
+				if (MAPPING.importedFromDetailLayout[info.name]) {
+					info.aliasOf = MAPPING.importedFromDetailLayout[info.name];
+					refs.push({ info, typeOnly });
+					return;
+				}
+				const target = FN_MODULE.get(info.name);
+				if (!target) return bad(`function ${info.name} has no entry in mapping.json`);
+				if (target.kind === 'pure') {
+					refs.push({ info, typeOnly });
+					return;
+				}
+				if (ctx.kind === 'pure') return bad(`pure code calls the stateful function ${info.name}`);
+				if (ctx.kind === 'controller' && ctx.path === target.path) return put(`this.${info.name}`);
+				return put(`this.fp.${target.property}.${info.name}`);
+			}
+			case 'derived': {
+				if (ctx.kind === 'pure') return bad(`pure code reads the derived ${info.name}`);
+				if (captures.includes(info.name)) {
+					let closure = false;
+					let statement = null;
+					for (let p = n.parent; p; p = p.parent) {
+						if (ts.isArrowFunction(p) || ts.isFunctionExpression(p)) closure = true;
+						if (ts.isBlock(p.parent) && p.parent.parent === node) {
+							statement = p;
+							break;
+						}
+					}
+					if (closure) {
+						if (!statement)
+							return bad(`closure use of ${info.name} outside a statement of the body`);
+						const seen = captured.get(info.name);
+						if (seen && seen !== statement)
+							return bad(`${info.name} is used in closures of several statements`);
+						captured.set(info.name, statement);
+						return;
+					}
+				}
+				return put(ctx.kind === 'state' ? `this.${info.name}` : `this.s.${info.name}`);
+			}
+			case 'const':
+				if (info.name === 's') {
+					if (ctx.kind === 'pure') return bad('pure code reads page state');
+					const parent = n.parent;
+					if (!ts.isPropertyAccessExpression(parent) || parent.expression !== n) {
+						return bad('the state alias s is used other than as s.name');
+					}
+					if (ctx.kind === 'controller') return replace(n, 'this.s');
+					edits.push({ start: n.getStart(sf), end: parent.end, text: `this.${parent.name.text}` });
+					return;
+				}
+				if (info.name === 'workbench') {
+					if (ctx.kind === 'pure') return bad('pure code reads the workbench');
+					if (ctx.kind === 'controller') {
+						// The workbench never changes: a local of the same name keeps the narrowing the
+						// page's `if (!workbench) return` gave to closures.
+						flags.workbenchAlias = true;
+						return;
+					}
+					return put('this.workbench');
+				}
+				if (info.name === 'crc32Table' && ctx.kind === 'pure' && ctx.path === 'zip') return;
+				return bad(`unexpected reference to the constant ${info.name}`);
+			default:
+				return bad(`unexpected reference to ${info.kind} ${info.name}`);
+		}
+	}
+
+	const text = (start, end) =>
+		applyEdits(
+			page.code.slice(start, end),
+			edits
+				.filter((e) => e.start >= start && e.end <= end)
+				.map((e) => ({ ...e, start: e.start - start, end: e.end - start }))
+		);
+	void nodeStart;
+	for (const name of captures) {
+		if (!captured.has(name)) bad(`closure capture of ${name} found no closure use`);
+	}
+	for (const [name, statement] of captured) {
+		edits.push({
+			start: statement.getStart(sf),
+			end: statement.getStart(sf),
+			text: `const ${name} = this.s.${name};\n`
+		});
+	}
+	return { edits, refs, uses, text, flags };
+}
+
+function helperEntries(uses) {
+	const entries = [];
+	if (uses.translate) entries.push(localEntry(I18N_MODULE, 'translate'));
+	if (uses.currentLocale) entries.push(localEntry(I18N_MODULE, 'currentLocale'));
+	if (uses.stateType) entries.push(localEntry(STATE_MODULE, 'FormsPageState', true));
+	return entries;
+}
+
+function functionAsProperty(page, fn, unit) {
+	const { sf } = page;
+	const isAsync = fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+	const typeParams = fn.typeParameters
+		? `<${unit.text(fn.typeParameters.pos, fn.typeParameters.end)}>`
+		: '';
+	const params = unit.text(fn.parameters.pos, fn.parameters.end);
+	const ret = fn.type ? `: ${unit.text(fn.type.getStart(sf), fn.type.end)}` : '';
+	let body = unit.text(fn.body.getStart(sf), fn.body.end);
+	if (unit.flags.workbenchAlias) body = `{\nconst workbench = this.s.workbench;\n${body.slice(1)}`;
+	return `${fn.name.text} = ${isAsync ? 'async ' : ''}${typeParams}(${params})${ret} => ${body};`;
+}
+
+function leadingComments(page, st) {
+	const range = statementRange(page, st);
+	return page.code.slice(range.start, st.getStart(page.sf)).trim();
+}
+
+function importBlock(entries) {
+	return emitImports(entries);
+}
+
+async function modules() {
+	PHASE = 'modules';
+	const src = readFileSync(ROUTE, 'utf8');
+	const page = parsePage(src);
+	const { cs, sf } = page;
+
+	// --- classification and consistency checks ---
+	const functions = page.infos.filter((i) => i.kind === 'function');
+	const deriveds = page.infos.filter((i) => i.kind === 'derived');
+	const stray = page.infos.filter(
+		(i) =>
+			!['import', 'function', 'derived'].includes(i.kind) &&
+			!(
+				i.kind === 'const' &&
+				['workbench', 'recordEditorAction', 'fp', 's', 'crc32Table'].includes(i.name)
+			)
+	);
+	if (stray.length)
+		fail(`unexpected top-level declarations: ${stray.map((i) => i.name).join(', ')}`);
+	const mapped = new Set(FN_MODULE.keys());
+	for (const name of Object.keys(MAPPING.earlyPure)) mapped.delete(name);
+	const inPage = new Set(functions.map((f) => f.name));
+	const missingInMapping = [...inPage].filter((n) => !FN_MODULE.has(n));
+	const missingInPage = [...mapped].filter((n) => !inPage.has(n));
+	if (missingInMapping.length)
+		fail(`functions without a mapping entry: ${missingInMapping.join(', ')}`);
+	if (missingInPage.length) fail(`mapped functions not in the page: ${missingInPage.join(', ')}`);
+	if (deriveds.length !== 70) fail(`expected 70 deriveds, found ${deriveds.length}`);
+	for (const [name, exported] of Object.entries(MAPPING.importedFromDetailLayout)) {
+		const info = page.byName.get(name);
+		if (!info) fail(`${name} (identical to detail-layout.ts ${exported}) is not in the page`);
+		info.aliasOf = exported;
+	}
+
+	// --- rewrite every moving unit ---
+	const crc = page.byName.get('crc32Table');
+	const units = new Map(); // info -> unit
+	const movers = [...functions, ...deriveds, crc];
+	for (const info of movers) {
+		if (info.aliasOf) continue;
+		let ctx;
+		if (info.kind === 'derived') ctx = { kind: 'state' };
+		else if (info.kind === 'const') ctx = { kind: 'pure', path: 'zip' };
+		else {
+			const target = FN_MODULE.get(info.name);
+			ctx =
+				target.kind === 'controller'
+					? { kind: 'controller', path: target.path }
+					: { kind: 'pure', path: target.path };
+		}
+		// nested functions are rare; the contract forbids them in the source
+		const node = info.kind === 'function' ? info.decl : info.decl;
+		if (info.kind === 'function') {
+			(function check(n) {
+				if (
+					n !== info.decl &&
+					(ts.isFunctionDeclaration(n) || (ts.isFunctionExpression(n) && n.asteriskToken))
+				) {
+					fail(`${info.name}: nested function declaration or generator`);
+				}
+				if (ts.isThis(n) || (ts.isIdentifier(n) && n.text === 'arguments')) {
+					fail(`${info.name}: this or arguments in the source function`);
+				}
+				if (ts.isFunctionDeclaration(n) && n !== info.decl) fail(`${info.name}: nested function`);
+				ts.forEachChild(n, check);
+			})(info.decl);
+			if (info.decl.body === undefined) fail(`${info.name}: overload signature`);
+		}
+		units.set(info, {
+			ctx,
+			...rewriteUnit(page, node, ctx, info.name, MAPPING.closureCaptures.units[info.name] ?? [])
+		});
+	}
+
+	const snapshotUsed = [...units.values()].some((unit) => unit.uses.snapshot);
+
+	// --- pure modules ---
+	const pureModules = Object.entries(MAPPING.modules).filter(([, e]) => e.kind === 'pure');
+	for (const [path, entry] of pureModules) {
+		const self = `#lib/forms/${path}.js`;
+		const file = moduleFile(path);
+		const parts = [];
+		let entries = [];
+		const early = entry.functions.filter((f) => MAPPING.earlyPure[f.name]);
+		if (early.length) {
+			const existing = readFileSync(file, 'utf8');
+			const parsed = parseImportEntries(existing);
+			entries.push(...parsed.entries);
+			for (const fn of early) {
+				const st = parsed.sf.statements.find(
+					(x) => ts.isFunctionDeclaration(x) && x.name?.text === fn.name
+				);
+				if (!st) fail(`${fn.name} not found in ${path}.ts`);
+				parts.push({ line: fn.line, text: existing.slice(st.getFullStart(), st.end).trim() });
+			}
+		}
+		const refs = [];
+		const uses = {
+			translate: false,
+			currentLocale: false,
+			authUser: false,
+			stateType: false,
+			snapshot: false
+		};
+		for (const fn of entry.functions) {
+			const info = page.byName.get(fn.name);
+			if (!info || info.aliasOf || MAPPING.earlyPure[fn.name]) continue;
+			const unit = units.get(info);
+			const range = statementRange(page, info.stmt);
+			let text = dedent(unit.text(range.start, range.end).replace(/\n$/, ''));
+			text = text.replace(
+				/^((?:\s*(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/)\s*)*)((?:async\s+)?function\b)/,
+				'$1export $2'
+			);
+			if (!/(^|\n)export (async )?function /.test(text))
+				fail(`${fn.name}: could not mark as exported`);
+			parts.push({ line: fn.line, text });
+			refs.push(...unit.refs);
+			for (const k of Object.keys(uses)) uses[k] = uses[k] || unit.uses[k];
+		}
+		for (const [name, c] of Object.entries(MAPPING.moduleConstants)) {
+			if (c.module !== path) continue;
+			const info = page.byName.get(name);
+			const unit = units.get(info);
+			const range = statementRange(page, info.stmt);
+			parts.push({
+				line: c.line,
+				text: dedent(unit.text(range.start, range.end).replace(/\n$/, ''))
+			});
+			refs.push(...unit.refs);
+		}
+		entries.push(...needsToEntries(mergeNeeds(refs), self), ...helperEntries(uses));
+		parts.sort((a, b) => a.line - b.line);
+		writeOut(file, `${importBlock(entries)}\n\n${parts.map((p) => p.text).join('\n\n')}\n`);
+	}
+
+	// --- controllers ---
+	for (const [path, entry] of Object.entries(MAPPING.modules).filter(
+		([, e]) => e.kind === 'controller'
+	)) {
+		const refs = [];
+		const uses = {
+			translate: false,
+			currentLocale: false,
+			authUser: false,
+			stateType: false,
+			snapshot: false
+		};
+		const props = [];
+		for (const fn of entry.functions) {
+			const info = page.byName.get(fn.name);
+			const unit = units.get(info);
+			const comments = leadingComments(page, info.stmt);
+			props.push({
+				line: fn.line,
+				text: `${comments ? `${comments}\n` : ''}${functionAsProperty(page, info.decl, unit)}`
+			});
+			refs.push(...unit.refs);
+			for (const k of Object.keys(uses)) uses[k] = uses[k] || unit.uses[k];
+		}
+		props.sort((a, b) => a.line - b.line);
+		const entries = [
+			localEntry(CONTROLLER_MODULE, 'FormsController'),
+			...needsToEntries(mergeNeeds(refs), `#lib/forms/${path}.js`),
+			...helperEntries(uses)
+		];
+		writeOut(
+			moduleFile(path),
+			`${importBlock(entries)}\n\nexport class ${entry.class} extends FormsController {\n${props.map((p) => p.text).join('\n\n')}\n}\n`
+		);
+	}
+
+	// --- i18n.ts ---
+	writeOut(
+		join(LIB_FORMS, 'i18n.ts'),
+		`import { fromStore } from 'svelte/store';
+import { locale, t } from 'svelte-i18n';
+
+// \`fromStore(...).current\` subscribes when read inside an effect or a derived and falls back to the
+// store's current value elsewhere, which is what \`$t\` does in a component.
+const tState = fromStore(t);
+const localeState = fromStore(locale);
+
+export const translate: typeof tState.current = (...args) => tState.current(...args);
+
+export function currentLocale(): string | null | undefined {
+	return localeState.current;
+}
+`
+	);
+
+	// --- state class: deriveds, workbench accessor, store bridge ---
+	{
+		const existing = readFileSync(STATE_FILE, 'utf8');
+		const parsed = parseImportEntries(existing);
+		const refs = [];
+		const uses = {
+			translate: false,
+			currentLocale: false,
+			authUser: false,
+			stateType: false,
+			snapshot: false
+		};
+		const members = [];
+		for (const info of deriveds) {
+			const unit = units.get(info);
+			const range = statementRange(page, info.stmt);
+			const d = info.decl;
+			const initStart = d.initializer.getStart(sf);
+			let init = unit.text(initStart, d.initializer.end);
+			// `$derived(this.fp...)` reads `this.fp` in a field initialiser, before the constructor has
+			// assigned it (TS2729); `$derived.by(() => ...)` is the same derived and reads it lazily.
+			const call = d.initializer;
+			if (
+				ts.isCallExpression(call) &&
+				call.expression.getText(sf) === '$derived' &&
+				/this\.fp\b/.test(init)
+			) {
+				const typeArgs = call.typeArguments
+					? `<${unit.text(call.typeArguments.pos, call.typeArguments.end)}>`
+					: '';
+				const arg = unit.text(call.arguments[0].getStart(sf), call.arguments[0].end);
+				init = `$derived.by${typeArgs}(() => (${arg}))`;
+			}
+			const comments = leadingComments(page, info.stmt);
+			members.push(
+				`${comments ? `${comments}\n` : ''}readonly ${d.name.text}${d.type ? `: ${unit.text(d.type.getStart(sf), d.type.end)}` : ''} = ${init};`
+			);
+			refs.push(...unit.refs);
+			for (const k of Object.keys(uses)) uses[k] = uses[k] || unit.uses[k];
+			void range;
+		}
+		const entries = [
+			...parsed.entries,
+			...needsToEntries(mergeNeeds(refs), STATE_MODULE),
+			...helperEntries({ ...uses, stateType: false })
+		];
+		if (uses.authUser) {
+			entries.push({
+				from: 'svelte/store',
+				form: 'named',
+				name: 'fromStore',
+				imported: 'fromStore',
+				typeOnly: false,
+				local: false
+			});
+			entries.push({
+				from: '#lib/stores/auth.js',
+				form: 'named',
+				name: 'authStore',
+				imported: 'authStore',
+				typeOnly: false,
+				local: false
+			});
+		}
+		const body = existing.slice(parsed.end);
+		const close = body.lastIndexOf('}');
+		if (close < 0) fail('state class has no closing brace');
+		const intro = body
+			.slice(0, close)
+			.replace(
+				'(fields only; deriveds join in W0-D)',
+				'(fields, deriveds and the workbench accessor)'
+			);
+		const snapshotHelper = snapshotUsed
+			? `\n/** \`$state.snapshot\` for the controllers, which are plain .ts files and cannot use runes. */\nreadonly snapshot = <T,>(value: T): ReturnType<typeof $state.snapshot<T>> => $state.snapshot(value);\n`
+			: '';
+		const bridge = uses.authUser ? `\nconst authUser = fromStore(authStore);\n` : '';
+		writeOut(
+			STATE_FILE,
+			`${importBlock(entries)}\n${bridge}${intro}\n// deriveds\n${members.join('\n\n')}\n\nget workbench() {\nreturn this.fp.deps.workbench;\n}\n${snapshotHelper}}\n`
+		);
+	}
+
+	// --- forms-page.ts ---
+	{
+		const ctrl = CONTROLLER_ORDER_ENTRIES();
+		const imports = ctrl
+			.map((c) => `import { ${c.class} } from '#lib/forms/${c.path}.js';`)
+			.join('\n');
+		writeOut(
+			join(LIB_FORMS, 'state/forms-page.ts'),
+			`import type { taskEditorAction } from '#lib/workbench/edit-surface.js';
+import type { TaskWorkbench } from '#lib/workbench/tabs.js';
+import { FormsPageState } from '#lib/forms/state/forms-page-state.svelte.js';
+${imports}
+
+export interface FormsPageDeps {
+	workbench: TaskWorkbench | undefined;
+	recordEditorAction: ReturnType<typeof taskEditorAction>;
+}
+
+/** Root of the forms page: its dependencies, its state and one controller per stateful module. */
+export class FormsPage {
+	readonly deps: FormsPageDeps;
+	readonly state: FormsPageState;
+${ctrl.map((c) => `readonly ${c.property}: ${c.class};`).join('\n')}
+
+	constructor(deps: FormsPageDeps) {
+		this.deps = deps;
+		this.state = new FormsPageState(this);
+${ctrl.map((c) => `this.${c.property} = new ${c.class}(this);`).join('\n')}
+	}
+}
+`
+		);
+	}
+
+	// --- the route ---
+	const moverInfos = new Set([...units.keys(), ...functions.filter((f) => f.aliasOf)]);
+	const removedRanges = [...moverInfos].map((info) => ({
+		info,
+		...statementRange(page, info.stmt)
+	}));
+	const inRemoved = (pos) => removedRanges.some((r) => pos >= r.start && pos < r.end);
+	const derivedNames = new Set(deriveds.map((d) => d.name));
+	const scriptEdits = [];
+	const keptRefs = [];
+	const usedBefore = new Set();
+	for (const ref of collectRefs(page, sf)) {
+		if (ref.info.kind === 'import') usedBefore.add(ref.info);
+		const pos = ref.id.getStart(sf);
+		if (inRemoved(pos)) continue;
+		keptRefs.push(ref);
+		if (derivedNames.has(ref.info.name)) {
+			const text = ts.isShorthandPropertyAssignment(ref.id.parent)
+				? `${ref.info.name}: s.${ref.info.name}`
+				: `s.${ref.info.name}`;
+			scriptEdits.push({ start: cs + pos, end: cs + ref.id.end, text });
+		}
+	}
+	for (const r of removedRanges)
+		scriptEdits.push({ start: cs + r.start, end: cs + r.end, text: '' });
+
+	const markupEdits = [];
+	const markupNames = new Set();
+	// {@const} captures: a derived used in a closure inside a guarded block (see mapping.json).
+	const arrows = [];
+	const ifBlocks = [];
+	(function collect(node) {
+		if (Array.isArray(node)) return node.forEach(collect);
+		if (!node || typeof node !== 'object') return;
+		if (node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') {
+			arrows.push([node.start, node.end]);
+		}
+		if (node.type === 'IfBlock') ifBlocks.push(node);
+		for (const [k, v] of Object.entries(node)) {
+			if (k !== 'parent' && k !== 'metadata' && v && typeof v === 'object') collect(v);
+		}
+	})(page.ast.fragment);
+	const seenTests = new Map();
+	const captureBlocks = [];
+	for (const block of ifBlocks) {
+		const test = src.slice(block.test.start, block.test.end);
+		const count = (seenTests.get(test) ?? 0) + 1;
+		seenTests.set(test, count);
+		const spec = MAPPING.markupCaptures.find((c) => c.test === test && c.occurrence === count);
+		if (!spec) continue;
+		const nodes = block.consequent.nodes;
+		captureBlocks.push({
+			spec,
+			start: nodes[0].start,
+			end: nodes.at(-1).end,
+			insertAt: src.indexOf('}', block.test.end) + 1,
+			replaced: 0
+		});
+	}
+	if (captureBlocks.length !== MAPPING.markupCaptures.length) {
+		fail(
+			`markup captures: expected ${MAPPING.markupCaptures.length} blocks, found ${captureBlocks.length}`
+		);
+	}
+	const captureFor = (node) =>
+		captureBlocks.find(
+			(b) =>
+				b.spec.derived === node.name &&
+				node.start >= b.start &&
+				node.end <= b.end &&
+				arrows.some(([from, to]) => node.start >= from && node.end <= to && from >= b.start)
+		);
+	const declared = walkMarkup(page.ast.fragment, src, {
+		identifier(node) {
+			markupNames.add(node.name);
+			if (derivedNames.has(node.name)) {
+				const capture = captureFor(node);
+				if (capture) capture.replaced += 1;
+				markupEdits.push({
+					start: node.start,
+					end: node.end,
+					text: capture ? capture.spec.local : `s.${node.name}`
+				});
+			}
+		},
+		typeIdentifier(node) {
+			markupNames.add(node.name);
+		},
+		shorthand(prop) {
+			markupNames.add(prop.key.name);
+			if (derivedNames.has(prop.key.name)) {
+				markupEdits.push({
+					start: prop.start,
+					end: prop.end,
+					text: `${prop.key.name}: s.${prop.key.name}`
+				});
+			}
+		},
+		shorthandAttribute(attr, expression) {
+			markupNames.add(expression.name);
+			if (derivedNames.has(expression.name)) {
+				markupEdits.push({
+					start: attr.start,
+					end: attr.end,
+					text: `${attr.name}={s.${attr.name}}`
+				});
+			}
+		}
+	});
+	for (const block of captureBlocks) {
+		if (!block.replaced) fail(`markup capture of ${block.spec.derived} replaced nothing`);
+		if (markupNames.has(block.spec.local) || page.byName.has(block.spec.local)) {
+			fail(`markup capture local ${block.spec.local} collides with an existing name`);
+		}
+		markupEdits.push({
+			start: block.insertAt,
+			end: block.insertAt,
+			text: `{@const ${block.spec.local} = s.${block.spec.derived}}`
+		});
+	}
+	for (const name of declared) {
+		if (derivedNames.has(name)) fail(`the template declares ${name}, which shadows a derived`);
+		if (FN_MODULE.has(name) || page.byName.get(name)?.kind === 'function') {
+			fail(`the template declares ${name}, which shadows a function of the page`);
+		}
+	}
+
+	// What the route still calls: functions (destructured or imported) from hooks and markup.
+	const routeFns = new Map();
+	const noteFn = (info) => {
+		if (info.kind === 'function' && !info.aliasOf) routeFns.set(info.name, info);
+		if (info.kind === 'function' && info.aliasOf) routeFns.set(info.name, info);
+	};
+	for (const ref of keptRefs) noteFn(ref.info);
+	for (const name of markupNames) {
+		const info = page.byName.get(name);
+		if (info) noteFn(info);
+	}
+	const destructure = [];
+	const pureEntries = [];
+	for (const c of CONTROLLER_ORDER_ENTRIES()) {
+		const names = [...routeFns.values()]
+			.filter((i) => !i.aliasOf && FN_MODULE.get(i.name)?.path === c.path)
+			.sort((a, b) => FN_MODULE.get(a.name).line - FN_MODULE.get(b.name).line)
+			.map((i) => i.name);
+		if (names.length) destructure.push(`const { ${names.join(', ')} } = fp.${c.property};`);
+	}
+	for (const info of [...routeFns.values()].sort(
+		(a, b) => FN_MODULE.get(a.name).line - FN_MODULE.get(b.name).line
+	)) {
+		if (info.aliasOf) pureEntries.push(...needsToEntries([{ info, typeOnly: false }], ''));
+		else if (FN_MODULE.get(info.name).kind === 'pure') {
+			pureEntries.push(...needsToEntries([{ info, typeOnly: false }], ''));
+		}
+	}
+	const usedNames = new Set(markupNames);
+	for (const name of [...usedNames]) if (name.startsWith('$')) usedNames.add(name.slice(1));
+	for (const ref of keptRefs) usedNames.add(ref.info.name);
+	(function scan(n) {
+		if (ts.isIdentifier(n) && n.text.startsWith('$') && !inRemoved(n.getStart(sf)))
+			usedNames.add(n.text.slice(1));
+		ts.forEachChild(n, scan);
+	})(sf);
+	const importEdits = [];
+	const removedImports = new Set();
+	const pageImports = page.infos.filter((i) => i.kind === 'import');
+	for (const info of pageImports) {
+		const wasUsed =
+			usedBefore.has(info) || STORE_NAMES.has(info.name) || markupNames.has(info.name);
+		if (wasUsed && !usedNames.has(info.name)) removedImports.add(info);
+	}
+	const byStmt = new Map();
+	for (const info of pageImports) {
+		if (!byStmt.has(info.stmt)) byStmt.set(info.stmt, []);
+		byStmt.get(info.stmt).push(info);
+	}
+	for (const [st, infos] of byStmt) {
+		const dropped = infos.filter((i) => removedImports.has(i));
+		if (!dropped.length) continue;
+		const range = statementRange(page, st);
+		if (dropped.length === infos.length) {
+			importEdits.push({ start: cs + range.start, end: cs + range.end, text: '' });
+			continue;
+		}
+		const kept = infos.filter((i) => !removedImports.has(i));
+		const def = kept.find((i) => i.form === 'default');
+		const ns = kept.find((i) => i.form === 'namespace');
+		const named = kept
+			.filter((i) => i.form === 'named')
+			.map(
+				(i) =>
+					`${i.decl.isTypeOnly ? 'type ' : ''}${i.imported === i.name ? i.name : `${i.imported} as ${i.name}`}`
+			);
+		const parts = [];
+		if (def) parts.push(def.name);
+		if (ns) parts.push(`* as ${ns.name}`);
+		if (named.length) parts.push(`{ ${named.join(', ')} }`);
+		importEdits.push({
+			start: cs + st.getStart(sf),
+			end: cs + st.end,
+			text: `import ${st.importClause.isTypeOnly ? 'type ' : ''}${parts.join(', ')} from '${st.moduleSpecifier.text}';`
+		});
+	}
+	const sInfo = page.byName.get('s');
+	const lastImportStmt = pageImports.at(-1).stmt;
+	const importsAt = cs + lastImportStmt.end;
+	scriptEdits.push({ start: importsAt, end: importsAt, text: `\n${emitImports(pureEntries)}\n` });
+	const destructureAt = cs + sInfo.stmt.end;
+	scriptEdits.push({
+		start: destructureAt,
+		end: destructureAt,
+		text: `\n\n${destructure.join('\n')}\n`
+	});
+
+	const all = [...scriptEdits, ...importEdits, ...markupEdits];
+	writeOut(ROUTE, applyEdits(src, all));
+	await flush();
+	return {
+		functions: functions.length,
+		deriveds: deriveds.length,
+		pureModules: pureModules.length,
+		controllers: Object.values(MAPPING.modules).filter((e) => e.kind === 'controller').length,
+		removedImports: [...removedImports].map((i) => i.name)
+	};
+}
+
+function CONTROLLER_ORDER_ENTRIES() {
+	return MAPPING.controllerOrder.map((property) => {
+		const found = Object.entries(MAPPING.modules).find(([, e]) => e.property === property);
+		if (!found) fail(`no controller module for ${property}`);
+		return { property, path: found[0], class: found[1].class };
+	});
+}
+
 // --- main ------------------------------------------------------------------------------------
 
 async function main() {
@@ -937,8 +1801,12 @@ async function main() {
 		const summary = await lift();
 		console.log(`codemod lift: ${JSON.stringify(summary)}`);
 		for (const path of written) console.log(`  wrote ${path.replace(`${FE}/`, '')}`);
+	} else if (command === 'modules') {
+		const summary = await modules();
+		console.log(`codemod modules: ${JSON.stringify(summary)}`);
+		for (const path of written) console.log(`  wrote ${path.replace(`${FE}/`, '')}`);
 	} else {
-		console.error('usage: codemod.mjs lift');
+		console.error('usage: codemod.mjs lift | modules');
 		process.exitCode = 2;
 	}
 }
