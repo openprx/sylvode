@@ -1,10 +1,8 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import Button from '../button/Button.svelte';
-	import ToastRegion from './ToastRegion.svelte';
-	import { Toasts } from './toast-store';
+	import { appToasts as toasts } from './app-toasts';
 
-	const toasts = new Toasts();
 	let undoCalls = $state(0);
 	let failNext = $state(false);
 
@@ -49,7 +47,6 @@
 		>
 	</div>
 </section>
-<ToastRegion {toasts} />
 
 <style>
 	.row {
