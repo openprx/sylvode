@@ -120,7 +120,11 @@ pub fn editor_model_signals(
     let Some(blocks) = read_blocks(doc, Mode::Floor, || Ok(placements))? else {
         return Ok(None);
     };
-    Ok(Some(EditorModelSignals {
+    Ok(Some(signals_of(&blocks)))
+}
+
+fn signals_of(blocks: &[EditorBlock]) -> EditorModelSignals {
+    EditorModelSignals {
         atom: blocks.iter().any(|block| crate::editor_media::is_atom(&block.kind)),
         beyond_model1: blocks.iter().any(|block| {
             !block.inline_spans.is_empty()
@@ -129,7 +133,7 @@ pub fn editor_model_signals(
                     "paragraph" | "heading" | "bulletItem" | "codeBlock"
                 )
         }),
-    }))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -307,14 +311,31 @@ fn read_blocks(
     Ok(Some(blocks))
 }
 
-/// The block ids `legacy_editor_blocks` returns, and what `editor_blocks` returns.
-pub type LegacyIdsAndBlocks = (Vec<String>, Vec<EditorBlock>);
+/// What the editor-model floor needs from the single pass in [`legacy_ids_and_editor_blocks`]:
+/// the two block signals of [`editor_model_signals`], and whether any *physical* block map (placed
+/// or not, supported or not) has an atom `nodeName`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FloorFacts {
+    pub physical_atom: bool,
+    pub signals: EditorModelSignals,
+}
+
+/// The block ids `legacy_editor_blocks` returns, what `editor_blocks` returns, and the floor facts
+/// of the same pass.
+pub type LegacyIdsAndBlocks = (Vec<String>, Vec<EditorBlock>, FloorFacts);
 
 /// `legacy_editor_blocks` (reduced to block ids) and `editor_blocks`, evaluated in that order but
 /// in one pass over the editor document. The result -- values, `None`, and which typed error is
 /// returned -- equals calling the two readers in sequence: an error the legacy reader would
 /// return wins over anything the current reader would report, then the current reader's
 /// placement error, then its first per-block error.
+///
+/// The returned [`FloorFacts`] equal what the floor walk derives (`physical_atoms_present` and
+/// [`editor_model_signals`]) whenever this succeeds, because both read the same root containers
+/// (by typed id) and the same physical maps and current blocks. The reverse does not hold: this
+/// pass can fail where the walk succeeds, for example on an unplaced block map without
+/// `nodeName` on a structured page, which the walk skips and this reader rejects. Nothing is
+/// derived from a failed pass.
 pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAndBlocks>, CollabError> {
     #[cfg(test)]
     crate::walk_counter::record_block_read();
@@ -336,12 +357,14 @@ pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAnd
     let mut current_error = placements.as_ref().err().cloned();
     let mut legacy_ids = Vec::new();
     let mut blocks = Vec::new();
+    let mut physical_atom = false;
     for i in 0..list.len() {
         let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(i) else {
             return Err(invalid("editor_doc_unsupported_block_container"));
         };
         let cid = map.id().to_string();
         let kind = string(&map, "nodeName");
+        physical_atom |= kind.as_deref().is_some_and(crate::editor_media::is_atom);
         let mut attributes = None;
         let mut texts = None;
 
@@ -391,7 +414,8 @@ pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAnd
     if let Some(index) = index {
         apply_placements(&mut blocks, &index)?;
     }
-    Ok(Some((legacy_ids, blocks)))
+    let signals = signals_of(&blocks);
+    Ok(Some((legacy_ids, blocks, FloorFacts { physical_atom, signals })))
 }
 /// Resolve only live top-level editor maps. Tombstoned aliases cannot resurrect blocks.
 pub fn resolve_editor_block_id(doc: &LoroDoc, id: &str) -> Option<String> {
@@ -1148,7 +1172,7 @@ mod tests {
     /// Asserts that the single-pass reader agrees with the sequential readers on `doc`; returns
     /// the shared error text when both fail.
     fn assert_single_pass_matches(doc: &LoroDoc, label: &str) -> Option<String> {
-        let fused = legacy_ids_and_editor_blocks(doc).map(|read| read.map(|(ids, blocks)| (ids, summarize(blocks))));
+        let fused = legacy_ids_and_editor_blocks(doc).map(|read| read.map(|(ids, blocks, _)| (ids, summarize(blocks))));
         let sequential = sequential_reads(doc);
         assert_eq!(sequential, fused, "{label}");
         sequential.err().map(|error| error.to_string())
