@@ -2217,9 +2217,10 @@ async fn nothing_secret_reaches_the_logs() {
 
     let everything = capture.everything.lock().clone();
     let info_up = capture.info_up.lock().clone();
+    // The capture is live: the stream's own limit refusal below is an info line it must have seen.
     assert!(
-        info_up.lines().count() > 2 && everything.lines().count() > 5,
-        "the capture saw the process's logging, so the assertions below mean something:\n{everything}"
+        info_up.contains("too many open streams"),
+        "the capture saw the stream's logging, so the assertions below mean something:\n{info_up}"
     );
     // What must never be logged at any level: raw tokens, cursors, event ids, the signing secret.
     let never = [
@@ -2255,10 +2256,5 @@ async fn nothing_secret_reaches_the_logs() {
         }
     }
     assert!(report.is_empty(), "{report}\n{info_up}");
-    // Ids and reason codes are what the stream logs.
-    assert!(
-        info_up.contains("too many open streams"),
-        "the limit refusal is logged by reason only:\n{info_up}"
-    );
     world.finish().await;
 }
