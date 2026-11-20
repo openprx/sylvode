@@ -98,6 +98,16 @@
       "explanation": "The openpr-<target> and openpr-frontend.tar.gz release archive aliases published next to the sylvode-* archives (ADR-0020 D1), and the removed openpr-mcp-server-<target> archives in the release notes."
     },
     {
+      "id": "sylvode-legacy-webhook-release-aliases",
+      "reason": "legacy_alias_documented",
+      "repo": "sylvode",
+      "paths": [
+        ".github/workflows/release.yml"
+      ],
+      "pattern": "openpr-(?:webhook|linux-\\*|macos-\\*)",
+      "explanation": "The webhook receiver is published under its legacy name on purpose, as the receiver README promises: the ghcr.io/openprx/openpr-webhook image (same manifest and digest as sylvode-webhook), the openpr-webhook-<platform> archives, the openpr-webhook executable inside the receiver image and archives, and the openpr-linux-*/openpr-macos-* archive globs the release job checks (ADR-0020 D1)."
+    },
+    {
       "id": "sylvode-database-names",
       "reason": "stable_identifier",
       "repo": "sylvode",
