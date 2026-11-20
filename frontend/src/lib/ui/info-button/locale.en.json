@@ -1,0 +1,10 @@
+{
+	"ui": {
+		"infoButton": {
+			"sample": {
+				"label": "About approvals",
+				"body": "An approval lets an agent take one action you have seen. Nothing runs until you allow it, and you can decline at any time."
+			}
+		}
+	}
+}

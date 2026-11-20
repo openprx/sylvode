@@ -1,0 +1,30 @@
+{
+	"states": {
+		"empty": {
+			"title": "还没有{thing}",
+			"body": "添加的{thing}会显示在这里。"
+		},
+		"loading": {
+			"label": "正在加载{thing}"
+		},
+		"loadFailed": {
+			"title": "无法加载{thing}",
+			"body": "服务器没有响应，筛选条件已保留。",
+			"action": "重试"
+		},
+		"forbidden": {
+			"title": "你没有访问权限",
+			"body": "请联系{role}为你开通“{place}”的访问权限。"
+		}
+	},
+	"ui": {
+		"stateBlock": {
+			"sample": {
+				"thing": "项目",
+				"create": "新建项目",
+				"grantor": "管理员",
+				"place": "Northwind 工作区"
+			}
+		}
+	}
+}
