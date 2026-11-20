@@ -13,6 +13,7 @@
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
 	import { authStore } from '#lib/stores/auth.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { renderMarkdown } from '#lib/utils/markdown.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import {
@@ -485,7 +486,14 @@
 			return;
 		}
 
-		if (!confirm(get(t)('issue.deleteConfirm'))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('issue.deleteTitle'),
+				body: get(t)('issue.deleteBody'),
+				confirmLabel: get(t)('issue.deleteAction')
+			}))
+		) {
 			return;
 		}
 
@@ -870,7 +878,14 @@
 		if (commentBusyId) {
 			return;
 		}
-		if (!confirm(get(t)('issue.commentDeleteConfirm'))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('issue.commentDeleteTitle'),
+				body: get(t)('issue.commentDeleteBody'),
+				confirmLabel: get(t)('issue.commentDeleteAction')
+			}))
+		) {
 			return;
 		}
 

@@ -4,6 +4,7 @@
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import {
 		workflowsApi,
@@ -112,7 +113,16 @@
 	}
 
 	async function handleDelete(wf: WorkflowSummary) {
-		if (!confirm(get(t)('workflow.deleteConfirm', { values: { name: wf.name } }))) return;
+		const nameValues = { values: { name: wf.name } };
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('workflow.deleteTitle', nameValues),
+				body: get(t)('workflow.deleteBody'),
+				confirmLabel: get(t)('workflow.deleteAction', nameValues)
+			}))
+		)
+			return;
 		const response = await workflowsApi.delete(wf.id);
 		if (response.code !== 0) {
 			toast.error(response.message);
@@ -224,7 +234,15 @@
 	}
 
 	async function handleDeleteState(state: WorkflowStateResponse) {
-		if (!confirm(get(t)('workflow.stateDeleteConfirm', { values: { name: state.display_name } })))
+		const nameValues = { values: { name: state.display_name } };
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('workflow.stateDeleteTitle', nameValues),
+				body: get(t)('workflow.stateDeleteBody'),
+				confirmLabel: get(t)('workflow.stateDeleteAction', nameValues)
+			}))
+		)
 			return;
 		const response = await workflowsApi.deleteState(state.id);
 		if (response.code !== 0) {

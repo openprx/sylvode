@@ -14,6 +14,7 @@
 	import { createBotRequest } from '#lib/bots/create-bot-request.js';
 	import { membersApi, type WorkspaceMember, type WorkspaceMemberRole } from '#lib/api/members.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import Button from '#lib/components/Button.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
@@ -121,7 +122,14 @@
 
 	async function removeMember(member: WorkspaceMember) {
 		const name = member.name || member.email || member.user_id;
-		if (!confirm(get(t)('members.removeConfirm', { values: { name } }))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('members.removeTitle', { values: { name } }),
+				body: get(t)('members.removeBody', { values: { name } }),
+				confirmLabel: get(t)('members.removeAction', { values: { name } })
+			}))
+		) {
 			return;
 		}
 
@@ -141,10 +149,14 @@
 			return;
 		}
 
+		const roleValues = { values: { email: member.email, role: nextRole } };
 		if (
-			!confirm(
-				get(t)('members.changeRoleConfirm', { values: { email: member.email, role: nextRole } })
-			)
+			!(await confirmAction({
+				tone: 'neutral',
+				title: get(t)('members.changeRoleTitle', roleValues),
+				body: get(t)('members.changeRoleBody', roleValues),
+				confirmLabel: get(t)('members.changeRoleAction', roleValues)
+			}))
 		) {
 			return;
 		}
@@ -239,7 +251,15 @@
 	}
 
 	async function revokeToken(bot: Bot) {
-		if (!confirm(get(t)('members.revokeConfirm', { values: { name: bot.name } }))) {
+		const nameValues = { values: { name: bot.name } };
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('members.revokeTitle', nameValues),
+				body: get(t)('members.revokeBody'),
+				confirmLabel: get(t)('members.revokeAction', nameValues)
+			}))
+		) {
 			return;
 		}
 

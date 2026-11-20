@@ -14,6 +14,7 @@
 	} from '#lib/api/sprints.js';
 	import ProgressBar from '#lib/components/ProgressBar.svelte';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
@@ -242,9 +243,13 @@
 	}
 
 	async function removeSprint(sprint: Sprint) {
-		const confirmed = window.confirm(
-			get(t)('cycles.deleteConfirm', { values: { name: sprint.name } })
-		);
+		const nameValues = { values: { name: sprint.name } };
+		const confirmed = await confirmAction({
+			tone: 'destructive',
+			title: get(t)('cycles.deleteTitle', nameValues),
+			body: get(t)('cycles.deleteBody'),
+			confirmLabel: get(t)('cycles.deleteAction', nameValues)
+		});
 		if (!confirmed) return;
 
 		const response = await sprintsApi.delete(sprint.id);
