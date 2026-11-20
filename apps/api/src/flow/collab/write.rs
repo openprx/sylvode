@@ -548,6 +548,79 @@ pub(crate) struct Prepared {
     pub(crate) child_references: Vec<crate::flow::child_pages::ChildReference>,
     pub(crate) logical_blocks: Vec<crate::flow::block_registry::PreparedBlock>,
 }
+/// How many accepted updates the worker's incremental window check decided differently from the
+/// host's full projection of the accepted document, since the process started. Exported as the
+/// `flow_window_check_divergence_total` field of the error log line below.
+pub(crate) static WINDOW_CHECK_DIVERGENCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The host's oracle for the worker's incremental window check: compares what the worker
+/// established about the accepted document (`report`, absent when the full computation decided)
+/// with the full projection the host just computed from the document it received. On any
+/// disagreement the write is refused with a typed internal error, never accepted, the divergence
+/// is logged at error level with the identifiers that reproduce it (the document, the update and
+/// the head it was applied to; never the content) and counted.
+fn verify_window_report(
+    report: Option<&collab_core::window_check::WindowReport>,
+    projection: &collab_core::SemanticSnapshot,
+    update_id: Uuid,
+    document_id: Uuid,
+    base_head_seq: i64,
+) -> Result<(), ApiError> {
+    let Some(report) = report else {
+        return Ok(());
+    };
+    let Err(divergence) = collab_core::window_check::compare_with_projection(report, projection) else {
+        return Ok(());
+    };
+    let total = WINDOW_CHECK_DIVERGENCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    tracing::error!(
+        flow_window_check_divergence_total = total,
+        field = divergence.field,
+        reported = divergence.reported,
+        projected = divergence.projected,
+        document_id = %document_id,
+        update_id = %update_id,
+        base_head_seq,
+        "incremental_check_divergence: the worker's window check disagrees with the full projection; refusing the write"
+    );
+    Err(ApiError::internal())
+}
+
+#[cfg(test)]
+mod window_oracle_tests {
+    use super::*;
+    use collab_core::SemanticSnapshot;
+    use collab_core::window_check::WindowReport;
+
+    fn report(blocks: u64) -> WindowReport {
+        WindowReport {
+            blocks,
+            navigators: 0,
+            chars: 0,
+            depth_bound: 0,
+            longest_bound: 0,
+        }
+    }
+
+    #[test]
+    fn no_report_means_the_full_computation_decided() {
+        let projection = SemanticSnapshot::default();
+        assert!(verify_window_report(None, &projection, Uuid::nil(), Uuid::nil(), 0).is_ok());
+    }
+
+    #[test]
+    fn agreeing_report_is_accepted_and_a_diverging_one_is_refused_and_counted() {
+        let projection = SemanticSnapshot::default();
+        assert!(verify_window_report(Some(&report(0)), &projection, Uuid::nil(), Uuid::nil(), 0).is_ok());
+        let before = WINDOW_CHECK_DIVERGENCES.load(std::sync::atomic::Ordering::Relaxed);
+        let refused = verify_window_report(Some(&report(1)), &projection, Uuid::nil(), Uuid::nil(), 0);
+        assert!(
+            matches!(&refused, Err(error) if format!("{error:?}") == format!("{:?}", ApiError::internal())),
+            "{refused:?}"
+        );
+        assert!(WINDOW_CHECK_DIVERGENCES.load(std::sync::atomic::Ordering::Relaxed) > before);
+    }
+}
 
 /// Maps an [`isolated_apply`](collab_core::isolation::isolated_apply) refusal to the rejection
 /// `hydrate_and_apply` reports, or to `Err` when the isolation host itself broke.
@@ -745,15 +818,16 @@ pub(crate) async fn hydrate_and_apply(
 
     isolated_step.finish();
 
-    let candidate_snapshot = match isolated_result {
+    let (candidate_snapshot, window_report) = match isolated_result {
         Ok(success) => {
             tracing::debug!(
                 window_cpu_us = success.window_cpu_us,
                 base_bytes = decoded_bytes_hint,
                 update_bytes = bytes.len(),
+                incremental_window = success.window_report.is_some(),
                 "flow write isolated window"
             );
-            success.snapshot
+            (success.snapshot, success.window_report)
         }
         Err(err) => return isolated_apply_rejection(update_id, document_id, err).map(HydrateOutcome::Rejected),
     };
@@ -778,6 +852,13 @@ pub(crate) async fn hydrate_and_apply(
         ApiError::internal()
     })?;
     host_snapshot_step.finish();
+    verify_window_report(
+        window_report.as_ref(),
+        &semantic,
+        update_id,
+        document_id,
+        observed.head_seq,
+    )?;
 
     let title = candidate.title().map_err(|err| {
         tracing::error!(error = %err, "collab write: title read failed after a successful isolated apply");
