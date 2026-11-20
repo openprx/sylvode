@@ -27,7 +27,7 @@
 //!
 //! | Call site | Why the assumptions hold |
 //! | --- | --- |
-//! | `bin/isolated_apply_worker.rs` `decode_apply_and_check` (`import_client_update`) | The write window. The base is the accepted head. Hostile bytes. It is the causal import plus the reserved-root rule (below). `semantic_snapshot` and `check_snapshot` run in the same window, so an unreadable result is refused there. |
+//! | `bin/isolated_apply_worker.rs` `decode_apply_and_check` (`import_client_update`) | The write window. The base is the accepted head. Hostile bytes. It is the causal import plus the reserved-root rule (below). The structural check runs in the same window: `window_check::run_window` evaluates the units the update touched (the ops of this same scan name them) with the projection's own per-unit code and falls back to `semantic_snapshot` and `check_snapshot` for anything it cannot classify, so a unit that cannot be read is refused there, and an untouched unit is as the valid base had it. |
 //! | `bin/isolated_apply_worker.rs` `replay_diff`, package updates (`import_update_causally_complete`) | Replays accepted package history onto the base. The replayed head must match the request frontier, then `semantic_snapshot` and `check_snapshot` run. |
 //! | `bin/isolated_apply_worker.rs` `replay_diff`, retained history (`import_update`) | Replays accepted rows. The snapshot frontier, each row's before and after frontier must match, so a row the guard refuses fails the request closed. |
 //! | `flow/collab/write.rs` `hydrate_and_apply` | Bootstrap replay of the accepted tail before a write. Fails closed (internal error) if a row is refused; the new write then goes through the worker. |
