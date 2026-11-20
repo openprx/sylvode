@@ -5,8 +5,8 @@
 //! `nodeName`, `attributes`, and `children`). Both are projected into [`InlineSpan`]s. A document
 //! that has neither marks nor a prosemirror map is unchanged.
 //!
-//! Reading never calls `get_map` / `get_text`: those attach a root container even when the key is
-//! absent. [`LoroDoc::get_by_str_path`] stays empty for a document that has never opened the editor.
+//! Roots are read by typed container id (`editor_structure::root_container`). On a document that
+//! has never opened the editor the read registers an empty root and finds nothing in it.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -124,7 +124,9 @@ pub fn read_rich_text(text: &LoroText) -> (String, Vec<InlineSpan>) {
 
 /// Top-level blocks of a `loro-prosemirror` document, when one is stored on this doc.
 pub fn editor_blocks(doc: &LoroDoc) -> Vec<EditorBlock> {
-    let Some(ValueOrContainer::Container(Container::Map(root))) = doc.get_by_str_path("doc") else {
+    let Some(Container::Map(root)) =
+        crate::editor_structure::root_container(doc, "doc", loro::ContainerType::Map)
+    else {
         return Vec::new();
     };
     if map_string(&root, "nodeName").as_deref() != Some("doc") {
