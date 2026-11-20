@@ -23,6 +23,13 @@
 //! its setup before the window opens (default: on). The `raw` column is then measured on a document
 //! prewarmed through the same public Loro reads, or cold, to match.
 //!
+//! The `incr` column is the window as the worker runs it since package C1: `window_check::run_window`
+//! with the base facts computed in setup (`facts`, not part of the window), on a freshly loaded and
+//! prewarmed base. `fb` counts the samples in which the incremental check did not decide and the
+//! full computation did (structured pages, until the structured path exists, always do).
+//! Model `0` is a legacy tree-only page of 10,000 nodes whose last update creates 1,000 nodes,
+//! the shape of the structural-limit tests; `FLOW_WINDOW_MODELS=0` selects it.
+//!
 //! `FLOW_WINDOW_UPDATE=delete` replaces the timed update by one raw deletion of a top-level
 //! block (`doc.children`), authored by a plain Loro peer on the base. The guard hands every such
 //! deletion to its exact path: a narrow scan of the block list and, on a page without the model 5
@@ -47,7 +54,9 @@
 use std::io::Write as _;
 use std::time::Duration;
 
+use collab_core::facts::BaseFacts;
 use collab_core::limits::{DocumentLimits, check_snapshot};
+use collab_core::window_check::run_window;
 use collab_core::{CollabEngine, LoroCollabEngine, NodeId, NodeKind, Operation};
 
 const BLOCKS_PER_BATCH: usize = 50;
@@ -148,7 +157,42 @@ struct Fixture {
     rebuild_tail: Vec<Vec<u8>>,
 }
 
+/// A legacy tree-only page of `nodes` nodes whose last update creates 1,000 of them.
+fn build_legacy(nodes: usize) -> Result<Fixture, String> {
+    let err = |e: collab_core::CollabError| e.to_string();
+    let mut engine = LoroCollabEngine::new_empty(1);
+    let create = |engine: &mut LoroCollabEngine, index: usize| {
+        engine
+            .apply_operation(&Operation::CreateNode {
+                id: NodeId::from(format!("n{index:05}")),
+                parent: None,
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .map_err(|e| e.to_string())
+    };
+    let chunk = 1_000.min(nodes);
+    for index in 0..nodes - chunk {
+        create(&mut engine, index)?;
+    }
+    let base = engine.export_snapshot().map_err(err)?;
+    let before = engine.frontier();
+    for index in nodes - chunk..nodes {
+        create(&mut engine, index)?;
+    }
+    let update = engine.export_from(&before).map_err(err)?;
+    Ok(Fixture {
+        base: base.clone(),
+        update,
+        rebuild_base: base,
+        rebuild_tail: Vec::new(),
+    })
+}
+
 fn build(blocks: usize, model: u32) -> Result<Fixture, String> {
+    if model == 0 {
+        return build_legacy(blocks);
+    }
     let err = |e: collab_core::CollabError| e.to_string();
     let mut engine = LoroCollabEngine::new_empty(1);
     engine.initialize_page_editor().map_err(err)?;
@@ -212,6 +256,9 @@ struct Samples {
     semantic: Vec<f64>,
     check: Vec<f64>,
     window: Vec<f64>,
+    incr: Vec<f64>,
+    facts: Vec<f64>,
+    fallbacks: usize,
     floor_pre: Vec<f64>,
     floor_post: Vec<f64>,
     rebuild: Vec<f64>,
@@ -227,6 +274,16 @@ fn sample(fixture: &Fixture, samples: &mut Samples) -> Result<(), String> {
     let ((), import) = timed(|| engine.import_client_update(&fixture.update).map(|_| ()).map_err(err))?;
     let (semantic, semantic_ms) = timed(|| engine.semantic_snapshot().map_err(err))?;
     let ((), check) = timed(|| check_snapshot(&semantic, &DocumentLimits::default()).map_err(|v| format!("{v:?}")))?;
+    // The incremental window, as the worker runs it since package C1.
+    let mut incremental = LoroCollabEngine::load(&fixture.base).map_err(err)?;
+    if prewarm_enabled() {
+        incremental.prewarm_for_writes();
+    }
+    let (facts, facts_ms) = timed(|| Ok(BaseFacts::compute(&incremental)))?;
+    let (accepted, incr_ms) = timed(|| run_window(&mut incremental, facts.as_ref(), &fixture.update).map_err(err))?;
+    samples.incr.push(incr_ms);
+    samples.facts.push(facts_ms);
+    samples.fallbacks += usize::from(accepted.fallback.is_some());
     // The same update applied by Loro alone, on its own freshly loaded copy of the base.
     let raw_doc = loro::LoroDoc::new();
     collab_core::page_inline::configure(&raw_doc);
@@ -280,10 +337,11 @@ fn main() {
     );
     let _ = writeln!(
         out,
-        "model blocks | window import raw guard semantic check | floor_pre(cold) floor_post | rebuild({REBUILD_TAIL} tail)"
+        "model blocks | window incr(fb) facts | import raw guard semantic check | floor_pre(cold) floor_post | rebuild({REBUILD_TAIL} tail)"
     );
     for model in models.iter().copied() {
-        for blocks in SIZES {
+        let sizes: &[usize] = if model == 0 { &[5_000, 10_000] } else { &SIZES };
+        for blocks in sizes.iter().copied() {
             let fixture = match build(blocks, model) {
                 Ok(fixture) => fixture,
                 Err(error) => {
@@ -300,8 +358,11 @@ fn main() {
             }
             let _ = writeln!(
                 out,
-                "{model:>5} {blocks:>6} | {:>6.2} {:>6.2} {:>5.2} {:>5.2} {:>8.2} {:>5.2} | {:>15.2} {:>10.2} | {:>8.2}",
+                "{model:>5} {blocks:>6} | {:>6.2} {:>6.2}({}) {:>6.1} | {:>6.2} {:>5.2} {:>5.2} {:>8.2} {:>5.2} | {:>15.2} {:>10.2} | {:>8.2}",
                 median(&mut samples.window),
+                median(&mut samples.incr),
+                samples.fallbacks,
+                median(&mut samples.facts),
                 median(&mut samples.import),
                 median(&mut samples.raw),
                 median(&mut samples.guard),
