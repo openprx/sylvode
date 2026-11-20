@@ -631,29 +631,32 @@ try {
 			await page.waitForSelector('[data-record-panel-status]', { state: 'detached' });
 			await page.waitForFunction(() => !location.search.includes('record='));
 		});
-		await check('the record route restores the panel from the URL, also after a reload', async () => {
-			for (const step of ['open', 'reload']) {
-				if (step === 'open') await s.open(recordUrl, '[data-record-panel-status="ready"]');
-				else {
-					await page.reload({ waitUntil: 'load' });
-					await page.waitForSelector('[data-record-panel-status="ready"]');
+		await check(
+			'the record route restores the panel from the URL, also after a reload',
+			async () => {
+				for (const step of ['open', 'reload']) {
+					if (step === 'open') await s.open(recordUrl, '[data-record-panel-status="ready"]');
+					else {
+						await page.reload({ waitUntil: 'load' });
+						await page.waitForSelector('[data-record-panel-status="ready"]');
+					}
+					const params = new URL(page.url()).searchParams;
+					assert(params.get('form') === 'form-order-line', `${step}: the form is not in the URL`);
+					assert(
+						params.get('record') === 'record-order-line-created',
+						`${step}: the record is not in the URL`
+					);
+					assert(
+						await page
+							.locator('[data-record-panel="record-order-line-created"]')
+							.getByText('Beef Noodles x2')
+							.first()
+							.isVisible(),
+						`${step}: the panel does not show the record title`
+					);
 				}
-				const params = new URL(page.url()).searchParams;
-				assert(params.get('form') === 'form-order-line', `${step}: the form is not in the URL`);
-				assert(
-					params.get('record') === 'record-order-line-created',
-					`${step}: the record is not in the URL`
-				);
-				assert(
-					await page
-						.locator('[data-record-panel="record-order-line-created"]')
-						.getByText('Beef Noodles x2')
-						.first()
-						.isVisible(),
-					`${step}: the panel does not show the record title`
-				);
 			}
-		});
+		);
 		await check('the durable record page opens from its own route', async () => {
 			await s.open(
 				`${formsPath}/records/record-order-line-created?form=form-order-line`,
@@ -774,7 +777,10 @@ try {
 			);
 		});
 		await check('detail layout: a section title and description are saved', async () => {
-			await page.locator('[data-form-config-workbench] button', { hasText: 'Detail layout' }).first().click();
+			await page
+				.locator('[data-form-config-workbench] button', { hasText: 'Detail layout' })
+				.first()
+				.click();
 			await page.getByRole('button', { name: 'Detail sections', exact: true }).click();
 			await page.waitForSelector('[data-detail-layout-section-builder="form-order-line"]');
 			await page.locator('[data-detail-layout-section-title="handoff"]').fill('Service Snapshot');
@@ -794,7 +800,10 @@ try {
 			);
 		});
 		await check('permissions: a role policy is saved with its scope and field denial', async () => {
-			await page.locator('[data-form-config-workbench] button', { hasText: 'Permissions' }).first().click();
+			await page
+				.locator('[data-form-config-workbench] button', { hasText: 'Permissions' })
+				.first()
+				.click();
 			await page.waitForSelector('[data-field-read-permission="unit_price"]');
 			const read = page.locator('[data-field-read-permission="unit_price"]');
 			if (await read.isChecked()) await read.uncheck();
@@ -829,7 +838,16 @@ try {
 					const box = element.getBoundingClientRect();
 					if (box.width > 0 && box.right > limit + 1) {
 						wide.push(
-							`${element.tagName.toLowerCase()}${element.className ? '.' + String(element.className.baseVal ?? element.className).trim().split(/\s+/).slice(0, 3).join('.') : ''} right=${Math.round(box.right)}`
+							`${element.tagName.toLowerCase()}${
+								element.className
+									? '.' +
+										String(element.className.baseVal ?? element.className)
+											.trim()
+											.split(/\s+/)
+											.slice(0, 3)
+											.join('.')
+									: ''
+							} right=${Math.round(box.right)}`
 						);
 					}
 				}
@@ -874,7 +892,6 @@ try {
 			await desktop.context.close();
 		}
 	}
-
 } catch (error) {
 	failures.push(`script: ${error.stack ?? error.message}`);
 	console.log(
