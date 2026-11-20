@@ -69,7 +69,7 @@
 	let alive = true;
 	const input = 'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm';
 	const button =
-		'min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-control disabled:border-line';
+		'min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line';
 	onDestroy(() => {
 		alive = false;
 	});

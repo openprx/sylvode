@@ -465,7 +465,7 @@
 	}
 
 	const iconButton =
-		'inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] text-fg-muted hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:text-control';
+		'inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] text-fg-muted hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:text-fg-muted';
 	const menuItem =
 		'flex min-h-8 w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-start text-sm text-fg hover:bg-surface focus:bg-surface';
 </script>
@@ -482,8 +482,7 @@
 	aria-busy={status === 'loading' ? 'true' : undefined}
 	{inert}
 	tabindex="-1"
-	class="record-panel flex flex-col border-line bg-raised text-fg {mode ===
-	'sheet'
+	class="record-panel flex flex-col border-line bg-raised text-fg {mode === 'sheet'
 		? 'sheet fixed inset-0 z-50'
 		: mode === 'overlay'
 			? 'overlay fixed end-4 top-4 bottom-4 z-40 rounded-float border shadow-overlay'
@@ -541,9 +540,7 @@
 			onclick={onnext}><ChevronDown class="h-4 w-4" aria-hidden="true" /></button
 		>
 		{#if position && inView}
-			<span
-				class="px-1 text-xs tabular-nums text-fg-muted"
-				data-record-panel-position
+			<span class="px-1 text-xs tabular-nums text-fg-muted" data-record-panel-position
 				>{$t('forms.recordPanel.position', {
 					values: { index: position.index, total: position.total }
 				})}</span
@@ -678,9 +675,7 @@
 
 	<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
 		{#if !online}
-			<p
-				class="border-b border-line px-4 py-1.5 text-xs text-fg-muted"
-			>
+			<p class="border-b border-line px-4 py-1.5 text-xs text-fg-muted">
 				{$t('forms.recordPanel.offline')}
 			</p>
 		{/if}
@@ -786,9 +781,7 @@
 						>
 							{record.title}
 						</h2>
-						<div
-							class="flex flex-wrap items-center gap-2 text-xs text-fg-muted"
-						>
+						<div class="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
 							{#if identifier}
 								<span
 									class="font-mono [unicode-bidi:isolate]"
@@ -943,11 +936,7 @@
 													>
 												{/each}
 											</dt>
-											<dd
-												class="min-w-0 text-sm text-fg {wide
-													? ''
-													: 'col-span-2'}"
-											>
+											<dd class="min-w-0 text-sm text-fg {wide ? '' : 'col-span-2'}">
 												{#if field.type === 'child_table'}
 													{@const table = childTable(field)}
 													{#if detailsLoading && table.rows.length === 0}
@@ -963,16 +952,12 @@
 															{ctx}
 														/>
 													{:else}
-														<div
-															class="overflow-x-auto rounded-card border border-line"
-														>
+														<div class="overflow-x-auto rounded-card border border-line">
 															<table
 																class="w-full text-xs"
 																data-record-panel-child-table={field.key}
 															>
-																<thead
-																	class="bg-nav text-fg-muted"
-																>
+																<thead class="bg-nav text-fg-muted">
 																	<tr>
 																		<th class="px-2 py-1.5 text-start font-medium"
 																			>{$t('forms.views.titleField')}</th
@@ -1101,10 +1086,7 @@
 						</details>
 					{/if}
 
-					<details
-						class="border-b border-line"
-						data-record-panel-details
-					>
+					<details class="border-b border-line" data-record-panel-details>
 						<summary
 							class="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase marker:hidden focus-visible:-outline-offset-2"
 						>

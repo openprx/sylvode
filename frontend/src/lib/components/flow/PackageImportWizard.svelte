@@ -215,9 +215,9 @@
 	}
 
 	const buttonPrimary =
-		'min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors';
+		'min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted motion-safe:transition-colors';
 	const buttonSecondary =
-		'min-h-11 rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line';
+		'min-h-11 rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted disabled:border-line';
 	const fieldClass =
 		'mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm';
 </script>
@@ -281,10 +281,7 @@
 
 				{#if snap.step === 'file'}
 					<div class="mt-3 space-y-3">
-						<label
-							for="flow-import-file"
-							class="block text-sm font-medium text-fg"
-						>
+						<label for="flow-import-file" class="block text-sm font-medium text-fg">
 							{$t('flow.import.file.label', { values: { ext: PACKAGE_FILE_EXTENSION } })}
 						</label>
 						<input
@@ -326,10 +323,7 @@
 						</p>
 						{#if snap.progress}
 							<div>
-								<label
-									for="flow-import-progress"
-									class="block text-sm text-fg"
-								>
+								<label for="flow-import-progress" class="block text-sm text-fg">
 									{$t('flow.import.upload.progress', {
 										values: {
 											loaded: formatBytes(snap.progress.loaded),
@@ -345,10 +339,7 @@
 								></progress>
 							</div>
 						{/if}
-						<p
-							class="text-sm text-fg"
-							data-testid="flow-import-upload-state"
-						>
+						<p class="text-sm text-fg" data-testid="flow-import-upload-state">
 							{$t(UPLOAD_STATE_KEYS[snap.uploadState])}
 						</p>
 						{#if snap.artifact}
@@ -499,10 +490,7 @@
 										{/if}
 									</div>
 									<div>
-										<label
-											for={`flow-import-target-${index}`}
-											class="block text-xs text-fg-muted"
-										>
+										<label for={`flow-import-target-${index}`} class="block text-xs text-fg-muted">
 											{$t('flow.import.options.targetProject')}
 										</label>
 										<select
@@ -576,10 +564,7 @@
 									class="rounded-card border border-line p-3 text-sm"
 									data-testid="flow-import-manifest"
 								>
-									<h4
-										id="flow-import-manifest-heading"
-										class="font-medium text-fg"
-									>
+									<h4 id="flow-import-manifest-heading" class="font-medium text-fg">
 										{$t('flow.import.preview.manifest.heading')}
 									</h4>
 									<dl class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -587,10 +572,7 @@
 											<dt class="text-fg-muted">
 												{$t('flow.import.preview.manifest.objects')}
 											</dt>
-											<dd
-												class="text-fg"
-												data-testid="flow-import-manifest-objects"
-											>
+											<dd class="text-fg" data-testid="flow-import-manifest-objects">
 												{summary.object_count}
 											</dd>
 										</div>
@@ -598,10 +580,7 @@
 											<dt class="text-fg-muted">
 												{$t('flow.import.preview.manifest.documents')}
 											</dt>
-											<dd
-												class="text-fg"
-												data-testid="flow-import-manifest-documents"
-											>
+											<dd class="text-fg" data-testid="flow-import-manifest-documents">
 												{summary.document_count}
 											</dd>
 										</div>
@@ -609,10 +588,7 @@
 											<dt class="text-fg-muted">
 												{$t('flow.import.preview.manifest.schema')}
 											</dt>
-											<dd
-												class="text-fg"
-												data-testid="flow-import-manifest-schema"
-											>
+											<dd class="text-fg" data-testid="flow-import-manifest-schema">
 												{summary.package_schema}
 											</dd>
 										</div>
@@ -620,10 +596,7 @@
 											<dt class="text-fg-muted">
 												{$t('flow.import.preview.manifest.engine')}
 											</dt>
-											<dd
-												class="break-all text-fg"
-												data-testid="flow-import-manifest-engine"
-											>
+											<dd class="break-all text-fg" data-testid="flow-import-manifest-engine">
 												{$t('flow.import.preview.manifest.engineValue', {
 													values: {
 														name: summary.engine.name,
@@ -705,10 +678,7 @@
 									<dt class="text-fg-muted">
 										{$t('flow.import.preview.objectMapping')}
 									</dt>
-									<dd
-										class="text-fg"
-										data-testid="flow-import-preview-objects"
-									>
+									<dd class="text-fg" data-testid="flow-import-preview-objects">
 										{countEntries(preview.mapping.object_map)}
 									</dd>
 								</div>
@@ -742,10 +712,7 @@
 									<dt class="text-fg-muted">
 										{$t('flow.import.preview.conflicts')}
 									</dt>
-									<dd
-										class="text-fg"
-										data-testid="flow-import-conflicts"
-									>
+									<dd class="text-fg" data-testid="flow-import-conflicts">
 										{#if conflicts.lineage.length === 0 && conflicts.unmapped.length === 0}
 											{#if preview.conflicts.length === 0}
 												{$t('flow.import.preview.none')}
@@ -810,10 +777,7 @@
 					{@const preview = snap.preview}
 					<div class="mt-3 space-y-4">
 						<div>
-							<label
-								for="flow-import-confirm-hash"
-								class="block text-sm font-medium text-fg"
-							>
+							<label for="flow-import-confirm-hash" class="block text-sm font-medium text-fg">
 								{$t('flow.import.packageSha256')}
 							</label>
 							<div class="mt-1 flex flex-col gap-2 sm:flex-row">
@@ -849,9 +813,7 @@
 								disabled={snap.committing || snap.expired}
 								onchange={(event) => wizard.acknowledgeHash(event.currentTarget.checked)}
 							/>
-							<span class="text-fg"
-								>{$t('flow.import.confirm.acknowledge')}</span
-							>
+							<span class="text-fg">{$t('flow.import.confirm.acknowledge')}</span>
 						</label>
 						{#if snap.expired}
 							<p class="text-sm text-warning" role="alert">

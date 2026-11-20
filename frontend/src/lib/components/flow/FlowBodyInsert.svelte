@@ -329,7 +329,7 @@
 				<button type="button" onclick={close}>{$t('common.cancel')}</button><button
 					type="submit"
 					disabled={submitting || readOnly}
-					class="rounded bg-primary rf-filled px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control"
+					class="rounded bg-primary rf-filled px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted"
 					>{$t(
 						draft.mode === 'details'
 							? 'common.save'

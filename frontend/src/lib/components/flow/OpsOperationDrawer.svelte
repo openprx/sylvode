@@ -304,7 +304,7 @@
 			{#if snap.executed === null}
 				<button
 					type="button"
-					class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+					class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 					disabled={!snap.canDryRun}
 					onclick={dryRun}
 					data-testid="flow-ops-drawer-dry-run"
@@ -384,7 +384,7 @@
 					</div>
 					<button
 						type="button"
-						class="min-h-11 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-control"
+						class="min-h-11 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-fg-muted"
 						disabled={!snap.canExecute}
 						onclick={execute}
 						data-testid="flow-ops-drawer-execute"

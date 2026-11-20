@@ -191,7 +191,7 @@
 		outline-offset: -1px;
 	}
 	.nav-button[aria-disabled='true'] {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	:global([dir='rtl']) .nav-button :global(svg) {

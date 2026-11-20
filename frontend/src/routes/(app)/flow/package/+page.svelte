@@ -57,7 +57,7 @@
 			</p>{/if}
 		<button
 			type="button"
-			class="min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
+			class="min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 			onclick={refreshReadiness}
 			disabled={loading}>{$t('flow.personal.packageCheckAvailability')}</button
 		>

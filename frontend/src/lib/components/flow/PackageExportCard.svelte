@@ -144,9 +144,7 @@
 		</p>
 
 		<fieldset class="mt-4 space-y-2" disabled={submitting}>
-			<legend class="text-sm font-medium text-fg"
-				>{$t('flow.package.kindsLabel')}</legend
-			>
+			<legend class="text-sm font-medium text-fg">{$t('flow.package.kindsLabel')}</legend>
 			<p class="text-sm text-fg-muted">{$t('flow.package.kindsNotice')}</p>
 			<div class="flex flex-wrap gap-4">
 				<label class="flex min-h-11 items-center gap-2"
@@ -166,10 +164,7 @@
 		</fieldset>
 		<div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
 			<div>
-				<label
-					for="flow-export-project"
-					class="block text-sm font-medium text-fg"
-				>
+				<label for="flow-export-project" class="block text-sm font-medium text-fg">
 					{$t('flow.export.scopeLabel')}
 				</label>
 				<select
@@ -184,9 +179,7 @@
 					{/each}
 				</select>
 			</div>
-			<label
-				class="flex min-h-11 cursor-pointer items-center gap-3 self-end text-sm text-fg"
-			>
+			<label class="flex min-h-11 cursor-pointer items-center gap-3 self-end text-sm text-fg">
 				<input
 					type="checkbox"
 					class="h-5 w-5"
@@ -203,7 +196,7 @@
 		<div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
 			<button
 				type="button"
-				class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors"
+				class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted motion-safe:transition-colors"
 				disabled={submitting || objectTypes.length === 0}
 				onclick={startExport}
 			>
@@ -296,11 +289,7 @@
 							{/if}
 						</dl>
 						{#if view.failure}
-							<p
-								class="mt-2 text-sm text-danger"
-								role="alert"
-								data-testid="flow-export-job-error"
-							>
+							<p class="mt-2 text-sm text-danger" role="alert" data-testid="flow-export-job-error">
 								{$t(view.failure.messageKey, { values: view.failure.values })}
 							</p>
 						{/if}
@@ -308,7 +297,7 @@
 							{@const finished = job}
 							<button
 								type="button"
-								class="mt-3 min-h-11 rounded-control border border-fg px-4 text-sm font-medium text-fg hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
+								class="mt-3 min-h-11 rounded-control border border-fg px-4 text-sm font-medium text-fg hover:bg-surface disabled:text-fg-muted disabled:hover:bg-transparent"
 								disabled={downloading !== null}
 								onclick={() => void download(finished)}
 							>

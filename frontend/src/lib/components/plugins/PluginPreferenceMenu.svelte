@@ -131,14 +131,14 @@
 										{/if}
 										<button
 											type="button"
-											class="underline disabled:text-control"
+											class="underline disabled:text-fg-muted"
 											disabled={busy || up === null}
 											onclick={() => up !== null && update(item, { position: up })}
 											>{$t('plugins.prefs.moveUp')}</button
 										>
 										<button
 											type="button"
-											class="underline disabled:text-control"
+											class="underline disabled:text-fg-muted"
 											disabled={busy || down === null}
 											onclick={() => down !== null && update(item, { position: down })}
 											>{$t('plugins.prefs.moveDown')}</button

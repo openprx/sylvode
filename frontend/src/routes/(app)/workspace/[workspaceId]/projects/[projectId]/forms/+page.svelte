@@ -12673,16 +12673,12 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">
 			{$t('forms.loadingForms')}
 		</div>
 	{:else}
 		{#if showCreateForm || forms.length === 0}
-			<section
-				class="rounded-card border border-line bg-raised p-4"
-			>
+			<section class="rounded-card border border-line bg-raised p-4">
 				<div class="mb-4 flex items-start justify-between gap-4">
 					<div>
 						<h2 class="text-base font-semibold text-fg">
@@ -12695,9 +12691,7 @@
 					</div>
 				</div>
 
-				<div
-					class="mb-5 rounded-card border border-line bg-nav p-3"
-				>
+				<div class="mb-5 rounded-card border border-line bg-nav p-3">
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div>
 							<h3 class="text-sm font-semibold text-fg">
@@ -12723,20 +12717,15 @@
 					{#if scenarioTemplates.length > 0}
 						<div class="mt-3 grid gap-2 lg:grid-cols-3">
 							{#each scenarioTemplates as template}
-								<div
-									class="rounded-card border border-line bg-raised p-3"
-								>
+								<div class="rounded-card border border-line bg-raised p-3">
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0">
 											<div class="flex flex-wrap items-center gap-2">
-												<h4
-													class="truncate text-sm font-semibold text-fg"
-												>
+												<h4 class="truncate text-sm font-semibold text-fg">
 													{scenarioTemplateName(template, $t)}
 												</h4>
 
-												<span
-													class="rounded bg-surface px-1.5 py-0.5 text-[11px] text-fg-muted"
+												<span class="rounded bg-surface px-1.5 py-0.5 text-[11px] text-fg-muted"
 													>{scenarioTemplateIndustry(template.industry, $t)}</span
 												>
 											</div>
@@ -12778,9 +12767,7 @@
 
 				<div class="grid gap-3 md:grid-cols-4">
 					<label class="space-y-1">
-						<span class="text-sm font-medium text-fg"
-							>{$t('forms.key')}</span
-						>
+						<span class="text-sm font-medium text-fg">{$t('forms.key')}</span>
 
 						<input
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -12789,9 +12776,7 @@
 					</label>
 
 					<label class="space-y-1 md:col-span-2">
-						<span class="text-sm font-medium text-fg"
-							>{$t('forms.name')}</span
-						>
+						<span class="text-sm font-medium text-fg">{$t('forms.name')}</span>
 
 						<input
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -12800,9 +12785,7 @@
 					</label>
 
 					<label class="space-y-1">
-						<span class="text-sm font-medium text-fg"
-							>{$t('forms.titleTemplate')}</span
-						>
+						<span class="text-sm font-medium text-fg">{$t('forms.titleTemplate')}</span>
 
 						<input
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -12811,9 +12794,7 @@
 					</label>
 
 					<label class="space-y-1 md:col-span-4">
-						<span class="text-sm font-medium text-fg"
-							>{$t('forms.description')}</span
-						>
+						<span class="text-sm font-medium text-fg">{$t('forms.description')}</span>
 
 						<input
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -12847,9 +12828,7 @@
 						{#each fieldDrafts as field, index}
 							<div class="grid gap-3 p-3 md:grid-cols-[1fr_1fr_160px_90px_44px]">
 								<label class="space-y-1">
-									<span class="text-xs font-medium text-fg-muted"
-										>{$t('forms.fieldKey')}</span
-									>
+									<span class="text-xs font-medium text-fg-muted">{$t('forms.fieldKey')}</span>
 
 									<input
 										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -12859,9 +12838,7 @@
 								</label>
 
 								<label class="space-y-1">
-									<span class="text-xs font-medium text-fg-muted"
-										>{$t('forms.fieldLabel')}</span
-									>
+									<span class="text-xs font-medium text-fg-muted">{$t('forms.fieldLabel')}</span>
 
 									<input
 										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -12871,9 +12848,7 @@
 								</label>
 
 								<label class="space-y-1">
-									<span class="text-xs font-medium text-fg-muted"
-										>{$t('forms.fieldType')}</span
-									>
+									<span class="text-xs font-medium text-fg-muted">{$t('forms.fieldType')}</span>
 
 									<select
 										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -12898,7 +12873,7 @@
 								<div class="flex items-end justify-end">
 									<button
 										type="button"
-										class="inline-flex h-9 w-9 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:opacity-40"
+										class="inline-flex h-9 w-9 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 										disabled={fieldDrafts.length === 1}
 										onclick={() => removeFieldDraft(index)}
 										aria-label={$t('forms.removeField')}
@@ -12908,9 +12883,7 @@
 
 								{#if field.type === 'single_select' || field.type === 'multi_select'}
 									<label class="space-y-1 md:col-span-5">
-										<span class="text-xs font-medium text-fg-muted"
-											>{$t('forms.optionList')}</span
-										>
+										<span class="text-xs font-medium text-fg-muted">{$t('forms.optionList')}</span>
 
 										<textarea
 											class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -12922,9 +12895,7 @@
 								{#if field.type === 'amount'}
 									<div class="grid gap-3 md:col-span-5 md:grid-cols-[160px_120px]">
 										<label class="space-y-1">
-											<span class="text-xs font-medium text-fg-muted"
-												>{$t('forms.currency')}</span
-											>
+											<span class="text-xs font-medium text-fg-muted">{$t('forms.currency')}</span>
 
 											<input
 												class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm uppercase text-fg"
@@ -12934,9 +12905,7 @@
 										</label>
 
 										<label class="space-y-1">
-											<span class="text-xs font-medium text-fg-muted"
-												>{$t('forms.scale')}</span
-											>
+											<span class="text-xs font-medium text-fg-muted">{$t('forms.scale')}</span>
 
 											<input
 												type="number"
@@ -12971,9 +12940,7 @@
 
 					{#if showAdvancedSchema}
 						<label class="block space-y-1 border-t border-line p-3">
-							<span class="text-sm font-medium text-fg"
-								>{$t('forms.schemaJson')}</span
-							>
+							<span class="text-sm font-medium text-fg">{$t('forms.schemaJson')}</span>
 
 							<textarea
 								class="h-56 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
@@ -12991,10 +12958,7 @@
 		{/if}
 
 		{#if forms.length > 0 && !selectedForm}
-			<section
-				class="rounded-card border border-line bg-raised p-4"
-				data-form-list-home
-			>
+			<section class="rounded-card border border-line bg-raised p-4" data-form-list-home>
 				<div class="mb-4">
 					<div>
 						<h2 class="text-lg font-semibold text-fg">
@@ -13017,10 +12981,7 @@
 							<div class="flex items-start justify-between gap-3">
 								<div class="min-w-0">
 									<div class="flex items-center gap-2">
-										<TableProperties
-											class="h-4 w-4 shrink-0 text-fg-muted"
-											aria-hidden="true"
-										/>
+										<TableProperties class="h-4 w-4 shrink-0 text-fg-muted" aria-hidden="true" />
 
 										<h3 class="truncate text-base font-semibold text-fg">
 											{form.name}
@@ -13040,9 +13001,7 @@
 								>
 							</div>
 
-							<p
-								class="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-fg-muted"
-							>
+							<p class="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-fg-muted">
 								{form.description || formFieldSummary(form)}
 							</p>
 
@@ -13053,9 +13012,7 @@
 									>{$t('forms.updatedAt', { values: { date: formatDate(form.updated_at) } })}</span
 								>
 
-								<span class="font-medium text-fg"
-									>{$t('forms.openForm')}</span
-								>
+								<span class="font-medium text-fg">{$t('forms.openForm')}</span>
 							</div>
 						</button>
 					{/each}
@@ -13077,9 +13034,7 @@
 										{$t('forms.recordsList')}
 									</h3>
 
-									<span
-										class="rounded-control bg-surface px-2 py-0.5 text-xs text-fg-muted"
-									>
+									<span class="rounded-control bg-surface px-2 py-0.5 text-xs text-fg-muted">
 										{#if recordsLoading}
 											{$t('common.loading')}
 										{:else if viewRecords.length === records.length}
@@ -13094,9 +13049,7 @@
 							</div>
 
 							<div class="flex flex-wrap items-center gap-1.5">
-								<label
-									class="inline-flex items-center gap-2 text-xs font-medium text-fg-muted"
-								>
+								<label class="inline-flex items-center gap-2 text-xs font-medium text-fg-muted">
 									<span>{$t('forms.dataTableSwitcher')}</span>
 
 									<select
@@ -13157,10 +13110,7 @@
 						</div>
 					</section>
 				{:else}
-					<section
-						class="rounded-card border border-line bg-raised"
-						data-form-config-workbench
-					>
+					<section class="rounded-card border border-line bg-raised" data-form-config-workbench>
 						<div
 							class="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between"
 						>
@@ -13194,16 +13144,13 @@
 						data-permission-state-locked-fields={memberLockedFieldLabels.join('|')}
 					>
 						<div class="flex flex-wrap items-center gap-2 text-xs">
-							<span
-								class="inline-flex items-center gap-1 font-medium text-fg"
-							>
+							<span class="inline-flex items-center gap-1 font-medium text-fg">
 								<Shield class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 								{$t('forms.permissionState')}
 							</span>
 
-							<span
-								class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
+							<span class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
 								>{$t('forms.recordScope')}: {$t(
 									`forms.recordScopes.${memberRecordScopeDraft}`
 								)}</span
@@ -13216,8 +13163,7 @@
 								)}</span
 							>
 
-							<span
-								class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
+							<span class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
 								>{$t('forms.lockedFieldEffect')}: {permissionFieldList(
 									memberLockedFieldLabels
 								)}</span
@@ -13255,9 +13201,7 @@
 							<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 						{:else}
 							<div class="grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)]">
-								<div
-									class="rounded-card border border-line bg-nav p-3 text-sm"
-								>
+								<div class="rounded-card border border-line bg-nav p-3 text-sm">
 									<p class="font-medium text-fg">{$t('roles.member')}</p>
 
 									<p class="mt-1 text-xs text-fg-muted">
@@ -13288,11 +13232,8 @@
 									{/each}
 								</div>
 
-								<label
-									class="rounded-control border border-line px-3 py-2 text-sm text-fg"
-								>
-									<span
-										class="block text-xs font-medium uppercase text-fg-muted"
+								<label class="rounded-control border border-line px-3 py-2 text-sm text-fg">
+									<span class="block text-xs font-medium uppercase text-fg-muted"
 										>{$t('forms.recordScope')}</span
 									>
 
@@ -13306,14 +13247,11 @@
 										<option value="owned">{$t('forms.recordScopeOwned')}</option>
 									</select>
 
-									<span class="mt-1 block text-xs text-fg-muted"
-										>{$t('forms.recordScopeHint')}</span
+									<span class="mt-1 block text-xs text-fg-muted">{$t('forms.recordScopeHint')}</span
 									>
 								</label>
 
-								<div
-									class="lg:col-span-2 rounded-card border border-line px-3 py-2 text-sm"
-								>
+								<div class="lg:col-span-2 rounded-card border border-line px-3 py-2 text-sm">
 									<div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
 										<div>
 											<p class="text-xs font-medium uppercase text-fg-muted">
@@ -13362,10 +13300,7 @@
 											data-permission-effect-hidden-fields={memberHiddenFieldLabels.join('|')}
 										>
 											<div class="flex items-center gap-2">
-												<AlertTriangle
-													class="h-4 w-4 text-warning"
-													aria-hidden="true"
-												/>
+												<AlertTriangle class="h-4 w-4 text-warning" aria-hidden="true" />
 
 												<p class="text-xs font-medium uppercase text-warning">
 													{$t('forms.hiddenFieldEffect')}
@@ -13386,10 +13321,7 @@
 											data-permission-effect-locked-fields={memberLockedFieldLabels.join('|')}
 										>
 											<div class="flex items-center gap-2">
-												<Shield
-													class="h-4 w-4 text-fg-muted"
-													aria-hidden="true"
-												/>
+												<Shield class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 												<p class="text-xs font-medium uppercase text-fg-muted">
 													{$t('forms.lockedFieldEffect')}
@@ -13455,9 +13387,7 @@
 							</div>
 
 							{#if formPermissions}
-								<div
-									class="mt-3 rounded-control bg-nav px-3 py-2 text-xs text-fg-muted"
-								>
+								<div class="mt-3 rounded-control bg-nav px-3 py-2 text-xs text-fg-muted">
 									{$t('forms.currentEffectiveRole', {
 										values: { role: formPermissions.effective.role }
 									})} · {formPermissionActions
@@ -13503,27 +13433,23 @@
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-fg"
-									>{$t('forms.downloadImportTemplate')}</span
-								>
+								<span class="font-medium text-fg">{$t('forms.downloadImportTemplate')}</span>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={exportCurrentView}
 								disabled={exportingRecords}
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-fg"
-									>{$t('forms.exportCurrentView')}</span
-								>
+								<span class="font-medium text-fg">{$t('forms.exportCurrentView')}</span>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={exportCurrentViewJson}
 								disabled={exportingRecords}
 								data-current-view-export-json
@@ -13531,14 +13457,12 @@
 							>
 								<FileText class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-fg"
-									>{$t('forms.exportCurrentViewJson')}</span
-								>
+								<span class="font-medium text-fg">{$t('forms.exportCurrentViewJson')}</span>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={exportAttachmentManifest}
 								disabled={exportingRecords}
 								data-attachment-manifest-export
@@ -13546,14 +13470,12 @@
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-fg"
-									>{$t('forms.exportAttachmentManifest')}</span
-								>
+								<span class="font-medium text-fg">{$t('forms.exportAttachmentManifest')}</span>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={() => void exportAttachmentBundle()}
 								disabled={exportingRecords}
 								data-attachment-bundle-export
@@ -13561,14 +13483,12 @@
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-fg"
-									>{$t('forms.exportAttachmentBundle')}</span
-								>
+								<span class="font-medium text-fg">{$t('forms.exportAttachmentBundle')}</span>
 							</button>
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								onclick={() => void exportAttachmentPackage()}
 								disabled={exportingRecords}
 								data-attachment-package-export
@@ -13577,9 +13497,7 @@
 							>
 								<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
-								<span class="font-medium text-fg"
-									>{$t('forms.exportAttachmentPackage')}</span
-								>
+								<span class="font-medium text-fg">{$t('forms.exportAttachmentPackage')}</span>
 							</button>
 						</div>
 					</section>
@@ -13729,9 +13647,7 @@
 										</div>
 
 										{#if detailHighlightSaving}
-											<span class="text-xs font-medium text-fg-muted"
-												>{$t('common.saving')}</span
-											>
+											<span class="text-xs font-medium text-fg-muted">{$t('common.saving')}</span>
 										{/if}
 									</div>
 
@@ -13765,15 +13681,11 @@
 												</label>
 
 												<div class="min-w-0">
-													<div
-														class="truncate text-sm font-medium text-fg"
-													>
+													<div class="truncate text-sm font-medium text-fg">
 														{fieldLabel(field)}
 													</div>
 
-													<p
-														class="mt-0.5 truncate font-mono text-xs text-fg-muted"
-													>
+													<p class="mt-0.5 truncate font-mono text-xs text-fg-muted">
 														{field.key}
 													</p>
 												</div>
@@ -13781,7 +13693,7 @@
 												<div class="flex items-center gap-1">
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 														disabled={!isChecked || highlightIndex === 0 || detailHighlightSaving}
 														aria-label={$t('forms.moveHighlightUp')}
 														title={$t('forms.moveHighlightUp')}
@@ -13792,7 +13704,7 @@
 
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 														disabled={!isChecked ||
 															highlightIndex === detailHighlightDraft.fields.length - 1 ||
 															detailHighlightSaving}
@@ -13935,8 +13847,7 @@
 													class="mb-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 md:grid-cols-[minmax(0,1fr)_120px_132px_auto]"
 												>
 													<label class="min-w-0 space-y-1">
-														<span
-															class="text-xs font-medium uppercase text-fg-muted"
+														<span class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.detailLayoutSectionTitle')}</span
 														>
 
@@ -13955,8 +13866,7 @@
 													</label>
 
 													<label class="space-y-1">
-														<span
-															class="text-xs font-medium uppercase text-fg-muted"
+														<span class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.detailLayoutSectionColumns')}</span
 														>
 
@@ -13982,8 +13892,7 @@
 													</label>
 
 													<label class="space-y-1">
-														<span
-															class="text-xs font-medium uppercase text-fg-muted"
+														<span class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.detailLayoutSectionDensity')}</span
 														>
 
@@ -14013,7 +13922,7 @@
 													<div class="flex items-center gap-1">
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 															disabled={sectionIndex === 0 || detailLayoutSectionSaving}
 															aria-label={$t('forms.moveSectionUp')}
 															title={$t('forms.moveSectionUp')}
@@ -14024,7 +13933,7 @@
 
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 															disabled={sectionIndex === detailLayoutSectionDrafts.length - 1 ||
 																detailLayoutSectionSaving}
 															aria-label={$t('forms.moveSectionDown')}
@@ -14036,7 +13945,7 @@
 
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-danger hover:bg-danger-soft disabled:opacity-40"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 															disabled={detailLayoutSectionDrafts.length <= 1 ||
 																detailLayoutSectionSaving}
 															aria-label={$t('forms.removeDetailSection')}
@@ -14049,8 +13958,7 @@
 												</div>
 
 												<label class="mb-3 block space-y-1">
-													<span
-														class="text-xs font-medium uppercase text-fg-muted"
+													<span class="text-xs font-medium uppercase text-fg-muted"
 														>{$t('forms.detailLayoutSectionDescription')}</span
 													>
 
@@ -14070,9 +13978,7 @@
 															)}></textarea>
 												</label>
 
-												<label
-													class="mb-3 flex items-center gap-2 text-sm text-fg"
-												>
+												<label class="mb-3 flex items-center gap-2 text-sm text-fg">
 													<input
 														type="checkbox"
 														class="h-4 w-4 rounded border-input accent-primary"
@@ -14092,9 +13998,7 @@
 												</label>
 
 												<div class="mb-3 grid gap-2 sm:grid-cols-2">
-													<label
-														class="flex items-center gap-2 text-sm text-fg"
-													>
+													<label class="flex items-center gap-2 text-sm text-fg">
 														<input
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
@@ -14113,9 +14017,7 @@
 														<span>{$t('forms.detailLayoutSectionCollapsible')}</span>
 													</label>
 
-													<label
-														class="flex items-center gap-2 text-sm text-fg"
-													>
+													<label class="flex items-center gap-2 text-sm text-fg">
 														<input
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
@@ -14163,9 +14065,7 @@
 															/>
 
 															<div class="min-w-0">
-																<span class="block truncate text-fg"
-																	>{fieldLabel(field)}</span
-																>
+																<span class="block truncate text-fg">{fieldLabel(field)}</span>
 
 																{#if assignedSectionKey && assignedSectionKey !== section.key}
 																	<span class="text-xs text-fg-muted"
@@ -14177,7 +14077,7 @@
 															<div class="flex items-center gap-1">
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	disabled={fieldIndex <= 0 || detailLayoutSectionSaving}
 																	aria-label={$t('forms.moveFieldUp')}
 																	title={$t('forms.moveFieldUp')}
@@ -14189,7 +14089,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	disabled={fieldIndex < 0 ||
 																		fieldIndex === section.fields.length - 1 ||
 																		detailLayoutSectionSaving}
@@ -14238,9 +14138,7 @@
 										</div>
 
 										{#if detailPageWidgetSaving}
-											<span class="text-xs font-medium text-fg-muted"
-												>{$t('common.saving')}</span
-											>
+											<span class="text-xs font-medium text-fg-muted">{$t('common.saving')}</span>
 										{/if}
 									</div>
 
@@ -14272,9 +14170,7 @@
 												</label>
 
 												<div class="min-w-0">
-													<div
-														class="truncate text-sm font-medium text-fg"
-													>
+													<div class="truncate text-sm font-medium text-fg">
 														{$t(option.labelKey)}
 													</div>
 
@@ -14283,8 +14179,7 @@
 													</p>
 
 													<label class="mt-2 block space-y-1">
-														<span
-															class="text-[11px] font-medium uppercase text-fg-muted"
+														<span class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetCustomTitle')}</span
 														>
 
@@ -14305,8 +14200,7 @@
 													</label>
 
 													<label class="mt-2 block space-y-1">
-														<span
-															class="text-[11px] font-medium uppercase text-fg-muted"
+														<span class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetDescription')}</span
 														>
 
@@ -14327,8 +14221,7 @@
 													</label>
 
 													<label class="mt-2 block space-y-1">
-														<span
-															class="text-[11px] font-medium uppercase text-fg-muted"
+														<span class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetLimit')}</span
 														>
 
@@ -14352,8 +14245,7 @@
 													</label>
 
 													<label class="mt-2 block space-y-1">
-														<span
-															class="text-[11px] font-medium uppercase text-fg-muted"
+														<span class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetDensity')}</span
 														>
 
@@ -14380,9 +14272,7 @@
 														</select>
 													</label>
 
-													<label
-														class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted"
-													>
+													<label class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted">
 														<input
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
@@ -14401,9 +14291,7 @@
 														<span>{$t('forms.detailPageWidgetShowCount')}</span>
 													</label>
 
-													<label
-														class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted"
-													>
+													<label class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted">
 														<input
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
@@ -14422,9 +14310,7 @@
 														<span>{$t('forms.detailPageWidgetHideEmpty')}</span>
 													</label>
 
-													<label
-														class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted"
-													>
+													<label class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted">
 														<input
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
@@ -14443,9 +14329,7 @@
 														<span>{$t('forms.detailPageWidgetCollapsible')}</span>
 													</label>
 
-													<label
-														class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted"
-													>
+													<label class="mt-2 inline-flex items-center gap-2 text-xs text-fg-muted">
 														<input
 															type="checkbox"
 															class="h-4 w-4 rounded border-input accent-primary"
@@ -14465,8 +14349,7 @@
 													</label>
 
 													<label class="mt-2 block space-y-1">
-														<span
-															class="text-[11px] font-medium uppercase text-fg-muted"
+														<span class="text-[11px] font-medium uppercase text-fg-muted"
 															>{$t('forms.detailPageWidgetEmptyText')}</span
 														>
 
@@ -14490,7 +14373,7 @@
 												<div class="flex items-center gap-1">
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 														disabled={index === 0 || detailPageWidgetSaving}
 														aria-label={$t('forms.moveWidgetUp')}
 														title={$t('forms.moveWidgetUp')}
@@ -14501,7 +14384,7 @@
 
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 														disabled={index === selectedDetailPageWidgetEntries.length - 1 ||
 															detailPageWidgetSaving}
 														aria-label={$t('forms.moveWidgetDown')}
@@ -14529,15 +14412,11 @@
 								>
 									<section class="w-full" data-view-tools-expanded-panel>
 										<div class="space-y-4">
-											<div
-												class="rounded-control border border-line bg-raised"
-												data-view-setup
-											>
+											<div class="rounded-control border border-line bg-raised" data-view-setup>
 												<div class="space-y-2 border-t border-line p-3">
 													<div class="grid grid-cols-2 gap-2">
 														<label class="space-y-1">
-															<span
-																class="text-xs font-medium uppercase text-fg-muted"
+															<span class="text-xs font-medium uppercase text-fg-muted"
 																>{$t('forms.viewType')}</span
 															>
 
@@ -14753,8 +14632,7 @@
 
 														{#if viewDraft.view_type === 'timeline'}
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineSource')}</span
 																>
 
@@ -14804,7 +14682,7 @@
 																					: viewDraft.timelineSubtitleField
 																		};
 																	}}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="records"
 																		>{$t('forms.timelineSourceRecords')}</option
@@ -14814,8 +14692,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventLayout')}</span
 																>
 
@@ -14827,7 +14704,7 @@
 																			...viewDraft,
 																			timelineEventLayout: timelineEventLayout(selectValue(event))
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="summary"
 																		>{$t('forms.timelineEventLayoutSummary')}</option
@@ -14839,8 +14716,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventType')}</span
 																>
 
@@ -14852,7 +14728,7 @@
 																			...viewDraft,
 																			timelineEventType: selectValue(event)
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="">{$t('forms.timelineEventTypeAll')}</option>
 
@@ -14863,8 +14739,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventActorFilter')}</span
 																>
 
@@ -14876,7 +14751,7 @@
 																			...viewDraft,
 																			timelineEventActor: selectValue(event)
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="">{$t('forms.timelineEventActorAll')}</option>
 
@@ -14887,8 +14762,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventAggregateFilter')}</span
 																>
 
@@ -14900,7 +14774,7 @@
 																			...viewDraft,
 																			timelineEventAggregate: selectValue(event)
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="">{$t('forms.timelineEventAggregateAll')}</option>
 
@@ -14911,8 +14785,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventSearch')}</span
 																>
 
@@ -14924,14 +14797,13 @@
 																			...viewDraft,
 																			timelineEventQuery: inputValue(event)
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	placeholder={$t('forms.timelineEventSearchPlaceholder')}
 																/>
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventFrom')}</span
 																>
 
@@ -14944,13 +14816,12 @@
 																			...viewDraft,
 																			timelineEventFrom: inputValue(event)
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																/>
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineEventTo')}</span
 																>
 
@@ -14963,13 +14834,12 @@
 																			...viewDraft,
 																			timelineEventTo: inputValue(event)
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																/>
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineTitleField')}</span
 																>
 
@@ -14988,7 +14858,7 @@
 																					: viewDraft.timelineSubtitleField
 																		};
 																	}}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="">{$t('forms.recordTitle')}</option>
 
@@ -14999,8 +14869,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.timelineSubtitleField')}</span
 																>
 
@@ -15012,7 +14881,7 @@
 																			...viewDraft,
 																			timelineSubtitleField: selectValue(event)
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15025,8 +14894,7 @@
 
 														{#if viewDraft.view_type === 'card'}
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.cardCoverAspect')}</span
 																>
 
@@ -15037,7 +14905,7 @@
 																			...viewDraft,
 																			cardCoverAspect: viewCardCoverAspect(selectValue(event))
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="auto">{$t('forms.cardCoverAspectAuto')}</option>
 																	<option value="wide">{$t('forms.cardCoverAspectWide')}</option>
@@ -15050,8 +14918,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.cardCoverFit')}</span
 																>
 
@@ -15062,7 +14929,7 @@
 																			...viewDraft,
 																			cardCoverFit: viewCardCoverFit(selectValue(event))
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="cover">{$t('forms.cardCoverFitCover')}</option>
 																	<option value="contain">{$t('forms.cardCoverFitContain')}</option>
@@ -15070,8 +14937,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.cardCoverPosition')}</span
 																>
 
@@ -15082,7 +14948,7 @@
 																			...viewDraft,
 																			cardCoverPosition: viewCardCoverPosition(selectValue(event))
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="top">{$t('forms.cardCoverPositionTop')}</option>
 																	<option value="left">{$t('forms.cardCoverPositionLeft')}</option>
@@ -15110,9 +14976,7 @@
 
 														<div class="space-y-2">
 															<div class="flex items-center justify-between gap-3">
-																<h5
-																	class="text-xs font-semibold uppercase text-fg-muted"
-																>
+																<h5 class="text-xs font-semibold uppercase text-fg-muted">
 																	{$t('forms.filterConditions')}
 																</h5>
 
@@ -15160,8 +15024,7 @@
 
 																<div class="flex flex-wrap items-end gap-2">
 																	<label class="block max-w-xs flex-1 space-y-1">
-																		<span
-																			class="text-xs font-medium uppercase text-fg-muted"
+																		<span class="text-xs font-medium uppercase text-fg-muted"
 																			>{$t('forms.filterGroupLogic')}</span
 																		>
 
@@ -15194,7 +15057,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionRecordIds(
 																				expressionMatchingRecords
@@ -15213,7 +15076,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionJson(expressionJsonText)}
 																		disabled={!expressionJsonText}
@@ -15230,7 +15093,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionConfigJson(expressionJsonText)}
 																		disabled={!expressionJsonText}
@@ -15247,7 +15110,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionSummary(expressionSummaryText)}
 																		disabled={!expressionSummaryText}
@@ -15264,7 +15127,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionSummary(expressionSummaryText)}
 																		disabled={!expressionSummaryText}
@@ -15281,7 +15144,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			focusViewDraftFilterExpressionRecords(
 																				expressionMatchingRecords
@@ -15296,7 +15159,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionCsv(expressionMatchingRecords)}
 																		disabled={!expressionRecordIdsText}
@@ -15313,7 +15176,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionCsvRecords(
 																				expressionMatchingRecords
@@ -15332,7 +15195,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionJsonRecords(
 																				expressionMatchingRecords
@@ -15351,7 +15214,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionJson(
 																				expressionMatchingRecords
@@ -15375,9 +15238,7 @@
 
 																<div
 																	class={`space-y-2 rounded-card border border-line bg-raised p-2 ${
-																		group.disabled
-																			? 'opacity-70 ring-1 ring-warning'
-																			: ''
+																		group.disabled ? 'opacity-70 ring-1 ring-warning' : ''
 																	}`}
 																	data-filter-group-disabled-state={group.disabled
 																		? 'true'
@@ -15385,8 +15246,7 @@
 																>
 																	<div class="flex flex-wrap items-end gap-2">
 																		<label class="min-w-36 flex-1 space-y-1">
-																			<span
-																				class="text-xs font-medium uppercase text-fg-muted"
+																			<span class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.filterGroup')} {groupIndex + 1}</span
 																			>
 
@@ -15456,7 +15316,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
+																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																				onclick={() =>
 																					mergeViewDraftFilterGroupWithPrevious(groupIndex)}
 																				disabled={!canMergeViewDraftFilterGroup(groupIndex)}
@@ -15467,7 +15327,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
+																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																				onclick={() => duplicateViewDraftFilterGroup(groupIndex)}
 																				disabled={!canDuplicateViewDraftFilterGroup(groupIndex)}
 																				aria-label={`${$t('forms.duplicateFilterGroup')} ${groupIndex + 1}`}
@@ -15477,7 +15337,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
+																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																				onclick={() => moveViewDraftFilterGroup(groupIndex, -1)}
 																				disabled={groupIndex === 0}
 																				aria-label={`${$t('forms.moveFilterGroupUp')} ${groupIndex + 1}`}
@@ -15487,7 +15347,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
+																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																				onclick={() => moveViewDraftFilterGroup(groupIndex, 1)}
 																				disabled={groupIndex >=
 																					visibleViewDraftFilterGroups().length - 1}
@@ -15514,17 +15374,14 @@
 
 																		<div
 																			class={`grid gap-2 rounded-card border border-line bg-nav p-2 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_auto_auto_auto_auto_auto_auto] ${
-																				filter.disabled
-																					? 'opacity-70 ring-1 ring-warning'
-																					: ''
+																				filter.disabled ? 'opacity-70 ring-1 ring-warning' : ''
 																			}`}
 																			data-filter-disabled-state={filter.disabled
 																				? 'true'
 																				: 'false'}
 																		>
 																			<label class="space-y-1">
-																				<span
-																					class="text-xs font-medium uppercase text-fg-muted"
+																				<span class="text-xs font-medium uppercase text-fg-muted"
 																					>{$t('forms.filterField')}
 																					{filterLabelSuffix(groupIndex, filterIndex)}</span
 																				>
@@ -15548,8 +15405,7 @@
 																			</label>
 
 																			<label class="space-y-1">
-																				<span
-																					class="text-xs font-medium uppercase text-fg-muted"
+																				<span class="text-xs font-medium uppercase text-fg-muted"
 																					>{$t('forms.filterOperator')}
 																					{filterLabelSuffix(groupIndex, filterIndex)}</span
 																				>
@@ -15565,7 +15421,7 @@
 																							},
 																							groupIndex
 																						)}
-																					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																				>
 																					<option value="contains"
 																						>{$t('forms.filterContains')}</option
@@ -15581,14 +15437,13 @@
 																			</label>
 
 																			<label class="space-y-1">
-																				<span
-																					class="text-xs font-medium uppercase text-fg-muted"
+																				<span class="text-xs font-medium uppercase text-fg-muted"
 																					>{$t('forms.filterValue')}
 																					{filterLabelSuffix(groupIndex, filterIndex)}</span
 																				>
 
 																				<input
-																					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																					value={filter.value}
 																					disabled={!filter.field ||
 																						filter.operator === 'not_empty'}
@@ -15644,7 +15499,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																				class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																				onclick={() =>
 																					duplicateViewDraftFilter(groupIndex, filterIndex)}
 																				disabled={hasReachedFilterLimit()}
@@ -15655,7 +15510,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																				class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																				onclick={() =>
 																					splitViewDraftFilterToGroup(groupIndex, filterIndex)}
 																				disabled={!canSplitViewDraftFilterToGroup(
@@ -15675,7 +15530,7 @@
 																			>
 																				<button
 																					type="button"
-																					class="rounded p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																					class="rounded p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																					onclick={() =>
 																						moveViewDraftFilter(groupIndex, filterIndex, -1)}
 																					disabled={filterIndex === 0}
@@ -15686,7 +15541,7 @@
 
 																				<button
 																					type="button"
-																					class="rounded p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																					class="rounded p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																					onclick={() =>
 																						moveViewDraftFilter(groupIndex, filterIndex, 1)}
 																					disabled={filterIndex >= group.filters.length - 1}
@@ -15703,8 +15558,7 @@
 
 														<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.sortField')}</span
 																>
 
@@ -15723,8 +15577,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.sortDirection')}</span
 																>
 
@@ -15736,7 +15589,7 @@
 																			...viewDraft,
 																			sortDirection: selectValue(event) as ViewSortDirection
 																		})}
-																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	<option value="asc">{$t('forms.sortAscending')}</option>
 																	<option value="desc">{$t('forms.sortDescending')}</option>
@@ -15744,8 +15597,7 @@
 															</label>
 
 															<label class="space-y-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.groupField')}</span
 																>
 
@@ -15776,8 +15628,7 @@
 
 															{#if viewDraft.view_type === 'pivot'}
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotRowField')}</span
 																	>
 
@@ -15795,7 +15646,7 @@
 																						: viewDraft.pivotColumnField
 																			};
 																		}}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15806,8 +15657,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotColumnField')}</span
 																	>
 
@@ -15818,7 +15668,7 @@
 																				...viewDraft,
 																				pivotColumnField: selectValue(event)
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15829,8 +15679,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotValueField')}</span
 																	>
 
@@ -15841,7 +15690,7 @@
 																				...viewDraft,
 																				pivotValueField: selectValue(event)
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15852,8 +15701,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotAggregate')}</span
 																	>
 
@@ -15864,7 +15712,7 @@
 																				...viewDraft,
 																				pivotAggregate: viewPivotAggregate(selectValue(event))
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="sum">{$t('forms.pivotAggregateSum')}</option>
 																		<option value="count">{$t('forms.pivotAggregateCount')}</option>
@@ -15873,8 +15721,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotTotals')}</span
 																	>
 
@@ -15885,7 +15732,7 @@
 																				...viewDraft,
 																				pivotTotals: viewPivotTotalsMode(selectValue(event))
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="all">{$t('forms.pivotTotalsAll')}</option>
 																		<option value="rows">{$t('forms.pivotTotalsRows')}</option>
@@ -15896,8 +15743,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotValueDisplay')}</span
 																	>
 
@@ -15908,7 +15754,7 @@
 																				...viewDraft,
 																				pivotValueDisplay: viewPivotValueDisplay(selectValue(event))
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="value"
 																			>{$t('forms.pivotValueDisplayValue')}</option
@@ -15926,8 +15772,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotSort')}</span
 																	>
 
@@ -15938,7 +15783,7 @@
 																				...viewDraft,
 																				pivotSort: viewPivotSortMode(selectValue(event))
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="label">{$t('forms.pivotSortLabel')}</option>
 																		<option value="row_total_desc"
@@ -15957,8 +15802,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotRowLimit')}</span
 																	>
 
@@ -15969,7 +15813,7 @@
 																				...viewDraft,
 																				pivotRowLimit: viewPivotRowLimit(selectValue(event))
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="0">{$t('forms.pivotRowLimitAll')}</option>
 																		<option value="2">{$t('forms.pivotRowLimitTwo')}</option>
@@ -15979,8 +15823,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.pivotColumnLimit')}</span
 																	>
 
@@ -15991,7 +15834,7 @@
 																				...viewDraft,
 																				pivotColumnLimit: viewPivotColumnLimit(selectValue(event))
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="0">{$t('forms.pivotColumnLimitAll')}</option>
 																		<option value="2">{$t('forms.pivotColumnLimitTwo')}</option>
@@ -16094,7 +15937,7 @@
 																		type="button"
 																		disabled={!viewDraft.pivotRowField ||
 																			!viewDraft.pivotColumnField}
-																		class="inline-flex h-10 items-center gap-2 rounded-control border border-input bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+																		class="inline-flex h-10 items-center gap-2 rounded-control border border-input bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:cursor-not-allowed disabled:bg-surface disabled:text-fg-muted"
 																		data-pivot-swap-axes
 																		onclick={swapViewDraftPivotAxes}
 																	>
@@ -16106,8 +15949,7 @@
 
 															{#if viewDraft.view_type === 'gantt'}
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttStartField')}</span
 																	>
 
@@ -16133,7 +15975,7 @@
 																						: viewDraft.ganttDependencyField
 																			};
 																		}}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16144,8 +15986,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttEndField')}</span
 																	>
 
@@ -16167,7 +16008,7 @@
 																						: viewDraft.ganttDependencyField
 																			};
 																		}}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.ganttNoEndField')}</option>
 
@@ -16178,8 +16019,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttGroupField')}</span
 																	>
 
@@ -16194,7 +16034,7 @@
 																						? ''
 																						: viewDraft.ganttDependencyField
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16205,8 +16045,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttDependencyField')}</span
 																	>
 
@@ -16217,7 +16056,7 @@
 																				...viewDraft,
 																				ganttDependencyField: selectValue(event)
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16228,8 +16067,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.ganttScale')}</span
 																	>
 
@@ -16240,7 +16078,7 @@
 																				...viewDraft,
 																				ganttScale: selectValue(event) as GanttScale
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="day">{$t('forms.ganttScaleDay')}</option>
 																		<option value="week">{$t('forms.ganttScaleWeek')}</option>
@@ -16251,8 +16089,7 @@
 
 															{#if viewDraft.view_type === 'kanban'}
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.swimlaneField')}</span
 																	>
 
@@ -16263,7 +16100,7 @@
 																				...viewDraft,
 																				swimlaneBy: selectValue(event)
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16275,8 +16112,7 @@
 															{/if}
 
 															<label class="space-y-1 sm:col-span-2 xl:col-span-1">
-																<span
-																	class="text-xs font-medium uppercase text-fg-muted"
+																<span class="text-xs font-medium uppercase text-fg-muted"
 																	>{$t('forms.dateField')}</span
 																>
 
@@ -16310,8 +16146,7 @@
 
 															{#if viewDraft.view_type === 'calendar'}
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarEndField')}</span
 																	>
 
@@ -16322,7 +16157,7 @@
 																				...viewDraft,
 																				calendarEndField: selectValue(event)
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16333,8 +16168,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarResourceField')}</span
 																	>
 
@@ -16345,7 +16179,7 @@
 																				...viewDraft,
 																				calendarResourceBy: selectValue(event)
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16356,8 +16190,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarRange')}</span
 																	>
 
@@ -16368,7 +16201,7 @@
 																				...viewDraft,
 																				calendarRange: selectValue(event) as ViewCalendarRange
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="week">{$t('forms.calendarRangeWeek')}</option>
 																		<option value="month">{$t('forms.calendarRangeMonth')}</option>
@@ -16376,15 +16209,14 @@
 																</label>
 
 																<div class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarFocusDate')}</span
 																	>
 
 																	<div class="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-1">
 																		<button
 																			type="button"
-																			class="inline-flex h-9 w-9 items-center justify-center rounded-control border border-input text-fg-muted hover:bg-surface disabled:opacity-40"
+																			class="inline-flex h-9 w-9 items-center justify-center rounded-control border border-input text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																			onclick={() => shiftViewDraftCalendarFocus(-1)}
 																			aria-label={$t('forms.calendarPreviousRange')}
 																			title={$t('forms.calendarPreviousRange')}
@@ -16402,12 +16234,12 @@
 																					...viewDraft,
 																					calendarFocusDate: inputValue(event)
 																				})}
-																			class="min-w-0 rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																			class="min-w-0 rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																		/>
 
 																		<button
 																			type="button"
-																			class="inline-flex h-9 w-9 items-center justify-center rounded-control border border-input text-fg-muted hover:bg-surface disabled:opacity-40"
+																			class="inline-flex h-9 w-9 items-center justify-center rounded-control border border-input text-fg-muted hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																			onclick={() => shiftViewDraftCalendarFocus(1)}
 																			aria-label={$t('forms.calendarNextRange')}
 																			title={$t('forms.calendarNextRange')}
@@ -16418,8 +16250,7 @@
 																</div>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarRecurrence')}</span
 																	>
 
@@ -16432,7 +16263,7 @@
 																					event
 																				) as ViewCalendarRecurrence
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="none"
 																			>{$t('forms.calendarRecurrenceNone')}</option
@@ -16450,8 +16281,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarDayScope')}</span
 																	>
 
@@ -16462,7 +16292,7 @@
 																				...viewDraft,
 																				calendarDayScope: selectValue(event) as ViewCalendarDayScope
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="all">{$t('forms.calendarDayScopeAll')}</option>
 																		<option value="workweek"
@@ -16472,8 +16302,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.calendarLayout')}</span
 																	>
 
@@ -16484,7 +16313,7 @@
 																				...viewDraft,
 																				calendarLayout: selectValue(event) as ViewCalendarLayout
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="grid">{$t('forms.calendarLayoutGrid')}</option>
 																		<option value="agenda"
@@ -16523,8 +16352,7 @@
 																<div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px_auto]">
 																	{#if viewDraft.view_type === 'calendar'}
 																		<label class="space-y-1">
-																			<span
-																				class="text-xs font-medium uppercase text-fg-muted"
+																			<span class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.calendarExceptionRecord')}</span
 																			>
 
@@ -16535,7 +16363,7 @@
 																						...viewDraft,
 																						calendarExceptionRecordId: selectValue(event)
 																					})}
-																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																			>
 																				<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16548,8 +16376,7 @@
 
 																	{#if viewDraft.view_type === 'card'}
 																		<label class="space-y-1">
-																			<span
-																				class="text-xs font-medium uppercase text-fg-muted"
+																			<span class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.cardFieldLimit')}</span
 																			>
 
@@ -16560,7 +16387,7 @@
 																						...viewDraft,
 																						cardFieldLimit: viewCardFieldLimit(selectValue(event))
 																					})}
-																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																			>
 																				<option value="3">{$t('forms.cardFieldLimitThree')}</option>
 																				<option value="6">{$t('forms.cardFieldLimitSix')}</option>
@@ -16641,8 +16468,7 @@
 
 																	{#if viewDraft.view_type === 'calendar'}
 																		<label class="space-y-1">
-																			<span
-																				class="text-xs font-medium uppercase text-fg-muted"
+																			<span class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.calendarExceptionDate')}</span
 																			>
 
@@ -16654,7 +16480,7 @@
 																						...viewDraft,
 																						calendarExceptionDate: inputValue(event)
 																					})}
-																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																			/>
 																		</label>
 																	{/if}
@@ -16664,7 +16490,7 @@
 																			type="button"
 																			disabled={!viewDraft.calendarExceptionRecordId ||
 																				!isIsoDate(viewDraft.calendarExceptionDate)}
-																			class="inline-flex h-10 items-center gap-2 rounded-control bg-primary text-on-primary px-3 text-sm font-medium disabled:opacity-50"
+																			class="inline-flex h-10 items-center gap-2 rounded-control bg-primary text-on-primary px-3 text-sm font-medium disabled:bg-surface disabled:text-fg-muted"
 																			onclick={addViewDraftCalendarException}
 																		>
 																			<Plus class="h-4 w-4" aria-hidden="true" />
@@ -16674,9 +16500,7 @@
 																</div>
 
 																<div class="space-y-1">
-																	<div
-																		class="text-xs font-medium uppercase text-fg-muted"
-																	>
+																	<div class="text-xs font-medium uppercase text-fg-muted">
 																		{$t('forms.calendarExceptions')}
 																	</div>
 
@@ -16714,8 +16538,7 @@
 
 															{#if viewDraft.view_type === 'card'}
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardLayout')}</span
 																	>
 
@@ -16726,7 +16549,7 @@
 																				...viewDraft,
 																				cardLayout: selectValue(event) as CardLayoutMode
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="standard"
 																			>{$t('forms.cardLayoutStandard')}</option
@@ -16738,8 +16561,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardTitleField')}</span
 																	>
 
@@ -16771,7 +16593,7 @@
 																						: viewDraft.cardFieldKeys
 																			};
 																		}}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.recordTitle')}</option>
 
@@ -16782,8 +16604,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardSubtitleField')}</span
 																	>
 
@@ -16798,7 +16619,7 @@
 																						? ''
 																						: viewDraft.cardBadgeField
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16809,8 +16630,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardBadgeField')}</span
 																	>
 
@@ -16821,7 +16641,7 @@
 																				...viewDraft,
 																				cardBadgeField: selectValue(event)
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16832,8 +16652,7 @@
 																</label>
 
 																<label class="space-y-1">
-																	<span
-																		class="text-xs font-medium uppercase text-fg-muted"
+																	<span class="text-xs font-medium uppercase text-fg-muted"
 																		>{$t('forms.cardCoverField')}</span
 																	>
 
@@ -16844,7 +16663,7 @@
 																				...viewDraft,
 																				cardCoverField: selectValue(event)
 																			})}
-																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16857,13 +16676,9 @@
 														</div>
 
 														{#if viewDraft.view_type === 'card' && viewDraftCardFields().length > 0}
-															<div
-																class="space-y-2 rounded-card border border-line bg-raised p-3"
-															>
+															<div class="space-y-2 rounded-card border border-line bg-raised p-3">
 																<div>
-																	<h5
-																		class="text-xs font-semibold uppercase text-fg-muted"
-																	>
+																	<h5 class="text-xs font-semibold uppercase text-fg-muted">
 																		{$t('forms.cardFieldOrder')}
 																	</h5>
 																</div>
@@ -16874,8 +16689,7 @@
 																			class="flex min-w-0 items-center justify-between gap-2 rounded-control border border-line bg-nav px-2 py-1.5 text-sm"
 																			data-card-field-order={`${fieldIndex + 1}:${field.key}`}
 																		>
-																			<span
-																				class="min-w-0 truncate text-fg"
+																			<span class="min-w-0 truncate text-fg"
 																				>{fieldIndex + 1}. {fieldLabel(field)}</span
 																			>
 
@@ -16884,7 +16698,7 @@
 																			>
 																				<button
 																					type="button"
-																					class="rounded p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																					class="rounded p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																					disabled={fieldIndex === 0}
 																					onclick={() => moveViewDraftCardField(fieldIndex, -1)}
 																					aria-label={`${$t('forms.moveCardFieldUp')} ${fieldLabel(field)}`}
@@ -16897,7 +16711,7 @@
 
 																				<button
 																					type="button"
-																					class="rounded p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																					class="rounded p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																					disabled={fieldIndex >= viewDraftCardFields().length - 1}
 																					onclick={() => moveViewDraftCardField(fieldIndex, 1)}
 																					aria-label={`${$t('forms.moveCardFieldDown')} ${fieldLabel(field)}`}
@@ -16915,13 +16729,9 @@
 														{/if}
 
 														{#if viewDraftKanbanWipOptions().length > 0}
-															<div
-																class="space-y-3 rounded-card border border-line bg-raised p-3"
-															>
+															<div class="space-y-3 rounded-card border border-line bg-raised p-3">
 																<div>
-																	<h5
-																		class="text-xs font-semibold uppercase text-fg-muted"
-																	>
+																	<h5 class="text-xs font-semibold uppercase text-fg-muted">
 																		{$t('forms.kanbanWipPolicy')}
 																	</h5>
 
@@ -16933,8 +16743,7 @@
 																<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
 																	{#each viewDraftKanbanWipOptions() as option}
 																		<label class="space-y-1">
-																			<span
-																				class="text-xs font-medium uppercase text-fg-muted"
+																			<span class="text-xs font-medium uppercase text-fg-muted"
 																				>{$t('forms.kanbanWipLimitFor', {
 																					values: { option }
 																				})}</span
@@ -16981,8 +16790,7 @@
 
 												<div class="border-t border-line p-3">
 													<div class="mb-2 flex items-center justify-between gap-3">
-														<span
-															class="text-xs font-medium uppercase text-fg-muted"
+														<span class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.visibleColumns')}</span
 														>
 
@@ -17082,16 +16890,11 @@
 										>
 											<div class="mb-3 flex items-center justify-between gap-3">
 												<div>
-													<h3
-														id="record-editor-title"
-														class="text-base font-semibold text-fg"
-													>
+													<h3 id="record-editor-title" class="text-base font-semibold text-fg">
 														{editingRecordId ? $t('forms.editRecord') : $t('forms.newRecord')}
 													</h3>
 
-													<span class="text-xs text-fg-muted"
-														>{$t('forms.decimalHint')}</span
-													>
+													<span class="text-xs text-fg-muted">{$t('forms.decimalHint')}</span>
 												</div>
 
 												<Button size="sm" variant="secondary" onclick={closeRecordEditorDrawer}>
@@ -17233,8 +17036,7 @@
 																			<span class="block">{optionDisplayLabel(field, option)}</span>
 
 																			{#if optionDescription(field, option)}
-																				<span
-																					class="block text-xs text-fg-muted"
+																				<span class="block text-xs text-fg-muted"
 																					>{optionDescription(field, option)}</span
 																				>
 																			{/if}
@@ -17382,15 +17184,11 @@
 																				{/if}
 
 																				<div class="min-w-0 flex-1">
-																					<div
-																						class="truncate font-medium text-fg"
-																					>
+																					<div class="truncate font-medium text-fg">
 																						{attachment.file_name}
 																					</div>
 
-																					<div
-																						class="truncate font-mono text-[11px] text-fg-muted"
-																					>
+																					<div class="truncate font-mono text-[11px] text-fg-muted">
 																						{attachment.content_type || attachment.storage_key}
 																					</div>
 																				</div>
@@ -17557,9 +17355,7 @@
 														{/if}
 
 														{#if field.help_text}
-															<span class="block text-xs text-fg-muted"
-																>{field.help_text}</span
-															>
+															<span class="block text-xs text-fg-muted">{field.help_text}</span>
 														{/if}
 
 														{#if fieldType(field) === 'multi_select' && fieldOptions(field).length > 0}
@@ -17723,10 +17519,7 @@
 											{$t('forms.noRecords')}
 										</div>
 									{:else if viewRecords.length === 0}
-										<div
-											class="p-8 text-center text-sm text-fg-muted"
-											data-view-empty-filter
-										>
+										<div class="p-8 text-center text-sm text-fg-muted" data-view-empty-filter>
 											<FileText class="mx-auto mb-3 h-8 w-8 text-fg-muted" aria-hidden="true" />
 
 											{$t('forms.noMatchingRecords')}
@@ -17777,9 +17570,7 @@
 													{$t('forms.ganttConfigureFields')}
 												</div>
 											{:else}
-												<div
-													class="mb-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted"
-												>
+												<div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
 													<span data-gantt-start-field={ganttTimeline.startField.key}
 														>{$t('forms.ganttStartField')}: {fieldLabel(
 															ganttTimeline.startField
@@ -17894,9 +17685,7 @@
 														<div
 															class="grid grid-cols-[180px_minmax(0,1fr)] border-b border-line bg-nav"
 														>
-															<div
-																class="px-4 py-3 text-xs font-semibold uppercase text-fg-muted"
-															>
+															<div class="px-4 py-3 text-xs font-semibold uppercase text-fg-muted">
 																{$t('forms.records')}
 															</div>
 
@@ -17945,15 +17734,11 @@
 																		class="grid grid-cols-[180px_minmax(0,1fr)] items-center border-t border-line"
 																	>
 																		<div class="min-w-0 px-4 py-3">
-																			<div
-																				class="truncate font-medium text-fg"
-																			>
+																			<div class="truncate font-medium text-fg">
 																				{task.record.title}
 																			</div>
 
-																			<div
-																				class="mt-0.5 text-xs text-fg-muted"
-																			>
+																			<div class="mt-0.5 text-xs text-fg-muted">
 																				{task.start}{task.end !== task.start
 																					? ` - ${task.end}`
 																					: ''}
@@ -18084,9 +17869,7 @@
 													{$t('forms.pivotConfigureFields')}
 												</div>
 											{:else}
-												<div
-													class="mb-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted"
-												>
+												<div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
 													<span data-pivot-row-field={pivotTable.rowField.key}
 														>{$t('forms.pivotRowField')}: {fieldLabel(pivotTable.rowField)}</span
 													>
@@ -18276,9 +18059,7 @@
 													</button>
 												</div>
 
-												<table
-													class="min-w-full divide-y divide-line text-sm"
-												>
+												<table class="min-w-full divide-y divide-line text-sm">
 													<thead
 														class="bg-nav text-left text-xs uppercase tracking-wide text-fg-muted"
 													>
@@ -18343,13 +18124,8 @@
 
 													<tbody class="divide-y divide-line">
 														{#each pivotTable.rows as row}
-															<tr
-																class="hover:bg-surface"
-																data-pivot-row={row.label}
-															>
-																<th
-																	class="px-4 py-3 text-left font-medium text-fg"
-																>
+															<tr class="hover:bg-surface" data-pivot-row={row.label}>
+																<th class="px-4 py-3 text-left font-medium text-fg">
 																	<div class="flex flex-wrap items-center gap-1.5">
 																		<span>{row.label}</span>
 
@@ -18464,9 +18240,7 @@
 													</tbody>
 
 													{#if pivotShowColumnTotals(pivotTable.totalsMode)}
-														<tfoot
-															class="bg-nav text-sm font-semibold text-fg"
-														>
+														<tfoot class="bg-nav text-sm font-semibold text-fg">
 															<tr>
 																<th class="px-4 py-3 text-left">{$t('forms.pivotTotal')}</th>
 
@@ -18529,9 +18303,7 @@
 													>
 														<div class="mb-3 flex items-start justify-between gap-3">
 															<div>
-																<h3
-																	class="text-sm font-semibold text-fg"
-																>
+																<h3 class="text-sm font-semibold text-fg">
 																	{$t('forms.pivotDrilldown')}
 																</h3>
 
@@ -18549,7 +18321,7 @@
 															<div class="flex shrink-0 items-center gap-2">
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	onclick={copyPivotDrilldownRecordIds}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-copy-ids
@@ -18560,7 +18332,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	onclick={exportPivotDrilldownRecordsCsv}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-export-csv
@@ -18575,7 +18347,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	onclick={applyPivotDrilldownFilters}
 																	disabled={!canApplyPivotDrilldownFilters()}
 																	data-pivot-drilldown-apply-filters
@@ -18590,7 +18362,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																	onclick={focusPivotDrilldownRecords}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-focus
@@ -18620,15 +18392,11 @@
 																		data-pivot-drilldown-record={record.id}
 																	>
 																		<div class="min-w-0">
-																			<div
-																				class="truncate text-sm font-medium text-fg"
-																			>
+																			<div class="truncate text-sm font-medium text-fg">
 																				{record.title}
 																			</div>
 
-																			<div
-																				class="mt-0.5 text-xs text-fg-muted"
-																			>
+																			<div class="mt-0.5 text-xs text-fg-muted">
 																				{record.id}
 																			</div>
 
@@ -18683,10 +18451,7 @@
 											{/if}
 										</div>
 									{:else if selectedViewType === 'detail'}
-										<div
-											class="divide-y divide-line"
-											data-view-renderer="detail"
-										>
+										<div class="divide-y divide-line" data-view-renderer="detail">
 											{#each viewRecords as record}
 												<article class="p-4 hover:bg-surface">
 													<div class="flex items-start justify-between gap-3">
@@ -18696,10 +18461,7 @@
 															onclick={() => selectRecord(record)}
 															aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 														>
-															<span
-																class="block truncate font-medium text-fg"
-																>{record.title}</span
-															>
+															<span class="block truncate font-medium text-fg">{record.title}</span>
 
 															<span class="mt-1 block text-xs text-fg-muted"
 																>{$t('forms.updatedAt', {
@@ -18710,7 +18472,7 @@
 
 														<button
 															type="button"
-															class="inline-flex shrink-0 items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
+															class="inline-flex shrink-0 items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 															disabled={deletingRecordId === record.id}
 															onclick={() => handleDeleteRecord(record)}
 															aria-label={$t('forms.deleteRecord')}
@@ -18768,9 +18530,7 @@
 																				{fieldLabel(field)}
 																			</dt>
 
-																			<dd
-																				class="mt-1 truncate text-sm text-fg"
-																			>
+																			<dd class="mt-1 truncate text-sm text-fg">
 																				<OptionValueBadges
 																					{field}
 																					value={record.values[field.key]}
@@ -18810,8 +18570,7 @@
 													</div>
 
 													<label class="min-w-56 space-y-1">
-														<span
-															class="text-xs font-medium uppercase text-fg-muted"
+														<span class="text-xs font-medium uppercase text-fg-muted"
 															>{$t('forms.kanbanBulkTarget', {
 																values: { field: fieldLabel(kanbanGroupField) }
 															})}</span
@@ -18862,23 +18621,18 @@
 														{#if kanbanSwimlaneField}
 															<div class="mb-3 flex items-center justify-between gap-3">
 																<div class="min-w-0">
-																	<div
-																		class="text-xs font-medium uppercase text-fg-muted"
-																	>
+																	<div class="text-xs font-medium uppercase text-fg-muted">
 																		{$t('forms.viewSwimlaneBy', {
 																			values: { field: fieldLabel(kanbanSwimlaneField) }
 																		})}
 																	</div>
 
-																	<h4
-																		class="truncate text-sm font-semibold text-fg"
-																	>
+																	<h4 class="truncate text-sm font-semibold text-fg">
 																		{swimlane.label}
 																	</h4>
 																</div>
 
-																<span
-																	class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
+																<span class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: swimlane.records.length }
 																	})}</span
@@ -18904,9 +18658,7 @@
 																	<div
 																		class="flex items-center justify-between gap-3 border-b border-line px-3 py-2"
 																	>
-																		<h4
-																			class="truncate text-sm font-semibold text-fg"
-																		>
+																		<h4 class="truncate text-sm font-semibold text-fg">
 																			{group.label}
 																		</h4>
 
@@ -18963,7 +18715,7 @@
 
 																					<button
 																						type="button"
-																						class="inline-flex shrink-0 items-center rounded-control p-1 text-danger hover:bg-danger-soft disabled:opacity-50"
+																						class="inline-flex shrink-0 items-center rounded-control p-1 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 																						disabled={deletingRecordId === record.id}
 																						onclick={() => handleDeleteRecord(record)}
 																						aria-label={$t('forms.deleteRecord')}
@@ -18976,9 +18728,7 @@
 
 																				<div class="mt-2 space-y-1">
 																					{#each cardFields.slice(0, 3) as field}
-																						<p
-																							class="truncate text-xs text-fg-muted"
-																						>
+																						<p class="truncate text-xs text-fg-muted">
 																							<span
 																								class="inline-flex items-center gap-1 font-medium"
 																							>
@@ -19038,7 +18788,7 @@
 																								kanbanGroupField,
 																								selectValue(event)
 																							)}
-																						class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:opacity-50"
+																						class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 																					>
 																						{#each kanbanMoveOptions(kanbanGroupField) as option}
 																							<option value={option}>{option}</option>
@@ -19057,9 +18807,7 @@
 										</div>
 									{:else if selectedViewType === 'calendar'}
 										<div class="overflow-x-auto p-4" data-view-renderer="calendar">
-											<div
-												class="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted"
-											>
+											<div class="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
 												{$t('forms.viewDateBy', {
 													values: {
 														field: calendarDateField
@@ -19166,15 +18914,12 @@
 																		{/if}
 																	</div>
 
-																	<h4
-																		class="truncate text-sm font-semibold text-fg"
-																	>
+																	<h4 class="truncate text-sm font-semibold text-fg">
 																		{resource.label}
 																	</h4>
 																</div>
 
-																<span
-																	class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
+																<span class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: resource.records.length }
 																	})}</span
@@ -19199,16 +18944,14 @@
 																		<div
 																			class="flex items-center justify-between gap-2 border-b border-line px-3 py-2"
 																		>
-																			<h4
-																				class="truncate text-sm font-semibold text-fg"
-																			>
+																			<h4 class="truncate text-sm font-semibold text-fg">
 																				{group.label}
 																			</h4>
 
 																			<div class="flex shrink-0 items-center gap-1">
 																				<button
 																					type="button"
-																					class="rounded-control p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																					class="rounded-control p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																					onclick={() =>
 																						applyCalendarBucketFilters(group.date, resource)}
 																					disabled={!canApplyCalendarBucketFilters(
@@ -19257,15 +19000,11 @@
 																						? 'true'
 																						: undefined}
 																				>
-																					<div
-																						class="min-w-0 text-xs font-medium text-fg-muted"
-																					>
+																					<div class="min-w-0 text-xs font-medium text-fg-muted">
 																						<div class="truncate">{occurrence.startDate}</div>
 
 																						{#if occurrence.spanDays > 1}
-																							<div
-																								class="mt-1 truncate text-success"
-																							>
+																							<div class="mt-1 truncate text-success">
 																								{$t('forms.calendarDateSpan', {
 																									values: {
 																										start: occurrence.startDate,
@@ -19322,7 +19061,7 @@
 																					<div class="flex items-center justify-end gap-1">
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																							onclick={() =>
 																								shiftCalendarOccurrence(occurrence, -1)}
 																							disabled={updatingCalendarRecordId === record.id ||
@@ -19340,7 +19079,7 @@
 
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																							onclick={() => shiftCalendarOccurrence(occurrence, 1)}
 																							disabled={updatingCalendarRecordId === record.id ||
 																								!canShiftCalendarOccurrence(occurrence)}
@@ -19372,7 +19111,7 @@
 
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:opacity-50"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 																							disabled={deletingRecordId === record.id}
 																							onclick={() => handleDeleteRecord(record)}
 																							aria-label={$t('forms.deleteRecord')}
@@ -19409,16 +19148,14 @@
 																		<div
 																			class="flex items-center justify-between gap-2 border-b border-line px-3 py-2"
 																		>
-																			<h4
-																				class="truncate text-sm font-semibold text-fg"
-																			>
+																			<h4 class="truncate text-sm font-semibold text-fg">
 																				{group.label}
 																			</h4>
 
 																			<div class="flex shrink-0 items-center gap-1">
 																				<button
 																					type="button"
-																					class="rounded-control p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
+																					class="rounded-control p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																					onclick={() =>
 																						applyCalendarBucketFilters(group.date, resource)}
 																					disabled={!canApplyCalendarBucketFilters(
@@ -19515,7 +19252,7 @@
 																						<div class="flex shrink-0 items-center gap-1">
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																								class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																								onclick={() =>
 																									shiftCalendarOccurrence(occurrence, -1)}
 																								disabled={updatingCalendarRecordId === record.id ||
@@ -19533,7 +19270,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
+																								class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																								onclick={() =>
 																									shiftCalendarOccurrence(occurrence, 1)}
 																								disabled={updatingCalendarRecordId === record.id ||
@@ -19566,7 +19303,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-control p-1 text-danger hover:bg-danger-soft disabled:opacity-50"
+																								class="inline-flex items-center rounded-control p-1 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 																								disabled={deletingRecordId === record.id}
 																								onclick={() => handleDeleteRecord(record)}
 																								aria-label={$t('forms.deleteRecord')}
@@ -19608,7 +19345,7 @@
 																												calendarDateField,
 																												inputValue(event)
 																											)}
-																										class="w-full rounded-control border border-input bg-selected px-2 py-1.5 text-xs text-fg disabled:opacity-50"
+																										class="w-full rounded-control border border-input bg-selected px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 																									/>
 																								</label>
 																							{/if}
@@ -19645,7 +19382,7 @@
 																									calendarDateField,
 																									inputValue(event)
 																								)}
-																							class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:opacity-50"
+																							class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 																						/>
 																					{/if}
 
@@ -19671,7 +19408,7 @@
 																										calendarEndField,
 																										inputValue(event)
 																									)}
-																								class="w-full rounded-control border border-line bg-success-soft px-2 py-1.5 text-xs text-success disabled:opacity-50"
+																								class="w-full rounded-control border border-line bg-success-soft px-2 py-1.5 text-xs text-success disabled:bg-surface disabled:text-fg-muted"
 																							/>
 																						</label>
 																					{/if}
@@ -19853,7 +19590,7 @@
 
 																<button
 																	type="button"
-																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-danger hover:bg-danger-soft disabled:opacity-50"
+																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 																	disabled={deletingRecordId === record.id}
 																	data-card-action={`${record.id}:delete`}
 																	onclick={() => handleDeleteRecord(record)}
@@ -19930,9 +19667,7 @@
 												</dl>
 
 												{#if cardEditableSelectFields.length > 0}
-													<div
-														class="mt-4 space-y-2 border-t border-line px-4 py-3"
-													>
+													<div class="mt-4 space-y-2 border-t border-line px-4 py-3">
 														{#each cardEditableSelectFields as field}
 															<label class="block space-y-1">
 																<span
@@ -19980,7 +19715,7 @@
 																	data-card-select={`${record.id}:${field.key}`}
 																	onchange={(event) =>
 																		updateCardRecordSelectField(record, field, selectValue(event))}
-																	class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:opacity-50"
+																	class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 																>
 																	{#each kanbanMoveOptions(field) as option}
 																		<option value={option}>{option}</option>
@@ -20030,24 +19765,19 @@
 													>
 														<div class="mb-3 flex items-center justify-between gap-3">
 															<div class="min-w-0">
-																<div
-																	class="text-xs font-medium uppercase text-fg-muted"
-																>
+																<div class="text-xs font-medium uppercase text-fg-muted">
 																	{$t('forms.viewGroupBy', {
 																		values: { field: fieldLabel(cardGroupField) }
 																	})}
 																</div>
 
-																<h4
-																	class="truncate text-sm font-semibold text-fg"
-																>
+																<h4 class="truncate text-sm font-semibold text-fg">
 																	{group.label}
 																</h4>
 															</div>
 
 															<div class="flex shrink-0 items-center gap-2">
-																<span
-																	class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
+																<span class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: group.records.length }
 																	})}</span
@@ -20055,7 +19785,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																	aria-label={$t('forms.copyCardGroupRecordIds')}
 																	title={$t('forms.copyCardGroupRecordIds')}
 																	disabled={group.records.length === 0}
@@ -20066,7 +19796,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																	aria-label={$t('forms.exportCardGroupRecords')}
 																	title={$t('forms.exportCardGroupRecords')}
 																	disabled={group.records.length === 0}
@@ -20077,7 +19807,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																	aria-label={$t('forms.focusCardGroupRecords')}
 																	title={$t('forms.focusCardGroupRecords')}
 																	disabled={group.records.length === 0}
@@ -20088,7 +19818,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 																	aria-label={$t('forms.applyCardGroupFilter')}
 																	title={$t('forms.applyCardGroupFilter')}
 																	disabled={!canApplyCardGroupFilter(group)}
@@ -20193,7 +19923,7 @@
 														<div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																disabled={timelineEventRows.length === 0}
 																onclick={() => copyTimelineEventIds(timelineEventRows)}
 																data-timeline-copy-event-ids
@@ -20204,7 +19934,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																disabled={timelineEventAggregateKeys(timelineEventRows).length ===
 																	0}
 																onclick={() => copyTimelineAggregateIds(timelineEventRows)}
@@ -20216,7 +19946,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																disabled={timelineEventLinkedRecordIds(timelineEventRows).length ===
 																	0}
 																onclick={() => focusTimelineEventRecords(timelineEventRows)}
@@ -20228,7 +19958,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																disabled={timelineEventRows.length === 0}
 																onclick={() => exportTimelineEventsJson(timelineEventRows)}
 																data-timeline-export-events-json
@@ -20239,7 +19969,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																disabled={timelineEventRows.length === 0}
 																onclick={() => exportTimelineEventsCsv(timelineEventRows)}
 																data-timeline-export-events-csv
@@ -20264,9 +19994,7 @@
 																{formatDate(event.created_at)}
 															</div>
 
-															<div
-																class="min-w-0 border-l border-line pl-4"
-															>
+															<div class="min-w-0 border-l border-line pl-4">
 																<div class="flex items-start justify-between gap-3">
 																	<div class="min-w-0">
 																		<span
@@ -20323,7 +20051,7 @@
 																			>
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:bg-surface disabled:text-fg-muted"
 																					disabled={!linkedRecord}
 																					data-timeline-event-action={`${event.id}:open-record`}
 																					onclick={() => {
@@ -20336,7 +20064,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:bg-surface disabled:text-fg-muted"
 																					disabled={!linkedRecord}
 																					data-timeline-event-action={`${event.id}:focus-record`}
 																					onclick={() => focusTimelineEventRecord(event)}
@@ -20371,7 +20099,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:bg-surface disabled:text-fg-muted"
 																					disabled={!event.actor_id}
 																					data-timeline-event-action={`${event.id}:filter-actor`}
 																					onclick={() =>
@@ -20469,9 +20197,7 @@
 																		<span class="text-fg-muted">{event.id}</span>
 																	</summary>
 
-																	<div
-																		class="space-y-3 border-t border-line p-3 text-xs"
-																	>
+																	<div class="space-y-3 border-t border-line p-3 text-xs">
 																		<div class="grid gap-2 sm:grid-cols-2">
 																			<div>
 																				<div class="font-medium text-fg-muted">
@@ -20502,9 +20228,7 @@
 
 																		<div class="grid gap-3 lg:grid-cols-3">
 																			<div>
-																				<div
-																					class="mb-1 font-medium text-fg-muted"
-																				>
+																				<div class="mb-1 font-medium text-fg-muted">
 																					{$t('forms.timelineEventPayload')}
 																				</div>
 
@@ -20516,9 +20240,7 @@
 																			</div>
 
 																			<div>
-																				<div
-																					class="mb-1 font-medium text-fg-muted"
-																				>
+																				<div class="mb-1 font-medium text-fg-muted">
 																					{$t('forms.timelineEventMetadata')}
 																				</div>
 
@@ -20530,9 +20252,7 @@
 																			</div>
 
 																			<div>
-																				<div
-																					class="mb-1 font-medium text-fg-muted"
-																				>
+																				<div class="mb-1 font-medium text-fg-muted">
 																					{$t('forms.timelineEventSource')}
 																				</div>
 
@@ -20556,9 +20276,7 @@
 															{formatDate(record.updated_at)}
 														</div>
 
-														<div
-															class="min-w-0 border-l border-line pl-4"
-														>
+														<div class="min-w-0 border-l border-line pl-4">
 															<div class="flex items-start justify-between gap-3">
 																<button
 																	type="button"
@@ -20652,7 +20370,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex shrink-0 items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
+																	class="inline-flex shrink-0 items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 																	disabled={deletingRecordId === record.id}
 																	onclick={() => handleDeleteRecord(record)}
 																	aria-label={$t('forms.deleteRecord')}
@@ -20713,7 +20431,7 @@
 																						field,
 																						selectValue(event)
 																					)}
-																				class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:opacity-50"
+																				class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 																			>
 																				{#each kanbanMoveOptions(field) as option}
 																					<option value={option}>{option}</option>
@@ -20819,9 +20537,7 @@
 									<div class="border-b border-line p-4">
 										<div class="flex items-start justify-between gap-3">
 											<div class="min-w-0">
-												<h3
-													class="truncate text-base font-semibold text-fg"
-												>
+												<h3 class="truncate text-base font-semibold text-fg">
 													{selectedRecord.title}
 												</h3>
 
@@ -20890,10 +20606,7 @@
 										{/key}
 									{/if}
 
-									<div
-										class="divide-y divide-line"
-										data-record-detail-layout={selectedRecord.id}
-									>
+									<div class="divide-y divide-line" data-record-detail-layout={selectedRecord.id}>
 										{#each detailLayoutSections() as section}
 											<details
 												class={section.density === 'compact' ? 'px-4 py-3' : 'px-4 py-4'}
@@ -20909,9 +20622,7 @@
 														? 'cursor-pointer list-none'
 														: 'cursor-default list-none'}
 												>
-													<h4
-														class="mb-3 inline text-xs font-semibold uppercase text-fg-muted"
-													>
+													<h4 class="mb-3 inline text-xs font-semibold uppercase text-fg-muted">
 														{section.title}
 													</h4>
 												</summary>
@@ -20972,9 +20683,7 @@
 																{/if}
 															</dt>
 
-															<dd
-																class="mt-1 break-words text-sm text-fg"
-															>
+															<dd class="mt-1 break-words text-sm text-fg">
 																{#if fieldType(field) === 'child_table'}
 																	{@const childRecords = childRecordsForRelationField(field)}
 																	{@const childFields = childGridFieldsForRelationField(field)}
@@ -21046,15 +20755,12 @@
 																						</tr>
 																					</thead>
 
-																					<tbody
-																						class="divide-y divide-line"
-																					>
+																					<tbody class="divide-y divide-line">
 																						{#each childRecords as child}
 																							<tr
 																								data-record-detail-child-table-row={`${field.key}:${child.record.id}`}
 																							>
-																								<td
-																									class="px-3 py-2 font-medium text-fg"
+																								<td class="px-3 py-2 font-medium text-fg"
 																									>{child.record.title}</td
 																								>
 
@@ -21074,7 +20780,7 @@
 																									<div class="flex justify-end gap-1">
 																										<button
 																											type="button"
-																											class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:opacity-50"
+																											class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																											onclick={() => startEditChildRecord(child)}
 																											aria-label={$t('forms.editChildRecord')}
 																											data-record-detail-child-table-edit-row={`${field.key}:${child.record.id}`}
@@ -21086,7 +20792,7 @@
 
 																										<button
 																											type="button"
-																											class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
+																											class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 																											disabled={deletingChildRecordId ===
 																												child.record.id}
 																											onclick={() => deleteChildRecord(child)}
@@ -21131,9 +20837,7 @@
 												class="px-4 py-4"
 												data-record-detail-section={`${selectedRecord.id}:child_tables`}
 											>
-												<h4
-													class="mb-3 text-xs font-semibold uppercase text-fg-muted"
-												>
+												<h4 class="mb-3 text-xs font-semibold uppercase text-fg-muted">
 													{$t('forms.childRecords')}
 												</h4>
 
@@ -21214,8 +20918,7 @@
 																				<tr
 																					data-record-detail-child-table-row={`${relationField.key}:${child.record.id}`}
 																				>
-																					<td
-																						class="px-3 py-2 font-medium text-fg"
+																					<td class="px-3 py-2 font-medium text-fg"
 																						>{child.record.title}</td
 																					>
 
@@ -21235,7 +20938,7 @@
 																						<div class="flex justify-end gap-1">
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:opacity-50"
+																								class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																								onclick={() => startEditChildRecord(child)}
 																								aria-label={$t('forms.editChildRecord')}
 																								data-record-detail-child-table-edit-row={`${relationField.key}:${child.record.id}`}
@@ -21247,7 +20950,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
+																								class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 																								disabled={deletingChildRecordId === child.record.id}
 																								onclick={() => deleteChildRecord(child)}
 																								aria-label={$t('forms.deleteChildRecord')}
@@ -21283,10 +20986,7 @@
 										<div class="mb-5">
 											<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 												<div class="flex items-center gap-2">
-													<TableProperties
-														class="h-4 w-4 text-fg-muted"
-														aria-hidden="true"
-													/>
+													<TableProperties class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 													<h4 class="text-sm font-semibold text-fg">
 														{$t('forms.childRecords')}
@@ -21308,9 +21008,7 @@
 											</div>
 
 											{#if childEditor}
-												<div
-													class="mb-3 rounded-card border border-line bg-surface p-3"
-												>
+												<div class="mb-3 rounded-card border border-line bg-surface p-3">
 													<div class="mb-3 flex items-center justify-between gap-3">
 														<h5 class="text-sm font-semibold text-fg">
 															{childEditor.recordId
@@ -21326,9 +21024,7 @@
 
 													<div class="grid gap-3 md:grid-cols-2">
 														<label class="space-y-1 text-sm">
-															<span class="font-medium text-fg"
-																>{$t('forms.titleOverride')}</span
-															>
+															<span class="font-medium text-fg">{$t('forms.titleOverride')}</span>
 
 															<input
 																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -21471,8 +21167,7 @@
 																					>
 
 																					{#if optionDescription(childField, option)}
-																						<span
-																							class="block text-xs text-fg-muted"
+																						<span class="block text-xs text-fg-muted"
 																							>{optionDescription(childField, option)}</span
 																						>
 																					{/if}
@@ -21780,8 +21475,7 @@
 																				<tr
 																					data-child-table-grid-row={`${relationField.key}:${child.record.id}`}
 																				>
-																					<td
-																						class="px-3 py-2 font-medium text-fg"
+																					<td class="px-3 py-2 font-medium text-fg"
 																						>{child.record.title}</td
 																					>
 
@@ -21801,7 +21495,7 @@
 																						<div class="flex justify-end gap-1">
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:opacity-50"
+																								class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																								onclick={() => startEditChildRecord(child)}
 																								aria-label={$t('forms.editChildRecord')}
 																								data-child-table-edit-row={`${relationField.key}:${child.record.id}`}
@@ -21813,7 +21507,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
+																								class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 																								disabled={deletingChildRecordId === child.record.id}
 																								onclick={() => deleteChildRecord(child)}
 																								aria-label={$t('forms.deleteChildRecord')}
@@ -21842,31 +21536,23 @@
 													{/each}
 												</div>
 											{:else if selectedRecordChildren.length > 0}
-												<div
-													class="overflow-hidden rounded-control border border-line"
-												>
-													<table
-														class="min-w-full divide-y divide-line text-xs"
-													>
+												<div class="overflow-hidden rounded-control border border-line">
+													<table class="min-w-full divide-y divide-line text-xs">
 														<thead class="bg-nav">
 															<tr>
-																<th
-																	class="px-3 py-2 text-left font-medium text-fg-muted"
+																<th class="px-3 py-2 text-left font-medium text-fg-muted"
 																	>{$t('forms.recordTitle')}</th
 																>
 
-																<th
-																	class="px-3 py-2 text-left font-medium text-fg-muted"
+																<th class="px-3 py-2 text-left font-medium text-fg-muted"
 																	>{$t('forms.relationKey')}</th
 																>
 
-																<th
-																	class="px-3 py-2 text-left font-medium text-fg-muted"
+																<th class="px-3 py-2 text-left font-medium text-fg-muted"
 																	>{$t('forms.fields')}</th
 																>
 
-																<th
-																	class="px-3 py-2 text-right font-medium text-fg-muted"
+																<th class="px-3 py-2 text-right font-medium text-fg-muted"
 																	>{$t('common.actions')}</th
 																>
 															</tr>
@@ -21875,9 +21561,7 @@
 														<tbody class="divide-y divide-line">
 															{#each selectedRecordChildren as child}
 																<tr>
-																	<td
-																		class="px-3 py-2 font-medium text-fg"
-																		>{child.record.title}</td
+																	<td class="px-3 py-2 font-medium text-fg">{child.record.title}</td
 																	>
 
 																	<td class="px-3 py-2 font-mono text-fg-muted"
@@ -21902,7 +21586,7 @@
 																		<div class="flex justify-end gap-1">
 																			<button
 																				type="button"
-																				class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:opacity-50"
+																				class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 																				onclick={() => startEditChildRecord(child)}
 																				aria-label={$t('forms.editChildRecord')}
 																				><Pencil class="h-4 w-4" aria-hidden="true" /></button
@@ -21910,7 +21594,7 @@
 
 																			<button
 																				type="button"
-																				class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
+																				class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 																				disabled={deletingChildRecordId === child.record.id}
 																				onclick={() => deleteChildRecord(child)}
 																				aria-label={$t('forms.deleteChildRecord')}
@@ -21940,9 +21624,7 @@
 
 										<div class="space-y-2">
 											{#each selectedRecordLinks as item}
-												<div
-													class="rounded-card border border-line px-3 py-2 text-xs"
-												>
+												<div class="rounded-card border border-line px-3 py-2 text-xs">
 													<div class="font-medium text-fg">
 														{item.relation_key} / {item.relation_type}
 													</div>
@@ -21999,10 +21681,7 @@
 											data-record-detail-comment-count={selectedRecordComments.length}
 										>
 											<div class="mb-3 flex items-center gap-2">
-												<FileText
-													class="h-4 w-4 text-fg-muted"
-													aria-hidden="true"
-												/>
+												<FileText class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 												<h4 class="text-sm font-semibold text-fg">
 													{$t('forms.recordComments')}
@@ -22083,10 +21762,7 @@
 												).length}
 											>
 												<div class="mb-3 flex items-center gap-2">
-													<FileDown
-														class="h-4 w-4 text-fg-muted"
-														aria-hidden="true"
-													/>
+													<FileDown class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 													<h4 class="text-sm font-semibold text-fg">
 														{$t('forms.attachmentConfig')}
@@ -22123,9 +21799,7 @@
 																		{/if}
 
 																		<div class="min-w-0 flex-1">
-																			<div
-																				class="truncate font-medium text-fg"
-																			>
+																			<div class="truncate font-medium text-fg">
 																				{attachment.file_name}
 																			</div>
 
@@ -22211,10 +21885,7 @@
 											data-record-detail-event-count={selectedRecordEvents.length}
 										>
 											<div class="mb-3 flex items-center gap-2">
-												<FileText
-													class="h-4 w-4 text-fg-muted"
-													aria-hidden="true"
-												/>
+												<FileText class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 												<h4 class="text-sm font-semibold text-fg">
 													{$t('forms.timelineSourceEvents')}
@@ -22349,9 +22020,8 @@
 		{#if importWizardStep === 'source'}
 			<section class="space-y-3" data-import-wizard-panel="source">
 				<div class="flex flex-wrap items-center justify-between gap-2">
-					<label
-						class="block text-sm font-medium text-fg"
-						for="form-import-text">{$t('forms.importPayload')}</label
+					<label class="block text-sm font-medium text-fg" for="form-import-text"
+						>{$t('forms.importPayload')}</label
 					>
 
 					<div class="flex flex-wrap items-center gap-2">
@@ -22376,7 +22046,7 @@
 
 						<button
 							type="button"
-							class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+							class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 							onclick={exportImportTemplate}
 							disabled={!selectedForm || visibleFields.length === 0}
 							data-import-template-export
@@ -22441,7 +22111,7 @@
 
 						<button
 							type="button"
-							class="inline-flex items-center rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
+							class="inline-flex items-center rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 							onclick={restoreImportMappingTemplate}
 							disabled={!importMappingTemplateAvailable}
 							data-import-mapping-template-restore
@@ -22480,9 +22150,7 @@
 								{/each}
 							</select>
 
-							<span class="font-medium text-fg-muted"
-								>{$t('forms.importMappingTransform')}</span
-							>
+							<span class="font-medium text-fg-muted">{$t('forms.importMappingTransform')}</span>
 
 							<select
 								class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
@@ -22516,9 +22184,7 @@
 			<section class="space-y-3" data-import-wizard-panel="preview">
 				{#if importPreview}
 					<div class="grid gap-2 sm:grid-cols-3">
-						<div
-							class="rounded-card border border-line bg-raised p-3"
-						>
+						<div class="rounded-card border border-line bg-raised p-3">
 							<p class="text-xs text-fg-muted">
 								{$t('forms.importTotalRows')}
 							</p>
@@ -22528,9 +22194,7 @@
 							</p>
 						</div>
 
-						<div
-							class="rounded-card border border-line bg-success-soft p-3"
-						>
+						<div class="rounded-card border border-line bg-success-soft p-3">
 							<p class="text-xs text-success">
 								{$t('forms.importValidRows')}
 							</p>
@@ -22540,9 +22204,7 @@
 							</p>
 						</div>
 
-						<div
-							class="rounded-card border border-line bg-danger-soft p-3"
-						>
+						<div class="rounded-card border border-line bg-danger-soft p-3">
 							<p class="text-xs text-danger">{$t('forms.importInvalidRows')}</p>
 
 							<p class="mt-1 text-2xl font-semibold text-danger">
@@ -22555,9 +22217,7 @@
 						<div
 							class="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2 text-sm"
 						>
-							<span class="font-medium text-fg"
-								>{$t('forms.importPreview')}</span
-							>
+							<span class="font-medium text-fg">{$t('forms.importPreview')}</span>
 
 							<span class="text-fg-muted">
 								{$t('forms.importPreviewSummary', {
@@ -22572,9 +22232,7 @@
 
 						<div class="max-h-64 overflow-auto">
 							<table class="min-w-full divide-y divide-line text-sm">
-								<thead
-									class="bg-nav text-left text-xs font-medium uppercase text-fg-muted"
-								>
+								<thead class="bg-nav text-left text-xs font-medium uppercase text-fg-muted">
 									<tr>
 										<th class="px-3 py-2">{$t('forms.importRow')}</th>
 										<th class="px-3 py-2">{$t('common.status')}</th>
@@ -22597,13 +22255,9 @@
 												>
 											</td>
 
-											<td class="max-w-56 truncate px-3 py-2 text-fg"
-												>{row.title ?? '-'}</td
-											>
+											<td class="max-w-56 truncate px-3 py-2 text-fg">{row.title ?? '-'}</td>
 
-											<td class="px-3 py-2 text-fg-muted"
-												>{row.error ?? '-'}</td
-											>
+											<td class="px-3 py-2 text-fg-muted">{row.error ?? '-'}</td>
 										</tr>
 									{/each}
 								</tbody>
@@ -22696,9 +22350,7 @@
 	onclose={closeDesignerConfirm}
 >
 	<div class="space-y-4">
-		<div
-			class="rounded-card border border-line bg-warning-soft p-3"
-		>
+		<div class="rounded-card border border-line bg-warning-soft p-3">
 			<div class="flex items-start gap-2 text-sm text-warning">
 				<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
 				<p>{$t('forms.schemaChangeConfirmDescription')}</p>
@@ -22707,9 +22359,7 @@
 
 		<div class="overflow-hidden rounded-control border border-line">
 			<table class="min-w-full divide-y divide-line text-sm">
-				<thead
-					class="bg-nav text-left text-xs font-medium uppercase text-fg-muted"
-				>
+				<thead class="bg-nav text-left text-xs font-medium uppercase text-fg-muted">
 					<tr>
 						<th class="px-3 py-2">{$t('forms.changeType')}</th>
 						<th class="px-3 py-2">{$t('forms.field')}</th>
@@ -22751,13 +22401,9 @@
 								{/if}
 							</td>
 
-							<td class="px-3 py-2 text-right font-mono text-fg"
-								>{change.valueCount}</td
-							>
+							<td class="px-3 py-2 text-right font-mono text-fg">{change.valueCount}</td>
 
-							<td class="px-3 py-2 text-right font-mono text-fg"
-								>{change.dependencyCount}</td
-							>
+							<td class="px-3 py-2 text-right font-mono text-fg">{change.dependencyCount}</td>
 
 							<td
 								class="px-3 py-2 text-right font-mono {change.blockingDependencyCount > 0

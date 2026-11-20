@@ -137,9 +137,9 @@
 	let menuElement: HTMLDivElement | undefined = $state();
 	let menuTrigger: HTMLButtonElement | undefined;
 	const toolButton =
-		'inline-flex disabled:text-control disabled:hover:bg-transparent min-h-8 items-center justify-center gap-1.5 rounded-control px-2 text-xs font-medium text-fg hover:bg-surface aria-expanded:bg-surface';
+		'inline-flex disabled:text-fg-muted disabled:hover:bg-transparent min-h-8 items-center justify-center gap-1.5 rounded-control px-2 text-xs font-medium text-fg hover:bg-surface aria-expanded:bg-surface';
 	const toolIcon =
-		'grid size-8 shrink-0 place-items-center rounded-control hover:bg-surface disabled:text-control disabled:hover:bg-transparent';
+		'grid size-8 shrink-0 place-items-center rounded-control hover:bg-surface disabled:text-fg-muted disabled:hover:bg-transparent';
 	const toolInput =
 		'min-w-0 flex-1 rounded-control border border-input bg-transparent px-2 py-1.5 text-sm';
 	const toolPanel =
@@ -893,9 +893,8 @@
 					>
 				</div>
 				<div class="flex flex-wrap items-center justify-between gap-x-2">
-					<span
-						id={`flow-find-scope-${objectId}`}
-						class="text-xs text-fg-muted">{$t('flow.canvas.find.scope')}</span
+					<span id={`flow-find-scope-${objectId}`} class="text-xs text-fg-muted"
+						>{$t('flow.canvas.find.scope')}</span
 					>
 					<span role="status" class="text-xs tabular-nums text-fg-muted">
 						{#if findQuery.trim()}
@@ -992,10 +991,7 @@
 		</ul>
 	{/if}
 	{#if readOnly}
-		<p
-			class="mx-auto mb-3 max-w-3xl text-xs text-fg-muted"
-			data-testid="flow-canvas-read-only"
-		>
+		<p class="mx-auto mb-3 max-w-3xl text-xs text-fg-muted" data-testid="flow-canvas-read-only">
 			{$t('flow.canvas.readOnlyNotice')}
 		</p>
 	{/if}
@@ -1325,10 +1321,7 @@
 						>{/each}
 
 					{#if filteredBridgeOptions.length > 0}
-						<div
-							class="my-1 border-t border-line"
-							role="presentation"
-						></div>
+						<div class="my-1 border-t border-line" role="presentation"></div>
 						{#each filteredBridgeOptions as option, index (option.action)}
 							<button
 								type="button"
@@ -1343,9 +1336,7 @@
 								data-testid={`flow-slash-${option.action}`}
 							>
 								<span class="block">{$t(option.labelKey)}</span>
-								<span class="block text-xs text-fg-muted"
-									>{$t(option.noteKey)}</span
-								>
+								<span class="block text-xs text-fg-muted">{$t(option.noteKey)}</span>
 							</button>
 						{/each}
 					{/if}

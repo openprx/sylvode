@@ -214,7 +214,7 @@
 	const selectClass =
 		'mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm text-fg';
 	const buttonClass =
-		'inline-flex min-h-11 items-center rounded-control px-4 text-sm font-medium disabled:text-control disabled:hover:bg-transparent';
+		'inline-flex min-h-11 items-center rounded-control px-4 text-sm font-medium disabled:text-fg-muted disabled:hover:bg-transparent';
 </script>
 
 <div class="sr-only" aria-live="polite" data-testid="flow-page-blocks-live">{announcement}</div>

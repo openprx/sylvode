@@ -180,9 +180,9 @@
 	}
 
 	const buttonPrimary =
-		'min-h-[44px] min-w-[44px] rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors';
+		'min-h-[44px] min-w-[44px] rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted motion-safe:transition-colors';
 	const buttonSecondary =
-		'min-h-[44px] min-w-[44px] rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line';
+		'min-h-[44px] min-w-[44px] rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted disabled:border-line';
 	const fieldClass =
 		'mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm';
 	const labelClass = 'block text-sm font-medium text-fg';
@@ -303,9 +303,7 @@
 									</dd>
 								</div>
 							</dl>
-							<div
-								class="rounded-card bg-surface p-4 text-sm text-fg"
-							>
+							<div class="rounded-card bg-surface p-4 text-sm text-fg">
 								<p class="font-medium">{$t('flow.bridge.convert.ownership.title')}</p>
 								<ul class="mt-2 list-disc space-y-1 pl-5">
 									<li>{$t('flow.bridge.convert.ownership.source')}</li>
@@ -383,10 +381,7 @@
 										oninput={(event) => wizard.setTitle(event.currentTarget.value)}
 										aria-describedby="flow-convert-title-hint"
 									/>
-									<p
-										id="flow-convert-title-hint"
-										class="mt-1 text-xs text-fg-muted"
-									>
+									<p id="flow-convert-title-hint" class="mt-1 text-xs text-fg-muted">
 										{$t('flow.bridge.convert.mapping.recordTitleHint')}
 									</p>
 								</div>
@@ -415,9 +410,7 @@
 															</legend>
 															<div class="mt-1 flex flex-wrap gap-3">
 																{#each field.options as option (option)}
-																	<label
-																		class="flex min-h-11 items-center gap-2 text-sm text-fg"
-																	>
+																	<label class="flex min-h-11 items-center gap-2 text-sm text-fg">
 																		<input
 																			type="checkbox"
 																			class="h-5 w-5"
@@ -735,9 +728,7 @@
 								</p>
 							{/if}
 
-							<label
-								class="flex min-h-11 items-start gap-3 text-sm text-fg"
-							>
+							<label class="flex min-h-11 items-start gap-3 text-sm text-fg">
 								<input
 									type="checkbox"
 									class="mt-0.5 h-5 w-5"

@@ -451,7 +451,7 @@
 										>
 
 										<button
-											class="text-sm text-fg-muted hover:text-danger transition-colors disabled:text-control disabled:cursor-not-allowed"
+											class="text-sm text-fg-muted hover:text-danger transition-colors disabled:text-fg-muted disabled:cursor-not-allowed"
 											disabled={deletingId === webhook.id}
 											onclick={() => deleteWebhook(webhook)}
 										>
@@ -628,7 +628,7 @@
 				</div>
 				<div class="flex items-center gap-1">
 					<button
-						class="rounded border border-input px-2 py-1 text-fg-muted disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
+						class="rounded border border-input px-2 py-1 text-fg-muted disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 						disabled={deliveriesPage <= 1}
 						onclick={() => goToDeliveriesPage(deliveriesPage - 1)}
 					>
@@ -651,7 +651,7 @@
 						{/if}
 					{/each}
 					<button
-						class="rounded border border-input px-2 py-1 text-fg-muted disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
+						class="rounded border border-input px-2 py-1 text-fg-muted disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 						disabled={deliveriesPage >= deliveriesTotalPages}
 						onclick={() => goToDeliveriesPage(deliveriesPage + 1)}
 					>

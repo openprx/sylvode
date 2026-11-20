@@ -265,7 +265,7 @@
 		outline-offset: -1px;
 	}
 	.action[aria-disabled='true'] {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: progress;
 	}
 	.action :global(.spin) {

@@ -519,7 +519,7 @@
 		color: var(--rf-on-primary);
 	}
 	.cell[aria-disabled='true'] {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	.cell[aria-disabled='true']:hover {
@@ -610,7 +610,7 @@
 		font-weight: var(--rf-weight-medium);
 	}
 	.text-button[aria-disabled='true'] {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	.time {

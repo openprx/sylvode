@@ -193,7 +193,7 @@
 	.ui-button:disabled {
 		background: var(--rf-surface);
 		border-color: transparent;
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	.ui-button.loading {

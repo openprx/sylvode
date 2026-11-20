@@ -216,10 +216,7 @@
 
 <div class="overflow-x-auto" data-view-renderer="grid">
 	<p id="record-table-hint" class="sr-only">{$t('forms.recordPanel.tableHint')}</p>
-	<table
-		class="min-w-full divide-y divide-line text-sm"
-		aria-describedby="record-table-hint"
-	>
+	<table class="min-w-full divide-y divide-line text-sm" aria-describedby="record-table-hint">
 		<thead class="bg-nav">
 			<tr>
 				<th
@@ -263,9 +260,7 @@
 						</div>
 					</th>
 				{/each}
-				<th class="px-4 py-3 text-end font-medium text-fg-muted"
-					>{$t('common.actions')}</th
-				>
+				<th class="px-4 py-3 text-end font-medium text-fg-muted">{$t('common.actions')}</th>
 			</tr>
 		</thead>
 		<tbody bind:this={tbody} class="divide-y divide-line">
@@ -281,10 +276,7 @@
 				>
 					<td class="relative px-4 py-3">
 						{#if selected}
-							<span
-								class="absolute inset-y-0 start-0 w-[3px] bg-primary"
-								aria-hidden="true"
-							></span>
+							<span class="absolute inset-y-0 start-0 w-[3px] bg-primary" aria-hidden="true"></span>
 						{/if}
 						<a
 							href={recordHref(record.id)}
@@ -336,7 +328,7 @@
 						{#if canDelete(record)}
 							<button
 								type="button"
-								class="inline-flex h-8 w-8 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:text-control"
+								class="inline-flex h-8 w-8 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:text-fg-muted"
 								tabindex={record.id === rovingId ? 0 : -1}
 								disabled={deletingId === record.id}
 								onclick={() => ondelete(record)}

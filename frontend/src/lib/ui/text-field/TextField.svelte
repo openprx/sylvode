@@ -118,7 +118,7 @@
 	.disabled {
 		background: var(--rf-surface);
 		border-color: var(--rf-line-strong);
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 	}
 	.readonly {
 		background: var(--rf-surface);

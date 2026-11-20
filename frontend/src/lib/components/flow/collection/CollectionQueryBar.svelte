@@ -212,7 +212,7 @@
 	{#if snapshot.mode === 'schema' && view}
 		<button
 			type="button"
-			class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+			class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 			disabled={snapshot.schemaBusy}
 			data-testid="collection-save-view"
 			onclick={() => void saveView()}>{$t('flow.collection.query.saveView')}</button

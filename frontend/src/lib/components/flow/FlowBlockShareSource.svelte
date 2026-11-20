@@ -343,7 +343,7 @@
 					>
 					<button
 						type="submit"
-						class="rounded border px-3 py-2 text-sm disabled:text-control disabled:hover:bg-transparent"
+						class="rounded border px-3 py-2 text-sm disabled:text-fg-muted disabled:hover:bg-transparent"
 						data-testid="flow-share-review"
 						disabled={frozen || !targetValid}
 						>{draft.status === 'reviewing'
@@ -379,7 +379,7 @@
 					</ol>
 					<button
 						type="button"
-						class="rounded bg-primary rf-filled px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control"
+						class="rounded bg-primary rf-filled px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted"
 						data-testid="flow-share-publish"
 						disabled={draft.busy || !targetValid}
 						onclick={() => manager?.publish()}

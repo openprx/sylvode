@@ -149,7 +149,7 @@
 	const selectClass =
 		'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm text-fg';
 	const linkButtonClass =
-		'min-h-11 rounded-control px-2 text-xs font-medium text-fg underline disabled:text-control disabled:hover:bg-transparent';
+		'min-h-11 rounded-control px-2 text-xs font-medium text-fg underline disabled:text-fg-muted disabled:hover:bg-transparent';
 </script>
 
 {#if !workspaceId && ready?.canManage && permittedToManage}
@@ -197,10 +197,7 @@
 		<dl class="space-y-2">
 			<div class="flex items-center justify-between gap-2">
 				<dt class="text-fg-muted">{$t('flow.share.yourAccess')}</dt>
-				<dd
-					class="font-medium text-fg"
-					data-testid="flow-share-effective"
-				>
+				<dd class="font-medium text-fg" data-testid="flow-share-effective">
 					{$t(shareLevelKey(ready.view.effective_level))}
 				</dd>
 			</div>
@@ -221,7 +218,7 @@
 		{:else}
 			<button
 				type="button"
-				class="min-h-11 w-full rounded-control border border-fg bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line"
+				class="min-h-11 w-full rounded-control border border-fg bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 				disabled={busy}
 				onclick={() =>
 					run({ kind: 'inheritance', inherit_from_parent: !ready.view.inherit_from_parent })}
@@ -232,10 +229,7 @@
 			</button>
 
 			<section aria-labelledby="flow-share-inherited">
-				<h3
-					id="flow-share-inherited"
-					class="mb-2 text-xs font-semibold uppercase text-fg-muted"
-				>
+				<h3 id="flow-share-inherited" class="mb-2 text-xs font-semibold uppercase text-fg-muted">
 					{$t('flow.share.inheritedHeading')}
 				</h3>
 				{#if ready.view.inherited.length === 0}
@@ -248,9 +242,7 @@
 									{nameOf(grant.principal_kind, grant.principal_id)}
 									<span class="text-xs text-fg-muted">· {kindLabel(grant.principal_kind)}</span>
 								</span>
-								<span class="text-fg-muted"
-									>{$t(shareLevelKey(grant.level))}</span
-								>
+								<span class="text-fg-muted">{$t(shareLevelKey(grant.level))}</span>
 							</li>
 						{/each}
 					</ul>
@@ -258,10 +250,7 @@
 			</section>
 
 			<section aria-labelledby="flow-share-explicit">
-				<h3
-					id="flow-share-explicit"
-					class="mb-2 text-xs font-semibold uppercase text-fg-muted"
-				>
+				<h3 id="flow-share-explicit" class="mb-2 text-xs font-semibold uppercase text-fg-muted">
 					{$t('flow.share.explicitHeading')}
 				</h3>
 				{#if ready.view.items.length === 0}
@@ -323,16 +312,11 @@
 			</section>
 
 			<section aria-labelledby="flow-share-add" class="space-y-2">
-				<h3
-					id="flow-share-add"
-					class="text-xs font-semibold uppercase text-fg-muted"
-				>
+				<h3 id="flow-share-add" class="text-xs font-semibold uppercase text-fg-muted">
 					{$t('flow.share.add.heading')}
 				</h3>
 				<label class="block">
-					<span class="mb-1 block text-xs text-fg-muted"
-						>{$t('flow.share.add.subject')}</span
-					>
+					<span class="mb-1 block text-xs text-fg-muted">{$t('flow.share.add.subject')}</span>
 					<select
 						aria-label={$t('flow.share.add.subject')}
 						class={selectClass}
@@ -362,9 +346,7 @@
 					</select>
 				</label>
 				<label class="block">
-					<span class="mb-1 block text-xs text-fg-muted"
-						>{$t('flow.share.add.level')}</span
-					>
+					<span class="mb-1 block text-xs text-fg-muted">{$t('flow.share.add.level')}</span>
 					<select
 						aria-label={$t('flow.share.add.level')}
 						class={selectClass}
@@ -378,7 +360,7 @@
 				</label>
 				<button
 					type="button"
-					class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+					class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 					disabled={busy || addPrincipal === ''}
 					onclick={submitAdd}
 				>
@@ -416,10 +398,7 @@
 
 <Modal open={dialogOpen} title={$t('flow.share.confirm.title')} onclose={cancelChange}>
 	{#if pending}
-		<div
-			class="space-y-3 text-sm text-fg"
-			data-testid="flow-share-confirm"
-		>
+		<div class="space-y-3 text-sm text-fg" data-testid="flow-share-confirm">
 			{#if pending.phase === 'previewing'}
 				<p aria-live="polite">{$t('flow.share.confirm.previewing')}</p>
 			{/if}
@@ -459,9 +438,7 @@
 				<p class="font-medium text-danger" role="alert">
 					{$t('flow.share.confirm.selfLockout')}
 				</p>
-				<label
-					class="flex min-h-11 cursor-pointer items-center gap-3 text-fg"
-				>
+				<label class="flex min-h-11 cursor-pointer items-center gap-3 text-fg">
 					<input
 						type="checkbox"
 						class="h-5 w-5"
@@ -491,7 +468,7 @@
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded-control bg-danger px-4 text-sm font-medium text-on-danger rf-filled disabled:bg-surface disabled:text-control"
+			class="min-h-11 rounded-control bg-danger px-4 text-sm font-medium text-on-danger rf-filled disabled:bg-surface disabled:text-fg-muted"
 			disabled={!permittedToManage ||
 				!pending ||
 				pending.phase === 'previewing' ||

@@ -808,9 +808,7 @@
 	</section>
 {:else if collectionObject}
 	{@const routeScopeId = collectionObject.scope_id}
-	<div
-		class="flex items-center justify-between border-b border-line px-6 py-3"
-	>
+	<div class="flex items-center justify-between border-b border-line px-6 py-3">
 		<h1 class="flex-1 truncate text-lg font-semibold text-fg">
 			{collectionObject.object_type === 'record'
 				? collectionObject.title || $t('flow.collection.record.untitled')
@@ -836,9 +834,7 @@
 		<FlowContextPanel object={collectionObject} />
 	</div>
 {:else if unsupportedObject}
-	<div
-		class="flex items-center justify-between border-b border-line px-6 py-3"
-	>
+	<div class="flex items-center justify-between border-b border-line px-6 py-3">
 		<h1 class="flex-1 truncate text-lg font-semibold text-fg">
 			{unsupportedObject.title || $t('flow.nav.untitled')}
 		</h1>
@@ -926,7 +922,7 @@
 						</button>
 						<button
 							type="button"
-							class="font-medium underline underline-offset-2 hover:no-underline disabled:text-control disabled:hover:bg-transparent"
+							class="font-medium underline underline-offset-2 hover:no-underline disabled:text-fg-muted disabled:hover:bg-transparent"
 							disabled={reloading || editorWritePaused}
 							onclick={reloadFromServer}
 						>

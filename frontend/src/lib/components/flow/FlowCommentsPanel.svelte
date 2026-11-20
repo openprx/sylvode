@@ -423,7 +423,7 @@
 	{/if}
 	<button
 		type="button"
-		class="min-h-11 rounded-control bg-primary rf-filled px-3 text-on-primary disabled:bg-surface disabled:text-control"
+		class="min-h-11 rounded-control bg-primary rf-filled px-3 text-on-primary disabled:bg-surface disabled:text-fg-muted"
 		disabled={busy || !canComment || body.trim() === ''}
 		onclick={submit}
 	>

@@ -31,7 +31,7 @@
 			{@const Icon = mode.icon}
 			<button
 				type="button"
-				class="inline-flex h-10 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:text-control {activeMode ===
+				class="inline-flex h-10 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:text-fg-muted {activeMode ===
 				mode.key
 					? 'border-fg text-fg'
 					: 'border-transparent text-fg-muted hover:border-line-strong hover:text-fg'}"

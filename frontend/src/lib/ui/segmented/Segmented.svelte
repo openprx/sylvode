@@ -118,7 +118,7 @@
 		outline-offset: -1px;
 	}
 	.segment[aria-disabled='true'] {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	@media (pointer: coarse) {

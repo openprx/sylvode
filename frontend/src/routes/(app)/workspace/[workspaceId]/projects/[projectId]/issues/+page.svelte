@@ -656,7 +656,7 @@
 				<div class="flex items-center gap-1">
 					<button
 						class="rounded border px-3 py-1 text-sm {currentPage === 1
-							? 'cursor-not-allowed text-control'
+							? 'cursor-not-allowed bg-surface text-fg-muted'
 							: 'hover:bg-surface'}"
 						onclick={() => goToPage(currentPage - 1)}
 						disabled={currentPage === 1}
@@ -679,7 +679,7 @@
 					{/each}
 					<button
 						class="rounded border px-3 py-1 text-sm {currentPage === totalPages
-							? 'cursor-not-allowed text-control'
+							? 'cursor-not-allowed bg-surface text-fg-muted'
 							: 'hover:bg-surface'}"
 						onclick={() => goToPage(currentPage + 1)}
 						disabled={currentPage === totalPages}

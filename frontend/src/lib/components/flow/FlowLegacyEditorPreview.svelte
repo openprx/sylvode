@@ -48,7 +48,7 @@
 		{#if canEnableLegacyEditor(object)}
 			<button
 				type="button"
-				class="mt-3 rounded-control bg-primary rf-filled px-3 py-2 font-medium text-on-primary disabled:bg-surface disabled:text-control"
+				class="mt-3 rounded-control bg-primary rf-filled px-3 py-2 font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				onclick={onEnable}
 				disabled={busy}
 				>{$t(busy ? 'flow.legacyEditor.enabling' : 'flow.legacyEditor.enable')}</button
@@ -56,7 +56,7 @@
 		{/if}
 		<button
 			type="button"
-			class="ml-3 mt-3 rounded-control border border-fg bg-raised px-3 py-2 disabled:bg-surface disabled:text-control disabled:border-line"
+			class="ml-3 mt-3 rounded-control border border-fg bg-raised px-3 py-2 disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 			onclick={onRefresh}
 			disabled={busy}>{$t('flow.legacyEditor.refresh')}</button
 		>

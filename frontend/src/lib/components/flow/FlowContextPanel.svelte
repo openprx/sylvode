@@ -376,7 +376,7 @@
 	}
 
 	const linkButtonClass =
-		'min-h-11 text-xs font-medium text-fg underline disabled:text-control disabled:hover:bg-transparent';
+		'min-h-11 text-xs font-medium text-fg underline disabled:text-fg-muted disabled:hover:bg-transparent';
 	const selectClass =
 		'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm text-fg';
 </script>
@@ -512,8 +512,7 @@
 					</p>{/if}{/if}
 			{#if formats.length > 0}
 				<label class="block">
-					<span class="mb-1 block text-xs text-fg-muted"
-						>{$t('flow.panel.export.formatLabel')}</span
+					<span class="mb-1 block text-xs text-fg-muted">{$t('flow.panel.export.formatLabel')}</span
 					>
 					<select
 						aria-label={$t('flow.panel.export.formatLabel')}
@@ -554,7 +553,7 @@
 			{/if}
 			<button
 				type="button"
-				class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+				class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				disabled={exporting || formats.length === 0 || exportState.job?.polling === true}
 				aria-describedby={formats.length === 0 ? 'flow-panel-export-unavailable' : undefined}
 				onclick={startExport}
@@ -566,11 +565,7 @@
 						: $t('flow.panel.export.start')}
 			</button>
 			{#if formats.length === 0}
-				<p
-					id="flow-panel-export-unavailable"
-					class="text-xs text-fg-muted"
-					role="status"
-				>
+				<p id="flow-panel-export-unavailable" class="text-xs text-fg-muted" role="status">
 					{$t(exportUnavailableKey)}
 				</p>
 			{/if}

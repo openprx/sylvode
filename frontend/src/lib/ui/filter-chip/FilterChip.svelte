@@ -56,7 +56,7 @@
 		outline-offset: -1px;
 	}
 	.ui-filter-chip:disabled {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	@media (pointer: coarse) {

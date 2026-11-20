@@ -354,7 +354,7 @@
 			>
 			<button
 				type="submit"
-				class="min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
+				class="min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 				disabled={busy || !workspaceId || placed || projectLoading}
 				>{$t('flow.mounts.create')}</button
 			>

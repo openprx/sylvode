@@ -644,7 +644,7 @@
 				<button
 					onclick={submitCreate}
 					disabled={saving}
-					class="rounded-control bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
+					class="rounded-control bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 				>
 					{saving ? $t('common.creating') : $t('common.create')}
 				</button>
@@ -720,7 +720,7 @@
 				<button
 					onclick={submitEdit}
 					disabled={saving}
-					class="rounded-control bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
+					class="rounded-control bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 				>
 					{saving ? $t('common.saving') : $t('common.save')}
 				</button>
