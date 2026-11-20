@@ -51,7 +51,7 @@
 				: $t('flow.import.report.pending')}
 		</div>
 	{:else if reportState.status === 'not_found'}
-		<div data-testid="flow-import-report-not-found" role="status" aria-live="polite">
+		<div data-testid="flow-import-report-not-found" role="alert">
 			<EmptyState
 				icon="search"
 				title={$t('flow.import.report.notFoundTitle')}

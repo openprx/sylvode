@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { proposalsApi, type Proposal } from '#lib/api/proposals.js';
@@ -11,10 +12,14 @@
 		type ReviewStatus
 	} from '#lib/api/impact-reviews.js';
 	import { toast } from '#lib/stores/toast.js';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
+	import { isMissingResult } from '#lib/utils/api-helpers.js';
 
 	const proposalId = $derived(page.params.id || '');
 
 	let loading = $state(true);
+	let loadFailure = $state<'missing' | 'failed' | null>(null);
+	let loadFailureMessage = $state('');
 	let proposal = $state<Proposal | null>(null);
 	let impactReviewDetail = $state<ImpactReviewDetail | null>(null);
 	let loadingImpactReview = $state(false);
@@ -40,6 +45,7 @@
 
 	async function init() {
 		loading = true;
+		loadFailure = null;
 		if (!proposalId) {
 			loading = false;
 			return;
@@ -47,7 +53,10 @@
 
 		const proposalRes = await proposalsApi.get(proposalId);
 		if (proposalRes.code !== 0 || !proposalRes.data) {
-			toast.error(proposalRes.message || get(t)('governance.notFound'));
+			loadFailureMessage = proposalRes.message || get(t)('governance.notFound');
+			loadFailure = isMissingResult(proposalRes) ? 'missing' : 'failed';
+			// A missing proposal is announced in the tip slot; a failed request by the block's own alert.
+			if (loadFailure === 'missing') toast.error(loadFailureMessage);
 			loading = false;
 			return;
 		}
@@ -145,8 +154,20 @@
 	<div class="rounded-card border border-line bg-raised p-5">
 		{#if loading}
 			<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
+		{:else if loadFailure === 'failed'}
+			<StateBlock
+				kind="loadFailed"
+				message={loadFailureMessage}
+				action={{ run: () => void init() }}
+				data-testid="proposal-review-load-failed"
+			/>
 		{:else if !proposal}
-			<p class="text-sm text-fg-muted">{$t('governance.notFound')}</p>
+			<StateBlock
+				kind="notFound"
+				place={$t('governance.place')}
+				action={{ run: () => goto('/proposals') }}
+				data-testid="proposal-review-not-found"
+			/>
 		{:else}
 			<div class="mb-3 text-xs text-fg-muted">
 				<p>{$t('impactReview.proposalId')}: {proposal.id}</p>

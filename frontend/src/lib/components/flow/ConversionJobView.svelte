@@ -137,7 +137,7 @@
 					{$t('flow.bridge.job.loading')}
 				</p>
 			{:else if snap.loadState === 'not_found'}
-				<div class="mt-6" data-testid="flow-conversion-not-found">
+				<div class="mt-6" data-testid="flow-conversion-not-found" role="alert">
 					<EmptyState
 						icon="search"
 						title={$t('flow.bridge.job.notFoundTitle')}
