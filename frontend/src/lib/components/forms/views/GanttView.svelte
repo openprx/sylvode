@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { ganttDateLabel } from '#lib/forms/calendar-dates.js';
@@ -32,24 +33,22 @@
 	{:else}
 		<div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
 			<span data-gantt-start-field={s.ganttTimeline.startField.key}
-				>{$t('forms.ganttStartField')}: {fieldLabel(
-					s.ganttTimeline.startField
-				)}</span
+				>{$t('forms.ganttStartField')}: {fieldLabel(s.ganttTimeline.startField)}</span
 			>
 
 			{#if fieldHasConditionalHidden(s.ganttTimeline.startField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-gantt-start-field-conditional-hidden={s.ganttTimeline.startField
-						.key}>{$t('forms.fieldConditionHiddenBadge')}</span
+					data-gantt-start-field-conditional-hidden={s.ganttTimeline.startField.key}
+					>{$t('forms.fieldConditionHiddenBadge')}</span
 				>
 			{/if}
 
 			{#if fieldHasConditionalReadOnly(s.ganttTimeline.startField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-gantt-start-field-conditional-readonly={s.ganttTimeline
-						.startField.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
+					data-gantt-start-field-conditional-readonly={s.ganttTimeline.startField.key}
+					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 				>
 			{/if}
 
@@ -72,8 +71,8 @@
 			{#if s.ganttTimeline.endField && fieldHasConditionalReadOnly(s.ganttTimeline.endField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-gantt-end-field-conditional-readonly={s.ganttTimeline.endField
-						.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
+					data-gantt-end-field-conditional-readonly={s.ganttTimeline.endField.key}
+					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 				>
 			{/if}
 
@@ -88,24 +87,22 @@
 			{#if s.ganttTimeline.groupField && fieldHasConditionalHidden(s.ganttTimeline.groupField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-gantt-group-field-conditional-hidden={s.ganttTimeline.groupField
-						.key}>{$t('forms.fieldConditionHiddenBadge')}</span
+					data-gantt-group-field-conditional-hidden={s.ganttTimeline.groupField.key}
+					>{$t('forms.fieldConditionHiddenBadge')}</span
 				>
 			{/if}
 
 			{#if s.ganttTimeline.groupField && fieldHasConditionalReadOnly(s.ganttTimeline.groupField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-gantt-group-field-conditional-readonly={s.ganttTimeline
-						.groupField.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
+					data-gantt-group-field-conditional-readonly={s.ganttTimeline.groupField.key}
+					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 				>
 			{/if}
 
 			<span>·</span>
 
-			<span
-				data-gantt-dependency-field={s.ganttTimeline.dependencyField?.key ?? ''}
-			>
+			<span data-gantt-dependency-field={s.ganttTimeline.dependencyField?.key ?? ''}>
 				{$t('forms.ganttDependencyField')}: {s.ganttTimeline.dependencyField
 					? fieldLabel(s.ganttTimeline.dependencyField)
 					: $t('forms.viewNoRule')}
@@ -114,16 +111,15 @@
 			{#if s.ganttTimeline.dependencyField && fieldHasConditionalHidden(s.ganttTimeline.dependencyField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-gantt-dependency-field-conditional-hidden={s.ganttTimeline
-						.dependencyField.key}>{$t('forms.fieldConditionHiddenBadge')}</span
+					data-gantt-dependency-field-conditional-hidden={s.ganttTimeline.dependencyField.key}
+					>{$t('forms.fieldConditionHiddenBadge')}</span
 				>
 			{/if}
 
 			{#if s.ganttTimeline.dependencyField && fieldHasConditionalReadOnly(s.ganttTimeline.dependencyField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-gantt-dependency-field-conditional-readonly={s.ganttTimeline
-						.dependencyField.key}
+					data-gantt-dependency-field-conditional-readonly={s.ganttTimeline.dependencyField.key}
 					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 				>
 			{/if}
@@ -142,9 +138,7 @@
 				data-gantt-start={s.ganttTimeline.dates[0]}
 				data-gantt-end={s.ganttTimeline.dates[s.ganttTimeline.dates.length - 1]}
 			>
-				<div
-					class="grid grid-cols-[180px_minmax(0,1fr)] border-b border-line bg-nav"
-				>
+				<div class="grid grid-cols-[180px_minmax(0,1fr)] border-b border-line bg-nav">
 					<div class="px-4 py-3 text-xs font-semibold uppercase text-fg-muted">
 						{$t('forms.records')}
 					</div>
@@ -170,13 +164,8 @@
 				</div>
 
 				{#each s.ganttTimeline.lanes as lane}
-					<div
-						class="border-b border-line last:border-b-0"
-						data-gantt-lane={lane.label}
-					>
-						<div
-							class="bg-nav px-4 py-2 text-xs font-semibold uppercase text-fg-muted"
-						>
+					<div class="border-b border-line last:border-b-0" data-gantt-lane={lane.label}>
+						<div class="bg-nav px-4 py-2 text-xs font-semibold uppercase text-fg-muted">
 							{lane.label}
 						</div>
 
@@ -190,18 +179,14 @@
 						{/if}
 
 						{#each lane.tasks as task}
-							<div
-								class="grid grid-cols-[180px_minmax(0,1fr)] items-center border-t border-line"
-							>
+							<div class="grid grid-cols-[180px_minmax(0,1fr)] items-center border-t border-line">
 								<div class="min-w-0 px-4 py-3">
 									<div class="truncate font-medium text-fg">
 										{task.record.title}
 									</div>
 
 									<div class="mt-0.5 text-xs text-fg-muted">
-										{task.start}{task.end !== task.start
-											? ` - ${task.end}`
-											: ''}
+										{task.start}{task.end !== task.start ? ` - ${task.end}` : ''}
 									</div>
 
 									<div class="mt-1 flex flex-wrap items-center gap-1.5">
@@ -275,15 +260,13 @@
 										role="button"
 										tabindex="0"
 										aria-label={task.record.title}
-										ondragstart={(event) =>
-											handleGanttDragStart(event, task.record)}
+										ondragstart={(event) => handleGanttDragStart(event, task.record)}
 										ondragend={handleGanttDragEnd}
 										data-gantt-bar={task.record.id}
 										data-gantt-bar-start={task.start}
 										data-gantt-bar-end={task.end}
 										data-gantt-bar-dependency={task.dependencyValue}
-										data-gantt-updating={s.updatingGanttRecordId ===
-										task.record.id
+										data-gantt-updating={s.updatingGanttRecordId === task.record.id
 											? 'true'
 											: 'false'}
 									>

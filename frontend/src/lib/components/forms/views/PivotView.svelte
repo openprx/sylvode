@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { Copy, FileDown, Filter, TableProperties } from '@lucide/svelte';
@@ -73,47 +74,43 @@
 			<span>·</span>
 
 			<span data-pivot-column-field={s.pivotTable.columnField.key}
-				>{$t('forms.pivotColumnField')}: {fieldLabel(
-					s.pivotTable.columnField
-				)}</span
+				>{$t('forms.pivotColumnField')}: {fieldLabel(s.pivotTable.columnField)}</span
 			>
 
 			{#if fieldHasConditionalHidden(s.pivotTable.columnField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-pivot-column-field-conditional-hidden={s.pivotTable.columnField
-						.key}>{$t('forms.fieldConditionHiddenBadge')}</span
+					data-pivot-column-field-conditional-hidden={s.pivotTable.columnField.key}
+					>{$t('forms.fieldConditionHiddenBadge')}</span
 				>
 			{/if}
 
 			{#if fieldHasConditionalReadOnly(s.pivotTable.columnField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-pivot-column-field-conditional-readonly={s.pivotTable.columnField
-						.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
+					data-pivot-column-field-conditional-readonly={s.pivotTable.columnField.key}
+					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 				>
 			{/if}
 
 			<span>·</span>
 			<span data-pivot-value-field={s.pivotTable.valueField.key}
-				>{$t('forms.pivotValueField')}: {fieldLabel(
-					s.pivotTable.valueField
-				)}</span
+				>{$t('forms.pivotValueField')}: {fieldLabel(s.pivotTable.valueField)}</span
 			>
 
 			{#if fieldHasConditionalHidden(s.pivotTable.valueField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-pivot-value-field-conditional-hidden={s.pivotTable.valueField
-						.key}>{$t('forms.fieldConditionHiddenBadge')}</span
+					data-pivot-value-field-conditional-hidden={s.pivotTable.valueField.key}
+					>{$t('forms.fieldConditionHiddenBadge')}</span
 				>
 			{/if}
 
 			{#if fieldHasConditionalReadOnly(s.pivotTable.valueField)}
 				<span
 					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-					data-pivot-value-field-conditional-readonly={s.pivotTable.valueField
-						.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
+					data-pivot-value-field-conditional-readonly={s.pivotTable.valueField.key}
+					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 				>
 			{/if}
 
@@ -142,8 +139,7 @@
 			<span>·</span>
 
 			<span data-pivot-value-display={s.pivotTable.valueDisplay}>
-				{$t('forms.pivotValueDisplay')}: {s.pivotTable.valueDisplay ===
-				'percent_row'
+				{$t('forms.pivotValueDisplay')}: {s.pivotTable.valueDisplay === 'percent_row'
 					? $t('forms.pivotValueDisplayPercentRow')
 					: s.pivotTable.valueDisplay === 'percent_column'
 						? $t('forms.pivotValueDisplayPercentColumn')
@@ -188,9 +184,7 @@
 			>
 			<span>·</span>
 			<span data-pivot-heatmap={s.pivotTable.heatmap}
-				>{$t('forms.pivotHeatmap')}: {s.pivotTable.heatmap
-					? $t('forms.yes')
-					: $t('forms.no')}</span
+				>{$t('forms.pivotHeatmap')}: {s.pivotTable.heatmap ? $t('forms.yes') : $t('forms.no')}</span
 			>
 			<span>·</span>
 
@@ -230,9 +224,7 @@
 				class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface"
 				onclick={exportPivotTableMatrixCsv}
 				data-pivot-export-table
-				data-pivot-table-exported={s.exportedPivotTableMatrix
-					? 'true'
-					: undefined}
+				data-pivot-table-exported={s.exportedPivotTableMatrix ? 'true' : undefined}
 			>
 				<FileDown class="h-3.5 w-3.5" aria-hidden="true" />
 				{$t('forms.exportPivotTable')}
@@ -240,9 +232,7 @@
 		</div>
 
 		<table class="min-w-full divide-y divide-line text-sm">
-			<thead
-				class="bg-nav text-left text-xs uppercase tracking-wide text-fg-muted"
-			>
+			<thead class="bg-nav text-left text-xs uppercase tracking-wide text-fg-muted">
 				<tr>
 					<th class="px-4 py-3 font-medium">
 						<div class="flex flex-wrap items-center gap-1.5">
@@ -251,16 +241,15 @@
 							{#if fieldHasConditionalHidden(s.pivotTable.rowField)}
 								<span
 									class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-									data-pivot-table-row-field-conditional-hidden={s.pivotTable
-										.rowField.key}>{$t('forms.fieldConditionHiddenBadge')}</span
+									data-pivot-table-row-field-conditional-hidden={s.pivotTable.rowField.key}
+									>{$t('forms.fieldConditionHiddenBadge')}</span
 								>
 							{/if}
 
 							{#if fieldHasConditionalReadOnly(s.pivotTable.rowField)}
 								<span
 									class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-									data-pivot-table-row-field-conditional-readonly={s.pivotTable
-										.rowField.key}
+									data-pivot-table-row-field-conditional-readonly={s.pivotTable.rowField.key}
 									>{$t('forms.fieldConditionReadOnlyBadge')}</span
 								>
 							{/if}
@@ -268,10 +257,7 @@
 					</th>
 
 					{#each s.pivotTable.columns as column}
-						<th
-							class="px-4 py-3 text-right font-medium"
-							data-pivot-column={column.label}
-						>
+						<th class="px-4 py-3 text-right font-medium" data-pivot-column={column.label}>
 							<div class="flex flex-wrap items-center justify-end gap-1.5">
 								<span>{column.label}</span>
 
@@ -295,9 +281,7 @@
 					{/each}
 
 					{#if pivotShowRowTotals(s.pivotTable.totalsMode)}
-						<th class="px-4 py-3 text-right font-medium"
-							>{$t('forms.pivotTotal')}</th
-						>
+						<th class="px-4 py-3 text-right font-medium">{$t('forms.pivotTotal')}</th>
 					{/if}
 				</tr>
 			</thead>
@@ -340,10 +324,7 @@
 									style={pivotCellHeatmapStyle(cellValue, s.pivotTable)}
 									onclick={() => selectPivotDrilldown(row, column)}
 									data-pivot-cell-button={`${row.label}:${column.label}`}
-									data-pivot-cell-intensity={pivotCellIntensity(
-										cellValue,
-										s.pivotTable
-									)}
+									data-pivot-cell-intensity={pivotCellIntensity(cellValue, s.pivotTable)}
 								>
 									<span
 										>{formatPivotDisplayValue(
@@ -388,11 +369,9 @@
 									onclick={() => copyPivotCellValue(row, column, cellValue)}
 									aria-label={$t('forms.copyPivotCellValue')}
 									data-pivot-cell-copy={`${row.label}:${column.label}`}
-									data-pivot-cell-copied={s.copiedPivotCellKey ===
-									`${row.label}:${column.label}`
+									data-pivot-cell-copied={s.copiedPivotCellKey === `${row.label}:${column.label}`
 										? 'true'
-										: undefined}
-									><Copy class="h-3.5 w-3.5" aria-hidden="true" /></button
+										: undefined}><Copy class="h-3.5 w-3.5" aria-hidden="true" /></button
 								>
 							</td>
 						{/each}
@@ -407,11 +386,7 @@
 									class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-fg hover:bg-surface"
 									onclick={() => selectPivotDrilldown(row, null)}
 									data-pivot-row-total-button={row.label}
-									>{formatPivotTotalDisplayValue(
-										row.total,
-										'row',
-										s.pivotTable
-									)}</button
+									>{formatPivotTotalDisplayValue(row.total, 'row', s.pivotTable)}</button
 								>
 							</td>
 						{/if}
@@ -425,20 +400,13 @@
 						<th class="px-4 py-3 text-left">{$t('forms.pivotTotal')}</th>
 
 						{#each s.pivotTable.columns as column}
-							<td
-								class="px-4 py-3 text-right"
-								data-pivot-column-total={column.label}
-							>
+							<td class="px-4 py-3 text-right" data-pivot-column-total={column.label}>
 								<button
 									type="button"
 									class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-fg hover:bg-surface"
 									onclick={() => selectPivotDrilldown(null, column)}
 									data-pivot-column-total-button={column.label}
-									>{formatPivotTotalDisplayValue(
-										column.total,
-										'column',
-										s.pivotTable
-									)}</button
+									>{formatPivotTotalDisplayValue(column.total, 'column', s.pivotTable)}</button
 								>
 							</td>
 						{/each}
@@ -467,12 +435,10 @@
 			<section
 				class="mt-4 rounded-card border border-line bg-raised p-4"
 				data-pivot-drilldown={`${s.pivotDrilldown.rowLabel}:${s.pivotDrilldown.columnLabel}`}
-				data-pivot-drilldown-copied={s.copiedPivotDrilldownKey ===
-				pivotDrilldownKey()
+				data-pivot-drilldown-copied={s.copiedPivotDrilldownKey === pivotDrilldownKey()
 					? `${s.pivotDrilldown.rowLabel}:${s.pivotDrilldown.columnLabel}`
 					: undefined}
-				data-pivot-drilldown-exported={s.exportedPivotDrilldownKey ===
-				pivotDrilldownKey()
+				data-pivot-drilldown-exported={s.exportedPivotDrilldownKey === pivotDrilldownKey()
 					? `${s.pivotDrilldown.rowLabel}:${s.pivotDrilldown.columnLabel}`
 					: undefined}
 				data-pivot-drilldown-filters-applied={s.appliedPivotDrilldownFilterKey ===
@@ -516,8 +482,7 @@
 							onclick={exportPivotDrilldownRecordsCsv}
 							disabled={s.pivotDrilldownRecords.length === 0}
 							data-pivot-drilldown-export-csv
-							data-pivot-drilldown-exported={s.exportedPivotDrilldownKey ===
-							pivotDrilldownKey()
+							data-pivot-drilldown-exported={s.exportedPivotDrilldownKey === pivotDrilldownKey()
 								? 'true'
 								: undefined}
 						>
@@ -619,8 +584,7 @@
 									type="button"
 									class="shrink-0 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface"
 									onclick={() => selectRecord(record)}
-									data-pivot-drilldown-open={record.id}
-									>{$t('forms.openRecord')}</button
+									data-pivot-drilldown-open={record.id}>{$t('forms.openRecord')}</button
 								>
 							</div>
 						{/each}

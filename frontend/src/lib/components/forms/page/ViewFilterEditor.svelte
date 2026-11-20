@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import {
@@ -106,15 +107,12 @@
 	{/if}
 
 	{#if visibleViewDraftFilterGroups().some((group) => group.filters.length > 0)}
-		{@const expressionMatchingRecords =
-			viewDraftFilterExpressionRecords()}
-		{@const expressionMatchCount =
-			expressionMatchingRecords?.length ?? null}
+		{@const expressionMatchingRecords = viewDraftFilterExpressionRecords()}
+		{@const expressionMatchCount = expressionMatchingRecords?.length ?? null}
 		{@const expressionRecordIdsText =
 			viewDraftFilterExpressionRecordIdsText(expressionMatchingRecords)}
 		{@const expressionJsonText = viewDraftFilterExpressionJsonText()}
-		{@const expressionSummaryText =
-			viewDraftFilterExpressionSummaryText()}
+		{@const expressionSummaryText = viewDraftFilterExpressionSummaryText()}
 
 		<div class="flex flex-wrap items-end gap-2">
 			<label class="block max-w-xs flex-1 space-y-1">
@@ -125,15 +123,11 @@
 				<select
 					value={s.viewDraft.filterRootLogic}
 					onchange={(event) =>
-						updateViewDraftFilterRootLogic(
-							selectValue(event) as ViewFilterLogic
-						)}
+						updateViewDraftFilterRootLogic(selectValue(event) as ViewFilterLogic)}
 					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
-					<option value="all">{$t('forms.filterGroupsMatchAll')}</option
-					>
-					<option value="any">{$t('forms.filterGroupsMatchAny')}</option
-					>
+					<option value="all">{$t('forms.filterGroupsMatchAll')}</option>
+					<option value="any">{$t('forms.filterGroupsMatchAny')}</option>
 				</select>
 			</label>
 
@@ -152,15 +146,11 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					copyViewDraftFilterExpressionRecordIds(
-						expressionMatchingRecords
-					)}
+				onclick={() => copyViewDraftFilterExpressionRecordIds(expressionMatchingRecords)}
 				disabled={!expressionRecordIdsText}
 				aria-label={$t('forms.copyFilterExpressionRecordIds')}
 				data-filter-expression-copy-ids
-				data-filter-expression-copied={s.copiedFilterExpressionRecordIds ===
-				expressionRecordIdsText
+				data-filter-expression-copied={s.copiedFilterExpressionRecordIds === expressionRecordIdsText
 					? 'true'
 					: undefined}
 			>
@@ -171,13 +161,11 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					copyViewDraftFilterExpressionJson(expressionJsonText)}
+				onclick={() => copyViewDraftFilterExpressionJson(expressionJsonText)}
 				disabled={!expressionJsonText}
 				aria-label={$t('forms.copyFilterExpressionJson')}
 				data-filter-expression-copy-json
-				data-filter-expression-json-copied={s.copiedFilterExpressionJson ===
-				expressionJsonText
+				data-filter-expression-json-copied={s.copiedFilterExpressionJson === expressionJsonText
 					? 'true'
 					: undefined}
 			>
@@ -188,8 +176,7 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					exportViewDraftFilterExpressionConfigJson(expressionJsonText)}
+				onclick={() => exportViewDraftFilterExpressionConfigJson(expressionJsonText)}
 				disabled={!expressionJsonText}
 				aria-label={$t('forms.exportFilterExpressionJson')}
 				data-filter-expression-export-config-json
@@ -205,8 +192,7 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					copyViewDraftFilterExpressionSummary(expressionSummaryText)}
+				onclick={() => copyViewDraftFilterExpressionSummary(expressionSummaryText)}
 				disabled={!expressionSummaryText}
 				aria-label={$t('forms.copyFilterExpressionSummary')}
 				data-filter-expression-copy-summary
@@ -222,8 +208,7 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					exportViewDraftFilterExpressionSummary(expressionSummaryText)}
+				onclick={() => exportViewDraftFilterExpressionSummary(expressionSummaryText)}
 				disabled={!expressionSummaryText}
 				aria-label={$t('forms.exportFilterExpressionSummary')}
 				data-filter-expression-export-summary
@@ -239,10 +224,7 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					focusViewDraftFilterExpressionRecords(
-						expressionMatchingRecords
-					)}
+				onclick={() => focusViewDraftFilterExpressionRecords(expressionMatchingRecords)}
 				disabled={!expressionRecordIdsText}
 				data-filter-expression-focus-records
 				data-record-count={expressionMatchCount ?? ''}
@@ -254,8 +236,7 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					exportViewDraftFilterExpressionCsv(expressionMatchingRecords)}
+				onclick={() => exportViewDraftFilterExpressionCsv(expressionMatchingRecords)}
 				disabled={!expressionRecordIdsText}
 				data-filter-expression-export-csv
 				data-filter-expression-exported={s.exportedFilterExpressionRecordIds ===
@@ -271,10 +252,7 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					copyViewDraftFilterExpressionCsvRecords(
-						expressionMatchingRecords
-					)}
+				onclick={() => copyViewDraftFilterExpressionCsvRecords(expressionMatchingRecords)}
 				disabled={!expressionRecordIdsText}
 				data-filter-expression-copy-matches-csv
 				data-filter-expression-matches-csv-copied={s.copiedFilterExpressionCsvRecordIds ===
@@ -290,10 +268,7 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					copyViewDraftFilterExpressionJsonRecords(
-						expressionMatchingRecords
-					)}
+				onclick={() => copyViewDraftFilterExpressionJsonRecords(expressionMatchingRecords)}
 				disabled={!expressionRecordIdsText}
 				data-filter-expression-copy-matches-json
 				data-filter-expression-matches-json-copied={s.copiedFilterExpressionJsonRecordIds ===
@@ -309,10 +284,7 @@
 			<button
 				type="button"
 				class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-				onclick={() =>
-					exportViewDraftFilterExpressionJson(
-						expressionMatchingRecords
-					)}
+				onclick={() => exportViewDraftFilterExpressionJson(expressionMatchingRecords)}
 				disabled={!expressionRecordIdsText}
 				data-filter-expression-export-json
 				data-filter-expression-json-exported={s.exportedFilterExpressionJsonRecordIds ===
@@ -334,9 +306,7 @@
 			class={`space-y-2 rounded-card border border-line bg-raised p-2 ${
 				group.disabled ? 'opacity-70 ring-1 ring-warning' : ''
 			}`}
-			data-filter-group-disabled-state={group.disabled
-				? 'true'
-				: 'false'}
+			data-filter-group-disabled-state={group.disabled ? 'true' : 'false'}
 		>
 			<div class="flex flex-wrap items-end gap-2">
 				<label class="min-w-36 flex-1 space-y-1">
@@ -347,10 +317,7 @@
 					<select
 						value={group.logic}
 						onchange={(event) =>
-							updateViewDraftFilterGroupLogic(
-								groupIndex,
-								selectValue(event) as ViewFilterLogic
-							)}
+							updateViewDraftFilterGroupLogic(groupIndex, selectValue(event) as ViewFilterLogic)}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					>
 						<option value="all">{$t('forms.filterMatchAll')}</option>
@@ -380,26 +347,17 @@
 							})}
 				</span>
 
-				<div
-					class="flex items-center rounded-control border border-line bg-nav p-0.5"
-				>
+				<div class="flex items-center rounded-control border border-line bg-nav p-0.5">
 					<button
 						type="button"
 						class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg"
-						onclick={() =>
-							toggleViewDraftFilterGroupDisabled(groupIndex)}
+						onclick={() => toggleViewDraftFilterGroupDisabled(groupIndex)}
 						aria-label={`${
-							group.disabled
-								? $t('forms.enableFilterGroup')
-								: $t('forms.disableFilterGroup')
+							group.disabled ? $t('forms.enableFilterGroup') : $t('forms.disableFilterGroup')
 						} ${groupIndex + 1}`}
-						title={group.disabled
-							? $t('forms.enableFilterGroup')
-							: $t('forms.disableFilterGroup')}
+						title={group.disabled ? $t('forms.enableFilterGroup') : $t('forms.disableFilterGroup')}
 						data-filter-group-toggle-disabled={groupIndex + 1}
-						data-filter-group-disabled={group.disabled
-							? 'true'
-							: 'false'}
+						data-filter-group-disabled={group.disabled ? 'true' : 'false'}
 					>
 						{#if group.disabled}
 							<Eye class="h-4 w-4" aria-hidden="true" />
@@ -411,8 +369,7 @@
 					<button
 						type="button"
 						class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-						onclick={() =>
-							mergeViewDraftFilterGroupWithPrevious(groupIndex)}
+						onclick={() => mergeViewDraftFilterGroupWithPrevious(groupIndex)}
 						disabled={!canMergeViewDraftFilterGroup(groupIndex)}
 						aria-label={`${$t('forms.mergeFilterGroup')} ${groupIndex + 1}`}
 						data-filter-group-merge-previous={groupIndex + 1}
@@ -443,8 +400,7 @@
 						type="button"
 						class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
 						onclick={() => moveViewDraftFilterGroup(groupIndex, 1)}
-						disabled={groupIndex >=
-							visibleViewDraftFilterGroups().length - 1}
+						disabled={groupIndex >= visibleViewDraftFilterGroups().length - 1}
 						aria-label={`${$t('forms.moveFilterGroupDown')} ${groupIndex + 1}`}
 						data-filter-group-move-down={groupIndex + 1}
 						><ArrowDown class="h-4 w-4" aria-hidden="true" /></button
@@ -470,9 +426,7 @@
 					class={`grid gap-2 rounded-card border border-line bg-nav p-2 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_auto_auto_auto_auto_auto_auto] ${
 						filter.disabled ? 'opacity-70 ring-1 ring-warning' : ''
 					}`}
-					data-filter-disabled-state={filter.disabled
-						? 'true'
-						: 'false'}
+					data-filter-disabled-state={filter.disabled ? 'true' : 'false'}
 				>
 					<label class="space-y-1">
 						<span class="text-xs font-medium uppercase text-fg-muted"
@@ -483,11 +437,7 @@
 						<select
 							value={filter.field}
 							onchange={(event) =>
-								updateViewDraftFilter(
-									filterIndex,
-									{ field: selectValue(event) },
-									groupIndex
-								)}
+								updateViewDraftFilter(filterIndex, { field: selectValue(event) }, groupIndex)}
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 						>
 							<option value="">{$t('forms.viewNoRule')}</option>
@@ -517,16 +467,10 @@
 								)}
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 						>
-							<option value="contains"
-								>{$t('forms.filterContains')}</option
-							>
+							<option value="contains">{$t('forms.filterContains')}</option>
 							<option value="equals">{$t('forms.filterEquals')}</option>
-							<option value="not_equals"
-								>{$t('forms.filterNotEquals')}</option
-							>
-							<option value="not_empty"
-								>{$t('forms.filterNotEmpty')}</option
-							>
+							<option value="not_equals">{$t('forms.filterNotEquals')}</option>
+							<option value="not_empty">{$t('forms.filterNotEmpty')}</option>
 						</select>
 					</label>
 
@@ -539,14 +483,9 @@
 						<input
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 							value={filter.value}
-							disabled={!filter.field ||
-								filter.operator === 'not_empty'}
+							disabled={!filter.field || filter.operator === 'not_empty'}
 							oninput={(event) =>
-								updateViewDraftFilter(
-									filterIndex,
-									{ value: inputValue(event) },
-									groupIndex
-								)}
+								updateViewDraftFilter(filterIndex, { value: inputValue(event) }, groupIndex)}
 						/>
 					</label>
 
@@ -565,12 +504,9 @@
 					<button
 						type="button"
 						class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg"
-						onclick={() =>
-							toggleViewDraftFilterDisabled(groupIndex, filterIndex)}
+						onclick={() => toggleViewDraftFilterDisabled(groupIndex, filterIndex)}
 						aria-label={`${filter.disabled ? $t('forms.enableFilter') : $t('forms.disableFilter')} ${filterLabelSuffix(groupIndex, filterIndex)}`}
-						title={filter.disabled
-							? $t('forms.enableFilter')
-							: $t('forms.disableFilter')}
+						title={filter.disabled ? $t('forms.enableFilter') : $t('forms.disableFilter')}
 						data-filter-toggle-disabled={`${groupIndex + 1}.${filterIndex + 1}`}
 						data-filter-disabled={filter.disabled ? 'true' : 'false'}
 					>
@@ -584,8 +520,7 @@
 					<button
 						type="button"
 						class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-danger"
-						onclick={() =>
-							removeViewDraftFilter(filterIndex, groupIndex)}
+						onclick={() => removeViewDraftFilter(filterIndex, groupIndex)}
 						aria-label={$t('forms.removeFilter')}
 						data-filter-remove={`${groupIndex + 1}.${filterIndex + 1}`}
 						><X class="h-4 w-4" aria-hidden="true" /></button
@@ -594,8 +529,7 @@
 					<button
 						type="button"
 						class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-						onclick={() =>
-							duplicateViewDraftFilter(groupIndex, filterIndex)}
+						onclick={() => duplicateViewDraftFilter(groupIndex, filterIndex)}
 						disabled={hasReachedFilterLimit()}
 						aria-label={`${$t('forms.duplicateFilter')} ${filterLabelSuffix(groupIndex, filterIndex)}`}
 						data-filter-duplicate={`${groupIndex + 1}.${filterIndex + 1}`}
@@ -605,18 +539,11 @@
 					<button
 						type="button"
 						class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-						onclick={() =>
-							splitViewDraftFilterToGroup(groupIndex, filterIndex)}
-						disabled={!canSplitViewDraftFilterToGroup(
-							groupIndex,
-							filterIndex
-						)}
+						onclick={() => splitViewDraftFilterToGroup(groupIndex, filterIndex)}
+						disabled={!canSplitViewDraftFilterToGroup(groupIndex, filterIndex)}
 						aria-label={`${$t('forms.splitFilterToGroup')} ${filterLabelSuffix(groupIndex, filterIndex)}`}
 						data-filter-split-group={`${groupIndex + 1}.${filterIndex + 1}`}
-						><ArrowLeftRight
-							class="h-4 w-4"
-							aria-hidden="true"
-						/></button
+						><ArrowLeftRight class="h-4 w-4" aria-hidden="true" /></button
 					>
 
 					<div
@@ -625,8 +552,7 @@
 						<button
 							type="button"
 							class="rounded p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-							onclick={() =>
-								moveViewDraftFilter(groupIndex, filterIndex, -1)}
+							onclick={() => moveViewDraftFilter(groupIndex, filterIndex, -1)}
 							disabled={filterIndex === 0}
 							aria-label={`${$t('forms.moveFilterUp')} ${filterLabelSuffix(groupIndex, filterIndex)}`}
 							data-filter-move-up={`${groupIndex + 1}.${filterIndex + 1}`}
@@ -636,8 +562,7 @@
 						<button
 							type="button"
 							class="rounded p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-							onclick={() =>
-								moveViewDraftFilter(groupIndex, filterIndex, 1)}
+							onclick={() => moveViewDraftFilter(groupIndex, filterIndex, 1)}
 							disabled={filterIndex >= group.filters.length - 1}
 							aria-label={`${$t('forms.moveFilterDown')} ${filterLabelSuffix(groupIndex, filterIndex)}`}
 							data-filter-move-down={`${groupIndex + 1}.${filterIndex + 1}`}

@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { Plus, X } from '@lucide/svelte';
@@ -17,9 +18,7 @@
 	} = fp.viewDraftFields;
 </script>
 
-<div
-	class="space-y-2 rounded-card border border-line p-3 lg:col-span-2"
->
+<div class="space-y-2 rounded-card border border-line p-3 lg:col-span-2">
 	<div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px_auto]">
 		{#if s.viewDraft.view_type === 'calendar'}
 			<label class="space-y-1">
@@ -47,8 +46,7 @@
 
 		{#if s.viewDraft.view_type === 'card'}
 			<label class="space-y-1">
-				<span class="text-xs font-medium uppercase text-fg-muted"
-					>{$t('forms.cardFieldLimit')}</span
+				<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.cardFieldLimit')}</span
 				>
 
 				<select
@@ -85,9 +83,7 @@
 						})}
 				/>
 
-				<span class="min-w-0 truncate"
-					>{$t('forms.cardHideEmptyFields')}</span
-				>
+				<span class="min-w-0 truncate">{$t('forms.cardHideEmptyFields')}</span>
 			</label>
 
 			<label
@@ -108,9 +104,7 @@
 						})}
 				/>
 
-				<span class="min-w-0 truncate"
-					>{$t('forms.cardShowTimestamps')}</span
-				>
+				<span class="min-w-0 truncate">{$t('forms.cardShowTimestamps')}</span>
 			</label>
 
 			<label
@@ -131,9 +125,7 @@
 						})}
 				/>
 
-				<span class="min-w-0 truncate"
-					>{$t('forms.cardShowRecordId')}</span
-				>
+				<span class="min-w-0 truncate">{$t('forms.cardShowRecordId')}</span>
 			</label>
 		{/if}
 
@@ -185,18 +177,12 @@
 					<span
 						class="inline-flex max-w-full items-center gap-2 rounded-control bg-surface px-2 py-1 text-xs text-fg"
 					>
-						<span class="truncate"
-							>{exception.label} · {exception.date}</span
-						>
+						<span class="truncate">{exception.label} · {exception.date}</span>
 
 						<button
 							type="button"
 							class="rounded p-0.5 text-fg-muted hover:bg-selected hover:text-fg"
-							onclick={() =>
-								removeViewDraftCalendarException(
-									exception.recordId,
-									exception.date
-								)}
+							onclick={() => removeViewDraftCalendarException(exception.recordId, exception.date)}
 							aria-label={$t('forms.calendarRemoveException')}
 							><X class="h-3 w-3" aria-hidden="true" /></button
 						>
@@ -209,9 +195,7 @@
 
 {#if s.viewDraft.view_type === 'card'}
 	<label class="space-y-1">
-		<span class="text-xs font-medium uppercase text-fg-muted"
-			>{$t('forms.cardLayout')}</span
-		>
+		<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.cardLayout')}</span>
 
 		<select
 			value={s.viewDraft.cardLayout}
@@ -222,9 +206,7 @@
 				})}
 			class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 		>
-			<option value="standard"
-				>{$t('forms.cardLayoutStandard')}</option
-			>
+			<option value="standard">{$t('forms.cardLayoutStandard')}</option>
 			<option value="gallery">{$t('forms.cardLayoutGallery')}</option>
 			<option value="compact">{$t('forms.cardLayoutCompact')}</option>
 			<option value="list">{$t('forms.cardLayoutList')}</option>
@@ -232,9 +214,7 @@
 	</label>
 
 	<label class="space-y-1">
-		<span class="text-xs font-medium uppercase text-fg-muted"
-			>{$t('forms.cardTitleField')}</span
-		>
+		<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.cardTitleField')}</span>
 
 		<select
 			value={s.viewDraft.cardTitleField}
@@ -245,21 +225,14 @@
 					...s.viewDraft,
 					cardTitleField,
 					cardSubtitleField:
-						s.viewDraft.cardSubtitleField === cardTitleField
-							? ''
-							: s.viewDraft.cardSubtitleField,
+						s.viewDraft.cardSubtitleField === cardTitleField ? '' : s.viewDraft.cardSubtitleField,
 					cardBadgeField:
-						s.viewDraft.cardBadgeField === cardTitleField
-							? ''
-							: s.viewDraft.cardBadgeField,
+						s.viewDraft.cardBadgeField === cardTitleField ? '' : s.viewDraft.cardBadgeField,
 					cardFieldKeys:
-						cardTitleField &&
-						s.viewDraft.cardFieldKeys[0] !== cardTitleField
+						cardTitleField && s.viewDraft.cardFieldKeys[0] !== cardTitleField
 							? [
 									cardTitleField,
-									...s.viewDraft.cardFieldKeys.filter(
-										(key) => key !== cardTitleField
-									)
+									...s.viewDraft.cardFieldKeys.filter((key) => key !== cardTitleField)
 								]
 							: s.viewDraft.cardFieldKeys
 				};
@@ -275,9 +248,7 @@
 	</label>
 
 	<label class="space-y-1">
-		<span class="text-xs font-medium uppercase text-fg-muted"
-			>{$t('forms.cardSubtitleField')}</span
-		>
+		<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.cardSubtitleField')}</span>
 
 		<select
 			value={s.viewDraft.cardSubtitleField}
@@ -286,9 +257,7 @@
 					...s.viewDraft,
 					cardSubtitleField: selectValue(event),
 					cardBadgeField:
-						s.viewDraft.cardBadgeField === selectValue(event)
-							? ''
-							: s.viewDraft.cardBadgeField
+						s.viewDraft.cardBadgeField === selectValue(event) ? '' : s.viewDraft.cardBadgeField
 				})}
 			class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 		>
@@ -301,9 +270,7 @@
 	</label>
 
 	<label class="space-y-1">
-		<span class="text-xs font-medium uppercase text-fg-muted"
-			>{$t('forms.cardBadgeField')}</span
-		>
+		<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.cardBadgeField')}</span>
 
 		<select
 			value={s.viewDraft.cardBadgeField}
@@ -323,9 +290,7 @@
 	</label>
 
 	<label class="space-y-1">
-		<span class="text-xs font-medium uppercase text-fg-muted"
-			>{$t('forms.cardCoverField')}</span
-		>
+		<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.cardCoverField')}</span>
 
 		<select
 			value={s.viewDraft.cardCoverField}

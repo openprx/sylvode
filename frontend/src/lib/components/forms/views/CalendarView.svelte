@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { ChevronLeft, ChevronRight, Copy, Filter, Trash2 } from '@lucide/svelte';
@@ -48,9 +49,7 @@
 	<div class="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
 		{$t('forms.viewDateBy', {
 			values: {
-				field: s.calendarDateField
-					? fieldLabel(s.calendarDateField)
-					: $t('forms.updated')
+				field: s.calendarDateField ? fieldLabel(s.calendarDateField) : $t('forms.updated')
 			}
 		})}
 
@@ -89,24 +88,16 @@
 
 	<div
 		class="min-w-[980px] space-y-4"
-		data-calendar-range={viewCalendarRange(
-			s.selectedView?.config?.calendar_range
-		)}
-		data-calendar-day-scope={viewCalendarDayScope(
-			s.selectedView?.config?.calendar_day_scope
-		)}
+		data-calendar-range={viewCalendarRange(s.selectedView?.config?.calendar_range)}
+		data-calendar-day-scope={viewCalendarDayScope(s.selectedView?.config?.calendar_day_scope)}
 		data-calendar-layout={s.selectedCalendarLayout}
 		data-calendar-hide-empty-days={s.selectedCalendarHideEmptyDays}
 		data-calendar-focus-date={viewCalendarFocusDate()}
 	>
 		{#each calendarResourceRows() as resource}
 			<section
-				class={s.calendarResourceField
-					? 'rounded-card border border-line bg-surface p-3'
-					: ''}
-				data-calendar-resource={s.calendarResourceField
-					? resource.label
-					: undefined}
+				class={s.calendarResourceField ? 'rounded-card border border-line bg-surface p-3' : ''}
+				data-calendar-resource={s.calendarResourceField ? resource.label : undefined}
 				data-record-count={resource.records.length}
 			>
 				{#if s.calendarResourceField}
@@ -122,8 +113,7 @@
 								{#if memberFieldHidden(s.calendarResourceField)}
 									<span
 										class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning"
-										data-calendar-resource-field-permission-hidden={s
-											.calendarResourceField.key}
+										data-calendar-resource-field-permission-hidden={s.calendarResourceField.key}
 										>{$t('forms.fieldHiddenBadge')}</span
 									>
 								{/if}
@@ -131,8 +121,7 @@
 								{#if memberFieldLocked(s.calendarResourceField)}
 									<span
 										class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-										data-calendar-resource-field-permission-locked={s
-											.calendarResourceField.key}
+										data-calendar-resource-field-permission-locked={s.calendarResourceField.key}
 										>{$t('forms.fieldLockedBadge')}</span
 									>
 								{/if}
@@ -140,8 +129,7 @@
 								{#if fieldHasConditionalHidden(s.calendarResourceField)}
 									<span
 										class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-										data-calendar-resource-field-conditional-hidden={s
-											.calendarResourceField.key}
+										data-calendar-resource-field-conditional-hidden={s.calendarResourceField.key}
 										>{$t('forms.fieldConditionHiddenBadge')}</span
 									>
 								{/if}
@@ -149,8 +137,7 @@
 								{#if fieldHasConditionalReadOnly(s.calendarResourceField)}
 									<span
 										class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
-										data-calendar-resource-field-conditional-readonly={s
-											.calendarResourceField.key}
+										data-calendar-resource-field-conditional-readonly={s.calendarResourceField.key}
 										>{$t('forms.fieldConditionReadOnlyBadge')}</span
 									>
 								{/if}
@@ -172,9 +159,7 @@
 				{#if s.selectedCalendarLayout === 'agenda'}
 					<div
 						class="space-y-3"
-						data-calendar-agenda-resource={s.calendarResourceField
-							? resource.label
-							: '__all__'}
+						data-calendar-agenda-resource={s.calendarResourceField ? resource.label : '__all__'}
 						data-record-count={calendarAgendaRecordCount(resource)}
 					>
 						{#each calendarAgendaGroups(resource) as group}
@@ -183,9 +168,7 @@
 								data-calendar-agenda-date={group.date}
 								data-record-count={group.records.length}
 							>
-								<div
-									class="flex items-center justify-between gap-2 border-b border-line px-3 py-2"
-								>
+								<div class="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
 									<h4 class="truncate text-sm font-semibold text-fg">
 										{group.label}
 									</h4>
@@ -194,24 +177,18 @@
 										<button
 											type="button"
 											class="rounded-control p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-											onclick={() =>
-												applyCalendarBucketFilters(group.date, resource)}
-											disabled={!canApplyCalendarBucketFilters(
-												group.date,
-												resource
-											)}
+											onclick={() => applyCalendarBucketFilters(group.date, resource)}
+											disabled={!canApplyCalendarBucketFilters(group.date, resource)}
 											aria-label={$t('forms.applyCalendarBucketFilters')}
 											title={$t('forms.applyCalendarBucketFilters')}
 											data-calendar-agenda-apply-filters={`${group.date}:${s.calendarResourceField ? resource.key : '__all__'}`}
 											data-calendar-filters-applied={s.appliedCalendarFilterKey ===
 											calendarBucketFilterKey(group.date, resource)
 												? 'true'
-												: undefined}
-											><Filter class="h-3.5 w-3.5" aria-hidden="true" /></button
+												: undefined}><Filter class="h-3.5 w-3.5" aria-hidden="true" /></button
 										>
 
-										<span
-											class="rounded bg-nav px-2 py-0.5 text-xs text-fg-muted"
+										<span class="rounded bg-nav px-2 py-0.5 text-xs text-fg-muted"
 											>{$t('forms.groupRecordCount', {
 												values: { count: group.records.length }
 											})}</span
@@ -263,14 +240,11 @@
 												onclick={() => selectRecord(record)}
 												aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 											>
-												<span
-													class="block truncate text-sm font-semibold text-fg"
+												<span class="block truncate text-sm font-semibold text-fg"
 													>{record.title}</span
 												>
 
-												<span
-													class="mt-0.5 block truncate text-xs text-fg-muted"
-												>
+												<span class="mt-0.5 block truncate text-xs text-fg-muted">
 													{s.visibleFields[0]
 														? recordDisplay(record, s.visibleFields[0])
 														: record.id.slice(0, 8)}
@@ -304,19 +278,13 @@
 												<button
 													type="button"
 													class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-													onclick={() =>
-														shiftCalendarOccurrence(occurrence, -1)}
+													onclick={() => shiftCalendarOccurrence(occurrence, -1)}
 													disabled={s.updatingCalendarRecordId === record.id ||
 														!canShiftCalendarOccurrence(occurrence)}
 													aria-label={$t('forms.calendarShiftPreviousDay')}
 													title={$t('forms.calendarShiftPreviousDay')}
-													data-calendar-shift-previous={calendarScheduleKey(
-														occurrence
-													)}
-													><ChevronLeft
-														class="h-3.5 w-3.5"
-														aria-hidden="true"
-													/></button
+													data-calendar-shift-previous={calendarScheduleKey(occurrence)}
+													><ChevronLeft class="h-3.5 w-3.5" aria-hidden="true" /></button
 												>
 
 												<button
@@ -327,13 +295,8 @@
 														!canShiftCalendarOccurrence(occurrence)}
 													aria-label={$t('forms.calendarShiftNextDay')}
 													title={$t('forms.calendarShiftNextDay')}
-													data-calendar-shift-next={calendarScheduleKey(
-														occurrence
-													)}
-													><ChevronRight
-														class="h-3.5 w-3.5"
-														aria-hidden="true"
-													/></button
+													data-calendar-shift-next={calendarScheduleKey(occurrence)}
+													><ChevronRight class="h-3.5 w-3.5" aria-hidden="true" /></button
 												>
 
 												<button
@@ -342,13 +305,8 @@
 													onclick={() => copyCalendarSchedule(occurrence)}
 													aria-label={$t('forms.copyCalendarSchedule')}
 													title={$t('forms.copyCalendarSchedule')}
-													data-calendar-copy-schedule={calendarScheduleKey(
-														occurrence
-													)}
-													><Copy
-														class="h-3.5 w-3.5"
-														aria-hidden="true"
-													/></button
+													data-calendar-copy-schedule={calendarScheduleKey(occurrence)}
+													><Copy class="h-3.5 w-3.5" aria-hidden="true" /></button
 												>
 
 												<button
@@ -357,10 +315,7 @@
 													disabled={s.deletingRecordId === record.id}
 													onclick={() => handleDeleteRecord(record)}
 													aria-label={$t('forms.deleteRecord')}
-													><Trash2
-														class="h-3.5 w-3.5"
-														aria-hidden="true"
-													/></button
+													><Trash2 class="h-3.5 w-3.5" aria-hidden="true" /></button
 												>
 											</div>
 										</article>
@@ -372,8 +327,7 @@
 				{:else}
 					<div
 						class={`grid gap-3 ${
-							viewCalendarRange(s.selectedView?.config?.calendar_range) ===
-							'month'
+							viewCalendarRange(s.selectedView?.config?.calendar_range) === 'month'
 								? 'grid-cols-2 md:grid-cols-4 xl:grid-cols-7'
 								: 'lg:grid-cols-7'
 						}`}
@@ -387,9 +341,7 @@
 								ondragover={handleCalendarDragOver}
 								ondrop={(event) => handleCalendarDrop(event, group.date)}
 							>
-								<div
-									class="flex items-center justify-between gap-2 border-b border-line px-3 py-2"
-								>
+								<div class="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
 									<h4 class="truncate text-sm font-semibold text-fg">
 										{group.label}
 									</h4>
@@ -398,24 +350,18 @@
 										<button
 											type="button"
 											class="rounded-control p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-											onclick={() =>
-												applyCalendarBucketFilters(group.date, resource)}
-											disabled={!canApplyCalendarBucketFilters(
-												group.date,
-												resource
-											)}
+											onclick={() => applyCalendarBucketFilters(group.date, resource)}
+											disabled={!canApplyCalendarBucketFilters(group.date, resource)}
 											aria-label={$t('forms.applyCalendarBucketFilters')}
 											title={$t('forms.applyCalendarBucketFilters')}
 											data-calendar-apply-filters={`${group.date}:${s.calendarResourceField ? resource.key : '__all__'}`}
 											data-calendar-filters-applied={s.appliedCalendarFilterKey ===
 											calendarBucketFilterKey(group.date, resource)
 												? 'true'
-												: undefined}
-											><Filter class="h-3.5 w-3.5" aria-hidden="true" /></button
+												: undefined}><Filter class="h-3.5 w-3.5" aria-hidden="true" /></button
 										>
 
-										<span
-											class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
+										<span class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
 											>{$t('forms.groupRecordCount', {
 												values: { count: group.records.length }
 											})}</span
@@ -429,8 +375,7 @@
 
 										<article
 											class={`rounded-card border border-line bg-raised p-3 transition-opacity ${s.draggingCalendarRecordId === record.id ? 'opacity-60' : ''}`}
-											draggable={Boolean(s.calendarDateField) &&
-												!occurrence.recurring}
+											draggable={Boolean(s.calendarDateField) && !occurrence.recurring}
 											data-calendar-card={record.id}
 											data-calendar-occurrence={occurrence.spanStart
 												? `${record.id}:${occurrence.startDate}`
@@ -450,8 +395,7 @@
 												? 'true'
 												: undefined}
 											role="listitem"
-											ondragstart={(event) =>
-												handleCalendarDragStart(event, record)}
+											ondragstart={(event) => handleCalendarDragStart(event, record)}
 											ondragend={handleCalendarDragEnd}
 										>
 											<div class="flex items-start justify-between gap-2">
@@ -461,14 +405,11 @@
 													onclick={() => selectRecord(record)}
 													aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 												>
-													<span
-														class="block truncate text-sm font-medium text-fg"
+													<span class="block truncate text-sm font-medium text-fg"
 														>{record.title}</span
 													>
 
-													<span
-														class="mt-0.5 block truncate text-xs text-fg-muted"
-													>
+													<span class="mt-0.5 block truncate text-xs text-fg-muted">
 														{s.visibleFields[0]
 															? recordDisplay(record, s.visibleFields[0])
 															: record.id.slice(0, 8)}
@@ -495,39 +436,25 @@
 													<button
 														type="button"
 														class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-														onclick={() =>
-															shiftCalendarOccurrence(occurrence, -1)}
-														disabled={s.updatingCalendarRecordId ===
-															record.id ||
+														onclick={() => shiftCalendarOccurrence(occurrence, -1)}
+														disabled={s.updatingCalendarRecordId === record.id ||
 															!canShiftCalendarOccurrence(occurrence)}
 														aria-label={$t('forms.calendarShiftPreviousDay')}
 														title={$t('forms.calendarShiftPreviousDay')}
-														data-calendar-shift-previous={calendarScheduleKey(
-															occurrence
-														)}
-														><ChevronLeft
-															class="h-3.5 w-3.5"
-															aria-hidden="true"
-														/></button
+														data-calendar-shift-previous={calendarScheduleKey(occurrence)}
+														><ChevronLeft class="h-3.5 w-3.5" aria-hidden="true" /></button
 													>
 
 													<button
 														type="button"
 														class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:bg-surface disabled:text-fg-muted"
-														onclick={() =>
-															shiftCalendarOccurrence(occurrence, 1)}
-														disabled={s.updatingCalendarRecordId ===
-															record.id ||
+														onclick={() => shiftCalendarOccurrence(occurrence, 1)}
+														disabled={s.updatingCalendarRecordId === record.id ||
 															!canShiftCalendarOccurrence(occurrence)}
 														aria-label={$t('forms.calendarShiftNextDay')}
 														title={$t('forms.calendarShiftNextDay')}
-														data-calendar-shift-next={calendarScheduleKey(
-															occurrence
-														)}
-														><ChevronRight
-															class="h-3.5 w-3.5"
-															aria-hidden="true"
-														/></button
+														data-calendar-shift-next={calendarScheduleKey(occurrence)}
+														><ChevronRight class="h-3.5 w-3.5" aria-hidden="true" /></button
 													>
 
 													<button
@@ -536,13 +463,8 @@
 														onclick={() => copyCalendarSchedule(occurrence)}
 														aria-label={$t('forms.copyCalendarSchedule')}
 														title={$t('forms.copyCalendarSchedule')}
-														data-calendar-copy-schedule={calendarScheduleKey(
-															occurrence
-														)}
-														><Copy
-															class="h-3.5 w-3.5"
-															aria-hidden="true"
-														/></button
+														data-calendar-copy-schedule={calendarScheduleKey(occurrence)}
+														><Copy class="h-3.5 w-3.5" aria-hidden="true" /></button
 													>
 
 													<button
@@ -551,10 +473,7 @@
 														disabled={s.deletingRecordId === record.id}
 														onclick={() => handleDeleteRecord(record)}
 														aria-label={$t('forms.deleteRecord')}
-														><Trash2
-															class="h-3.5 w-3.5"
-															aria-hidden="true"
-														/></button
+														><Trash2 class="h-3.5 w-3.5" aria-hidden="true" /></button
 													>
 												</div>
 											</div>
@@ -569,19 +488,14 @@
 													{#if s.calendarDateField && ['date', 'datetime'].includes(s.calendarDateField.type ?? 'text')}{@const calendarField =
 															s.calendarDateField}
 														<label class="block space-y-1">
-															<span
-																class="text-[11px] font-medium uppercase text-fg-muted"
+															<span class="text-[11px] font-medium uppercase text-fg-muted"
 																>{$t('forms.calendarSeriesDate')}</span
 															>
 
 															<input
 																type="date"
-																value={calendarDateInputValue(
-																	record,
-																	s.calendarDateField
-																)}
-																disabled={s.updatingCalendarRecordId ===
-																	record.id}
+																value={calendarDateInputValue(record, s.calendarDateField)}
+																disabled={s.updatingCalendarRecordId === record.id}
 																aria-label={`${$t('forms.calendarSeriesDate')} ${record.title}`}
 																data-calendar-series-date={`${record.id}:${occurrence.date}`}
 																onchange={(event) =>
@@ -616,18 +530,11 @@
 													s.calendarDateField}
 												<input
 													type="date"
-													value={calendarDateInputValue(
-														record,
-														s.calendarDateField
-													)}
+													value={calendarDateInputValue(record, s.calendarDateField)}
 													disabled={s.updatingCalendarRecordId === record.id}
 													aria-label={`${$t('forms.calendarSetDate')} ${fieldLabel(s.calendarDateField)}`}
 													onchange={(event) =>
-														updateCalendarRecordDate(
-															record,
-															calendarField,
-															inputValue(event)
-														)}
+														updateCalendarRecordDate(record, calendarField, inputValue(event))}
 													class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 												/>
 											{/if}
@@ -635,26 +542,18 @@
 											{#if s.calendarDateField && s.calendarEndField && ['date', 'datetime'].includes(s.calendarEndField.type ?? 'text') && occurrence.startDate === calendarRecordIsoDate(record, s.calendarDateField)}{@const calendarEnd =
 													s.calendarEndField}
 												<label class="mt-3 block space-y-1">
-													<span
-														class="text-[11px] font-medium uppercase text-fg-muted"
+													<span class="text-[11px] font-medium uppercase text-fg-muted"
 														>{$t('forms.calendarEndDate')}</span
 													>
 
 													<input
 														type="date"
-														value={calendarDateInputValue(
-															record,
-															s.calendarEndField
-														)}
+														value={calendarDateInputValue(record, s.calendarEndField)}
 														disabled={s.updatingCalendarRecordId === record.id}
 														aria-label={`${$t('forms.calendarEndDate')} ${record.title}`}
 														data-calendar-end-date={`${record.id}:${occurrence.startDate}`}
 														onchange={(event) =>
-															updateCalendarRecordEndDate(
-																record,
-																calendarEnd,
-																inputValue(event)
-															)}
+															updateCalendarRecordEndDate(record, calendarEnd, inputValue(event))}
 														class="w-full rounded-control border border-line bg-success-soft px-2 py-1.5 text-xs text-success disabled:bg-surface disabled:text-fg-muted"
 													/>
 												</label>

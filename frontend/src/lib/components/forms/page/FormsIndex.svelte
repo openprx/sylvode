@@ -59,9 +59,7 @@
 					{form.description || formFieldSummary(form)}
 				</p>
 
-				<div
-					class="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3 text-xs"
-				>
+				<div class="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3 text-xs">
 					<span class="truncate text-fg-muted"
 						>{$t('forms.updatedAt', { values: { date: formatDate(form.updated_at) } })}</span
 					>

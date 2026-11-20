@@ -18,23 +18,23 @@
 </script>
 
 {#if s.selectedForm}
-<FormDesignerWorkspace
-	form={s.selectedForm}
-	fieldDrafts={s.designerFieldDrafts}
-	{fieldTypeOptions}
-	selectedIndex={s.selectedDesignerFieldIndex}
-	selectedFieldUsage={s.selectedDesignerFieldUsage}
-	selectedFieldDependencies={s.selectedDesignerFieldDependencies}
-	hiddenFieldKeys={s.memberHiddenFieldKeys}
-	lockedFieldKeys={s.memberLockedFieldKeys}
-	usageLoading={s.designerUsageLoading}
-	saving={s.designerSaving}
-	onSelectField={(index) => (s.selectedDesignerFieldIndex = index)}
-	onAppendField={addDesignerField}
-	onUpdateField={updateDesignerField}
-	onDuplicateField={duplicateDesignerField}
-	onRemoveField={removeDesignerField}
-	onMoveField={moveDesignerField}
-	onSave={saveDesignerSchema}
-/>
+	<FormDesignerWorkspace
+		form={s.selectedForm}
+		fieldDrafts={s.designerFieldDrafts}
+		{fieldTypeOptions}
+		selectedIndex={s.selectedDesignerFieldIndex}
+		selectedFieldUsage={s.selectedDesignerFieldUsage}
+		selectedFieldDependencies={s.selectedDesignerFieldDependencies}
+		hiddenFieldKeys={s.memberHiddenFieldKeys}
+		lockedFieldKeys={s.memberLockedFieldKeys}
+		usageLoading={s.designerUsageLoading}
+		saving={s.designerSaving}
+		onSelectField={(index) => (s.selectedDesignerFieldIndex = index)}
+		onAppendField={addDesignerField}
+		onUpdateField={updateDesignerField}
+		onDuplicateField={duplicateDesignerField}
+		onRemoveField={removeDesignerField}
+		onMoveField={moveDesignerField}
+		onSave={saveDesignerSchema}
+	/>
 {/if}

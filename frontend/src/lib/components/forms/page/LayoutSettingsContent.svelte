@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import ViewSetupBasics from '#lib/components/forms/page/ViewSetupBasics.svelte';
@@ -15,41 +16,38 @@
 	const { viewDraftKanbanWipOptions } = fp.viewDraftFields;
 </script>
 
-									<section class="w-full" data-view-tools-expanded-panel>
-										<div class="space-y-4">
-											<div class="rounded-control border border-line bg-raised" data-view-setup>
-												<div class="space-y-2 border-t border-line p-3">
-													<ViewSetupBasics />
+<section class="w-full" data-view-tools-expanded-panel>
+	<div class="space-y-4">
+		<div class="rounded-control border border-line bg-raised" data-view-setup>
+			<div class="space-y-2 border-t border-line p-3">
+				<ViewSetupBasics />
 
-													<div
-														class="space-y-3 rounded-card border border-line bg-nav p-3"
-														data-view-config-panel
-													>
-														<div>
-															<h4 class="text-sm font-semibold text-fg">
-																{$t('forms.viewRules')}
-															</h4>
+				<div class="space-y-3 rounded-card border border-line bg-nav p-3" data-view-config-panel>
+					<div>
+						<h4 class="text-sm font-semibold text-fg">
+							{$t('forms.viewRules')}
+						</h4>
 
-															<p class="mt-1 text-xs text-fg-muted">
-																{$t('forms.viewRulesDescription')}
-															</p>
-														</div>
+						<p class="mt-1 text-xs text-fg-muted">
+							{$t('forms.viewRulesDescription')}
+						</p>
+					</div>
 
-														<ViewFilterEditor />
+					<ViewFilterEditor />
 
-														<ViewTypeOptions />
+					<ViewTypeOptions />
 
-														{#if s.viewDraft.view_type === 'card' && viewDraftCardFields().length > 0}
-															<ViewCardFieldOrder />
-														{/if}
+					{#if s.viewDraft.view_type === 'card' && viewDraftCardFields().length > 0}
+						<ViewCardFieldOrder />
+					{/if}
 
-														{#if viewDraftKanbanWipOptions().length > 0}
-															<ViewKanbanWipPolicy />
-														{/if}
-													</div>
-												</div>
-											</div>
+					{#if viewDraftKanbanWipOptions().length > 0}
+						<ViewKanbanWipPolicy />
+					{/if}
+				</div>
+			</div>
+		</div>
 
-												<ViewColumnsDisclosure />
-										</div>
-									</section>
+		<ViewColumnsDisclosure />
+	</div>
+</section>

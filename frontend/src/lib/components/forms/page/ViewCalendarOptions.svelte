@@ -1,10 +1,16 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { ChevronLeft, ChevronRight } from '@lucide/svelte';
 	import { fieldLabel } from '#lib/forms/field-options.js';
 	import { inputValue, selectValue } from '#lib/forms/record-format.js';
-	import type { ViewCalendarDayScope, ViewCalendarLayout, ViewCalendarRange, ViewCalendarRecurrence } from '#lib/forms/page-types.js';
+	import type {
+		ViewCalendarDayScope,
+		ViewCalendarLayout,
+		ViewCalendarRange,
+		ViewCalendarRecurrence
+	} from '#lib/forms/page-types.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
 
 	const fp = getFormsPageContext();
@@ -17,9 +23,7 @@
 </script>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.calendarEndField')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.calendarEndField')}</span>
 
 	<select
 		value={s.viewDraft.calendarEndField}
@@ -61,9 +65,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.calendarRange')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.calendarRange')}</span>
 
 	<select
 		value={s.viewDraft.calendarRange}
@@ -80,9 +82,7 @@
 </label>
 
 <div class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.calendarFocusDate')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.calendarFocusDate')}</span>
 
 	<div class="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-1">
 		<button
@@ -91,8 +91,7 @@
 			onclick={() => shiftViewDraftCalendarFocus(-1)}
 			aria-label={$t('forms.calendarPreviousRange')}
 			title={$t('forms.calendarPreviousRange')}
-			data-calendar-focus-shift="-1"
-			><ChevronLeft class="h-4 w-4" aria-hidden="true" /></button
+			data-calendar-focus-shift="-1"><ChevronLeft class="h-4 w-4" aria-hidden="true" /></button
 		>
 
 		<input
@@ -114,47 +113,32 @@
 			onclick={() => shiftViewDraftCalendarFocus(1)}
 			aria-label={$t('forms.calendarNextRange')}
 			title={$t('forms.calendarNextRange')}
-			data-calendar-focus-shift="1"
-			><ChevronRight class="h-4 w-4" aria-hidden="true" /></button
+			data-calendar-focus-shift="1"><ChevronRight class="h-4 w-4" aria-hidden="true" /></button
 		>
 	</div>
 </div>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.calendarRecurrence')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.calendarRecurrence')}</span>
 
 	<select
 		value={s.viewDraft.calendarRecurrence}
 		onchange={(event) =>
 			(s.viewDraft = {
 				...s.viewDraft,
-				calendarRecurrence: selectValue(
-					event
-				) as ViewCalendarRecurrence
+				calendarRecurrence: selectValue(event) as ViewCalendarRecurrence
 			})}
 		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 	>
-		<option value="none"
-			>{$t('forms.calendarRecurrenceNone')}</option
-		>
-		<option value="daily"
-			>{$t('forms.calendarRecurrenceDaily')}</option
-		>
-		<option value="weekly"
-			>{$t('forms.calendarRecurrenceWeekly')}</option
-		>
-		<option value="monthly"
-			>{$t('forms.calendarRecurrenceMonthly')}</option
-		>
+		<option value="none">{$t('forms.calendarRecurrenceNone')}</option>
+		<option value="daily">{$t('forms.calendarRecurrenceDaily')}</option>
+		<option value="weekly">{$t('forms.calendarRecurrenceWeekly')}</option>
+		<option value="monthly">{$t('forms.calendarRecurrenceMonthly')}</option>
 	</select>
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.calendarDayScope')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.calendarDayScope')}</span>
 
 	<select
 		value={s.viewDraft.calendarDayScope}
@@ -166,16 +150,12 @@
 		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 	>
 		<option value="all">{$t('forms.calendarDayScopeAll')}</option>
-		<option value="workweek"
-			>{$t('forms.calendarDayScopeWorkweek')}</option
-		>
+		<option value="workweek">{$t('forms.calendarDayScopeWorkweek')}</option>
 	</select>
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.calendarLayout')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.calendarLayout')}</span>
 
 	<select
 		value={s.viewDraft.calendarLayout}
@@ -187,9 +167,7 @@
 		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 	>
 		<option value="grid">{$t('forms.calendarLayoutGrid')}</option>
-		<option value="agenda"
-			>{$t('forms.calendarLayoutAgenda')}</option
-		>
+		<option value="agenda">{$t('forms.calendarLayoutAgenda')}</option>
 	</select>
 </label>
 
@@ -205,13 +183,9 @@
 			(s.viewDraft = {
 				...s.viewDraft,
 				calendarHideEmptyDays:
-					event.currentTarget instanceof HTMLInputElement
-						? event.currentTarget.checked
-						: false
+					event.currentTarget instanceof HTMLInputElement ? event.currentTarget.checked : false
 			})}
 	/>
 
-	<span class="min-w-0 truncate"
-		>{$t('forms.calendarHideEmptyDays')}</span
-	>
+	<span class="min-w-0 truncate">{$t('forms.calendarHideEmptyDays')}</span>
 </label>
