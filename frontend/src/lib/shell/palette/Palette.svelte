@@ -163,6 +163,8 @@
 	{open}
 	title={$t('shell.palette.title')}
 	{onclose}
+	width={560}
+	headless
 	initialFocus="[data-palette-input]"
 	testId="palette-dialog"
 >
@@ -235,24 +237,6 @@
 </Dialog>
 
 <style>
-	/* The dialog frame is the shared Dialog; the palette sets its own width and drops the header. */
-	:global(.ui-dialog:has([data-shell='palette'])) {
-		width: 560px;
-		padding: 0;
-		gap: 0;
-		overflow: hidden;
-	}
-	:global(.ui-dialog:has([data-shell='palette']) > header) {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		margin: -1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-	}
-	:global(.ui-dialog:has([data-shell='palette']) > .body) {
-		padding: 0;
-	}
 	.palette {
 		display: flex;
 		flex-direction: column;

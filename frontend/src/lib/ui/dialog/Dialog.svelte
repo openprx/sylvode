@@ -18,6 +18,10 @@
 		onclose: () => void;
 		/** 480 wide by default; the task-detail dialog is `wide` (680). */
 		size?: 'md' | 'wide';
+		/** Overrides `size` with a fixed width in px: 560 is the command palette. */
+		width?: 560;
+		/** No visible header and no padding: the title stays as a visually hidden heading. */
+		headless?: boolean;
 		/** Keep the content mounted while closed, so local draft state survives Escape. */
 		keepMounted?: boolean;
 		/** Selector for the element that first receives focus; default is the first field. */
@@ -38,6 +42,8 @@
 		title,
 		onclose,
 		size = 'md',
+		width,
+		headless = false,
 		keepMounted = false,
 		initialFocus,
 		testId,
@@ -79,6 +85,8 @@
 	<div class="ui-scrim" hidden={!open} data-ui-layer="dialog" use:portal>
 		<div
 			class="ui-dialog size-{size}"
+			class:width-560={width === 560}
+			class:headless
 			{role}
 			aria-modal="true"
 			aria-labelledby={titleId}
@@ -129,6 +137,25 @@
 	}
 	.size-wide {
 		width: 680px;
+	}
+	.width-560 {
+		width: 560px;
+	}
+	.headless {
+		gap: 0;
+		padding: 0;
+		overflow: hidden;
+	}
+	.headless > header {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		margin: -1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+	}
+	.headless > .body {
+		padding: 0;
 	}
 	.ui-dialog:focus-visible {
 		outline: none;
