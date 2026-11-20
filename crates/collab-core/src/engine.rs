@@ -1862,6 +1862,8 @@ fn encode_frontier_entries(entries: &BTreeMap<u64, i32>) -> Vec<u8> {
 #[cfg(test)]
 mod floor_equivalence_tests;
 #[cfg(test)]
+mod hand_encoded;
+#[cfg(test)]
 mod placement_session_tests;
 #[cfg(test)]
 mod prewarm_tests;
@@ -1874,9 +1876,13 @@ mod root_read_cost_tests;
 #[cfg(test)]
 mod window_check_pins_tests;
 #[cfg(test)]
+mod window_class_fixtures;
+#[cfg(test)]
 mod window_differential_tests;
 #[cfg(test)]
 mod window_fixtures;
+#[cfg(test)]
+mod window_regression_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

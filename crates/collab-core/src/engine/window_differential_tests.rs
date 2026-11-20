@@ -35,8 +35,8 @@ use std::time::Instant;
 use loro::LoroValue;
 
 use super::window_fixtures::{
-    BaseSpec, Case, Expect, History, MODELS, Model, author_update, boundary_cases, build_base, generated_cases,
-    hostile_cases, run_parallel,
+    BaseSpec, Case, Expect, FactsFrom, History, MODELS, Model, author_update, boundary_cases, build_base,
+    generated_cases, hostile_cases, run_parallel,
 };
 use super::{CollabEngine, LoroCollabEngine};
 use crate::error::CollabError;
@@ -318,9 +318,28 @@ impl Incremental {
 
     /// The window, keeping how the check decided.
     pub(super) fn window(&self, base: &[u8], update: &[u8]) -> (Result<WindowAccepted, CollabError>, LoroCollabEngine) {
+        self.window_with(base, update, &FactsFrom::Base)
+    }
+
+    /// [`Self::window`] with the base facts taken from `from`.
+    pub(super) fn window_with(
+        &self,
+        base: &[u8],
+        update: &[u8],
+        from: &FactsFrom,
+    ) -> (Result<WindowAccepted, CollabError>, LoroCollabEngine) {
         let mut engine = LoroCollabEngine::load(base).expect("the trusted base loads");
         engine.prewarm_for_writes();
-        let mut facts = BaseFacts::compute(&engine);
+        let mut facts = match from {
+            FactsFrom::Base | FactsFrom::Tampered(_) => BaseFacts::compute(&engine),
+            FactsFrom::OtherBase(other) => {
+                let other = LoroCollabEngine::load(other).expect("the other base loads");
+                BaseFacts::compute(&other)
+            }
+        };
+        if let (FactsFrom::Tampered(tamper), Some(facts)) = (from, facts.as_mut()) {
+            tamper(facts);
+        }
         if matches!(self.defect, Defect::StaleBaseFacts)
             && let Some(facts) = facts.as_mut()
         {
@@ -1022,17 +1041,31 @@ fn prewarmed_references() -> &'static [Observed] {
 struct Decided {
     observed: Observed,
     fallback: Option<FallbackReason>,
+    /// The reason of the fallback when the window fell back, whether the full computation then
+    /// accepted or refused.
+    reason: Option<String>,
+    /// The refusal came from the incremental check's exact totals, without the full computation.
+    direct_refusal: bool,
     /// The oracle of the host: the report against the full projection of the accepted document.
     oracle: Option<Result<(), WindowDivergence>>,
 }
 
 fn decide(implementation: &Incremental, case: &Case) -> Decided {
-    let (outcome, engine) = implementation.window(&case.base, &case.update);
+    walk_counter::reset();
+    let (outcome, engine) = implementation.window_with(&case.base, &case.update, &case.facts);
+    let reason = walk_counter::fallback_reasons().last().cloned();
+    let direct_refusal = walk_counter::window_counts().direct_refusals > 0;
     match outcome {
         Ok(accepted) => {
-            // The host's oracle: a document it cannot project at all is a divergence too.
+            // The host's oracle: it projects the document it loads from the snapshot the worker
+            // returned, not the worker's own engine (whose id caches can differ from a fresh load).
+            // A document it cannot project at all is a divergence too.
             let oracle = accepted.report.as_ref().map(|report| {
-                engine.semantic_snapshot().map_or(
+                let host = engine
+                    .export_snapshot()
+                    .ok()
+                    .and_then(|snapshot| LoroCollabEngine::load(&snapshot).ok());
+                host.and_then(|host| host.semantic_snapshot().ok()).map_or(
                     Err(WindowDivergence {
                         field: "projection_error",
                         reported: 0,
@@ -1056,6 +1089,8 @@ fn decide(implementation: &Incremental, case: &Case) -> Decided {
                     outputs: result.engine.as_ref().map(outputs),
                 },
                 fallback: accepted.fallback,
+                reason,
+                direct_refusal,
                 oracle,
             }
         }
@@ -1068,6 +1103,8 @@ fn decide(implementation: &Incremental, case: &Case) -> Decided {
                 outputs: None,
             },
             fallback: None,
+            reason,
+            direct_refusal,
             oracle: None,
         },
     }
@@ -1101,6 +1138,8 @@ fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
             exact,
             against_plain,
             same_bytes,
+            decided.reason,
+            decided.direct_refusal,
         )
     });
     let elapsed = started.elapsed();
@@ -1110,7 +1149,15 @@ fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
     let mut by_reason: BTreeMap<String, usize> = BTreeMap::new();
     let mut by_model: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     let mut same_bytes_count = 0;
-    for (case, (fallback, report, oracle, exact, against_plain, same_bytes)) in cases.iter().zip(&decided) {
+    let mut every_reason: BTreeMap<String, usize> = BTreeMap::new();
+    let mut refused_after_fallback = 0;
+    let mut refused_directly = 0;
+    for (case, (fallback, report, oracle, exact, against_plain, same_bytes, reason, direct)) in
+        cases.iter().zip(&decided)
+    {
+        if let Some(reason) = reason {
+            *every_reason.entry(reason.clone()).or_default() += 1;
+        }
         same_bytes_count += usize::from(*same_bytes == Some(true));
         assert!(exact.is_none(), "{}: {}", case.label, exact.clone().unwrap());
         assert!(
@@ -1137,6 +1184,8 @@ fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
             *by_reason.entry(format!("{reason:?}")).or_default() += 1;
         } else {
             refused += 1;
+            refused_after_fallback += usize::from(reason.is_some());
+            refused_directly += usize::from(*direct);
         }
     }
     println!(
@@ -1148,6 +1197,12 @@ fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
     );
     println!("  by model (incremental, accepted after fallback): {by_model:?}");
     println!("  fallbacks of accepted updates by reason: {by_reason:?}");
+    println!("  fallbacks of every case (accepted or refused afterwards) by reason: {every_reason:?}");
+    println!(
+        "  of the {refused} refusals: {refused_directly} produced by the incremental check from its totals, \
+         {refused_after_fallback} by the full computation after a fallback, {} by the import",
+        refused - refused_directly - refused_after_fallback
+    );
     assert!(incremental > 0 && accepted_full > 0);
     // The incremental path must carry the ordinary updates of the models it describes.
     for model in ["model1", "legacy", "mixed"] {
@@ -1177,6 +1232,70 @@ fn every_refusal_of_the_incremental_window_is_the_full_computations() {
     assert!(refusals > 100, "the corpus has too few refusals: {refusals}");
 }
 
+/// Every reason the check can give for not deciding is reached by some case of the default run, in
+/// the cases the full computation then accepts and in those it then refuses. A reason added to
+/// [`FallbackReason`] without a case that reaches it fails here, so no fallback goes untested.
+#[test]
+fn every_fallback_reason_is_reached_by_some_case() {
+    let cases = all_cases();
+    let reasons = run_parallel(&cases, &|_, case| decide(&Incremental::WORKER, case).reason);
+    let mut reached: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (case, reason) in cases.iter().zip(&reasons) {
+        if let Some(reason) = reason {
+            let examples = reached.entry(reason.clone()).or_default();
+            if examples.len() < 2 {
+                examples.push(case.label.clone());
+            }
+        }
+    }
+    for (reason, examples) in &reached {
+        println!("  {reason}: e.g. {examples:?}");
+    }
+    let missing: Vec<String> = FallbackReason::ALL
+        .iter()
+        .map(|reason| format!("{reason:?}"))
+        .filter(|name| !reached.contains_key(name))
+        .collect();
+    assert!(missing.is_empty(), "no case reaches the fallback reason(s) {missing:?}");
+}
+
+/// A refusal by a total over its limit is produced by the incremental check itself, with the limit
+/// kind, `observed` and `limit` of the full computation, on every boundary case that the check
+/// can decide: no fallback, no full computation.
+#[test]
+fn a_refusal_by_a_total_is_produced_without_a_fallback_on_every_boundary() {
+    let cases: Vec<&Case> = boundary().cases.iter().collect();
+    let results = parallel(&cases, &|case| {
+        let decided = decide(&Incremental::WORKER, case);
+        (decided.direct_refusal, decided.reason, decided.observed.decision)
+    });
+    let mut direct = 0;
+    for (case, (direct_refusal, reason, decision)) in cases.iter().zip(&results) {
+        let Decision::Refuse(CollabError::LimitExceeded { limit_kind, .. }) = decision else {
+            continue;
+        };
+        let total = matches!(
+            *limit_kind,
+            "container_count" | "document_block_count" | "document_text_chars"
+        );
+        let facts_exist = !case.label.starts_with("structured");
+        if total && facts_exist && reason.is_none() {
+            assert!(
+                *direct_refusal,
+                "{}: a total refused, but not by the check itself",
+                case.label
+            );
+        }
+        if *direct_refusal {
+            assert!(total, "{}: a direct refusal of {limit_kind}", case.label);
+            assert!(reason.is_none(), "{}: a direct refusal that also fell back", case.label);
+            direct += 1;
+        }
+    }
+    println!("{direct} boundary refusals produced directly");
+    assert!(direct >= 8, "only {direct} direct refusals on the boundary");
+}
+
 /// The id caches of an engine after an import that rebuilt them from the update's ops are the
 /// caches a full rebuild gives (the replay import of the same update into the same base rebuilds
 /// them in full), on every case the window accepts, and so are the uncached nodes and the
@@ -1185,7 +1304,7 @@ fn every_refusal_of_the_incremental_window_is_the_full_computations() {
 fn the_incremental_id_cache_rebuild_equals_the_full_rebuild() {
     let cases = all_cases();
     let checked = run_parallel(&cases, &|_, case| {
-        let (outcome, engine) = Incremental::WORKER.window(&case.base, &case.update);
+        let (outcome, engine) = Incremental::WORKER.window_with(&case.base, &case.update, &case.facts);
         if outcome.is_err() {
             return Ok(false);
         }
@@ -1233,11 +1352,18 @@ fn hostile_and_boundary_shapes_report_their_path() {
         .flat_map(|family| family.cases.iter())
         .collect();
     let paths = run_parallel(&cases, &|_, case| {
-        walk_counter::reset();
         let decided = decide(&Incremental::WORKER, case);
-        let fell_back = walk_counter::window_counts().fallbacks > 0;
+        let fell_back = decided.reason.is_some();
         match (&decided.observed.decision, decided.observed.report, decided.fallback) {
-            (Decision::Refuse(_), _, _) if fell_back => "refused by the full computation after a fallback".to_owned(),
+            (Decision::Refuse(_), _, _) if decided.direct_refusal => {
+                "refused by the incremental check from its totals".to_owned()
+            }
+            (Decision::Refuse(_), _, _) if fell_back => {
+                format!(
+                    "refused by the full computation after a fallback ({})",
+                    decided.reason.clone().unwrap_or_default()
+                )
+            }
             (Decision::Refuse(_), _, _) => "refused by the import".to_owned(),
             (Decision::Accept, Some(_), _) => "incremental accept".to_owned(),
             (Decision::Accept, None, Some(reason)) => format!("accept after fallback {reason:?}"),
@@ -1287,6 +1413,7 @@ fn a_legacy_cycle_through_concurrent_moves_is_decided_by_the_full_computation() 
         base: std::sync::Arc::new(base),
         update: second,
         expect: None,
+        facts: FactsFrom::Base,
     };
     let decided = decide(&Incremental::WORKER, &case);
     assert_eq!(
@@ -1322,7 +1449,34 @@ fn incremental_mutants() -> Vec<Incremental> {
             name: "mutant: no fallback on a structural change",
             defect: Defect::Fault(Fault::StructuralFallbackSkipped),
         },
+        Incremental {
+            name: "mutant: a created tree node is taken for new although it existed",
+            defect: Defect::Fault(Fault::CreatedTargetChecksSkipped),
+        },
+        Incremental {
+            name: "mutant: no fallback for a root list over the length limit",
+            defect: Defect::Fault(Fault::ListThresholdSkipped),
+        },
+        Incremental {
+            name: "mutant: no fallback when an existing node's logical id is rewritten",
+            defect: Defect::Fault(Fault::IdRewriteSkipped),
+        },
+        Incremental {
+            name: "mutant: a refusal by a total reports observed + 1",
+            defect: Defect::Fault(Fault::RefusalOffByOne),
+        },
     ]
+}
+
+/// Whether a mutant's wrong report is also what the host's oracle (the report against the full
+/// projection) is expected to catch. A mutant that changes the path but not the decision or the
+/// report (the length limit), or that refuses with a wrong number (no report), is caught by the
+/// harness alone.
+fn oracle_expected(mutant: &Incremental) -> bool {
+    !matches!(
+        mutant.defect,
+        Defect::Fault(Fault::ListThresholdSkipped | Fault::RefusalOffByOne)
+    )
 }
 
 /// Every mutant of the incremental window is caught by the harness (a different decision, output
@@ -1331,11 +1485,19 @@ fn incremental_mutants() -> Vec<Incremental> {
 #[test]
 fn the_harness_detects_every_incremental_mutant() {
     let cases = all_cases();
+    // The path the worker takes on every case: a mutant that decides the same but along another
+    // path (it skips a fallback) is caught by the path.
+    let worker_paths = run_parallel(&cases, &|_, case| {
+        let decided = decide(&Incremental::WORKER, case);
+        (decided.reason, decided.direct_refusal)
+    });
     for mutant in incremental_mutants() {
         let results = run_parallel(&cases, &|index, case| {
             let decided = decide(&mutant, case);
+            let path_differs = (decided.reason.clone(), decided.direct_refusal) != worker_paths[index];
+            let diff = difference_with(&prewarmed_references()[index], &decided.observed, false);
             (
-                difference_with(&prewarmed_references()[index], &decided.observed, false),
+                diff.or_else(|| path_differs.then(|| "the path differs from the worker's".to_owned())),
                 matches!(decided.oracle, Some(Err(_))),
             )
         });
@@ -1356,7 +1518,9 @@ fn the_harness_detects_every_incremental_mutant() {
             mutant.name
         );
         assert!(caught > 0, "{} was not detected by the harness", mutant.name);
-        assert!(oracle_catches > 0, "{} was not detected by the oracle", mutant.name);
+        if oracle_expected(&mutant) {
+            assert!(oracle_catches > 0, "{} was not detected by the oracle", mutant.name);
+        }
     }
 }
 

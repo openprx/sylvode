@@ -32,6 +32,7 @@ use loro::{
 use serde_json::Value;
 
 use super::floor_equivalence_tests::{children, image_attrs, push_raw_atom, raw_update, set_model};
+use super::hand_encoded::raw_edit;
 use super::{CollabEngine, LoroCollabEngine};
 use crate::editor_doc_bridge::{EditorInitialBlock, initialize_editor_doc};
 use crate::frontier::Frontier;
@@ -76,6 +77,19 @@ pub(super) const fn over(limit_kind: &'static str, observed: u64, limit: u64) ->
     }
 }
 
+/// Where the base facts a window starts from come from. The worker computes them from the base it
+/// loaded; a case can hand the check facts that are not those.
+#[derive(Clone)]
+pub(super) enum FactsFrom {
+    /// The facts of the base the update is imported into (what the worker does).
+    Base,
+    /// The facts of another snapshot of the page: they describe a state the import does not start
+    /// from.
+    OtherBase(Arc<Vec<u8>>),
+    /// The facts of the base after a deliberate corruption.
+    Tampered(fn(&mut crate::facts::BaseFacts)),
+}
+
 /// One input of the harness.
 pub(super) struct Case {
     pub label: String,
@@ -88,6 +102,8 @@ pub(super) struct Case {
     pub update: Vec<u8>,
     /// Recorded decision of today's code; `None` for generated cases.
     pub expect: Option<Expect>,
+    /// The facts the incremental window starts from.
+    pub facts: FactsFrom,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -577,6 +593,7 @@ fn generated(built: &Built, kind: &'static str, update: Vec<u8>) -> Case {
         base: Arc::clone(&built.snapshot),
         update,
         expect: None,
+        facts: FactsFrom::Base,
     }
 }
 
@@ -990,10 +1007,12 @@ pub(super) fn update_cases(built: &Built, rng: &mut Rng) -> Vec<Case> {
                     base: base_with(author, held),
                     update: update.clone(),
                     expect: None,
+                    facts: FactsFrom::Base,
                 });
             }
         }
     }
+    cases.extend(super::window_class_fixtures::class_cases(built, rng));
     cases
 }
 
@@ -1088,15 +1107,6 @@ fn load_raw(base: &[u8], peer: u64) -> LoroDoc {
     raw
 }
 
-/// The update produced by `edit` on a raw copy of `base`.
-fn raw_edit(base: &[u8], peer: u64, edit: impl FnOnce(&LoroDoc)) -> Vec<u8> {
-    let raw = load_raw(base, peer);
-    let before = raw.oplog_vv();
-    edit(&raw);
-    raw.commit();
-    raw.export(ExportMode::updates(&before)).unwrap()
-}
-
 fn tree_node_of(tree: &LoroTree, cid: &str) -> TreeID {
     tree.nodes()
         .into_iter()
@@ -1185,12 +1195,18 @@ fn boundary(label: String, kind: &'static str, base: &Arc<Vec<u8>>, update: Vec<
         base: Arc::clone(base),
         update,
         expect: Some(expect),
+        facts: FactsFrom::Base,
     }
 }
 
 /// A flat editor page with `live` blocks and, when set, a total of `aliases` alias entries (the
 /// surplus as `__deleted__` tombstones), built in one commit. Texts are `text_of(index)`.
-fn big_flat_page(seed: u64, live: usize, aliases: usize, text_of: impl Fn(usize) -> String) -> LoroCollabEngine {
+pub(super) fn big_flat_page(
+    seed: u64,
+    live: usize,
+    aliases: usize,
+    text_of: impl Fn(usize) -> String,
+) -> LoroCollabEngine {
     let mut engine = LoroCollabEngine::new_empty(seed);
     let list: Vec<EditorInitialBlock> = (0..live)
         .map(|index| EditorInitialBlock {
@@ -1655,7 +1671,7 @@ pub(super) fn boundary_cases() -> Vec<Case> {
 // Hostile corpus
 // ---------------------------------------------------------------------------------------------
 
-fn hostile(name: &str, kind: &'static str, base: &Arc<Vec<u8>>, update: Vec<u8>) -> Case {
+pub(super) fn hostile(name: &str, kind: &'static str, base: &Arc<Vec<u8>>, update: Vec<u8>) -> Case {
     Case {
         label: name.to_owned(),
         family: "hostile",
@@ -1664,6 +1680,7 @@ fn hostile(name: &str, kind: &'static str, base: &Arc<Vec<u8>>, update: Vec<u8>)
         update,
         // Filled in from the recorded table by `record`.
         expect: None,
+        facts: FactsFrom::Base,
     }
 }
 
@@ -2940,6 +2957,7 @@ fn hostile_shapes() -> Vec<Case> {
             fork.export_from(&middle).unwrap(),
         ));
     }
+    cases.extend(super::window_class_fixtures::class_hostile());
     cases
 }
 
@@ -3675,5 +3693,46 @@ pub(super) const RECORDED: &[(&str, Expect)] = &[
     (
         "incomplete: the second of two sequential updates, delivered alone",
         refuse("causal_dependency_missing"),
+    ),
+    (
+        "tree: a late created parent deepens its hidden children to depth 33",
+        over("tree_depth", 33, 32),
+    ),
+    (
+        "tree: a late created parent leaves its hidden children at depth 32",
+        Expect::Accept,
+    ),
+    (
+        "tree: re-creating the unnamed root of a deleted subtree revives 20 navigators",
+        Expect::Accept,
+    ),
+    (
+        "list: 10 more unsupported maps keep a 14990-element list within what the incremental path takes",
+        Expect::Accept,
+    ),
+    (
+        "list: 11 more unsupported maps take a 14990-element list over what the incremental path takes",
+        Expect::Accept,
+    ),
+    ("list: a keystroke on a 15010-element list", Expect::Accept),
+    (
+        "limit: every one of 1000 blocks gains one character, 1000 characters under the document limit",
+        Expect::Accept,
+    ),
+    (
+        "limit: every one of 1000 blocks gains two characters, 1000 characters over the document limit",
+        over("document_text_chars", 1_001_000, 1_000_000),
+    ),
+    (
+        "limit: every block gains a character, one block 1 past the block limit and the document 100 past its own",
+        over("text_block_chars", 100_001, 100_000),
+    ),
+    (
+        "facts: a block is deleted from a page whose facts count no blocks",
+        Expect::Accept,
+    ),
+    (
+        "facts: a created node takes an id the facts already hold",
+        Expect::Accept,
     ),
 ];
