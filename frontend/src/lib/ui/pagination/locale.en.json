@@ -1,0 +1,21 @@
+{
+	"ui": {
+		"pagination": {
+			"label": "Pagination",
+			"range": "Showing {from}–{to} of {total}",
+			"rangeNoTotal": "Showing {from}–{to}",
+			"rangeShort": "{from}–{to} / {total}",
+			"rangeShortNoTotal": "{from}–{to}",
+			"position": "Page {page} of {pages}",
+			"positionNoTotal": "Page {page}",
+			"positionShort": "{page} / {pages}",
+			"positionShortNoTotal": "{page}",
+			"rowsPerPage": "Rows per page",
+			"previous": "Previous page",
+			"previousFirst": "Previous page, this is the first page",
+			"next": "Next page",
+			"nextLast": "Next page, this is the last page",
+			"loading": "Loading…"
+		}
+	}
+}
