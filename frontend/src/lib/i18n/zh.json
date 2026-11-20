@@ -52,8 +52,6 @@
 		"webhook": "Webhook",
 		"connections": "操作记录",
 		"workspaceSettings": "工作区设置",
-		"logout": "退出",
-		"toggleSidebar": "切换侧边栏",
 		"currentWorkspace": "当前工作区",
 		"governanceProposals": "治理提案",
 		"impactReviews": "影响评审",
