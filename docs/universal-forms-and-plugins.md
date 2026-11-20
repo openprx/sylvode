@@ -147,7 +147,8 @@ Frontend:
 cd frontend
 bun run check
 bun run build
-bun run smoke:forms-ui
+bun run smoke:forms-page-interactions
+bun run smoke:forms-record-list
 bun run smoke:restaurant-ordering
 ```
 

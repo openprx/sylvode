@@ -591,7 +591,7 @@
 </script>
 
 {#each Object.values(resourceConflicts) as remote (remote.id)}<section
-		class="rounded border border-amber-300 p-3"
+		class="rounded border p-3"
 		role="alert"
 		data-testid="task-conflict"
 	>
@@ -602,7 +602,7 @@
 		>
 	</section>{/each}
 {#each Object.values(assistantConflicts) as remote (remote.id)}<section
-		class="rounded border border-amber-300 p-3"
+		class="rounded border p-3"
 		role="alert"
 		data-testid="task-conflict"
 	>
@@ -614,7 +614,7 @@
 	</section>{/each}
 
 {#if remoteDetail}<p
-		class="rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+		class="rounded border bg-warning-soft p-3 text-sm"
 		role="status"
 		data-testid="task-remote-change"
 	>
@@ -624,20 +624,17 @@
 <div class="max-w-7xl mx-auto">
 	{#if loading}
 		<div class="flex items-center justify-center py-12">
-			<div class="text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+			<div class="text-fg-muted">{$t('common.loading')}</div>
 		</div>
 	{:else if project}
 		<div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div>
 				<div class="mb-2 flex items-center gap-3">
-					<span
-						class="rounded bg-slate-100 dark:bg-slate-800 px-2 py-1 text-sm text-slate-600 dark:text-slate-300"
-						>{project.key}</span
-					>
-					<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{project.name}</h1>
+					<span class="rounded bg-surface px-2 py-1 text-sm text-fg-muted">{project.key}</span>
+					<h1 class="text-2xl font-semibold text-fg">{project.name}</h1>
 				</div>
 				{#if project.description}
-					<p class="text-slate-600 dark:text-slate-300">{project.description}</p>
+					<p class="text-fg-muted">{project.description}</p>
 				{/if}
 			</div>
 			<div class="flex flex-wrap gap-2">
@@ -646,7 +643,7 @@
 					>{$t('project.exportJson')}</Button
 				>
 				<label
-					class="inline-flex cursor-pointer items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+					class="inline-flex cursor-pointer items-center justify-center rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary"
 				>
 					{importing ? $t('project.importingJson') : $t('project.importJson')}
 					<input
@@ -661,75 +658,71 @@
 		</div>
 
 		<div class="mb-8 grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-			<section
-				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
-			>
+			<section class="rounded-card border border-line bg-raised p-5">
 				<div class="mb-4">
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{$t('project.projectManagement')}
 					</h2>
-					<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+					<p class="mt-1 text-sm text-fg-muted">
 						{$t('project.projectManagementDesc')}
 					</p>
 				</div>
 				<div class="grid gap-3 md:grid-cols-3">
 					<a
 						href={`/workspace/${workspaceId}/projects/${projectId}/issues`}
-						class="rounded-md border border-slate-200 p-4 transition-colors hover:border-blue-200 hover:bg-blue-50 dark:border-slate-700 dark:hover:bg-slate-800"
+						class="rounded-control border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 					>
-						<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<h3 class="text-sm font-semibold text-fg">
 							{$t('project.workItems')}
 						</h3>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+						<p class="mt-1 text-sm text-fg-muted">
 							{$t('project.workItemsDesc')}
 						</p>
 					</a>
 					<a
 						href={`/workspace/${workspaceId}/projects/${projectId}/board`}
-						class="rounded-md border border-slate-200 p-4 transition-colors hover:border-blue-200 hover:bg-blue-50 dark:border-slate-700 dark:hover:bg-slate-800"
+						class="rounded-control border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 					>
-						<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<h3 class="text-sm font-semibold text-fg">
 							{$t('project.boardView')}
 						</h3>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+						<p class="mt-1 text-sm text-fg-muted">
 							{$t('project.boardViewDesc')}
 						</p>
 					</a>
 					<a
 						href={`/workspace/${workspaceId}/projects/${projectId}/cycles`}
-						class="rounded-md border border-slate-200 p-4 transition-colors hover:border-blue-200 hover:bg-blue-50 dark:border-slate-700 dark:hover:bg-slate-800"
+						class="rounded-control border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 					>
-						<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<h3 class="text-sm font-semibold text-fg">
 							{$t('project.sprintPlan')}
 						</h3>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+						<p class="mt-1 text-sm text-fg-muted">
 							{$t('project.sprintPlanDesc')}
 						</p>
 					</a>
 				</div>
 			</section>
 
-			<section
-				class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
-			>
+			<section class="rounded-card border border-line bg-raised p-5">
 				<div class="mb-4">
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{$t('project.businessData')}
 					</h2>
-					<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+					<p class="mt-1 text-sm text-fg-muted">
 						{$t('project.businessDataDesc')}
 					</p>
 				</div>
 				<a
 					href={`/workspace/${workspaceId}/projects/${projectId}/forms`}
-					class="flex items-start gap-3 rounded-md border border-slate-200 p-4 transition-colors hover:border-blue-200 hover:bg-blue-50 dark:border-slate-700 dark:hover:bg-slate-800"
+					class="flex items-start gap-3 rounded-control border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 				>
-					<FileText class="mt-0.5 h-5 w-5 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+					<FileText class="mt-0.5 h-5 w-5 text-fg-muted" aria-hidden="true" />
 					<span>
-						<span class="block text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<span class="block text-sm font-semibold text-fg">
 							{$t('project.forms')}
 						</span>
-						<span class="mt-1 block text-sm text-slate-600 dark:text-slate-300">
+						<span class="mt-1 block text-sm text-fg-muted">
 							{$t('project.formsDesc')}
 						</span>
 					</span>
@@ -740,59 +733,57 @@
 		<ProjectPluginNav {workspaceId} {projectId} />
 
 		{#if scenarioTemplate}
-			<div
-				class="mb-8 rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900"
-			>
+			<div class="mb-8 rounded-card border border-line bg-raised p-6">
 				<div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 					<div>
-						<p class="text-xs font-medium uppercase tracking-wide text-blue-600 dark:text-blue-300">
+						<p class="text-xs font-medium uppercase tracking-wide text-fg-muted">
 							{scenarioTemplateIndustry(scenarioTemplate.industry, $t)}
 						</p>
-						<h2 class="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
+						<h2 class="mt-1 text-lg font-semibold text-fg">
 							{scenarioTemplateName(scenarioTemplate, $t)}
 						</h2>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+						<p class="mt-1 text-sm text-fg-muted">
 							{scenarioTemplateAudience(scenarioTemplate.audience_label, scenarioTemplate.key, $t)}
 						</p>
 					</div>
 					<a
 						href={`/workspace/${workspaceId}/projects/${projectId}/issues`}
-						class="inline-flex items-center justify-center rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+						class="inline-flex items-center justify-center rounded-control border border-line px-3 py-2 text-sm font-medium text-fg transition-colors hover:border-line-strong hover:bg-surface"
 					>
 						{$t('project.openScenarioWork')}
 					</a>
 				</div>
 
 				<div class="grid gap-3 md:grid-cols-4">
-					<div class="rounded-lg bg-slate-50 p-4 dark:bg-slate-950">
-						<p class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
+					<div class="rounded-card bg-surface p-4">
+						<p class="text-xs font-medium uppercase text-fg-muted">
 							{$t('project.workflow')}
 						</p>
-						<p class="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+						<p class="mt-2 text-2xl font-semibold text-fg">
 							{scenarioWorkflowStates.length}
 						</p>
 					</div>
-					<div class="rounded-lg bg-slate-50 p-4 dark:bg-slate-950">
-						<p class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
+					<div class="rounded-card bg-surface p-4">
+						<p class="text-xs font-medium uppercase text-fg-muted">
 							{$t('project.fields')}
 						</p>
-						<p class="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+						<p class="mt-2 text-2xl font-semibold text-fg">
 							{scenarioFields.length}
 						</p>
 					</div>
-					<div class="rounded-lg bg-slate-50 p-4 dark:bg-slate-950">
-						<p class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
+					<div class="rounded-card bg-surface p-4">
+						<p class="text-xs font-medium uppercase text-fg-muted">
 							{$t('project.resources')}
 						</p>
-						<p class="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+						<p class="mt-2 text-2xl font-semibold text-fg">
 							{scenarioRequiredResources.length}
 						</p>
 					</div>
-					<div class="rounded-lg bg-slate-50 p-4 dark:bg-slate-950">
-						<p class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
+					<div class="rounded-card bg-surface p-4">
+						<p class="text-xs font-medium uppercase text-fg-muted">
 							{$t('project.assistants')}
 						</p>
-						<p class="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+						<p class="mt-2 text-2xl font-semibold text-fg">
 							{scenarioTemplate.ai_roles.length}
 						</p>
 					</div>
@@ -800,29 +791,27 @@
 
 				<div class="mt-5 grid gap-5 lg:grid-cols-3">
 					<div>
-						<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<h3 class="mb-2 text-sm font-semibold text-fg">
 							{$t('project.scenarioFields')}
 						</h3>
 						<div class="space-y-2">
 							{#each scenarioFields.slice(0, 5) as field}
 								<div
-									class="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"
+									class="flex items-center justify-between rounded-control border border-line px-3 py-2 text-sm"
 								>
-									<span class="text-slate-700 dark:text-slate-300">{field.label}</span>
-									<span class="text-xs text-slate-500 dark:text-slate-400">{field.type}</span>
+									<span class="text-fg">{field.label}</span>
+									<span class="text-xs text-fg-muted">{field.type}</span>
 								</div>
 							{/each}
 						</div>
 					</div>
 					<div>
-						<h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<h3 class="mb-2 text-sm font-semibold text-fg">
 							{$t('project.requiredResources')}
 						</h3>
 						<div class="space-y-2">
 							{#each scenarioRequiredResources.slice(0, 5) as item, index}
-								<div
-									class="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-300"
-								>
+								<div class="rounded-control border border-line px-3 py-2 text-sm text-fg">
 									{scenarioItemLabel(item, `Resource ${index + 1}`)}
 								</div>
 							{/each}
@@ -831,15 +820,13 @@
 				</div>
 			</div>
 
-			<div
-				class="mb-8 rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900"
-			>
+			<div class="mb-8 rounded-card border border-line bg-raised p-6">
 				<div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
 					<div>
-						<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+						<h2 class="text-lg font-semibold text-fg">
 							{$t('project.scenarioSetup')}
 						</h2>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+						<p class="mt-1 text-sm text-fg-muted">
 							{scenarioTemplateAudience(scenarioTemplate.audience_label, scenarioTemplate.key, $t)}
 						</p>
 					</div>
@@ -847,12 +834,12 @@
 
 				<div class="grid gap-5">
 					<div>
-						<h3 class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<h3 class="mb-3 text-sm font-semibold text-fg">
 							{$t('project.assistantSetup')}
 						</h3>
 						{#if assistantRoles().length === 0}
 							<p
-								class="rounded-md border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400"
+								class="rounded-control border border-dashed border-input p-4 text-sm text-fg-muted"
 							>
 								{$t('project.noAssistantRoles')}
 							</p>
@@ -860,21 +847,20 @@
 							<div class="space-y-3">
 								{#each assistantRoles() as role (scenarioValue(role, 'key', scenarioItemLabel(role, 'assistant')))}
 									{@const assistant = assistantForRole(role)}
-									<div class="rounded-md border border-slate-200 p-4 dark:border-slate-700">
+									<div class="rounded-control border border-line p-4">
 										<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 											<div class="min-w-0">
 												<div class="flex flex-wrap items-center gap-2">
-													<h4 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+													<h4 class="text-sm font-semibold text-fg">
 														{scenarioItemLabel(role, $t('project.assistant'))}
 													</h4>
-													<span
-														class="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+													<span class="rounded bg-surface px-2 py-0.5 text-xs text-fg-muted"
 														>{scenarioValue(role, 'agent_type', 'assistant')}</span
 													>
 													<span
 														class="rounded px-2 py-0.5 text-xs font-medium {assistant?.is_active
-															? 'bg-emerald-50 text-emerald-700'
-															: 'bg-amber-50 text-amber-700'}"
+															? 'bg-success-soft text-success'
+															: 'bg-warning-soft text-warning'}"
 													>
 														{assistant?.is_active ? $t('project.active') : $t('project.needsSetup')}
 													</span>
@@ -882,25 +868,23 @@
 												<div class="mt-2 flex flex-wrap gap-1.5">
 													{#each scenarioArrayValue(role, 'capabilities') as capability}
 														<span
-															class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+															class="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-xs text-fg-muted"
 															>{capability}</span
 														>
 													{/each}
 												</div>
 												{#if scenarioBooleanValue(role, 'writes_require_approval')}
-													<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+													<p class="mt-2 text-xs text-fg-muted">
 														{$t('project.writesRequireApproval')}
 													</p>
 												{/if}
 												{#if assistant}
 													{@const draft = assistantDraft(assistant, role)}
 													<div class="mt-3 grid gap-2 sm:grid-cols-3">
-														<label
-															class="block text-xs font-medium text-slate-600 dark:text-slate-300"
-														>
+														<label class="block text-xs font-medium text-fg-muted">
 															{$t('project.provider')}
 															<input
-																class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="mt-1 block w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
 																value={draft.provider}
 																placeholder={assistantProviderForRole(role)}
 																oninput={(event) =>
@@ -912,12 +896,10 @@
 																	)}
 															/>
 														</label>
-														<label
-															class="block text-xs font-medium text-slate-600 dark:text-slate-300"
-														>
+														<label class="block text-xs font-medium text-fg-muted">
 															{$t('project.model')}
 															<input
-																class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="mt-1 block w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
 																value={draft.model}
 																placeholder={assistantModelForRole(role)}
 																oninput={(event) =>
@@ -929,12 +911,10 @@
 																	)}
 															/>
 														</label>
-														<label
-															class="block text-xs font-medium text-slate-600 dark:text-slate-300"
-														>
+														<label class="block text-xs font-medium text-fg-muted">
 															{$t('project.apiEndpoint')}
 															<input
-																class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+																class="mt-1 block w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
 																value={draft.api_endpoint}
 																placeholder="https://..."
 																oninput={(event) =>
@@ -970,15 +950,13 @@
 			</div>
 		{/if}
 
-		<div
-			class="mb-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6"
-		>
+		<div class="mb-8 rounded-card border border-line bg-raised p-6">
 			<div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 				<div>
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{$t('resources.title')}
 					</h2>
-					<p class="text-sm text-slate-600 dark:text-slate-300">
+					<p class="text-sm text-fg-muted">
 						{$t('resources.description')}
 					</p>
 				</div>
@@ -987,7 +965,7 @@
 			<div class="mb-5 grid grid-cols-1 gap-3 md:grid-cols-[160px_1fr_1.3fr_auto]">
 				<select
 					bind:value={resourceForm.kind}
-					class="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+					class="rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					aria-label={$t('resources.resourceKind')}
 				>
 					<option value="directory">{$t('resources.kindDirectory')}</option>
@@ -996,12 +974,12 @@
 				<input
 					bind:value={resourceForm.name}
 					placeholder={$t('resources.name')}
-					class="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+					class="rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 				/>
 				<input
 					bind:value={resourceForm.locator}
 					placeholder={locatorPlaceholder}
-					class="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+					class="rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 				/>
 				<Button loading={resourceSubmitting} onclick={handleCreateResource}
 					>{$t('resources.add')}</Button
@@ -1009,46 +987,40 @@
 			</div>
 
 			{#if resources.length === 0}
-				<p
-					class="rounded-md border border-dashed border-slate-300 dark:border-slate-700 p-4 text-sm text-slate-500 dark:text-slate-400"
-				>
+				<p class="rounded-control border border-dashed border-input p-4 text-sm text-fg-muted">
 					{$t('resources.empty')}
 				</p>
 			{:else}
-				<div class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
-					<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
-						<thead class="bg-slate-50 dark:bg-slate-800">
+				<div class="overflow-hidden rounded-control border border-line">
+					<table class="min-w-full divide-y divide-line">
+						<thead class="bg-nav">
 							<tr>
-								<th
-									class="px-4 py-2 text-left text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+								<th class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
 									>{$t('resources.kind')}</th
 								>
-								<th
-									class="px-4 py-2 text-left text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+								<th class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
 									>{$t('resources.name')}</th
 								>
-								<th
-									class="px-4 py-2 text-left text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+								<th class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
 									>{$t('resources.locator')}</th
 								>
-								<th
-									class="px-4 py-2 text-right text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+								<th class="px-4 py-2 text-right text-xs font-medium uppercase text-fg-muted"
 									>{$t('common.actions')}</th
 								>
 							</tr>
 						</thead>
-						<tbody class="divide-y divide-slate-200 dark:divide-slate-700">
+						<tbody class="divide-y divide-line">
 							{#each resources as resource (resource.id)}
 								{@const editingResource = editingResourceId === resource.id}
 								{@const draft = resourceDraft(resource)}
 								<tr>
-									<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+									<td class="px-4 py-3 text-sm text-fg-muted">
 										{#if editingResource}
 											<select
 												value={draft.kind}
 												onchange={(event) =>
 													setResourceDraft(resource, 'kind', event.currentTarget.value)}
-												class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+												class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
 											>
 												<option value="directory">{$t('resources.kindDirectory')}</option>
 												<option value="custom">{$t('resources.kindCustom')}</option>
@@ -1057,25 +1029,25 @@
 											{resourceKindLabel(resource.kind)}
 										{/if}
 									</td>
-									<td class="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100">
+									<td class="px-4 py-3 text-sm font-medium text-fg">
 										{#if editingResource}
 											<input
 												value={draft.name}
 												oninput={(event) =>
 													setResourceDraft(resource, 'name', event.currentTarget.value)}
-												class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+												class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
 											/>
 										{:else}
 											{resource.name}
 										{/if}
 									</td>
-									<td class="max-w-md px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+									<td class="max-w-md px-4 py-3 text-sm text-fg-muted">
 										{#if editingResource}
 											<input
 												value={draft.locator}
 												oninput={(event) =>
 													setResourceDraft(resource, 'locator', event.currentTarget.value)}
-												class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+												class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
 											/>
 										{:else}
 											<span class="block truncate">{formatLocator(resource.locator)}</span>
@@ -1101,7 +1073,7 @@
 												<button
 													type="button"
 													onclick={() => startEditResource(resource)}
-													class="text-sm text-blue-600 hover:text-blue-700"
+													class="text-sm text-fg underline"
 												>
 													{$t('common.edit')}
 												</button>
@@ -1109,7 +1081,7 @@
 													type="button"
 													disabled={deletingResourceId === resource.id}
 													onclick={() => handleDeleteResource(resource)}
-													class="text-sm text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+													class="text-sm text-danger disabled:cursor-not-allowed disabled:text-fg-muted"
 												>
 													{$t('common.delete')}
 												</button>
@@ -1124,35 +1096,29 @@
 			{/if}
 		</div>
 
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6"
-		>
-			<h2 class="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<div class="rounded-card border border-line bg-raised p-6">
+			<h2 class="mb-4 text-lg font-semibold text-fg">
 				{$t('project.recentUpdates')}
 			</h2>
 			{#if recentIssues.length === 0}
-				<p class="text-slate-500 dark:text-slate-400">{$t('project.noRecentWorkItems')}</p>
+				<p class="text-fg-muted">{$t('project.noRecentWorkItems')}</p>
 			{:else}
 				<div class="space-y-3">
 					{#each recentIssues as issue}
 						<a
 							href={`/workspace/${workspaceId}/projects/${projectId}/issues/${issue.id}`}
-							class="block rounded-md p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+							class="block rounded-control p-3 hover:bg-surface"
 						>
 							<div class="space-y-1.5">
 								<div class="flex items-center gap-2">
-									<span class="font-mono text-sm text-slate-500 dark:text-slate-400"
-										>{issue.key}</span
-									>
+									<span class="font-mono text-sm text-fg-muted">{issue.key}</span>
 
-									<span class="text-sm font-medium text-slate-900 dark:text-slate-100"
-										>{issue.title}</span
-									>
+									<span class="text-sm font-medium text-fg">{issue.title}</span>
 
 									<span
 										class="ml-auto rounded px-2 py-1 text-xs {issue.status === 'done'
-											? 'bg-green-100 text-green-700'
-											: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}"
+											? 'bg-success-soft text-success'
+											: 'bg-surface text-fg-muted'}"
 									>
 										{issue.status}
 									</span>

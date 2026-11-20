@@ -7,6 +7,7 @@ export interface ProjectOption {
 	name: string;
 	workspace_id: string;
 	workspace_name: string;
+	type_key: string;
 }
 
 interface ProjectOptionsState {
@@ -47,7 +48,8 @@ export function createProjectOptionsStore() {
 					id: project.id,
 					name: project.name,
 					workspace_id: workspace.id,
-					workspace_name: workspace.name
+					workspace_name: workspace.name,
+					type_key: project.type_key
 				}));
 			})
 		);

@@ -41,6 +41,6 @@
 
 	p {
 		font-size: 1.2rem;
-		color: #666;
+		color: var(--rf-secondary);
 	}
 </style>

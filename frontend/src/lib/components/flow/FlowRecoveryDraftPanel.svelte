@@ -41,7 +41,7 @@
 </script>
 
 <section
-	class="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100"
+	class="border-b border-line bg-danger-soft px-6 py-3 text-sm text-danger"
 	aria-label={$t('flow.recovery.title')}
 	data-testid="flow-recovery-draft"
 	data-count={entries.length}
@@ -54,7 +54,7 @@
 		</p>
 		<button
 			type="button"
-			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline"
 			data-testid="flow-recovery-download"
 			onclick={ondownload}
 		>
@@ -62,7 +62,7 @@
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline"
 			data-testid="flow-recovery-copy"
 			onclick={oncopy}
 		>
@@ -70,7 +70,7 @@
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+			class="min-h-11 rounded px-3 font-medium underline underline-offset-2 hover:no-underline"
 			data-testid="flow-recovery-discard"
 			onclick={ondiscard}
 		>

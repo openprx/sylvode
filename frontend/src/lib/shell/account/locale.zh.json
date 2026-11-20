@@ -1,0 +1,14 @@
+{
+	"shell": {
+		"account": {
+			"label": "账户",
+			"theme": "主题",
+			"themeLight": "浅色",
+			"themeDark": "深色",
+			"themeSystem": "跟随系统",
+			"language": "语言",
+			"personalSettings": "个人设置",
+			"signOut": "退出登录"
+		}
+	}
+}

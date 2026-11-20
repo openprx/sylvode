@@ -1,0 +1,11 @@
+{
+	"ui": {
+		"settingRow": {
+			"sample": {
+				"label": "邮件通知",
+				"value": "仅提及时",
+				"change": "更改"
+			}
+		}
+	}
+}

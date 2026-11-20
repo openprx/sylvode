@@ -1,0 +1,24 @@
+{
+	"ui": {
+		"form": {
+			"required": "(required)",
+			"optional": "(optional)",
+			"reason": {
+				"prefix": "Fill in ",
+				"separator": ", ",
+				"last": " and ",
+				"more": " and {n} more",
+				"suffix": " to {action}."
+			},
+			"sample": {
+				"title": "Title",
+				"due": "Due date",
+				"owner": "Owner",
+				"titleError": "Enter a title of up to 200 characters.",
+				"action": "create the record",
+				"status": "Status",
+				"labels": "Labels"
+			}
+		}
+	}
+}

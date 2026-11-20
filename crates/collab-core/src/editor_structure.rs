@@ -5,7 +5,8 @@ use loro::{
     Container, ContainerID, ContainerTrait, ContainerType, LoroDoc, LoroMap, LoroTree, LoroValue, TreeID, TreeParentId,
     ValueOrContainer,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 fn invalid(reason: &str) -> CollabError {
     CollabError::OperationFailed { reason: reason.into() }
 }
@@ -140,6 +141,8 @@ pub struct Placement {
     pub position: usize,
 }
 pub fn placements(doc: &LoroDoc) -> Result<Option<Vec<Placement>>, CollabError> {
+    #[cfg(test)]
+    full_walks::record();
     if !ready(doc)? {
         return Ok(None);
     }
@@ -191,6 +194,8 @@ fn block_cid(tree: &LoroTree, node: TreeID) -> Result<Option<String>, CollabErro
     ))
 }
 fn active_placements(tree: &LoroTree) -> Result<Vec<Placement>, CollabError> {
+    #[cfg(test)]
+    full_walks::record();
     active_placements_with(tree, |node| block_cid(tree, node))
 }
 /// The active (non-deleted) placements in document order. `cid_of` returns a node's
@@ -391,6 +396,313 @@ pub fn delete(doc: &LoroDoc, cid: &str) -> Result<(), CollabError> {
         return Err(invalid("editor_doc_requires_one_block"));
     }
     tree(doc)?.delete(node.tree_id).map_err(|e| invalid(&e.to_string()))?;
+    Ok(())
+}
+
+/// Test-only count of full placement-tree walks (`placements`, `active_placements`) on this thread.
+#[cfg(test)]
+pub(crate) mod full_walks {
+    use std::cell::Cell;
+    thread_local! {
+        static WALKS: Cell<usize> = const { Cell::new(0) };
+    }
+    pub fn record() {
+        WALKS.with(|count| count.set(count.get() + 1));
+    }
+    pub fn reset() {
+        WALKS.with(|count| count.set(0));
+    }
+    pub fn count() -> usize {
+        WALKS.with(Cell::get)
+    }
+}
+
+/// The tree handle of a [`PlacementIndex`]; handles compare equal so that index equality is about
+/// placements only.
+#[derive(Debug, Clone)]
+struct TreeHandle(LoroTree);
+
+impl PartialEq for TreeHandle {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for TreeHandle {}
+
+/// One active placement as the session index keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IndexedNode {
+    tree_id: TreeID,
+    parent: Option<Arc<str>>,
+    depth: u32,
+}
+
+/// The editor session's placement index: what `insert`, `move_block` and `delete` read of the
+/// active placements, kept incrementally instead of being recomputed from the whole tree for
+/// every operation.
+///
+/// It holds, for every active block CID, its tree node, its parent CID and its depth, and the set
+/// of active children of every parent (and of the root level). It is built from [`placements`]
+/// (so a document the full read refuses is refused exactly as before) and is updated by
+/// [`insert_indexed`], [`move_indexed`] and [`delete_indexed`] with the effect each has on the
+/// active tree. Child order is not kept: no operation reads it.
+///
+/// The index is valid only for the document state it was built or last updated at; the owner
+/// (`LoroCollabEngine`) drops it whenever the document may have changed behind it, and after any
+/// failed operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacementIndex {
+    /// The editor tree, read once by typed id when the index is built. A tree-root probe values
+    /// the whole tree (O(page)), so the operations reuse this handle: nothing that can replace or
+    /// shadow the root runs while the index is valid (any other change retires the index).
+    tree: TreeHandle,
+    nodes: HashMap<Arc<str>, IndexedNode>,
+    roots: HashSet<Arc<str>>,
+    children: HashMap<Arc<str>, HashSet<Arc<str>>>,
+    /// Set when an update could not be applied to the index exactly; the index must then be
+    /// rebuilt before use.
+    stale: bool,
+}
+
+impl PlacementIndex {
+    /// Builds the index with one full read of the placement tree.
+    ///
+    /// # Errors
+    /// Whatever [`placements`] returns, and `editor_structure_required` when the structure
+    /// metadata root does not say the placement index is initialised.
+    pub fn build(doc: &LoroDoc) -> Result<Self, CollabError> {
+        let entries = placements(doc)?.ok_or_else(|| invalid("editor_structure_required"))?;
+        Ok(Self::from_placements(tree(doc)?, &entries))
+    }
+
+    /// The index of a full read's result, with the editor tree it was read from.
+    #[must_use]
+    pub fn from_placements(tree: LoroTree, entries: &[Placement]) -> Self {
+        let mut index = Self {
+            tree: TreeHandle(tree),
+            nodes: HashMap::with_capacity(entries.len()),
+            roots: HashSet::new(),
+            children: HashMap::new(),
+            stale: false,
+        };
+        for entry in entries {
+            let cid: Arc<str> = Arc::from(entry.cid.as_str());
+            let parent = entry.parent.as_deref().map(Arc::<str>::from);
+            index.link(cid, entry.tree_id, parent, entry.depth);
+        }
+        index
+    }
+
+    /// Whether the index cannot be trusted any more and must be rebuilt.
+    #[must_use]
+    pub const fn is_stale(&self) -> bool {
+        self.stale
+    }
+
+    /// Number of active placements.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Whether `cid` has an active placement.
+    #[must_use]
+    pub fn contains(&self, cid: &str) -> bool {
+        self.nodes.contains_key(cid)
+    }
+
+    fn link(&mut self, cid: Arc<str>, tree_id: TreeID, parent: Option<Arc<str>>, depth: u32) {
+        match &parent {
+            Some(parent) => self.children.entry(parent.clone()).or_default().insert(cid.clone()),
+            None => self.roots.insert(cid.clone()),
+        };
+        self.nodes.insert(cid, IndexedNode { tree_id, parent, depth });
+    }
+
+    fn unlink_from_parent(&mut self, cid: &str, parent: Option<&Arc<str>>) {
+        match parent {
+            Some(parent) => {
+                if let Some(siblings) = self.children.get_mut(parent.as_ref()) {
+                    siblings.remove(cid);
+                    if siblings.is_empty() {
+                        self.children.remove(parent.as_ref());
+                    }
+                }
+            }
+            None => {
+                self.roots.remove(cid);
+            }
+        }
+    }
+
+    fn child_count(&self, parent: Option<&str>) -> usize {
+        parent.map_or(self.roots.len(), |parent| {
+            self.children.get(parent).map_or(0, HashSet::len)
+        })
+    }
+
+    /// `cid` and its active descendants, `cid` first.
+    fn subtree(&self, cid: &str) -> Vec<Arc<str>> {
+        let mut out = Vec::new();
+        let Some((key, _)) = self.nodes.get_key_value(cid) else {
+            return out;
+        };
+        let mut stack = vec![key.clone()];
+        while let Some(next) = stack.pop() {
+            if let Some(children) = self.children.get(next.as_ref()) {
+                stack.extend(children.iter().cloned());
+            }
+            out.push(next);
+        }
+        out
+    }
+
+    /// The greatest depth below `cid` (0 for a leaf).
+    fn height(&self, cid: &str) -> u32 {
+        let base = self.nodes.get(cid).map_or(0, |node| node.depth);
+        self.subtree(cid)
+            .iter()
+            .filter_map(|id| self.nodes.get(id.as_ref()))
+            .map(|node| node.depth.saturating_sub(base))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The active children count of `parent` (`None` for the root level) and the depth of
+    /// `parent` when it is given; `None` when `parent` has no active placement.
+    pub(crate) fn placement_bounds(&self, parent: Option<&str>) -> Option<(usize, Option<u32>)> {
+        let Some(cid) = parent else {
+            return Some((self.child_count(None), None));
+        };
+        self.nodes
+            .get(cid)
+            .map(|node| (self.child_count(Some(cid)), Some(node.depth)))
+    }
+}
+
+/// [`insert`] against the session index: the same tree operations in the same order, with the
+/// parent looked up in the index instead of in a fresh walk of the tree.
+///
+/// # Errors
+/// As [`insert`]. The caller drops the index after an error.
+pub fn insert_indexed(
+    index: &mut PlacementIndex,
+    cid: &str,
+    parent: Option<&str>,
+    position: usize,
+) -> Result<(), CollabError> {
+    let tree = index.tree.0.clone();
+    let parent = parent
+        .map(|cid| {
+            index
+                .nodes
+                .get_key_value(cid)
+                .map(|(key, node)| (key.clone(), node.tree_id, node.depth))
+                .ok_or_else(|| invalid("editor_structure_parent_not_found"))
+        })
+        .transpose()?;
+    let node = tree
+        .create_at(parent.as_ref().map(|entry| entry.1), position)
+        .map_err(|e| invalid(&e.to_string()))?;
+    tree.get_meta(node)
+        .map_err(|e| invalid(&e.to_string()))?
+        .insert("block_cid", cid)
+        .map_err(|e| invalid(&e.to_string()))?;
+    if index.nodes.contains_key(cid) {
+        // A second active node for one CID: a fresh read refuses that document, so the index
+        // cannot describe it. Force a rebuild (which reports it as before).
+        index.stale = true;
+        return Ok(());
+    }
+    let depth = parent.as_ref().map_or(0, |entry| entry.2 + 1);
+    index.link(Arc::from(cid), node, parent.map(|entry| entry.0), depth);
+    Ok(())
+}
+
+/// [`move_block`] against the session index: the same checks in the same order and the same
+/// `mov_to`, with the placement facts read from the index.
+///
+/// # Errors
+/// As [`move_block`]. The caller drops the index after an error.
+pub fn move_indexed(
+    index: &mut PlacementIndex,
+    cid: &str,
+    parent: Option<&str>,
+    position: usize,
+) -> Result<(), CollabError> {
+    let node = index
+        .nodes
+        .get(cid)
+        .cloned()
+        .ok_or_else(|| invalid("editor_block_not_found"))?;
+    let parent = parent
+        .map(|cid| {
+            index
+                .nodes
+                .get_key_value(cid)
+                .map(|(key, entry)| (key.clone(), entry.tree_id, entry.depth))
+                .ok_or_else(|| invalid("editor_structure_parent_not_found"))
+        })
+        .transpose()?;
+    let parent_depth = parent.as_ref().map_or(0, |entry| entry.2 + 1);
+    if parent_depth + index.height(cid) > 7 {
+        return Err(invalid("editor_structure_depth_limit"));
+    }
+    let tree = index.tree.0.clone();
+    let mut ancestor = parent.as_ref().map(|entry| entry.0.clone());
+    while let Some(id) = ancestor {
+        if id.as_ref() == cid {
+            return Err(invalid("editor_structure_cycle"));
+        }
+        ancestor = index.nodes.get(id.as_ref()).and_then(|entry| entry.parent.clone());
+    }
+    tree.mov_to(node.tree_id, parent.as_ref().map(|entry| entry.1), position)
+        .map_err(|e| invalid(&e.to_string()))?;
+    let new_parent = parent.map(|entry| entry.0);
+    index.unlink_from_parent(cid, node.parent.as_ref());
+    match &new_parent {
+        Some(parent) => index.children.entry(parent.clone()).or_default().insert(Arc::from(cid)),
+        None => index.roots.insert(Arc::from(cid)),
+    };
+    for id in index.subtree(cid) {
+        let Some(entry) = index.nodes.get_mut(id.as_ref()) else {
+            continue;
+        };
+        entry.depth = entry.depth - node.depth + parent_depth;
+        if id.as_ref() == cid {
+            entry.parent.clone_from(&new_parent);
+        }
+    }
+    Ok(())
+}
+
+/// [`delete`] against the session index.
+///
+/// # Errors
+/// As [`delete`]. The caller drops the index after an error.
+pub fn delete_indexed(index: &mut PlacementIndex, cid: &str) -> Result<(), CollabError> {
+    let node = index
+        .nodes
+        .get(cid)
+        .cloned()
+        .ok_or_else(|| invalid("editor_block_not_found"))?;
+    let tree = index.tree.0.clone();
+    let subtree = index.subtree(cid);
+    if index.nodes.len() == subtree.len() {
+        return Err(invalid("editor_doc_requires_one_block"));
+    }
+    tree.delete(node.tree_id).map_err(|e| invalid(&e.to_string()))?;
+    index.unlink_from_parent(cid, node.parent.as_ref());
+    for id in subtree {
+        index.nodes.remove(id.as_ref());
+        index.children.remove(id.as_ref());
+    }
     Ok(())
 }
 
