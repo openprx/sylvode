@@ -19,6 +19,10 @@
 //! `FLOW_WINDOW_SAMPLES` (default 7) and `FLOW_WINDOW_MODELS` (comma-separated, default `1,4,5`)
 //! narrow a run.
 //!
+//! `FLOW_WINDOW_PREWARM=0` skips `LoroCollabEngine::prewarm_for_writes()`, which the worker runs in
+//! its setup before the window opens (default: on). The `raw` column is then measured on a document
+//! prewarmed through the same public Loro reads, or cold, to match.
+//!
 //! `FLOW_WINDOW_UPDATE=delete` replaces the timed update by one raw deletion of a top-level
 //! block (`doc.children`), authored by a plain Loro peer on the base. The guard hands every such
 //! deletion to its exact path: a narrow scan of the block list and, on a page without the model 5
@@ -110,6 +114,30 @@ fn raw_block_deletion(base: &[u8]) -> Result<Vec<u8>, String> {
     doc.export(loro::ExportMode::updates(&from)).map_err(|e| e.to_string())
 }
 
+fn prewarm_enabled() -> bool {
+    std::env::var("FLOW_WINDOW_PREWARM").map_or(true, |value| value != "0")
+}
+
+/// The same reads as `LoroCollabEngine::prewarm_for_writes`, on a bare Loro document.
+fn prewarm_raw(doc: &loro::LoroDoc) {
+    use loro::{Container, Index, ValueOrContainer};
+    if let Some(ValueOrContainer::Container(Container::Map(root))) = doc.get_by_path(&[Index::Key("doc".into())])
+        && let Some(ValueOrContainer::Container(Container::List(list))) = root.get("children")
+    {
+        let _ = list.get_id_at(0);
+    }
+    for name in ["flow_editor_aliases", "order"] {
+        if let Some(ValueOrContainer::Container(Container::Map(map))) = doc.get_by_path(&[Index::Key(name.into())]) {
+            let _ = map.get_last_editor("");
+        }
+    }
+    if let Some(ValueOrContainer::Container(Container::Tree(tree))) =
+        doc.get_by_path(&[Index::Key("flow_editor_structure".into())])
+    {
+        let _ = tree.roots();
+    }
+}
+
 struct Fixture {
     /// Snapshot before the last batch: the worker's base document.
     base: Vec<u8>,
@@ -193,6 +221,9 @@ fn sample(fixture: &Fixture, samples: &mut Samples) -> Result<(), String> {
     let err = |e: collab_core::CollabError| e.to_string();
     // The window, exactly as the worker runs it.
     let mut engine = LoroCollabEngine::load(&fixture.base).map_err(err)?;
+    if prewarm_enabled() {
+        engine.prewarm_for_writes();
+    }
     let ((), import) = timed(|| engine.import_client_update(&fixture.update).map(|_| ()).map_err(err))?;
     let (semantic, semantic_ms) = timed(|| engine.semantic_snapshot().map_err(err))?;
     let ((), check) = timed(|| check_snapshot(&semantic, &DocumentLimits::default()).map_err(|v| format!("{v:?}")))?;
@@ -200,6 +231,9 @@ fn sample(fixture: &Fixture, samples: &mut Samples) -> Result<(), String> {
     let raw_doc = loro::LoroDoc::new();
     collab_core::page_inline::configure(&raw_doc);
     raw_doc.import(&fixture.base).map_err(|e| e.to_string())?;
+    if prewarm_enabled() {
+        prewarm_raw(&raw_doc);
+    }
     let ((), raw) = timed(|| raw_doc.import(&fixture.update).map(|_| ()).map_err(|e| e.to_string()))?;
     samples.raw.push(raw);
     samples.guard.push((import - raw).max(0.0));

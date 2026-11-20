@@ -252,15 +252,18 @@ fn digest(value: &impl std::hash::Hash) -> u64 {
     hasher.finish()
 }
 
-/// The names of [`Outputs`]' fields, for a diff message.
-fn output_diff(a: &Outputs, b: &Outputs) -> Option<&'static str> {
+/// The names of [`Outputs`]' fields, for a diff message. With `snapshot_bytes` false the byte
+/// comparison of the exported snapshot is skipped. A Loro snapshot is not canonical: a container whose state was decoded before the export is encoded
+/// from that state, one that was not is copied as it was read, so equal documents can export
+/// different bytes. Everything else, the exported value and the roots included, is still compared.
+fn output_diff_with(a: &Outputs, b: &Outputs, snapshot_bytes: bool) -> Option<&'static str> {
     if a.frontier != b.frontier {
         Some("frontier")
     } else if a.deep_value != b.deep_value {
         Some("get_deep_value (a root was registered or a value differs)")
     } else if a.roots != b.roots {
         Some("get_value (the list of roots differs)")
-    } else if a.snapshot != b.snapshot {
+    } else if snapshot_bytes && a.snapshot != b.snapshot {
         Some("export(Snapshot) bytes")
     } else if a.semantic != b.semantic {
         Some("semantic_snapshot_with_floor")
@@ -302,6 +305,14 @@ pub(super) struct Observed {
     outputs: Option<Outputs>,
 }
 
+impl Observed {
+    /// Whether the exported snapshot bytes of this run and `other` are equal (`None` unless both
+    /// accepted).
+    pub(super) fn same_snapshot_bytes(&self, other: &Self) -> Option<bool> {
+        Some(self.outputs.as_ref()?.snapshot == other.outputs.as_ref()?.snapshot)
+    }
+}
+
 pub(super) fn observe(implementation: &dyn WindowImpl, case: &Case) -> Observed {
     let result = implementation.run(&case.base, &case.update);
     Observed {
@@ -315,6 +326,12 @@ pub(super) fn observe(implementation: &dyn WindowImpl, case: &Case) -> Observed 
 /// `None` when two runs agree on the decision (the whole error, not only its code), on the facts
 /// when both derive them, and on every output.
 pub(super) fn difference(a: &Observed, b: &Observed) -> Option<String> {
+    difference_with(a, b, true)
+}
+
+/// [`difference`] with the snapshot bytes compared only when `snapshot_bytes` (see
+/// [`output_diff_with`]).
+pub(super) fn difference_with(a: &Observed, b: &Observed, snapshot_bytes: bool) -> Option<String> {
     if a.decision != b.decision {
         return Some(format!(
             "decision differs: {} says {}, {} says {}",
@@ -330,7 +347,7 @@ pub(super) fn difference(a: &Observed, b: &Observed) -> Option<String> {
         return Some(format!("facts differ: {x:?} against {y:?}"));
     }
     match (&a.outputs, &b.outputs) {
-        (Some(x), Some(y)) => output_diff(x, y).map(|field| format!("output differs: {field}")),
+        (Some(x), Some(y)) => output_diff_with(x, y, snapshot_bytes).map(|field| format!("output differs: {field}")),
         (None, None) => None,
         _ => Some("one implementation accepted without returning its engine".into()),
     }

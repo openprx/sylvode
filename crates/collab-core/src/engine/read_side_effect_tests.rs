@@ -62,7 +62,7 @@ fn read_engine(engine: &LoroCollabEngine) {
     read_doc(&engine.doc);
 }
 
-fn assert_unchanged(label: &str, doc: &LoroDoc, read: impl FnOnce()) {
+pub(super) fn assert_unchanged(label: &str, doc: &LoroDoc, read: impl FnOnce()) {
     let before = observe(doc);
     read();
     let after = observe(doc);
@@ -109,7 +109,7 @@ fn structured_page() -> LoroCollabEngine {
 }
 
 /// Documents as raw Loro docs: roots exactly as stored, none added by an engine.
-fn documents() -> Vec<(String, LoroDoc)> {
+pub(super) fn documents() -> Vec<(String, LoroDoc)> {
     let from = |engine: &LoroCollabEngine| {
         let doc = LoroDoc::new();
         doc.import(&engine.export_snapshot().unwrap()).unwrap();
