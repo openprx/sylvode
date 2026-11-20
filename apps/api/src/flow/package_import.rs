@@ -1286,6 +1286,7 @@ async fn promote_objects(
                     target_object,
                     object.accepted_seq,
                     &super::block_registry::prepare(&semantic)?,
+                    super::block_registry::RegistrationAllowance::Complete,
                 )
                 .await?;
                 super::body_assets::reconcile_accepted(
@@ -1364,6 +1365,9 @@ pub(crate) fn reconstruct_head(
             .import_update(&member_bytes(package, path)?)
             .map_err(|_| ApiError::checksum_mismatch("package update cannot be applied"))?;
     }
+    // The snapshot and the tail came from an uploaded file: the head must not carry a root
+    // container with a reserved name and the wrong type, whichever of the two brought it.
+    super::package::require_no_shadow_roots(&engine)?;
     engine
         .export_snapshot()
         .map_err(|_| ApiError::checksum_mismatch("package head cannot be compacted"))
@@ -1614,6 +1618,7 @@ mod tests {
     };
     use crate::flow::event_origin::{CommandOrigin, EventSurface};
     use crate::flow::export::{CreateExportRequest, ExportPrincipal, ExportScope, create_package_export};
+    use crate::flow::package::{PackageMemberInput, build_package};
     use crate::routes::context::tenant_fixture::{exec, scratch, seed_tenant};
     use platform::{
         app::AppState,
@@ -1736,6 +1741,127 @@ mod tests {
             package_semantic_hash(&engine, &v2).unwrap(),
             plan.objects[0].semantic_hash
         );
+    }
+
+    /// The stored legacy browser package, rebuilt with `snapshot` as its document snapshot and,
+    /// when given, `tail` as the single update after it.
+    fn rebuilt_package(snapshot: &[u8], tail: Option<&[u8]>) -> (Vec<u8>, String) {
+        let path = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/flow-v2/legacy-browser-package-v1"
+        ));
+        let bytes = std::fs::read(path.join("package.zip")).unwrap();
+        let contract: Value = serde_json::from_slice(&std::fs::read(path.join("contract.json")).unwrap()).unwrap();
+        let plan = parse_plan(&bytes, contract["package_sha256"].as_str().unwrap()).unwrap();
+        let document = plan.objects[0].source_document_id;
+        let mut members = Vec::new();
+        for member in &plan.verified.manifest.members {
+            let mut body = if member.kind == "snapshot" {
+                snapshot.to_vec()
+            } else {
+                member_bytes(&bytes, &member.path).unwrap()
+            };
+            if member.kind == "object" && tail.is_some() {
+                let mut object: Value = serde_json::from_slice(&body).unwrap();
+                object["accepted_seq"] = json!(1);
+                body = serde_jcs::to_vec(&object).unwrap();
+            }
+            members.push(PackageMemberInput {
+                path: member.path.clone(),
+                kind: member.kind.clone(),
+                bytes: body,
+            });
+        }
+        if let Some(tail) = tail {
+            members.push(PackageMemberInput {
+                path: format!("documents/{document}/updates/1.bin"),
+                kind: "update".into(),
+                bytes: tail.to_vec(),
+            });
+            members.push(PackageMemberInput {
+                path: "history/events.jsonl".into(),
+                kind: "event".into(),
+                bytes: Vec::new(),
+            });
+        }
+        let mut manifest = plan.verified.manifest;
+        if tail.is_some() {
+            manifest.history.included = true;
+            manifest.counts.updates = 1;
+            manifest.history.through_seq_by_document.insert(document.to_string(), 1);
+        }
+        let built = build_package(manifest, members).unwrap();
+        (built.bytes, built.package_sha256)
+    }
+
+    fn reconstruct(package: (Vec<u8>, String)) -> Result<Vec<u8>, ApiError> {
+        let (bytes, hash) = package;
+        let plan = parse_plan(&bytes, &hash)?;
+        reconstruct_head(&bytes, &plan.verified.manifest, &plan.objects[0])
+    }
+
+    fn assert_shadow_refusal(outcome: Result<Vec<u8>, ApiError>, what: &str) {
+        let error = outcome.expect_err(what);
+        assert_eq!(error.kind(), crate::error::ApiErrorKind::InvalidUpdate, "{what}");
+        let rendered = format!("{error:?}");
+        assert!(rendered.contains("reserved_root_container_type"), "{what}: {rendered}");
+    }
+
+    /// An uploaded document that carries a shadow root is refused with a typed error naming the
+    /// reason, whether the root sits in the uploaded snapshot or arrives in its uploaded tail. The
+    /// same package without the shadow is accepted as before.
+    #[test]
+    fn a_package_document_with_a_shadow_root_is_refused() {
+        let clean = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot"
+        ))
+        .unwrap();
+        // Unmodified: accepted, with and without an update tail.
+        reconstruct(rebuilt_package(&clean, None)).unwrap();
+        let benign = {
+            let doc = loro::LoroDoc::new();
+            doc.import(&clean).unwrap();
+            doc.set_peer_id(9_100_000).unwrap();
+            let from = doc.oplog_vv();
+            doc.get_map("scratch_root").insert("k", 1).unwrap();
+            doc.commit();
+            doc.export(loro::ExportMode::updates(&from)).unwrap()
+        };
+        reconstruct(rebuilt_package(&clean, Some(&benign))).unwrap();
+
+        for (name, kind) in [
+            ("flow_editor_structure_meta", "text"),
+            ("doc", "list"),
+            ("order", "text"),
+        ] {
+            let shadow_update = |base: &[u8]| {
+                let doc = loro::LoroDoc::new();
+                doc.import(base).unwrap();
+                doc.set_peer_id(9_100_001).unwrap();
+                let from = doc.oplog_vv();
+                match kind {
+                    "text" => doc.get_text(name).insert(0, "x").unwrap(),
+                    _ => doc.get_list(name).insert(0, 1).unwrap(),
+                }
+                doc.commit();
+                doc.export(loro::ExportMode::updates(&from)).unwrap()
+            };
+            // In the uploaded snapshot (state and history).
+            let doc = loro::LoroDoc::new();
+            doc.import(&clean).unwrap();
+            doc.import(&shadow_update(&clean)).unwrap();
+            let with_shadow = doc.export(loro::ExportMode::Snapshot).unwrap();
+            assert_shadow_refusal(
+                reconstruct(rebuilt_package(&with_shadow, None)),
+                &format!("snapshot with a shadow {name}"),
+            );
+            // In the uploaded update tail only.
+            assert_shadow_refusal(
+                reconstruct(rebuilt_package(&clean, Some(&shadow_update(&clean)))),
+                &format!("tail with a shadow {name}"),
+            );
+        }
     }
 
     #[test]

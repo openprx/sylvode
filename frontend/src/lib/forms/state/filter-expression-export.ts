@@ -5,9 +5,9 @@ import type {
 	ViewFilterDraft,
 	ViewFilterGroupDraft
 } from '#lib/forms/page-types.js';
-import { fieldLabel } from '#lib/forms/field-options.js';
+import { fieldLabel, fieldType } from '#lib/forms/field-options.js';
 import { translate } from '#lib/forms/i18n.js';
-import { csvCell } from '#lib/forms/import-csv.js';
+import { NUMERIC_FIELD_TYPES, csvExportCell } from '#lib/utils/csv.js';
 import { displayValue, recordMatchesViewFilter } from '#lib/forms/record-format.js';
 import { FormsController } from '#lib/forms/state/controller.js';
 import {
@@ -86,7 +86,14 @@ export class FilterExpressionExportController extends FormsController {
 	recordsCsv = (records: FormRecord[]): string => {
 		const exportFields =
 			this.s.visibleFields.length > 0 ? this.s.visibleFields : this.s.fields.slice(0, 8);
-		const header = ['Record ID', 'Title', ...exportFields.map(fieldLabel)].map(csvCell).join(',');
+		const header = ['Record ID', 'Title', ...exportFields.map(fieldLabel)]
+			.map((cell) => csvExportCell(cell))
+			.join(',');
+		const numericColumns = [
+			false,
+			false,
+			...exportFields.map((field) => NUMERIC_FIELD_TYPES.has(fieldType(field)))
+		];
 
 		const rows = records.map((record) =>
 			[
@@ -98,7 +105,7 @@ export class FilterExpressionExportController extends FormsController {
 					return value === '-' ? '' : value;
 				})
 			]
-				.map(csvCell)
+				.map((cell, index) => csvExportCell(cell, numericColumns[index]))
 				.join(',')
 		);
 

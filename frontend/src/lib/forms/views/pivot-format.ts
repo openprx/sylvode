@@ -7,7 +7,7 @@ import type {
 } from '#lib/forms/page-types.js';
 import { fieldLabel } from '#lib/forms/field-options.js';
 import { translate } from '#lib/forms/i18n.js';
-import { csvCell } from '#lib/forms/import-csv.js';
+import { csvExportCell } from '#lib/utils/csv.js';
 import { displayValue, isRecord } from '#lib/forms/record-format.js';
 
 export function pivotShowRowTotals(mode: PivotTotalsMode): boolean {
@@ -215,6 +215,6 @@ export function pivotTableMatrixText(table: PivotTable): string {
 
 export function pivotTableMatrixCsv(table: PivotTable): string {
 	return pivotTableMatrixRows(table)
-		.map((row) => row.map(csvCell).join(','))
+		.map((row) => row.map((cell) => csvExportCell(cell)).join(','))
 		.join('\n');
 }

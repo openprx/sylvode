@@ -48,7 +48,8 @@
 
 #![allow(clippy::items_after_statements, clippy::too_long_first_doc_paragraph)]
 
-use std::time::Duration;
+use crate::flow::block_registry::RegistrationAllowance;
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use parking_lot::Mutex;
@@ -85,7 +86,8 @@ use super::snapshot::{self, SnapshotAdvancer, Trigger};
 /// approach without any of them individually exceeding it.
 ///
 /// Deliberately does **not** cover `COMMIT`: see [`run_locked_phase`].
-const LOCKED_PHASE_STAGING_BUDGET: Duration = Duration::from_millis(DOCUMENT_LOCK_HOLD_MS_MAX.saturating_mul(4));
+pub(crate) const LOCKED_PHASE_STAGING_BUDGET: Duration =
+    Duration::from_millis(DOCUMENT_LOCK_HOLD_MS_MAX.saturating_mul(4));
 
 #[cfg(test)]
 struct PreparedPause {
@@ -325,6 +327,22 @@ fn reject_from_collab_error(update_id: Option<Uuid>, err: &CollabError) -> Accep
             // Refused inside `hydrate_and_apply`, before any transaction is opened: no seq.
             write_state: WriteState::NotApplied,
             details: Some(serde_json::json!({"reason": crate::error::CAUSAL_DEPENDENCY_MISSING_REASON})),
+            current_seq: None,
+            current_frontier: None,
+        });
+    }
+    // A new shadow root (a reserved root container with the wrong type) or an update whose ops
+    // could not all be inspected: `invalid_update`, with the reason a caller can branch on.
+    if let CollabError::OperationFailed { reason } = err
+        && (reason == collab_core::reserved_roots::SHADOW_ROOT_REASON
+            || reason == collab_core::reserved_roots::SCAN_INCOMPLETE_REASON)
+    {
+        return AcceptOutcome::Rejected(Rejected {
+            update_id,
+            code: RejectedCode::InvalidUpdate,
+            recoverable: false,
+            write_state: WriteState::NotApplied,
+            details: Some(serde_json::json!({"reason": reason})),
             current_seq: None,
             current_frontier: None,
         });
@@ -696,7 +714,8 @@ pub(crate) async fn hydrate_and_apply(
     })?;
     let after_frontier = candidate.frontier().as_bytes().to_vec();
 
-    let semantic = candidate.semantic_snapshot().map_err(|err| {
+    // The floor comes from the same block pass as the projection, so it costs no second walk.
+    let (semantic, minimum_editor_model) = candidate.semantic_snapshot_with_floor().map_err(|err| {
         tracing::error!(error = %err, "collab write: semantic_snapshot failed after a successful isolated apply");
         ApiError::internal()
     })?;
@@ -712,9 +731,6 @@ pub(crate) async fn hydrate_and_apply(
     let plain_text = projection::plain_text(&semantic);
     let content_hash_hex = content_hash(bytes);
 
-    let minimum_editor_model = candidate
-        .minimum_editor_model()
-        .map_err(|e| crate::flow::command::map_collab_error(&e))?;
     Ok(HydrateOutcome::Prepared(Box::new(Prepared {
         observed,
         candidate,
@@ -796,6 +812,7 @@ async fn stage_locked_writes(
     request: &UpdateRequest,
     prepared: &Prepared,
     dispatch_max_attempts: i32,
+    registration: RegistrationAllowance,
 ) -> Result<StagedOutcome, ApiError> {
     if prepared.minimum_editor_model >= 4 {
         crate::flow::scope::require_editor_model_readers(tx, prepared.minimum_editor_model).await?;
@@ -817,7 +834,7 @@ async fn stage_locked_writes(
         Err(err) => return Err(err),
     }
 
-    stage_one_document(tx, request, prepared, dispatch_max_attempts).await
+    stage_one_document(tx, request, prepared, dispatch_max_attempts, registration).await
 }
 
 /// `limits-v1.md`'s `document_lock_wait_ms_max` / `document_lock_hold_ms_max`, applied
@@ -866,6 +883,7 @@ pub(crate) async fn stage_one_document(
     request: &UpdateRequest,
     prepared: &Prepared,
     dispatch_max_attempts: i32,
+    registration: RegistrationAllowance,
 ) -> Result<StagedOutcome, ApiError> {
     #[derive(FromQueryResult)]
     struct LockedHead {
@@ -1032,6 +1050,7 @@ pub(crate) async fn stage_one_document(
         prepared.observed.object_id,
         new_head_seq,
         &prepared.logical_blocks,
+        registration,
     )
     .await?;
     Ok(StagedOutcome::Ready(StagedWrite {
@@ -1079,6 +1098,7 @@ async fn run_locked_phase(
     // it is a conservative in-process superset rather than a newly chosen, narrower timer.
     #[cfg(test)]
     let _locked_phase_measurement = begin_locked_phase_measurement(request.document_id);
+    let started = Instant::now();
     let tx = match db.begin().await {
         Ok(tx) => tx,
         Err(err) => {
@@ -1091,7 +1111,13 @@ async fn run_locked_phase(
     // before the arms below move `tx` into `rollback`/`commit`.
     let staged = tokio::time::timeout(
         staging_budget,
-        stage_locked_writes(&tx, request, prepared, dispatch_max_attempts),
+        stage_locked_writes(
+            &tx,
+            request,
+            prepared,
+            dispatch_max_attempts,
+            RegistrationAllowance::within(started, staging_budget),
+        ),
     )
     .await;
 
@@ -1803,6 +1829,38 @@ mod isolation_rejection_tests {
             );
             assert_eq!(details["observed"], limit + 1);
         }
+    }
+
+    /// A client update that creates a reserved root container of the wrong type is an
+    /// `invalid_update` with the reason a caller can branch on, and nothing was applied.
+    #[test]
+    fn a_shadow_root_update_rejects_as_invalid_update_with_its_reason() {
+        for reason in [
+            collab_core::reserved_roots::SHADOW_ROOT_REASON,
+            collab_core::reserved_roots::SCAN_INCOMPLETE_REASON,
+        ] {
+            let update_id = Uuid::new_v4();
+            let outcome =
+                reject_from_collab_error(Some(update_id), &CollabError::OperationFailed { reason: reason.into() });
+            let AcceptOutcome::Rejected(rejected) = outcome else {
+                panic!("{reason} must reject");
+            };
+            assert_eq!(rejected.code, RejectedCode::InvalidUpdate);
+            assert!(!rejected.recoverable);
+            assert_eq!(rejected.write_state, WriteState::NotApplied);
+            assert_eq!(rejected.details, Some(serde_json::json!({ "reason": reason })));
+        }
+        // Any other engine refusal keeps its bare rejection.
+        let other = reject_from_collab_error(
+            None,
+            &CollabError::OperationFailed {
+                reason: "editor_model_floor_downgrade".into(),
+            },
+        );
+        let AcceptOutcome::Rejected(rejected) = other else {
+            panic!("must reject");
+        };
+        assert_eq!(rejected.details, None);
     }
 
     /// `UnsupportedPlatform` (a non-Linux build, `ADR-0014`'s platform matrix) is constructed

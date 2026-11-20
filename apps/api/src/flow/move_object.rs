@@ -1123,7 +1123,18 @@ async fn run_locked_phase(
         else {
             continue;
         };
-        match write::stage_one_document(tx, request, prepared, dispatch_max_attempts).await? {
+        match write::stage_one_document(
+            tx,
+            request,
+            prepared,
+            dispatch_max_attempts,
+            crate::flow::block_registry::RegistrationAllowance::within(
+                std::time::Instant::now(),
+                write::LOCKED_PHASE_STAGING_BUDGET,
+            ),
+        )
+        .await?
+        {
             write::StagedOutcome::Ready(staged) => advanced.push(AdvancedDocument {
                 document_id: *document_id,
                 accepted: write::Accepted {

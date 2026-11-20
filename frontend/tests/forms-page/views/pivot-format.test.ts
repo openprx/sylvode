@@ -654,7 +654,7 @@ suite.check('pivotTableMatrixText joins cells with tabs and rows with line feeds
 	assertEqual(pivot.pivotTableMatrixText(table({ rowField: null })), '', 'empty table');
 });
 
-suite.check('pivotTableMatrixCsv quotes every cell and keeps formula-like labels unchanged', () => {
+suite.check('pivotTableMatrixCsv quotes every cell and neutralises formula-like labels', () => {
 	assertEqual(
 		pivot.pivotTableMatrixCsv(table({ totalsMode: 'none' })),
 		'"Region","Q1","Q2"\n"East","10.00 USD","20.50 USD"\n"West","5.00 USD","0.00 USD"',
@@ -677,11 +677,9 @@ suite.check('pivotTableMatrixCsv quotes every cell and keeps formula-like labels
 				]
 			})
 		),
-		'"Region","Q ""1"", early"\n"=HYPERLINK(""http://x"")","1.00 USD"',
-		'quotes doubled; a label starting with = is written as it is'
+		'"Region","Q ""1"", early"\n"\'=HYPERLINK(""http://x"")","1.00 USD"',
+		'quotes doubled; a label starting with = gets a leading quote'
 	);
-	// CURRENT BEHAVIOUR: the row label above starts with "=" and is exported without a guard
-	// against spreadsheet formula injection.
 });
 
 finish(suite.result());

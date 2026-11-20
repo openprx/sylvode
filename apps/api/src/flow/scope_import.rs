@@ -282,6 +282,29 @@ async fn replay_snapshot(
         })
     })
 }
+/// The replayed head of an uploaded package document (its snapshot with its whole update tail)
+/// must not carry a root container with a reserved name and the wrong type. The head is what the
+/// worker exported after replaying the package, so its history holds both the uploaded snapshot's
+/// and the uploaded tail's operations. The check reads all of it, outside the isolated window.
+async fn require_head_without_shadow_roots(
+    validated: &collab_core::isolation::wire::ReplayDiffResult,
+) -> Result<(), ApiError> {
+    let head = STANDARD
+        .decode(
+            validated
+                .validated_head_snapshot_base64
+                .as_deref()
+                .ok_or_else(|| ApiError::unsupported_protocol("isolated worker lacks package replay support"))?,
+        )
+        .map_err(|_| ApiError::internal())?;
+    tokio::task::spawn_blocking(move || {
+        let engine = <collab_core::LoroCollabEngine as collab_core::CollabEngine>::load(&head)
+            .map_err(|_| ApiError::checksum_mismatch("package head cannot be decoded"))?;
+        super::package::require_no_shadow_roots(&engine)
+    })
+    .await
+    .map_err(|_| ApiError::internal())?
+}
 struct Validated {
     source: Uuid,
     snapshot: Vec<u8>,
@@ -333,6 +356,7 @@ async fn validate_snapshots(bytes: &[u8], plan: &shared::PackagePlan) -> Result<
             package_updates_base64: Some(encoded),
         };
         let validated = replay_snapshot(snapshot, request, object.source_object_id).await?;
+        require_head_without_shadow_roots(&validated).await?;
         let hash = match super::package::semantic_model(&plan.verified.manifest)? {
             super::package::PackageSemanticModel::V1 => {
                 validated.legacy_package_semantic_hash_v1.clone().ok_or_else(|| {
@@ -643,6 +667,7 @@ pub async fn commit(
                 target,
                 object.accepted_seq,
                 &super::block_registry::prepare(&valid.semantic)?,
+                super::block_registry::RegistrationAllowance::Complete,
             )
             .await?;
             super::body_assets::reconcile_accepted(
@@ -798,6 +823,46 @@ mod tests {
             values.insert(table.into(), row.try_get("", "n").unwrap());
         }
         values
+    }
+    fn replayed(head: &[u8]) -> collab_core::isolation::wire::ReplayDiffResult {
+        let engine = collab_core::LoroCollabEngine::load(head).unwrap();
+        collab_core::isolation::wire::ReplayDiffResult {
+            semantic_diff: collab_core::SemanticDiff::default(),
+            to_snapshot: engine.semantic_snapshot().unwrap(),
+            legacy_package_semantic_hash_v4: None,
+            legacy_package_semantic_hash_v3: None,
+            from_title: String::new(),
+            to_title: String::new(),
+            package_reference_remap_required: Some(false),
+            legacy_package_semantic_hash_v2: None,
+            legacy_package_semantic_hash_v1: None,
+            validated_head_snapshot_base64: Some(STANDARD.encode(head)),
+        }
+    }
+    /// The replayed head of an uploaded document is refused when it carries a reserved root of the
+    /// wrong type, and accepted when it does not.
+    #[tokio::test]
+    async fn a_replayed_package_head_with_a_shadow_root_is_refused() {
+        let clean = include_bytes!("../../../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot").to_vec();
+        require_head_without_shadow_roots(&replayed(&clean)).await.unwrap();
+        let doc = loro::LoroDoc::new();
+        doc.import(&clean).unwrap();
+        doc.set_peer_id(9_200_001).unwrap();
+        doc.get_text("flow_editor_structure_meta").insert(0, "x").unwrap();
+        doc.commit();
+        let shadowed = doc.export(loro::ExportMode::Snapshot).unwrap();
+        let error = require_head_without_shadow_roots(&replayed(&shadowed))
+            .await
+            .expect_err("a shadow root must be refused");
+        assert_eq!(error.kind(), crate::error::ApiErrorKind::InvalidUpdate);
+        assert!(
+            format!("{error:?}").contains("reserved_root_container_type"),
+            "{error:?}"
+        );
+        // A head the worker did not export has nothing to check.
+        let mut missing = replayed(&clean);
+        missing.validated_head_snapshot_base64 = None;
+        assert!(require_head_without_shadow_roots(&missing).await.is_err());
     }
     #[tokio::test]
     async fn mocked_verified_replay_scope_import_uses_real_pg_and_rolls_back_every_promotion_row() {

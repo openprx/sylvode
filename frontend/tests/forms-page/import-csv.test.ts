@@ -27,9 +27,9 @@ suite.check('csvCell wraps in quotes and doubles embedded quotes', () => {
 });
 
 suite.check('csvCell leaves values starting with = + - @ unchanged', () => {
-	// CURRENT BEHAVIOUR: no spreadsheet-formula neutralisation. An exported cell such as
-	// =HYPERLINK(...) is written as ="..." text and is evaluated as a formula when the CSV is
-	// opened in a spreadsheet application (CSV injection). Prefixing a single quote would avoid it.
+	// Intended: csvCell is the plain-quoting encoder of the import template and the import round
+	// trip. Those cells are parsed back into records, so a leading ' would corrupt the data.
+	// Downloads and copies use csvExportCell (src/lib/utils/csv.ts), which neutralises formulas.
 	assertEqual(csv.csvCell('=1+1'), '"=1+1"', 'equals');
 	assertEqual(csv.csvCell('+1'), '"+1"', 'plus');
 	assertEqual(csv.csvCell('-1'), '"-1"', 'minus');

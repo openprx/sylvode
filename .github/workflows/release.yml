@@ -119,6 +119,8 @@ jobs:
           cross build --release -p worker --bin worker --target ${{ matrix.target }}
           cross build --release -p mcp-server --bin mcp-server --target ${{ matrix.target }}
           cross build --release -p mcp-server --bin sylvode --target ${{ matrix.target }}
+          # The webhook receiver ships in its own archive on the Unix targets (it is Unix-only).
+          cross build --release -p sylvode-webhook --bins --target ${{ matrix.target }}
 
       # Builds every workspace binary, collab-isolated-apply-worker included.
       - name: Build all binaries (native)
@@ -141,6 +143,22 @@ jobs:
           cp sylvode-${{ matrix.suffix }}.tar.gz openpr-${{ matrix.suffix }}.tar.gz
           sha256sum sylvode-${{ matrix.suffix }}.tar.gz > sylvode-${{ matrix.suffix }}.tar.gz.sha256
           sha256sum openpr-${{ matrix.suffix }}.tar.gz > openpr-${{ matrix.suffix }}.tar.gz.sha256
+
+      # The webhook receiver archive: both executables, flat, and the legacy-named copy of the
+      # same bytes (kept through Sylvode 1.x). The receiver is Unix-only, so there is no Windows one.
+      - name: Package webhook receiver (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p staging-webhook
+          for bin in sylvode-webhook openpr-webhook; do
+            test -x target/${{ matrix.target }}/release/$bin
+            cp target/${{ matrix.target }}/release/$bin staging-webhook/
+            chmod +x staging-webhook/$bin
+          done
+          (cd staging-webhook && tar czf ../sylvode-webhook-${{ matrix.suffix }}.tar.gz -- *)
+          cp sylvode-webhook-${{ matrix.suffix }}.tar.gz openpr-webhook-${{ matrix.suffix }}.tar.gz
+          sha256sum sylvode-webhook-${{ matrix.suffix }}.tar.gz > sylvode-webhook-${{ matrix.suffix }}.tar.gz.sha256
+          sha256sum openpr-webhook-${{ matrix.suffix }}.tar.gz > openpr-webhook-${{ matrix.suffix }}.tar.gz.sha256
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -174,6 +192,10 @@ jobs:
             openpr-${{ matrix.suffix }}.tar.gz.sha256
             openpr-${{ matrix.suffix }}.zip
             openpr-${{ matrix.suffix }}.zip.sha256
+            sylvode-webhook-${{ matrix.suffix }}.tar.gz
+            sylvode-webhook-${{ matrix.suffix }}.tar.gz.sha256
+            openpr-webhook-${{ matrix.suffix }}.tar.gz
+            openpr-webhook-${{ matrix.suffix }}.tar.gz.sha256
           if-no-files-found: error
 
   build-frontend:
@@ -211,15 +233,99 @@ jobs:
             openpr-frontend.tar.gz.sha256
           if-no-files-found: error
 
+  # One image per architecture, each built on a native runner (no emulation), checked, and pushed
+  # under a per-architecture tag. publish-webhook-image-manifest joins them into the final tags.
+  # Only this job and the manifest job can write packages.
+  build-webhook-image:
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/openprx/sylvode-webhook
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Build the image
+        run: docker build -f apps/webhook/Dockerfile -t "webhook-check:${{ matrix.arch }}" .
+
+      # The same kind of check the Image contents job in ci.yml makes for the api and worker images.
+      - name: Check the image contents
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          img="webhook-check:${{ matrix.arch }}"
+          docker run --rm --entrypoint sh "$img" -c 'test -x /app/sylvode-webhook && test -x /app/openpr-webhook'
+          out="$(docker run --rm "$img" /app/sylvode-webhook --version)"
+          echo "sylvode-webhook --version: $out"
+          grep -qF "$version" <<<"$out" || { echo "::error::image reports '$out', not $version"; exit 1; }
+          user="$(docker run --rm --entrypoint id "$img" -u)"
+          test "$user" != 0 || { echo "::error::image runs as root"; exit 1; }
+
+      - name: Log in to ghcr.io
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+
+      - name: Push the per-architecture image
+        run: |
+          set -euo pipefail
+          target="$IMAGE:${RELEASE_TAG#v}-linux-${{ matrix.arch }}"
+          docker tag "webhook-check:${{ matrix.arch }}" "$target"
+          docker push "$target"
+
+  # Joins the two per-architecture images into a multi-platform image and publishes the final
+  # tags: the release version and latest, under the canonical name and under the legacy name
+  # ghcr.io/openprx/openpr-webhook (same manifest, so the same digest) through Sylvode 1.x.
+  publish-webhook-image:
+    needs: build-webhook-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to ghcr.io
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+
+      - name: Create and push the multi-platform tags
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          src="ghcr.io/openprx/sylvode-webhook"
+          docker buildx imagetools create \
+            -t "ghcr.io/openprx/sylvode-webhook:$version" -t ghcr.io/openprx/sylvode-webhook:latest \
+            -t "ghcr.io/openprx/openpr-webhook:$version" -t ghcr.io/openprx/openpr-webhook:latest \
+            "$src:$version-linux-amd64" "$src:$version-linux-arm64"
+          docker buildx imagetools inspect "ghcr.io/openprx/sylvode-webhook:$version"
+          docker buildx imagetools inspect "ghcr.io/openprx/openpr-webhook:$version"
+
   # Publishes only when the version check and every build and package job succeeded; a failed
   # or cancelled leg leaves no release behind.
   release:
-    needs: [verify-version, build, build-frontend]
+    needs: [verify-version, build, build-frontend, publish-webhook-image]
     if: >-
       always()
       && needs.verify-version.result == 'success'
       && needs.build.result == 'success'
       && needs.build-frontend.result == 'success'
+      && needs.publish-webhook-image.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -234,16 +340,26 @@ jobs:
         run: |
           set -euo pipefail
           for file in sylvode-linux-amd64.tar.gz sylvode-linux-arm64.tar.gz sylvode-macos-amd64.tar.gz \
-                      sylvode-macos-arm64.tar.gz sylvode-windows-amd64.zip sylvode-frontend.tar.gz; do
+                      sylvode-macos-arm64.tar.gz sylvode-windows-amd64.zip sylvode-frontend.tar.gz \
+                      sylvode-webhook-linux-amd64.tar.gz sylvode-webhook-linux-arm64.tar.gz \
+                      sylvode-webhook-macos-amd64.tar.gz sylvode-webhook-macos-arm64.tar.gz; do
             test -s "artifacts/$file" || { echo "::error::missing release archive $file"; exit 1; }
             test -s "artifacts/$file.sha256" || { echo "::error::missing checksum $file.sha256"; exit 1; }
           done
           (cd artifacts && sha256sum -c ./*.sha256)
           # Flow collaborative writes need collab-isolated-apply-worker beside api, in every
           # platform archive and its deprecated alias.
-          for archive in artifacts/*-linux-*.tar.gz artifacts/*-macos-*.tar.gz; do
+          for archive in artifacts/sylvode-linux-*.tar.gz artifacts/sylvode-macos-*.tar.gz \
+                         artifacts/openpr-linux-*.tar.gz artifacts/openpr-macos-*.tar.gz; do
             listing="$(tar tzf "$archive")"
             for bin in api collab-isolated-apply-worker; do
+              grep -qx "$bin" <<<"$listing" || { echo "::error::$archive lacks $bin"; exit 1; }
+            done
+          done
+          # The receiver archives carry both executables, canonical and legacy name.
+          for archive in artifacts/sylvode-webhook-*.tar.gz artifacts/openpr-webhook-*.tar.gz; do
+            listing="$(tar tzf "$archive")"
+            for bin in sylvode-webhook openpr-webhook; do
               grep -qx "$bin" <<<"$listing" || { echo "::error::$archive lacks $bin"; exit 1; }
             done
           done
@@ -265,7 +381,8 @@ jobs:
           body: |
             ## Sylvode ${{ env.RELEASE_TAG }}
 
-            Pre-built binaries for Sylvode (API server, Worker, MCP server, native CLI, Frontend).
+            Pre-built binaries for Sylvode (API server, Worker, MCP server, native CLI, Frontend)
+            and the webhook receiver.
 
             ### Downloads
 
@@ -277,11 +394,17 @@ jobs:
             | macOS | Apple Silicon | `sylvode-macos-arm64.tar.gz` |
             | Windows | x86_64 | `sylvode-windows-amd64.zip` |
             | Frontend | Static | `sylvode-frontend.tar.gz` |
+            | Webhook receiver | Linux and macOS, amd64 and arm64 | `sylvode-webhook-<platform>.tar.gz` |
 
             Each archive contains `api`, `collab-isolated-apply-worker`, `worker`,
             legacy-compatible `mcp-server`, and the new `sylvode` CLI, with a `.sha256` file to
             check it (`sha256sum -c`). Keep `collab-isolated-apply-worker` in the same directory
             as `api`: the API spawns it for every Flow collaborative write.
+            Each `sylvode-webhook-<platform>.tar.gz` contains `sylvode-webhook` and the legacy
+            `openpr-webhook`; there is no Windows build of the receiver.
+            The receiver container image is `ghcr.io/openprx/sylvode-webhook:<version>`
+            (the release tag without the `v`; also `latest`), for linux/amd64 and linux/arm64, and under the
+            legacy name `ghcr.io/openprx/openpr-webhook` with the same digest.
             Matching `openpr-*` archive names are published as deprecated aliases with the same
             content; they are not removed before Sylvode v2.0.
 

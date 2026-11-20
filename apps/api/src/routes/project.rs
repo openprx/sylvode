@@ -2327,6 +2327,18 @@ pub async fn update_project(
     }))
 }
 
+/// Removes the project's blocking content, then the project itself, inside the caller's transaction.
+async fn delete_project_row(tx: &sea_orm::DatabaseTransaction, project_id: Uuid) -> Result<(), ApiError> {
+    crate::services::teardown::delete_project_content(tx, project_id).await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "DELETE FROM projects WHERE id = $1",
+        vec![project_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
 /// DELETE /api/v1/projects/:id - Delete project
 pub async fn delete_project(
     State(state): State<AppState>,
@@ -2410,12 +2422,9 @@ pub async fn delete_project(
         },
     )
     .await?;
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "DELETE FROM projects WHERE id = $1",
-        vec![project_id.into()],
-    ))
-    .await?;
+    delete_project_row(&tx, project_id)
+        .await
+        .map_err(|err| crate::services::teardown::refuse_blocked(err, "project"))?;
     tx.commit().await?;
 
     trigger_webhooks(

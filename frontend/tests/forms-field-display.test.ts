@@ -458,4 +458,46 @@ suite.check('rich text: the DOM walker reads parser-built trees the same way', (
 	);
 });
 
+suite.check('link-scheme guard blocks every non-http(s)/mailto scheme, however spelled', () => {
+	const hostile = [
+		'javascript:alert(1)',
+		'  JaVaScRiPt:alert(1)',
+		'java\tscript:alert(1)',
+		'\njavascript:alert(1)',
+		'vbscript:msgbox(1)',
+		'data:text/html;base64,PHNjcmlwdD4=',
+		'file:///etc/passwd',
+		'ftp://example.test/x'
+	];
+	for (const url of hostile) {
+		const files = fieldDisplay(field('doc', 'attachment'), url, ctx);
+		assert(
+			files.kind === 'files' && files.items.every((item) => item.blocked && !item.href),
+			`attachment url blocked: ${JSON.stringify(url)}`
+		);
+		const nested = fieldDisplay(field('doc', 'attachment'), { url }, ctx);
+		assert(
+			nested.kind === 'files' && nested.items.every((item) => item.blocked && !item.href),
+			`attachment object url blocked: ${JSON.stringify(url)}`
+		);
+		const images = fieldDisplay(field('cover', 'image'), [url], ctx);
+		assert(
+			images.kind !== 'images' || images.items.length === 0,
+			`image url blocked: ${JSON.stringify(url)}`
+		);
+	}
+	const ok = fieldDisplay(field('doc', 'attachment'), 'https://cdn.test/a.pdf', ctx);
+	assert(
+		ok.kind === 'files' && ok.items[0].href === 'https://cdn.test/a.pdf' && !ok.items[0].blocked,
+		'https attachment still links'
+	);
+	for (const text of ['javascript:alert(1)//a@b.co', 'a@b.co?cc=x" onmouseover="y']) {
+		const email = fieldDisplay(field('email', 'email'), text, ctx);
+		assert(
+			email.kind !== 'link' || email.href.startsWith('mailto:'),
+			`email never yields a non-mailto link: ${JSON.stringify(text)}`
+		);
+	}
+});
+
 finish(suite.result());

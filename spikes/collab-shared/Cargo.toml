@@ -29,6 +29,8 @@ path = "src/bin/isolation_calibrate.rs"
 [dev-dependencies]
 collab-loro-spike = { path = "../collab-loro" }
 collab-yrs-yjs-spike = { path = "../collab-yrs-yjs" }
+# Serialises the allocator-counter tests; already in the workspace lockfile.
+parking_lot = "0.12"
 
 # Declared as `[[example]]`, not `[[test]]`: a plain `cargo test` (this crate's normal regression
 # check) builds an `[[example]]` target but never *executes* it, whereas a `[[test]]` target -- even

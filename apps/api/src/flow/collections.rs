@@ -480,9 +480,13 @@ pub(crate) fn embed_position_after(
     after_block_id: &str,
 ) -> Result<(Option<NodeId>, u32), ApiError> {
     let engine = engine_at_head(boot)?;
-    let canonical = engine.resolve_content_node_id(&NodeId::from(after_block_id));
+    let canonical = engine
+        .resolve_content_node_id(&NodeId::from(after_block_id))
+        .map_err(|_| ApiError::internal())?;
     let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
-    if engine.has_editor_alias(after_block_id)
+    if engine
+        .has_editor_alias(after_block_id)
+        .map_err(|_| ApiError::internal())?
         || semantic.nodes.get(&canonical).is_some_and(|node| {
             node.properties
                 .get("content_source")
@@ -1275,6 +1279,10 @@ async fn execute_document_update(
                 &request,
                 &prepared,
                 crate::config::runtime().flow.dispatch_max_attempts,
+                crate::flow::block_registry::RegistrationAllowance::within(
+                    std::time::Instant::now(),
+                    write::LOCKED_PHASE_STAGING_BUDGET,
+                ),
             )
             .await?
             {
@@ -2992,6 +3000,10 @@ async fn create_collection_embed(
             &request,
             &prepared,
             crate::config::runtime().flow.dispatch_max_attempts,
+            crate::flow::block_registry::RegistrationAllowance::within(
+                std::time::Instant::now(),
+                write::LOCKED_PHASE_STAGING_BUDGET,
+            ),
         )
         .await?;
         let write::StagedOutcome::Ready(staged) = staged else {

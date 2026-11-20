@@ -98,6 +98,9 @@ pub async fn create_comment(
     let mut proofs = vec![actor.clone()];
     proofs.extend(recipients.clone());
     let identity = scope::identity(db, object).await?;
+    if input.block_id.is_some() {
+        super::block_anchors::complete_registration(db, object).await?;
+    }
     let anchor_context =
         super::block_anchors::prepare(db, object, input.block_id.is_some(), input.parent_id.is_some()).await?;
     let operation = key(idempotency, "comment_create");

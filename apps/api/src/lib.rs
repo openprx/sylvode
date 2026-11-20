@@ -9,5 +9,6 @@ pub mod outbound;
 pub mod plugins;
 pub mod response;
 pub mod routes;
+pub mod security;
 pub mod services;
 pub mod webhook_trigger;
