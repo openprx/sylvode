@@ -10,6 +10,15 @@ name.
 
 ## [Unreleased]
 
+### Added
+
+- **OAuth authorization server, foundations.** Schema for an OAuth 2.1 authorization server (clients,
+  grants, tokens, audit, rate windows, an event outbox fed by triggers on notifications and AI
+  tasks) with the Ramflux client pre-registered, the shared token, scope, error, validation,
+  revocation, audit and rate-limit primitives, and the RFC 8414 / RFC 9728 discovery documents.
+  The feature is off until `[oauth] issuer` is configured; see
+  `docs/runbooks/oauth-authorization-server.md`.
+
 ### Fixed
 
 - **Flow: large Pages stay writable on slower databases.** Every statement of the block registry
