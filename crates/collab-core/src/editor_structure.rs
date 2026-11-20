@@ -25,32 +25,49 @@ fn value(map: &LoroMap, key: &str) -> Option<String> {
 /// frontier and the semantic hash do not change). So the typed getter is only called once the
 /// root is known to exist:
 ///
-/// 1. `LoroDoc::get_value` lists the registered roots by name (the shallow value, O(roots)). A name
-///    that is absent has no root of any type: `None`.
-/// 2. The listed root is of type `kind`: it exists, and the typed getter finds it registered.
-/// 3. The listed root is of another type. The shallow value shows one root per name, so a root of
+/// 1. `LoroDoc::get_by_path` with the single key `name` finds the registered root of that name
+///    (the root the library prefers when several share it) without touching any other root. A
+///    name that is absent has no root of any type: `None`. `LoroDoc::get_value` must not be used
+///    for this: it values every root, so its cost grows with the whole document (the editor tree
+///    of a 5,000-block page costs milliseconds per call), and this read runs several times per
+///    write inside the isolated worker's CPU window.
+/// 2. The found root is of type `kind`: it exists, and the typed getter finds it registered.
+/// 3. The found root is of another type. The path lookup shows one root per name, so a root of
 ///    `kind` may still exist beside it; the document is a fork-and-compare away from knowing
 ///    (O(document), only for a document that has a same-named root of another type): the typed
 ///    getter runs on a fork, and the root exists exactly when that did not change the fork's
 ///    snapshot.
 ///
-/// The typed id is what makes the read exact. `LoroDoc::get_by_str_path` must not be used for
-/// roots: it picks among all roots with that name, of any type, so a second root of another type
-/// could make two readers of one document disagree.
+/// The typed id is what makes the read exact. The path lookup alone must not be used to read a
+/// root: it picks among all roots with that name, of any type, so a second root of another type
+/// could make two readers of one document disagree. It is only the existence probe of step 1.
+///
+/// The first lookup on a document loaded from a snapshot lists the keys of the store once
+/// (O(containers), the library's lazy root scan); the lookups after it cost the named root only.
 ///
 /// # Errors
 /// `editor_root_probe_failed` when the fork-and-compare of step 3 cannot export the document. The
 /// root is then neither present nor absent as far as this read knows; the caller must not assume
 /// absence.
 pub(crate) fn root_container(doc: &LoroDoc, name: &str, kind: ContainerType) -> Result<Option<Container>, CollabError> {
-    let LoroValue::Map(roots) = doc.get_value() else {
-        return Ok(None);
-    };
+    #[cfg(test)]
+    let allocated_before = crate::test_alloc::allocated_bytes();
+    let found = probe_root(doc, name, kind);
+    #[cfg(test)]
+    crate::walk_counter::record_root_probe(
+        name,
+        crate::test_alloc::allocated_bytes().saturating_sub(allocated_before),
+    );
+    found
+}
+fn probe_root(doc: &LoroDoc, name: &str, kind: ContainerType) -> Result<Option<Container>, CollabError> {
     let id = ContainerID::new_root(name, kind);
-    match roots.get(name) {
+    match doc.get_by_path(&[loro::Index::Key(name.into())]) {
         None => return Ok(None),
-        Some(LoroValue::Container(ContainerID::Root { container_type, .. })) if *container_type == kind => {}
+        Some(ValueOrContainer::Container(found)) if found.get_type() == kind => {}
         Some(_) => {
+            #[cfg(test)]
+            crate::walk_counter::record_root_fork();
             let probe = |error: loro::LoroEncodeError| invalid(&format!("editor_root_probe_failed: {error}"));
             let fork = doc.fork();
             let before = fork.export(loro::ExportMode::Snapshot).map_err(probe)?;
