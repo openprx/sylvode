@@ -81,7 +81,14 @@
 				<Button variant="secondary" data-autofocus onclick={() => answer(false)}>
 					{cancelLabel}
 				</Button>
-				<Button variant="primary" onclick={() => answer(true)}>{confirmLabel}</Button>
+				<Button
+					variant="primary"
+					title={confirmLabel}
+					aria-label={confirmLabel}
+					onclick={() => answer(true)}
+				>
+					<span class="confirm-label">{confirmLabel}</span>
+				</Button>
 			{/snippet}
 		</Dialog>
 	{:else}
@@ -98,3 +105,13 @@
 		</DestructiveDialog>
 	{/if}
 {/if}
+
+<style>
+	.confirm-label {
+		display: block;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+</style>

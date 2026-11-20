@@ -42,8 +42,27 @@
 		<Button variant="secondary" data-autofocus onclick={() => onclose()}>
 			{cancelLabel ?? $t('ui.dialog.cancel')}
 		</Button>
-		<Button variant="danger" loading={busy} loadingLabel={busyLabel} onclick={() => onconfirm()}>
-			{confirmLabel}
+		<Button
+			variant="danger"
+			loading={busy}
+			loadingLabel={busyLabel}
+			title={confirmLabel}
+			aria-label={busy ? undefined : confirmLabel}
+			onclick={() => onconfirm()}
+		>
+			<span class="confirm-label">{confirmLabel}</span>
 		</Button>
 	{/snippet}
 </Dialog>
+
+<style>
+	/* A long label (an address, a template name) is cut with an ellipsis; the full text stays the
+	   accessible name and the title. */
+	.confirm-label {
+		display: block;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+</style>
