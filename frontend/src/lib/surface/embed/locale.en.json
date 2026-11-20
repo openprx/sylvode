@@ -1,0 +1,33 @@
+{
+	"surface": {
+		"embed": {
+			"invalidLink": "This embedded address is not valid.",
+			"harness": {
+				"title": "Embed harness",
+				"intro": "Hosts one surface in frames of 340, 480, 600 pixels and the full width, the way another application would.",
+				"missing": "Open this page with surface=record and the w, p and r parameters of an existing record.",
+				"theme": "Theme",
+				"themeLight": "Light",
+				"themeDark": "Dark",
+				"density": "Density",
+				"densityComfortable": "Comfortable",
+				"densityCompact": "Compact",
+				"frameFull": "Full width",
+				"frameWidth": "{width} px frame",
+				"widthLabel": "Frame width in pixels",
+				"hostTitle": "Host title",
+				"hostOrigin": "Origin",
+				"hostContext": "Context",
+				"hostActions": "Actions",
+				"hostNoActions": "No actions yet",
+				"hostTip": "Tip",
+				"hostClosed": "Close requested by the frame",
+				"hostOpened": "Open requested",
+				"hostDirty": "Unsaved input",
+				"widthClass": "Width class",
+				"logTitle": "Messages received from frames",
+				"logEmpty": "Nothing received yet."
+			}
+		}
+	}
+}
