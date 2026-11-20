@@ -131,15 +131,15 @@
 	}
 
 	const toolButton =
-		'inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800';
+		'inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] px-2 text-sm text-fg hover:bg-surface';
 	const control =
-		'h-8 rounded-md border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-slate-800';
+		'h-8 rounded-control border border-input bg-field px-2 text-sm';
 </script>
 
 <button
 	type="button"
 	bind:this={filterButton}
-	class="{toolButton} {activeFilters.length > 0 ? 'text-blue-700 dark:text-blue-300' : ''}"
+	class="{toolButton} {activeFilters.length > 0 ? 'text-fg' : ''}"
 	aria-haspopup="dialog"
 	aria-expanded={open === 'filter'}
 	data-view-filter-button={activeFilters.length}
@@ -153,7 +153,7 @@
 <button
 	type="button"
 	bind:this={sortButton}
-	class="{toolButton} {sort ? 'text-blue-700 dark:text-blue-300' : ''}"
+	class="{toolButton} {sort ? 'text-fg' : ''}"
 	aria-haspopup="dialog"
 	aria-expanded={open === 'sort'}
 	data-view-sort-button={sort ? `${sort.field}:${sort.direction}` : ''}
@@ -204,9 +204,9 @@
 							type="button"
 							role="radio"
 							aria-checked={filterLogic === value}
-							class="h-7 rounded-md px-2 text-xs font-medium {filterLogic === value
-								? 'bg-blue-600 text-white'
-								: 'bg-slate-100 text-fg dark:bg-slate-800'}"
+							class="h-7 rounded-control px-2 text-xs font-medium {filterLogic === value
+								? 'bg-primary text-on-primary'
+								: 'bg-surface text-fg'}"
 							onclick={() => onfilters(filters, value as 'all' | 'any')}>{label}</button
 						>
 					{/each}
@@ -249,7 +249,7 @@
 					{/if}
 					<button
 						type="button"
-						class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+						class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface"
 						aria-label={$t('forms.views.removeCondition')}
 						onclick={() => removeFilter(index)}><X class="h-4 w-4" aria-hidden="true" /></button
 					>
@@ -257,7 +257,7 @@
 			{/each}
 			<button
 				type="button"
-				class="inline-flex h-8 items-center gap-1 rounded-md px-2 text-sm text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+				class="inline-flex h-8 items-center gap-1 rounded-control px-2 text-sm text-fg hover:bg-surface disabled:text-control"
 				disabled={fields.length === 0}
 				data-view-filter-add
 				onclick={addFilter}
@@ -267,7 +267,7 @@
 		<div class="border-t border-line pt-2">
 			<button
 				type="button"
-				class="h-8 rounded-md px-2 text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+				class="h-8 rounded-control px-2 text-sm text-fg hover:bg-surface"
 				data-view-filter-advanced
 				onclick={() => {
 					open = null;
@@ -313,10 +313,10 @@
 					role="radio"
 					aria-checked={sort?.direction === value}
 					disabled={!sort}
-					class="h-8 flex-1 rounded-md px-2 text-sm font-medium disabled:opacity-50 {sort?.direction ===
+					class="h-8 flex-1 rounded-control px-2 text-sm font-medium disabled:text-control {sort?.direction ===
 					value
-						? 'bg-blue-600 text-white'
-						: 'bg-slate-100 text-fg dark:bg-slate-800'}"
+						? 'bg-primary text-on-primary'
+						: 'bg-surface text-fg'}"
 					data-view-sort-direction={value}
 					onclick={() => sort && onsort({ field: sort.field, direction: value as 'asc' | 'desc' })}
 					>{label}</button
@@ -326,7 +326,7 @@
 		{#if sort}
 			<button
 				type="button"
-				class="h-8 rounded-md px-2 text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+				class="h-8 rounded-control px-2 text-sm text-fg hover:bg-surface"
 				onclick={() => onsort(null)}>{$t('forms.views.clear')}</button
 			>
 		{/if}
@@ -345,7 +345,7 @@
 		<div class="flex gap-1 pb-1">
 			<button
 				type="button"
-				class="h-7 rounded-md px-2 text-xs text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+				class="h-7 rounded-control px-2 text-xs text-fg hover:bg-surface"
 				onclick={() => oncolumns(orderedColumns.filter((key) => !hiddenByPermission.has(key)))}
 				>{$t('forms.views.showAll')}</button
 			>
@@ -356,12 +356,12 @@
 				{#if field}
 					{@const blocked = hiddenByPermission.has(key)}
 					<li
-						class="flex min-h-8 items-center gap-2 rounded-md px-1 hover:bg-slate-50 dark:hover:bg-slate-800/60"
+						class="flex min-h-8 items-center gap-2 rounded-[var(--radius-sm)] px-1 hover:bg-surface"
 					>
 						<input
 							type="checkbox"
 							id={`view-column-${key}`}
-							class="h-4 w-4 rounded border-slate-300"
+							class="h-4 w-4 rounded-control border-input"
 							checked={columns.includes(key)}
 							disabled={blocked || (columns.length === 1 && columns.includes(key))}
 							onchange={(event) => setColumn(key, event.currentTarget.checked)}
@@ -371,14 +371,14 @@
 						<label for={`view-column-${key}`} class="min-w-0 flex-1 truncate text-sm">
 							{fieldLabel(field)}
 							{#if blocked}
-								<span class="block text-xs text-slate-500"
+								<span class="block text-xs text-fg-muted"
 									>{$t('forms.views.hiddenByPermission')}</span
 								>
 							{/if}
 						</label>
 						<button
 							type="button"
-							class="inline-flex h-6 w-6 items-center justify-center rounded text-slate-500 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+							class="inline-flex h-6 w-6 items-center justify-center rounded-control text-fg-muted hover:bg-surface disabled:text-control"
 							aria-label={$t('forms.views.moveUp', { values: { field: fieldLabel(field) } })}
 							disabled={index === 0 || !columns.includes(key)}
 							onclick={() => moveColumn(key, -1)}
@@ -386,7 +386,7 @@
 						>
 						<button
 							type="button"
-							class="inline-flex h-6 w-6 items-center justify-center rounded text-slate-500 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"
+							class="inline-flex h-6 w-6 items-center justify-center rounded-control text-fg-muted hover:bg-surface disabled:text-control"
 							aria-label={$t('forms.views.moveDown', { values: { field: fieldLabel(field) } })}
 							disabled={index === orderedColumns.length - 1 || !columns.includes(key)}
 							onclick={() => moveColumn(key, 1)}

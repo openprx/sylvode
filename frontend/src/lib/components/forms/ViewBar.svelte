@@ -95,7 +95,7 @@
 		ondelete={props.ondelete}
 	/>
 	<span
-		class="mx-1 hidden h-5 w-px bg-slate-200 sm:inline-block dark:bg-slate-700"
+		class="mx-1 hidden h-5 w-px bg-line sm:inline-block"
 		aria-hidden="true"
 	></span>
 	<ViewArrangementControls
@@ -117,13 +117,13 @@
 		<span
 			class="inline-flex items-center gap-1.5 text-xs font-medium text-warning"
 			data-view-modified
-			><span class="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true"></span>{$t(
+			><span class="h-1.5 w-1.5 rounded-full bg-warning" aria-hidden="true"></span>{$t(
 				'forms.views.modified'
 			)}</span
 		>
 		<button
 			type="button"
-			class="h-8 rounded-md px-2 text-sm text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+			class="h-8 rounded-control px-2 text-sm text-fg hover:bg-surface"
 			data-view-reset
 			onclick={props.onreset}>{$t('forms.views.reset')}</button
 		>
@@ -131,7 +131,7 @@
 		<span class="text-xs text-fg-muted">{$t('forms.views.resetDone')}</span>
 		<button
 			type="button"
-			class="h-8 rounded-md px-2 text-sm font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+			class="h-8 rounded-control px-2 text-sm font-medium text-fg hover:bg-surface"
 			data-view-undo-reset
 			onclick={props.onundo}>{$t('forms.views.undo')}</button
 		>
@@ -140,9 +140,9 @@
 		<button
 			type="button"
 			bind:this={saveButton}
-			class="h-8 rounded-md px-3 text-sm font-medium {props.modified
-				? 'bg-blue-600 text-white hover:bg-blue-700'
-				: 'border border-slate-300 text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800'}"
+			class="h-8 rounded-control px-3 text-sm font-medium {props.modified
+				? 'bg-primary text-on-primary'
+				: 'border border-input text-fg hover:bg-surface'}"
 			aria-haspopup="dialog"
 			aria-expanded={props.saveOpen}
 			data-view-save-as
@@ -163,7 +163,7 @@
 </div>
 {#if props.conflict}
 	<div
-		class="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+		class="flex flex-wrap items-center gap-2 border-b border-line bg-warning-soft px-4 py-2 text-sm text-warning"
 		role="alert"
 		data-view-conflict
 	>
@@ -180,7 +180,7 @@
 {/if}
 {#if props.partialNotice}
 	<p
-		class="border-b border-line bg-slate-50 px-4 py-1.5 text-xs text-fg-muted dark:bg-slate-800/50"
+		class="border-b border-line bg-surface px-4 py-1.5 text-xs text-fg-muted"
 		data-view-partial-filter
 	>
 		{props.partialNotice}

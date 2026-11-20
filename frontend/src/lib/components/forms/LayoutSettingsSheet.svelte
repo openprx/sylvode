@@ -44,7 +44,7 @@
 	<!-- Esc from any control inside the sheet closes it; the handler only listens. -->
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<aside
-		class="layout-sheet fixed end-4 top-4 bottom-4 z-40 flex w-[min(560px,calc(100vw-2rem))] flex-col rounded-lg border border-line bg-white shadow-xl dark:bg-slate-900 dark:ring-1 dark:ring-slate-700"
+		class="layout-sheet fixed end-4 top-4 bottom-4 z-40 flex w-[min(560px,calc(100vw-2rem))] flex-col rounded-float border border-overlay-line bg-overlay shadow-overlay"
 		aria-labelledby="layout-settings-title"
 		data-layout-settings-sheet
 		onkeydown={onKeydown}
@@ -62,7 +62,7 @@
 			</h2>
 			<button
 				type="button"
-				class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+				class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface"
 				aria-label={$t('common.close')}
 				onclick={onclose}><X class="h-4 w-4" aria-hidden="true" /></button
 			>
@@ -76,7 +76,7 @@
 			<p class="text-xs text-fg-muted">{$t('forms.views.layoutHint')}</p>
 			<button
 				type="button"
-				class="h-8 rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700"
+				class="h-8 rounded-control bg-primary px-3 text-sm font-medium text-on-primary"
 				data-layout-settings-done
 				onclick={onclose}>{$t('forms.views.done')}</button
 			>
