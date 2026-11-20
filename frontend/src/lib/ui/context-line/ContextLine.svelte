@@ -133,7 +133,7 @@
 			<ol class="list">
 				{#each segments as segment, index (segment.id)}
 					{#if index === 1 && hidden.length > 0}
-						<li class="entry collapse">
+						<li class="entry more-entry">
 							<button
 								bind:this={menuAnchor}
 								type="button"
@@ -171,7 +171,7 @@
 			<li class="entry">{@render item(segment)}</li>
 		{/each}
 		<li class="entry current"><span class="text">{current}</span></li>
-		<li class="entry collapse">
+		<li class="entry more-entry">
 			<span class="more"><Ellipsis size={14} aria-hidden="true" /></span>
 		</li>
 	</ol>
@@ -237,7 +237,7 @@
 		padding: 0 var(--rf-space-2);
 		color: var(--rf-secondary);
 	}
-	.entry:not(.current):not(.collapse) {
+	.entry:not(.current):not(.more-entry) {
 		min-width: 48px;
 	}
 	.link,

@@ -73,7 +73,8 @@
 		position: relative;
 		display: flex;
 		height: 360px;
-		border: var(--rf-border-width) solid var(--rf-line);
+		outline: var(--rf-border-width) solid var(--rf-line);
+		outline-offset: -1px;
 		background: var(--rf-bg);
 	}
 	.list {
