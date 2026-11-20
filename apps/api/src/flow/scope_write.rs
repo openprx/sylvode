@@ -137,9 +137,7 @@ async fn accept_inner(
             return Ok(AcceptOutcome::Accepted(prior.accepted(update)));
         }
         let prepared =
-            match write::hydrate_and_apply(db, &runtime::runtime().cache, document, update, &bytes, expected, None)
-                .await?
-            {
+            match write::hydrate_and_apply(db, &runtime::runtime().cache, document, update, &bytes, expected).await? {
                 HydrateOutcome::Prepared(p) => p,
                 HydrateOutcome::Rejected(result) => return Ok(result),
             };

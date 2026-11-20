@@ -57,16 +57,7 @@ pub fn ascending_document_lock_order(document_ids: &[Uuid]) -> Vec<Uuid> {
 /// waiting on it (checked opportunistically on the next acquire, not eagerly on release, since an
 /// eager sweep would need the registry lock held at drop time from a context that cannot await).
 pub struct DocumentPermit {
-    document_id: Uuid,
     _permit: OwnedSemaphorePermit,
-}
-
-impl DocumentPermit {
-    /// The document this permit admits.
-    #[must_use]
-    pub const fn document_id(&self) -> Uuid {
-        self.document_id
-    }
 }
 
 impl DocumentCoordinator {
@@ -132,10 +123,7 @@ impl DocumentCoordinator {
         let semaphore = self.semaphore_for(document_id);
         let acquire = semaphore.acquire_owned();
         match tokio::time::timeout(Duration::from_millis(COORDINATOR_ACQUIRE_TIMEOUT_MS), acquire).await {
-            Ok(Ok(permit)) => Ok(DocumentPermit {
-                document_id,
-                _permit: permit,
-            }),
+            Ok(Ok(permit)) => Ok(DocumentPermit { _permit: permit }),
             Ok(Err(_closed)) => Err(ApiError::server_draining(
                 ServerDrainingReason::Drain,
                 COORDINATOR_CLOSED_RETRY_AFTER_MS,

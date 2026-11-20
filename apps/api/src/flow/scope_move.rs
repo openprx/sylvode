@@ -358,7 +358,6 @@ pub async fn execute(
                 update,
                 bytes,
                 expected.as_deref(),
-                None,
             )
             .await?
             {

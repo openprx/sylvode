@@ -52,11 +52,15 @@ pub struct CacheEntry {
     last_used: Instant,
 }
 
-/// The head a caller observed in the database (under its coordinator permit) and wants a cache
-/// entry for. An entry is served only when **all three** parts equal the entry's own: a stale
-/// `head_seq`, a different frontier (a rewritten or re-created document that happens to reuse a
-/// sequence number) or a different format version is a miss, and the caller loads from the
-/// database instead.
+/// The head a caller has just read from the database and wants a cache entry for. An entry is
+/// served only when **all three** parts equal the entry's own: a stale `head_seq`, a different
+/// frontier (a rewritten or re-created document that happens to reuse a sequence number) or a
+/// different format version is a miss, and the caller loads from the database instead.
+///
+/// The frontier is compared bytewise, not as a decoded version vector (`flow::frontier` is for
+/// checks between two independently produced frontiers). Both sides of this comparison are copies
+/// of bytes the database stored or the write path just wrote, so bytewise equality is the exact
+/// test, and a spelling difference of one version could only ever cost a miss, never a false hit.
 #[derive(Debug, Clone, Copy)]
 pub struct HeadKey<'a> {
     pub head_seq: i64,
@@ -112,6 +116,9 @@ pub enum PutOutcome {
     /// document just too large to cache always still bootstraps from the database on the next
     /// write.
     TooLargeToCache,
+    /// [`WarmCache::seed_with_base`] found an entry for the document that is already ahead of the
+    /// head being seeded, and left it in place.
+    Superseded,
 }
 
 impl WarmCache {
@@ -263,6 +270,58 @@ impl WarmCache {
         decoded_bytes: u64,
         base_bytes: Option<Arc<Vec<u8>>>,
     ) -> PutOutcome {
+        self.insert(
+            document_id,
+            engine,
+            format_version,
+            prepared_head_seq,
+            prepared_head_frontier,
+            decoded_bytes,
+            base_bytes,
+            false,
+        )
+    }
+
+    /// [`Self::put_with_base`] for state that was *loaded* from the database at a head some time
+    /// ago, not committed just now: it never replaces an entry whose head sequence is higher
+    /// (that entry was cached by a later commit, and a stale load must not undo it). An entry at
+    /// the same or a lower sequence is replaced, so a rewritten history at a reused sequence still
+    /// heals.
+    #[allow(clippy::too_many_arguments)]
+    pub fn seed_with_base(
+        &self,
+        document_id: Uuid,
+        engine: LoroCollabEngine,
+        format_version: String,
+        prepared_head_seq: i64,
+        prepared_head_frontier: Vec<u8>,
+        decoded_bytes: u64,
+        base_bytes: Option<Arc<Vec<u8>>>,
+    ) -> PutOutcome {
+        self.insert(
+            document_id,
+            engine,
+            format_version,
+            prepared_head_seq,
+            prepared_head_frontier,
+            decoded_bytes,
+            base_bytes,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert(
+        &self,
+        document_id: Uuid,
+        engine: LoroCollabEngine,
+        format_version: String,
+        prepared_head_seq: i64,
+        prepared_head_frontier: Vec<u8>,
+        decoded_bytes: u64,
+        base_bytes: Option<Arc<Vec<u8>>>,
+        keep_newer: bool,
+    ) -> PutOutcome {
         if decoded_bytes > WARM_CACHE_ENTRY_DECODED_BYTES_MAX {
             return PutOutcome::TooLargeToCache;
         }
@@ -276,6 +335,14 @@ impl WarmCache {
         let mut registry = self.inner.lock();
         evict_stale(&mut registry);
 
+        if keep_newer
+            && registry
+                .entries
+                .get(&document_id)
+                .is_some_and(|old| old.prepared_head_seq > prepared_head_seq)
+        {
+            return PutOutcome::Superseded;
+        }
         if let Some(old) = registry.entries.remove(&document_id) {
             registry.total_bytes = registry.total_bytes.saturating_sub(old.decoded_bytes);
         }
@@ -654,6 +721,48 @@ mod tests {
                 .base_bytes
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_seed_never_replaces_an_entry_that_is_ahead_of_it() {
+        let cache = WarmCache::new();
+        let id = Uuid::new_v4();
+        cache.put_with_base(
+            id,
+            engine(),
+            "loro-1".into(),
+            7,
+            vec![7],
+            100,
+            Some(Arc::new(vec![1; 10])),
+        );
+
+        let stale = cache.seed_with_base(
+            id,
+            engine(),
+            "loro-1".into(),
+            6,
+            vec![6],
+            100,
+            Some(Arc::new(vec![2; 10])),
+        );
+        assert_eq!(stale, PutOutcome::Superseded);
+        assert_eq!(
+            cache.total_bytes(),
+            110,
+            "the newer entry and its accounting are untouched"
+        );
+        let kept = cache.checkout(id, &key(7, &[7], "loro-1"), false).unwrap().unwrap();
+        assert_eq!(kept.base_bytes.as_deref().map(Vec::as_slice), Some(&[1u8; 10][..]));
+
+        // The same sequence with another frontier (a restored history) and a newer sequence both
+        // replace the entry.
+        let same = cache.seed_with_base(id, engine(), "loro-1".into(), 7, vec![8], 100, None);
+        assert_eq!(same, PutOutcome::Cached);
+        assert!(cache.checkout(id, &key(7, &[8], "loro-1"), false).unwrap().is_some());
+        let newer = cache.seed_with_base(id, engine(), "loro-1".into(), 9, vec![9], 100, None);
+        assert_eq!(newer, PutOutcome::Cached);
+        assert!(cache.checkout(id, &key(9, &[9], "loro-1"), false).unwrap().is_some());
     }
 
     #[test]

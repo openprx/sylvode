@@ -2197,9 +2197,10 @@ async fn replay_content_command(
     Ok(Some(accepted_change_from_row(view, existing.id)))
 }
 
-/// Builds the CRDT update bytes for one content command (isolated fork, outside any lock — matches
-/// `write::hydrate_and_apply`'s own discipline for exactly this reason: neither path may hold a
-/// lock across a CRDT apply), then submits them through [`write::accept_update`] — the identical
+/// Builds the CRDT update bytes for one content command on a private fork of the document's warm
+/// cache entry (or of a database load on a miss), outside any lock and without the coordinator
+/// permit — matches `write::hydrate_and_apply`'s own discipline for exactly this reason: neither
+/// path may hold a lock across a CRDT apply — then submits them through [`write::accept_update`] — the identical
 /// function `flow::collab::session::handle_client_frame` calls for a WebSocket `update` frame.
 /// `accept_update` itself broadcasts the resulting `update`+`accepted` frame pair to this
 /// document's WebSocket sessions (`collab-protocol-v1.md`: "复用 ADR-0010 的 ordered egress /
@@ -2246,18 +2247,14 @@ async fn execute_content_command(
     // `write::replay_stable_update_id`.
     let update_id = write::replay_stable_update_id(document_id, &input.idempotency_key);
 
-    // The document's coordinator permit is taken *before* the base is read and held until the
-    // write has been accepted: the update is built on exactly the head the database reports under
-    // this permit, and `accept_update_held` applies it to that same head. The base comes from the
-    // warm cache when its entry has exactly the observed head (sequence, frontier, format), else
-    // from the database; it is then handed to the accept path, so the document is loaded and
-    // exported once per write instead of once to build and again to apply.
-    let permit = match write::acquire_document_permit(&collab.coordinator, document_id, update_id).await {
-        Ok(permit) => permit,
-        Err(write::AcceptOutcome::Rejected(rejected)) => return Err(map_write_rejection(&rejected)),
-        Err(write::AcceptOutcome::Accepted(_)) => return Err(ApiError::internal()),
-    };
-    let (write_base, mut engine) = match write::prepare_write_base(
+    // The build runs outside any lock and without the document's coordinator permit, exactly as
+    // before the warm cache existed: concurrent REST writers of one page build in parallel and the
+    // CRDT merges their updates; only the accept below is serialised per document. The base is a
+    // private fork of the warm cache entry when its entry has exactly the head the database
+    // reports (sequence, frontier, format), else it is loaded from the database and seeds the
+    // cache.
+    let build_base_step = write::WriteStep::start("rest_build_base");
+    let mut engine = match write::prepare_build_engine(
         &state.db,
         &collab.cache,
         document_id,
@@ -2266,16 +2263,12 @@ async fn execute_content_command(
     )
     .await?
     {
-        write::BaseOutcome::Ready {
-            base,
-            engine: Some(engine),
-        } => (base, engine),
-        write::BaseOutcome::Rejected(write::AcceptOutcome::Rejected(rejected)) => {
-            return Err(map_write_rejection(&rejected));
-        }
-        write::BaseOutcome::Ready { engine: None, .. }
-        | write::BaseOutcome::Rejected(write::AcceptOutcome::Accepted(_)) => return Err(ApiError::internal()),
+        Ok(engine) => engine,
+        Err(write::AcceptOutcome::Rejected(rejected)) => return Err(map_write_rejection(&rejected)),
+        Err(write::AcceptOutcome::Accepted(_)) => return Err(ApiError::internal()),
     };
+    build_base_step.finish();
+    let build_apply_step = write::WriteStep::start("rest_apply_command");
     let base_frontier = engine.frontier();
     if is_page && kind != ContentCommandType::SetTitle {
         engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
@@ -2283,7 +2276,7 @@ async fn execute_content_command(
     if let Err(err) = apply_content_command(&mut engine, kind, &normalized_payload) {
         // The concurrent same-key double submit `rest-api-v1.md` registers as a known residual
         // window: this request's `find_idempotent_event` guard (in `execute_command_authorized`)
-        // ran *before* the other request committed and so missed, while the `bootstrap::load`
+        // ran *before* the other request committed and so missed, while the base read
         // above ran *after* it and already sees that request's effect — so `insert_block` fails
         // `DuplicateNode` here, before `update_id` deduplication in `write::accept_update` is ever
         // reached, and the caller is told `invalid_update` for a command that in fact succeeded.
@@ -2309,17 +2302,21 @@ async fn execute_content_command(
         }
         return Err(err);
     }
+    build_apply_step.finish();
+    let export_update_step = write::WriteStep::start("rest_export_update");
     let update_bytes = engine
         .export_from(&base_frontier)
         .map_err(|err| map_collab_error(&err))?;
+    export_update_step.finish();
 
-    let outcome = write::accept_update_held(
+    let outcome = write::accept_update(
         &state.db,
         &collab.cache,
-        &permit,
+        &collab.coordinator,
         &collab.registry,
         &collab.snapshot,
         crate::config::runtime().flow.dispatch_max_attempts,
+        None,
         write::UpdateRequest {
             document_id,
             update_id,
@@ -2346,12 +2343,8 @@ async fn execute_content_command(
             // `collab_updates.origin_surface` as a WebSocket write.
             origin: input.origin.clone(),
         },
-        write_base,
     )
     .await?;
-    // Committed or refused: the response below is built from the stored projection and needs no
-    // document lock.
-    drop(permit);
 
     let accepted = match outcome {
         write::AcceptOutcome::Accepted(accepted) => accepted,
@@ -5513,7 +5506,7 @@ mod idempotency_race_database_tests {
 
     /// `rest-api-v1.md`'s registered residual window, reproduced deterministically: a content
     /// command whose replay guard missed (here: bypassed, which is exactly what a guard read
-    /// before the winner's COMMIT observes) but whose `bootstrap::load` already sees the winner's
+    /// before the winner's COMMIT observes) but whose base read already sees the winner's
     /// committed block. `apply_content_command` then fails `DuplicateNode` before `update_id`
     /// deduplication is ever reached.
     ///
