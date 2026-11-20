@@ -17056,7 +17056,7 @@
 
 										<section
 											bind:this={recordEditorPanel}
-											class="relative z-10 flex h-full w-full max-w-3xl flex-col overflow-y-auto bg-overlay p-4 shadow-xl"
+											class="relative z-10 flex h-full w-full max-w-3xl flex-col overflow-y-auto bg-overlay p-4 shadow-sheet"
 										>
 											<div class="mb-3 flex items-center justify-between gap-3">
 												<div>
@@ -19797,7 +19797,7 @@
 															>
 
 															<div
-																class="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-float border border-line bg-overlay py-1 text-sm shadow-lg"
+																class="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-float border border-line bg-overlay py-1 text-sm shadow-overlay"
 															>
 																<button
 																	type="button"
@@ -20297,7 +20297,7 @@
 																			>
 
 																			<div
-																				class="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-float border border-line bg-overlay py-1 text-sm shadow-lg"
+																				class="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-float border border-line bg-overlay py-1 text-sm shadow-overlay"
 																			>
 																				<button
 																					type="button"
