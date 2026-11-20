@@ -62,7 +62,7 @@ fn project_blocks(
         }
     }
     // The document does not change while projecting: read the structure model once.
-    let structure_model = (!legacy && !blocks.is_empty() && crate::editor_structure::ready(doc)).then(|| {
+    let structure_model = (!legacy && !blocks.is_empty() && crate::editor_structure::ready(doc)?).then(|| {
         match doc.get_map(crate::editor_structure::META).get("model") {
             Some(loro::ValueOrContainer::Value(loro::LoroValue::String(value))) => value.to_string(),
             _ => "rich_page_v4".into(),

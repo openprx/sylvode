@@ -1,12 +1,11 @@
 //! Native tree placement index over immutable physical editor block containers.
 use crate::CollabError;
+pub use crate::reserved_roots::{META, TREE};
 use loro::{
     Container, ContainerID, ContainerTrait, ContainerType, LoroDoc, LoroMap, LoroTree, LoroValue, TreeID, TreeParentId,
     ValueOrContainer,
 };
 use std::collections::BTreeSet;
-pub const TREE: &str = "flow_editor_structure";
-pub const META: &str = "flow_editor_structure_meta";
 fn invalid(reason: &str) -> CollabError {
     CollabError::OperationFailed { reason: reason.into() }
 }
@@ -38,34 +37,51 @@ fn value(map: &LoroMap, key: &str) -> Option<String> {
 /// The typed id is what makes the read exact. `LoroDoc::get_by_str_path` must not be used for
 /// roots: it picks among all roots with that name, of any type, so a second root of another type
 /// could make two readers of one document disagree.
-pub(crate) fn root_container(doc: &LoroDoc, name: &str, kind: ContainerType) -> Option<Container> {
+///
+/// # Errors
+/// `editor_root_probe_failed` when the fork-and-compare of step 3 cannot export the document. The
+/// root is then neither present nor absent as far as this read knows; the caller must not assume
+/// absence.
+pub(crate) fn root_container(doc: &LoroDoc, name: &str, kind: ContainerType) -> Result<Option<Container>, CollabError> {
     let LoroValue::Map(roots) = doc.get_value() else {
-        return None;
+        return Ok(None);
     };
     let id = ContainerID::new_root(name, kind);
     match roots.get(name) {
-        None => return None,
+        None => return Ok(None),
         Some(LoroValue::Container(ContainerID::Root { container_type, .. })) if *container_type == kind => {}
         Some(_) => {
+            let probe = |error: loro::LoroEncodeError| invalid(&format!("editor_root_probe_failed: {error}"));
             let fork = doc.fork();
-            let before = fork.export(loro::ExportMode::Snapshot).ok()?;
-            fork.get_container(id.clone())?;
-            if fork.export(loro::ExportMode::Snapshot).ok()? != before {
-                return None;
+            let before = fork.export(loro::ExportMode::Snapshot).map_err(probe)?;
+            if fork.get_container(id.clone()).is_none() {
+                return Ok(None);
+            }
+            if fork.export(loro::ExportMode::Snapshot).map_err(probe)? != before {
+                return Ok(None);
             }
         }
     }
-    doc.get_container(id)
+    Ok(doc.get_container(id))
 }
-/// [`root_container`] when the root is a map.
-pub(crate) fn root_map(doc: &LoroDoc, name: &str) -> Option<LoroMap> {
-    match root_container(doc, name, ContainerType::Map) {
+/// The reserved root `name` (see [`crate::reserved_roots`]) with its one allowed container type,
+/// read exactly as [`root_container`] reads it.
+///
+/// # Errors
+/// As [`root_container`]; `editor_root_not_reserved` for a name that is not in the table.
+pub(crate) fn reserved_root(doc: &LoroDoc, name: &str) -> Result<Option<Container>, CollabError> {
+    let kind = crate::reserved_roots::expected_type(name).ok_or_else(|| invalid("editor_root_not_reserved"))?;
+    root_container(doc, name, kind)
+}
+/// [`reserved_root`] when the root is a map (`None` also when it is absent).
+pub(crate) fn root_map(doc: &LoroDoc, name: &str) -> Result<Option<LoroMap>, CollabError> {
+    Ok(match reserved_root(doc, name)? {
         Some(Container::Map(map)) => Some(map),
         _ => None,
-    }
+    })
 }
 pub fn physical(doc: &LoroDoc) -> Result<Vec<LoroMap>, CollabError> {
-    let Some(Container::Map(root)) = root_container(doc, "doc", ContainerType::Map) else {
+    let Some(Container::Map(root)) = reserved_root(doc, crate::reserved_roots::DOC)? else {
         return Err(invalid("editor_doc_required"));
     };
     let Some(ValueOrContainer::Container(Container::List(list))) = root.get("children") else {
@@ -78,17 +94,21 @@ pub fn physical(doc: &LoroDoc) -> Result<Vec<LoroMap>, CollabError> {
         })
         .collect()
 }
-pub fn ready(doc: &LoroDoc) -> bool {
-    let Some(Container::Map(meta)) = root_container(doc, META, ContainerType::Map) else {
-        return false;
+/// Whether the structure metadata root says the placement index is initialised.
+///
+/// # Errors
+/// As [`root_container`].
+pub fn ready(doc: &LoroDoc) -> Result<bool, CollabError> {
+    let Some(Container::Map(meta)) = reserved_root(doc, META)? else {
+        return Ok(false);
     };
-    matches!(
+    Ok(matches!(
         meta.get("initialized"),
         Some(ValueOrContainer::Value(LoroValue::Bool(true)))
-    )
+    ))
 }
 fn tree(doc: &LoroDoc) -> Result<LoroTree, CollabError> {
-    let Some(Container::Tree(tree)) = root_container(doc, TREE, ContainerType::Tree) else {
+    let Some(Container::Tree(tree)) = reserved_root(doc, TREE)? else {
         return Err(invalid("editor_structure_missing_tree"));
     };
     tree.enable_fractional_index(0);
@@ -103,7 +123,7 @@ pub struct Placement {
     pub position: usize,
 }
 pub fn placements(doc: &LoroDoc) -> Result<Option<Vec<Placement>>, CollabError> {
-    if !ready(doc) {
+    if !ready(doc)? {
         return Ok(None);
     }
     let meta = doc.get_map(META);
@@ -196,11 +216,11 @@ fn active_placements_with(
     Ok(output)
 }
 pub fn initialize(doc: &LoroDoc) -> Result<bool, CollabError> {
-    if ready(doc) {
+    if ready(doc)? {
         placements(doc)?;
         return Ok(false);
     }
-    if root_container(doc, TREE, ContainerType::Tree).is_some_and(|value| match value {
+    if reserved_root(doc, TREE)?.is_some_and(|value| match value {
         Container::Tree(tree) => !tree.roots().is_empty(),
         _ => true,
     }) {
@@ -443,7 +463,7 @@ mod tests {
                 text: "New".into(),
             })
             .unwrap();
-        let created = engine.resolve_content_node_id(&"new-indexed".into());
+        let created = engine.resolve_content_node_id(&"new-indexed".into()).unwrap();
         assert_eq!(
             engine
                 .semantic_snapshot()

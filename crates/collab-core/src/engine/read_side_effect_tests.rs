@@ -194,12 +194,12 @@ fn root_container_is_exact_and_registers_nothing() {
     doc.get_map("both").insert("k", 1).unwrap();
     doc.commit();
     let before = observe(&doc);
-    assert!(root_container(&doc, "m", ContainerType::Map).is_some());
-    assert!(root_container(&doc, "m", ContainerType::Text).is_none());
-    assert!(root_container(&doc, "m", ContainerType::Tree).is_none());
-    assert!(root_container(&doc, "absent", ContainerType::Map).is_none());
-    assert!(root_container(&doc, "both", ContainerType::Map).is_some());
-    assert!(root_container(&doc, "both", ContainerType::Text).is_some());
-    assert!(root_container(&doc, "both", ContainerType::List).is_none());
+    assert!(root_container(&doc, "m", ContainerType::Map).unwrap().is_some());
+    assert!(root_container(&doc, "m", ContainerType::Text).unwrap().is_none());
+    assert!(root_container(&doc, "m", ContainerType::Tree).unwrap().is_none());
+    assert!(root_container(&doc, "absent", ContainerType::Map).unwrap().is_none());
+    assert!(root_container(&doc, "both", ContainerType::Map).unwrap().is_some());
+    assert!(root_container(&doc, "both", ContainerType::Text).unwrap().is_some());
+    assert!(root_container(&doc, "both", ContainerType::List).unwrap().is_none());
     assert_eq!(before, observe(&doc));
 }

@@ -31,20 +31,19 @@ fn children(map: &LoroMap) -> Option<LoroList> {
         _ => None,
     }
 }
-fn root_children(doc: &LoroDoc) -> Option<LoroList> {
-    children(&crate::editor_structure::root_map(doc, "doc")?)
+fn root_children(doc: &LoroDoc) -> Result<Option<LoroList>, CollabError> {
+    Ok(crate::editor_structure::root_map(doc, crate::reserved_roots::DOC)?.and_then(|root| children(&root)))
 }
-const ALIASES: &str = "flow_editor_aliases";
 /// The alias map, read without registering it: `None` when the document has none.
-fn aliases_map(doc: &LoroDoc) -> Option<LoroMap> {
-    crate::editor_structure::root_map(doc, ALIASES)
+fn aliases_map(doc: &LoroDoc) -> Result<Option<LoroMap>, CollabError> {
+    crate::editor_structure::root_map(doc, crate::reserved_roots::ALIASES)
 }
 /// Whether the alias map holds `id` (tombstones included). A read: registers nothing.
-pub fn has_alias_entry(doc: &LoroDoc, id: &str) -> bool {
-    aliases_map(doc).is_some_and(|aliases| aliases.get(id).is_some())
+pub fn has_alias_entry(doc: &LoroDoc, id: &str) -> Result<bool, CollabError> {
+    Ok(aliases_map(doc)?.is_some_and(|aliases| aliases.get(id).is_some()))
 }
-fn alias_target(doc: &LoroDoc, id: &str) -> Option<String> {
-    string(&aliases_map(doc)?, id)
+fn alias_target(doc: &LoroDoc, id: &str) -> Result<Option<String>, CollabError> {
+    Ok(aliases_map(doc)?.and_then(|aliases| string(&aliases, id)))
 }
 fn supported(kind: &str) -> bool {
     matches!(
@@ -264,10 +263,10 @@ fn read_blocks(
     crate::walk_counter::record_block_read();
     let legacy = mode == Mode::Legacy;
     let collect_values = mode != Mode::Floor;
-    let Some(list) = root_children(doc) else {
+    let Some(list) = root_children(doc)? else {
         return Ok(None);
     };
-    let aliases = aliases_map(doc);
+    let aliases = aliases_map(doc)?;
     if aliases
         .as_ref()
         .is_some_and(|aliases| aliases.len() > crate::limits::DOCUMENT_BLOCK_COUNT_MAX)
@@ -358,10 +357,10 @@ pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAnd
     #[cfg(test)]
     crate::walk_counter::record_block_read();
     // Both readers stop here identically: no editor document, or too many aliases.
-    let Some(list) = root_children(doc) else {
+    let Some(list) = root_children(doc)? else {
         return Ok(None);
     };
-    let aliases = aliases_map(doc);
+    let aliases = aliases_map(doc)?;
     if aliases
         .as_ref()
         .is_some_and(|aliases| aliases.len() > crate::limits::DOCUMENT_BLOCK_COUNT_MAX)
@@ -439,23 +438,36 @@ pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAnd
     Ok(Some((legacy_ids, blocks, FloorFacts { physical_atom, signals })))
 }
 /// Resolve only live top-level editor maps. Tombstoned aliases cannot resurrect blocks.
-pub fn resolve_editor_block_id(doc: &LoroDoc, id: &str) -> Option<String> {
-    let list = root_children(doc)?;
-    let canonical = alias_target(doc, id).unwrap_or_else(|| id.to_owned());
-    if crate::editor_structure::placements(doc)
-        .ok()?
-        .is_some_and(|entries| !entries.iter().any(|entry| entry.cid == canonical))
-    {
-        return None;
+///
+/// # Errors
+/// A failed root read (`editor_root_probe_failed`), which is neither "found" nor "not found". Any
+/// other failure of the placement index reads as not found, as before.
+pub fn resolve_editor_block_id(doc: &LoroDoc, id: &str) -> Result<Option<String>, CollabError> {
+    let Some(list) = root_children(doc)? else {
+        return Ok(None);
+    };
+    let canonical = alias_target(doc, id)?.unwrap_or_else(|| id.to_owned());
+    match crate::editor_structure::placements(doc) {
+        Ok(placements) => {
+            if placements.is_some_and(|entries| !entries.iter().any(|entry| entry.cid == canonical)) {
+                return Ok(None);
+            }
+        }
+        Err(error) if is_probe_failure(&error) => return Err(error),
+        Err(_) => return Ok(None),
     }
     for i in 0..list.len() {
         if let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(i)
             && map.id().to_string() == canonical
         {
-            return Some(canonical);
+            return Ok(Some(canonical));
         }
     }
-    None
+    Ok(None)
+}
+/// Whether `error` is the typed failure of a root read, as opposed to a verdict about the content.
+fn is_probe_failure(error: &CollabError) -> bool {
+    matches!(error, CollabError::OperationFailed { reason } if reason.starts_with("editor_root_probe_failed"))
 }
 
 /// Apply one UTF-8 byte-indexed edit to an actual reachable editor block CID.
@@ -469,10 +481,10 @@ pub fn apply_editor_text(
     delete_len: Option<u32>,
     insert: Option<&str>,
 ) -> Result<bool, CollabError> {
-    let Some(list) = root_children(doc) else {
+    let Some(list) = root_children(doc)? else {
         return Ok(false);
     };
-    let Some(canonical_id) = resolve_editor_block_id(doc, id) else {
+    let Some(canonical_id) = resolve_editor_block_id(doc, id)? else {
         return Ok(false);
     };
     let mut target = None;
@@ -549,8 +561,8 @@ pub fn apply_editor_text(
 
 /// Apply validated UTF-8 mark edits on the existing canonical text CID.
 pub fn apply_editor_marks(doc: &LoroDoc, id: &str, edits: &[crate::page_inline::MarkEdit]) -> Result<(), CollabError> {
-    let canonical = resolve_editor_block_id(doc, id).ok_or_else(|| invalid("editor_block_not_found"))?;
-    let list = root_children(doc).ok_or_else(|| invalid("editor_doc_required"))?;
+    let canonical = resolve_editor_block_id(doc, id)?.ok_or_else(|| invalid("editor_block_not_found"))?;
+    let list = root_children(doc)?.ok_or_else(|| invalid("editor_doc_required"))?;
     for index in 0..list.len() {
         if let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(index)
             && map.id().to_string() == canonical
@@ -700,7 +712,7 @@ pub fn initialize_editor_doc(doc: &LoroDoc, blocks: &[EditorInitialBlock]) -> Re
 /// Structural edits are deliberately limited to the flat shipped schema. Existing map IDs
 /// are retained; requested creation IDs are bounded aliases, never guessed from text/order.
 pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Result<bool, CollabError> {
-    let Some(list) = root_children(doc) else {
+    let Some(list) = root_children(doc)? else {
         return Ok(false);
     };
     if let crate::Operation::CreateNode {
@@ -713,13 +725,13 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
         if *kind != crate::NodeKind::Block {
             return Ok(false);
         }
-        let indexed = crate::editor_structure::ready(doc);
+        let indexed = crate::editor_structure::ready(doc)?;
         if parent.is_some() && !indexed {
             return Err(invalid("editor_block_parent_must_be_root"));
         }
         let parent_cid = parent
             .as_ref()
-            .map(|id| resolve_editor_block_id(doc, id).ok_or_else(|| invalid("editor_structure_parent_not_found")))
+            .map(|id| resolve_editor_block_id(doc, id)?.ok_or_else(|| invalid("editor_structure_parent_not_found")))
             .transpose()?;
         if indexed {
             let placements =
@@ -741,11 +753,11 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
         if id.is_empty() || id.len() > 256 || id.starts_with("cid:") {
             return Err(invalid("editor_block_invalid_logical_id"));
         }
-        if has_alias_entry(doc, id.as_ref()) {
+        if has_alias_entry(doc, id.as_ref())? {
             return Err(CollabError::DuplicateNode { id: id.to_string() });
         }
         if list.len() >= crate::limits::DOCUMENT_BLOCK_COUNT_MAX
-            || aliases_map(doc).is_some_and(|aliases| aliases.len() >= crate::limits::DOCUMENT_BLOCK_COUNT_MAX)
+            || aliases_map(doc)?.is_some_and(|aliases| aliases.len() >= crate::limits::DOCUMENT_BLOCK_COUNT_MAX)
         {
             return Err(invalid("editor_block_alias_limit_exceeded"));
         }
@@ -767,7 +779,7 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
         if indexed {
             crate::editor_structure::insert(doc, &attached.id().to_string(), parent_cid.as_deref(), *index as usize)?;
         }
-        doc.get_map(ALIASES)
+        doc.get_map(crate::reserved_roots::ALIASES)
             .insert(id.as_ref(), attached.id().to_string())
             .map_err(|e| invalid(&e.to_string()))?;
         return Ok(true);
@@ -778,7 +790,7 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
     else {
         return Ok(false);
     };
-    let canonical = alias_target(doc, id.as_ref()).unwrap_or_else(|| id.to_string());
+    let canonical = alias_target(doc, id.as_ref())?.unwrap_or_else(|| id.to_string());
     let mut target = None;
     for i in 0..list.len() {
         if let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(i)
@@ -789,7 +801,7 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
         }
     }
     let Some((position, map)) = target else {
-        if has_alias_entry(doc, id.as_ref()) {
+        if has_alias_entry(doc, id.as_ref())? {
             return Err(CollabError::UnknownNode { id: id.to_string() });
         }
         return Ok(false);
@@ -799,7 +811,7 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
     }
     match operation {
         crate::Operation::DeleteNode { .. } => {
-            if crate::editor_structure::ready(doc) {
+            if crate::editor_structure::ready(doc)? {
                 crate::editor_structure::delete(doc, &canonical)?;
                 return Ok(true);
             }
@@ -809,11 +821,11 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
             list.delete(position, 1).map_err(|e| invalid(&e.to_string()))?;
         }
         crate::Operation::MoveNode { new_parent, index, .. } => {
-            if crate::editor_structure::ready(doc) {
+            if crate::editor_structure::ready(doc)? {
                 let parent = new_parent
                     .as_ref()
                     .map(|id| {
-                        resolve_editor_block_id(doc, id).ok_or_else(|| invalid("editor_structure_parent_not_found"))
+                        resolve_editor_block_id(doc, id)?.ok_or_else(|| invalid("editor_structure_parent_not_found"))
                     })
                     .transpose()?;
                 crate::editor_structure::move_block(doc, &canonical, parent.as_deref(), *index as usize)?;
@@ -910,7 +922,7 @@ pub fn apply_editor_structure(doc: &LoroDoc, operation: &crate::Operation) -> Re
                     }
                     attrs.insert(key, value).map_err(|e| invalid(&e.to_string()))?;
                 }
-                "indent" if crate::editor_structure::ready(doc) => {
+                "indent" if crate::editor_structure::ready(doc)? => {
                     return Err(invalid("editor_structure_requires_move_for_indent"));
                 }
                 "indent" | "level" => {
@@ -943,13 +955,13 @@ pub fn insert_atom(
     attributes: &Value,
 ) -> Result<String, CollabError> {
     crate::editor_media::validate(kind, attributes)?;
-    if id.is_empty() || id.len() > 256 || id.starts_with("cid:") || has_alias_entry(doc, id) {
+    if id.is_empty() || id.len() > 256 || id.starts_with("cid:") || has_alias_entry(doc, id)? {
         return Err(invalid("editor_block_invalid_or_duplicate_logical_id"));
     }
-    let list = root_children(doc).ok_or_else(|| invalid("editor_doc_required"))?;
+    let list = root_children(doc)?.ok_or_else(|| invalid("editor_doc_required"))?;
     let placements = crate::editor_structure::placements(doc)?.ok_or_else(|| invalid("editor_structure_required"))?;
     let parent = parent
-        .map(|id| resolve_editor_block_id(doc, id).ok_or_else(|| invalid("editor_structure_parent_not_found")))
+        .map(|id| resolve_editor_block_id(doc, id)?.ok_or_else(|| invalid("editor_structure_parent_not_found")))
         .transpose()?;
     let count = placements
         .iter()
@@ -999,8 +1011,8 @@ pub fn replace_atom(doc: &LoroDoc, id: &str, kind: &str, attributes: &Value) -> 
     if kind == "childPage" {
         return Err(invalid("editor_asset_replacement_kind"));
     }
-    let cid = resolve_editor_block_id(doc, id).ok_or_else(|| invalid("editor_block_not_found"))?;
-    let list = root_children(doc).ok_or_else(|| invalid("editor_doc_required"))?;
+    let cid = resolve_editor_block_id(doc, id)?.ok_or_else(|| invalid("editor_block_not_found"))?;
+    let list = root_children(doc)?.ok_or_else(|| invalid("editor_doc_required"))?;
     for index in 0..list.len() {
         if let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(index)
             && map.id().to_string() == cid
@@ -1119,7 +1131,7 @@ mod tests {
     }
 
     fn damaged_block(doc: &LoroDoc, index: usize) -> LoroMap {
-        match root_children(doc).unwrap().get(index) {
+        match root_children(doc).unwrap().unwrap().get(index) {
             Some(ValueOrContainer::Container(Container::Map(map))) => map,
             _ => panic!("block {index}"),
         }
@@ -1153,7 +1165,7 @@ mod tests {
                     .unwrap();
             }
             _ => {
-                let list = root_children(doc).unwrap();
+                let list = root_children(doc).unwrap().unwrap();
                 list.insert_container(list.len(), LoroText::new()).unwrap();
             }
         }
@@ -1253,7 +1265,7 @@ mod tests {
         use crate::page_inline::{InlineMark, MarkEdit};
         let doc = fixture();
         crate::page_inline::configure(&doc);
-        let list = root_children(&doc).unwrap();
+        let list = root_children(&doc).unwrap().unwrap();
         let Some(ValueOrContainer::Container(Container::Map(root))) = list.get(0) else {
             panic!("fixture root block missing");
         };
@@ -1422,7 +1434,7 @@ mod tests {
     #[test]
     fn unknown_marks_and_private_dependency_attrs_fail_before_text_mutation() {
         let doc = fixture();
-        let list = root_children(&doc).unwrap();
+        let list = root_children(&doc).unwrap().unwrap();
         let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(0) else {
             panic!("fixture map")
         };
@@ -1441,7 +1453,7 @@ mod tests {
         assert!(apply_editor_text(&doc, &map.id().to_string(), 0, None, Some("bad")).is_err());
         assert_eq!(doc.oplog_vv(), before);
         let doc = fixture();
-        let list = root_children(&doc).unwrap();
+        let list = root_children(&doc).unwrap().unwrap();
         let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(0) else {
             panic!("fixture map")
         };
@@ -1468,7 +1480,7 @@ mod tests {
         let frontier = doc.oplog_vv();
         assert!(initialize_editor_doc(&doc, std::slice::from_ref(&bad)).is_err());
         assert_eq!(doc.oplog_vv(), frontier);
-        assert!(root_children(&doc).is_none());
+        assert!(root_children(&doc).unwrap().is_none());
         let good = EditorInitialBlock {
             kind: "paragraph".into(),
             ..bad
@@ -1534,7 +1546,7 @@ mod tests {
         assert_eq!(engine.legacy_package_semantic_snapshot_v3().unwrap(), old);
         let loaded = crate::LoroCollabEngine::load(&engine.export_snapshot().unwrap()).unwrap();
         assert_eq!(loaded.semantic_snapshot().unwrap(), rich);
-        assert_eq!(loaded.resolve_content_node_id(&id), id);
+        assert_eq!(loaded.resolve_content_node_id(&id).unwrap(), id);
         engine
             .apply_operation(&crate::Operation::InsertText {
                 id: id.clone(),

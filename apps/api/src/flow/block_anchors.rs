@@ -43,7 +43,10 @@ pub(crate) async fn prepare(
     if !engine.matches_frontier(&boot.head_frontier) {
         return Err(ApiError::resync_required("comment anchor head did not replay", None));
     }
-    if !engine.has_editor_doc() {
+    if !engine
+        .has_editor_doc()
+        .map_err(|error| super::command::map_collab_error(&error))?
+    {
         if anchored && !reply {
             return Err(ApiError::invalid_update(
                 "initialize Page editor before creating a block anchor",
@@ -534,6 +537,7 @@ mod tests {
             .unwrap();
         let aliased = source
             .resolve_content_node_id(&"legacy-readable-alias".into())
+            .unwrap()
             .to_string();
         let original_snapshot = source.export_snapshot().unwrap();
         let replayed = LoroCollabEngine::load(&original_snapshot).unwrap();
@@ -731,7 +735,10 @@ mod tests {
                 kind: collab_core::NodeKind::Block,
             })
             .unwrap();
-        let destination_cid = destination.resolve_content_node_id(&"moved-carrier".into()).to_string();
+        let destination_cid = destination
+            .resolve_content_node_id(&"moved-carrier".into())
+            .unwrap()
+            .to_string();
         assert_ne!(destination_cid, cid);
         exec(db,"UPDATE collab_documents SET snapshot=$2,snapshot_checksum=encode(digest($2,'sha256'),'hex'),byte_count=octet_length($2),snapshot_frontier=$3,head_frontier=$3 WHERE id=$1",vec![documents[1].into(),destination.export_snapshot().unwrap().into(),destination.frontier().as_bytes().to_vec().into()]).await;
         exec(db,"INSERT INTO flow_block_placements(id,logical_id,scope_id,page_id,physical_cid,generation,state,content_hash) VALUES($1,$2,$3,$4,$5,2,'active',decode(repeat('00',32),'hex'))",vec![Uuid::new_v4().into(),logical.into(),scopes[1].into(),pages[1].into(),destination_cid.into()]).await;

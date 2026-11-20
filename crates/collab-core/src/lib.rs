@@ -49,6 +49,7 @@ pub mod limits;
 pub mod operation;
 pub mod page_inline;
 mod prose_projection;
+pub mod reserved_roots;
 pub mod semantic;
 #[cfg(test)]
 mod walk_counter;
