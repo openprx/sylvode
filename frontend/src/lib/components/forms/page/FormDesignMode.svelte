@@ -1,3 +1,5 @@
+<svelte:options runes />
+
 <script lang="ts">
 	import FormDesignerWorkspace from '#lib/components/forms/FormDesignerWorkspace.svelte';
 	import { fieldTypeOptions } from '#lib/forms/page-constants.js';
