@@ -7,7 +7,8 @@
 	import { governanceExtApi, type AuditReport } from '#lib/api/governance-ext.js';
 	import { toast } from '#lib/stores/toast.js';
 
-	const projectId = $derived(page.params.pid || '');
+	const projectId = $derived(page.params.projectId || '');
+	const workspaceId = $derived(page.params.workspaceId || '');
 
 	let loading = $state(true);
 	let generating = $state(false);
@@ -164,7 +165,7 @@
 								>
 								<td class="px-2 py-2 text-xs">
 									<a
-										href={`/projects/${projectId}/audit-reports/${report.id}`}
+										href={`/workspace/${workspaceId}/projects/${projectId}/audit-reports/${report.id}`}
 										class="text-blue-600 hover:underline"
 									>
 										{$t('governanceExt.viewDetail')}
