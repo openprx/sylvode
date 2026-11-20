@@ -15,6 +15,9 @@ thread_local! {
     static NARROW_ATOM_SCANS: Cell<usize> = const { Cell::new(0) };
     static ROOT_PROBE_LOG: RefCell<Vec<(String, usize)>> = const { RefCell::new(Vec::new()) };
     static ROOT_FORKS: Cell<usize> = const { Cell::new(0) };
+    static UNIT_EVALUATIONS: Cell<usize> = const { Cell::new(0) };
+    static FALLBACKS: Cell<usize> = const { Cell::new(0) };
+    static PLACEMENT_WALKS: Cell<usize> = const { Cell::new(0) };
 }
 
 /// One evaluation of the editor-model floor (`minimum_editor_model` without a cache hit).
@@ -55,6 +58,28 @@ pub fn record_root_fork() {
     ROOT_FORKS.with(|count| count.set(count.get() + 1));
 }
 
+/// One evaluation of a single unit (a block map, a placement node or a legacy tree node) by the
+/// incremental window check. Nothing records it yet: `window_check` (work package C1) calls it
+/// once per touched unit, and the counting test then asserts the number equals the update's size
+/// at every page size.
+pub fn record_unit_evaluation() {
+    UNIT_EVALUATIONS.with(|count| count.set(count.get() + 1));
+}
+
+/// One fallback of the incremental window check to the full computation (`semantic_snapshot` plus
+/// `check_snapshot`). Recorded by `window_check` (work package C1); the counting test asserts none
+/// happens for an ordinary update.
+pub fn record_fallback() {
+    FALLBACKS.with(|count| count.set(count.get() + 1));
+}
+
+/// One full walk of the placement tree (`editor_structure::placements`). Recorded by the
+/// structured-page path of the window check (work package C2); the counting test asserts none
+/// happens for an ordinary update.
+pub fn record_placement_walk() {
+    PLACEMENT_WALKS.with(|count| count.set(count.get() + 1));
+}
+
 /// Root probes recorded since the last [`reset`], in order: `(root name, bytes allocated)`.
 pub fn root_probes() -> Vec<(String, usize)> {
     ROOT_PROBE_LOG.with(|log| log.borrow().clone())
@@ -80,6 +105,29 @@ pub fn counts() -> (usize, usize) {
     (FLOOR_WALKS.with(Cell::get), BLOCK_READS.with(Cell::get))
 }
 
+/// What one write window did, as the counting test reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WindowCounts {
+    /// Passes over the whole editor block list (`record_block_read`).
+    pub block_reads: usize,
+    /// Single-unit evaluations (`record_unit_evaluation`).
+    pub unit_evaluations: usize,
+    /// Fallbacks to the full computation (`record_fallback`).
+    pub fallbacks: usize,
+    /// Full placement-tree walks (`record_placement_walk`).
+    pub placement_walks: usize,
+}
+
+/// The window counters recorded on this thread since the last [`reset`].
+pub fn window_counts() -> WindowCounts {
+    WindowCounts {
+        block_reads: BLOCK_READS.with(Cell::get),
+        unit_evaluations: UNIT_EVALUATIONS.with(Cell::get),
+        fallbacks: FALLBACKS.with(Cell::get),
+        placement_walks: PLACEMENT_WALKS.with(Cell::get),
+    }
+}
+
 pub fn reset() {
     FLOOR_WALKS.with(|count| count.set(0));
     BLOCK_READS.with(|count| count.set(0));
@@ -88,4 +136,41 @@ pub fn reset() {
     NARROW_ATOM_SCANS.with(|count| count.set(0));
     ROOT_PROBE_LOG.with(|log| log.borrow_mut().clear());
     ROOT_FORKS.with(|count| count.set(0));
+    UNIT_EVALUATIONS.with(|count| count.set(0));
+    FALLBACKS.with(|count| count.set(0));
+    PLACEMENT_WALKS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_counters_count_per_thread_and_reset() {
+        reset();
+        assert_eq!(window_counts(), WindowCounts::default());
+        record_block_read();
+        record_unit_evaluation();
+        record_unit_evaluation();
+        record_fallback();
+        record_placement_walk();
+        let expected = WindowCounts {
+            block_reads: 1,
+            unit_evaluations: 2,
+            fallbacks: 1,
+            placement_walks: 1,
+        };
+        assert_eq!(window_counts(), expected);
+        // Another thread starts from zero and does not disturb this one.
+        std::thread::spawn(|| {
+            assert_eq!(window_counts(), WindowCounts::default());
+            record_unit_evaluation();
+        })
+        .join()
+        .unwrap();
+        assert_eq!(window_counts(), expected);
+        reset();
+        assert_eq!(window_counts(), WindowCounts::default());
+    }
 }
