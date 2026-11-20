@@ -6,7 +6,11 @@ import {
 	assertEqual,
 	finish
 } from '../../../../tests/support/harness';
+import { composeHandlers } from './compose';
 import { resetIds, uid } from './ids';
+import { enterModal, isModalOpen, onModalChange } from './modal';
+import { isPluralCategoryKey, plural, pluralCategory, pluralKeys } from './plural';
+import { TypeaheadBuffer, isTypeaheadKey, typeaheadMatch } from './typeahead';
 import { trapTarget } from './focus';
 import { isTopLayer, openLayerCount, pushLayer } from './layers';
 import { mergeMessages } from './messages';
@@ -174,5 +178,124 @@ suite.check('messages: deep merge adds keys and rejects conflicts', () => {
 	}
 	assert(failed, 'leaf versus branch must throw');
 });
+
+// Composed handlers: the internal one runs first, the caller's second, and a caller handler that
+// changes after creation is the one that runs.
+suite.check('composeHandlers runs the internal handler, then the caller handler', () => {
+	const calls: string[] = [];
+	const event = new Event('change');
+	composeHandlers(
+		() => calls.push('internal'),
+		() => () => calls.push('caller')
+	)(event);
+	assertDeepEqual(calls, ['internal', 'caller'], 'order');
+});
+suite.check('composeHandlers works without a caller handler and reads it at call time', () => {
+	const calls: string[] = [];
+	let caller: ((e: Event) => void) | undefined = undefined;
+	const handler = composeHandlers(
+		() => calls.push('internal'),
+		() => caller
+	);
+	handler(new Event('change'));
+	caller = () => calls.push('late');
+	handler(new Event('change'));
+	assertDeepEqual(calls, ['internal', 'internal', 'late'], 'late binding');
+});
+
+// Type-ahead.
+const names = ['Open', 'Rename', 'Duplicate', 'Delete', 'Share'];
+suite.check('typeahead: one letter goes to the next item that starts with it', () => {
+	assertEqual(typeaheadMatch(names, 0, 'd'), 2, 'first D after Open');
+	assertEqual(typeaheadMatch(names, 2, 'd'), 3, 'repeating moves to the next D');
+	assertEqual(typeaheadMatch(names, 3, 'd'), 2, 'and wraps');
+});
+suite.check('typeahead: a longer buffer matches by prefix from the current item', () => {
+	assertEqual(typeaheadMatch(names, 2, 'de'), 3, 'de');
+	assertEqual(typeaheadMatch(names, 2, 'du'), 2, 'du stays');
+	assertEqual(typeaheadMatch(names, 0, 'zz'), null, 'no match');
+	assertEqual(typeaheadMatch(names, 0, ''), null, 'empty');
+});
+suite.check('typeahead: case and surrounding space are ignored; a repeated letter cycles', () => {
+	assertEqual(typeaheadMatch(['  Alpha', 'alto', 'Beta'], 0, 'A'), 1, 'case');
+	assertEqual(typeaheadMatch(['Alpha', 'Alto', 'Beta'], 0, 'aa'), 1, 'aa cycles');
+});
+suite.check('typeahead: only a printable key without a shortcut modifier counts', () => {
+	const key = (k: string, mods: Partial<Record<'ctrlKey' | 'metaKey' | 'altKey', boolean>> = {}) =>
+		isTypeaheadKey({ key: k, ctrlKey: false, metaKey: false, altKey: false, ...mods });
+	assert(key('a') && key('1') && key(' '), 'printable');
+	assert(!key('ArrowDown') && !key('Enter') && !key('Escape'), 'named keys');
+	assert(!key('a', { ctrlKey: true }) && !key('a', { metaKey: true }), 'shortcuts');
+});
+suite.check('typeahead buffer accumulates characters until reset', () => {
+	const buffer = new TypeaheadBuffer(60_000);
+	assertEqual(buffer.push('d'), 'd', 'first');
+	assertEqual(buffer.push('e'), 'de', 'second');
+	buffer.reset();
+	assertEqual(buffer.push('x'), 'x', 'after reset');
+	buffer.reset();
+});
+
+// Plural wording.
+suite.check('plural category: English has one and other, Chinese only other', () => {
+	assertEqual(pluralCategory(1, 'en'), 'one', 'en 1');
+	assertEqual(pluralCategory(0, 'en'), 'other', 'en 0');
+	assertEqual(pluralCategory(5, 'en'), 'other', 'en 5');
+	assertEqual(pluralCategory(1, 'zh'), 'other', 'zh 1');
+});
+suite.check('plural category falls back to English for a missing or invalid language', () => {
+	assertEqual(pluralCategory(1, null), 'one', 'null');
+	assertEqual(pluralCategory(1, undefined), 'one', 'undefined');
+	assertEqual(pluralCategory(1, 'not a tag!'), 'one', 'invalid');
+});
+suite.check('plural keys try the category, then other', () => {
+	assertDeepEqual(pluralKeys('a.b', 1, 'en'), ['a.b.one', 'a.b.other'], 'en one');
+	assertDeepEqual(pluralKeys('a.b', 3, 'en'), ['a.b.other'], 'en other');
+	assertDeepEqual(pluralKeys('a.b', 1, 'zh'), ['a.b.other'], 'zh');
+});
+suite.check('plural reads the right message and passes the count', () => {
+	const messages: Record<string, string> = {
+		'x.one': '{count} row selected',
+		'x.other': '{count} rows selected'
+	};
+	const translate = (
+		key: string,
+		options?: { values?: Record<string, unknown>; default?: string }
+	) => {
+		const text = messages[key] ?? options?.default ?? key;
+		return text.replace('{count}', String(options?.values?.count));
+	};
+	assertEqual(plural(translate, 'x', 1, 'en'), '1 row selected', 'one');
+	assertEqual(plural(translate, 'x', 4, 'en'), '4 rows selected', 'other');
+	assertEqual(plural(translate, 'x', 1, 'zh'), '1 rows selected', 'zh uses other');
+	delete messages['x.one'];
+	assertEqual(plural(translate, 'x', 1, 'en'), '1 rows selected', 'missing category falls back');
+});
+suite.check('a plural category key is recognised, other and plain keys are not', () => {
+	assert(isPluralCategoryKey('ui.a.selected.one'), 'one');
+	assert(!isPluralCategoryKey('ui.a.selected.other'), 'other');
+	assert(!isPluralCategoryKey('ui.a.selectedOne'), 'camel case');
+});
+
+suite.check(
+	'modal tracking: nested modals count, listeners hear only changes of the open state',
+	() => {
+		const seen: boolean[] = [];
+		const stop = onModalChange((open) => seen.push(open));
+		assertDeepEqual(seen, [false], 'initial state is reported');
+		const leaveOuter = enterModal();
+		const leaveInner = enterModal();
+		assert(isModalOpen(), 'open');
+		leaveInner();
+		leaveInner();
+		assert(isModalOpen(), 'the outer one is still open and a double leave counts once');
+		leaveOuter();
+		assert(!isModalOpen(), 'closed');
+		stop();
+		enterModal()();
+		assertEqual(seen[seen.length - 1], false, 'a stopped listener hears nothing more');
+		assertEqual(seen.length >= 4, true, 'it heard the open and the close');
+	}
+);
 
 finish(suite.result());
