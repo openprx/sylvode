@@ -19,6 +19,14 @@
 //! `FLOW_WINDOW_SAMPLES` (default 7) and `FLOW_WINDOW_MODELS` (comma-separated, default `1,4,5`)
 //! narrow a run.
 //!
+//! `FLOW_WINDOW_UPDATE=delete` replaces the timed update by one raw deletion of a top-level
+//! block (`doc.children`), authored by a plain Loro peer on the base. The guard hands every such
+//! deletion to its exact path: a narrow scan of the block list and, on a page without the model 5
+//! marker or a remaining atom, a read of the pre-import state. Use it with `FLOW_WINDOW_MODELS=1`: on
+//! a structured page a raw list deletion leaves a dangling placement and the projection refuses the
+//! page, so there is nothing to time. This is the cost of the worst accepted shape, not of an
+//! ordinary edit.
+//!
 //! Besides the window, the binary reports standalone costs of the parts inside it:
 //! - `raw`: `LoroDoc::import` of the same update on a freshly loaded base, with nothing around it;
 //! - `guard`: `import - raw`, the cost the update-scoped downgrade guard (plus the id-cache
@@ -86,6 +94,22 @@ fn batch_ops(start: usize) -> Vec<Operation> {
     ops
 }
 
+/// An update from a plain Loro peer that deletes one top-level block of the base document.
+fn raw_block_deletion(base: &[u8]) -> Result<Vec<u8>, String> {
+    let doc = loro::LoroDoc::new();
+    collab_core::page_inline::configure(&doc);
+    doc.import(base).map_err(|e| e.to_string())?;
+    doc.set_peer_id(9_999).map_err(|e| e.to_string())?;
+    let from = doc.oplog_vv();
+    let Some(loro::ValueOrContainer::Container(loro::Container::List(list))) = doc.get_map("doc").get("children")
+    else {
+        return Err("the base has no editor block list".to_string());
+    };
+    list.delete(3, 1).map_err(|e| e.to_string())?;
+    doc.commit();
+    doc.export(loro::ExportMode::updates(&from)).map_err(|e| e.to_string())
+}
+
 struct Fixture {
     /// Snapshot before the last batch: the worker's base document.
     base: Vec<u8>,
@@ -140,6 +164,9 @@ fn build(blocks: usize, model: u32) -> Result<Fixture, String> {
             }
             rebuild_tail.push(delta);
         }
+    }
+    if std::env::var("FLOW_WINDOW_UPDATE").is_ok_and(|value| value == "delete") {
+        update = raw_block_deletion(&base)?;
     }
     Ok(Fixture {
         base,
