@@ -21,8 +21,7 @@
 
 	let { toasts, hosted = false }: Props = $props();
 
-	// Proposed (batch A): `--rf-z-toast: 45` and `--rf-layout-header-compact: 56px` are not in
-	// tokens.css yet; the region defines the toast layer locally.
+	// The toast layer is `--rf-z-toast` from tokens.css.
 	const items = $state<{ list: ToastItem[]; live: { text: string; seq: number } }>({
 		list: [],
 		live: { text: '', seq: 0 }

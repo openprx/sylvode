@@ -2,14 +2,12 @@
 	import { t } from 'svelte-i18n';
 	import { onMount, tick } from 'svelte';
 	import TaskTabStrip from '#lib/ui/task-tab-strip/TaskTabStrip.svelte';
-	import ToastRegion from '#lib/ui/toast/ToastRegion.svelte';
-	import { Toasts } from '#lib/ui/toast/toast-store.js';
+	import { appToasts } from '#lib/ui/toast/app-toasts.js';
 	import { navigateTask } from '#lib/workbench/navigation.js';
 	import type { DroppedTab, TaskWorkbench } from '#lib/workbench/tabs.js';
 	let { workbench }: { workbench: TaskWorkbench } = $props();
 	let confirming = $state<string | null>(null);
 	let origin: HTMLElement | null = null;
-	const toasts = new Toasts();
 
 	const label = (title: string) => (title.startsWith('workbench.') ? $t(title) : title);
 	const tabs = $derived(
@@ -47,7 +45,7 @@
 	}
 
 	function dropped(tab: DroppedTab, next: string) {
-		toasts.show({
+		appToasts.show({
 			message: $t('workbench.droppedTab', {
 				values: { title: label(tab.title), next: label(next) }
 			}),
@@ -63,7 +61,7 @@
 	let noticed = false;
 	$effect(() => {
 		const trimmed = $workbench.restoredTrimmed === true;
-		if (trimmed && !noticed) toasts.show({ message: $t('workbench.restoredLimit') });
+		if (trimmed && !noticed) appToasts.show({ message: $t('workbench.restoredLimit') });
 		noticed = trimmed;
 	});
 
@@ -121,4 +119,3 @@
 	oncloseOthers={(key) => closeSaved(key)}
 	{confirming}
 />
-<ToastRegion {toasts} />
