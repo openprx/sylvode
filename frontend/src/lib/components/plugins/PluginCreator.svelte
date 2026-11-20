@@ -403,19 +403,14 @@
 		</p>
 	</header>
 	{#if error}
-		<p
-			role="alert"
-			class="rounded-control border border-danger px-3 py-2 text-sm text-danger"
-		>
+		<p role="alert" class="rounded-control border border-danger px-3 py-2 text-sm text-danger">
 			{$t(error)}
 			{backendMessage}
 		</p>
 	{/if}
 	{#if checking}<p role="status" class="text-sm">{$t('common.loading')}</p>{/if}
 	{#if allowed}
-		<section
-			class="space-y-4 rounded-card border border-line bg-raised p-4"
-		>
+		<section class="space-y-4 rounded-card border border-line bg-raised p-4">
 			<div class="flex flex-wrap items-center justify-between gap-3">
 				<h2 class="font-semibold">{$t('plugins.creator.draft')}</h2>
 				<label class="flex items-center gap-2 text-sm">
@@ -463,9 +458,7 @@
 						{#each uiViewSlots as slot (slot)}
 							{@const item = uiDraft.contributions.find((entry) => entry.slot === slot)}
 							{#if item}
-								<fieldset
-									class="space-y-2 rounded-card border border-line p-3"
-								>
+								<fieldset class="space-y-2 rounded-card border border-line p-3">
 									<legend class="px-1 text-sm font-medium">{$t(slotLabelKey(slot))}</legend>
 									<label class="flex items-start gap-2 text-sm">
 										<input
@@ -515,9 +508,7 @@
 					{#if invalid.includes('contributions')}<p role="status" class="text-sm">
 							{$t('plugins.creatorV3.needLocation')}
 						</p>{/if}
-					<fieldset
-						class="grid gap-3 rounded-card border border-line p-3 sm:grid-cols-2"
-					>
+					<fieldset class="grid gap-3 rounded-card border border-line p-3 sm:grid-cols-2">
 						<legend class="px-1 text-sm font-medium">{$t('plugins.creatorV3.reads')}</legend>
 						{@render uiInput(
 							'readFormKey',
@@ -589,9 +580,7 @@
 			</form>
 		</section>
 		{#if bundle}
-			<section
-				class="space-y-3 rounded-card border border-line bg-raised p-4"
-			>
+			<section class="space-y-3 rounded-card border border-line bg-raised p-4">
 				<h2 class="font-semibold" tabindex="-1" bind:this={reviewStart}>
 					{$t('plugins.creator.review')}
 				</h2>

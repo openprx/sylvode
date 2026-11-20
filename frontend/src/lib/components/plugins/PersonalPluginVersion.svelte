@@ -167,9 +167,7 @@
 	}
 </script>
 
-<article
-	class="space-y-4 rounded-card border border-line bg-raised p-4"
->
+<article class="space-y-4 rounded-card border border-line bg-raised p-4">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0 space-y-1">
 			<h3 class="break-words font-semibold">
@@ -319,8 +317,7 @@
 							{#if project?.can_manage && link.status === 'attached'}
 								<a
 									href={`/workspace/${encodeURIComponent(project.workspace_id)}/projects/${encodeURIComponent(project.id)}/settings/plugins`}
-									class="text-fg underline"
-									>{$t('plugins.library.manageInProject')}</a
+									class="text-fg underline">{$t('plugins.library.manageInProject')}</a
 								>
 							{/if}
 							{#if confirmRemoval === link.project_id}
