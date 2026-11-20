@@ -51,7 +51,7 @@ use crate::{
             CreateExportJobRequest, ExportColumnResponse, ExportRecordRowResponse, ExportRecordsPolicyResponse,
             ExportRecordsQuery, ExportRecordsResponse, build_records_csv, create_export_job_input,
             export_columns_from_config, export_display_value, export_records_format, export_records_include_archived,
-            export_records_limit, export_records_query_from_job, export_records_scope,
+            export_records_limit, export_records_query_from_job, export_records_scope, is_numeric_field_type,
         },
         record_import::{
             CreateImportJobRequest, ImportMappingTemplateConfig, ImportRecordInput, ImportRecordPreviewRow,
@@ -1574,6 +1574,7 @@ async fn export_records_for_form(
         .map(|field| ExportColumnResponse {
             key: field.key.clone(),
             label: field.label.clone(),
+            numeric: is_numeric_field_type(&field.field_type),
         })
         .collect::<Vec<_>>();
 

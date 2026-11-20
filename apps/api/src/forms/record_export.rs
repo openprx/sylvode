@@ -22,6 +22,15 @@ pub struct ExportRecordsQuery {
 pub struct ExportColumnResponse {
     pub key: String,
     pub label: String,
+    /// The field holds numbers, so a cell that is a plain number is written as is (a leading
+    /// `-` is a sign there, not a formula). Export-only: not part of the response body.
+    #[serde(skip)]
+    pub numeric: bool,
+}
+
+/// Field types whose values are numbers.
+pub fn is_numeric_field_type(field_type: &str) -> bool {
+    matches!(field_type, "number" | "integer" | "amount" | "rating" | "progress")
 }
 
 #[derive(Debug, Serialize)]
@@ -112,15 +121,15 @@ pub fn export_display_value(value: &Value) -> String {
 
 pub fn build_records_csv(columns: &[ExportColumnResponse], rows: &[ExportRecordRowResponse]) -> String {
     let mut csv = String::new();
-    let mut header = vec!["Title".to_string()];
-    header.extend(columns.iter().map(|column| column.label.clone()));
+    let mut header = vec![(false, "Title".to_string())];
+    header.extend(columns.iter().map(|column| (false, column.label.clone())));
     csv.push_str(&csv_line(&header));
     for row in rows {
-        let mut values = vec![row.title.clone()];
+        let mut values = vec![(false, row.title.clone())];
         values.extend(
             columns
                 .iter()
-                .map(|column| row.values.get(&column.key).cloned().unwrap_or_default()),
+                .map(|column| (column.numeric, row.values.get(&column.key).cloned().unwrap_or_default())),
         );
         csv.push_str(&csv_line(&values));
     }
@@ -201,21 +210,58 @@ pub fn export_records_query_from_job(req: CreateExportJobRequest) -> Result<Expo
     })
 }
 
-fn csv_line(values: &[String]) -> String {
-    let mut line = values
+fn csv_line(cells: &[(bool, String)]) -> String {
+    let mut line = cells
         .iter()
-        .map(|value| csv_escape(value))
+        .map(|(numeric, value)| csv_escape(value, *numeric))
         .collect::<Vec<_>>()
         .join(",");
     line.push('\n');
     line
 }
 
-fn csv_escape(value: &str) -> String {
+/// Whether `value` is a plain number, optionally followed by a three-letter uppercase currency
+/// code as the amount display produces (`-12.30 CNY`). Nothing else passes, so a numeric column
+/// cannot be used to smuggle a formula.
+fn is_plain_number(value: &str) -> bool {
+    let number = match value.split_once(' ') {
+        Some((number, code)) if code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase()) => number,
+        Some(_) => return false,
+        None => value,
+    };
+    let unsigned = number.strip_prefix('-').unwrap_or(number);
+    let (mantissa, exponent) = match unsigned.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => (mantissa, Some(exponent)),
+        None => (unsigned, None),
+    };
+    let (int_part, frac_part) = match mantissa.split_once('.') {
+        Some((int_part, frac_part)) => (int_part, Some(frac_part)),
+        None => (mantissa, None),
+    };
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    digits(int_part)
+        && frac_part.is_none_or(digits)
+        && exponent.is_none_or(|exp| digits(exp.strip_prefix(['+', '-']).unwrap_or(exp)))
+}
+
+/// Quotes a CSV cell and neutralises spreadsheet formulas.
+///
+/// A cell that starts with `=`, `+`, `-`, `@`, tab or carriage return is evaluated as a formula by
+/// Excel, Sheets and `LibreOffice`, so it gets a leading `'` before quoting. The one exception is a
+/// cell of a `numeric` column that is a plain number (see [`is_plain_number`]): its leading `-`
+/// is a sign, and prefixing it would turn a number into text. Every text cell is neutralised, so
+/// a text field holding `-5` exports as `'-5`.
+fn csv_escape(value: &str, numeric: bool) -> String {
+    let formula_start = value.starts_with(['=', '+', '-', '@', '\t', '\r']);
+    let value = if formula_start && !(numeric && is_plain_number(value)) {
+        format!("'{value}")
+    } else {
+        value.to_string()
+    };
     if value.contains('"') || value.contains(',') || value.contains('\n') || value.contains('\r') {
         format!("\"{}\"", value.replace('"', "\"\""))
     } else {
-        value.to_string()
+        value
     }
 }
 
@@ -223,8 +269,9 @@ fn csv_escape(value: &str) -> String {
 mod tests {
     use super::{
         CreateExportJobRequest, ExportColumnResponse, ExportRecordRowResponse, build_records_csv,
-        create_export_job_input, export_columns_from_config, export_display_value, export_records_format,
+        create_export_job_input, csv_escape, export_columns_from_config, export_display_value, export_records_format,
         export_records_include_archived, export_records_limit, export_records_query_from_job, export_records_scope,
+        is_plain_number,
     };
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -254,10 +301,12 @@ mod tests {
             ExportColumnResponse {
                 key: "dish".to_string(),
                 label: "菜品".to_string(),
+                numeric: false,
             },
             ExportColumnResponse {
                 key: "note".to_string(),
                 label: "备注".to_string(),
+                numeric: false,
             },
         ];
         let mut values = BTreeMap::new();
@@ -274,6 +323,77 @@ mod tests {
             csv,
             "Title,菜品,备注\n订单 1,\"米饭,大\",\"第一行\n第二行 \"\"加急\"\"\"\n"
         );
+    }
+
+    #[test]
+    fn neutralises_every_formula_trigger() {
+        for trigger in ['=', '+', '-', '@', '\t', '\r'] {
+            let cell = format!("{trigger}1+1");
+            let out = csv_escape(&cell, false);
+            let expected = if trigger == '\r' {
+                format!("\"'{cell}\"")
+            } else {
+                format!("'{cell}")
+            };
+            assert_eq!(out, expected, "trigger {trigger:?}");
+        }
+        assert_eq!(csv_escape("plain", false), "plain");
+        assert_eq!(csv_escape("a=b", false), "a=b");
+        assert_eq!(csv_escape("", false), "");
+        assert_eq!(csv_escape("1-2", false), "1-2");
+    }
+
+    #[test]
+    fn neutralisation_keeps_quoting_correct() {
+        assert_eq!(
+            csv_escape("=HYPERLINK(\"http://x\",\"y\")", false),
+            "\"'=HYPERLINK(\"\"http://x\"\",\"\"y\"\")\""
+        );
+        assert_eq!(csv_escape("@a,b", false), "\"'@a,b\"");
+        assert_eq!(csv_escape("-x\ny", false), "\"'-x\ny\"");
+    }
+
+    #[test]
+    fn numeric_cells_keep_their_sign_but_only_when_plain_numbers() {
+        for ok in ["-5", "-5.25", "-0.5", "-1e-7", "-1E+9", "-12.30 CNY", "7", "3.5"] {
+            assert_eq!(csv_escape(ok, true), ok, "{ok}");
+            assert!(is_plain_number(ok), "{ok}");
+        }
+        // the same text in a text column is neutralised
+        assert_eq!(csv_escape("-5", false), "'-5");
+        for bad in [
+            "-5+cmd", "=1+1", "-5 cny", "-5 CNYX", "-", "-.5", "-5.", "-1e", "-5 CNY ", "+5", "-5\t", "- 5",
+        ] {
+            assert!(!is_plain_number(bad), "{bad}");
+        }
+        assert_eq!(csv_escape("=1+1", true), "'=1+1");
+        assert_eq!(csv_escape("+5", true), "'+5");
+        assert_eq!(csv_escape("-5+cmd|' /C calc'!A0", true), "'-5+cmd|' /C calc'!A0");
+    }
+
+    #[test]
+    fn build_csv_neutralises_headers_titles_and_text_but_not_numbers() {
+        let columns = vec![
+            ExportColumnResponse {
+                key: "qty".to_string(),
+                label: "=Qty".to_string(),
+                numeric: true,
+            },
+            ExportColumnResponse {
+                key: "note".to_string(),
+                label: "Note".to_string(),
+                numeric: false,
+            },
+        ];
+        let mut values = BTreeMap::new();
+        values.insert("qty".to_string(), "-5".to_string());
+        values.insert("note".to_string(), "-5".to_string());
+        let rows = vec![ExportRecordRowResponse {
+            record_id: uuid::Uuid::nil(),
+            title: "@t".to_string(),
+            values,
+        }];
+        assert_eq!(build_records_csv(&columns, &rows), "Title,'=Qty,Note\n'@t,-5,'-5\n");
     }
 
     #[test]
