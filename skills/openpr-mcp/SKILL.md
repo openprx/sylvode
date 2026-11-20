@@ -209,12 +209,13 @@ surface than a bot token does:
 
 - It acts in the one workspace it was connected to; `workspace_id` arguments must match it or the
   call is refused. Projects outside the connection are refused by the API.
-- `tools/list` returns only what the granted scopes allow: `projects:read` (`projects.list`,
-  `projects.get`, `context.get_project`), `work_items:read` (`work_items.list`, `.get`,
-  `.get_by_identifier`, `.search`, `.list_labels`, `comments.list`, `labels.list_by_project`) and
-  `forms:read` (`forms.list`, `.get`, `.schema_summary`, `form_views.list`, `form_records.list`,
-  `.get`, `.children`). In this release no tool that creates, changes or deletes data, administers
-  the workspace or dispatches an agent is available to a connected application, whatever its scopes.
+- `tools/list` returns only what the granted scopes allow, eight read tools: `projects:read`
+  (`projects.list`, `projects.get`, `context.get_project`) and `work_items:read`
+  (`work_items.list`, `.get`, `.get_by_identifier`, `.list_labels`, `comments.list`). Search, the
+  project label list and the forms tools are not offered to a connected application in this
+  release (their API routes are not open to it); bot and user tokens keep them. In this release no
+  tool that creates, changes or deletes data, administers the workspace or dispatches an agent is
+  available to a connected application, whatever its scopes.
 - A call outside the granted scopes answers HTTP 403 with `error="insufficient_scope"` and the scope
   to request; a tool that is never available answers JSON-RPC error `-32002`. Do not retry either.
 - HTTP 401 means the token is no longer valid: refresh it once, and reconnect if that fails.

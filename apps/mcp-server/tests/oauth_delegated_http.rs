@@ -325,16 +325,18 @@ fn names(items: &[&str]) -> BTreeSet<String> {
     items.iter().map(|name| (*name).to_string()).collect()
 }
 
-const WORK_ITEM_READS: [&str; 7] = [
+const WORK_ITEM_READS: [&str; 5] = [
     "work_items.list",
     "work_items.get",
     "work_items.get_by_identifier",
-    "work_items.search",
     "work_items.list_labels",
     "comments.list",
-    "labels.list_by_project",
 ];
-const FORM_READS: [&str; 7] = [
+/// Read tools that exist for bot and user tokens but that no delegated caller gets, because the
+/// API routes they call are not on the delegated allow-list.
+const WITHHELD_READS: [&str; 9] = [
+    "work_items.search",
+    "labels.list_by_project",
     "forms.list",
     "forms.get",
     "forms.schema_summary",
@@ -563,17 +565,17 @@ async fn tools_list_contains_exactly_the_tools_the_scopes_allow() -> TestResult 
     let cases: Vec<(&str, BTreeSet<String>)> = vec![
         ("projects:read", names(&PROJECT_READS)),
         ("work_items:read", names(&WORK_ITEM_READS)),
-        ("forms:read", names(&FORM_READS)),
+        ("forms:read", names(&[])),
         (
             "projects:read work_items:read",
             names(&[&PROJECT_READS[..], &WORK_ITEM_READS[..]].concat()),
         ),
         // A write scope implies its read scope, and unlocks nothing that changes data.
         ("work_items:write", names(&WORK_ITEM_READS)),
-        ("forms:write", names(&FORM_READS)),
+        ("forms:write", names(&[])),
         (
             "projects:read work_items:read work_items:write forms:read forms:write",
-            names(&[&PROJECT_READS[..], &WORK_ITEM_READS[..], &FORM_READS[..]].concat()),
+            names(&[&PROJECT_READS[..], &WORK_ITEM_READS[..]].concat()),
         ),
     ];
     for (scope, expected) in cases {
@@ -655,7 +657,10 @@ async fn a_call_the_scopes_do_not_allow_gets_a_403_naming_the_scope_and_never_re
     let source = FakeSource::new([(token.clone(), active("projects:read"))]);
     let server = Harness::delegated(&source).await?;
 
-    for (tool, scope) in [("work_items.list", "work_items:read"), ("forms.list", "forms:read")] {
+    for (tool, scope) in [
+        ("work_items.list", "work_items:read"),
+        ("comments.list", "work_items:read"),
+    ] {
         let reply = server
             .post(Some(&token), &call(tool, &json!({"project_id": PROJECT})))
             .await?;
@@ -732,6 +737,121 @@ async fn a_tool_that_is_not_available_is_refused_whatever_the_scopes_claim() -> 
         answers.first(),
         Some(&Some(json!("tool not available to connected applications")))
     );
+    assert!(server.seen().await.is_empty(), "a refused call reached the API");
+    Ok(())
+}
+
+/// A value for each required argument of a tool, taken from its own input schema so that a tool
+/// added later needs no entry here: ids and identifiers get values the API's routes accept, any
+/// other required string a plain word.
+fn required_arguments(schema: &Value) -> Value {
+    let mut arguments = serde_json::Map::new();
+    let properties = schema.get("properties").and_then(Value::as_object);
+    for name in schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        let property = properties.and_then(|properties| properties.get(name));
+        let is_uuid = property
+            .and_then(|property| property.get("pattern"))
+            .and_then(Value::as_str)
+            .is_some_and(|pattern| pattern.contains("[0-9a-f]{8}"));
+        let value = if name == "identifier" {
+            json!("AAA-1")
+        } else if is_uuid || name.ends_with("_id") {
+            json!(PROJECT)
+        } else {
+            json!("word")
+        };
+        arguments.insert(name.to_string(), value);
+    }
+    Value::Object(arguments)
+}
+
+/// Whether the concrete `path` is an instance of the router's `template`.
+fn path_matches(template: &str, path: &str) -> bool {
+    let (template, path): (Vec<&str>, Vec<&str>) = (template.split('/').collect(), path.split('/').collect());
+    template.len() == path.len()
+        && template
+            .iter()
+            .zip(&path)
+            .all(|(wanted, actual)| (wanted.starts_with('{') && !actual.is_empty()) || wanted == actual)
+}
+
+/// Every tool a delegated caller can see must be one the API will serve it: the route the tool
+/// really calls (recorded from the call, so no table of routes is kept here) is on the API's
+/// delegated allow-list, and the scope the tool requires satisfies the scope that route requires.
+/// This is what keeps the MCP tool map and the API allow-list, which live in two crates, from
+/// drifting into a tool that is listed and then fails closed.
+#[tokio::test]
+async fn every_tool_available_to_delegated_callers_calls_a_route_the_api_allows_for_its_scope() -> TestResult {
+    use api::oauth::delegated::DELEGATED_ROUTES;
+    use api::oauth::scopes::ScopeSet;
+    let definitions = mcp_server::get_all_tool_definitions();
+    assert!(!mcp_server::oauth_scopes::SCOPED_TOOLS.is_empty());
+    for (tool, scope) in mcp_server::oauth_scopes::SCOPED_TOOLS {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == *tool)
+            .ok_or_else(|| format!("{tool} is not a registered tool"))?;
+        let token = delegated('a');
+        let source = FakeSource::new([(token.clone(), active(scope.as_str()))]);
+        let server = Harness::delegated(&source).await?;
+        let reply = server
+            .post(Some(&token), &call(tool, &required_arguments(&definition.input_schema)))
+            .await?;
+        assert_eq!(reply.status, StatusCode::OK, "{tool}: {}", reply.text);
+        let seen = server.seen().await;
+        assert!(
+            !seen.is_empty(),
+            "{tool}: the call never reached the API: {}",
+            reply.text
+        );
+        let granted = ScopeSet::from_scopes(&[*scope]);
+        for request in &seen {
+            let entry = DELEGATED_ROUTES
+                .iter()
+                .find(|entry| entry.method == request.method && path_matches(entry.pattern, &request.path))
+                .ok_or_else(|| {
+                    format!(
+                        "{tool} calls {} {}, which is not on the API's delegated allow-list",
+                        request.method, request.path
+                    )
+                })?;
+            assert!(
+                entry.required.satisfied_by(granted),
+                "{tool} holds {} but {} {} requires {:?}",
+                scope.as_str(),
+                entry.method,
+                entry.pattern,
+                entry.required
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Read tools whose API routes are denied to connected applications are not offered and not
+/// callable, so none can be listed only to fail closed.
+#[tokio::test]
+async fn read_tools_with_denied_routes_are_not_available_to_delegated_callers() -> TestResult {
+    let token = delegated('a');
+    let source = FakeSource::new([(
+        token.clone(),
+        active("projects:read work_items:read work_items:write forms:read forms:write"),
+    )]);
+    let server = Harness::delegated(&source).await?;
+    let visible = listed(&server.post(Some(&token), &list()).await?)?;
+    for tool in WITHHELD_READS {
+        assert!(!visible.contains(tool), "{tool} is listed");
+        let reply = server
+            .post(Some(&token), &call(tool, &json!({"project_id": PROJECT})))
+            .await?;
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{tool}");
+    }
     assert!(server.seen().await.is_empty(), "a refused call reached the API");
     Ok(())
 }
