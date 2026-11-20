@@ -105,6 +105,7 @@
 	} from '#lib/forms/record-values.js';
 
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { safeImageUrl, safeLinkUrl } from '#lib/utils/safe-url.js';
 
 	import {
@@ -1324,7 +1325,16 @@
 		return result;
 	}
 	async function reloadFormsSession() {
-		if (formsSessionDirty() && !window.confirm($t('forms.session.discardPrompt'))) return;
+		if (
+			formsSessionDirty() &&
+			!(await confirmAction({
+				tone: 'destructive',
+				title: $t('forms.session.discardPrompt'),
+				verb: 'discard',
+				object: $t('forms.session.mine').toLowerCase()
+			}))
+		)
+			return;
 		const id = selectedFormId;
 		const recordId = editingRecordId;
 		formsSessionGeneration++;
@@ -2019,7 +2029,13 @@
 	async function handleDeleteRecord(record: FormRecord) {
 		const label = record.title || record.id;
 
-		if (!window.confirm($t('forms.deleteRecordConfirm', { values: { title: label } }))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: $t('forms.deleteRecordConfirm', { values: { title: label } }),
+				confirmLabel: $t('forms.deleteRecord')
+			}))
+		) {
 			return;
 		}
 
@@ -3691,7 +3707,13 @@
 	async function deleteChildRecord(child: FormChildRecord) {
 		const label = child.record.title || child.record.id;
 
-		if (!window.confirm($t('forms.deleteChildRecordConfirm', { values: { title: label } }))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: $t('forms.deleteChildRecordConfirm', { values: { title: label } }),
+				confirmLabel: $t('forms.deleteChildRecord')
+			}))
+		) {
 			return;
 		}
 
