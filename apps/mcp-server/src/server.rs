@@ -1,4 +1,5 @@
 use crate::client::{ListRecordsQuery, ListWorkItemsQuery, OpenPrClient};
+use crate::oauth::{DelegatedGrant, ToolRefusal, gate_tool_call, is_static_guide_resource};
 use crate::protocol::{CallToolParams, CallToolResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, ListToolsResult};
 use crate::tools;
 use serde_json::{Value, json};
@@ -589,6 +590,13 @@ pub struct McpServer {
     /// two lifetimes must not be decoupled. On stdio there is one caller for the life of the
     /// process, so the same map is simply that caller's own.
     project_id_cache: Arc<Mutex<HashMap<String, ResolvedOwner>>>,
+    /// What a delegated (OAuth) caller was granted; `None` for every other caller.
+    ///
+    /// When present it narrows the server on every door: `tools/list` shows only the tools the
+    /// scopes allow, `tools/call` refuses anything else before the policy chain runs, and
+    /// `resources/*` serves only the static guides. It is fixed when the server is built for one
+    /// request and cannot be changed by anything the caller sends.
+    delegated: Option<DelegatedGrant>,
 }
 
 impl McpServer {
@@ -596,7 +604,31 @@ impl McpServer {
         Self {
             client,
             project_id_cache: Arc::new(Mutex::new(HashMap::new())),
+            delegated: None,
         }
+    }
+
+    /// A server for one delegated caller. `client` must already act for that caller
+    /// ([`OpenPrClient::acting_as_delegated`]); `grant` is what its token context allows.
+    pub fn new_delegated(client: OpenPrClient, grant: DelegatedGrant) -> Self {
+        Self {
+            client,
+            project_id_cache: Arc::new(Mutex::new(HashMap::new())),
+            delegated: Some(grant),
+        }
+    }
+
+    /// Why a `tools/call` with these `params` must be refused for a delegated caller, or `None`
+    /// when it may proceed (or when the caller is not delegated).
+    ///
+    /// The transport asks this before dispatch so that it can answer with the HTTP status and
+    /// challenge the refusal calls for. `call_tool` asks the same question again, so no path into
+    /// a tool skips it.
+    pub fn delegated_refusal(&self, params: Option<&Value>) -> Option<ToolRefusal> {
+        let grant = self.delegated.as_ref()?;
+        let name = params.and_then(|params| params.get("name")).and_then(Value::as_str)?;
+        let arguments = params.and_then(|params| params.get("arguments"));
+        gate_tool_call(grant, name, arguments).err()
     }
 
     pub async fn handle_request(&self, req: JsonRpcRequest) -> Option<JsonRpcResponse> {
@@ -649,11 +681,14 @@ impl McpServer {
     }
 
     async fn handle_list_tools(&self, id: Option<Value>, params: Option<Value>) -> JsonRpcResponse {
-        let static_tools = if self.client.is_flow_only() {
+        let mut static_tools = if self.client.is_flow_only() {
             tools::flow_scope::definitions()
         } else {
             tools::get_all_tool_definitions()
         };
+        if let Some(grant) = &self.delegated {
+            static_tools.retain(|tool| crate::oauth_scopes::allowed(grant.scopes, &tool.name));
+        }
         let requested_project_id = match extract_tools_list_project_id(params.as_ref()) {
             Ok(project_id) => project_id,
             Err(error) => return JsonRpcResponse::error(id, JsonRpcError::invalid_params(error)),
@@ -724,6 +759,11 @@ impl McpServer {
     }
 
     pub async fn call_tool(&self, name: &str, args: Value) -> CallToolResult {
+        if let Some(grant) = &self.delegated
+            && let Err(refusal) = gate_tool_call(grant, name, Some(&args))
+        {
+            return CallToolResult::error(refusal.message());
+        }
         let scoped = Self {
             client: self.client.recording_operation(name),
             project_id_cache: if self.client.is_flow_only() {
@@ -731,6 +771,7 @@ impl McpServer {
             } else {
                 Arc::clone(&self.project_id_cache)
             },
+            delegated: self.delegated,
         };
         if scoped.client.is_flow_only() {
             let request = match tools::flow_scope::prepare(&scoped.client, name, &args).await {
@@ -1515,7 +1556,7 @@ impl McpServer {
     /// hide nothing — `resources/read` is where the data lives, and that is gated.
     #[allow(clippy::unused_self)]
     fn handle_resources_list(&self, id: Option<Value>) -> JsonRpcResponse {
-        let resources = vec![
+        let mut resources = vec![
             json!({
                 "uri": "sylvode://skills/openpr-mcp",
                 "name": "Sylvode MCP Skill Guide",
@@ -1541,6 +1582,15 @@ impl McpServer {
                 "mimeType": "application/json"
             }),
         ];
+        if self.delegated.is_some() {
+            // Only the static guides: the scenario template list is read from the API.
+            resources.retain(|resource| {
+                resource
+                    .get("uri")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_static_guide_resource)
+            });
+        }
 
         JsonRpcResponse::success(id, json!({ "resources": resources }))
     }
@@ -1553,6 +1603,11 @@ impl McpServer {
     /// does.
     #[allow(clippy::unused_self)]
     fn handle_resources_templates_list(&self, id: Option<Value>) -> JsonRpcResponse {
+        if self.delegated.is_some() {
+            // Every template addresses data, and delegated callers reach data through the
+            // scope-checked tools only.
+            return JsonRpcResponse::success(id, json!({ "resourceTemplates": [] }));
+        }
         let templates = vec![
             json!({
                 "uriTemplate": "sylvode://projects/{project_id}/issues",
@@ -1703,6 +1758,17 @@ impl McpServer {
             }
         };
         let uri = canonical_resource_uri(&requested_uri).unwrap_or(requested_uri);
+
+        if self.delegated.is_some() && !is_static_guide_resource(&uri) {
+            tracing::warn!(
+                uri = %sanitize_for_error(&uri),
+                "Refusing resources/read: the resource is not available to connected applications"
+            );
+            return JsonRpcResponse::error(
+                id,
+                JsonRpcError::invalid_params("resource not available to connected applications"),
+            );
+        }
 
         // `resources/read` serves the same project owned payloads `tools/call` does, so it
         // is gated by the same project agent policy. Without this the resource door is a
