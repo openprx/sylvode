@@ -529,12 +529,20 @@ impl Default for AiTasksConfig {
 ///
 /// `conversion_reap_interval_secs` is the period of the API's sweep that fails conversion jobs
 /// left `started` past the stale threshold (`rest-api-v1.md` v0.7).
+///
+/// `incremental_window` (default on) lets the collab write window decide the structural limits
+/// from the facts of the page and the units an update touched; off, every write runs the full
+/// computation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlowConfig {
     pub dispatch_max_attempts: i32,
     pub collab_allowed_origins: Vec<String>,
     pub conversion_reap_interval_secs: u64,
     pub body_asset_max_bytes: u64,
+    /// Whether the collab write window may decide the structural limits incrementally. Off makes
+    /// every write run the full computation (today's bounded cost, without the incremental
+    /// check), whatever the page.
+    pub incremental_window: bool,
 }
 
 impl Default for FlowConfig {
@@ -544,6 +552,7 @@ impl Default for FlowConfig {
             collab_allowed_origins: Vec::new(),
             conversion_reap_interval_secs: DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
             body_asset_max_bytes: DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
+            incremental_window: true,
         }
     }
 }

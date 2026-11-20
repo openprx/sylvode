@@ -550,46 +550,148 @@ pub(crate) struct Prepared {
 }
 /// How many accepted updates the worker's incremental window check decided differently from the
 /// host's full projection of the accepted document, since the process started. Exported as the
-/// `flow_window_check_divergence_total` field of the error log line below.
+/// `flow_window_check_divergence_total` field of the error log line of [`log_window_divergence`];
+/// the API has no metrics endpoint or other exported counters, so the log line is where it shows.
 pub(crate) static WINDOW_CHECK_DIVERGENCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The identifiers that reproduce a window decision: the document, the update and the head it was
+/// applied to. Never content.
+#[derive(Clone, Copy)]
+struct WindowIds {
+    document_id: Uuid,
+    update_id: Uuid,
+    base_head_seq: i64,
+}
 
 /// The host's oracle for the worker's incremental window check: compares what the worker
 /// established about the accepted document (`report`, absent when the full computation decided)
-/// with the full projection the host just computed from the document it received. On any
-/// disagreement the write is refused with a typed internal error, never accepted, the divergence
-/// is logged at error level with the identifiers that reproduce it (the document, the update and
-/// the head it was applied to; never the content) and counted.
+/// with the full projection the host just computed from the document it received.
+///
+/// # Errors
+/// The first field in which the two disagree. The caller does not accept the write on this
+/// worker's word (see [`decide_window`]).
 fn verify_window_report(
     report: Option<&collab_core::window_check::WindowReport>,
     projection: &collab_core::SemanticSnapshot,
-    update_id: Uuid,
-    document_id: Uuid,
-    base_head_seq: i64,
-) -> Result<(), ApiError> {
-    let Some(report) = report else {
-        return Ok(());
-    };
-    let Err(divergence) = collab_core::window_check::compare_with_projection(report, projection) else {
-        return Ok(());
-    };
+) -> Result<(), collab_core::window_check::WindowDivergence> {
+    report.map_or(Ok(()), |report| {
+        collab_core::window_check::compare_with_projection(report, projection)
+    })
+}
+
+/// Counts and logs a disagreement at error level with the identifiers that reproduce it.
+fn log_window_divergence(divergence: &collab_core::window_check::WindowDivergence, ids: WindowIds) {
     let total = WINDOW_CHECK_DIVERGENCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     tracing::error!(
         flow_window_check_divergence_total = total,
         field = divergence.field,
         reported = divergence.reported,
         projected = divergence.projected,
-        document_id = %document_id,
-        update_id = %update_id,
-        base_head_seq,
-        "incremental_check_divergence: the worker's window check disagrees with the full projection; refusing the write"
+        document_id = %ids.document_id,
+        update_id = %ids.update_id,
+        base_head_seq = ids.base_head_seq,
+        "incremental_check_divergence: the worker's window check disagrees with the full projection; deciding again with the full window"
     );
-    Err(ApiError::internal())
+}
+
+/// What one attempt of the isolated window produced.
+enum WindowAttempt {
+    /// The worker refused, or did not finish: the rejection is `isolated_apply_rejection`'s.
+    Rejected(collab_core::isolation::IsolatedApplyError),
+    /// The worker accepted with an incremental result the host's projection contradicts.
+    Diverged(collab_core::window_check::WindowDivergence),
+    /// The worker accepted, and the host's projection agrees with whatever it reported.
+    Prepared(Box<WindowPrepared>),
+}
+
+/// An accepted window with everything the host derived from it.
+struct WindowPrepared {
+    candidate: LoroCollabEngine,
+    semantic: collab_core::SemanticSnapshot,
+    minimum_editor_model: u32,
+    window_cpu_us: Option<u64>,
+    incremental: bool,
+}
+
+/// One attempt: the isolated window in `mode`, then the host's load and projection of the document
+/// it returned, compared with the worker's report. Blocking and CPU heavy (process spawn, pipe I/O,
+/// load, a full projection): run it on a blocking thread, never on an async worker.
+fn window_attempt(
+    base_snapshot: &[u8],
+    update: &[u8],
+    mode: collab_core::isolation::WindowMode,
+) -> Result<WindowAttempt, ApiError> {
+    let isolated_step = WriteStep::start("isolated_apply");
+    let isolated = collab_core::isolation::isolated_apply_with(base_snapshot, update, mode);
+    isolated_step.finish();
+    let success = match isolated {
+        Ok(success) => success,
+        Err(err) => return Ok(WindowAttempt::Rejected(err)),
+    };
+    // Reconstructing `LoroCollabEngine` from the isolated worker's already-shape-validated result
+    // is cheap and safe: the worker already bounded this document's tree depth/container
+    // count/block count/text volume inside the metered window, so this load and the
+    // `semantic_snapshot`/`title` reads below operate on state with a known worst-case size, not
+    // on attacker-controlled input directly.
+    let candidate_load_step = WriteStep::start("candidate_load");
+    let candidate = LoroCollabEngine::load(&success.snapshot).map_err(|err| {
+        tracing::error!(error = %err, "collab write: reload of isolated-apply result snapshot failed");
+        ApiError::internal()
+    })?;
+    candidate_load_step.finish();
+    // The floor comes from the same block pass as the projection, so it costs no second walk.
+    let host_snapshot_step = WriteStep::start("host_semantic_snapshot");
+    let (semantic, minimum_editor_model) = candidate.semantic_snapshot_with_floor().map_err(|err| {
+        tracing::error!(error = %err, "collab write: semantic_snapshot failed after a successful isolated apply");
+        ApiError::internal()
+    })?;
+    host_snapshot_step.finish();
+    if let Err(divergence) = verify_window_report(success.window_report.as_ref(), &semantic) {
+        return Ok(WindowAttempt::Diverged(divergence));
+    }
+    Ok(WindowAttempt::Prepared(Box::new(WindowPrepared {
+        candidate,
+        semantic,
+        minimum_editor_model,
+        window_cpu_us: success.window_cpu_us,
+        incremental: success.window_report.is_some(),
+    })))
+}
+
+/// Decides one write's window with `attempt`, which runs the isolated window in a given mode.
+///
+/// The first attempt runs in `mode`. If the worker's incremental result is contradicted by the
+/// host's own projection, the worker's word is not taken: the disagreement is counted and logged
+/// at error level, and the decision is made once more by the full computation (the worker is asked
+/// for the full window, which it cannot be told to skip checks in). The write is accepted or
+/// refused by that result, so a wrong incremental check can neither commit a document the full
+/// computation would refuse nor turn into a plain failure the client retries forever. A full
+/// window reports nothing to disagree with; if a worker reports anyway and is contradicted, the
+/// write fails with an internal error.
+fn decide_window(
+    ids: WindowIds,
+    mode: collab_core::isolation::WindowMode,
+    mut attempt: impl FnMut(collab_core::isolation::WindowMode) -> Result<WindowAttempt, ApiError>,
+) -> Result<WindowAttempt, ApiError> {
+    let first = attempt(mode)?;
+    let WindowAttempt::Diverged(divergence) = first else {
+        return Ok(first);
+    };
+    log_window_divergence(&divergence, ids);
+    match attempt(collab_core::isolation::WindowMode::Full)? {
+        WindowAttempt::Diverged(second) => {
+            log_window_divergence(&second, ids);
+            Err(ApiError::internal())
+        }
+        decided => Ok(decided),
+    }
 }
 
 #[cfg(test)]
 mod window_oracle_tests {
     use super::*;
     use collab_core::SemanticSnapshot;
+    use collab_core::isolation::{IsolatedApplyError, WindowMode};
     use collab_core::window_check::WindowReport;
 
     fn report(blocks: u64) -> WindowReport {
@@ -602,23 +704,137 @@ mod window_oracle_tests {
         }
     }
 
-    #[test]
-    fn no_report_means_the_full_computation_decided() {
-        let projection = SemanticSnapshot::default();
-        assert!(verify_window_report(None, &projection, Uuid::nil(), Uuid::nil(), 0).is_ok());
+    fn ids() -> WindowIds {
+        WindowIds {
+            document_id: Uuid::nil(),
+            update_id: Uuid::nil(),
+            base_head_seq: 0,
+        }
+    }
+
+    fn prepared(incremental: bool) -> WindowAttempt {
+        WindowAttempt::Prepared(Box::new(WindowPrepared {
+            candidate: LoroCollabEngine::new_empty(1),
+            semantic: SemanticSnapshot::default(),
+            minimum_editor_model: 0,
+            window_cpu_us: None,
+            incremental,
+        }))
+    }
+
+    fn diverged() -> WindowAttempt {
+        WindowAttempt::Diverged(collab_core::window_check::WindowDivergence {
+            field: "blocks",
+            reported: 1,
+            projected: 0,
+        })
     }
 
     #[test]
-    fn agreeing_report_is_accepted_and_a_diverging_one_is_refused_and_counted() {
+    fn no_report_means_the_full_computation_decided() {
         let projection = SemanticSnapshot::default();
-        assert!(verify_window_report(Some(&report(0)), &projection, Uuid::nil(), Uuid::nil(), 0).is_ok());
+        assert!(verify_window_report(None, &projection).is_ok());
+    }
+
+    #[test]
+    fn agreeing_report_is_accepted_and_a_diverging_one_is_named() {
+        let projection = SemanticSnapshot::default();
+        assert!(verify_window_report(Some(&report(0)), &projection).is_ok());
+        let divergence = verify_window_report(Some(&report(1)), &projection).expect_err("the report disagrees");
+        assert_eq!(
+            (divergence.field, divergence.reported, divergence.projected),
+            ("blocks", 1, 0)
+        );
+    }
+
+    #[test]
+    fn an_agreeing_incremental_window_is_decided_by_one_attempt() {
+        let mut modes = Vec::new();
+        let decided = decide_window(ids(), WindowMode::Incremental, |mode| {
+            modes.push(mode);
+            Ok(prepared(true))
+        })
+        .expect("decides");
+        assert!(matches!(decided, WindowAttempt::Prepared(window) if window.incremental));
+        assert_eq!(modes, [WindowMode::Incremental]);
+    }
+
+    #[test]
+    fn a_refusal_of_the_worker_is_passed_on_without_a_second_attempt() {
+        let mut attempts = 0;
+        let decided = decide_window(ids(), WindowMode::Incremental, |_| {
+            attempts += 1;
+            Ok(WindowAttempt::Rejected(IsolatedApplyError::CpuCeiling))
+        })
+        .expect("decides");
+        assert!(matches!(
+            decided,
+            WindowAttempt::Rejected(IsolatedApplyError::CpuCeiling)
+        ));
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn a_divergence_is_counted_and_the_decision_is_made_again_by_the_full_window() {
         let before = WINDOW_CHECK_DIVERGENCES.load(std::sync::atomic::Ordering::Relaxed);
-        let refused = verify_window_report(Some(&report(1)), &projection, Uuid::nil(), Uuid::nil(), 0);
+        let mut modes = Vec::new();
+        let decided = decide_window(ids(), WindowMode::Incremental, |mode| {
+            modes.push(mode);
+            Ok(if mode == WindowMode::Full {
+                prepared(false)
+            } else {
+                diverged()
+            })
+        })
+        .expect("the full window decides");
+        assert!(matches!(decided, WindowAttempt::Prepared(window) if !window.incremental));
+        assert_eq!(modes, [WindowMode::Incremental, WindowMode::Full]);
+        assert!(WINDOW_CHECK_DIVERGENCES.load(std::sync::atomic::Ordering::Relaxed) > before);
+    }
+
+    #[test]
+    fn the_full_window_can_refuse_what_the_incremental_one_accepted() {
+        let decided = decide_window(ids(), WindowMode::Incremental, |mode| {
+            Ok(if mode == WindowMode::Full {
+                WindowAttempt::Rejected(IsolatedApplyError::Collab(CollabError::LimitExceeded {
+                    limit_kind: "tree_depth",
+                    limit: 32,
+                    observed: 33,
+                }))
+            } else {
+                diverged()
+            })
+        })
+        .expect("decides");
+        assert!(matches!(
+            decided,
+            WindowAttempt::Rejected(IsolatedApplyError::Collab(CollabError::LimitExceeded {
+                observed: 33,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn a_divergence_that_survives_the_full_window_is_an_internal_error() {
+        let refused = decide_window(ids(), WindowMode::Incremental, |_| Ok(diverged()));
         assert!(
             matches!(&refused, Err(error) if format!("{error:?}") == format!("{:?}", ApiError::internal())),
-            "{refused:?}"
+            "{:?}",
+            refused.err()
         );
-        assert!(WINDOW_CHECK_DIVERGENCES.load(std::sync::atomic::Ordering::Relaxed) > before);
+    }
+
+    #[test]
+    fn with_the_switch_off_the_first_attempt_is_already_the_full_window() {
+        let mut modes = Vec::new();
+        let decided = decide_window(ids(), WindowMode::Full, |mode| {
+            modes.push(mode);
+            Ok(prepared(false))
+        })
+        .expect("decides");
+        assert!(matches!(decided, WindowAttempt::Prepared(_)));
+        assert_eq!(modes, [WindowMode::Full]);
     }
 }
 
@@ -806,59 +1022,53 @@ pub(crate) async fn hydrate_and_apply(
     // `spawn_blocking`: `isolated_apply` performs blocking process spawn/pipe I/O/`wait`
     // synchronously, which must never run directly on a Tokio worker thread.
     let update_bytes_owned = bytes.to_vec();
-    let isolated_step = WriteStep::start("isolated_apply");
-    let isolated_result = tokio::task::spawn_blocking(move || {
-        collab_core::isolation::isolated_apply(&base_snapshot_bytes, &update_bytes_owned)
+    let ids = WindowIds {
+        document_id,
+        update_id,
+        base_head_seq: observed.head_seq,
+    };
+    // `[flow] incremental_window = false` makes every window the full computation.
+    let mode = if crate::config::runtime().flow.incremental_window {
+        collab_core::isolation::WindowMode::Incremental
+    } else {
+        collab_core::isolation::WindowMode::Full
+    };
+    // The whole decision runs on one blocking thread: the isolated window, the load and projection
+    // of the document it returns, the comparison with the worker's report and, if they disagree,
+    // the second decision by the full window (see `decide_window`).
+    let window = tokio::task::spawn_blocking(move || {
+        decide_window(ids, mode, |mode| {
+            window_attempt(&base_snapshot_bytes, &update_bytes_owned, mode)
+        })
     })
     .await
     .map_err(|err| {
         tracing::error!(error = %err, "collab write: isolated apply task panicked or was cancelled");
         ApiError::internal()
-    })?;
+    })??;
 
-    isolated_step.finish();
-
-    let (candidate_snapshot, window_report) = match isolated_result {
-        Ok(success) => {
-            tracing::debug!(
-                window_cpu_us = success.window_cpu_us,
-                base_bytes = decoded_bytes_hint,
-                update_bytes = bytes.len(),
-                incremental_window = success.window_report.is_some(),
-                "flow write isolated window"
-            );
-            (success.snapshot, success.window_report)
+    let WindowPrepared {
+        candidate,
+        semantic,
+        minimum_editor_model,
+        window_cpu_us,
+        incremental,
+    } = match window {
+        WindowAttempt::Prepared(window) => *window,
+        WindowAttempt::Rejected(err) => {
+            return isolated_apply_rejection(update_id, document_id, err).map(HydrateOutcome::Rejected);
         }
-        Err(err) => return isolated_apply_rejection(update_id, document_id, err).map(HydrateOutcome::Rejected),
+        // `decide_window` retries a divergence with the full window and never returns one.
+        WindowAttempt::Diverged(_) => return Err(ApiError::internal()),
     };
-
-    // Reconstructing `LoroCollabEngine` from the isolated worker's already-shape-validated result
-    // is cheap and safe: `check_snapshot` already bounded this document's tree depth/container
-    // count/block count/text volume inside the metered window above, so this load and the
-    // `semantic_snapshot`/`title` reads below operate on state with a known worst-case size, not
-    // on attacker-controlled input directly.
-    let candidate_load_step = WriteStep::start("candidate_load");
-    let candidate = LoroCollabEngine::load(&candidate_snapshot).map_err(|err| {
-        tracing::error!(error = %err, "collab write: reload of isolated-apply result snapshot failed");
-        ApiError::internal()
-    })?;
-    candidate_load_step.finish();
+    tracing::debug!(
+        window_cpu_us,
+        base_bytes = decoded_bytes_hint,
+        update_bytes = bytes.len(),
+        incremental_window = incremental,
+        "flow write isolated window"
+    );
     let after_frontier = candidate.frontier().as_bytes().to_vec();
-
-    // The floor comes from the same block pass as the projection, so it costs no second walk.
-    let host_snapshot_step = WriteStep::start("host_semantic_snapshot");
-    let (semantic, minimum_editor_model) = candidate.semantic_snapshot_with_floor().map_err(|err| {
-        tracing::error!(error = %err, "collab write: semantic_snapshot failed after a successful isolated apply");
-        ApiError::internal()
-    })?;
-    host_snapshot_step.finish();
-    verify_window_report(
-        window_report.as_ref(),
-        &semantic,
-        update_id,
-        document_id,
-        observed.head_seq,
-    )?;
 
     let title = candidate.title().map_err(|err| {
         tracing::error!(error = %err, "collab write: title read failed after a successful isolated apply");

@@ -8,6 +8,17 @@ use crate::error::CollabError;
 
 use super::wire;
 
+/// How the worker's metered window decides the structural limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowMode {
+    /// Incrementally against the facts of the base when the check can be certain, with the full
+    /// computation otherwise.
+    #[default]
+    Incremental,
+    /// Always the full computation: `semantic_snapshot` and `check_snapshot` on the whole document.
+    Full,
+}
+
 #[derive(Debug)]
 pub struct IsolatedApplySuccess {
     pub snapshot: Vec<u8>,

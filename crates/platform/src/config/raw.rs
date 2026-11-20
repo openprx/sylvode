@@ -112,6 +112,7 @@ struct RawFlow {
     collab_allowed_origins: Option<Vec<String>>,
     conversion_reap_interval_secs: Option<u64>,
     body_asset_max_bytes: Option<u64>,
+    incremental_window: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -580,6 +581,7 @@ impl RawFlow {
             collab_allowed_origins,
             conversion_reap_interval_secs,
             body_asset_max_bytes,
+            incremental_window: self.incremental_window.unwrap_or(true),
         }
     }
 }
