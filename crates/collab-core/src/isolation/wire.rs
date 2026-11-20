@@ -138,7 +138,7 @@ pub struct ReplayDiffResult {
 pub fn package_reference_remap_required(engine: &crate::LoroCollabEngine) -> Result<bool, crate::CollabError> {
     let semantic = engine.semantic_snapshot()?;
     Ok(engine.minimum_editor_model()? >= 5
-        || !engine.navigator_order().is_empty()
+        || !engine.navigator_order()?.is_empty()
         || semantic.nodes.values().any(|node| {
             node.kind == crate::NodeKind::NavigatorNode
                 || ["embed_object_id", "child_page_id", "reference_id", "asset_id"]

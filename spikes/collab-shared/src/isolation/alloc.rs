@@ -151,11 +151,38 @@ unsafe impl GlobalAlloc for CountingAllocator {
 mod tests {
     use super::*;
     use crate::isolation::shared_page::SharedPage;
+    use parking_lot::{Mutex, MutexGuard};
+
+    /// `ACTIVE_BYTES` and `TARGET_PAGE` are process-global, and the test harness runs tests in
+    /// parallel threads: a second test arming its own page would redirect the first test's
+    /// allocations and reset its counter. Every test that arms the allocator holds this lock.
+    static COUNTER_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Holds [`COUNTER_LOCK`] and, when dropped, disarms the allocator so that it never points at
+    /// a page that is about to be unmapped.
+    struct ArmedCase {
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl ArmedCase {
+        fn arm(page: &SharedPage) -> Self {
+            let guard = COUNTER_LOCK.lock();
+            arm_for_case(page.layout());
+            Self { _lock: guard }
+        }
+    }
+
+    impl Drop for ArmedCase {
+        fn drop(&mut self) {
+            TARGET_PAGE.store(ptr::null_mut(), Ordering::SeqCst);
+            ACTIVE_BYTES.store(0, Ordering::SeqCst);
+        }
+    }
 
     #[test]
     fn alloc_below_ceiling_updates_active_peak_and_dealloc_frees_it() {
         let Ok(page) = SharedPage::map() else { return };
-        arm_for_case(page.layout());
+        let _armed = ArmedCase::arm(&page);
         let allocator = CountingAllocator;
         let layout = Layout::from_size_align(4096, 8).unwrap_or(Layout::new::<u8>());
 
@@ -177,7 +204,7 @@ mod tests {
     #[test]
     fn alloc_past_ceiling_is_rejected_and_records_attempted_peak_before_returning_null() {
         let Ok(page) = SharedPage::map() else { return };
-        arm_for_case(page.layout());
+        let _armed = ArmedCase::arm(&page);
         let allocator = CountingAllocator;
         let oversized = ISOLATED_APPLY_MEMORY_BYTES_MAX + 1;
         // `oversized` is the memory ceiling plus 1, far below usize::MAX on every real target; a
