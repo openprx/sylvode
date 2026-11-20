@@ -1,0 +1,7 @@
+{
+	"surface": {
+		"report": "{object}：已写入 {written}。",
+		"reportUnchanged": "{object}：已写入 {written}。未改动：{unchanged}。",
+		"reportNone": "{object}：没有写入任何内容。"
+	}
+}
