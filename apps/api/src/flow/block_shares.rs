@@ -221,6 +221,7 @@ async fn publish(
         return Err(ApiError::invalid_update("invalid shared command identity"));
     }
     validate_destination_policy(db, actor, &input.audiences).await?;
+    super::block_anchors::complete_registration(db, source).await?;
     let document = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -353,7 +354,17 @@ async fn publish(
         return Err(ApiError::policy_rejected("source Page changed; select blocks again"));
     }
     let seq = head.try_get::<i64>("", "head_seq")?;
-    super::block_registry::reconcile(&tx, identity.scope_id, source, seq, &prepared).await?;
+    // The completion loop registered the Page in capped steps before this transaction, so only
+    // changes made since then are registered here, completely: the share needs every identity.
+    super::block_registry::reconcile(
+        &tx,
+        identity.scope_id,
+        source,
+        seq,
+        &prepared,
+        super::block_registry::RegistrationAllowance::Complete,
+    )
+    .await?;
     let root_logical=tx.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT logical_id FROM flow_block_placements WHERE scope_id=$1 AND page_id=$2 AND physical_cid=$3 AND state='active'",vec![identity.scope_id.into(),source.into(),input.root_block_cid.clone().into()])).await?.ok_or_else(unavailable)?.try_get::<Uuid>("","logical_id")?;
     let share_id = existing.unwrap_or_else(Uuid::new_v4);
     let mut old_members = std::collections::BTreeMap::new();

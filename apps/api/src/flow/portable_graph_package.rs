@@ -1167,7 +1167,14 @@ async fn store_timeline(tx: &DatabaseTransaction, input: PagePromotion<'_>) -> R
         let registry = super::block_registry::prepare(&frame.semantic)?;
         body_assets::reconcile_accepted(tx, object, seq, &refs).await?;
         super::child_pages::reconcile_accepted(tx, object, Some(actor), seq, &child_refs).await?;
-        super::block_registry::reconcile_accepted(tx, object, seq, &registry).await?;
+        super::block_registry::reconcile_accepted(
+            tx,
+            object,
+            seq,
+            &registry,
+            super::block_registry::RegistrationAllowance::Complete,
+        )
+        .await?;
         if offset + 1 == source.versions.len() {
             if seq > 0 {
                 tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,

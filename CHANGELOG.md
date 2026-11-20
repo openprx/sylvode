@@ -10,6 +10,16 @@ name.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Flow: large Pages stay writable on slower databases.** Every statement of the block registry
+  whose size depended on the Page (the locking read, the removal of absent blocks, the legacy
+  comment seal and the bulk writes) now carries at most 500 rows. The first registration of an
+  existing Page is resumable: each accepted write registers new blocks only while it fits its
+  staging budget and records the rest in `flow_block_checkpoints.pending_registrations`
+  (migration `0107`, additive). Comment lists, anchored comments, block shares and transfers
+  finish the registration in short capped steps before they read block identities.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added
