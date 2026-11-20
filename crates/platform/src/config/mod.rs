@@ -43,6 +43,7 @@
 //! missing value of the section at once, and [`AppConfig::from_config`] — the API's and the
 //! worker's single entry point — reports the missing database *and* auth values together.
 
+mod cidr;
 mod error;
 mod raw;
 mod secret;
@@ -53,6 +54,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use uuid::Uuid;
 
+pub use cidr::IpCidr;
 pub use error::{ConfigError, EXAMPLE_CONFIG_PATH};
 pub use secret::{REDACTED, Secret};
 
@@ -270,6 +272,9 @@ fn absolute(path: &Path) -> PathBuf {
 pub struct ServerConfig {
     pub app_name: Option<String>,
     pub bind_addr: Option<String>,
+    /// Reverse proxies whose `X-Forwarded-For` / `X-Real-IP` headers may be believed.
+    /// `None` means the key was absent and the API applies its built-in default.
+    pub trusted_proxies: Option<Vec<IpCidr>>,
 }
 
 /// What a binary that opens a database connection is told when `database.url` is absent.

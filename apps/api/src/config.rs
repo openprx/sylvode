@@ -17,7 +17,11 @@
 //!
 use std::sync::OnceLock;
 
-use platform::config::{DEFAULT_STORAGE_DIR, FlowConfig, OpenPrConfig, OutboundConfig, StorageBackend, StorageConfig};
+use platform::config::{
+    DEFAULT_STORAGE_DIR, FlowConfig, IpCidr, OpenPrConfig, OutboundConfig, StorageBackend, StorageConfig,
+};
+
+use crate::security::default_trusted_proxies;
 
 /// The sections of the configuration file reached from outside `AppState`.
 #[derive(Clone, Debug)]
@@ -25,6 +29,8 @@ pub struct RuntimeConfig {
     pub storage: StorageConfig,
     pub outbound: OutboundConfig,
     pub flow: FlowConfig,
+    /// Peers allowed to vouch for a client address through `X-Forwarded-For` / `X-Real-IP`.
+    pub trusted_proxies: Vec<IpCidr>,
 }
 
 impl RuntimeConfig {
@@ -34,6 +40,11 @@ impl RuntimeConfig {
             storage: config.storage.clone(),
             outbound: config.outbound.clone(),
             flow: config.flow.clone(),
+            trusted_proxies: config
+                .server
+                .trusted_proxies
+                .clone()
+                .unwrap_or_else(default_trusted_proxies),
         }
     }
 
@@ -57,6 +68,7 @@ impl RuntimeConfig {
             },
             outbound: OutboundConfig::default(),
             flow: FlowConfig::default(),
+            trusted_proxies: default_trusted_proxies(),
         }
     }
 }

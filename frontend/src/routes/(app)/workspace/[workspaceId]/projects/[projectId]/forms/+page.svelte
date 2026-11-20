@@ -106,6 +106,7 @@
 
 	import { toast } from '#lib/stores/toast.js';
 	import { safeImageUrl, safeLinkUrl } from '#lib/utils/safe-url.js';
+	import { NUMERIC_FIELD_TYPES, csvExportCell } from '#lib/utils/csv.js';
 
 	import {
 		scenarioTemplateDescription,
@@ -5317,13 +5318,22 @@
 		return records?.map((record) => record.id).join('\n') ?? '';
 	}
 
+	// Quoting only, for the import template and the import round trip: those cells are parsed back
+	// into records, so they must not be formula-neutralised. Exports use csvExportCell.
 	function csvCell(value: string): string {
 		return `"${value.replaceAll('"', '""')}"`;
 	}
 
 	function recordsCsv(records: FormRecord[]): string {
 		const exportFields = visibleFields.length > 0 ? visibleFields : fields.slice(0, 8);
-		const header = ['Record ID', 'Title', ...exportFields.map(fieldLabel)].map(csvCell).join(',');
+		const header = ['Record ID', 'Title', ...exportFields.map(fieldLabel)]
+			.map((cell) => csvExportCell(cell))
+			.join(',');
+		const numericColumns = [
+			false,
+			false,
+			...exportFields.map((f) => NUMERIC_FIELD_TYPES.has(f.type ?? ''))
+		];
 
 		const rows = records.map((record) =>
 			[
@@ -5335,7 +5345,7 @@
 					return value === '-' ? '' : value;
 				})
 			]
-				.map(csvCell)
+				.map((cell, index) => csvExportCell(cell, numericColumns[index]))
 				.join(',')
 		);
 
@@ -5356,7 +5366,7 @@
 			'Metadata',
 			'Source'
 		]
-			.map(csvCell)
+			.map((cell) => csvExportCell(cell))
 			.join(',');
 
 		const rows = events.map((event) =>
@@ -5373,7 +5383,7 @@
 				timelineEventJson(event.metadata),
 				timelineEventJson(event.source)
 			]
-				.map(csvCell)
+				.map((cell) => csvExportCell(cell))
 				.join(',')
 		);
 
@@ -6281,7 +6291,7 @@
 
 	function pivotTableMatrixCsv(table: PivotTable): string {
 		return pivotTableMatrixRows(table)
-			.map((row) => row.map(csvCell).join(','))
+			.map((row) => row.map((cell) => csvExportCell(cell)).join(','))
 			.join('\n');
 	}
 
