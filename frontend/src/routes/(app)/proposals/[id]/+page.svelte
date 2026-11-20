@@ -23,6 +23,7 @@
 		type ReviewStatus
 	} from '#lib/api/impact-reviews.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { renderMarkdown } from '#lib/utils/markdown.js';
 	import {
 		isAllowedUploadMime,
@@ -439,7 +440,12 @@
 
 	async function actDeleteDraft() {
 		if (!proposal) return;
-		const yes = window.confirm(get(t)('governance.draftDeleteConfirm'));
+		const yes = await confirmAction({
+			tone: 'destructive',
+			title: get(t)('governance.draftDeleteTitle'),
+			body: get(t)('governance.draftDeleteBody'),
+			confirmLabel: get(t)('governance.draftDeleteAction')
+		});
 		if (!yes) return;
 		const res = await proposalsApi.delete(proposal.id);
 		if (res.code !== 0) {

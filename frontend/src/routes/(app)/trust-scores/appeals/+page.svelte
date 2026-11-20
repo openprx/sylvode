@@ -7,6 +7,7 @@
 	import { isAdminUser } from '#lib/utils/auth.js';
 	import { trustApi, type Appeal, type AppealStatus } from '#lib/api/trust.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import Button from '#lib/components/Button.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import Input from '#lib/components/Input.svelte';
@@ -149,7 +150,14 @@
 	}
 
 	async function removeAppeal(item: Appeal) {
-		if (!confirm(get(t)('appeals.deleteConfirm'))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('appeals.deleteTitle'),
+				body: get(t)('appeals.deleteBody'),
+				confirmLabel: get(t)('appeals.deleteAction')
+			}))
+		) {
 			return;
 		}
 		const res = await trustApi.deleteAppeal(item.id);

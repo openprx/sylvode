@@ -9,6 +9,7 @@
 		type UpdateProposalTemplateInput
 	} from '#lib/api/proposal-templates.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { projectOptionsStore } from '#lib/stores/project-options.js';
 	import { groupProjectOptionsByWorkspace } from '#lib/utils/project-options.js';
 
@@ -152,7 +153,12 @@
 
 	async function removeTemplate(item: ProposalTemplate) {
 		if (
-			!window.confirm(get(t)('proposalTemplates.deleteConfirm', { values: { name: item.name } }))
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('proposalTemplates.deleteTitle', { values: { name: item.name } }),
+				body: get(t)('proposalTemplates.deleteBody'),
+				confirmLabel: get(t)('proposalTemplates.deleteAction', { values: { name: item.name } })
+			}))
 		) {
 			return;
 		}
