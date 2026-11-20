@@ -1,10 +1,12 @@
 //! Tests of the write base: the warm cache's validation, invalidation and bounds, the single base
 //! load and export per write, and the guarantee that a stale base can never be committed.
 //!
-//! Every test registers its document with [`in_process_apply::enable`], so the isolated apply runs
-//! in this process (the same import, projection and limit check, without the Linux-only worker
-//! process). That keeps these tests runnable on every platform; the worker boundary itself is
-//! covered by the existing isolation tests.
+//! Every test but the `real_worker_*` ones registers its document with
+//! [`in_process_apply::enable`], so the isolated apply runs in this process (the worker's own
+//! import entry point, projection and limit check, without the Linux-only worker process). That
+//! keeps them runnable on every platform. The `real_worker_*` tests do not register their document:
+//! they go through the real isolated worker and, like every other write-path test that does, need
+//! Linux (on another platform the write is refused as `isolated_apply_unsupported_platform`).
 
 #![allow(
     clippy::cast_possible_wrap,
@@ -26,9 +28,9 @@ use super::{
 use crate::flow::collab::cache::{HeadKey, WarmCache};
 use crate::flow::collab::frame::RejectedCode;
 use crate::flow::collab::write::{
-    AcceptOutcome, BaseOutcome, HydrateOutcome, LockedOutcome, UpdateRequest, WriteBase, accept_update,
-    accept_update_held, acquire_document_permit, base_counters, cold_cache, hydrate_and_apply, in_process_apply,
-    prepare_write_base, read_observed_head, run_locked_phase,
+    AcceptOutcome, BaseOutcome, HydrateOutcome, LockedOutcome, UpdateRequest, accept_update, base_counters, cold_cache,
+    find_prior_update, finish_committed, hydrate_and_apply, in_process_apply, prepare_build_engine, read_observed_head,
+    resolve_base, run_locked_phase,
 };
 use crate::flow::collab::{authz, runtime};
 use crate::flow::command::execute_command;
@@ -78,8 +80,9 @@ impl Process {
         }
     }
 
-    /// What `execute_content_command` does, against this process's own cache: take the permit,
-    /// resolve the base, build `change` on it, and accept the update with the same base.
+    /// What `execute_content_command` does, against this process's own cache: build `change` on a
+    /// private engine at the head the database reports (no permit held), then accept the update
+    /// through the ordinary path.
     async fn write(
         &self,
         state: &AppState,
@@ -88,26 +91,12 @@ impl Process {
         change: impl FnOnce(&mut LoroCollabEngine),
     ) -> AcceptOutcome {
         let (workspace_id, actor_id, document_id) = ids;
-        let permit = acquire_document_permit(&self.coordinator, document_id, update_id)
-            .await
-            .unwrap_or_else(|_| panic!("permit is granted"));
-        let (base, mut engine) = ready_base(state, &self.cache, document_id, update_id).await;
+        let mut engine = build_engine(state, &self.cache, document_id, update_id).await;
         let frontier = engine.frontier();
         change(&mut engine);
         let bytes = engine.export_from(&frontier).expect("update exports");
-        let epoch = authz::read_epoch(&state.db, workspace_id).await.expect("epoch reads");
-        accept_update_held(
-            &state.db,
-            &self.cache,
-            &permit,
-            &self.registry,
-            &self.snapshot,
-            10,
-            request_for(document_id, update_id, bytes, workspace_id, actor_id, epoch),
-            base,
-        )
-        .await
-        .expect("accept does not error")
+        self.accept_bytes(state, (workspace_id, actor_id, document_id), update_id, bytes)
+            .await
     }
 
     /// A write that goes through the public accept path with a pre-built update (no held base).
@@ -135,22 +124,11 @@ impl Process {
     }
 }
 
-async fn ready_base(
-    state: &AppState,
-    cache: &WarmCache,
-    document_id: Uuid,
-    update_id: Uuid,
-) -> (WriteBase, LoroCollabEngine) {
-    let BaseOutcome::Ready {
-        base,
-        engine: Some(engine),
-    } = prepare_write_base(&state.db, cache, document_id, update_id, None)
+async fn build_engine(state: &AppState, cache: &WarmCache, document_id: Uuid, update_id: Uuid) -> LoroCollabEngine {
+    prepare_build_engine(&state.db, cache, document_id, update_id, None)
         .await
         .expect("base resolves")
-    else {
-        panic!("a base with an engine is expected");
-    };
-    (base, engine)
+        .unwrap_or_else(|_| panic!("a build engine is expected"))
 }
 
 fn accepted_seq(outcome: &AcceptOutcome) -> i64 {
@@ -222,6 +200,47 @@ fn title_change(title: String) -> impl FnOnce(&mut LoroCollabEngine) {
     move |engine| engine.set_title(&title).expect("title sets")
 }
 
+/// A change that inserts one block with distinct text. Unlike a title (last writer wins), a lost
+/// update shows up as a missing block.
+fn block_change(id: &str, text: &str) -> impl FnOnce(&mut LoroCollabEngine) {
+    let operations: Vec<collab_core::Operation> = serde_json::from_value(json!([
+        {"op": "create_node", "id": id, "parent": null, "index": 0, "kind": "block"},
+        {"op": "insert_text", "id": id, "index": 0, "text": text},
+    ]))
+    .expect("operations parse");
+    move |engine| {
+        engine.initialize_page_editor().expect("page editor initializes");
+        for operation in &operations {
+            engine.apply_content_operation(operation).expect("operation applies");
+        }
+    }
+}
+
+/// Every text is in the committed document, in the stored projection state and in the stored
+/// plain text, exactly once. The three are what a reader sees; a lost update is missing from all.
+async fn assert_every_text_landed(state: &AppState, object_id: Uuid, document_id: Uuid, texts: &[String]) {
+    let rebuilt = projection_of(&rebuild_from_database(state, document_id).await).to_string();
+    let stored = stored_projection_state(state, object_id).await.to_string();
+    let plain = plain_text_of(state, object_id).await;
+    for text in texts {
+        assert_eq!(
+            rebuilt.matches(text.as_str()).count(),
+            1,
+            "{text} is in the document once"
+        );
+        assert_eq!(
+            stored.matches(text.as_str()).count(),
+            1,
+            "{text} is in the stored state once"
+        );
+        assert_eq!(
+            plain.matches(text.as_str()).count(),
+            1,
+            "{text} is in the plain text once"
+        );
+    }
+}
+
 struct Fixture {
     state: AppState,
     workspace_id: Uuid,
@@ -237,10 +256,17 @@ impl Fixture {
 }
 
 async fn fixture(scratch: &super::Scratch) -> Fixture {
+    fixture_with(scratch, true).await
+}
+
+/// `in_process: false` leaves the document on the real isolated worker.
+async fn fixture_with(scratch: &super::Scratch, in_process: bool) -> Fixture {
     let state = state_for(scratch.db.clone());
     let (workspace_id, owner_id) = seed_workspace(&state).await;
     let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
-    in_process_apply::enable(document_id);
+    if in_process {
+        in_process_apply::enable(document_id);
+    }
     Fixture {
         state,
         workspace_id,
@@ -309,8 +335,9 @@ async fn consecutive_rest_writes_load_and_export_the_base_a_constant_number_of_t
 }
 
 /// Negative control for the counting test: with the cache forced off, the same writes load and
-/// export on every write, which is what the counting test above must (and does) refuse. This is
-/// the shape of the code before the base was shared and cached.
+/// export on every write, twice (once to build the update, once to apply it), which is what the
+/// counting test above must (and does) refuse. This is the shape of the code before the base was
+/// cached.
 #[tokio::test]
 async fn the_counting_test_detects_a_cold_path_that_loads_on_every_write() {
     let scratch = scratch_or_skip!("base-cache-counting-cold");
@@ -322,12 +349,14 @@ async fn the_counting_test_detects_a_cold_path_that_loads_on_every_write() {
     }
     let counts = base_counters::of(f.document_id);
     assert_eq!(
-        counts.database_loads, COUNTED_WRITES,
-        "one database load per write when cold"
+        counts.database_loads,
+        2 * COUNTED_WRITES,
+        "two database loads per write when cold: the build and the apply"
     );
     assert_eq!(
-        counts.snapshot_exports, COUNTED_WRITES,
-        "one export per write when cold"
+        counts.snapshot_exports,
+        2 * COUNTED_WRITES,
+        "two exports per write when cold: the build and the apply"
     );
     assert!(counts.database_loads > BASE_LOADS_MAX && counts.snapshot_exports > BASE_EXPORTS_MAX);
     scratch.drop_self().await;
@@ -405,7 +434,11 @@ async fn the_cached_path_and_the_forced_cold_path_agree_on_every_observable_resu
         "stored projection state agrees"
     );
     assert_cache_equals_database(&warm.state, &runtime::runtime().cache, warm.document_id).await;
-    assert_eq!(base_counters::of(cold.document_id).database_loads, commands.len());
+    assert_eq!(
+        base_counters::of(cold.document_id).database_loads,
+        2 * commands.len(),
+        "two loads per cold write: the build and the apply"
+    );
     scratch.drop_self().await;
 }
 
@@ -526,43 +559,39 @@ async fn a_write_through_another_process_makes_this_processs_entry_a_miss() {
     scratch.drop_self().await;
 }
 
-/// The same property one level down: a base handed to `hydrate_and_apply` is used only when it
-/// still names the head the database reports, and a `Prepared` made against an old head cannot
-/// commit, whatever was cached.
+/// The cache entry of one process names an old head after another process committed. An update
+/// built on the new head and accepted by the first process must be applied to the new head's
+/// state, not to the entry: the committed document holds every block, and the update prepared at
+/// the old head cannot commit. Checked by content, not by how often the database was read.
 #[tokio::test]
-async fn a_stale_base_is_discarded_and_a_stale_prepared_cannot_commit() {
+async fn a_cached_entry_for_an_old_head_is_never_the_base_of_a_new_head() {
     let scratch = scratch_or_skip!("base-cache-stale-base");
     let f = fixture(&scratch).await;
     let a = Process::new();
     let b = Process::new();
     accepted_seq(
-        &a.write(&f.state, f.ids(), Uuid::new_v4(), title_change("seed".into()))
+        &a.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blocka1", "TEXTA1"))
             .await,
     );
+    let old_head = head_of(&f.state, f.document_id).await;
+    assert!(
+        cached_state(&a.cache, f.document_id, &old_head).is_some(),
+        "A holds the head it committed"
+    );
 
-    // A prepares an update against the head it sees: a base and a Prepared at the old head.
-    let update_id = Uuid::new_v4();
-    let (stale_base, mut engine) = ready_base(&f.state, &a.cache, f.document_id, update_id).await;
+    // An update prepared by A at that head, kept to be committed later.
+    let stale_update_id = Uuid::new_v4();
+    let mut engine = build_engine(&f.state, &a.cache, f.document_id, stale_update_id).await;
     let frontier = engine.frontier();
-    engine.set_title("from-a").expect("title");
-    let bytes = engine.export_from(&frontier).expect("exports");
-    let old_head_seq = stale_base.observed.head_seq;
-    // A second handle on the same old head, kept to be handed in after the head moved.
-    let second_stale_base = match prepare_write_base(&f.state.db, &a.cache, f.document_id, update_id, None)
-        .await
-        .expect("base resolves")
-    {
-        BaseOutcome::Ready { base, .. } => base,
-        BaseOutcome::Rejected(_) => panic!("base expected"),
-    };
+    block_change("blockstale", "TEXTSTALE")(&mut engine);
+    let stale_bytes = engine.export_from(&frontier).expect("exports");
     let prepared_at_old_head = match hydrate_and_apply(
         &f.state.db,
         &a.cache,
         f.document_id,
-        update_id,
-        &bytes,
+        stale_update_id,
+        &stale_bytes,
         None,
-        Some(stale_base),
     )
     .await
     .expect("hydrates")
@@ -570,22 +599,22 @@ async fn a_stale_base_is_discarded_and_a_stale_prepared_cannot_commit() {
         HydrateOutcome::Prepared(prepared) => prepared,
         HydrateOutcome::Rejected(_) => panic!("a valid update prepares"),
     };
-    assert_eq!(prepared_at_old_head.observed.head_seq, old_head_seq);
+    assert_eq!(prepared_at_old_head.observed.head_seq, old_head.0);
 
-    // Another process commits first.
+    // Another process commits first: A's entry now names an old head.
     accepted_seq(
-        &b.write(&f.state, f.ids(), Uuid::new_v4(), title_change("from-b".into()))
+        &b.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blockb1", "TEXTB1"))
             .await,
     );
     let new_head = head_seq_of(&f.state, f.document_id).await;
-    assert_eq!(new_head, old_head_seq + 1);
+    assert_eq!(new_head, old_head.0 + 1);
 
     // 1. The locked phase refuses to commit what was prepared at the old head, and writes nothing.
     let epoch = authz::read_epoch(&f.state.db, f.workspace_id).await.expect("epoch");
     let request = request_for(
         f.document_id,
-        update_id,
-        bytes.clone(),
+        stale_update_id,
+        stale_bytes.clone(),
         f.workspace_id,
         f.owner_id,
         epoch,
@@ -608,32 +637,21 @@ async fn a_stale_base_is_discarded_and_a_stale_prepared_cannot_commit() {
         "nothing was written"
     );
 
-    // 2. A base handed in for the old head is dropped when the database reports the new one.
-    let loads_before = base_counters::of(f.document_id).database_loads;
-    let fresh = match hydrate_and_apply(
-        &f.state.db,
-        &a.cache,
+    // 2. A accepts an update built on the new head. It is applied to the new head's state, so the
+    // committed document holds A's first block, B's block and this one.
+    let mut next = rebuild_from_database(&f.state, f.document_id).await;
+    let next_frontier = next.frontier();
+    block_change("blocka2", "TEXTA2")(&mut next);
+    let next_bytes = next.export_from(&next_frontier).expect("exports");
+    accepted_seq(&a.accept_bytes(&f.state, f.ids(), Uuid::new_v4(), next_bytes).await);
+    assert_every_text_landed(
+        &f.state,
+        f.object_id,
         f.document_id,
-        update_id,
-        &bytes,
-        None,
-        Some(second_stale_base),
+        &["TEXTA1".into(), "TEXTB1".into(), "TEXTA2".into()],
     )
-    .await
-    .expect("hydrates")
-    {
-        HydrateOutcome::Prepared(prepared) => prepared,
-        HydrateOutcome::Rejected(_) => panic!("a valid update prepares"),
-    };
-    assert_eq!(
-        fresh.observed.head_seq, new_head,
-        "the retry is prepared on the new head"
-    );
-    assert_eq!(
-        base_counters::of(f.document_id).database_loads,
-        loads_before + 1,
-        "A's entry named the old head, so the retry loaded from the database"
-    );
+    .await;
+    assert_cache_equals_database(&f.state, &a.cache, f.document_id).await;
     scratch.drop_self().await;
 }
 
@@ -841,9 +859,11 @@ async fn a_replayed_update_id_returns_the_original_receipt_without_a_second_row(
 const RACE_ROUNDS: usize = 20;
 const WRITERS_PER_PROCESS: usize = 3;
 
-/// Two processes, several concurrent writers each, on one page: every accepted write holds a
-/// unique, gap-free sequence, the head advances by exactly the number of accepted writes, and both
-/// caches end up equal to the database. Repeated with a fresh document each round.
+/// Two processes, several concurrent writers each, on one page, each inserting a block with its own
+/// text: every accepted write holds a unique, gap-free sequence, the head advances by exactly the
+/// number of accepted writes, every block is in the committed document and in the stored
+/// projection (a lost update would be a missing block), and both caches end up equal to the
+/// database. Repeated with a fresh document each round.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_writers_in_two_processes_lose_nothing_and_never_duplicate_a_sequence() {
     let scratch = scratch_or_skip!("base-cache-race");
@@ -864,7 +884,12 @@ async fn concurrent_writers_in_two_processes_lose_nothing_and_never_duplicate_a_
                     loop {
                         attempts += 1;
                         outcome = process
-                            .write(&f.state, f.ids(), update_id, title_change(format!("r{round}p{p}w{w}")))
+                            .write(
+                                &f.state,
+                                f.ids(),
+                                update_id,
+                                block_change(&format!("blk-{p}-{w}"), &format!("ROUND{round:02}P{p}W{w}")),
+                            )
                             .await;
                         let contended = matches!(
                             &outcome,
@@ -903,6 +928,10 @@ async fn concurrent_writers_in_two_processes_lose_nothing_and_never_duplicate_a_
             );
             assert_eq!(super::update_id_at_seq(&f.state, f.document_id, *seq).await, *update_id);
         }
+        let texts: Vec<String> = (0..2)
+            .flat_map(|p| (0..WRITERS_PER_PROCESS).map(move |w| format!("ROUND{round:02}P{p}W{w}")))
+            .collect();
+        assert_every_text_landed(&f.state, f.object_id, f.document_id, &texts).await;
         // Each process's entry, if it names the head, equals the database; otherwise it is a miss.
         let head = head_of(&f.state, f.document_id).await;
         let rebuilt = projection_of(&rebuild_from_database(&f.state, f.document_id).await);
@@ -948,14 +977,8 @@ async fn concurrent_rest_commands_on_one_page_all_land_exactly_once() {
     seqs.sort_unstable();
     let expected: Vec<i64> = (1..=writers as i64).map(|n| head_before + n).collect();
     assert_eq!(seqs, expected);
-    let text = plain_text_of(&f.state, f.object_id).await;
-    for w in 0..writers {
-        assert_eq!(
-            text.matches(&format!("RACETEXT{w}")).count(),
-            1,
-            "block {w} landed once"
-        );
-    }
+    let texts: Vec<String> = (0..writers).map(|w| format!("RACETEXT{w}")).collect();
+    assert_every_text_landed(&f.state, f.object_id, f.document_id, &texts).await;
     assert_cache_equals_database(&f.state, &runtime::runtime().cache, f.document_id).await;
     scratch.drop_self().await;
 }
@@ -984,5 +1007,350 @@ async fn an_accept_without_a_held_base_uses_and_reseeds_the_same_entry() {
         "no load or export for the second write"
     );
     assert_cache_equals_database(&f.state, &a.cache, f.document_id).await;
+    scratch.drop_self().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// What is cached must be what was committed.
+// ---------------------------------------------------------------------------------------------
+
+/// A lost `COMMIT` response is recovered by finding the row under the write's `update_id`. When a
+/// client retried the same logical write against another process that committed it, that row is
+/// the other process's commit over a base this process's candidate does not share. Caching the
+/// candidate under that row's head would make the next write here build on a state the database
+/// does not have; the entry must be dropped instead, and the next write must contain the other
+/// process's block and not this process's.
+#[tokio::test]
+async fn recovering_a_commit_that_another_process_made_never_caches_the_local_candidate() {
+    let scratch = scratch_or_skip!("base-cache-commit-unknown-foreign");
+    let f = fixture(&scratch).await;
+    let p = Process::new();
+    let q = Process::new();
+    accepted_seq(
+        &p.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blkseed", "TEXTSEED"))
+            .await,
+    );
+
+    // P prepares its update for logical write `x` on the head it sees.
+    let x = Uuid::new_v4();
+    let mut engine = build_engine(&f.state, &p.cache, f.document_id, x).await;
+    let frontier = engine.frontier();
+    block_change("blkp", "TEXTP")(&mut engine);
+    let bytes_p = engine.export_from(&frontier).expect("exports");
+    let prepared = match hydrate_and_apply(&f.state.db, &p.cache, f.document_id, x, &bytes_p, None)
+        .await
+        .expect("hydrates")
+    {
+        HydrateOutcome::Prepared(prepared) => prepared,
+        HydrateOutcome::Rejected(_) => panic!("a valid update prepares"),
+    };
+
+    // The retry reached Q, which commits `x` with its own content at the next sequence.
+    let q_seq = accepted_seq(&q.write(&f.state, f.ids(), x, block_change("blkq", "TEXTQ")).await);
+    assert_eq!(q_seq, prepared.observed.head_seq + 1);
+
+    // P's own COMMIT returned an error; its recovery finds Q's row under `x`.
+    let prior = find_prior_update(&f.state.db, f.document_id, x)
+        .await
+        .expect("lookup runs")
+        .expect("the row exists");
+    let epoch = authz::read_epoch(&f.state.db, f.workspace_id).await.expect("epoch");
+    let request = request_for(f.document_id, x, bytes_p, f.workspace_id, f.owner_id, epoch);
+    finish_committed(&p.cache, &p.registry, None, &request, prepared, prior, false);
+
+    let head = head_of(&f.state, f.document_id).await;
+    assert!(
+        cached_state(&p.cache, f.document_id, &head).is_none(),
+        "P's candidate is not Q's committed state and must not be served at Q's head"
+    );
+    accepted_seq(
+        &p.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blknext", "TEXTNEXT"))
+            .await,
+    );
+    assert_every_text_landed(
+        &f.state,
+        f.object_id,
+        f.document_id,
+        &["TEXTSEED".into(), "TEXTQ".into(), "TEXTNEXT".into()],
+    )
+    .await;
+    assert!(
+        !projection_of(&rebuild_from_database(&f.state, f.document_id).await)
+            .to_string()
+            .contains("TEXTP"),
+        "P's update was never committed"
+    );
+    assert_cache_equals_database(&f.state, &p.cache, f.document_id).await;
+    scratch.drop_self().await;
+}
+
+/// The recovery's normal case still seeds the cache: the row found is this write's own commit.
+#[tokio::test]
+async fn recovering_a_commit_this_process_made_still_seeds_the_cache() {
+    let scratch = scratch_or_skip!("base-cache-commit-unknown-own");
+    let f = fixture(&scratch).await;
+    let p = Process::new();
+    let x = Uuid::new_v4();
+    let mut engine = build_engine(&f.state, &p.cache, f.document_id, x).await;
+    let frontier = engine.frontier();
+    block_change("blkp", "TEXTP")(&mut engine);
+    let bytes = engine.export_from(&frontier).expect("exports");
+    let prepared = match hydrate_and_apply(&f.state.db, &p.cache, f.document_id, x, &bytes, None)
+        .await
+        .expect("hydrates")
+    {
+        HydrateOutcome::Prepared(prepared) => prepared,
+        HydrateOutcome::Rejected(_) => panic!("a valid update prepares"),
+    };
+    let epoch = authz::read_epoch(&f.state.db, f.workspace_id).await.expect("epoch");
+    let request = request_for(f.document_id, x, bytes, f.workspace_id, f.owner_id, epoch);
+    let outcome = run_locked_phase(
+        &f.state.db,
+        &request,
+        &prepared,
+        10,
+        crate::flow::collab::write::LOCKED_PHASE_STAGING_BUDGET,
+    )
+    .await;
+    assert!(matches!(outcome, LockedOutcome::Committed(_)), "the write commits");
+    // The response of the commit is treated as lost: the row is found by its update id.
+    let prior = find_prior_update(&f.state.db, f.document_id, x)
+        .await
+        .expect("lookup runs")
+        .expect("the row exists");
+    finish_committed(&p.cache, &p.registry, None, &request, prepared, prior, false);
+    assert_cache_equals_database(&f.state, &p.cache, f.document_id).await;
+    assert_every_text_landed(&f.state, f.object_id, f.document_id, &["TEXTP".into()]).await;
+    scratch.drop_self().await;
+}
+
+/// `observe_head` and the bootstrap load are two reads. When another process commits between
+/// them, the loaded state belongs to the newer head: it is used for this write and never cached
+/// under the head that was observed.
+#[tokio::test]
+async fn a_state_loaded_at_a_newer_head_than_observed_is_never_cached_under_the_old_head() {
+    let scratch = scratch_or_skip!("base-cache-load-race");
+    let f = fixture(&scratch).await;
+    let b = Process::new();
+    accepted_seq(
+        &b.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blkone", "TEXTONE"))
+            .await,
+    );
+    let observed = read_observed_head(&f.state.db, f.document_id)
+        .await
+        .expect("head reads")
+        .expect("document exists");
+    let old_head = (
+        observed.head_seq,
+        observed.head_frontier.clone(),
+        observed.format_version.clone(),
+    );
+
+    // Another process commits after the head was observed and before the load.
+    accepted_seq(
+        &b.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blktwo", "TEXTTWO"))
+            .await,
+    );
+
+    let cache = WarmCache::new();
+    let update_id = Uuid::new_v4();
+    for want_engine in [false, true] {
+        let observed = read_observed_head(&f.state.db, f.document_id)
+            .await
+            .expect("head reads")
+            .expect("document exists");
+        // Re-create the stale observation: the head as it was before the second commit.
+        let stale = crate::flow::collab::write::ObservedHead {
+            head_seq: old_head.0,
+            head_frontier: old_head.1.clone(),
+            format_version: old_head.2.clone(),
+            ..observed
+        };
+        let resolved = match resolve_base(&f.state.db, &cache, f.document_id, update_id, stale, want_engine)
+            .await
+            .expect("base resolves")
+        {
+            BaseOutcome::Ready(resolved) => resolved,
+            BaseOutcome::Rejected(_) => panic!("a base is expected"),
+        };
+        let loaded = LoroCollabEngine::load(&resolved.snapshot_bytes).expect("bytes decode");
+        assert!(
+            projection_of(&loaded).to_string().contains("TEXTTWO"),
+            "the loaded state is the newer head's"
+        );
+        assert!(
+            cached_state(&cache, f.document_id, &old_head).is_none(),
+            "the newer state must not be served as the older head (want_engine={want_engine})"
+        );
+        assert!(!cache.contains(f.document_id), "nothing was seeded");
+    }
+    scratch.drop_self().await;
+}
+
+/// Paths such as `scope_write`, `scope_move` and page transfers advance the head and put their own
+/// engine into the cache *without* base bytes. The entry they replace carried the bytes of the
+/// previous head; those must go with it, or the next write would send the worker a base one head
+/// behind the database.
+#[tokio::test]
+async fn an_entry_put_without_bytes_over_one_with_bytes_never_serves_the_old_bytes() {
+    let scratch = scratch_or_skip!("base-cache-put-without-bytes");
+    let f = fixture(&scratch).await;
+    let a = Process::new();
+    let b = Process::new();
+    accepted_seq(
+        &a.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blka1", "TEXTA1"))
+            .await,
+    );
+    let before = head_of(&f.state, f.document_id).await;
+    assert!(
+        cached_state(&a.cache, f.document_id, &before).is_some(),
+        "A holds an entry with bytes"
+    );
+
+    accepted_seq(
+        &b.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blkb1", "TEXTB1"))
+            .await,
+    );
+    // The foreign path caches the committed engine at the new head, without bytes.
+    let head = head_of(&f.state, f.document_id).await;
+    let rebuilt = rebuild_from_database(&f.state, f.document_id).await;
+    a.cache
+        .put(f.document_id, rebuilt, head.2.clone(), head.0, head.1.clone(), 1);
+    assert!(
+        cached_state(&a.cache, f.document_id, &head).is_none(),
+        "the replaced entry holds no bytes"
+    );
+
+    accepted_seq(
+        &a.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blka2", "TEXTA2"))
+            .await,
+    );
+    assert_every_text_landed(
+        &f.state,
+        f.object_id,
+        f.document_id,
+        &["TEXTA1".into(), "TEXTB1".into(), "TEXTA2".into()],
+    )
+    .await;
+    assert_cache_equals_database(&f.state, &a.cache, f.document_id).await;
+    scratch.drop_self().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The REST build holds no lock.
+// ---------------------------------------------------------------------------------------------
+
+/// A command that fails while it is built never reaches the accept, so it must never wait for the
+/// document's coordinator permit: with another writer holding the permit it is refused with its
+/// own error at once, not with `contention` after the acquire timeout.
+#[tokio::test]
+async fn a_failing_rest_command_does_not_wait_for_the_document_permit() {
+    let scratch = scratch_or_skip!("base-cache-failing-command-no-permit");
+    let f = fixture(&scratch).await;
+    let held = runtime::runtime()
+        .coordinator
+        .acquire(f.document_id)
+        .await
+        .expect("the permit is free");
+    let started = std::time::Instant::now();
+    let outcome = execute_command(
+        &f.state,
+        command_input(
+            f.object_id,
+            f.owner_id,
+            "delete_block",
+            json!({"block_id": "no-such-block"}),
+            &Uuid::new_v4().to_string(),
+        ),
+    )
+    .await;
+    let Err(error) = outcome else {
+        panic!("deleting a block that does not exist must fail");
+    };
+    let waited = started.elapsed();
+    assert!(
+        !matches!(error.kind(), crate::error::ApiErrorKind::ServerDraining(_)),
+        "the failure is the command's own, not contention: {error:?}"
+    );
+    assert!(
+        waited < std::time::Duration::from_millis(crate::flow::collab::limits::COORDINATOR_ACQUIRE_TIMEOUT_MS),
+        "the failing command did not queue behind the permit (took {waited:?})"
+    );
+    drop(held);
+    scratch.drop_self().await;
+}
+
+/// A successful REST write queues for the permit only inside the accept: with the permit held for a
+/// moment it still lands once the permit is released.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rest_write_waits_for_the_permit_only_to_accept_and_then_lands() {
+    let scratch = scratch_or_skip!("base-cache-permit-wait");
+    let f = Arc::new(fixture(&scratch).await);
+    let held = runtime::runtime()
+        .coordinator
+        .acquire(f.document_id)
+        .await
+        .expect("the permit is free");
+    let writer = {
+        let f = f.clone();
+        tokio::spawn(async move {
+            execute_command(
+                &f.state,
+                command_input(
+                    f.object_id,
+                    f.owner_id,
+                    "insert_block",
+                    json!({"block_id": "waited", "index": 0, "text": "TEXTWAITED"}),
+                    &Uuid::new_v4().to_string(),
+                ),
+            )
+            .await
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    drop(held);
+    writer.await.expect("joins").expect("the command is accepted");
+    assert_every_text_landed(&f.state, f.object_id, f.document_id, &["TEXTWAITED".into()]).await;
+    scratch.drop_self().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Through the real isolated worker (Linux).
+// ---------------------------------------------------------------------------------------------
+
+/// No stand-in: the document is applied by the real isolated worker, whose returned snapshot is
+/// what the cache keeps as the next write's base. After every write the cached engine and the
+/// cached bytes decode to what the database rebuilds, at the database head frontier, and every
+/// block written so far is in the stored projection. Needs Linux, like every write-path test that
+/// does not register the stand-in (filter: `real_worker_`).
+#[tokio::test]
+async fn real_worker_consecutive_rest_writes_keep_the_cached_bytes_equal_to_the_database() {
+    let scratch = scratch_or_skip!("base-cache-real-worker");
+    let f = fixture_with(&scratch, false).await;
+    let writes = 4usize;
+    let mut texts = Vec::new();
+    for write in 0..writes {
+        let text = format!("REALWORKER{write}");
+        let change = rest_patch(
+            &f,
+            json!({"operations": [
+                {"op": "create_node", "id": format!("rw{write}"), "parent": null, "index": 0, "kind": "block"},
+                {"op": "insert_text", "id": format!("rw{write}"), "index": 0, "text": text},
+            ]}),
+            &Uuid::new_v4().to_string(),
+        )
+        .await;
+        texts.push(text);
+        assert_eq!(change.accepted_seq, head_seq_of(&f.state, f.document_id).await);
+        assert_cache_equals_database(&f.state, &runtime::runtime().cache, f.document_id).await;
+        assert_every_text_landed(&f.state, f.object_id, f.document_id, &texts).await;
+    }
+    let counts = base_counters::of(f.document_id);
+    assert!(
+        counts.database_loads <= BASE_LOADS_MAX && counts.snapshot_exports <= BASE_EXPORTS_MAX,
+        "{writes} writes through the real worker loaded {} / exported {} times",
+        counts.database_loads,
+        counts.snapshot_exports
+    );
     scratch.drop_self().await;
 }
