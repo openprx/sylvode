@@ -32,6 +32,15 @@ name.
 
 ### Fixed
 
+- **Deleting a workspace or a project that holds content works.** A workspace with a Flow Page
+  that had an accepted collaboration update answered `database error` and stayed, because the
+  delete cascade reached the event row before the update that references it. Workspace and project
+  deletion now remove the rows that block the cascade first (accepted updates, event dispatch and
+  delivery rows, import jobs, scope command receipts, conversion jobs, previews and lineage,
+  plugin bindings, activities and notifications) inside the same transaction, and remove the
+  workspace's legacy Flow scope with it. No foreign key changed. If content outside the deleted
+  workspace or project still restricts it, the request is refused with a typed `invalid_update`
+  (`details.reason = "retained_by_external_reference"`) and nothing is deleted.
 - **Flow: large Pages stay writable on slower databases.** Every statement of the block registry
   whose size depended on the Page (the locking read, the removal of absent blocks, the legacy
   comment seal and the bulk writes) now carries at most 500 rows. The first registration of an

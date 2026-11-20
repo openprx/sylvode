@@ -368,12 +368,9 @@ pub async fn delete_workspace(
     if current.is_none_or(|row| row.try_get::<String>("", "role").ok().as_deref() != Some("owner")) {
         return Err(ApiError::Forbidden("only owners can delete workspaces".to_string()));
     }
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "DELETE FROM workspaces WHERE id=$1",
-        vec![workspace_id.into()],
-    ))
-    .await?;
+    crate::services::teardown::delete_workspace_content(&tx, workspace_id)
+        .await
+        .map_err(|err| crate::services::teardown::refuse_blocked(err, "workspace"))?;
     tx.commit().await?;
 
     Ok(ApiResponse::ok())
