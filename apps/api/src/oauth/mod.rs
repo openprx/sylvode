@@ -10,6 +10,7 @@ pub mod delegated;
 pub mod error;
 pub mod grants;
 pub mod internal;
+pub mod manage;
 pub mod metadata;
 pub mod rate;
 pub mod redirect;
