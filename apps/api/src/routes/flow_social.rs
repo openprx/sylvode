@@ -4,7 +4,7 @@
 //! `routes::flow::`. The anonymous share read hashes the token, hides revoked and expired links,
 //! and rate-limits per client address. It is registered without auth middleware on purpose.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 
 use axum::extract::{ConnectInfo, FromRequestParts, Path, State};
 use axum::http::request::Parts;
@@ -23,14 +23,17 @@ use crate::flow::policy;
 use crate::flow::shares;
 use crate::middleware::bot_auth::BotAuthContext;
 use crate::response::ApiResponse;
+use crate::security::client_ip;
 
 use super::build_auth_extensions;
 
 #[derive(Clone, Copy)]
 /// Client address for the public-share limiter.
 ///
-/// `axum::serve(...into_make_service_with_connect_info)` inserts [`ConnectInfo`]. A caller that
-/// reaches the handler without it (direct tests) shares the unspecified address.
+/// `axum::serve(...into_make_service_with_connect_info)` inserts [`ConnectInfo`]. Behind a
+/// trusted reverse proxy the address comes from its forwarding headers, see
+/// [`crate::security::client_ip`]. A caller that reaches the handler without `ConnectInfo`
+/// (direct tests) shares the unspecified address.
 pub struct ShareClientIp(pub IpAddr);
 
 impl<S> FromRequestParts<S> for ShareClientIp
@@ -40,11 +43,12 @@ where
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let ip = parts
-            .extensions
-            .get::<ConnectInfo<SocketAddr>>()
-            .map_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED), |info| info.0.ip());
-        Ok(Self(ip))
+        let peer = parts.extensions.get::<ConnectInfo<SocketAddr>>().map(|info| info.0);
+        Ok(Self(client_ip(
+            &parts.headers,
+            peer,
+            &crate::config::runtime().trusted_proxies,
+        )))
     }
 }
 

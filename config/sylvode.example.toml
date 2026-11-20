@@ -38,6 +38,14 @@
 # Listen address as host:port. Default: the binary's own default.
 # bind_addr = "0.0.0.0:8081"
 
+# Reverse proxies (IP addresses or CIDR blocks) whose X-Forwarded-For / X-Real-IP headers the api
+# believes when it needs the real client address (per-address rate limits). A request from any
+# other peer has those headers ignored, so a direct caller cannot forge its address. Setting this
+# REPLACES the default. Default: loopback (127.0.0.0/8, ::1/128) and 172.16.0.0/12, the range
+# Docker hands to the compose bridge network the bundled nginx runs on. Podman and custom
+# networks use other ranges: list yours here.
+# trusted_proxies = ["127.0.0.0/8", "::1/128", "172.16.0.0/12"]
+
 
 # ---------------------------------------------------------------------------------------------
 # [database] — PostgreSQL connection and pool shape.
