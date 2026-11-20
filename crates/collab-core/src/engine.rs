@@ -21,8 +21,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use loro::{
-    Container, ContainerType, Frontiers, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId,
-    ValueOrContainer, VersionVector,
+    Container, Frontiers, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer,
+    VersionVector,
 };
 use serde_json::{Map as JsonMap, Number, Value};
 
@@ -203,25 +203,22 @@ fn loro_value_to_json(value: &LoroValue) -> Value {
 /// The model-5 marker (`flow_editor_structure_meta.model == "rich_page_v5"`), read by typed
 /// container id. The read registers nothing, on a legacy document or any other: the exported
 /// value, the snapshot bytes and the list of roots are the same afterwards.
-pub(crate) fn model5_marker(doc: &LoroDoc) -> bool {
-    matches!(
-        crate::editor_structure::root_container(doc, crate::editor_structure::META, ContainerType::Map),
+///
+/// # Errors
+/// A failed root read (`editor_root_probe_failed`).
+pub(crate) fn model5_marker(doc: &LoroDoc) -> Result<bool, CollabError> {
+    Ok(matches!(
+        crate::editor_structure::reserved_root(doc, crate::reserved_roots::META)?,
         Some(Container::Map(meta))
             if matches!(meta.get("model"), Some(ValueOrContainer::Value(LoroValue::String(model)))
                 if model.as_ref() == "rich_page_v5")
-    )
+    ))
 }
 
 /// Whether some physical block map in `doc.children` has an atom `nodeName`, placed or not.
 /// `Ok(false)` without an editor document.
 pub(crate) fn physical_atoms_present(doc: &LoroDoc) -> Result<bool, CollabError> {
-    let has_editor_doc = crate::editor_structure::root_map(doc, "doc").is_some_and(|root| {
-        matches!(
-            root.get("children"),
-            Some(ValueOrContainer::Container(Container::List(_)))
-        )
-    });
-    if !has_editor_doc {
+    if !editor_doc_present(doc)? {
         return Ok(false);
     }
     Ok(crate::editor_structure::physical(doc)?.iter().any(|map| {
@@ -230,6 +227,18 @@ pub(crate) fn physical_atoms_present(doc: &LoroDoc) -> Result<bool, CollabError>
             Some(ValueOrContainer::Value(LoroValue::String(kind))) if crate::editor_media::is_atom(kind.as_ref())
         )
     }))
+}
+
+/// Whether the `doc` root map holds a `children` list (browser prose owns the document).
+fn editor_doc_present(doc: &LoroDoc) -> Result<bool, CollabError> {
+    Ok(
+        crate::editor_structure::root_map(doc, crate::reserved_roots::DOC)?.is_some_and(|root| {
+            matches!(
+                root.get("children"),
+                Some(ValueOrContainer::Container(Container::List(_)))
+            )
+        }),
+    )
 }
 
 fn read_string_value(value_or_container: &ValueOrContainer) -> Option<String> {
@@ -556,18 +565,20 @@ impl LoroCollabEngine {
     }
 
     /// Browser navigator ordering is an existing named map, separate from tree placement IDs.
-    #[must_use]
-    pub fn navigator_order(&self) -> BTreeMap<String, String> {
+    ///
+    /// # Errors
+    /// A failed root read (`editor_root_probe_failed`).
+    pub fn navigator_order(&self) -> Result<BTreeMap<String, String>, CollabError> {
         let mut values = BTreeMap::new();
-        let Some(order) = crate::editor_structure::root_map(&self.doc, "order") else {
-            return values;
+        let Some(order) = crate::editor_structure::root_map(&self.doc, crate::reserved_roots::ORDER)? else {
+            return Ok(values);
         };
         order.for_each(|id, value| {
             if let ValueOrContainer::Value(LoroValue::String(key)) = value {
                 values.insert(id.to_owned(), key.to_string());
             }
         });
-        values
+        Ok(values)
     }
     /// Mutate one navigator key in place; preserve all other container identities and content.
     ///
@@ -594,21 +605,18 @@ impl LoroCollabEngine {
     }
 
     /// Whether browser prose owns the document representation, including an empty document.
-    #[must_use]
-    pub fn has_editor_doc(&self) -> bool {
-        crate::editor_structure::root_map(&self.doc, "doc").is_some_and(|root| {
-            matches!(
-                root.get("children"),
-                Some(ValueOrContainer::Container(Container::List(_)))
-            )
-        })
+    ///
+    /// # Errors
+    /// A failed root read (`editor_root_probe_failed`).
+    pub fn has_editor_doc(&self) -> Result<bool, CollabError> {
+        editor_doc_present(&self.doc)
     }
 
     /// Initialize supported tree-only Page prose on a private candidate. Callers must include
     /// this delta in their normal accepted write transaction; reads never invoke this method.
     pub fn initialize_page_editor(&mut self) -> Result<bool, CollabError> {
         self.invalidate_editor_model_floor();
-        if self.has_editor_doc() {
+        if self.has_editor_doc()? {
             return Ok(false);
         }
         let legacy = self.semantic_snapshot()?;
@@ -690,15 +698,19 @@ impl LoroCollabEngine {
     }
 
     /// Includes tombstoned aliases, so a deleted editor anchor cannot be reused as tree prose.
-    #[must_use]
-    pub fn has_editor_alias(&self, id: &str) -> bool {
-        self.has_editor_doc() && crate::editor_doc_bridge::has_alias_entry(&self.doc, id)
+    ///
+    /// # Errors
+    /// A failed root read (`editor_root_probe_failed`).
+    pub fn has_editor_alias(&self, id: &str) -> Result<bool, CollabError> {
+        Ok(self.has_editor_doc()? && crate::editor_doc_bridge::has_alias_entry(&self.doc, id)?)
     }
 
     /// Resolve only an attested live editor alias; otherwise preserve the caller's tree ID.
-    #[must_use]
-    pub fn resolve_content_node_id(&self, id: &NodeId) -> NodeId {
-        crate::editor_doc_bridge::resolve_editor_block_id(&self.doc, id).map_or_else(|| id.clone(), NodeId::from)
+    ///
+    /// # Errors
+    /// A failed root read (`editor_root_probe_failed`).
+    pub fn resolve_content_node_id(&self, id: &NodeId) -> Result<NodeId, CollabError> {
+        Ok(crate::editor_doc_bridge::resolve_editor_block_id(&self.doc, id)?.map_or_else(|| id.clone(), NodeId::from))
     }
 
     /// Prose-command intent is explicit: typed embed planners use tree metadata blocks and
@@ -735,14 +747,14 @@ impl LoroCollabEngine {
     fn compute_minimum_editor_model(&self) -> Result<u32, CollabError> {
         #[cfg(test)]
         crate::walk_counter::record_floor_walk();
-        let structured = self.has_editor_structure();
+        let structured = self.has_editor_structure()?;
         // Evaluated once: the block read below needs the same placements for the same state.
         let placements = if structured {
             crate::editor_structure::placements(&self.doc)?
         } else {
             None
         };
-        let model5 = model5_marker(&self.doc);
+        let model5 = model5_marker(&self.doc)?;
         let physical_media = physical_atoms_present(&self.doc)?;
         let signals = crate::editor_doc_bridge::editor_model_signals(&self.doc, placements)?.unwrap_or_default();
         if model5 || physical_media || signals.atom {
@@ -760,7 +772,9 @@ impl LoroCollabEngine {
         // raise the floor; an ordinary v4 structure remains readable by a v4 client.
         self.initialize_page_structure()
     }
-    pub fn has_editor_structure(&self) -> bool {
+    /// # Errors
+    /// A failed root read (`editor_root_probe_failed`).
+    pub fn has_editor_structure(&self) -> Result<bool, CollabError> {
         crate::editor_structure::ready(&self.doc)
     }
     pub fn initialize_page_structure(&mut self) -> Result<bool, CollabError> {
@@ -790,7 +804,7 @@ impl LoroCollabEngine {
         attrs: &Value,
     ) -> Result<String, CollabError> {
         self.invalidate_editor_model_floor();
-        if !self.has_editor_doc() {
+        if !self.has_editor_doc()? {
             return Err(CollabError::OperationFailed {
                 reason: "explicit_editor_initialization_required".into(),
             });
@@ -845,7 +859,7 @@ impl LoroCollabEngine {
         // Browser prose has a separate canonical Loro container. A legacy tree-text write
         // cannot be acknowledged if it would only change the shadow tree that readers suppress.
         // The explicit editor-block bridge handles its own container identities separately.
-        if matches!(operation, Operation::InsertText { .. } | Operation::DeleteText { .. }) && self.has_editor_doc() {
+        if matches!(operation, Operation::InsertText { .. } | Operation::DeleteText { .. }) && self.has_editor_doc()? {
             return Err(CollabError::OperationFailed {
                 reason: "editor_doc_requires_editor_block_command".into(),
             });
@@ -858,9 +872,9 @@ impl LoroCollabEngine {
                 kind,
             } => {
                 if self.id_to_tree.contains_key(id)
-                    || (self.has_editor_doc()
-                        && (crate::editor_doc_bridge::has_alias_entry(&self.doc, id.as_ref())
-                            || crate::editor_doc_bridge::resolve_editor_block_id(&self.doc, id).is_some()))
+                    || (self.has_editor_doc()?
+                        && (crate::editor_doc_bridge::has_alias_entry(&self.doc, id.as_ref())?
+                            || crate::editor_doc_bridge::resolve_editor_block_id(&self.doc, id)?.is_some()))
                 {
                     return Err(CollabError::DuplicateNode { id: id.to_string() });
                 }
@@ -953,11 +967,11 @@ impl LoroCollabEngine {
         // editor document once for both prose steps (see
         // `project_legacy_then_current_editor_prose`).
         let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
-        self.project_navigator_order(&mut snapshot);
+        self.project_navigator_order(&mut snapshot)?;
         let facts = crate::prose_projection::project_legacy_then_current_editor_prose(&self.doc, &mut snapshot)?;
-        let floor = if model5_marker(&self.doc) || facts.physical_atom || facts.signals.atom {
+        let floor = if model5_marker(&self.doc)? || facts.physical_atom || facts.signals.atom {
             5
-        } else if self.has_editor_structure() || facts.signals.beyond_model1 {
+        } else if self.has_editor_structure()? || facts.signals.beyond_model1 {
             4
         } else {
             1
@@ -985,14 +999,14 @@ impl LoroCollabEngine {
     }
     pub fn legacy_package_semantic_snapshot_v3(&self) -> Result<SemanticSnapshot, CollabError> {
         let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
-        self.project_navigator_order(&mut snapshot);
+        self.project_navigator_order(&mut snapshot)?;
         crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
         Ok(snapshot)
     }
 
     /// Package v3's navigator step: order keys from the `order` map override tree positions.
-    fn project_navigator_order(&self, snapshot: &mut SemanticSnapshot) {
-        let order = self.navigator_order();
+    fn project_navigator_order(&self, snapshot: &mut SemanticSnapshot) -> Result<(), CollabError> {
+        let order = self.navigator_order()?;
         for (id, node) in &mut snapshot.nodes {
             if node.kind != NodeKind::NavigatorNode {
                 continue;
@@ -1015,6 +1029,7 @@ impl LoroCollabEngine {
                 node.order_key.clone_from(key);
             }
         }
+        Ok(())
     }
 
     /// Exact package v2 reader before navigator order-map projection (tree plus editor prose).
@@ -1109,6 +1124,15 @@ impl LoroCollabEngine {
     }
 }
 
+/// How an import is judged: replay of accepted history, or an update a client offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportMode {
+    /// Accepted history. `causal` refuses an update with missing dependencies.
+    Replay { causal: bool },
+    /// A client update: causal, and no new shadow roots.
+    Client,
+}
+
 impl LoroCollabEngine {
     /// [`CollabEngine::import_update`] for an update offered for acceptance: additionally refuses
     /// an update whose causal dependencies are not in this document with
@@ -1124,7 +1148,38 @@ impl LoroCollabEngine {
     /// unchanged), so the caller must discard it -- as the isolated-apply worker, whose engine
     /// lives for one request, does.
     pub fn import_update_causally_complete(&mut self, update: &[u8]) -> Result<Diff, CollabError> {
-        self.import_guarded(update, true)
+        self.import_guarded(update, ImportMode::Replay { causal: true })
+    }
+
+    /// [`Self::import_update_causally_complete`] for an update that a client offers for
+    /// acceptance: additionally refuses an update that creates or writes a reserved root container
+    /// (`reserved_roots`) with a type other than the expected one, a "shadow root", with
+    /// `reserved_root_container_type`, and an update whose ops cannot all be inspected with
+    /// `reserved_root_scan_incomplete`.
+    ///
+    /// Only this entry applies the rule. Replay of history that was accepted earlier
+    /// (`import_update`, `import_update_causally_complete`) must keep working for a document that
+    /// already contains a shadow root. See `floor_guard::scan_imported_ops` for what the rule rests
+    /// on. The cost is O(imported ops) and shares the pass that the floor guard makes anyway.
+    ///
+    /// # Errors
+    /// Everything `import_update_causally_complete` reports, plus the two refusals above. After
+    /// any error the engine must be discarded: the update is already applied to it, as for the
+    /// floor guard's refusal.
+    pub fn import_client_update(&mut self, update: &[u8]) -> Result<Diff, CollabError> {
+        self.import_guarded(update, ImportMode::Client)
+    }
+
+    /// Refuses a document that carries a reserved root container of the wrong type (a "shadow
+    /// root"), in its state or anywhere in its history. For a document that arrives from outside,
+    /// such as an uploaded package: O(history), so never for the write window. Replay of the
+    /// server's own stored history does not call it. See [`Self::import_client_update`].
+    ///
+    /// # Errors
+    /// `reserved_root_container_type`, or `reserved_root_scan_incomplete` when the history cannot
+    /// be inspected (a shallow document).
+    pub fn refuse_shadow_roots(&self) -> Result<(), CollabError> {
+        crate::floor_guard::refuse_shadow_roots(&self.doc)
     }
 
     /// Imports `update` and refuses an update that takes the editor-model floor from 5 to below 5
@@ -1137,9 +1192,10 @@ impl LoroCollabEngine {
     /// deletes from the top-level block list (whatever ids it names), re-types a pre-existing block
     /// map, or touches the `doc` map falls back to a
     /// narrow scan of `doc.children` and, if still undecided, a read of the pre-import state.
-    fn import_guarded(&mut self, update: &[u8], causal: bool) -> Result<Diff, CollabError> {
+    fn import_guarded(&mut self, update: &[u8], mode: ImportMode) -> Result<Diff, CollabError> {
+        let causal = !matches!(mode, ImportMode::Replay { causal: false });
         InputLimits::default().validate_update(update)?;
-        let prior_m5 = model5_marker(&self.doc);
+        let prior_m5 = model5_marker(&self.doc)?;
         let before_frontiers = self.doc.state_frontiers();
         let before_ops = self.doc.oplog_vv();
         self.invalidate_editor_model_floor();
@@ -1152,8 +1208,13 @@ impl LoroCollabEngine {
             return Err(CollabError::CausalDependencyMissing);
         }
         let after = self.doc.state_vv();
+        let client_scan = if matches!(mode, ImportMode::Client) {
+            Some(crate::floor_guard::scan_imported_ops(&self.doc, &before_ops, true)?)
+        } else {
+            None
+        };
         self.rebuild_id_cache()?;
-        self.enforce_floor_ratchet(prior_m5, &before_ops, &before_frontiers)?;
+        self.enforce_floor_ratchet(prior_m5, &before_ops, &before_frontiers, client_scan)?;
         Ok(Diff {
             changed: before != after,
         })
@@ -1166,12 +1227,13 @@ impl LoroCollabEngine {
         prior_m5: bool,
         before_ops: &VersionVector,
         before: &Frontiers,
+        scanned: Option<crate::floor_guard::RemovalScan>,
     ) -> Result<(), CollabError> {
         use crate::floor_guard::RemovalScan;
         let downgrade = || CollabError::OperationFailed {
             reason: "editor_model_floor_downgrade".into(),
         };
-        if model5_marker(&self.doc) {
+        if model5_marker(&self.doc)? {
             return Ok(());
         }
         let narrow_atom_scan = || {
@@ -1179,7 +1241,11 @@ impl LoroCollabEngine {
             crate::walk_counter::record_narrow_atom_scan();
             physical_atoms_present(&self.doc)
         };
-        match (prior_m5, crate::floor_guard::removal_scan(&self.doc, before_ops)) {
+        let removal = match scanned {
+            Some(removal) => removal,
+            None => crate::floor_guard::removal_scan(&self.doc, before_ops)?,
+        };
+        match (prior_m5, removal) {
             // No block map that could hold the physical-atom signal up was removed or re-typed,
             // and the marker was not set before: if the signal was set before it still is.
             (false, RemovalScan::None) => Ok(()),
@@ -1231,7 +1297,7 @@ impl CollabEngine for LoroCollabEngine {
     }
 
     fn import_update(&mut self, update: &[u8]) -> Result<Diff, Self::Error> {
-        self.import_guarded(update, false)
+        self.import_guarded(update, ImportMode::Replay { causal: false })
     }
 
     fn export_snapshot(&self) -> Result<Vec<u8>, Self::Error> {
@@ -1371,12 +1437,12 @@ mod tests {
             })
             .unwrap();
         assert!(engine.initialize_page_editor().unwrap());
-        let canonical = engine.resolve_content_node_id(&id);
+        let canonical = engine.resolve_content_node_id(&id).unwrap();
         let migrated = engine.semantic_snapshot().unwrap();
         let first = migrated.nodes.get(&canonical).unwrap();
         let second = migrated
             .nodes
-            .get(&engine.resolve_content_node_id(&NodeId::from("aaa-after")))
+            .get(&engine.resolve_content_node_id(&NodeId::from("aaa-after")).unwrap())
             .unwrap();
         assert!(first.order_key < second.order_key);
         assert_eq!(first.properties.get("level").unwrap(), "2");

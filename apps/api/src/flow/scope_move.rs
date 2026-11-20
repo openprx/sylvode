@@ -136,7 +136,9 @@ pub async fn navigator_positions(
         ));
     }
     let ids: Vec<_> = rows.into_iter().map(|row| row.id).collect();
-    let mut order = engine.navigator_order();
+    let mut order = engine
+        .navigator_order()
+        .map_err(|e| super::command::map_collab_error(&e))?;
     seed_missing_keys(&mut order, &ids)?;
     Ok(ids
         .into_iter()
@@ -203,7 +205,9 @@ fn prepare_order_update(
     after: Option<Uuid>,
 ) -> Result<Option<Vec<u8>>, ApiError> {
     let base = engine.frontier();
-    let before = engine.navigator_order();
+    let before = engine
+        .navigator_order()
+        .map_err(|e| super::command::map_collab_error(&e))?;
     let mut order = before.clone();
     seed_missing_keys(&mut order, ordered)?;
     let mut siblings: Vec<_> = siblings.iter().copied().filter(|id| *id != object).collect();
@@ -663,7 +667,7 @@ mod tests {
         assert_eq!(positions.len(), 3);
         let mut blank = LoroCollabEngine::new_empty(75);
         prepare_order_update(&mut blank, &[a, b, c], &[a, b, c], a, Some(b)).unwrap();
-        let order = blank.navigator_order();
+        let order = blank.navigator_order().unwrap();
         assert!(order.get(&b.to_string()).unwrap() < order.get(&a.to_string()).unwrap());
         assert!(order.get(&a.to_string()).unwrap() < order.get(&c.to_string()).unwrap());
         let ranked = std::collections::HashMap::from([(a, "i".into())]);
@@ -678,10 +682,10 @@ mod tests {
             "../../../../frontend/tests/fixtures/flow-navigator-order/browser.snapshot"
         ))
         .unwrap();
-        let before = engine.navigator_order();
+        let before = engine.navigator_order().unwrap();
         assert_eq!(before.get(&a.to_string()).map(String::as_str), Some("v"));
         prepare_order_update(&mut engine, &[a, b, c], &[a, b, c], a, Some(b)).unwrap();
-        let after = engine.navigator_order();
+        let after = engine.navigator_order().unwrap();
         assert_eq!(after.get(&a.to_string()).map(String::as_str), Some("m"));
         assert_eq!(after.get(&b.to_string()), before.get(&b.to_string()));
         assert_eq!(after.get(&c.to_string()), before.get(&c.to_string()));
@@ -700,7 +704,7 @@ mod tests {
         ))
         .unwrap();
         let c = "33333333-3333-4333-8333-333333333333";
-        assert_eq!(engine.navigator_order().get(c).map(String::as_str), Some("9"));
+        assert_eq!(engine.navigator_order().unwrap().get(c).map(String::as_str), Some("9"));
         assert_eq!(engine.semantic_snapshot().unwrap().nodes.get(c).unwrap().order_key, "9");
         assert_ne!(
             engine

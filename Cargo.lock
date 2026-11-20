@@ -134,6 +134,7 @@ dependencies = [
  "hmac",
  "image",
  "jsonwebtoken",
+ "loro",
  "parking_lot",
  "platform",
  "rand 0.8.6",
