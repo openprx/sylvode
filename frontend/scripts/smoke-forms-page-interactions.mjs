@@ -8,7 +8,15 @@
  *
  * Covered: import wizard, page modes, layout settings sheet, kanban (drag, bulk move), calendar
  * (drag), pivot (drill-down, export), card and gallery views, timeline (events and records),
- * record editor drawer, record side panel, detail aside with the child record editor.
+ * record editor drawer, record side panel, durable record route (URL restore, reload, record
+ * page), detail aside with the child record editor, designer saves (field design schema, detail
+ * sections, role permissions, each with its request payload), and no horizontal document overflow
+ * at 390 px in the table, kanban, calendar and card views.
+ *
+ * Not covered (the retired smoke asserted them; they are listed in the Universal Forms gates):
+ * the remaining detail-layout builders (header, highlights, composition, widgets), the
+ * relation/formula/attachment/image field-designer configuration saves, attachment upload and
+ * comment payloads, gantt drag, and the permission list/export filtering checks.
  *
  * Drives the built app through playwright-core against the forms smoke mock
  * (`forms-smoke-server.mjs`), like `smoke-forms-record-list.mjs`.
@@ -17,9 +25,12 @@
  *   CHROMIUM_BIN           Chromium executable (default /usr/bin/chromium)
  *   PLAYWRIGHT_CORE        path to a playwright-core package directory (default: resolve 'playwright-core')
  *   OPENPR_FORMS_UI_PORT   port of the mock server (default: a random free-ish port)
+ *   OPENPR_FORMS_UI_SCREENSHOT_DIR  when set, writes forms-ui-desktop.png (1366x900) and
+ *                          forms-ui-mobile.png (390x844) of the records page there, the evidence
+ *                          `scripts/collect-universal-forms-ui-artifacts.sh` gathers
  */
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -35,6 +46,8 @@ const formsPath = '/workspace/ws-forms-smoke/projects/project-forms-smoke/forms'
 const viewUrl = (type) => `${formsPath}?form=form-order-line&view=view-order-line-${type}`;
 const recordUrl = `${viewUrl('default')}&record=record-order-line-created`;
 const T = 15_000;
+const screenshotDir = process.env.OPENPR_FORMS_UI_SCREENSHOT_DIR || '';
+const screenshots = [];
 
 // --- harness ---------------------------------------------------------------------------------
 const failures = [];
@@ -618,6 +631,36 @@ try {
 			await page.waitForSelector('[data-record-panel-status]', { state: 'detached' });
 			await page.waitForFunction(() => !location.search.includes('record='));
 		});
+		await check('the record route restores the panel from the URL, also after a reload', async () => {
+			for (const step of ['open', 'reload']) {
+				if (step === 'open') await s.open(recordUrl, '[data-record-panel-status="ready"]');
+				else {
+					await page.reload({ waitUntil: 'load' });
+					await page.waitForSelector('[data-record-panel-status="ready"]');
+				}
+				const params = new URL(page.url()).searchParams;
+				assert(params.get('form') === 'form-order-line', `${step}: the form is not in the URL`);
+				assert(
+					params.get('record') === 'record-order-line-created',
+					`${step}: the record is not in the URL`
+				);
+				assert(
+					await page
+						.locator('[data-record-panel="record-order-line-created"]')
+						.getByText('Beef Noodles x2')
+						.first()
+						.isVisible(),
+					`${step}: the panel does not show the record title`
+				);
+			}
+		});
+		await check('the durable record page opens from its own route', async () => {
+			await s.open(
+				`${formsPath}/records/record-order-line-created?form=form-order-line`,
+				'[data-permission-state-mode="durable-detail"], main'
+			);
+			await page.getByText('Beef Noodles x2').first().waitFor();
+		});
 		await check('the panel Edit opens the editor drawer and cancel returns', async () => {
 			await s.open(recordUrl, '[data-record-panel-status="ready"]');
 			await page.locator('[data-record-panel-edit]').first().click();
@@ -690,6 +733,148 @@ try {
 		});
 		await s.context.close();
 	}
+	// --- designer saves ------------------------------------------------------------------------
+	console.log('designer saves');
+	{
+		const s = await session('designer');
+		const { page } = s;
+		const formPatches = () => writesTo(s, 'PATCH', /\/forms\/form-order-line$/);
+		await s.open(viewUrl('default'), '[data-record-list-panel]');
+		await check('field design: add a text field with help text and save the schema', async () => {
+			await button(page, 'Field design').click();
+			await page.waitForSelector('[data-form-mode="field-design"]');
+			const keysBefore = await page
+				.locator('[data-designer-field-key]')
+				.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-designer-field-key')));
+			await page.locator('[data-field-library-type="text"]').click();
+			await page.waitForFunction(
+				(count) => document.querySelectorAll('[data-designer-field-key]').length > count,
+				keysBefore.length
+			);
+			await page.locator('[data-field-inspector-section="input-behavior"] summary').click();
+			await page.getByLabel('Help text').fill('Smoke designer help');
+			const before = formPatches().length;
+			await button(page, 'Save design').click();
+			for (let wait = 0; wait < 50 && formPatches().length === before; wait += 1) {
+				await page.waitForTimeout(100);
+			}
+			const patch = formPatches().at(-1);
+			assert(formPatches().length > before, 'saving the design sent no PATCH to the form');
+			const fields = JSON.parse(patch.body)?.schema?.fields ?? [];
+			const added = fields.find((field) => !keysBefore.includes(field.key));
+			assert(added, `the payload holds no new field: ${patch.body.slice(0, 300)}`);
+			assert(added.type === 'text', `the new field has type ${added.type}`);
+			assert(
+				JSON.stringify(added).includes('Smoke designer help'),
+				`the help text is missing from the new field: ${JSON.stringify(added)}`
+			);
+			assert(
+				fields.length === keysBefore.length + 1,
+				'the payload dropped or duplicated existing fields'
+			);
+		});
+		await check('detail layout: a section title and description are saved', async () => {
+			await page.locator('[data-form-config-workbench] button', { hasText: 'Detail layout' }).first().click();
+			await page.getByRole('button', { name: 'Detail sections', exact: true }).click();
+			await page.waitForSelector('[data-detail-layout-section-builder="form-order-line"]');
+			await page.locator('[data-detail-layout-section-title="handoff"]').fill('Service Snapshot');
+			await page
+				.locator('[data-detail-layout-section-description="handoff"]')
+				.fill('Review service notes before closing the line.');
+			const before = formPatches().length;
+			await page.locator('[data-detail-layout-section-save] button').click();
+			await page.getByText('Detail sections saved').first().waitFor();
+			assert(formPatches().length > before, 'saving the sections sent no PATCH to the form');
+			const sections = JSON.parse(formPatches().at(-1).body)?.detail_layout?.sections ?? [];
+			const handoff = sections.find((section) => section.key === 'handoff');
+			assert(handoff?.title === 'Service Snapshot', `section title: ${JSON.stringify(handoff)}`);
+			assert(
+				handoff?.description === 'Review service notes before closing the line.',
+				`section description: ${JSON.stringify(handoff)}`
+			);
+		});
+		await check('permissions: a role policy is saved with its scope and field denial', async () => {
+			await page.locator('[data-form-config-workbench] button', { hasText: 'Permissions' }).first().click();
+			await page.waitForSelector('[data-field-read-permission="unit_price"]');
+			const read = page.locator('[data-field-read-permission="unit_price"]');
+			if (await read.isChecked()) await read.uncheck();
+			await page.getByLabel('Record scope').selectOption('owned');
+			const before = writesTo(s, 'PATCH', /\/permissions$/).length;
+			await button(page, 'Save permissions').click();
+			await page.getByText('Permissions saved').first().waitFor();
+			const patches = writesTo(s, 'PATCH', /\/permissions$/);
+			assert(patches.length > before, 'saving the permissions sent no PATCH');
+			const policies = JSON.parse(patches.at(-1).body)?.policies ?? [];
+			const member = policies.find((p) => p.subject_type === 'role' && p.subject_id === 'member');
+			assert(member?.policy?.record_scope === 'owned', `record scope: ${JSON.stringify(member)}`);
+			assert(
+				JSON.stringify(member?.policy?.fields ?? {}).includes('unit_price'),
+				`the unit_price denial is missing: ${JSON.stringify(member)}`
+			);
+		});
+		await s.context.close();
+	}
+
+	// --- mobile layout -------------------------------------------------------------------------
+	console.log('mobile layout (390 px)');
+	{
+		const s = await session('mobile', { width: 390, height: 844 });
+		const { page } = s;
+		// The widest element that sticks out of the viewport, for the failure message.
+		const overflowReport = () =>
+			page.evaluate(() => {
+				const limit = document.documentElement.clientWidth;
+				const wide = [];
+				for (const element of document.body.querySelectorAll('*')) {
+					const box = element.getBoundingClientRect();
+					if (box.width > 0 && box.right > limit + 1) {
+						wide.push(
+							`${element.tagName.toLowerCase()}${element.className ? '.' + String(element.className.baseVal ?? element.className).trim().split(/\s+/).slice(0, 3).join('.') : ''} right=${Math.round(box.right)}`
+						);
+					}
+				}
+				return {
+					scrollWidth: document.documentElement.scrollWidth,
+					clientWidth: limit,
+					wide: wide.slice(0, 6)
+				};
+			});
+		const views = [
+			['table', viewUrl('default'), '[data-record-list-panel]'],
+			['kanban', viewUrl('kanban'), '[data-view-renderer="kanban"] [data-kanban-card]'],
+			['calendar', viewUrl('calendar'), '[data-view-renderer="calendar"]'],
+			['card', viewUrl('card'), '[data-view-renderer="card"] [data-card-title]']
+		];
+		const shoot = async (page, name) => {
+			if (!screenshotDir) return;
+			mkdirSync(screenshotDir, { recursive: true });
+			const file = join(screenshotDir, name);
+			await page.screenshot({ path: file });
+			screenshots.push(file);
+		};
+		for (const [name, path, ready] of views) {
+			await check(`records mode, ${name} view: no horizontal document overflow`, async () => {
+				await s.open(path, ready);
+				const report = await overflowReport();
+				assert(report.clientWidth === 390, `the viewport is ${report.clientWidth} px, not 390`);
+				assert(
+					report.scrollWidth <= report.clientWidth,
+					`horizontal overflow: scrollWidth ${report.scrollWidth} > clientWidth ${report.clientWidth}; ` +
+						`elements past the right edge: ${report.wide.join(' | ')}`
+				);
+				if (name === 'table') await shoot(page, 'forms-ui-mobile.png');
+			});
+		}
+		await s.context.close();
+
+		if (screenshotDir) {
+			const desktop = await session('desktop-shot', { width: 1366, height: 900 });
+			await desktop.open(viewUrl('default'), '[data-record-list-panel]');
+			await shoot(desktop.page, 'forms-ui-desktop.png');
+			await desktop.context.close();
+		}
+	}
+
 } catch (error) {
 	failures.push(`script: ${error.stack ?? error.message}`);
 	console.log(
@@ -706,4 +891,7 @@ console.log(`\nforms page interactions: ${passed} passed, ${failures.length} fai
 if (failures.length > 0) {
 	console.log(failures.map((failure) => `  - ${failure.split('\n')[0]}`).join('\n'));
 	process.exitCode = 1;
+} else {
+	console.log('Forms UI browser smoke passed');
+	if (screenshots.length > 0) console.log(`Forms UI screenshots: ${screenshots.join(', ')}`);
 }
