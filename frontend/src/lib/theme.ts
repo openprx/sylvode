@@ -1,5 +1,5 @@
 import { browser } from '$app/env';
-import { writable } from 'svelte/store';
+import { writable, type Readable } from 'svelte/store';
 
 export type Theme = 'light' | 'dark' | 'system';
 
@@ -17,12 +17,28 @@ function getStoredTheme(): Theme {
 
 export const theme = writable<Theme>(getStoredTheme());
 
+export type ResolvedTheme = 'light' | 'dark';
+
+/** 'system' resolved against the OS preference: what is actually shown. */
+export function resolveTheme(value: Theme, prefersDark: boolean): ResolvedTheme {
+	return value === 'dark' || (value === 'system' && prefersDark) ? 'dark' : 'light';
+}
+
+function systemPrefersDark(): boolean {
+	return browser && window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+const resolvedStore = writable<ResolvedTheme>(resolveTheme(getStoredTheme(), systemPrefersDark()));
+/** The theme in effect (never 'system'); follows `setTheme` and OS changes while on 'system'. */
+export const resolvedTheme: Readable<ResolvedTheme> = { subscribe: resolvedStore.subscribe };
+
 export function applyTheme(nextTheme: Theme) {
 	if (!browser) return;
 	const root = document.documentElement;
 	const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-	const shouldUseDark = nextTheme === 'dark' || (nextTheme === 'system' && prefersDark);
-	root.classList.toggle('dark', shouldUseDark);
+	const resolved = resolveTheme(nextTheme, prefersDark);
+	root.classList.toggle('dark', resolved === 'dark');
+	resolvedStore.set(resolved);
 }
 
 export function setTheme(nextTheme: Theme) {
