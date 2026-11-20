@@ -1,0 +1,10 @@
+{
+	"shell": {
+		"settings": {
+			"close": "关闭设置",
+			"title": "设置",
+			"leavesSettings": "在设置之外打开",
+			"chooseWorkspaceMenu": "选择工作区"
+		}
+	}
+}
