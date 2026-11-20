@@ -12,12 +12,54 @@ name.
 
 ### Added
 
-- **OAuth authorization server, foundations.** Schema for an OAuth 2.1 authorization server (clients,
-  grants, tokens, audit, rate windows, an event outbox fed by triggers on notifications and AI
-  tasks) with the Ramflux client pre-registered, the shared token, scope, error, validation,
-  revocation, audit and rate-limit primitives, and the RFC 8414 / RFC 9728 discovery documents.
-  The feature is off until `[oauth] issuer` is configured; see
-  `docs/runbooks/oauth-authorization-server.md`.
+- **Sylvode as an OAuth 2.1 authorization server for its own API and MCP server (P4).** A person
+  can connect Ramflux, the one pre-registered public client, to one workspace: Ramflux holds its own
+  credentials and Sylvode proxies nothing. Off until `[oauth] issuer` is configured; see
+  `docs/runbooks/oauth-authorization-server.md` for configuration, operation and rollback.
+  - *Endpoints.* `POST /api/v1/oauth/authorization-requests` and `.../{request_id}/decision` (the
+    consent flow with PKCE `S256`, exact redirect matching with loopback ports, one consent token
+    per request), `POST /api/v1/oauth/token` (authorization code and refresh token grants, refresh
+    rotation with reuse detection, code replay detection), `POST /api/v1/oauth/revoke` (RFC 7009),
+    the RFC 8414 and RFC 9728 discovery documents, and `GET /api/v1/oauth/connection` for a
+    connected application to describe its own grant. Tokens are opaque (`svc_`, `sva_`, `svr_`),
+    stored as hashes, bound to one resource (API or MCP) and checked against live state on every
+    request, so revocation is immediate.
+  - *Scopes of the first release.* The client may be granted `projects:read`, `work_items:read`,
+    `notifications:read`, `tasks:read` and `offline_access`. Write scopes, forms and surfaces are
+    in the vocabulary and refused for this client. A delegated request acts as the person with the
+    workspace role capped at `member`, inside the one workspace and, when chosen, the selected
+    projects of the grant; routes outside a fixed allow-list are refused. Starting, assigning or
+    re-dispatching an agent is never available to a connected application: the check sits in the
+    function that creates an agent task.
+  - *Event stream.* `GET /api/v1/oauth/events/stream` pushes `notification.created`,
+    `notification.read`, `task.created` and `task.status_changed` as server-sent events, filtered
+    when each is delivered (workspace, scope, owner, project set, present membership), with resume
+    by `Last-Event-ID`, a bounded backlog, back-pressure, limits per grant, user and process, and
+    closing control messages (`revoked`, `reauth`, `lagged`, `resync_required`). The worker writes
+    the feed from a transactional outbox and prunes it. nginx serves the path unbuffered.
+  - *Management.* A person lists and disconnects their connections; a workspace owner or admin
+    lists and disconnects the workspace's and switches connected applications on or off; an
+    instance administrator disables or re-enables the client. These accept a first-party session
+    only. Password change, admin reset, disabling an account, removal from a workspace, disabling
+    the client and switching a workspace off revoke the affected grants in the transaction of the
+    change itself.
+  - *MCP.* The MCP server accepts delegated tokens on `POST /mcp/rpc` and offers eight read tools
+    (`projects.list`, `projects.get`, `context.get_project`, `work_items.list`, `work_items.get`,
+    `work_items.get_by_identifier`, `work_items.list_labels`, `comments.list`); a project argument
+    outside the grant is refused before the API is called. Search, the project label list, the forms
+    tools and everything that writes stay available to bot and user tokens only.
+  - *Deviations from the MCP authorization specification.* Only the pre-registered client exists:
+    there is no dynamic client registration and no client metadata documents. The specification
+    says an MCP server must not pass a received token through; this server forwards the caller's
+    MCP-audience token to Sylvode's own API together with an internal forwarding credential
+    (`oauth.internal_forward_secret`, the same value as `mcp.oauth_forward_secret`), and the API
+    accepts an MCP-audience token only with it. The MCP server is a stateless facade over its own
+    API, and the API is the issuer and the policy point for both audiences.
+  - *Operations.* Migration `0108` (twelve tables, one seeded client, four triggers on
+    `notifications` and `ai_tasks`); the worker prunes the event feed after
+    `oauth.event_feed_retention_days`, audit rows after 180 days, operation logs after 90 days and
+    expired requests, codes and tokens daily. Revocations, consent and token issue take row locks in
+    one fixed order so they cannot deadlock or leave a usable token behind.
 
 ### Fixed
 
