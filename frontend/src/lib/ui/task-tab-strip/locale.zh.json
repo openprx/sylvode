@@ -8,9 +8,15 @@
 			"unsavedShort": "有未保存的更改",
 			"updated": "有新的更改",
 			"close": "关闭 {title}",
-			"allTabs": "显示全部 {count} 个页签",
-			"tabCount": "{count} 个页签",
-			"openTabs": "已打开 {count} 个页签",
+			"allTabs": {
+				"other": "显示全部 {count} 个页签"
+			},
+			"tabCount": {
+				"other": "{count} 个页签"
+			},
+			"openTabs": {
+				"other": "已打开 {count} 个页签"
+			},
 			"closeSaved": "关闭所有已保存的页签",
 			"closeTab": "关闭",
 			"closeOthers": "关闭其他已保存的页签",

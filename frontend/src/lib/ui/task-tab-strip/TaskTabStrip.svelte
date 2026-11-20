@@ -9,10 +9,11 @@
 </script>
 
 <script lang="ts">
-	import { t } from 'svelte-i18n';
+	import { locale, t } from 'svelte-i18n';
+	import '../foundations/visually-hidden.css';
+	import { plural } from '../foundations/plural';
 	import { tick } from 'svelte';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import Check from '@lucide/svelte/icons/check';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import X from '@lucide/svelte/icons/x';
 	import Button from '../button/Button.svelte';
@@ -21,7 +22,6 @@
 	import MenuSeparator from '../menu/MenuSeparator.svelte';
 	import Popover from '../popover/Popover.svelte';
 	import { focusTrap } from '../foundations/focus-trap';
-	import { roving } from '../foundations/roving';
 	import { uid } from '../foundations/ids';
 	import { tooltip } from '../tooltip/tooltip';
 	import { isTruncated } from '../context-line/context-line';
@@ -222,8 +222,8 @@
 	}
 </script>
 
-<p id={ids.hint} class="sr-only">{$t('ui.taskTabStrip.reorderHint')}</p>
-<div class="sr-only" role="status" aria-live="polite" data-testid="task-tab-reorder-status">
+<p id={ids.hint} class="ui-sr-only">{$t('ui.taskTabStrip.reorderHint')}</p>
+<div class="ui-sr-only" role="status" aria-live="polite" data-testid="task-tab-reorder-status">
 	{announcement}
 </div>
 
@@ -322,7 +322,7 @@
 			class="overflow"
 			aria-haspopup="menu"
 			aria-expanded={overflowOpen}
-			aria-label={$t('ui.taskTabStrip.allTabs', { values: { count: tabs.length } })}
+			aria-label={plural($t, 'ui.taskTabStrip.allTabs', tabs.length, $locale)}
 			data-testid="task-tab-overflow"
 			onclick={() => (overflowOpen = !overflowOpen)}
 			onkeydown={(event) => {
@@ -333,7 +333,7 @@
 			}}
 		>
 			{#if layout.mode === 'collapsed'}
-				<span>{$t('ui.taskTabStrip.tabCount', { values: { count: tabs.length } })}</span>
+				<span>{plural($t, 'ui.taskTabStrip.tabCount', tabs.length, $locale)}</span>
 			{:else if hiddenCount > 0}
 				<span>+{hiddenCount}</span>
 			{/if}
@@ -343,24 +343,18 @@
 {/if}
 
 <!-- Overflow menu, and the blocking "close one to continue" variant of it. -->
-<Popover
+<Menu
 	open={overflowOpen}
 	anchor={overflowButton}
 	onclose={closeOverflow}
-	role="menu"
 	labelledby={pending ? ids.pendingTitle : undefined}
+	describedby={pending ? ids.pendingBody : undefined}
 	label={pending ? undefined : $t('ui.taskTabStrip.openTasks')}
 	placement="bottom-end"
 	width={300}
-	padding="menu"
-	initialFocus="[role='menuitemradio'], [role='menuitem']"
+	data-testid={pending ? 'task-tab-limit' : 'task-tab-overflow-menu'}
 >
-	<div
-		class="items"
-		data-testid={pending ? 'task-tab-limit' : 'task-tab-overflow-menu'}
-		aria-describedby={pending ? ids.pendingBody : undefined}
-		use:roving={{ selector: '[role="menuitemradio"], [role="menuitem"]', orientation: 'vertical' }}
-	>
+	{#snippet header()}
 		{#if pending}
 			<div class="caption strong" id={ids.pendingTitle}>{$t('ui.taskTabStrip.closeOneTitle')}</div>
 			<div class="caption" id={ids.pendingBody}>
@@ -370,61 +364,53 @@
 			</div>
 		{:else}
 			<div class="caption">
-				{$t('ui.taskTabStrip.openTabs', { values: { count: tabs.length } })}
+				{plural($t, 'ui.taskTabStrip.openTabs', tabs.length, $locale)}
 			</div>
 		{/if}
-		{#each tabs as tab (tab.key)}
-			<button
-				type="button"
-				role="menuitemradio"
-				aria-checked={active === tab.key}
-				tabindex="-1"
-				class="entry"
-				data-tab-key={tab.key}
-				data-testid="task-tab-overflow-item"
-				onclick={() => chooseFromOverflow(tab.key)}
-			>
-				<span class="check"
-					>{#if active === tab.key}<Check size={16} aria-hidden="true" />{/if}</span
-				>
-				<span class="name">{tab.title}</span>
+	{/snippet}
+	<!-- The handlers resolve or close the menu themselves, hence keepOpen. -->
+	{#each tabs as tab (tab.key)}
+		<MenuItem
+			compact
+			keepOpen
+			role="menuitemradio"
+			checked={active === tab.key}
+			data-tab-key={tab.key}
+			data-testid="task-tab-overflow-item"
+			onselect={() => chooseFromOverflow(tab.key)}
+		>
+			{tab.title}
+			{#snippet trailing()}
 				{#if tab.dirty}<span class="dot" role="img" aria-label={$t('ui.taskTabStrip.unsavedShort')}
 					></span>{/if}
-			</button>
-		{/each}
-		<div class="rule" role="separator"></div>
-		{#if pending}
-			<button
-				type="button"
-				role="menuitem"
-				tabindex="-1"
-				class="entry"
-				data-testid="task-tab-cancel-opening"
-				onclick={closeOverflow}
-			>
-				<span class="check"></span>
-				<span class="name">{$t('ui.taskTabStrip.cancelOpening')}</span>
-				<span class="hint">{$t('ui.taskTabStrip.escape')}</span>
-			</button>
-		{:else}
-			<button
-				type="button"
-				role="menuitem"
-				tabindex="-1"
-				class="entry"
-				aria-disabled={savedCount === 0 || undefined}
-				onclick={() => {
-					if (savedCount === 0) return;
-					overflowOpen = false;
-					oncloseSaved();
-				}}
-			>
-				<span class="check"></span>
-				<span class="name">{$t('ui.taskTabStrip.closeSaved')}</span>
-			</button>
-		{/if}
-	</div>
-</Popover>
+			{/snippet}
+		</MenuItem>
+	{/each}
+	<MenuSeparator />
+	{#if pending}
+		<MenuItem
+			compact
+			keepOpen
+			shortcut={$t('ui.taskTabStrip.escape')}
+			data-testid="task-tab-cancel-opening"
+			onselect={closeOverflow}
+		>
+			{$t('ui.taskTabStrip.cancelOpening')}
+		</MenuItem>
+	{:else}
+		<MenuItem
+			compact
+			keepOpen
+			disabled={savedCount === 0}
+			onselect={() => {
+				overflowOpen = false;
+				oncloseSaved();
+			}}
+		>
+			{$t('ui.taskTabStrip.closeSaved')}
+		</MenuItem>
+	{/if}
+</Menu>
 
 <!-- Tab context menu: right-click, Shift+F10 or the menu key. -->
 <Menu
@@ -458,19 +444,15 @@
 	open={confirmTab !== null}
 	anchor={confirmAnchor}
 	onclose={() => oncanceldiscard?.()}
-	role="none"
+	role="dialog"
+	labelledby={ids.confirm}
+	data-testid="task-close-confirm"
 	width={280}
 	placement="bottom-start"
 	initialFocus="[data-autofocus]"
 >
 	{#if confirmTab}
-		<div
-			class="confirm"
-			role="dialog"
-			aria-labelledby={ids.confirm}
-			data-testid="task-close-confirm"
-			use:focusTrap={{ initialFocus: '[data-autofocus]' }}
-		>
+		<div class="confirm" use:focusTrap={{ initialFocus: '[data-autofocus]' }}>
 			<h2 class="question" id={ids.confirm}>
 				{$t('ui.taskTabStrip.discardTitle', { values: { title: confirmTab.title } })}
 			</h2>
@@ -488,15 +470,6 @@
 </Popover>
 
 <style>
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		margin: -1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
-	}
 	.ui-tab-strip {
 		display: flex;
 		align-items: center;
@@ -668,10 +641,6 @@
 		outline: var(--rf-border-width-focus) solid var(--rf-focus);
 		outline-offset: -1px;
 	}
-	.items {
-		display: flex;
-		flex-direction: column;
-	}
 	.caption {
 		padding: var(--rf-space-3) var(--rf-space-5);
 		color: var(--rf-secondary);
@@ -683,54 +652,6 @@
 		color: var(--rf-text);
 		font-size: var(--rf-size-secondary);
 		font-weight: var(--rf-weight-semibold);
-	}
-	.entry {
-		display: flex;
-		align-items: center;
-		gap: var(--rf-space-4);
-		width: 100%;
-		min-height: 32px;
-		padding: 0 var(--rf-space-5);
-		border: 0;
-		border-radius: var(--rf-radius-sm);
-		background: transparent;
-		color: var(--rf-text);
-		font-family: inherit;
-		font-size: var(--rf-size-secondary);
-		text-align: start;
-		cursor: pointer;
-	}
-	.entry:hover:not([aria-disabled='true']) {
-		background: var(--rf-surface);
-	}
-	.entry:focus-visible {
-		outline: var(--rf-border-width-focus) solid var(--rf-focus);
-		outline-offset: -1px;
-	}
-	.entry[aria-disabled='true'] {
-		color: var(--rf-control);
-		cursor: not-allowed;
-	}
-	.check {
-		display: inline-grid;
-		flex: none;
-		width: 16px;
-	}
-	.name {
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.hint {
-		color: var(--rf-secondary);
-		font-size: var(--rf-size-meta);
-	}
-	.rule {
-		height: 1px;
-		margin: var(--rf-space-2) 0;
-		background: var(--rf-line);
 	}
 	.confirm {
 		display: flex;
@@ -764,9 +685,6 @@
 			content: '';
 			position: absolute;
 			inset: -8px -10px;
-		}
-		.entry {
-			min-height: var(--rf-touch-target);
 		}
 	}
 </style>

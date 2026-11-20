@@ -1,8 +1,16 @@
 <script lang="ts">
 	import type { Component, Snippet } from 'svelte';
+	import Check from '@lucide/svelte/icons/check';
 	import { useMenu } from './menu-context';
 
-	interface Props {
+	/** Data attributes (`data-testid`, ...) are passed to the item element. */
+	type DataAttributes = { [K in `data-${string}`]?: string | undefined };
+
+	interface Props extends DataAttributes {
+		/** `menuitemradio` and `menuitemcheckbox` carry `aria-checked` and a leading check glyph. */
+		role?: 'menuitem' | 'menuitemradio' | 'menuitemcheckbox';
+		/** State of a radio or checkbox item; ignored for a plain `menuitem`. */
+		checked?: boolean;
 		/** Optional 16px Lucide icon. */
 		icon?: Component<{ size?: number | string; 'aria-hidden'?: 'true' }>;
 		/** Shortcut hint printed at the end of the row, in platform form. */
@@ -11,44 +19,94 @@
 		/** Disabled items stay focusable (menu pattern) and ignore activation. */
 		disabled?: boolean;
 		compact?: boolean;
+		/** Render a real link: Cmd/Ctrl-click and middle-click open a new browser tab. */
+		href?: string;
+		/** Keep the menu open after selecting (a checkbox item that toggles several options). */
+		keepOpen?: boolean;
 		onselect?: () => void;
+		/** Content at the end of the row (a dot, a hint). */
+		trailing?: Snippet;
 		children: Snippet;
 	}
 
 	let {
+		role = 'menuitem',
+		checked = false,
 		icon: Icon,
 		shortcut,
 		destructive = false,
 		disabled = false,
 		compact = false,
+		href,
+		keepOpen = false,
 		onselect,
-		children
+		trailing,
+		children,
+		...rest
 	}: Props = $props();
 
 	const menu = useMenu();
+	const checkable = $derived(role !== 'menuitem');
+	const link = $derived(!!href && !disabled);
 
-	function activate() {
-		if (disabled) return;
+	function activate(event: MouseEvent) {
+		if (disabled) {
+			event.preventDefault();
+			return;
+		}
+		// A modified click on a link belongs to the browser (new tab); the menu stays as it is.
+		if (link && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) return;
 		onselect?.();
-		menu?.close();
+		if (!keepOpen) menu?.close();
 	}
 </script>
 
-<button
-	type="button"
-	role="menuitem"
-	tabindex="-1"
-	aria-disabled={disabled || undefined}
-	class="ui-menu-item"
-	class:compact
-	class:destructive
-	data-ui="menu-item"
-	onclick={activate}
->
-	{#if Icon && !compact}<Icon size={16} aria-hidden="true" />{/if}
+{#snippet content()}
+	{#if checkable}
+		<span class="check"
+			>{#if checked}<Check size={16} aria-hidden="true" />{/if}</span
+		>
+	{:else if Icon && !compact}
+		<Icon size={16} aria-hidden="true" />
+	{/if}
 	<span class="label">{@render children()}</span>
+	{#if trailing}{@render trailing()}{/if}
 	{#if shortcut}<span class="shortcut">{shortcut}</span>{/if}
-</button>
+{/snippet}
+
+<!-- eslint-disable svelte/no-navigation-without-resolve -- the caller builds the full path -->
+{#if link}
+	<a
+		{...rest}
+		{href}
+		{role}
+		aria-checked={checkable ? checked : undefined}
+		tabindex="-1"
+		class="ui-menu-item"
+		class:compact
+		class:destructive
+		data-ui="menu-item"
+		onclick={activate}
+	>
+		{@render content()}
+	</a>
+{:else}
+	<button
+		{...rest}
+		type="button"
+		{role}
+		aria-checked={checkable ? checked : undefined}
+		tabindex="-1"
+		aria-disabled={disabled || undefined}
+		class="ui-menu-item"
+		class:compact
+		class:destructive
+		data-ui="menu-item"
+		onclick={activate}
+	>
+		{@render content()}
+	</button>
+{/if}
 
 <style>
 	.ui-menu-item {
@@ -67,6 +125,7 @@
 		line-height: var(--rf-leading-button);
 		font-weight: var(--rf-weight-regular);
 		text-align: start;
+		text-decoration: none;
 		cursor: pointer;
 	}
 	.ui-menu-item.compact {
@@ -76,6 +135,14 @@
 	.label {
 		flex: 1;
 		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.check {
+		display: inline-grid;
+		flex: none;
+		width: 16px;
 	}
 	.shortcut {
 		font-size: var(--rf-size-meta);

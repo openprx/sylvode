@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { t } from 'svelte-i18n';
-	import { goto } from '$app/navigation';
+	import { locale, t } from 'svelte-i18n';
+	import { plural } from '../foundations/plural';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import Lock from '@lucide/svelte/icons/lock';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
@@ -84,10 +84,6 @@
 			menuOpen = true;
 		}
 	}
-	function open(segment: ContextSegment) {
-		// eslint-disable-next-line svelte/no-navigation-without-resolve -- full path built by the caller
-		if (segment.href) void goto(segment.href);
-	}
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -- segment hrefs are full paths built by the caller -->
@@ -141,7 +137,7 @@
 								aria-haspopup="menu"
 								aria-expanded={menuOpen}
 								aria-controls={menuOpen ? menuId : undefined}
-								aria-label={$t('ui.contextLine.showHidden', { values: { count: hidden.length } })}
+								aria-label={plural($t, 'ui.contextLine.showHidden', hidden.length, $locale)}
 								onclick={() => (menuOpen = !menuOpen)}
 								onkeydown={onEllipsisKey}
 							>
@@ -186,11 +182,7 @@
 	testId="context-line-menu"
 >
 	{#each hiddenSegments as segment (segment.id)}
-		<MenuItem
-			compact
-			disabled={!segment.href || stateOf(segment) !== 'normal'}
-			onselect={() => open(segment)}
-		>
+		<MenuItem compact disabled={!segment.href || stateOf(segment) !== 'normal'} href={segment.href}>
 			{labelOf(segment)}
 		</MenuItem>
 	{/each}
