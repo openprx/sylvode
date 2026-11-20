@@ -1,0 +1,32 @@
+{
+	"ui": {
+		"sidePanel": {
+			"previous": "Previous record",
+			"next": "Next record",
+			"openFull": "Open full page",
+			"more": "More actions",
+			"close": "Close panel",
+			"resize": "Resize panel",
+			"unsaved": "Unsaved changes",
+			"loading": "Loading",
+			"changed": "This record changed elsewhere.",
+			"offline": "You are offline. Showing what was loaded.",
+			"refresh": "Refresh",
+			"sampleIdentifier": "LEAD-128",
+			"sampleTitle": "Northwind purchase order",
+			"sampleStatus": "Open",
+			"sampleLabel": "Owner",
+			"sampleValue": "Mei Tan",
+			"sampleSave": "Save changes",
+			"sampleOpen": "Open panel",
+			"sampleDelete": "Delete",
+			"sampleRow": "Row",
+			"sampleMenu": "Duplicate",
+			"firstRecord": "this is the first record",
+			"lastRecord": "this is the last record",
+			"thisRecord": "this record",
+			"record": "record",
+			"forbiddenBody": "Ask a project admin to give you access to this record."
+		}
+	}
+}

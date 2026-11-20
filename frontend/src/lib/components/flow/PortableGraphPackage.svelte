@@ -58,10 +58,9 @@
 	let review = $state.raw<Review | null>(null);
 	let receipt = $state.raw<PortableGraphReceipt | null>(null);
 	let heading = $state<HTMLElement | null>(null);
-	const field =
-		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-slate-900';
+	const field = 'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm';
 	const button =
-		'min-h-11 rounded-md border border-slate-300 px-3 text-sm underline-offset-2 hover:underline focus-visible:ring-2 disabled:opacity-50 dark:border-slate-600';
+		'min-h-11 rounded-control border border-fg bg-raised px-3 text-sm underline-offset-2 hover:underline disabled:bg-surface disabled:text-fg-muted disabled:border-line';
 	onDestroy(() => {
 		alive = false;
 	});
@@ -274,10 +273,7 @@
 	}
 </script>
 
-<section
-	class="my-4 space-y-3 border-t pt-4 dark:border-slate-700"
-	data-testid="flow-graph-package"
->
+<section class="my-4 space-y-3 border-t pt-4" data-testid="flow-graph-package">
 	<h3 class="text-sm font-semibold">{$t('flow.graphPackage.title')}</h3>
 	<button
 		type="button"
@@ -427,7 +423,7 @@
 				{/if}
 			</fieldset>
 		{/if}
-		{#if pickerError}<p role="alert" class="text-sm text-red-700 dark:text-red-300">
+		{#if pickerError}<p role="alert" class="text-sm text-danger">
 				{$t('flow.graphPackage.discoveryFailed')}
 			</p>{/if}
 		<label class="flex items-center gap-2 text-sm"
@@ -450,10 +446,10 @@
 				/>
 			</label>{/if}
 		{#if busy}<p class="text-sm" role="status">{$t('common.loading')}</p>{/if}
-		{#if error}<p class="text-sm text-red-700 dark:text-red-300" role="alert">{$t(error)}</p>{/if}
+		{#if error}<p class="text-sm text-danger" role="alert">{$t(error)}</p>{/if}
 		{#if review && !receipt}
 			<section
-				class="space-y-3 rounded-md border p-3 text-sm"
+				class="space-y-3 rounded-card border p-3 text-sm"
 				data-testid="flow-graph-package-review"
 				aria-labelledby={`${uid}-review`}
 			>
@@ -552,7 +548,7 @@
 			</section>
 		{:else if receipt}
 			<section
-				class="space-y-2 rounded-md border p-3 text-sm"
+				class="space-y-2 rounded-card border p-3 text-sm"
 				data-testid="flow-graph-package-receipt"
 				aria-labelledby={`${uid}-receipt`}
 			>

@@ -188,7 +188,8 @@ run_quick_checks() {
   run_check "Restaurant demo bootstrap MCP HTTP smoke" "./scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh"
   run_check "Frontend project template wizard smoke" "flock '$FRONTEND_LOCK' -c 'cd frontend && $FRONTEND_BUN run smoke:project-template'"
   run_check "Frontend template work items smoke" "flock '$FRONTEND_LOCK' -c 'cd frontend && $FRONTEND_BUN run smoke:template-work-items'"
-  run_check "Frontend forms browser smoke" "flock '$FRONTEND_LOCK' -c 'cd frontend && $FRONTEND_BUN run smoke:forms-ui'"
+  run_check "Frontend forms browser smoke" "flock '$FRONTEND_LOCK' -c 'cd frontend && $FRONTEND_BUN run smoke:forms-page-interactions'"
+  run_check "Frontend forms record list smoke" "flock '$FRONTEND_LOCK' -c 'cd frontend && $FRONTEND_BUN run smoke:forms-record-list'"
   run_check "Frontend restaurant browser smoke" "flock '$FRONTEND_LOCK' -c 'cd frontend && $FRONTEND_BUN run smoke:restaurant-ordering'"
 }
 

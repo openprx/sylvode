@@ -1,0 +1,16 @@
+{
+	"shell": {
+		"app": {
+			"skipToContent": "Skip to content",
+			"signOutTitle": "Sign out and discard unsaved changes?",
+			"signOutBody": "Some task tabs have unsaved input. Signing out discards it and it cannot be restored.",
+			"signOutConfirm": "Discard and sign out",
+			"restoreTitle": "Restore default navigation?",
+			"restoreBody": "Your shortcuts are removed from the rail. The four main destinations stay.",
+			"restoreConfirm": "Restore navigation"
+		},
+		"content": {
+			"dismissTip": "Dismiss message"
+		}
+	}
+}

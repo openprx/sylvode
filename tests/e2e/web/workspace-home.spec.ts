@@ -80,7 +80,10 @@ async function signInAs(page: Page, login: LoginData): Promise<void> {
 }
 
 const ADMIN_LINKS = ['Members', 'Webhook', 'Operation Records', 'Workspace Settings'];
-const SIDEBAR_ADMIN_LINKS = [...ADMIN_LINKS, 'Flow settings'];
+// Workspace sections the settings column lists for an owner or admin (`a[data-settings-section]`).
+const SETTINGS_ADMIN_SECTIONS = ['general', 'members', 'webhooks', 'connections', 'flow'];
+const settingsSection = (page: Page, id: string) =>
+	page.locator(`[data-shell="settings-column"] a[data-settings-section="${id}"]`);
 
 test('workspace home: entry from the list, cards by role and Flow flag, titles', async ({ browser, request }) => {
 	const admin = await instanceAdmin(request);
@@ -131,11 +134,13 @@ test('workspace home: entry from the list, cards by role and Flow flag, titles',
 	await expect(page.getByTestId('workspace-home-name')).toHaveText(workspaceName);
 	await expect(page.getByTestId('workspace-home-slug')).toHaveText(`home-${runId}`);
 	await expect(page.getByTestId('workspace-home-role')).toContainText('Owner');
-	// Entered from the list with no reload: the sidebar reads the role for this workspace now.
-	const sidebar = page.locator('aside');
-	for (const label of SIDEBAR_ADMIN_LINKS) {
-		await expect(sidebar.getByRole('link', { name: label, exact: true })).toBeVisible();
+	// Entered from the list with no reload: the settings column reads the role for this workspace now.
+	await page.locator('a[data-shell="settings"]').click();
+	for (const id of SETTINGS_ADMIN_SECTIONS) {
+		await expect(settingsSection(page, id)).toBeVisible();
 	}
+	await page.locator('a[data-rail-destination="home"]').click();
+	await expect(page).toHaveURL(new RegExp(`${homeUrl}$`));
 
 	await expect(page.getByTestId('workspace-home-project-total')).toHaveText('Total: 6');
 	const recent = page.getByTestId('workspace-home-recent').getByRole('link');
@@ -180,15 +185,19 @@ test('workspace home: entry from the list, cards by role and Flow flag, titles',
 		})
 	);
 	await page.goto(homeUrl);
-	await expect(page.locator('aside').getByRole('link', { name: 'Members', exact: true })).toBeVisible();
-	// Client-side only (no reload): sidebar link to the list, then the foreign workspace.
-	await page.locator('aside a[href="/workspace"]').click();
+	await page.locator('a[data-shell="settings"]').click();
+	await expect(settingsSection(page, 'members')).toBeVisible();
+	await page.locator('a[data-rail-destination="home"]').click();
+	await expect(page).toHaveURL(new RegExp(`${homeUrl}$`));
+	// Client-side only (no reload): the Home column's Overview row to the list, then the foreign workspace.
+	await page.locator('[data-shell="column"][data-destination="home"] a[href="/workspace"]').click();
 	await expect(page).toHaveURL(/\/workspace$/);
 	await page.getByRole('button', { name: new RegExp(`Foreign ${runId}`) }).first().click();
 	await expect(page).toHaveURL(new RegExp(`/workspace/${foreign.id}$`));
 	await expect(page.getByTestId('workspace-home-role')).toContainText('Member');
-	for (const label of SIDEBAR_ADMIN_LINKS) {
-		await expect(page.locator('aside').getByRole('link', { name: label, exact: true })).toHaveCount(0);
+	await page.locator('a[data-shell="settings"]').click();
+	for (const id of SETTINGS_ADMIN_SECTIONS) {
+		await expect(settingsSection(page, id)).toHaveCount(0);
 	}
 
 	// ---- an instance admin that is not a member gets no workspace-admin links ----
@@ -196,9 +205,10 @@ test('workspace home: entry from the list, cards by role and Flow flag, titles',
 	const adminPage = await adminContext.newPage();
 	await signInAs(adminPage, admin);
 	await adminPage.goto(homeUrl);
-	await expect(adminPage.locator('aside').getByRole('link', { name: 'Projects', exact: true })).toBeVisible();
-	for (const label of SIDEBAR_ADMIN_LINKS) {
-		await expect(adminPage.locator('aside').getByRole('link', { name: label, exact: true })).toHaveCount(0);
+	await expect(adminPage.locator('a[data-rail-destination="projects"]')).toBeVisible();
+	await adminPage.locator('a[data-shell="settings"]').click();
+	for (const id of SETTINGS_ADMIN_SECTIONS) {
+		await expect(settingsSection(adminPage, id)).toHaveCount(0);
 	}
 	await adminContext.close();
 

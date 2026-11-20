@@ -158,7 +158,7 @@ export function parsePresencePayload(raw: unknown): PresencePayload | null {
 }
 
 /** A stable colour per user id, so a peer keeps the same colour on every screen. */
-const PRESENCE_COLORS = [
+export const PRESENCE_COLORS = [
 	'#2563eb',
 	'#db2777',
 	'#16a34a',
@@ -173,6 +173,29 @@ export function presenceColor(userId: string): string {
 	let hash = 0;
 	for (let i = 0; i < userId.length; i += 1) hash = (hash * 31 + userId.charCodeAt(i)) >>> 0;
 	return PRESENCE_COLORS[hash % PRESENCE_COLORS.length];
+}
+
+function relativeLuminance(color: string): number {
+	const channel = (offset: number) => {
+		const value = parseInt(color.slice(offset, offset + 2), 16) / 255;
+		return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+	};
+	return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+}
+
+/** WCAG contrast ratio of two `#rrggbb` colours. */
+export function contrastRatio(a: string, b: string): number {
+	const [light, dark] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+	return (light + 0.05) / (dark + 0.05);
+}
+
+/**
+ * The label colour on a presence hue: white or black, whichever contrasts more. Either choice
+ * reaches 4.5:1 on any colour (the worse of the two is at least 4.58:1 at the crossover), so a
+ * name or initials on a peer's hue are always readable.
+ */
+export function presenceInk(color: string): string {
+	return contrastRatio('#ffffff', color) >= contrastRatio('#000000', color) ? '#ffffff' : '#000000';
 }
 
 /** Short initials for a block-level avatar. */

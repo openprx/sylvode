@@ -41,21 +41,21 @@
 </script>
 
 <div
-	class="my-2 rounded-md border border-slate-200 px-3 py-2 dark:border-slate-700"
+	class="my-2 rounded-card border border-line px-3 py-2"
 	data-testid="flow-body-child-page"
 	data-child-id={publicView ? undefined : childId}
 	data-state={publicView ? 'restricted' : childState}
 >
-	{#if publicView}<p class="text-sm text-slate-500">▧ {$t('flow.body.privatePageLink')}</p>
+	{#if publicView}<p class="text-sm text-fg-muted">▧ {$t('flow.body.privatePageLink')}</p>
 	{:else if childState === 'ready'}<a
 			href={resolve('/(app)/flow/[objectId]', { objectId: childId })}
 			class="text-sm underline"
 			draggable="false">▧ {title || $t('flow.nav.untitled')}</a
 		>
-	{:else if childState === 'pending'}<p role="status" class="text-sm text-slate-500">
+	{:else if childState === 'pending'}<p role="status" class="text-sm text-fg-muted">
 			▧ {pendingTitle || $t('flow.nav.untitled')} · {$t('flow.body.creatingPage')}
 		</p>
-	{:else}<p role="status" class="text-sm text-slate-500">
+	{:else}<p role="status" class="text-sm text-fg-muted">
 			▧ {$t(publicView ? 'flow.body.privatePageLink' : 'flow.body.pageUnavailable')}
 		</p>{/if}
 </div>

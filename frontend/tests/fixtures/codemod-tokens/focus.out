@@ -1,0 +1,5 @@
+<button class="px-3">A</button>
+<button class="px-3">B</button>
+<input class="rounded border px-2" />
+<input class="focus:border-red-500 hover:ring-2 focus-within:ring-2" />
+<div class=""></div>

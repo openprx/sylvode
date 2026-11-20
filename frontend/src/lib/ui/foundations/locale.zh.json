@@ -1,0 +1,17 @@
+{
+	"ui": {
+		"gallery": {
+			"dark": "深色",
+			"sample": "示例",
+			"reason": "请先填写必填项",
+			"field": "字段",
+			"open": "打开",
+			"title": "对话框标题",
+			"body": "对话框正文。",
+			"confirm": "删除项目",
+			"destructiveTitle": "删除项目 Alpha？",
+			"destructiveBody": "项目及其任务将被移除，此操作无法撤销。",
+			"busy": "正在删除..."
+		}
+	}
+}
