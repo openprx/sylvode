@@ -1065,3 +1065,6 @@ pub fn routes(config: Option<&Arc<OAuthConfig>>) -> Router<AppState> {
         .route(ADMIN_CLIENT_PATH, axum::routing::patch(patch_client))
         .layer(Extension(Arc::clone(config)))
 }
+
+#[cfg(test)]
+mod tests;
