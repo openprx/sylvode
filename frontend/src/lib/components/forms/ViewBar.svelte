@@ -94,10 +94,7 @@
 		onreset={props.onreset}
 		ondelete={props.ondelete}
 	/>
-	<span
-		class="mx-1 hidden h-5 w-px bg-line sm:inline-block"
-		aria-hidden="true"
-	></span>
+	<span class="mx-1 hidden h-5 w-px bg-line sm:inline-block" aria-hidden="true"></span>
 	<ViewArrangementControls
 		fields={props.fields}
 		sortableKeys={props.sortableKeys}

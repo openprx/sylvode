@@ -315,10 +315,7 @@
 	</header>
 
 	{#if error}
-		<p
-			role="alert"
-			class="rounded-control border border-danger px-3 py-2 text-sm text-danger"
-		>
+		<p role="alert" class="rounded-control border border-danger px-3 py-2 text-sm text-danger">
 			{$t(error)}{#if backendMessage}
 				{backendMessage}{/if}
 		</p>
@@ -329,9 +326,7 @@
 		{#key projectId}
 			<ProjectPluginRequests {projectId} onApproved={() => load(workspaceId, projectId, scope)} />
 		{/key}
-		<section
-			class="space-y-3 rounded-card border border-line bg-raised p-4"
-		>
+		<section class="space-y-3 rounded-card border border-line bg-raised p-4">
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<h2 class="font-semibold">{$t('plugins.installPackage')}</h2>
 				<div class="flex flex-wrap items-center gap-2">
@@ -428,9 +423,7 @@
 				{#each packages as item (item.id)}
 					{@const binding = bindings.find((entry) => entry.key === item.manifest.key)}
 					{@const active = binding?.package_id === item.id}
-					<li
-						class="space-y-3 rounded-[var(--radius-sm)] border border-line bg-raised p-4"
-					>
+					<li class="space-y-3 rounded-[var(--radius-sm)] border border-line bg-raised p-4">
 						<div class="flex flex-wrap items-start justify-between gap-2">
 							<div class="min-w-0 space-y-1">
 								<h3 class="font-semibold">{item.manifest.name} · v{item.manifest.version}</h3>

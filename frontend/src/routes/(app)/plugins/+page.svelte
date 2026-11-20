@@ -167,9 +167,7 @@
 	{#if drafts.length}
 		<section aria-labelledby="personal-drafts" class="space-y-2">
 			<h2 id="personal-drafts" class="font-semibold">{$t('plugins.library.drafts')}</h2>
-			<ul
-				class="divide-y divide-line rounded-card border border-line bg-raised px-4"
-			>
+			<ul class="divide-y divide-line rounded-card border border-line bg-raised px-4">
 				{#each drafts as entry (`${entry.templateId}:${entry.id}`)}
 					<li class="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
 						<span class="break-all"

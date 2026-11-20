@@ -209,9 +209,7 @@
 					role="option"
 					aria-selected={option.id === currentId}
 					tabindex="-1"
-					class="{optionClass} {index === activeIndex
-						? 'bg-selected'
-						: 'hover:bg-surface'}"
+					class="{optionClass} {index === activeIndex ? 'bg-selected' : 'hover:bg-surface'}"
 					data-view-option={option.id}
 					onclick={() => choose(option.id)}
 					onmouseenter={() => (activeIndex = index)}
@@ -224,15 +222,12 @@
 						<span class="sr-only">{$t('forms.views.privateBadge')}</span>
 					{/if}
 					{#if option.id === defaultId}
-						<span
-							class="rounded-control bg-surface px-1 text-[10px] font-medium text-fg-muted"
+						<span class="rounded-control bg-surface px-1 text-[10px] font-medium text-fg-muted"
 							>{$t('forms.views.defaultBadge')}</span
 						>
 					{/if}
 					<Check
-						class="h-4 w-4 shrink-0 {option.id === currentId
-							? 'text-fg'
-							: 'invisible'}"
+						class="h-4 w-4 shrink-0 {option.id === currentId ? 'text-fg' : 'invisible'}"
 						aria-hidden="true"
 					/>
 				</div>

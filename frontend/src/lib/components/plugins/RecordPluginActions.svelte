@@ -23,8 +23,7 @@
 		{/each}
 		{#if actions.more.length}
 			<details class="relative">
-				<summary
-					class="cursor-pointer rounded-control border border-input px-3 py-1.5 text-sm"
+				<summary class="cursor-pointer rounded-control border border-input px-3 py-1.5 text-sm"
 					>{$t('plugins.host.more')}</summary
 				>
 				<ul
