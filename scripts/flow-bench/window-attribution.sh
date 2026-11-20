@@ -26,7 +26,7 @@
 #   --max-seconds N    seeding budget per shape in the API run (default 1500)
 #
 # The image, target directory and cargo registry are the ones of the local CI harness in
-# /Users/nn/worker/llama/ops/sylvode-linux-test/ (read, never modified; its containers are not
+# the local Linux test harness directory (read, never modified; its containers are not
 # touched). The script starts nothing but its own sv-attr-* containers and network.
 set -euo pipefail
 
@@ -36,10 +36,11 @@ REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # script itself runs from /ops inside the container.
 PY_DIR="${SCRIPT_DIR_IN:-$SCRIPT_DIR}"
 
-HARNESS=/Users/nn/worker/llama/ops/sylvode-linux-test
-RUNTIME_DIR=/Users/nn/worker/llama/reports/sv-flow-decoupling-2026-11-14/runtime
-TARGET_DIR="$RUNTIME_DIR/linux-target"
-REGISTRY_DIR=/Users/nn/worker/llama/reports/sv-plugin-analysis-2026-11-14/release-next-local-deploy-20261119T153906Z/cargo-registry
+# Local directories come from the environment: nothing machine-specific is recorded here.
+HARNESS="${SV_ATTR_HARNESS:-}"
+RUNTIME_DIR="${SV_ATTR_RUNTIME_DIR:-}"
+TARGET_DIR="${SV_ATTR_TARGET_DIR:-$RUNTIME_DIR/linux-target}"
+REGISTRY_DIR="${SV_ATTR_REGISTRY_DIR:-}"
 IMAGE=localhost/sylvode-builder-20261109:latest
 PG_IMAGE=postgres:18
 NET=sv-attr-net
@@ -253,6 +254,7 @@ fi
 SRC="$(cd "$SRC" && pwd)"
 git -C "$SRC" rev-parse --verify HEAD >/dev/null 2>&1 || die "not a git worktree: $SRC"
 [ -f "$SRC/scripts/flow-bench/window_attribution.py" ] || die "the source tree has no scripts/flow-bench/window_attribution.py"
+[ -n "$HARNESS" ] && [ -n "$REGISTRY_DIR" ] && [ -n "$TARGET_DIR" ] || die "set SV_ATTR_HARNESS, SV_ATTR_REGISTRY_DIR and SV_ATTR_RUNTIME_DIR (or SV_ATTR_TARGET_DIR) to the local harness, cargo registry cache and build cache directories"
 [ -d "$TARGET_DIR" ] || die "target directory missing: $TARGET_DIR"
 [ -d "$REGISTRY_DIR" ] || die "cargo registry cache missing: $REGISTRY_DIR"
 [ -d "$HARNESS/cache" ] || die "harness cache missing: $HARNESS/cache"
