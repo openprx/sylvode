@@ -1956,7 +1956,9 @@ fn apply_content_command(
             }
             if let Some(text) = payload.text {
                 let existing = engine.semantic_snapshot().map_err(|err| map_collab_error(&err))?;
-                let canonical_id = engine.resolve_content_node_id(&id);
+                let canonical_id = engine
+                    .resolve_content_node_id(&id)
+                    .map_err(|err| map_collab_error(&err))?;
                 let node = existing
                     .nodes
                     .get(&canonical_id)

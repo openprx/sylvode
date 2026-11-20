@@ -27,7 +27,7 @@
 //!
 //! | Call site | Why the assumptions hold |
 //! | --- | --- |
-//! | `bin/isolated_apply_worker.rs` `decode_apply_and_check` (`import_update_causally_complete`) | The write window. The base is the accepted head. Hostile bytes. `semantic_snapshot` and `check_snapshot` run in the same window, so an unreadable result is refused there. |
+//! | `bin/isolated_apply_worker.rs` `decode_apply_and_check` (`import_client_update`) | The write window. The base is the accepted head. Hostile bytes. It is the causal import plus the reserved-root rule (below). `semantic_snapshot` and `check_snapshot` run in the same window, so an unreadable result is refused there. |
 //! | `bin/isolated_apply_worker.rs` `replay_diff`, package updates (`import_update_causally_complete`) | Replays accepted package history onto the base. The replayed head must match the request frontier, then `semantic_snapshot` and `check_snapshot` run. |
 //! | `bin/isolated_apply_worker.rs` `replay_diff`, retained history (`import_update`) | Replays accepted rows. The snapshot frontier, each row's before and after frontier must match, so a row the guard refuses fails the request closed. |
 //! | `flow/collab/write.rs` `hydrate_and_apply` | Bootstrap replay of the accepted tail before a write. Fails closed (internal error) if a row is refused; the new write then goes through the worker. |
@@ -35,16 +35,31 @@
 //! | `flow/collab/integrity.rs` `document_fingerprint` | Replay of the accepted tail. The head frontier is compared afterwards and the semantic projection is read; fails closed. |
 //! | `flow/maintenance.rs` `rebuild_projection_audited` | Replay of the accepted tail, head frontier compared, then `semantic_snapshot`. |
 //! | `flow/export.rs` `reconstruct_and_verify` | Replay of canonical update rows. Each row's content hash and after-frontier are verified. |
-//! | `flow/package_import.rs` `reconstruct_head` | Bytes from an uploaded package (not produced by this server). Sequence gaps and member checksums are verified, and the caller loads the result fresh and runs `semantic_snapshot` and the semantic-hash check before anything is stored. |
+//! | `flow/package_import.rs` `reconstruct_head` | Bytes from an uploaded package (not produced by this server). Sequence gaps and member checksums are verified, the head is refused if it carries a shadow root (`refuse_shadow_roots`, below), and the caller loads the result fresh and runs `semantic_snapshot` and the semantic-hash check before anything is stored. |
 //! | `flow/portable_graph_package.rs` `export_versions` | Replay of the accepted tail; a version capture (a projection) follows every update. |
 //! | `flow/command.rs` `execute_content_command`, `flow/move_object.rs` `plan_document`, `flow/scope_move.rs` `navigator_positions` and `execute` | Bootstrap replay of the accepted tail onto the head before a host-authored edit. A refused row fails closed. The edit's own update is then admitted through the worker. |
 //! | `flow/scope_history.rs` `restore_page` | Replay of the accepted tail, then a revert authored on the engine; the result is admitted through the worker. |
 //! | `flow/scope_package.rs` `render`, `flow/scope_collections.rs` `execute_inner`, `flow/collections.rs` `engine_at_head`, `flow/document.rs` `engine_from_boot` | Read-only replay of the accepted tail. Failure is an error, and each caller reads the projection or the model floor from the replayed engine. |
 //! | `flow/scope_editor.rs` `require_bootstrap_model` | Replay of the accepted tail from a bootstrap payload, followed by `minimum_editor_model`. |
 //!
+//! The worker's `replay_diff` with package updates (`scope_import`) takes uploaded bytes too: its
+//! replayed head is checked with `refuse_shadow_roots` in the API process, outside the isolated
+//! window (`flow/scope_import.rs` `require_head_without_shadow_roots`).
+//!
+//! # The reserved-root rule
+//!
+//! A root container is identified by its name and its type, so a client could add a second root
+//! with a reserved name (`reserved_roots`) and another type, a "shadow root". Reading the real
+//! root next to one costs a fork and two exports of the document on every read. Only the client
+//! write path (`LoroCollabEngine::import_client_update`) and uploaded packages
+//! (`LoroCollabEngine::refuse_shadow_roots`) refuse it; every replay entry keeps accepting
+//! history that was accepted earlier, so a page that already carries one stays readable and
+//! writable. See [`scan_imported_ops`] for the facts the rule rests on.
+//!
 //! Replay sites apply rows that the guarded write path (or the package importer, which projects)
 //! already accepted; the guard decides every row as the walk it replaced did, apart from the three
-//! differences listed in `CHANGELOG.md`, so a row accepted then is accepted now. Test-only call
+//! differences listed in `CHANGELOG.md` (the fourth, the reserved-root rule, is not applied to
+//! replay at all), so a row accepted then is accepted now. Test-only call
 //! sites (`#[cfg(test)]`, `tests/`, examples) are not listed.
 use loro::{
     Container, ContainerID, ContainerTrait, ContainerType, Frontiers, IdSpan, JsonListOp, JsonMapOp, JsonOp,
@@ -73,14 +88,14 @@ fn created_after(before: &VersionVector, peer: u64, counter: i32) -> bool {
     counter >= before.get(&peer).copied().unwrap_or(0)
 }
 
-fn root_children_id(doc: &LoroDoc) -> Option<ContainerID> {
-    let Some(Container::Map(root)) = crate::editor_structure::root_container(doc, "doc", ContainerType::Map) else {
-        return None;
+fn root_children_id(doc: &LoroDoc) -> Result<Option<ContainerID>, CollabError> {
+    let Some(Container::Map(root)) = crate::editor_structure::reserved_root(doc, crate::reserved_roots::DOC)? else {
+        return Ok(None);
     };
-    match root.get("children") {
+    Ok(match root.get("children") {
         Some(ValueOrContainer::Container(Container::List(list))) => Some(list.id()),
         _ => None,
-    }
+    })
 }
 
 /// Scans every op the import added to the op log (`before` is the op log version vector taken
@@ -102,10 +117,41 @@ fn root_children_id(doc: &LoroDoc) -> Option<ContainerID> {
 /// reach either input.
 ///
 /// Cost: O(imported ops). Independent of document size.
-pub fn removal_scan(doc: &LoroDoc, before: &VersionVector) -> RemovalScan {
-    let root_list = root_children_id(doc);
+///
+/// # Errors
+/// A failed root read (`editor_root_probe_failed`).
+pub fn removal_scan(doc: &LoroDoc, before: &VersionVector) -> Result<RemovalScan, CollabError> {
+    scan_imported_ops(doc, before, false)
+}
+
+use crate::reserved_roots::{SCAN_INCOMPLETE_REASON, SHADOW_ROOT_REASON};
+
+/// One pass over the ops the import added (`before` is the op log version vector taken before it),
+/// serving [`removal_scan`] and, with `check_roots`, the reserved-root rule.
+///
+/// The reserved-root rule (client write path only): an op whose container is a root container with
+/// a reserved name (`reserved_roots`) and a type other than the expected one makes the update
+/// invalid. Both the name and the type are read from the op's own container id, which the library
+/// derives from the op itself: a root id is `(name, type)` and nothing else, and every container
+/// inside a root can only have been created by an op that targets the root. So a shadow root cannot
+/// gain content, or be referenced from a child, without an op that this rule sees. The update is
+/// also invalid when the ops read do not add up to the imported span of every peer, so an op that
+/// was not inspected can never pass. Both outcomes are errors, not verdicts: the caller discards
+/// the engine, as for every other refusal after an import.
+///
+/// Without `check_roots` the scan stops at the first suspect op, as before. With it, it reads every
+/// op, since a later op can still carry the violation.
+///
+/// Cost: O(imported ops), one comparison per op. Independent of document size.
+///
+/// # Errors
+/// A failed root read, `reserved_root_container_type`, or `reserved_root_scan_incomplete`.
+pub fn scan_imported_ops(doc: &LoroDoc, before: &VersionVector, check_roots: bool) -> Result<RemovalScan, CollabError> {
+    let refuse = |reason: &str| CollabError::OperationFailed { reason: reason.into() };
+    let root_list = root_children_id(doc)?;
     let doc_map = ContainerID::new_root("doc", ContainerType::Map);
     let after = doc.oplog_vv();
+    let mut removal = RemovalScan::None;
     for (&peer, &end) in after.iter() {
         let start = before.get(&peer).copied().unwrap_or(0);
         if start >= end {
@@ -116,17 +162,61 @@ pub fn removal_scan(doc: &LoroDoc, before: &VersionVector) -> RemovalScan {
             for op in change.ops {
                 #[cfg(test)]
                 crate::walk_counter::record_scanned_op();
-                if op.container == doc_map || op_removes_block(before, root_list.as_ref(), &op) {
-                    return RemovalScan::Suspect;
+                if check_roots
+                    && matches!(&op.container, ContainerID::Root { name, container_type }
+                        if crate::reserved_roots::is_shadow_root(name, *container_type))
+                {
+                    return Err(refuse(SHADOW_ROOT_REASON));
+                }
+                if removal == RemovalScan::None
+                    && (op.container == doc_map || op_removes_block(before, root_list.as_ref(), &op))
+                {
+                    removal = RemovalScan::Suspect;
+                    if !check_roots {
+                        return Ok(removal);
+                    }
                 }
                 covered += i64::try_from(op.content.op_len()).unwrap_or(i64::MAX);
             }
         }
         if covered != i64::from(end) - i64::from(start) {
-            return RemovalScan::Suspect;
+            if check_roots {
+                return Err(refuse(SCAN_INCOMPLETE_REASON));
+            }
+            return Ok(RemovalScan::Suspect);
         }
     }
-    RemovalScan::None
+    Ok(removal)
+}
+
+/// Refuses a whole document that carries a shadow root, for a document that arrives from outside
+/// (an uploaded package). Three facts, none of which a forged file can fake:
+///
+/// 1. the document is not shallow, so its op log is the whole history;
+/// 2. no op in that history targets a reserved root of the wrong type
+///    ([`scan_imported_ops`] from the empty version);
+/// 3. no reserved name is listed in the state under the wrong type (the roots `LoroDoc::get_value`
+///    lists), which is also what a root registered without ops would look like.
+///
+/// This is O(history) and meant for package ingestion, never for the timed write window.
+///
+/// # Errors
+/// `reserved_root_container_type` or `reserved_root_scan_incomplete`, or a failed root read.
+pub fn refuse_shadow_roots(doc: &LoroDoc) -> Result<(), CollabError> {
+    let refuse = |reason: &str| CollabError::OperationFailed { reason: reason.into() };
+    if doc.is_shallow() {
+        return Err(refuse(SCAN_INCOMPLETE_REASON));
+    }
+    if let loro::LoroValue::Map(roots) = doc.get_value() {
+        for (name, value) in roots.iter() {
+            if matches!(value, loro::LoroValue::Container(ContainerID::Root { container_type, .. })
+                if crate::reserved_roots::is_shadow_root(name, *container_type))
+            {
+                return Err(refuse(SHADOW_ROOT_REASON));
+            }
+        }
+    }
+    scan_imported_ops(doc, &VersionVector::default(), true).map(|_| ())
 }
 
 /// Rules 1 and 2 of [`removal_scan`] for one op.
@@ -243,7 +333,7 @@ mod tests {
         let replica = cold_copy(base);
         let before = replica.oplog_vv();
         replica.import(update).unwrap();
-        removal_scan(&replica, &before)
+        removal_scan(&replica, &before).unwrap()
     }
 
     /// The scan reads every op of a multi-change update (several peers, text with multi-byte

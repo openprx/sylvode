@@ -21,14 +21,24 @@ name.
   refused as before (`editor_model_floor_downgrade`). The semantic snapshot now also yields the
   floor of the state it read, so the host no longer walks a second time. The guard never trusts
   the fields of an operation that a client chooses: every deletion on the top-level block list
-  goes to the exact check, which decides from the document's actual state. Three differences
+  goes to the exact check, which decides from the document's actual state. Four differences
   affect invalid or hostile input only: a base document that fails the current rules is no
   longer re-checked before the import (the check after the import still rejects an invalid
   result); an update that is invalid in several ways at once may report a different first
   reason; and the editor document, the structure index and its metadata are read through their
   typed root containers everywhere, so a second root container with the same name and another
   type no longer makes the floor check and the page reader disagree (before, such a page could
-  fail the floor check on replay until the next snapshot compaction).
+  fail the floor check on replay until the next snapshot compaction); and, as the fourth, an
+  update from a client that creates or writes a root container with a reserved name
+  (`doc`, `flow_editor_structure`, `flow_editor_structure_meta`, `flow_editor_aliases`, `order`,
+  `tree`, `meta`) and a container type other than the expected one is refused as an invalid update
+  (`reserved_root_container_type`), as is an update whose operations cannot all be inspected
+  (`reserved_root_scan_incomplete`). Such a second root made every later write of that page read
+  the whole document more than once, and compaction does not remove it. No product client
+  creates one. The rule applies to updates a client offers for acceptance only: replay of stored
+  history, snapshot rebuilds and integrity checks still accept a page that already carries such a
+  root, and the check costs the update, not the page. An uploaded package whose document carries
+  such a root, in its snapshot or in its update tail, is refused the same way on import.
 
 ### Fixed
 

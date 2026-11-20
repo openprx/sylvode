@@ -251,7 +251,7 @@ pub async fn export(db: &DatabaseConnection, object: Uuid, actor: Uuid) -> Resul
         return Err(super::policy::authorization_read_unstable());
     }
     let mut engine = super::document::engine_from_boot(&boot)?;
-    if !engine.has_editor_doc() {
+    if !engine.has_editor_doc().map_err(map)? {
         engine.initialize_page_editor().map_err(|_| invalid_content())?;
     }
     let title = engine.title().map_err(map)?;

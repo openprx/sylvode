@@ -1351,7 +1351,7 @@ mod collab_database_tests {
         assert_eq!(
             semantic_b
                 .nodes
-                .get(&engine_b.resolve_content_node_id(&node_id))
+                .get(&engine_b.resolve_content_node_id(&node_id).unwrap())
                 .expect("the node A created is present on B")
                 .text,
             "hello from A"
