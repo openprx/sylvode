@@ -773,12 +773,16 @@ fn required_arguments(schema: &Value) -> Value {
 
 /// Whether the concrete `path` is an instance of the router's `template`.
 fn path_matches(template: &str, path: &str) -> bool {
-    let (template, path): (Vec<&str>, Vec<&str>) = (template.split('/').collect(), path.split('/').collect());
-    template.len() == path.len()
-        && template
-            .iter()
-            .zip(&path)
-            .all(|(wanted, actual)| (wanted.starts_with('{') && !actual.is_empty()) || wanted == actual)
+    let mut wanted = template.split('/');
+    let mut actual = path.split('/');
+    loop {
+        match (wanted.next(), actual.next()) {
+            (None, None) => return true,
+            (Some(segment), Some(value)) if segment == value => {}
+            (Some(segment), Some(value)) if segment.starts_with('{') && !value.is_empty() => {}
+            _ => return false,
+        }
+    }
 }
 
 /// Every tool a delegated caller can see must be one the API will serve it: the route the tool
