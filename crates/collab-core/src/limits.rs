@@ -97,7 +97,7 @@ pub struct LimitViolation {
 /// ("recursive verification and stack has a hard bound") — the *new* node being created is what
 /// gets compared against the limit, so callers pass the depth of the *new* node's parent and this
 /// helper reports that parent's own depth.
-fn depth_of(snapshot: &SemanticSnapshot, id: &NodeId) -> usize {
+pub(crate) fn depth_of(snapshot: &SemanticSnapshot, id: &NodeId) -> usize {
     let mut current = id.clone();
     let mut depth = 0usize;
     let mut hops = 0usize;

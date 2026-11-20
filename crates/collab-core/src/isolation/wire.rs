@@ -8,6 +8,7 @@ use std::io::{self, Read, Write};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CollabError;
+use crate::window_check::WindowReport;
 use crate::{SemanticDiff, SemanticSnapshot};
 
 /// Child-only operation selector set explicitly by the trusted host for every spawn.
@@ -174,13 +175,20 @@ pub enum Outcome {
     /// worker spent between opening and closing its metered window. Telemetry only: it never
     /// influences a verdict. `None` when the worker did not measure it (the diff operation, an
     /// unreadable clock) or when an older worker produced the outcome.
+    ///
+    /// `window_report` is what the worker's incremental window check established about the
+    /// accepted document (`window_check::WindowReport`); `None` when the full computation decided.
+    /// The host compares it with its own projection of the accepted document.
     Success {
         snapshot: Vec<u8>,
         window_cpu_us: Option<u64>,
+        window_report: Option<WindowReport>,
     },
     Rejected(CollabError),
 }
 
+/// The encoding of a window CPU time that was not measured, when a report follows it.
+const NOT_MEASURED: u64 = u64::MAX;
 const TAG_SUCCESS: u8 = 0;
 const TAG_EMPTY_INPUT: u8 = 1;
 const TAG_INPUT_TOO_LARGE: u8 = 2;
@@ -226,14 +234,27 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
         Outcome::Success {
             snapshot,
             window_cpu_us,
+            window_report,
         } => {
             buf.push(TAG_SUCCESS);
             write_field(&mut buf, snapshot)?;
-            // Optional trailing field: absent when `None`, so the payload stays byte-identical to
-            // the pre-telemetry encoding and a decoder that predates the field (which ignores
-            // trailing bytes) still reads it.
-            if let Some(micros) = window_cpu_us {
-                write_u64(&mut buf, *micros)?;
+            // Optional trailing fields: absent when both are `None`, so the payload stays
+            // byte-identical to the pre-telemetry encoding and a decoder that predates the fields
+            // (which ignores trailing bytes) still reads it. The CPU time is written whenever
+            // anything is (`u64::MAX` standing for "not measured"), the report after it.
+            if window_cpu_us.is_some() || window_report.is_some() {
+                write_u64(&mut buf, window_cpu_us.unwrap_or(NOT_MEASURED))?;
+            }
+            if let Some(report) = window_report {
+                for value in [
+                    report.blocks,
+                    report.navigators,
+                    report.chars,
+                    report.depth_bound,
+                    report.longest_bound,
+                ] {
+                    write_u64(&mut buf, value)?;
+                }
             }
         }
         Outcome::Rejected(CollabError::EmptyInput { input }) => {
@@ -303,15 +324,27 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
     match tag_byte {
         TAG_SUCCESS => {
             let snapshot = read_field(&mut cursor, MAX_RESPONSE_PAYLOAD_BYTES)?;
-            // An outcome written before the telemetry field existed ends here.
+            // An outcome written before the telemetry fields existed ends here.
             let window_cpu_us = if cursor.is_empty() {
                 None
             } else {
-                Some(read_u64(&mut cursor)?)
+                Some(read_u64(&mut cursor)?).filter(|micros| *micros != NOT_MEASURED)
+            };
+            let window_report = if cursor.is_empty() {
+                None
+            } else {
+                Some(WindowReport {
+                    blocks: read_u64(&mut cursor)?,
+                    navigators: read_u64(&mut cursor)?,
+                    chars: read_u64(&mut cursor)?,
+                    depth_bound: read_u64(&mut cursor)?,
+                    longest_bound: read_u64(&mut cursor)?,
+                })
             };
             Ok(Outcome::Success {
                 snapshot,
                 window_cpu_us,
+                window_report,
             })
         }
         TAG_EMPTY_INPUT => {
@@ -423,6 +456,7 @@ mod tests {
             let outcome = Outcome::Success {
                 snapshot: b"exported snapshot bytes".to_vec(),
                 window_cpu_us,
+                window_report: None,
             };
             let payload = encode_outcome(&outcome).expect("encode succeeds");
             let decoded = decode_outcome(&payload).expect("decode succeeds");
@@ -440,15 +474,52 @@ mod tests {
             Outcome::Success {
                 snapshot: b"old snapshot".to_vec(),
                 window_cpu_us: None,
+                window_report: None,
             }
         );
         // `None` encodes to precisely those bytes, so old hosts keep reading new workers.
         let encoded = encode_outcome(&Outcome::Success {
             snapshot: b"old snapshot".to_vec(),
             window_cpu_us: None,
+            window_report: None,
         })
         .expect("encode succeeds");
         assert_eq!(encoded, legacy);
+    }
+
+    #[test]
+    fn success_outcome_with_a_window_report_round_trips() {
+        let report = WindowReport {
+            blocks: 5_000,
+            navigators: 7,
+            chars: 123_456,
+            depth_bound: 3,
+            longest_bound: 99,
+        };
+        for window_cpu_us in [None, Some(0), Some(13_980)] {
+            let outcome = Outcome::Success {
+                snapshot: b"exported snapshot bytes".to_vec(),
+                window_cpu_us,
+                window_report: Some(report),
+            };
+            let payload = encode_outcome(&outcome).expect("encode succeeds");
+            assert_eq!(decode_outcome(&payload).expect("decode succeeds"), outcome);
+        }
+        // A report cut short is a corrupt payload, not a report with fewer fields.
+        let payload = encode_outcome(&Outcome::Success {
+            snapshot: b"snap".to_vec(),
+            window_cpu_us: Some(1),
+            window_report: Some(report),
+        })
+        .expect("encode succeeds");
+        for cut in 1..=39 {
+            let truncated = payload.get(..payload.len() - cut).expect("cut within the payload");
+            let decoded = decode_outcome(truncated);
+            assert!(
+                decoded.is_err(),
+                "a payload cut by {cut} bytes must not decode: {decoded:?}"
+            );
+        }
     }
 
     #[test]

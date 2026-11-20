@@ -56,9 +56,13 @@ use std::io::Write;
 #[cfg(target_os = "linux")]
 use collab_core::error::CollabError;
 #[cfg(target_os = "linux")]
+use collab_core::facts::BaseFacts;
+#[cfg(target_os = "linux")]
 use collab_core::isolation::{alloc, child_runtime, host, wire};
 #[cfg(target_os = "linux")]
 use collab_core::limits::{DocumentLimits, check_snapshot};
+#[cfg(target_os = "linux")]
+use collab_core::window_check::{self, WindowReport};
 #[cfg(target_os = "linux")]
 use collab_core::{CollabEngine, LoroCollabEngine};
 
@@ -113,9 +117,13 @@ fn main() {
     // Still setup: materialise the trusted base's containers that an update would otherwise make
     // the metered import decode. No verdict is reached here and nothing depends on the update.
     base_engine.prewarm_for_writes();
+    // Also setup: the facts of the trusted base that the incremental window check corrects by
+    // what the update touched (D2b). A pure function of the base; absent for a base the check does
+    // not describe, and then the window takes the full computation.
+    let facts = BaseFacts::compute(&base_engine);
 
     write_marker_or_exit();
-    respond_and_exit(&decode_apply_check_and_export(base_engine, &update));
+    respond_and_exit(&decode_apply_check_and_export(base_engine, facts.as_ref(), &update));
 }
 
 #[cfg(target_os = "linux")]
@@ -131,6 +139,7 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
             Ok(snapshot) => wire::Outcome::Success {
                 snapshot,
                 window_cpu_us: None,
+                window_report: None,
             },
             Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
                 reason: format!("diff result encoding failed: {error}"),
@@ -277,13 +286,13 @@ fn write_marker_or_exit() {
 /// not just this one test's work. The real armed path is only ever exercised by spawning the
 /// actual compiled worker binary as a subprocess, which `isolation::host`'s own tests do.
 #[cfg(target_os = "linux")]
-fn run_metered(engine: LoroCollabEngine, update: &[u8]) -> (Result<LoroCollabEngine, wire::Outcome>, Option<u64>) {
+fn run_metered(engine: LoroCollabEngine, facts: Option<&BaseFacts>, update: &[u8]) -> Metered {
     child_runtime::arm_sigprof();
     alloc::arm();
     // Telemetry only: two process-CPU clock reads bracket the workload. They do not allocate and
     // take no part in the verdict or in the `SIGPROF` ceiling.
     let cpu_before = process_cpu_micros();
-    let outcome = metered_workload(engine, update);
+    let outcome = metered_workload(engine, facts, update);
     let cpu_after = process_cpu_micros();
     child_runtime::disarm_sigprof();
     alloc::disarm();
@@ -291,7 +300,18 @@ fn run_metered(engine: LoroCollabEngine, update: &[u8]) -> (Result<LoroCollabEng
         (Some(before), Some(after)) => Some(after.saturating_sub(before)),
         _ => None,
     };
-    (outcome, window_cpu_us)
+    Metered {
+        verdict: outcome,
+        window_cpu_us,
+    }
+}
+
+/// What the metered window produced.
+#[cfg(target_os = "linux")]
+struct Metered {
+    /// The accepted engine and what the incremental check established, or the rejection.
+    verdict: Result<(LoroCollabEngine, Option<WindowReport>), wire::Outcome>,
+    window_cpu_us: Option<u64>,
 }
 
 /// Process CPU time (user plus system, `CLOCK_PROCESS_CPUTIME_ID`) in microseconds -- the clock
@@ -318,33 +338,34 @@ fn process_cpu_micros() -> Option<u64> {
 /// controllable synthetic workload for the real decode/apply/validate pipeline, still inside this
 /// exact arm/disarm pair.
 #[cfg(target_os = "linux")]
-fn metered_workload(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
+fn metered_workload(
+    engine: LoroCollabEngine,
+    facts: Option<&BaseFacts>,
+    update: &[u8],
+) -> Result<(LoroCollabEngine, Option<WindowReport>), wire::Outcome> {
     #[cfg(debug_assertions)]
     if let Some(workload) = test_injection::workload_from_env() {
-        return Ok(test_injection::run(&workload, engine));
+        return Ok((test_injection::run(&workload, engine), None));
     }
-    decode_apply_and_check(engine, update)
+    decode_apply_and_check(engine, facts, update)
 }
 
 /// The pure decode/apply/shape-validate logic, with no timer or allocator side effects of its own
 /// -- safe to unit test directly (see [`run_metered`]'s doc comment for why that function itself
 /// is not).
 #[cfg(target_os = "linux")]
-fn decode_apply_and_check(mut engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
-    if let Err(err) = engine.import_client_update(update) {
-        return Err(wire::Outcome::Rejected(err));
+fn decode_apply_and_check(
+    mut engine: LoroCollabEngine,
+    facts: Option<&BaseFacts>,
+    update: &[u8],
+) -> Result<(LoroCollabEngine, Option<WindowReport>), wire::Outcome> {
+    // Import, then the structural check of the result: incrementally against the base facts when
+    // that is certain, with the full projection and `check_snapshot` otherwise. Every refusal is
+    // the full computation's own.
+    match window_check::run_window(&mut engine, facts, update) {
+        Ok(accepted) => Ok((engine, accepted.report)),
+        Err(err) => Err(wire::Outcome::Rejected(err)),
     }
-
-    let semantic = match engine.semantic_snapshot() {
-        Ok(semantic) => semantic,
-        Err(err) => return Err(wire::Outcome::Rejected(err)),
-    };
-
-    if let Err(violation) = check_snapshot(&semantic, &DocumentLimits::default()) {
-        return Err(wire::Outcome::Rejected(CollabError::from(violation)));
-    }
-
-    Ok(engine)
 }
 
 /// Composes [`run_metered`] with the unmetered `export_snapshot` step that follows it, producing
@@ -362,13 +383,14 @@ fn decode_apply_and_check(mut engine: LoroCollabEngine, update: &[u8]) -> Result
 /// inside the window (as an earlier version of this file did) was spending real budget on work the
 /// contract does not ask this ceiling to bound.
 #[cfg(target_os = "linux")]
-fn decode_apply_check_and_export(engine: LoroCollabEngine, update: &[u8]) -> wire::Outcome {
-    let (verdict, window_cpu_us) = run_metered(engine, update);
+fn decode_apply_check_and_export(engine: LoroCollabEngine, facts: Option<&BaseFacts>, update: &[u8]) -> wire::Outcome {
+    let Metered { verdict, window_cpu_us } = run_metered(engine, facts, update);
     match verdict {
-        Ok(accepted) => match accepted.export_snapshot() {
+        Ok((accepted, window_report)) => match accepted.export_snapshot() {
             Ok(snapshot) => wire::Outcome::Success {
                 snapshot,
                 window_cpu_us,
+                window_report,
             },
             Err(err) => wire::Outcome::Rejected(err),
         },
@@ -581,15 +603,21 @@ mod tests {
         writer.set_title("hello").expect("set_title succeeds");
         let update = writer.export_from(&base_frontier).expect("export succeeds");
 
-        let outcome = decode_apply_check_and_export(base, &update);
+        let facts = BaseFacts::compute(&base);
+        let outcome = decode_apply_check_and_export(base, facts.as_ref(), &update);
         let wire::Outcome::Success {
             snapshot,
             window_cpu_us,
+            window_report,
         } = outcome
         else {
             panic!("expected Success, a title-only update stays well within every ceiling");
         };
         assert!(window_cpu_us.is_some(), "the worker reports the window CPU time");
+        assert!(
+            window_report.is_some(),
+            "a title-only update on a tree page is decided by the incremental check"
+        );
         let reloaded = LoroCollabEngine::load(&snapshot).expect("exported snapshot reloads");
         assert_eq!(reloaded.title().expect("title reads"), "hello");
     }
@@ -643,7 +671,8 @@ mod tests {
             .expect("insert_text succeeds at the engine level (check_snapshot, not the engine, enforces this ceiling)");
         let update = writer.export_from(&base_frontier).expect("export succeeds");
 
-        let outcome = decode_apply_check_and_export(base, &update);
+        let facts = BaseFacts::compute(&base);
+        let outcome = decode_apply_check_and_export(base, facts.as_ref(), &update);
         let wire::Outcome::Rejected(CollabError::LimitExceeded { limit_kind, .. }) = outcome else {
             panic!("expected a document_text_chars rejection, got {outcome:?}");
         };

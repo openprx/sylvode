@@ -18,6 +18,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use loro::{
@@ -125,6 +126,12 @@ pub struct LoroCollabEngine {
     meta: LoroMap,
     id_to_tree: HashMap<NodeId, TreeID>,
     tree_to_id: HashMap<TreeID, NodeId>,
+    /// Tree nodes the last rebuild saw without a readable `logical_id`. A rebuild retries them, as
+    /// the full rebuild retries every uncached node, since an import can still give them one.
+    uncached_tree_nodes: HashSet<TreeID>,
+    /// Two live tree nodes have claimed one `logical_id`. Whichever the cache keeps, the full
+    /// projection keeps one node under that id; the incremental check does not model that.
+    duplicate_logical_ids: bool,
     /// Memoized [`LoroCollabEngine::minimum_editor_model`] result for the current document state.
     ///
     /// Every method that can change the document takes `&mut self` and clears this cell first
@@ -317,20 +324,83 @@ impl LoroCollabEngine {
             if self.tree_to_id.contains_key(&tree_id) {
                 continue;
             }
-            let meta = self
-                .tree
-                .get_meta(tree_id)
-                .map_err(|e| map_loro_error(&e, "<rebuild>"))?;
-            let Some(raw) = meta.get(META_LOGICAL_ID) else {
-                continue;
-            };
-            if let Some(logical) = read_string_value(&raw) {
-                let id = NodeId::from(logical);
-                self.id_to_tree.insert(id.clone(), tree_id);
-                self.tree_to_id.insert(tree_id, id);
-            }
+            self.cache_tree_node(tree_id)?;
         }
         Ok(())
+    }
+
+    /// [`Self::rebuild_id_cache`] for an import whose ops are known: `created` holds every tree
+    /// node that the imported ops created, and no other node can be new. The result equals the
+    /// full rebuild's: the nodes the full rebuild would visit are the uncached ones, which a
+    /// previous rebuild left without a `logical_id` and an import can still give one, and the new
+    /// ones. Cost: O(created + uncached) instead of O(tree).
+    ///
+    /// Returns whether a node that was not created by this import got its id now (an existing
+    /// node that had none): the id of an existing node is part of what its children and the
+    /// projection key on, so the incremental check does not model it.
+    fn rebuild_id_cache_for(&mut self, created: &[TreeID]) -> Result<bool, CollabError> {
+        let created_now: HashSet<TreeID> = created.iter().copied().collect();
+        let candidates: HashSet<TreeID> = self.uncached_tree_nodes.iter().chain(created).copied().collect();
+        // Read first, change nothing: if two nodes would claim one id, the full rebuild decides,
+        // since which of them the cache keeps depends on the order they are read in (tree order).
+        let mut reads: Vec<(TreeID, Option<NodeId>)> = Vec::with_capacity(candidates.len());
+        for tree_id in candidates {
+            if self.tree_to_id.contains_key(&tree_id) || !self.tree.contains(tree_id) {
+                continue;
+            }
+            reads.push((tree_id, self.read_logical_id(tree_id)?));
+        }
+        let mut claimed: HashSet<&NodeId> = HashSet::with_capacity(reads.len());
+        let duplicate = reads
+            .iter()
+            .filter_map(|(_, id)| id.as_ref())
+            .any(|id| self.id_to_tree.contains_key(id) || !claimed.insert(id));
+        if duplicate {
+            self.rebuild_id_cache()?;
+            return Ok(true);
+        }
+        let mut resolved_existing = false;
+        for (tree_id, logical) in reads {
+            resolved_existing |= logical.is_some() && !created_now.contains(&tree_id);
+            self.store_logical_id(tree_id, logical);
+        }
+        Ok(resolved_existing)
+    }
+
+    /// Reads one tree node's `logical_id` into the caches, or remembers that it has none yet.
+    fn cache_tree_node(&mut self, tree_id: TreeID) -> Result<(), CollabError> {
+        let logical = self.read_logical_id(tree_id)?;
+        self.store_logical_id(tree_id, logical);
+        Ok(())
+    }
+
+    /// A tree node's `logical_id`, if it has a readable one.
+    fn read_logical_id(&self, tree_id: TreeID) -> Result<Option<NodeId>, CollabError> {
+        let meta = self
+            .tree
+            .get_meta(tree_id)
+            .map_err(|e| map_loro_error(&e, "<rebuild>"))?;
+        Ok(meta
+            .get(META_LOGICAL_ID)
+            .and_then(|raw| read_string_value(&raw))
+            .map(NodeId::from))
+    }
+
+    /// Caches a node's logical id, or remembers that it has none yet.
+    fn store_logical_id(&mut self, tree_id: TreeID, logical: Option<NodeId>) {
+        let Some(id) = logical else {
+            self.uncached_tree_nodes.insert(tree_id);
+            return;
+        };
+        if self
+            .id_to_tree
+            .insert(id.clone(), tree_id)
+            .is_some_and(|previous| previous != tree_id)
+        {
+            self.duplicate_logical_ids = true;
+        }
+        self.tree_to_id.insert(tree_id, id);
+        self.uncached_tree_nodes.remove(&tree_id);
     }
 
     fn text_handler(&self, tree_id: TreeID) -> Result<LoroText, CollabError> {
@@ -372,6 +442,8 @@ impl LoroCollabEngine {
             meta,
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
+            uncached_tree_nodes: HashSet::new(),
+            duplicate_logical_ids: false,
             editor_model_floor: OnceLock::new(),
             session_index: None,
             session_stamp: None,
@@ -401,6 +473,8 @@ impl LoroCollabEngine {
             meta,
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
+            uncached_tree_nodes: HashSet::new(),
+            duplicate_logical_ids: false,
             editor_model_floor: OnceLock::new(),
             session_index: None,
             session_stamp: None,
@@ -536,6 +610,8 @@ impl LoroCollabEngine {
             meta,
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
+            uncached_tree_nodes: HashSet::new(),
+            duplicate_logical_ids: false,
             editor_model_floor: OnceLock::new(),
             session_index: None,
             session_stamp: None,
@@ -1092,6 +1168,113 @@ impl LoroCollabEngine {
         Ok((snapshot, floor))
     }
 
+    /// The Loro document, for the incremental window check.
+    pub(crate) const fn doc(&self) -> &LoroDoc {
+        &self.doc
+    }
+
+    /// Whether some logical id is claimed by two tree nodes (see `duplicate_logical_ids`).
+    pub(crate) const fn has_duplicate_logical_ids(&self) -> bool {
+        self.duplicate_logical_ids
+    }
+
+    /// Whether a tree node has this logical id.
+    pub(crate) fn has_logical_id(&self, id: &str) -> bool {
+        self.id_to_tree.contains_key(id)
+    }
+
+    /// The block maps in `doc.children`, in list order, as container ids: `None` without an editor
+    /// document. Read from the list's value, which names every element by its container id and
+    /// costs far less than reading the blocks.
+    ///
+    /// # Errors
+    /// A failed root read, or an element that is not a map container.
+    pub(crate) fn root_block_ids(&self) -> Result<Option<Vec<loro::ContainerID>>, CollabError> {
+        let Some(root) = crate::editor_structure::root_map(&self.doc, crate::reserved_roots::DOC)? else {
+            return Ok(None);
+        };
+        let Some(ValueOrContainer::Container(Container::List(list))) = root.get("children") else {
+            return Ok(None);
+        };
+        let LoroValue::List(items) = list.get_value() else {
+            return Err(CollabError::OperationFailed {
+                reason: "editor_doc_unsupported_block_container".into(),
+            });
+        };
+        items
+            .iter()
+            .map(|item| match item {
+                LoroValue::Container(id @ loro::ContainerID::Normal { container_type, .. })
+                    if *container_type == loro::ContainerType::Map =>
+                {
+                    Ok(id.clone())
+                }
+                _ => Err(CollabError::OperationFailed {
+                    reason: "editor_doc_unsupported_block_container".into(),
+                }),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+
+    /// What [`Self::semantic_snapshot`] makes of one legacy tree node, reduced to what the
+    /// structural limits read: its key, its parent's key, whether the projection keeps it, whether
+    /// it is deleted, its kind and the characters it contributes. `editor_doc` is whether the page
+    /// has an editor document, which drops nodes marked as editor blocks and clears the text of
+    /// block nodes (`prose_projection::project_blocks`). `None` for a node without a logical id,
+    /// which the projection skips.
+    ///
+    /// It reads the same fields in the same way as `legacy_package_semantic_snapshot_v1` and
+    /// `project_blocks`.
+    ///
+    /// # Errors
+    /// The failed read of the node's deleted state or metadata, which fails the whole projection.
+    pub(crate) fn evaluate_tree_unit(
+        &self,
+        tree_id: TreeID,
+        editor_doc: bool,
+    ) -> Result<Option<TreeUnit>, CollabError> {
+        let Some(key) = self.tree_to_id.get(&tree_id).cloned() else {
+            return Ok(None);
+        };
+        let deleted = self
+            .tree
+            .is_node_deleted(&tree_id)
+            .map_err(|e| map_loro_error(&e, &key))?;
+        let parent_tp = self.tree.parent(tree_id).unwrap_or(TreeParentId::Root);
+        let parent_key = match parent_tp {
+            TreeParentId::Node(parent_tree_id) => self.tree_to_id.get(&parent_tree_id).cloned(),
+            _ => None,
+        };
+        let meta = self.tree.get_meta(tree_id).map_err(|e| map_loro_error(&e, &key))?;
+        let kind = meta
+            .get(META_KIND)
+            .and_then(|v| read_string_value(&v))
+            .map_or(NodeKind::Block, |s| str_to_kind(&s));
+        let property = |name: &str| {
+            meta.get(&format!("{META_PROPERTY_PREFIX}{name}"))
+                .and_then(|raw| read_string_value(&raw))
+        };
+        let present = !(editor_doc && property("content_source").as_deref() == Some("editor_doc"));
+        let cleared = editor_doc && kind == NodeKind::Block && property("embed_object_id").is_none();
+        let chars = if !present || deleted || cleared {
+            0
+        } else {
+            match meta.get(META_TEXT) {
+                Some(ValueOrContainer::Container(Container::Text(text))) => text.to_string().chars().count(),
+                _ => 0,
+            }
+        };
+        Ok(Some(TreeUnit {
+            key,
+            parent_key,
+            present,
+            deleted,
+            kind,
+            chars,
+        }))
+    }
+
     /// Frozen v4 prose/Tree reader. A model5 document must declare the v5 package model.
     pub fn legacy_package_semantic_snapshot_v4(&self) -> Result<SemanticSnapshot, CollabError> {
         if self.minimum_editor_model()? > 4 {
@@ -1230,6 +1413,36 @@ impl LoroCollabEngine {
     }
 }
 
+/// One legacy tree node as the projection sees it, reduced to what the structural limits read.
+/// See [`LoroCollabEngine::evaluate_tree_unit`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TreeUnit {
+    pub key: NodeId,
+    pub parent_key: Option<NodeId>,
+    /// The projection keeps the node.
+    pub present: bool,
+    pub deleted: bool,
+    pub kind: NodeKind,
+    /// Characters the node contributes when it is live (zero when its text is cleared).
+    pub chars: usize,
+}
+
+/// What an import left behind for the incremental window check.
+pub(crate) struct ImportTrace {
+    /// Whether the document's state changed.
+    pub changed: bool,
+    /// The state version vector before the import.
+    pub before_state: VersionVector,
+    /// The library's account of the import: the imported spans, nothing pending (a causal import
+    /// refuses otherwise).
+    pub status: loro::ImportStatus,
+    /// The units the imported ops touched (client imports only; empty for replay).
+    pub summary: crate::window_check::OpSummary,
+    /// An existing tree node got a `logical_id` by this import, or the id caches were rebuilt in
+    /// full (so the set of nodes with an id may differ from the base's anywhere).
+    pub resolved_existing_id: bool,
+}
+
 /// How an import is judged: replay of accepted history, or an update a client offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ImportMode {
@@ -1349,6 +1562,21 @@ impl LoroCollabEngine {
     /// map, or touches the `doc` map falls back to a
     /// narrow scan of `doc.children` and, if still undecided, a read of the pre-import state.
     fn import_guarded(&mut self, update: &[u8], mode: ImportMode) -> Result<Diff, CollabError> {
+        self.import_guarded_traced(update, mode)
+            .map(|trace| Diff { changed: trace.changed })
+    }
+
+    /// [`Self::import_client_update`], keeping what the incremental window check needs to know
+    /// about the import: the state before it, the library's [`ImportStatus`] and the units the
+    /// update's ops touched. The decisions and the effect on the document are the same.
+    ///
+    /// # Errors
+    /// As [`Self::import_client_update`].
+    pub(crate) fn import_client_update_traced(&mut self, update: &[u8]) -> Result<ImportTrace, CollabError> {
+        self.import_guarded_traced(update, ImportMode::Client)
+    }
+
+    fn import_guarded_traced(&mut self, update: &[u8], mode: ImportMode) -> Result<ImportTrace, CollabError> {
         let causal = !matches!(mode, ImportMode::Replay { causal: false });
         InputLimits::default().validate_update(update)?;
         let prior_m5 = model5_marker(&self.doc)?;
@@ -1364,15 +1592,33 @@ impl LoroCollabEngine {
             return Err(CollabError::CausalDependencyMissing);
         }
         let after = self.doc.state_vv();
+        let mut summary = crate::window_check::OpSummary::default();
         let client_scan = if matches!(mode, ImportMode::Client) {
-            Some(crate::floor_guard::scan_imported_ops(&self.doc, &before_ops, true)?)
+            Some(crate::floor_guard::scan_imported_ops_visiting(
+                &self.doc,
+                &before_ops,
+                true,
+                &mut |peer, op, root_list| summary.visit(peer, op, root_list),
+            )?)
         } else {
             None
         };
-        self.rebuild_id_cache()?;
+        // The ops of a client update say exactly which tree nodes it created, unless one of them
+        // is a tree op the summary does not model (a move or delete, or a create it cannot match
+        // to its own id): then every node is looked at, as for a replayed update.
+        let resolved_existing_id = if client_scan.is_some() && summary.tree_ids_known() {
+            self.rebuild_id_cache_for(&summary.tree_created)?
+        } else {
+            self.rebuild_id_cache()?;
+            true
+        };
         self.enforce_floor_ratchet(prior_m5, &before_ops, &before_frontiers, client_scan)?;
-        Ok(Diff {
+        Ok(ImportTrace {
             changed: before != after,
+            before_state: before,
+            status,
+            summary,
+            resolved_existing_id,
         })
     }
 
@@ -1446,6 +1692,8 @@ impl CollabEngine for LoroCollabEngine {
             meta,
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
+            uncached_tree_nodes: HashSet::new(),
+            duplicate_logical_ids: false,
             editor_model_floor: OnceLock::new(),
             session_index: None,
             session_stamp: None,
