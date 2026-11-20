@@ -443,7 +443,6 @@
 		"nameEmailRequired": "姓名和邮箱不能为空",
 		"userUpdated": "用户信息已更新",
 		"passwordResetSuccess": "密码重置成功",
-		"toggleStatusConfirm": "确认{action}用户 {email} 吗？",
 		"toggleDisableTitle": "禁用用户 {email}？",
 		"toggleDisableBody": "该用户将无法再登录。其数据会保留，之后可以重新启用该账号。",
 		"toggleDisableAction": "禁用用户",
@@ -853,7 +852,6 @@
 		"updateSuccess": "Draft 已更新",
 		"updateFailed": "更新 Draft 失败",
 		"deleteFailed": "删除 Draft 失败",
-		"draftDeleteConfirm": "确认删除该 Draft 提案吗？",
 		"draftDeleteTitle": "删除该草稿提案？",
 		"draftDeleteBody": "该草稿及其内容将被移除，无法撤销。",
 		"draftDeleteAction": "删除草稿提案",
@@ -1018,7 +1016,6 @@
 		"templateType": "模板类型",
 		"content": "模板内容（JSON）",
 		"contentInvalid": "模板内容必须是合法 JSON 对象",
-		"deleteConfirm": "确认删除模板 {name}？",
 		"deleteTitle": "删除模板 {name}？",
 		"deleteBody": "该模板将对所有人移除，无法撤销。",
 		"deleteAction": "删除模板 {name}",
@@ -1232,7 +1229,6 @@
 		"createFailed": "提交申诉失败",
 		"reviewSuccess": "申诉审批完成",
 		"reviewFailed": "申诉审批失败",
-		"deleteConfirm": "确认删除该待处理申诉？",
 		"deleteTitle": "删除该待处理申诉？",
 		"deleteBody": "该申诉将被移除，无法撤销。",
 		"deleteAction": "删除申诉",
@@ -1644,7 +1640,6 @@
 		"noRecords": "暂无记录。",
 		"noMatchingRecords": "当前视图没有匹配记录。",
 		"deleteRecord": "删除记录",
-		"deleteRecordConfirm": "确认删除记录「{title}」吗？删除后可在记录列表顶部的提示中恢复。",
 		"recordDeletedRestoreHint": "记录「{title}」已删除，可立即恢复。",
 		"restoreRecord": "恢复记录",
 		"recordRestored": "记录已恢复",
@@ -1690,7 +1685,6 @@
 		"addChildRecord": "新增子记录",
 		"editChildRecord": "编辑子记录",
 		"deleteChildRecord": "删除子记录",
-		"deleteChildRecordConfirm": "确认删除子记录「{title}」吗？",
 		"childRecordSaved": "子记录已保存",
 		"childRecordDeleted": "子记录已删除",
 		"addLink": "添加关联",
@@ -2347,7 +2341,6 @@
 			"conflict": "内容已变化，草稿未提交。",
 			"review": "查看差异",
 			"reload": "重新加载",
-			"discardPrompt": "重新加载将丢弃本表单未保存的草稿，继续？",
 			"keepDraft": "保留草稿",
 			"field": "字段",
 			"mine": "我的草稿",
@@ -2518,6 +2511,23 @@
 			"yes": "是",
 			"no": "否",
 			"openImage": "打开第 {index} 张图片"
+		},
+		"dialogs": {
+			"discardChanges": {
+				"title": "放弃未保存的修改？",
+				"body": "重新加载会用已保存的版本替换此表单中尚未保存的草稿，草稿无法找回。",
+				"confirm": "放弃未保存的修改"
+			},
+			"deleteRecord": {
+				"title": "删除记录「{title}」？",
+				"body": "删除后可在记录列表上方的提示中恢复。",
+				"confirm": "删除记录「{title}」"
+			},
+			"deleteChildRecord": {
+				"title": "删除子记录「{title}」？",
+				"body": "该子记录将从此记录中移除。",
+				"confirm": "删除子记录「{title}」"
+			}
 		}
 	},
 	"pageTitle": {
@@ -4713,7 +4723,6 @@
 			"closeDrawer": "关闭面板",
 			"rateLimited": "请求过于频繁，请稍后再试。",
 			"methodUnavailable": "应用无权使用此操作。",
-			"confirmApply": "确认将此结果应用到记录？",
 			"invalidParams": "应用发送了无效的请求。",
 			"notFound": "请求的内容不存在或已不可用。"
 		},

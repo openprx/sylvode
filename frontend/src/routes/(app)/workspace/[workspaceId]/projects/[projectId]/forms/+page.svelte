@@ -1329,9 +1329,9 @@
 			formsSessionDirty() &&
 			!(await confirmAction({
 				tone: 'destructive',
-				title: $t('forms.session.discardPrompt'),
-				verb: 'discard',
-				object: $t('forms.session.mine').toLowerCase()
+				title: $t('forms.dialogs.discardChanges.title'),
+				body: $t('forms.dialogs.discardChanges.body'),
+				confirmLabel: $t('forms.dialogs.discardChanges.confirm')
 			}))
 		)
 			return;
@@ -2032,8 +2032,9 @@
 		if (
 			!(await confirmAction({
 				tone: 'destructive',
-				title: $t('forms.deleteRecordConfirm', { values: { title: label } }),
-				confirmLabel: $t('forms.deleteRecord')
+				title: $t('forms.dialogs.deleteRecord.title', { values: { title: label } }),
+				body: $t('forms.dialogs.deleteRecord.body'),
+				confirmLabel: $t('forms.dialogs.deleteRecord.confirm', { values: { title: label } })
 			}))
 		) {
 			return;
@@ -3710,8 +3711,9 @@
 		if (
 			!(await confirmAction({
 				tone: 'destructive',
-				title: $t('forms.deleteChildRecordConfirm', { values: { title: label } }),
-				confirmLabel: $t('forms.deleteChildRecord')
+				title: $t('forms.dialogs.deleteChildRecord.title', { values: { title: label } }),
+				body: $t('forms.dialogs.deleteChildRecord.body'),
+				confirmLabel: $t('forms.dialogs.deleteChildRecord.confirm', { values: { title: label } })
 			}))
 		) {
 			return;

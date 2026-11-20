@@ -443,7 +443,6 @@
 		"nameEmailRequired": "Name and email are required",
 		"userUpdated": "User updated successfully",
 		"passwordResetSuccess": "Password reset successfully",
-		"toggleStatusConfirm": "Confirm to {action} user {email}?",
 		"toggleDisableTitle": "Disable user {email}?",
 		"toggleDisableBody": "The user can no longer sign in. Their data is kept, and you can enable the account again.",
 		"toggleDisableAction": "Disable user",
@@ -853,7 +852,6 @@
 		"updateSuccess": "Draft updated",
 		"updateFailed": "Failed to update draft",
 		"deleteFailed": "Failed to delete draft",
-		"draftDeleteConfirm": "Delete this draft proposal?",
 		"draftDeleteTitle": "Delete this draft proposal?",
 		"draftDeleteBody": "The draft and its content are removed. This cannot be undone.",
 		"draftDeleteAction": "Delete draft proposal",
@@ -1018,7 +1016,6 @@
 		"templateType": "Template Type",
 		"content": "Template Content (JSON)",
 		"contentInvalid": "Template content must be valid JSON object",
-		"deleteConfirm": "Delete template {name}?",
 		"deleteTitle": "Delete template {name}?",
 		"deleteBody": "The template is removed for everyone. This cannot be undone.",
 		"deleteAction": "Delete template {name}",
@@ -1232,7 +1229,6 @@
 		"createFailed": "Failed to submit appeal",
 		"reviewSuccess": "Appeal reviewed",
 		"reviewFailed": "Failed to review appeal",
-		"deleteConfirm": "Delete this pending appeal?",
 		"deleteTitle": "Delete this pending appeal?",
 		"deleteBody": "The appeal is removed. This cannot be undone.",
 		"deleteAction": "Delete appeal",
@@ -1644,7 +1640,6 @@
 		"noRecords": "No records yet.",
 		"noMatchingRecords": "No records match this view.",
 		"deleteRecord": "Delete record",
-		"deleteRecordConfirm": "Delete record \"{title}\"? You can restore it from the banner above the record list.",
 		"recordDeletedRestoreHint": "Record \"{title}\" was deleted and can still be restored.",
 		"restoreRecord": "Restore record",
 		"recordRestored": "Record restored",
@@ -1690,7 +1685,6 @@
 		"addChildRecord": "Add child record",
 		"editChildRecord": "Edit child record",
 		"deleteChildRecord": "Delete child record",
-		"deleteChildRecordConfirm": "Delete child record \"{title}\"?",
 		"childRecordSaved": "Child record saved",
 		"childRecordDeleted": "Child record deleted",
 		"addLink": "Add link",
@@ -2347,7 +2341,6 @@
 			"conflict": "Content changed; draft was not saved.",
 			"review": "Review changes",
 			"reload": "Reload",
-			"discardPrompt": "Reload discards unsaved drafts for this form. Continue?",
 			"keepDraft": "Keep draft",
 			"field": "Field",
 			"mine": "My draft",
@@ -2518,6 +2511,23 @@
 			"yes": "Yes",
 			"no": "No",
 			"openImage": "Open image {index}"
+		},
+		"dialogs": {
+			"discardChanges": {
+				"title": "Discard unsaved changes?",
+				"body": "Reloading replaces the unsaved draft of this form with the saved version. The draft cannot be recovered.",
+				"confirm": "Discard unsaved changes"
+			},
+			"deleteRecord": {
+				"title": "Delete record \"{title}\"?",
+				"body": "You can restore it from the banner above the record list.",
+				"confirm": "Delete record \"{title}\""
+			},
+			"deleteChildRecord": {
+				"title": "Delete child record \"{title}\"?",
+				"body": "The child record is removed from this record.",
+				"confirm": "Delete child record \"{title}\""
+			}
 		}
 	},
 	"pageTitle": {
@@ -4713,7 +4723,6 @@
 			"closeDrawer": "Close panel",
 			"rateLimited": "Too many requests. Try again shortly.",
 			"methodUnavailable": "This action is not available to the app.",
-			"confirmApply": "Apply this result to the record?",
 			"invalidParams": "The app sent an invalid request.",
 			"notFound": "The requested item was not found or is no longer available."
 		},
