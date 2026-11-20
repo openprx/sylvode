@@ -15,6 +15,8 @@
 		type CycleTemplate
 	} from '#lib/api/proposals.js';
 	import { toast } from '#lib/stores/toast.js';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
+	import { isMissingResult } from '#lib/utils/api-helpers.js';
 	import { renderMarkdown } from '#lib/utils/markdown.js';
 	import {
 		isAllowedUploadMime,
@@ -27,6 +29,8 @@
 	const meId = $derived($authStore.user?.id || '');
 
 	let loading = $state(true);
+	let loadFailure = $state<'missing' | 'failed' | null>(null);
+	let loadFailureMessage = $state('');
 	let saving = $state(false);
 	let proposal = $state<Proposal | null>(null);
 
@@ -71,10 +75,14 @@
 			goto('/proposals');
 			return;
 		}
+		loadFailure = null;
 		const res = await proposalsApi.get(proposalId);
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governance.notFound'));
-			goto('/proposals');
+			loadFailureMessage = res.message || get(t)('governance.notFound');
+			loadFailure = isMissingResult(res) ? 'missing' : 'failed';
+			// A missing proposal is announced in the tip slot; a failed request by the block's own alert.
+			if (loadFailure === 'missing') toast.error(loadFailureMessage);
+			loading = false;
 			return;
 		}
 		proposal = res.data.proposal;
@@ -234,6 +242,24 @@
 		class="mx-auto max-w-3xl rounded-card border border-line bg-raised p-8 text-center text-fg-muted"
 	>
 		{$t('governance.loading')}
+	</div>
+{:else if loadFailure === 'missing'}
+	<div class="mx-auto max-w-6xl">
+		<StateBlock
+			kind="notFound"
+			place={$t('governance.place')}
+			action={{ run: () => goto('/proposals') }}
+			data-testid="proposal-edit-not-found"
+		/>
+	</div>
+{:else if loadFailure === 'failed'}
+	<div class="mx-auto max-w-6xl">
+		<StateBlock
+			kind="loadFailed"
+			message={loadFailureMessage}
+			action={{ run: () => void loadProposal() }}
+			data-testid="proposal-edit-load-failed"
+		/>
 	</div>
 {:else}
 	<div class="mx-auto max-w-3xl">

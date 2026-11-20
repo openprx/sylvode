@@ -70,7 +70,7 @@
 	{#if status === 'loading'}
 		<p class="mx-auto max-w-3xl px-4 py-10 text-fg-muted">{$t('flow.publicShare.loading')}</p>
 	{:else if status === 'missing'}
-		<p class="mx-auto max-w-3xl px-4 py-10 text-fg">
+		<p class="mx-auto max-w-3xl px-4 py-10 text-fg" role="alert">
 			{$t('flow.publicShare.missing')}
 		</p>
 	{:else}

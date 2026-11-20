@@ -9,6 +9,7 @@
 	import { vetoApi, type VetoEvent } from '#lib/api/veto.js';
 	import { issuesApi } from '#lib/api/issues.js';
 	import { toast } from '#lib/stores/toast.js';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import Button from '#lib/components/Button.svelte';
 
 	const proposalId = $derived(page.params.id || '');
@@ -232,9 +233,12 @@
 			</div>
 		</div>
 	{:else if !proposal || !vetoEvent}
-		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
-			{$t('vetoDetail.empty')}
-		</div>
+		<StateBlock
+			kind="notFound"
+			place={$t('governance.place')}
+			action={{ run: () => goto('/proposals') }}
+			data-testid="veto-proposal-not-found"
+		/>
 	{:else}
 		<div class="rounded-card border border-line bg-raised p-4">
 			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">

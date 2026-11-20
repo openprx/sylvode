@@ -763,7 +763,7 @@
 	{/if}
 {/snippet}
 {#if loadError}
-	<div class="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
+	<div class="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center" role="alert">
 		<h1 class="text-lg font-semibold text-fg">
 			{loadError.code === 'not_found'
 				? $t('flow.route.notFoundTitle')
