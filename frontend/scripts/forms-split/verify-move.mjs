@@ -93,6 +93,35 @@ function componentPath(name) {
 
 const norm = (lines) => lines.map((line) => line.trim()).filter((line) => line !== '');
 
+// A moved block may sit inside `{#if ... && s.selectedForm}` in the route, which narrows state
+// properties to non-null for the type checker. A component cannot inherit that narrowing, so it
+// may repeat it: its whole markup may be wrapped in ONE guard whose condition is only a
+// conjunction of state property truthiness tests (`{#if s.a && s.b.c}` ... `{/if}`). Such a guard
+// is always true where the component is rendered and adds no DOM. It is removed here before the
+// markup is compared with the route lines. Anything else around the moved markup still fails.
+const GUARD_OPEN =
+	/^\{#if s\.[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*( && s\.[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*)*\}$/;
+
+function stripNarrowingGuard(lines) {
+	const filled = lines
+		.map((line, index) => ({ line, index }))
+		.filter((entry) => entry.line.trim() !== '');
+	if (filled.length < 2) return lines;
+	const first = filled[0];
+	const last = filled.at(-1);
+	if (!GUARD_OPEN.test(first.line.trim()) || last.line.trim() !== '{/if}') return lines;
+	// The opening guard must be closed by the last line and by nothing earlier.
+	let depth = 0;
+	for (const entry of filled) {
+		const opens = (entry.line.match(/\{#if\b/g) ?? []).length;
+		const closes = (entry.line.match(/\{\/if\}/g) ?? []).length;
+		depth += opens - closes;
+		if (depth === 0 && entry.index !== last.index) return lines;
+	}
+	if (depth !== 0) return lines;
+	return lines.filter((_, index) => index !== first.index && index !== last.index);
+}
+
 function markupOf(name, seen = new Set()) {
 	const path = componentPath(name);
 	if (!path) fail(`component ${name} does not exist`);
@@ -100,7 +129,7 @@ function markupOf(name, seen = new Set()) {
 	const text = readFileSync(path, 'utf8');
 	const end = text.indexOf('</script>');
 	if (end < 0) fail(`${name} has no script block`);
-	const markup = text.slice(end + '</script>'.length).split('\n');
+	const markup = stripNarrowingGuard(text.slice(end + '</script>'.length).split('\n'));
 	const out = [];
 	for (const line of markup) {
 		const tag = /^\s*<([A-Z]\w*) \/>\s*$/.exec(line);
