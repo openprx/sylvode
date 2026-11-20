@@ -3,6 +3,15 @@
 //! `reference_import` is the previous `import_update*` verbatim (floor walk before, import, floor
 //! walk after, refuse a fall from 5). Every update in the tests below goes through both, and the
 //! decisions must agree. The guard's cost is checked by counting work, not by timing.
+//!
+//! One deliberate difference from the code the guard replaced: the reference's walk reads the
+//! root containers by typed container id (`editor_structure::root_container`), as the guard and
+//! the projection do. The old walk resolved them with `get_by_str_path`, which lets a second root
+//! container of the same name and another type change what the walk sees (accepted difference
+//! three in `CHANGELOG.md`). Everything else in the reference is the old algorithm.
+//!
+//! Updates are hostile input: besides honest encodings, the tests forge the fields of list
+//! deletes (`start_id`, `len`) and create shadow root containers of every type.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -236,6 +245,96 @@ fn raw_update(engine: &LoroCollabEngine, peer: u64, edit: impl FnOnce(&LoroDoc))
     raw.export(ExportMode::updates(&before)).unwrap()
 }
 
+/// The `counter@peer` text of a normal container id, the form JSON ops use for element ids.
+fn id_text(id: &loro::ContainerID) -> String {
+    match id {
+        loro::ContainerID::Normal { peer, counter, .. } => format!("{counter}@{peer}"),
+        loro::ContainerID::Root { .. } => panic!("not a normal container id"),
+    }
+}
+
+/// An update whose root-list deletes are re-encoded through JSON: `forged_id(author)` (called
+/// after `edit` ran on the author) replaces each delete's `start_id` when it returns `Some`, and
+/// `forged_len` replaces its `len`. The author's honest `pos` is kept, so the update removes the
+/// element at `pos` while the metadata names another one. Only deletes on the root list are
+/// touched; other ops are exactly what the author produced.
+fn forged_delete_update(
+    engine: &LoroCollabEngine,
+    peer: u64,
+    edit: impl FnOnce(&LoroDoc),
+    forged_id: impl FnOnce(&LoroDoc) -> Option<String>,
+    forged_len: Option<i32>,
+) -> Vec<u8> {
+    let snapshot = engine.export_snapshot().unwrap();
+    let author = LoroDoc::new();
+    author.import(&snapshot).unwrap();
+    author.set_peer_id(peer).unwrap();
+    let from = author.oplog_vv();
+    edit(&author);
+    author.commit();
+    let root = children(&author).id().to_string();
+    let forged = forged_id(&author);
+    let mut json = serde_json::to_value(
+        author
+            .export_json_updates_without_peer_compression(&from, &author.oplog_vv())
+            .unwrap(),
+    )
+    .unwrap();
+    for change in json["changes"].as_array_mut().unwrap() {
+        for op in change["ops"].as_array_mut().unwrap() {
+            if op["container"] == root && op["content"]["type"] == "delete" {
+                if let Some(id) = &forged {
+                    op["content"]["start_id"] = Value::String(id.clone());
+                }
+                if let Some(len) = forged_len {
+                    op["content"]["len"] = Value::from(len);
+                }
+            }
+        }
+    }
+    let rewritten = LoroDoc::new();
+    rewritten.import(&snapshot).unwrap();
+    rewritten
+        .import_json_updates(serde_json::to_string(&json).unwrap())
+        .unwrap();
+    rewritten.export(ExportMode::updates(&from)).unwrap()
+}
+
+/// One op on a new root container `name` of `kind`, an update that adds a shadow root.
+fn shadow_root_update(engine: &LoroCollabEngine, peer: u64, name: &str, kind: loro::ContainerType) -> Vec<u8> {
+    use loro::ContainerType as T;
+    raw_update(engine, peer, |raw| match kind {
+        T::Text => raw.get_text(name).insert(0, "x").unwrap(),
+        T::List => raw.get_list(name).insert(0, 1).unwrap(),
+        T::MovableList => raw.get_movable_list(name).insert(0, 1).unwrap(),
+        T::Map => raw.get_map(name).insert("k", 1).unwrap(),
+        T::Tree => {
+            raw.get_tree(name).create(None).unwrap();
+        }
+        _ => panic!("unsupported shadow kind"),
+    })
+}
+
+const SHADOWABLE: [loro::ContainerType; 5] = [
+    loro::ContainerType::Text,
+    loro::ContainerType::List,
+    loro::ContainerType::MovableList,
+    loro::ContainerType::Map,
+    loro::ContainerType::Tree,
+];
+
+/// Shadow root kinds for the root `name`: every type but the one the readers use.
+fn shadow_kinds(name: &str) -> Vec<loro::ContainerType> {
+    let real = if name == crate::editor_structure::TREE {
+        loro::ContainerType::Tree
+    } else {
+        loro::ContainerType::Map
+    };
+    SHADOWABLE.into_iter().filter(|kind| *kind != real).collect()
+}
+
+const ROOT_NAMES: [&str; 3] = ["doc", crate::editor_structure::META, crate::editor_structure::TREE];
+
 /// Appends a raw atom block map (no placement, no marker): valid on a flat page, where it alone
 /// holds the floor at 5.
 fn push_raw_atom(raw: &LoroDoc, kind: &str) -> loro::ContainerID {
@@ -422,7 +521,7 @@ fn adversarial_updates(engine: &LoroCollabEngine, rng: &mut Rng, peer: u64) -> V
     let atoms = indices_of(&engine.doc, true);
     let plain = indices_of(&engine.doc, false);
     let list_len = children(&engine.doc).len();
-    match rng.below(12) {
+    match rng.below(14) {
         0 => {
             // Delete an atom block map.
             let Some(&index) = atoms.get(rng.index(atoms.len().max(1))) else {
@@ -530,6 +629,56 @@ fn adversarial_updates(engine: &LoroCollabEngine, rng: &mut Rng, peer: u64) -> V
                     list.delete(list.len() - 1 - k.min(list.len() - 1), 1).unwrap();
                 }
             })]
+        }
+        12 => {
+            // A root-list delete re-encoded with forged metadata: the position removes one
+            // element, `start_id` (and sometimes `len`) name another, an unknown, or a created one.
+            let atom_first = rng.below(2) == 0 && !atoms.is_empty();
+            let index = if atom_first {
+                atoms[rng.index(atoms.len())]
+            } else if list_len > 0 {
+                rng.index(list_len)
+            } else {
+                return Vec::new();
+            };
+            let choice = rng.below(4);
+            let named = rng.index(list_len.max(1));
+            let unknown = format!("{}@{}", rng.below(80), 1 + rng.below(200_000));
+            let len = [None, Some(-1), None][rng.index(3)];
+            vec![forged_delete_update(
+                engine,
+                peer,
+                |raw| {
+                    if choice == 3 {
+                        let list = children(raw);
+                        let map = list.insert_container(list.len(), LoroMap::new()).unwrap();
+                        map.insert("nodeName", "paragraph").unwrap();
+                    }
+                    children(raw).delete(index, 1).unwrap();
+                },
+                |raw| match choice {
+                    0 => children(raw)
+                        .get(named.min(children(raw).len().saturating_sub(1)))
+                        .and_then(|value| match value {
+                            ValueOrContainer::Container(Container::Map(map)) => Some(id_text(&map.id())),
+                            _ => None,
+                        }),
+                    1 => Some(unknown),
+                    2 => None,
+                    // The element this update created itself (the last one in the list).
+                    _ => match children(raw).get(children(raw).len() - 1) {
+                        Some(ValueOrContainer::Container(Container::Map(map))) => Some(id_text(&map.id())),
+                        _ => None,
+                    },
+                },
+                len,
+            )]
+        }
+        13 => {
+            // A shadow root container of another type under a name the readers use.
+            let name = ROOT_NAMES[rng.index(ROOT_NAMES.len())];
+            let kinds = shadow_kinds(name);
+            vec![shadow_root_update(engine, peer, name, kinds[rng.index(kinds.len())])]
         }
         10 => {
             // Add a raw atom: raises a flat page's floor with no marker.
@@ -814,7 +963,9 @@ fn deleting_an_already_deleted_atom_is_judged_on_the_current_base() {
 }
 
 #[test]
-fn an_atom_created_and_deleted_by_one_update_is_not_suspect() {
+fn atoms_created_and_deleted_by_one_update_are_still_suspect() {
+    // Nothing in the update tells which elements its deletes remove, so even deletes of elements
+    // the same update created go to the exact path. Here the base atom keeps the floor at 5.
     let mut engine = flat_page_with_raw_atom(10);
     let update = raw_update(&engine, 70_012, |raw| {
         let list = children(raw);
@@ -830,9 +981,9 @@ fn an_atom_created_and_deleted_by_one_update_is_not_suspect() {
         }
     });
     let (outcome, counts) = expect(&mut engine, &update, "create and delete atoms");
-    assert_eq!(outcome.arm, Arm::NoSuspectOp, "the elements did not exist in the base");
-    assert_eq!((counts.1, counts.2), (0, 0));
-    assert!(counts.0 > 0);
+    assert_eq!(outcome.arm, Arm::SuspectAtomRemains);
+    assert!(outcome.accepted);
+    assert_eq!((counts.1, counts.2), (1, 0));
 }
 
 #[test]
@@ -866,6 +1017,175 @@ fn a_backward_run_of_deletes_naming_an_atom_is_suspect() {
     assert_eq!(outcome.arm, Arm::SuspectBaseRead);
     assert!(outcome.downgrade);
     assert_eq!(counts.2, 1);
+}
+
+// ---------------------------------------------------------------------------------------
+// Hostile encodings: forged delete metadata and shadow root containers.
+// ---------------------------------------------------------------------------------------
+
+/// A list delete is applied by position; its `start_id` is metadata a hostile client chooses.
+/// Here `pos` removes the only atom while `start_id` names a live paragraph.
+#[test]
+fn a_delete_whose_start_id_names_a_paragraph_but_whose_pos_removes_the_atom_is_refused() {
+    let mut engine = flat_page_with_raw_atom(91);
+    let atom = indices_of(&engine.doc, true)[0];
+    let paragraph = id_text(&map_at(&engine.doc, indices_of(&engine.doc, false)[0]).id());
+    let update = forged_delete_update(
+        &engine,
+        91_001,
+        |author| children(author).delete(atom, 1).unwrap(),
+        |_| Some(paragraph),
+        None,
+    );
+    let outcome = step(&mut engine, &update, true, "forged delete");
+    assert!(outcome.downgrade, "a forged delete of the last atom must be refused");
+    assert_eq!(outcome.arm, Arm::SuspectBaseRead);
+}
+
+/// The same forgery with `start_id` naming (a) an element the update itself creates, (b) an
+/// element that was already deleted in the base, (c) nothing that exists, and with (d) a backward
+/// span length.
+#[test]
+fn forged_delete_ids_of_every_kind_cannot_hide_the_removal_of_the_last_atom() {
+    for kind in [
+        "created by the update",
+        "deleted in the base",
+        "unknown",
+        "backward length",
+    ] {
+        let mut engine = flat_page_with_raw_atom(92);
+        let mut dead = None;
+        if kind == "deleted in the base" {
+            let victim = indices_of(&engine.doc, false)[1];
+            dead = Some(id_text(&map_at(&engine.doc, victim).id()));
+            let update = raw_update(&engine, 92_000, |raw| children(raw).delete(victim, 1).unwrap());
+            engine.import_update(&update).unwrap();
+            assert_eq!(engine.minimum_editor_model().unwrap(), 5);
+        }
+        let atom = indices_of(&engine.doc, true)[0];
+        let update = forged_delete_update(
+            &engine,
+            92_001,
+            |author| {
+                if kind == "created by the update" {
+                    let list = children(author);
+                    let map = list.insert_container(list.len(), LoroMap::new()).unwrap();
+                    map.insert("nodeName", "paragraph").unwrap();
+                }
+                children(author).delete(atom, 1).unwrap();
+            },
+            |author| match kind {
+                "created by the update" => match children(author).get(children(author).len() - 1) {
+                    Some(ValueOrContainer::Container(Container::Map(map))) => Some(id_text(&map.id())),
+                    _ => panic!("no created map"),
+                },
+                "deleted in the base" => dead.clone(),
+                "unknown" => Some("77@4242".to_owned()),
+                _ => Some(id_text(&map_at(author, 0).id())),
+            },
+            (kind == "backward length").then_some(-1),
+        );
+        let outcome = step(&mut engine, &update, true, kind);
+        // `step` already proved the decision equals the reference's; for every forgery that
+        // removes the atom the reference refuses.
+        if engine.minimum_editor_model().is_ok_and(|floor| floor < 5) {
+            assert!(
+                outcome.downgrade,
+                "{kind}: the atom is gone, the update must be refused"
+            );
+        }
+    }
+}
+
+/// A product-built page at floor 5 loses its marker (accepted, the atom holds the floor) and then
+/// its last atom, with the placement removed through the tree and the list delete forged.
+#[test]
+fn a_two_step_downgrade_with_a_forged_delete_on_a_product_page_is_refused() {
+    let mut engine = page(5, 4, 93);
+    let flip = raw_update(&engine, 93_001, |raw| set_model(raw, "rich_page_v4"));
+    let (outcome, _) = expect(&mut engine, &flip, "marker flip, atom stays");
+    assert!(outcome.accepted && !outcome.downgrade);
+    let atom = indices_of(&engine.doc, true)[0];
+    let atom_cid = map_at(&engine.doc, atom).id().to_string();
+    let paragraph = id_text(&map_at(&engine.doc, indices_of(&engine.doc, false)[0]).id());
+    let update = forged_delete_update(
+        &engine,
+        93_002,
+        |author| {
+            let tree = author.get_tree(crate::editor_structure::TREE);
+            let node = tree
+                .nodes()
+                .into_iter()
+                .find(|node| {
+                    matches!(
+                        tree.get_meta(*node).unwrap().get("block_cid"),
+                        Some(ValueOrContainer::Value(LoroValue::String(cid))) if cid.as_ref() == atom_cid
+                    )
+                })
+                .expect("the atom has a placement");
+            tree.delete(node).unwrap();
+            children(author).delete(atom, 1).unwrap();
+        },
+        |_| Some(paragraph),
+        None,
+    );
+    let outcome = step(&mut engine, &update, true, "forged two-step downgrade");
+    assert!(
+        outcome.downgrade,
+        "the page would present as v4 with v5 content in its history"
+    );
+}
+
+/// Shadow roots of every container type under each name the readers use, on three flat or
+/// structured floor-5 pages: the guard and the reference decide alike, the update is accepted,
+/// and the floor stays 5 (the readers all see the real container).
+#[test]
+fn shadow_root_containers_do_not_change_the_decision() {
+    type Maker = fn() -> LoroCollabEngine;
+    let bases: [(&str, Maker); 3] = [
+        ("unmarked atom", || flat_page_with_raw_atom(94)),
+        ("marker without structure", || {
+            let mut engine = page(1, 6, 95);
+            let update = raw_update(&engine, 95_001, |raw| set_model(raw, "rich_page_v5"));
+            engine.import_update(&update).unwrap();
+            assert_eq!(engine.minimum_editor_model().unwrap(), 5);
+            engine
+        }),
+        ("structured with marker", || page(5, 6, 96)),
+    ];
+    for (label, make) in bases {
+        for name in ROOT_NAMES {
+            for kind in shadow_kinds(name) {
+                let mut engine = make();
+                let update = shadow_root_update(&engine, 94_500, name, kind);
+                let outcome = step(&mut engine, &update, true, &format!("{label}: shadow {name} {kind:?}"));
+                assert!(outcome.accepted, "{label}: shadow {name} {kind:?} must be accepted");
+                assert_eq!(engine.minimum_editor_model().unwrap(), 5);
+                assert_eq!(
+                    engine.semantic_snapshot_with_floor().unwrap().1,
+                    engine.compute_minimum_editor_model().unwrap(),
+                    "{label}: shadow {name} {kind:?}: the fused floor equals a fresh walk"
+                );
+            }
+        }
+    }
+}
+
+/// A flat model-1 page with a shadow `doc` root stays readable when the history is replayed onto
+/// a live engine (snapshot plus tail): the walk used to fail with `editor_doc_required` there.
+#[test]
+fn a_shadow_root_does_not_make_a_replayed_page_unreadable() {
+    let mut engine = page(1, 6, 97);
+    let snapshot = engine.export_snapshot().unwrap();
+    let update = shadow_root_update(&engine, 97_001, "doc", loro::ContainerType::Text);
+    engine.import_update(&update).unwrap();
+    let tail = engine
+        .export_from(&LoroCollabEngine::load(&snapshot).unwrap().frontier())
+        .unwrap();
+    let mut replayed = LoroCollabEngine::load(&snapshot).unwrap();
+    replayed.import_update(&tail).unwrap();
+    assert_eq!(replayed.compute_minimum_editor_model().unwrap(), 1);
+    assert_eq!(replayed.minimum_editor_model().unwrap(), 1);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -957,9 +1277,17 @@ fn guard_cost_for_ordinary_updates_is_independent_of_document_size() {
                     "floor {floor}, {blocks} blocks, {shape}: floor walks and block reads"
                 );
                 let (ops_scanned, narrow, historical) = walk_counter::guard_counts();
+                // A top-level block deletion on a flat page is a root-list delete, which is always
+                // handed to the exact path: one narrow scan, and with no atom left one read of the
+                // base. Structured pages delete placements only, and a marker ends the check early.
+                let expected_fallback = if floor == 1 && shape == "block deletion" {
+                    (1, 1)
+                } else {
+                    (0, 0)
+                };
                 assert_eq!(
                     (narrow, historical),
-                    (0, 0),
+                    expected_fallback,
                     "floor {floor}, {blocks} blocks, {shape}: fallback scans"
                 );
                 // With the model-5 marker set after the import nothing can be refused, so the guard
@@ -977,6 +1305,30 @@ fn guard_cost_for_ordinary_updates_is_independent_of_document_size() {
             assert!(
                 counts.windows(2).all(|pair| pair[0] == pair[1]),
                 "floor {floor}, {shape}: ops visited differ with document size: {runs:?}"
+            );
+        }
+    }
+}
+
+/// A top-level block deletion on a page without the marker is a root-list delete, which is always
+/// handed to the exact path whatever ids it names: one narrow scan, and, if no atom remains, one
+/// read of the base. Independent of the number of blocks in ops visited. Structured pages, where
+/// the product deletes placements only, are covered by the guard-cost test above.
+#[test]
+fn a_raw_top_level_deletion_takes_the_exact_path_on_unmarked_pages() {
+    for floor in [1, 4] {
+        for blocks in [200_usize, 2_000] {
+            let author = sized_page(floor, blocks);
+            let base = author.export_snapshot().unwrap();
+            let update = raw_update(&author, 99_000, |raw| children(raw).delete(5, 1).unwrap());
+            let mut worker = LoroCollabEngine::load(&base).unwrap();
+            walk_counter::reset();
+            let _ = worker.import_update_causally_complete(&update);
+            let (ops, narrow, historical) = walk_counter::guard_counts();
+            assert_eq!(
+                (ops, narrow, historical, walk_counter::counts()),
+                (1, 1, 1, (0, 0)),
+                "floor {floor}, {blocks} blocks"
             );
         }
     }
