@@ -70,6 +70,16 @@ immediately; a proxy that buffers or has an idle timeout under 30 seconds will c
 stream. `scripts/test-nginx-event-stream-location.sh` checks the nginx file;
 `scripts/lib/e2e-web-proxy-streaming-check.ts` checks the local test proxy.
 
+`frontend/nginx.conf` also routes `/.well-known/oauth-authorization-server` and
+`/.well-known/oauth-protected-resource/api` to the API (exact locations), and serves everything
+under `/oauth/` (the consent page) with `frame-ancestors 'none'`, `X-Frame-Options: DENY`,
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`. It does not proxy the MCP server, so
+the MCP server's own metadata document (`/.well-known/oauth-protected-resource/mcp` behind a
+reverse proxy that maps `/mcp`) must be routed to the MCP server by whoever publishes it.
+`scripts/test-nginx-oauth-locations.sh` asserts this over the file (it does not run nginx);
+`scripts/lib/e2e-web-proxy-oauth-check.ts` checks the same behaviour in the local test proxy
+(`E2E_PROXY_MCP_ORIGIN` enables the MCP document there).
+
 ## Operating it
 
 ### Disable the client
