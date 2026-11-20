@@ -104,7 +104,7 @@
 
 <div class="space-y-3">
 	<details
-		class="rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+		class="rounded-card border border-line bg-raised p-4"
 	>
 		<summary class="cursor-pointer text-base font-semibold"
 			>{$t('plugins.bindingHistory')}</summary
@@ -170,7 +170,7 @@
 	</details>
 
 	<details
-		class="rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+		class="rounded-card border border-line bg-raised p-4"
 	>
 		<summary class="cursor-pointer text-base font-semibold"
 			>{$t('plugins.invocationHistory')}</summary
