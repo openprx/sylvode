@@ -12617,16 +12617,16 @@
 	>
 		<div>
 			<div class="text-sm text-fg-muted">
-				<a href="/workspace" class="hover:text-blue-600">{$t('forms.workspace')}</a>
+				<a href="/workspace" class="hover:text-fg">{$t('forms.workspace')}</a>
 				<span class="mx-1 text-fg-muted">/</span>
 
-				<a href={`/workspace/${workspaceId}/projects`} class="hover:text-blue-600"
+				<a href={`/workspace/${workspaceId}/projects`} class="hover:text-fg"
 					>{$t('forms.projects')}</a
 				>
 
 				<span class="mx-1 text-fg-muted">/</span>
 
-				<a href={`/workspace/${workspaceId}/projects/${projectId}`} class="hover:text-blue-600"
+				<a href={`/workspace/${workspaceId}/projects/${projectId}`} class="hover:text-fg"
 					>{project?.name ?? $t('forms.projectFallback')}</a
 				>
 			</div>
@@ -12866,7 +12866,7 @@
 								<label class="flex items-end gap-2 pb-2 text-sm text-fg">
 									<input
 										type="checkbox"
-										class="h-4 w-4 rounded border-input text-blue-600"
+										class="h-4 w-4 rounded border-input accent-primary"
 										bind:checked={field.required}
 									/>
 
@@ -12989,14 +12989,14 @@
 					{#each forms as form}
 						<button
 							type="button"
-							class="min-h-40 rounded-lg border border-line bg-nav p-4 text-left transition-colors hover:border-blue-200 hover:bg-blue-50 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+							class="min-h-40 rounded-lg border border-line bg-nav p-4 text-left transition-colors hover:border-input hover:bg-surface"
 							onclick={() => openForm(form.id)}
 						>
 							<div class="flex items-start justify-between gap-3">
 								<div class="min-w-0">
 									<div class="flex items-center gap-2">
 										<TableProperties
-											class="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-300"
+											class="h-4 w-4 shrink-0 text-fg-muted"
 											aria-hidden="true"
 										/>
 
@@ -13031,7 +13031,7 @@
 									>{$t('forms.updatedAt', { values: { date: formatDate(form.updated_at) } })}</span
 								>
 
-								<span class="font-medium text-blue-700 dark:text-blue-300"
+								<span class="font-medium text-fg"
 									>{$t('forms.openForm')}</span
 								>
 							</div>
@@ -13175,7 +13175,7 @@
 							<span
 								class="inline-flex items-center gap-1 font-medium text-fg"
 							>
-								<Shield class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+								<Shield class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 								{$t('forms.permissionState')}
 							</span>
@@ -13212,7 +13212,7 @@
 						<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 							<div>
 								<div class="flex items-center gap-2">
-									<Shield class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+									<Shield class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 									<h3 class="text-base font-semibold text-fg">
 										{$t('forms.permissions')}
@@ -13250,7 +13250,7 @@
 										>
 											<input
 												type="checkbox"
-												class="h-4 w-4 rounded border-input text-blue-600"
+												class="h-4 w-4 rounded border-input accent-primary"
 												checked={memberPermissionDraft[action]}
 												onchange={(event) =>
 													setMemberPermission(
@@ -13394,7 +13394,7 @@
 												<label class="flex items-center gap-2 text-xs">
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-input text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={memberFieldReadDraft[field.key] ?? true}
 														data-field-read-permission={field.key}
 														onchange={(event) =>
@@ -13412,7 +13412,7 @@
 												<label class="flex items-center gap-2 text-xs">
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-input text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={memberFieldWriteDraft[field.key] ?? true}
 														data-field-write-permission={field.key}
 														onchange={(event) =>
@@ -13456,7 +13456,7 @@
 						<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 							<div>
 								<div class="flex items-center gap-2">
-									<FileUp class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+									<FileUp class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 									<h3 class="text-base font-semibold text-fg">
 										{$t('forms.modes.importExport')}
@@ -13473,7 +13473,7 @@
 						<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface"
 								onclick={exportImportTemplate}
 								disabled={!selectedForm || visibleFields.length === 0}
 								data-import-template-export
@@ -13488,7 +13488,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={exportCurrentView}
 								disabled={exportingRecords}
 							>
@@ -13501,7 +13501,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={exportCurrentViewJson}
 								disabled={exportingRecords}
 								data-current-view-export-json
@@ -13516,7 +13516,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={exportAttachmentManifest}
 								disabled={exportingRecords}
 								data-attachment-manifest-export
@@ -13531,7 +13531,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={() => void exportAttachmentBundle()}
 								disabled={exportingRecords}
 								data-attachment-bundle-export
@@ -13546,7 +13546,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={() => void exportAttachmentPackage()}
 								disabled={exportingRecords}
 								data-attachment-package-export
@@ -13599,7 +13599,7 @@
 											type="button"
 											class="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium transition-colors {detailLayoutMode ===
 											mode.key
-												? 'bg-blue-600 text-white dark:bg-blue-500'
+												? 'bg-primary text-on-primary'
 												: 'text-fg-muted hover:bg-surface hover:text-fg'}"
 											aria-current={detailLayoutMode === mode.key ? 'page' : undefined}
 											data-detail-layout-tab={mode.key}
@@ -13726,7 +13726,7 @@
 												<label class="flex h-10 w-10 items-center justify-center">
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-input text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={isChecked}
 														disabled={detailHighlightSaving ||
 															(!isChecked && detailHighlightDraft.fields.length >= 4)}
@@ -14053,7 +14053,7 @@
 												>
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-input text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={section.hideEmptyFields}
 														disabled={detailLayoutSectionSaving}
 														data-detail-layout-section-hide-empty-fields={section.key}
@@ -14075,7 +14075,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-input text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={section.collapsible}
 															disabled={detailLayoutSectionSaving}
 															data-detail-layout-section-collapsible={section.key}
@@ -14096,7 +14096,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-input text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={section.defaultCollapsed}
 															disabled={detailLayoutSectionSaving || !section.collapsible}
 															data-detail-layout-section-default-collapsed={section.key}
@@ -14126,7 +14126,7 @@
 														>
 															<input
 																type="checkbox"
-																class="h-4 w-4 rounded border-input text-blue-600"
+																class="h-4 w-4 rounded border-input accent-primary"
 																checked={section.fields.includes(field.key)}
 																disabled={detailLayoutSectionSaving}
 																aria-label={`${$t('forms.detailLayoutField')}: ${fieldLabel(field)} / ${section.title}`}
@@ -14234,7 +14234,7 @@
 												<label class="flex h-10 w-10 items-center justify-center">
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-input text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={widget.enabled}
 														disabled={detailPageWidgetSaving}
 														aria-label={$t(option.labelKey)}
@@ -14363,7 +14363,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-input text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.showCount}
 															disabled={detailPageWidgetSaving}
 															data-detail-page-widget-show-count={widget.key}
@@ -14384,7 +14384,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-input text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.hideEmpty}
 															disabled={detailPageWidgetSaving}
 															data-detail-page-widget-hide-empty={widget.key}
@@ -14405,7 +14405,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-input text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.collapsible}
 															disabled={detailPageWidgetSaving}
 															data-detail-page-widget-collapsible={widget.key}
@@ -14426,7 +14426,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-input text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.defaultCollapsed}
 															disabled={detailPageWidgetSaving || !widget.collapsible}
 															data-detail-page-widget-default-collapsed={widget.key}
@@ -15159,7 +15159,7 @@
 																	</label>
 
 																	<span
-																		class="rounded-md border border-blue-200 bg-blue-50 px-2.5 py-2 text-xs font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200"
+																		class="rounded-md border border-line bg-surface px-2.5 py-2 text-xs font-semibold text-fg-muted"
 																		data-filter-expression-match-count
 																		data-record-count={expressionMatchCount ?? ''}
 																	>
@@ -15983,7 +15983,7 @@
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-input text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.pivotEmptyBuckets}
 																		data-pivot-empty-buckets-control
 																		onchange={(event) =>
@@ -16006,7 +16006,7 @@
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-input text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.pivotHideZeroBuckets}
 																		data-pivot-hide-zero-buckets-control
 																		onchange={(event) =>
@@ -16029,7 +16029,7 @@
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-input text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.pivotShowCounts}
 																		data-pivot-show-counts-control
 																		onchange={(event) =>
@@ -16051,7 +16051,7 @@
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-input text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.pivotHeatmap}
 																		data-pivot-heatmap-control
 																		onchange={(event) =>
@@ -16476,7 +16476,7 @@
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-input text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.calendarHideEmptyDays}
 																		data-calendar-hide-empty-days-control
 																		onchange={(event) =>
@@ -16552,7 +16552,7 @@
 																		>
 																			<input
 																				type="checkbox"
-																				class="h-4 w-4 rounded border-input text-blue-600"
+																				class="h-4 w-4 rounded border-input accent-primary"
 																				checked={viewDraft.cardHideEmptyFields}
 																				data-card-hide-empty-fields-control
 																				onchange={(event) =>
@@ -16575,7 +16575,7 @@
 																		>
 																			<input
 																				type="checkbox"
-																				class="h-4 w-4 rounded border-input text-blue-600"
+																				class="h-4 w-4 rounded border-input accent-primary"
 																				checked={viewDraft.cardShowTimestamps}
 																				data-card-show-timestamps-control
 																				onchange={(event) =>
@@ -16598,7 +16598,7 @@
 																		>
 																			<input
 																				type="checkbox"
-																				class="h-4 w-4 rounded border-input text-blue-600"
+																				class="h-4 w-4 rounded border-input accent-primary"
 																				checked={viewDraft.cardShowRecordId}
 																				data-card-show-record-id-control
 																				onchange={(event) =>
@@ -16978,7 +16978,7 @@
 															>
 																<input
 																	type="checkbox"
-																	class="h-4 w-4 rounded border-input text-blue-600"
+																	class="h-4 w-4 rounded border-input accent-primary"
 																	checked={viewDraftHasColumn(field.key)}
 																	aria-label={`${$t('forms.visibleColumns')}: ${fieldLabel(field)}`}
 																	onchange={(event) =>
@@ -17010,7 +17010,7 @@
 
 																{#if fieldHasConditionalHidden(field)}
 																	<span
-																		class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																		class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																		data-view-column-conditional-hidden={field.key}
 																		>{$t('forms.fieldConditionHiddenBadge')}</span
 																	>
@@ -17018,7 +17018,7 @@
 
 																{#if fieldHasConditionalReadOnly(field)}
 																	<span
-																		class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																		class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																		data-view-column-conditional-readonly={field.key}
 																		>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																	>
@@ -17146,7 +17146,7 @@
 																			? event.currentTarget.checked
 																			: false
 																	)}
-																class="h-5 w-5 rounded border-input text-blue-600"
+																class="h-5 w-5 rounded border-input accent-primary"
 															/>
 														{:else if fieldType(field) === 'single_select'}
 															<select
@@ -17187,7 +17187,7 @@
 																	>
 																		<input
 																			type="checkbox"
-																			class="h-4 w-4 rounded border-input text-blue-600"
+																			class="h-4 w-4 rounded border-input accent-primary"
 																			checked={isDraftOptionSelected(field.key, option)}
 																			disabled={fieldReadOnlyByCondition(field, recordDraft) ||
 																				optionDisabledForMultiDraft(field, option)}
@@ -17378,7 +17378,7 @@
 																						href={attachmentSignedUrl(attachment) || undefined}
 																						target="_blank"
 																						rel="noreferrer"
-																						class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																						class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-fg underline hover:bg-surface"
 																						data-attachment-open={attachment.id}
 																						data-attachment-signed-url={attachmentSignedUrl(
 																							attachment
@@ -17674,7 +17674,7 @@
 
 									{#if focusedRecords.length > 0}
 										<div
-											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-blue-50 px-4 py-2 text-sm text-blue-900 dark:bg-blue-950/30 dark:text-blue-100"
+											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 py-2 text-sm text-fg-muted"
 											data-record-focus={focusedRecords.map((record) => record.id).join('|')}
 										>
 											<span class="min-w-0 truncate">
@@ -17687,7 +17687,7 @@
 
 											<button
 												type="button"
-												class="rounded-md px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 dark:text-blue-200 dark:hover:bg-blue-900/40"
+												class="rounded-md px-2 py-1 text-xs font-medium text-fg hover:bg-surface"
 												onclick={clearFocusedRecord}
 												data-record-focus-clear>{$t('forms.clearFocusedRecord')}</button
 											>
@@ -17766,7 +17766,7 @@
 
 													{#if fieldHasConditionalHidden(ganttTimeline.startField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-start-field-conditional-hidden={ganttTimeline.startField
 																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -17774,7 +17774,7 @@
 
 													{#if fieldHasConditionalReadOnly(ganttTimeline.startField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-start-field-conditional-readonly={ganttTimeline.startField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -17790,7 +17790,7 @@
 
 													{#if ganttTimeline.endField && fieldHasConditionalHidden(ganttTimeline.endField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-end-field-conditional-hidden={ganttTimeline.endField.key}
 															>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -17798,7 +17798,7 @@
 
 													{#if ganttTimeline.endField && fieldHasConditionalReadOnly(ganttTimeline.endField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-end-field-conditional-readonly={ganttTimeline.endField.key}
 															>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -17814,7 +17814,7 @@
 
 													{#if ganttTimeline.groupField && fieldHasConditionalHidden(ganttTimeline.groupField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-group-field-conditional-hidden={ganttTimeline.groupField
 																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -17822,7 +17822,7 @@
 
 													{#if ganttTimeline.groupField && fieldHasConditionalReadOnly(ganttTimeline.groupField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-group-field-conditional-readonly={ganttTimeline.groupField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -17840,7 +17840,7 @@
 
 													{#if ganttTimeline.dependencyField && fieldHasConditionalHidden(ganttTimeline.dependencyField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-dependency-field-conditional-hidden={ganttTimeline
 																.dependencyField.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -17848,7 +17848,7 @@
 
 													{#if ganttTimeline.dependencyField && fieldHasConditionalReadOnly(ganttTimeline.dependencyField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-dependency-field-conditional-readonly={ganttTimeline
 																.dependencyField.key}
 															>{$t('forms.fieldConditionReadOnlyBadge')}</span
@@ -17940,7 +17940,7 @@
 																			<div class="mt-1 flex flex-wrap items-center gap-1.5">
 																				{#if recordFieldHiddenByCondition(ganttTimeline.startField, task.record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-gantt-task-start-conditional-hidden={`${task.record.id}:${ganttTimeline.startField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -17948,7 +17948,7 @@
 
 																				{#if recordFieldReadOnlyByCondition(ganttTimeline.startField, task.record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-gantt-task-start-conditional-readonly={`${task.record.id}:${ganttTimeline.startField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -17956,7 +17956,7 @@
 
 																				{#if ganttTimeline.endField && recordFieldHiddenByCondition(ganttTimeline.endField, task.record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-gantt-task-end-conditional-hidden={`${task.record.id}:${ganttTimeline.endField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -17964,7 +17964,7 @@
 
 																				{#if ganttTimeline.endField && recordFieldReadOnlyByCondition(ganttTimeline.endField, task.record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-gantt-task-end-conditional-readonly={`${task.record.id}:${ganttTimeline.endField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -17982,7 +17982,7 @@
 
 																			{#if ganttTimeline.dependencyField && recordFieldHiddenByCondition(ganttTimeline.dependencyField, task.record)}
 																				<span
-																					class="mt-1 inline-flex rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																					class="mt-1 inline-flex rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-gantt-task-dependency-conditional-hidden={`${task.record.id}:${ganttTimeline.dependencyField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
@@ -17990,7 +17990,7 @@
 
 																			{#if ganttTimeline.dependencyField && recordFieldReadOnlyByCondition(ganttTimeline.dependencyField, task.record)}
 																				<span
-																					class="mt-1 inline-flex rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																					class="mt-1 inline-flex rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-gantt-task-dependency-conditional-readonly={`${task.record.id}:${ganttTimeline.dependencyField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
@@ -18071,7 +18071,7 @@
 
 													{#if fieldHasConditionalHidden(pivotTable.rowField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-row-field-conditional-hidden={pivotTable.rowField.key}
 															>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -18079,7 +18079,7 @@
 
 													{#if fieldHasConditionalReadOnly(pivotTable.rowField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-row-field-conditional-readonly={pivotTable.rowField.key}
 															>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -18095,7 +18095,7 @@
 
 													{#if fieldHasConditionalHidden(pivotTable.columnField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-column-field-conditional-hidden={pivotTable.columnField
 																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -18103,7 +18103,7 @@
 
 													{#if fieldHasConditionalReadOnly(pivotTable.columnField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-column-field-conditional-readonly={pivotTable.columnField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -18118,7 +18118,7 @@
 
 													{#if fieldHasConditionalHidden(pivotTable.valueField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-value-field-conditional-hidden={pivotTable.valueField.key}
 															>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -18126,7 +18126,7 @@
 
 													{#if fieldHasConditionalReadOnly(pivotTable.valueField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-value-field-conditional-readonly={pivotTable.valueField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -18267,7 +18267,7 @@
 
 																	{#if fieldHasConditionalHidden(pivotTable.rowField)}
 																		<span
-																			class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																			class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																			data-pivot-table-row-field-conditional-hidden={pivotTable
 																				.rowField.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 																		>
@@ -18275,7 +18275,7 @@
 
 																	{#if fieldHasConditionalReadOnly(pivotTable.rowField)}
 																		<span
-																			class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																			class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																			data-pivot-table-row-field-conditional-readonly={pivotTable
 																				.rowField.key}
 																			>{$t('forms.fieldConditionReadOnlyBadge')}</span
@@ -18294,7 +18294,7 @@
 
 																		{#if recordsFieldHiddenByCondition(pivotTable.columnField, pivotColumnRecords(column))}
 																			<span
-																				class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																				class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-pivot-column-conditional-hidden={`${column.label}:${pivotTable.columnField.key}`}
 																				>{$t('forms.fieldConditionHiddenBadge')}</span
 																			>
@@ -18302,7 +18302,7 @@
 
 																		{#if recordsFieldReadOnlyByCondition(pivotTable.columnField, pivotColumnRecords(column))}
 																			<span
-																				class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																				class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-pivot-column-conditional-readonly={`${column.label}:${pivotTable.columnField.key}`}
 																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																			>
@@ -18333,7 +18333,7 @@
 
 																		{#if recordsFieldHiddenByCondition(pivotTable.rowField, pivotRowRecords(row))}
 																			<span
-																				class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																				class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-pivot-row-conditional-hidden={`${row.label}:${pivotTable.rowField.key}`}
 																				>{$t('forms.fieldConditionHiddenBadge')}</span
 																			>
@@ -18341,7 +18341,7 @@
 
 																		{#if recordsFieldReadOnlyByCondition(pivotTable.rowField, pivotRowRecords(row))}
 																			<span
-																				class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																				class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-pivot-row-conditional-readonly={`${row.label}:${pivotTable.rowField.key}`}
 																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																			>
@@ -18358,7 +18358,7 @@
 																	>
 																		<button
 																			type="button"
-																			class="flex w-full flex-col items-end rounded px-2 py-1 text-right font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="flex w-full flex-col items-end rounded px-2 py-1 text-right font-medium text-fg hover:bg-surface"
 																			style={pivotCellHeatmapStyle(cellValue, pivotTable)}
 																			onclick={() => selectPivotDrilldown(row, column)}
 																			data-pivot-cell-button={`${row.label}:${column.label}`}
@@ -18389,7 +18389,7 @@
 
 																			{#if recordsFieldHiddenByCondition(pivotTable.rowField, pivotCellRecords(row, column))}
 																				<span
-																					class="mt-0.5 rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																					class="mt-0.5 rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-pivot-cell-row-conditional-hidden={`${row.label}:${column.label}:${pivotTable.rowField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
@@ -18397,7 +18397,7 @@
 
 																			{#if recordsFieldReadOnlyByCondition(pivotTable.columnField, pivotCellRecords(row, column))}
 																				<span
-																					class="mt-0.5 rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																					class="mt-0.5 rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-pivot-cell-column-conditional-readonly={`${row.label}:${column.label}:${pivotTable.columnField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
@@ -18426,7 +18426,7 @@
 																	>
 																		<button
 																			type="button"
-																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-fg hover:bg-surface"
 																			onclick={() => selectPivotDrilldown(row, null)}
 																			data-pivot-row-total-button={row.label}
 																			>{formatPivotTotalDisplayValue(
@@ -18455,7 +18455,7 @@
 																	>
 																		<button
 																			type="button"
-																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-fg hover:bg-surface"
 																			onclick={() => selectPivotDrilldown(null, column)}
 																			data-pivot-column-total-button={column.label}
 																			>{formatPivotTotalDisplayValue(
@@ -18471,7 +18471,7 @@
 																	<td class="px-4 py-3 text-right" data-pivot-grand-total>
 																		<button
 																			type="button"
-																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-fg hover:bg-surface"
 																			onclick={() => selectPivotDrilldown(null, null)}
 																			data-pivot-grand-total-button
 																			>{formatPivotTotalDisplayValue(
@@ -18613,7 +18613,7 @@
 																			<div class="mt-1 flex flex-wrap items-center gap-1.5">
 																				{#if recordFieldHiddenByCondition(pivotTable.rowField, record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-pivot-drilldown-row-conditional-hidden={`${record.id}:${pivotTable.rowField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -18621,7 +18621,7 @@
 
 																				{#if recordFieldReadOnlyByCondition(pivotTable.rowField, record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-pivot-drilldown-row-conditional-readonly={`${record.id}:${pivotTable.rowField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -18629,7 +18629,7 @@
 
 																				{#if recordFieldHiddenByCondition(pivotTable.columnField, record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-pivot-drilldown-column-conditional-hidden={`${record.id}:${pivotTable.columnField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -18637,7 +18637,7 @@
 
 																				{#if recordFieldReadOnlyByCondition(pivotTable.columnField, record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-pivot-drilldown-column-conditional-readonly={`${record.id}:${pivotTable.columnField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -18675,7 +18675,7 @@
 															aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 														>
 															<span
-																class="block truncate font-medium text-blue-700 dark:text-blue-300"
+																class="block truncate font-medium text-fg"
 																>{record.title}</span
 															>
 
@@ -18916,7 +18916,7 @@
 																					<div class="flex min-w-0 items-start gap-2">
 																						<input
 																							type="checkbox"
-																							class="mt-0.5 h-4 w-4 rounded border-input text-blue-600"
+																							class="mt-0.5 h-4 w-4 rounded border-input accent-primary"
 																							checked={isKanbanRecordSelected(record.id)}
 																							disabled={bulkMovingKanban}
 																							onchange={(event) =>
@@ -18931,7 +18931,7 @@
 
 																						<button
 																							type="button"
-																							class="min-w-0 text-left text-sm font-medium text-blue-700 dark:text-blue-300"
+																							class="min-w-0 text-left text-sm font-medium text-fg"
 																							onclick={() => selectRecord(record)}
 																							aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 																							><span class="block truncate">{record.title}</span
@@ -18980,7 +18980,7 @@
 
 																								{#if recordFieldHiddenByCondition(field, record)}
 																									<span
-																										class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																										class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																										data-kanban-card-field-conditional-hidden={`${record.id}:${field.key}`}
 																										>{$t('forms.fieldConditionHiddenBadge')}</span
 																									>
@@ -18988,7 +18988,7 @@
 
 																								{#if recordFieldReadOnlyByCondition(field, record)}
 																									<span
-																										class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																										class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																										data-kanban-card-field-conditional-readonly={`${record.id}:${field.key}`}
 																										>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																									>
@@ -19064,7 +19064,7 @@
 
 												{#if calendarDateField && fieldHasConditionalHidden(calendarDateField)}
 													<span
-														class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+														class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 														data-calendar-date-field-conditional-hidden={calendarDateField.key}
 														>{$t('forms.fieldConditionHiddenBadge')}</span
 													>
@@ -19072,7 +19072,7 @@
 
 												{#if calendarDateField && fieldHasConditionalReadOnly(calendarDateField)}
 													<span
-														class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+														class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 														data-calendar-date-field-conditional-readonly={calendarDateField.key}
 														>{$t('forms.fieldConditionReadOnlyBadge')}</span
 													>
@@ -19129,7 +19129,7 @@
 
 																		{#if fieldHasConditionalHidden(calendarResourceField)}
 																			<span
-																				class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																				class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-calendar-resource-field-conditional-hidden={calendarResourceField.key}
 																				>{$t('forms.fieldConditionHiddenBadge')}</span
 																			>
@@ -19137,7 +19137,7 @@
 
 																		{#if fieldHasConditionalReadOnly(calendarResourceField)}
 																			<span
-																				class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																				class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-calendar-resource-field-conditional-readonly={calendarResourceField.key}
 																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																			>
@@ -19275,7 +19275,7 @@
 
 																						{#if visibleFields[0] && recordFieldHiddenByCondition(visibleFields[0], record)}
 																							<span
-																								class="mt-1 inline-flex rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																								class="mt-1 inline-flex rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																								data-calendar-summary-conditional-hidden={`${record.id}:${visibleFields[0].key}`}
 																								>{$t('forms.fieldConditionHiddenBadge')}</span
 																							>
@@ -19283,7 +19283,7 @@
 
 																						{#if visibleFields[0] && recordFieldReadOnlyByCondition(visibleFields[0], record)}
 																							<span
-																								class="mt-1 inline-flex rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																								class="mt-1 inline-flex rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																								data-calendar-summary-conditional-readonly={`${record.id}:${visibleFields[0].key}`}
 																								>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																							>
@@ -19291,7 +19291,7 @@
 
 																						{#if occurrence.recurring}
 																							<span
-																								class="mt-2 inline-flex rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																								class="mt-2 inline-flex rounded bg-surface px-2 py-0.5 text-xs font-medium text-fg-muted"
 																								>{$t('forms.calendarRecurringOccurrence')}</span
 																							>
 																						{/if}
@@ -19461,7 +19461,7 @@
 																							aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 																						>
 																							<span
-																								class="block truncate text-sm font-medium text-blue-700 dark:text-blue-300"
+																								class="block truncate text-sm font-medium text-fg"
 																								>{record.title}</span
 																							>
 
@@ -19475,7 +19475,7 @@
 
 																							{#if visibleFields[0] && recordFieldHiddenByCondition(visibleFields[0], record)}
 																								<span
-																									class="mt-1 inline-flex rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																									class="mt-1 inline-flex rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																									data-calendar-summary-conditional-hidden={`${record.id}:${visibleFields[0].key}`}
 																									>{$t('forms.fieldConditionHiddenBadge')}</span
 																								>
@@ -19483,7 +19483,7 @@
 
 																							{#if visibleFields[0] && recordFieldReadOnlyByCondition(visibleFields[0], record)}
 																								<span
-																									class="mt-1 inline-flex rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																									class="mt-1 inline-flex rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																									data-calendar-summary-conditional-readonly={`${record.id}:${visibleFields[0].key}`}
 																									>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																								>
@@ -19559,7 +19559,7 @@
 																					{#if occurrence.recurring}
 																						<div class="mt-3 space-y-2">
 																							<span
-																								class="inline-flex rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																								class="inline-flex rounded bg-surface px-2 py-0.5 text-xs font-medium text-fg-muted"
 																								>{$t('forms.calendarRecurringOccurrence')}</span
 																							>
 
@@ -19586,7 +19586,7 @@
 																												calendarDateField,
 																												inputValue(event)
 																											)}
-																										class="w-full rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-900 disabled:opacity-50 dark:border-blue-900/70 dark:bg-blue-950/30 dark:text-blue-100"
+																										class="w-full rounded-md border border-input bg-selected px-2 py-1.5 text-xs text-fg disabled:opacity-50"
 																									/>
 																								</label>
 																							{/if}
@@ -19746,7 +19746,7 @@
 																? 'block truncate text-base font-semibold text-fg'
 																: selectedCardLayout === 'compact' || selectedCardLayout === 'list'
 																	? 'block truncate text-sm font-semibold text-fg'
-																	: 'block truncate font-medium text-blue-700 dark:text-blue-300'}
+																	: 'block truncate font-medium text-fg'}
 															data-card-title={record.id}>{cardTitle(record)}</span
 														>
 
@@ -19885,7 +19885,7 @@
 
 																{#if recordFieldHiddenByCondition(field, record)}
 																	<span
-																		class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																		class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-card-field-conditional-hidden={`${record.id}:${field.key}`}
 																		>{$t('forms.fieldConditionHiddenBadge')}</span
 																	>
@@ -19893,7 +19893,7 @@
 
 																{#if recordFieldReadOnlyByCondition(field, record)}
 																	<span
-																		class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																		class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-card-field-conditional-readonly={`${record.id}:${field.key}`}
 																		>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																	>
@@ -19936,7 +19936,7 @@
 
 																	{#if recordFieldHiddenByCondition(field, record)}
 																		<span
-																			class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																			class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																			data-card-select-conditional-hidden={`${record.id}:${field.key}`}
 																			>{$t('forms.fieldConditionHiddenBadge')}</span
 																		>
@@ -19944,7 +19944,7 @@
 
 																	{#if recordFieldReadOnlyByCondition(field, record)}
 																		<span
-																			class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																			class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																			data-card-select-conditional-readonly={`${record.id}:${field.key}`}
 																			>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																		>
@@ -20545,7 +20545,7 @@
 																	aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 																>
 																	<span
-																		class="block truncate font-medium text-blue-700 dark:text-blue-300"
+																		class="block truncate font-medium text-fg"
 																		data-timeline-title={record.id}>{timelineTitle(record)}</span
 																	>
 
@@ -20569,7 +20569,7 @@
 
 																			{#if recordFieldHiddenByCondition(timelineTitlePermissionField, record)}
 																				<span
-																					class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																					class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-title-conditional-hidden={`${record.id}:${timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
@@ -20577,7 +20577,7 @@
 
 																			{#if recordFieldReadOnlyByCondition(timelineTitlePermissionField, record)}
 																				<span
-																					class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																					class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-title-conditional-readonly={`${record.id}:${timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
@@ -20611,7 +20611,7 @@
 
 																			{#if recordFieldHiddenByCondition(timelineSubtitlePermissionField, record)}
 																				<span
-																					class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																					class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-subtitle-conditional-hidden={`${record.id}:${timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
@@ -20619,7 +20619,7 @@
 
 																			{#if recordFieldReadOnlyByCondition(timelineSubtitlePermissionField, record)}
 																				<span
-																					class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																					class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-subtitle-conditional-readonly={`${record.id}:${timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
@@ -20665,7 +20665,7 @@
 
 																				{#if recordFieldHiddenByCondition(field, record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-timeline-select-conditional-hidden={`${record.id}:${field.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -20673,7 +20673,7 @@
 
 																				{#if recordFieldReadOnlyByCondition(field, record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-timeline-select-conditional-readonly={`${record.id}:${field.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -20935,7 +20935,7 @@
 
 																{#if recordFieldHiddenByCondition(field, selectedRecord)}
 																	<span
-																		class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																		class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-record-detail-conditional-hidden={field.key}
 																		>{$t('forms.fieldConditionHiddenBadge')}</span
 																	>
@@ -20943,7 +20943,7 @@
 
 																{#if recordFieldReadOnlyByCondition(field, selectedRecord)}
 																	<span
-																		class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																		class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-record-detail-conditional-readonly={field.key}
 																		>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																	>
@@ -21052,7 +21052,7 @@
 																									<div class="flex justify-end gap-1">
 																										<button
 																											type="button"
-																											class="inline-flex items-center rounded-md p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																											class="inline-flex items-center rounded-md p-1.5 text-fg hover:bg-surface disabled:opacity-50"
 																											onclick={() => startEditChildRecord(child)}
 																											aria-label={$t('forms.editChildRecord')}
 																											data-record-detail-child-table-edit-row={`${field.key}:${child.record.id}`}
@@ -21213,7 +21213,7 @@
 																						<div class="flex justify-end gap-1">
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																								class="inline-flex items-center rounded-md p-1.5 text-fg hover:bg-surface disabled:opacity-50"
 																								onclick={() => startEditChildRecord(child)}
 																								aria-label={$t('forms.editChildRecord')}
 																								data-record-detail-child-table-edit-row={`${relationField.key}:${child.record.id}`}
@@ -21262,7 +21262,7 @@
 											<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 												<div class="flex items-center gap-2">
 													<TableProperties
-														class="h-4 w-4 text-blue-600 dark:text-blue-300"
+														class="h-4 w-4 text-fg-muted"
 														aria-hidden="true"
 													/>
 
@@ -21287,7 +21287,7 @@
 
 											{#if childEditor}
 												<div
-													class="mb-3 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/60 dark:bg-blue-950/30"
+													class="mb-3 rounded-md border border-line bg-surface p-3"
 												>
 													<div class="mb-3 flex items-center justify-between gap-3">
 														<h5 class="text-sm font-semibold text-fg">
@@ -21351,7 +21351,7 @@
 																	>
 																		<input
 																			type="checkbox"
-																			class="h-4 w-4 rounded border-input text-blue-600"
+																			class="h-4 w-4 rounded border-input accent-primary"
 																			checked={childEditor.draft[childField.key] === true}
 																			disabled={fieldReadOnlyByCondition(
 																				childField,
@@ -21418,7 +21418,7 @@
 																			>
 																				<input
 																					type="checkbox"
-																					class="h-4 w-4 rounded border-input text-blue-600"
+																					class="h-4 w-4 rounded border-input accent-primary"
 																					checked={isChildDraftOptionSelected(
 																						childField.key,
 																						option
@@ -21779,7 +21779,7 @@
 																						<div class="flex justify-end gap-1">
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																								class="inline-flex items-center rounded-md p-1.5 text-fg hover:bg-surface disabled:opacity-50"
 																								onclick={() => startEditChildRecord(child)}
 																								aria-label={$t('forms.editChildRecord')}
 																								data-child-table-edit-row={`${relationField.key}:${child.record.id}`}
@@ -21880,7 +21880,7 @@
 																		<div class="flex justify-end gap-1">
 																			<button
 																				type="button"
-																				class="inline-flex items-center rounded-md p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																				class="inline-flex items-center rounded-md p-1.5 text-fg hover:bg-surface disabled:opacity-50"
 																				onclick={() => startEditChildRecord(child)}
 																				aria-label={$t('forms.editChildRecord')}
 																				><Pencil class="h-4 w-4" aria-hidden="true" /></button
@@ -21909,7 +21909,7 @@
 										</div>
 
 										<div class="mb-3 flex items-center gap-2">
-											<Link class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+											<Link class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 											<h4 class="text-sm font-semibold text-fg">
 												{$t('forms.recordLinks')}
@@ -21978,7 +21978,7 @@
 										>
 											<div class="mb-3 flex items-center gap-2">
 												<FileText
-													class="h-4 w-4 text-blue-600 dark:text-blue-300"
+													class="h-4 w-4 text-fg-muted"
 													aria-hidden="true"
 												/>
 
@@ -22062,7 +22062,7 @@
 											>
 												<div class="mb-3 flex items-center gap-2">
 													<FileDown
-														class="h-4 w-4 text-blue-600 dark:text-blue-300"
+														class="h-4 w-4 text-fg-muted"
 														aria-hidden="true"
 													/>
 
@@ -22119,7 +22119,7 @@
 																			href={attachmentSignedUrl(attachment) || undefined}
 																			target="_blank"
 																			rel="noreferrer"
-																			class="rounded px-2 py-1 font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																			class="rounded px-2 py-1 font-medium text-fg underline hover:bg-surface"
 																			data-record-detail-attachment-open={attachment.id}
 																			data-record-detail-attachment-signed-url={attachmentSignedUrl(
 																				attachment
@@ -22154,7 +22154,7 @@
 																				href={safeLinkUrl(url)}
 																				target="_blank"
 																				rel="noreferrer"
-																				class="rounded px-2 py-1 font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																				class="rounded px-2 py-1 font-medium text-fg underline hover:bg-surface"
 																				data-record-detail-attachment-value-open={field.key}
 																				>{$t('forms.attachmentOpen')}</a
 																			>
@@ -22190,7 +22190,7 @@
 										>
 											<div class="mb-3 flex items-center gap-2">
 												<FileText
-													class="h-4 w-4 text-blue-600 dark:text-blue-300"
+													class="h-4 w-4 text-fg-muted"
 													aria-hidden="true"
 												/>
 
@@ -22307,7 +22307,7 @@
 
 				<div
 					class={current
-						? 'rounded-md border border-blue-200 bg-blue-50 p-3 text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-100'
+						? 'rounded-md border border-line bg-surface p-3 text-fg-muted'
 						: complete
 							? 'rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100'
 							: 'rounded-md border border-line bg-raised p-3 text-fg-muted'}
