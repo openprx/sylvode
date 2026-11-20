@@ -1,0 +1,23 @@
+{
+	"ui": {
+		"multiSelect": {
+			"placeholder": "Choose options",
+			"clear": "Clear",
+			"clearAll": "Clear all",
+			"clearedAll": "Selection cleared",
+			"selected": "{n} selected",
+			"more": "+{n}",
+			"summary": "{label}: {labels}",
+			"summaryMore": "{label}: {labels} and {n} more",
+			"removed": "Removed {label}",
+			"sample": {
+				"label": "Labels",
+				"choose": "Choose labels",
+				"bug": "Bug",
+				"urgent": "Urgent",
+				"docs": "Documentation",
+				"infra": "Infrastructure"
+			}
+		}
+	}
+}

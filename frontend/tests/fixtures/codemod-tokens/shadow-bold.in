@@ -1,0 +1,4 @@
+<div class="rounded border shadow-sm dark:shadow-slate-900/50 p-4">card</div>
+<div class="shadow-lg hover:shadow-sm shadow-md">kept</div>
+<span class="font-bold">Bold</span>
+<span class="hover:font-bold md:font-bold font-medium">Variants</span>

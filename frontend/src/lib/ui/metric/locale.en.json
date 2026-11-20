@@ -1,0 +1,10 @@
+{
+	"ui": {
+		"metric": {
+			"sample": {
+				"label": "Records this week",
+				"note": "across 4 projects"
+			}
+		}
+	}
+}

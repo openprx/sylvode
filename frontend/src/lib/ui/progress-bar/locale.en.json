@@ -1,0 +1,18 @@
+{
+	"ui": {
+		"progress": {
+			"queued": "Waiting to start.",
+			"retry": "Retry",
+			"started": "Started.",
+			"milestone": "{percent}% done.",
+			"done": "Completed.",
+			"failed": "Failed.",
+			"sample": {
+				"label": "Exporting records",
+				"count": "3 of 8 files",
+				"done": "Completed. 1,240 records exported.",
+				"failed": "Stopped at 40%. The records exported so far are kept."
+			}
+		}
+	}
+}

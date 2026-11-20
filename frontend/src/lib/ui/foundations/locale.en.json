@@ -1,0 +1,17 @@
+{
+	"ui": {
+		"gallery": {
+			"dark": "Dark",
+			"sample": "Sample",
+			"reason": "Complete the required fields first",
+			"field": "Field",
+			"open": "Open",
+			"title": "Dialog title",
+			"body": "Dialog body text.",
+			"confirm": "Delete project",
+			"destructiveTitle": "Delete project Alpha?",
+			"destructiveBody": "The project and its tasks are removed. This cannot be undone.",
+			"busy": "Deleting..."
+		}
+	}
+}

@@ -81,7 +81,7 @@
 	<div class="mx-auto max-w-3xl space-y-4">
 		<h1 class="text-xl font-semibold">{$t('flow.createForm.convertTitle')}</h1>
 		{#if sourceTitle}<p class="text-sm font-medium">{sourceTitle}</p>{/if}
-		<p class="text-sm text-slate-600 dark:text-slate-300">{$t('flow.personal.destinationNote')}</p>
+		<p class="text-sm text-fg-muted">{$t('flow.personal.destinationNote')}</p>
 		{#if loading}<p role="status">{$t('common.loading')}</p>
 		{:else if failed}<p role="alert">{$t('flow.personal.conversionAvailabilityFailed')}</p>
 			<button
@@ -93,13 +93,13 @@
 		{:else if availability.mode === 'unavailable'}
 			<p
 				role="status"
-				class="text-sm text-slate-600 dark:text-slate-300"
+				class="text-sm text-fg-muted"
 				data-testid="flow-conversion-unavailable"
 			>
 				{$t('flow.personal.conversionUnavailable')}
 			</p>
 		{:else}
-			{#if availability.mode === 'same_workspace'}<p class="text-sm text-slate-500">
+			{#if availability.mode === 'same_workspace'}<p class="text-sm text-fg-muted">
 					{$t('flow.personal.conversionSameWorkspace')}
 				</p>{/if}
 			<label for="flow-convert-destination" class="block text-sm font-medium"
@@ -108,14 +108,14 @@
 			<select
 				id="flow-convert-destination"
 				bind:value={destination}
-				class="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 dark:bg-slate-900"
+				class="min-h-11 w-full rounded-control border border-input bg-field px-3"
 			>
 				<option value="">{$t('flow.mounts.choose')}</option>
 				{#each workspaces as workspace (workspace.id)}<option value={workspace.id}
 						>{workspace.name}</option
 					>{/each}
 			</select>
-			{#if workspaces.length === 0}<p class="text-sm text-slate-500">
+			{#if workspaces.length === 0}<p class="text-sm text-fg-muted">
 					{$t('flow.personal.noDestination')}
 				</p>{/if}
 			{#if validDestination && page.params.objectId}

@@ -1,0 +1,32 @@
+{
+	"shell": {
+		"rail": {
+			"label": "Primary",
+			"destinations": "Destinations",
+			"homeUnread": "{label}, {count} unread notifications",
+			"editNavigation": "Edit navigation",
+			"more": "More",
+			"account": "Account: {name}",
+			"editor": {
+				"title": "Edit navigation",
+				"fixedLabel": "Always shown",
+				"shortcutsLabel": "Your shortcuts",
+				"always": "Always shown",
+				"empty": "No shortcuts yet. Add the current page or Governance.",
+				"moveUp": "Move {label} up",
+				"moveDown": "Move {label} down",
+				"remove": "Remove {label}",
+				"movedUp": "{label} moved up",
+				"movedDown": "{label} moved down",
+				"removed": "{label} removed",
+				"added": "{label} added",
+				"restored": "Default navigation restored",
+				"add": "Add",
+				"addCurrent": "Current page: {label}",
+				"nothingToAdd": "Nothing to add on this page.",
+				"restore": "Restore default navigation",
+				"done": "Done"
+			}
+		}
+	}
+}

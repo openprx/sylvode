@@ -31,14 +31,14 @@
 
 <div class="mx-auto max-w-5xl space-y-6">
 	<div>
-		<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">
+		<h1 class="text-2xl font-semibold text-fg">
 			{$t('admin.systemSettings')}
 		</h1>
-		<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('admin.settingsDescription')}</p>
+		<p class="mt-1 text-sm text-fg-muted">{$t('admin.settingsDescription')}</p>
 	</div>
 
 	<Card>
-		<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="text-lg font-semibold text-fg">
 			{$t('admin.basicSettings')}
 		</h2>
 		<div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -46,14 +46,14 @@
 			<Input label={$t('admin.siteUrl')} bind:value={basicSettings.siteUrl} disabled />
 			<div class="md:col-span-2">
 				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
+					class="mb-1 block text-sm font-medium text-fg"
 					for="allowWorkspaceCreate">{$t('admin.workspaceCreatePermission')}</label
 				>
 				<select
 					id="allowWorkspaceCreate"
 					bind:value={basicSettings.allowWorkspaceCreate}
 					disabled
-					class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="admin_only">{$t('admin.adminOnly')}</option>
 					<option value="all_users">{$t('admin.allUsers')}</option>
@@ -63,7 +63,7 @@
 	</Card>
 
 	<Card>
-		<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h2 class="text-lg font-semibold text-fg">
 			{$t('admin.securitySettings')}
 		</h2>
 		<div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -80,7 +80,7 @@
 				disabled
 			/>
 			<label
-				class="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-300"
+				class="flex items-center gap-2 rounded-control border border-line px-3 py-2 text-sm text-fg"
 			>
 				<input type="checkbox" bind:checked={securitySettings.requireStrongPassword} disabled />
 				{$t('admin.strongPasswordPolicy')}
@@ -88,9 +88,7 @@
 		</div>
 	</Card>
 
-	<div
-		class="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-	>
+	<div class="rounded-card border border-line bg-raised px-4 py-3 text-sm text-fg-muted">
 		{$t('admin.settingsReadOnly')}
 	</div>
 </div>

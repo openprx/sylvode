@@ -1,0 +1,10 @@
+{
+	"ui": {
+		"statusChip": {
+			"neutral": "Draft",
+			"success": "Saved",
+			"warning": "High risk",
+			"danger": "Failed"
+		}
+	}
+}

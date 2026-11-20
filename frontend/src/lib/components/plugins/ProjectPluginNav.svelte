@@ -35,14 +35,14 @@
 
 {#if visible && (discovery.items.length > 0 || canManage?.())}
 	<section
-		class="mb-8 rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
+		class="mb-8 rounded-card border border-line bg-raised p-5"
 		aria-labelledby="project-plugin-nav-title"
 		data-plugin-slot="project.view"
 	>
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
 			<h2
 				id="project-plugin-nav-title"
-				class="text-lg font-semibold text-slate-900 dark:text-slate-100"
+				class="text-lg font-semibold text-fg"
 			>
 				{$t('plugins.apps.navTitle')}
 			</h2>
@@ -57,14 +57,14 @@
 					<li>
 						<a
 							href={href(item)}
-							class="block rounded-md border border-slate-200 p-4 transition-colors hover:border-blue-200 hover:bg-blue-50 focus-visible:outline-blue-600 dark:border-slate-700 dark:hover:bg-slate-800"
+							class="block rounded-card border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 							data-plugin-contribution={item.contribution.id}
 							aria-label={$t('plugins.apps.open', { values: { label: item.contribution.label } })}
 						>
-							<span class="block text-sm font-semibold text-slate-900 dark:text-slate-100"
+							<span class="block text-sm font-semibold text-fg"
 								>{item.contribution.label}</span
 							>
-							<span class="mt-1 block text-sm text-slate-600 dark:text-slate-300">
+							<span class="mt-1 block text-sm text-fg-muted">
 								{$t('plugins.apps.publisher', {
 									values: { name: item.name, version: item.version }
 								})}
@@ -74,10 +74,10 @@
 				{/each}
 			</ul>
 		{:else}
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('plugins.apps.empty')}</p>
+			<p class="text-sm text-fg-muted">{$t('plugins.apps.empty')}</p>
 		{/if}
 		{#if layout.hidden.length}
-			<p class="mt-3 text-xs text-slate-600 dark:text-slate-300">
+			<p class="mt-3 text-xs text-fg-muted">
 				{$t('plugins.apps.hiddenCount', { values: { count: layout.hidden.length } })}
 			</p>
 		{/if}

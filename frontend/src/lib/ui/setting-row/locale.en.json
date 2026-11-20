@@ -1,0 +1,11 @@
+{
+	"ui": {
+		"settingRow": {
+			"sample": {
+				"label": "Email notifications",
+				"value": "Only for mentions",
+				"change": "Change"
+			}
+		}
+	}
+}

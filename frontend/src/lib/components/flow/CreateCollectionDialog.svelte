@@ -99,7 +99,7 @@
 <Modal {open} title={$t('flow.nav.createCollection.title')} {onclose}>
 	<form
 		id="flow-create-collection-form"
-		class="space-y-4 text-sm text-slate-700 dark:text-slate-300"
+		class="space-y-4 text-sm text-fg"
 		data-testid="flow-create-collection"
 		onsubmit={submit}
 		oninput={() => (errorKey = null)}
@@ -110,18 +110,18 @@
 				type="text"
 				bind:value={title}
 				maxlength={COLLECTION_TITLE_MAX_CHARS}
-				class="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+				class="min-h-11 w-full rounded-control border border-input bg-field px-3 text-fg"
 				data-testid="flow-create-collection-name"
 			/>
 		</label>
 
 		<fieldset>
 			<legend class="mb-1 font-medium">{$t('flow.nav.createCollection.fieldsLabel')}</legend>
-			<p class="mb-2 text-xs text-slate-500 dark:text-slate-400">
+			<p class="mb-2 text-xs text-fg-muted">
 				{$t('flow.nav.createCollection.fieldsHint')}
 			</p>
 			{#if fieldLabels.length === 0}
-				<p class="mb-2 text-xs text-slate-500 dark:text-slate-400">
+				<p class="mb-2 text-xs text-fg-muted">
 					{$t('flow.nav.createCollection.noFields')}
 				</p>
 			{/if}
@@ -135,15 +135,15 @@
 							aria-label={$t('flow.nav.createCollection.fieldLabel', {
 								values: { position: index + 1 }
 							})}
-							class="min-h-11 flex-1 rounded-md border border-slate-300 bg-white px-3 text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+							class="min-h-11 flex-1 rounded-control border border-input bg-field px-3 text-fg"
 							data-testid="flow-create-collection-field"
 						/>
-						<span class="text-xs text-slate-500 dark:text-slate-400"
+						<span class="text-xs text-fg-muted"
 							>{$t('flow.nav.createCollection.fieldTypeText')}</span
 						>
 						<button
 							type="button"
-							class="min-h-11 min-w-11 rounded-md px-2 text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300 dark:hover:bg-slate-700"
+							class="min-h-11 min-w-11 rounded-control px-2 text-fg-muted hover:bg-surface"
 							onclick={() => removeField(index)}
 							aria-label={$t('flow.nav.createCollection.removeField', {
 								values: { position: index + 1 }
@@ -156,7 +156,7 @@
 			</ul>
 			<button
 				type="button"
-				class="mt-2 min-h-11 rounded-md px-3 font-medium text-blue-700 hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-300 dark:hover:bg-slate-700"
+				class="mt-2 min-h-11 rounded-control px-3 font-medium text-fg hover:bg-surface"
 				onclick={addField}
 				data-testid="flow-create-collection-add-field"
 			>
@@ -184,11 +184,7 @@
 
 		<div aria-live="polite">
 			{#if errorKey}
-				<p
-					class="text-red-600 dark:text-red-400"
-					role="alert"
-					data-testid="flow-create-collection-error"
-				>
+				<p class="text-danger" role="alert" data-testid="flow-create-collection-error">
 					{$t(errorKey)}
 					{#if !errorRetryable}
 						{$t('flow.nav.createCollection.notRetryable')}
@@ -200,7 +196,7 @@
 	{#snippet footer()}
 		<button
 			type="button"
-			class="min-h-11 rounded-md px-4 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 dark:text-slate-200 dark:hover:bg-slate-700"
+			class="min-h-11 rounded-control px-4 text-sm font-medium text-fg hover:bg-surface"
 			onclick={onclose}
 		>
 			{$t('common.cancel')}
@@ -208,7 +204,7 @@
 		<button
 			type="submit"
 			form="flow-create-collection-form"
-			class="min-h-11 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-800"
+			class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 			disabled={submitting || (errorKey !== null && !errorRetryable)}
 			data-testid="flow-create-collection-submit"
 		>

@@ -66,7 +66,7 @@
 					<FlowInlineText text={content.text} spans={content.spans} />
 				</p>
 			{:else if content.kind === 'quote'}<blockquote
-					class="border-s-2 border-slate-300 ps-3 whitespace-pre-wrap"
+					class="border-s-2 border-line-strong ps-3 whitespace-pre-wrap"
 				>
 					<FlowInlineText text={content.text} spans={content.spans} />
 				</blockquote>
@@ -91,8 +91,7 @@
 						>{(folds[row.member.member_id] ?? content.collapsed) ? '▸' : '▾'}</button
 					><span><FlowInlineText text={content.text} spans={content.spans} /></span>
 				</div>
-			{:else if content.kind === 'code'}<pre
-					class="overflow-x-auto rounded bg-slate-100 p-3 dark:bg-slate-900"><code
+			{:else if content.kind === 'code'}<pre class="overflow-x-auto rounded bg-surface p-3"><code
 						>{content.text}</code
 					></pre>
 			{:else if content.kind === 'divider'}<hr />
@@ -110,12 +109,12 @@
 					name={content.name}
 					caption={content.caption}
 				/>
-			{:else}<div class="rounded border border-slate-200 px-3 py-2 text-sm text-slate-500">
+			{:else}<div class="rounded border border-line px-3 py-2 text-sm text-fg-muted">
 					{$t('flow.shared.childPlaceholder')}
 				</div>{/if}
 			{#if read.effective_permission === 'edit' && onEdit && 'text' in content}<button
 					type="button"
-					class="mt-1 rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 focus-visible:outline"
+					class="mt-1 rounded px-2 py-1 text-xs text-fg-muted hover:bg-surface"
 					onclick={() => onEdit?.(row.member)}>{$t('flow.shared.editMember')}</button
 				>{/if}
 		</article>
