@@ -11,6 +11,9 @@ use super::wire;
 #[derive(Debug)]
 pub struct IsolatedApplySuccess {
     pub snapshot: Vec<u8>,
+    /// Process CPU time the worker spent inside its metered window, in microseconds, as reported
+    /// by the worker (`CLOCK_PROCESS_CPUTIME_ID`). Telemetry only; `None` if it was not reported.
+    pub window_cpu_us: Option<u64>,
 }
 
 pub type IsolatedDiffSuccess = wire::ReplayDiffResult;
