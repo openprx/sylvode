@@ -8,6 +8,7 @@
 	import { isAdminUser } from '#lib/utils/auth.js';
 	import Card from '#lib/components/Card.svelte';
 	import Input from '#lib/components/Input.svelte';
+	import ConnectedAppsAdmin from '#lib/oauth/ConnectedAppsAdmin.svelte';
 
 	let basicSettings = $state({
 		siteName: 'Sylvode',
@@ -87,6 +88,8 @@
 			</label>
 		</div>
 	</Card>
+
+	<ConnectedAppsAdmin />
 
 	<div class="rounded-card border border-line bg-raised px-4 py-3 text-sm text-fg-muted">
 		{$t('admin.settingsReadOnly')}

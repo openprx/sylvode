@@ -14,6 +14,7 @@
 	import Textarea from '#lib/components/Textarea.svelte';
 	import Button from '#lib/components/Button.svelte';
 	import { resolveWorkspaceAdmin } from '#lib/flow/flow-settings.js';
+	import ConnectedAppsWorkspace from '#lib/oauth/ConnectedAppsWorkspace.svelte';
 
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 
@@ -175,6 +176,8 @@
 				</div>
 			</Card>
 		{/if}
+
+		<ConnectedAppsWorkspace {workspaceId} workspaceName={workspace?.name ?? ''} />
 
 		<Card>
 			<h2 class="text-lg font-semibold text-danger">{$t('workspace.dangerZone')}</h2>
