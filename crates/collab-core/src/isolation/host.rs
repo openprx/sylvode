@@ -49,7 +49,7 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::limits::DECODE_APPLY_WALL_MS_MAX;
-use super::outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess};
+use super::outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode};
 use super::wire::{self, MAX_RESPONSE_PAYLOAD_BYTES, Outcome};
 
 const RESPONSE_FRAME_HEADER_BYTES: usize = 8;
@@ -118,7 +118,29 @@ fn worker_binary_path() -> Result<std::path::PathBuf, IsolatedApplyError> {
 /// # Errors
 /// See [`IsolatedApplyError`].
 pub fn isolated_apply(base_snapshot: &[u8], update: &[u8]) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
-    run_isolated_apply(base_snapshot, update, wire::OPERATION_APPLY, &[])
+    isolated_apply_with(base_snapshot, update, WindowMode::Incremental)
+}
+
+/// [`isolated_apply`] with the window mode chosen by the host: [`WindowMode::Full`] makes the worker
+/// run the full computation (`semantic_snapshot` and `check_snapshot`) in its window and report no
+/// incremental result. The mode can only add checking.
+///
+/// # Errors
+/// See [`IsolatedApplyError`].
+pub fn isolated_apply_with(
+    base_snapshot: &[u8],
+    update: &[u8],
+    mode: WindowMode,
+) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+    match mode {
+        WindowMode::Incremental => run_isolated_apply(base_snapshot, update, wire::OPERATION_APPLY, &[]),
+        WindowMode::Full => run_isolated_apply(
+            base_snapshot,
+            update,
+            wire::OPERATION_APPLY,
+            &[(wire::WINDOW_ENV, wire::WINDOW_FULL)],
+        ),
+    }
 }
 
 /// Replays a bounded retained-history tail and computes its semantic diff inside the same
@@ -536,6 +558,28 @@ mod tests {
         Some(result)
     }
 
+    /// [`isolated_apply_with_real_worker`] with the window mode chosen.
+    fn isolated_apply_mode_with_real_worker(
+        base_snapshot: &[u8],
+        update: &[u8],
+        mode: WindowMode,
+    ) -> Option<Result<IsolatedApplySuccess, IsolatedApplyError>> {
+        let worker_path = real_worker_binary_for_tests()?;
+        let guard = env_lock().lock();
+        // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
+        // `WORKER_BINARY_PATH_ENV` while this is set.
+        unsafe {
+            std::env::set_var(WORKER_BINARY_PATH_ENV, &worker_path);
+        }
+        let result = isolated_apply_with(base_snapshot, update, mode);
+        // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
+        unsafe {
+            std::env::remove_var(WORKER_BINARY_PATH_ENV);
+        }
+        drop(guard);
+        Some(result)
+    }
+
     // ---- Boundary tests: `decode_apply_cpu_ms_max` / `decode_apply_wall_ms_max` /
     // `isolated_apply_memory_bytes_max`, and their correct signal classification.
     //
@@ -828,6 +872,56 @@ mod tests {
         let success = result.expect("a title-only update stays well within every ceiling");
         let reloaded = LoroCollabEngine::load(&success.snapshot).expect("returned snapshot reloads");
         assert_eq!(reloaded.title().expect("title reads"), "end to end");
+    }
+
+    /// The host can make the worker run the full computation: no incremental report, the same
+    /// document. Without the request, an update to a page with facts is decided incrementally.
+    #[test]
+    fn isolated_apply_full_window_mode_runs_the_full_computation_and_reports_nothing() {
+        let mut base = LoroCollabEngine::new_empty(1);
+        base.apply_content_operation(&Operation::CreateNode {
+            id: NodeId::from("a"),
+            parent: None,
+            index: 0,
+            kind: NodeKind::Block,
+        })
+        .expect("create applies");
+        let base_frontier = base.frontier();
+        let base_snapshot = base.export_snapshot().expect("export succeeds");
+        let mut writer = base.fork().expect("fork succeeds");
+        writer
+            .apply_content_operation(&Operation::InsertText {
+                id: NodeId::from("a"),
+                index: 0,
+                text: "typed".into(),
+            })
+            .expect("text applies");
+        let update = writer.export_from(&base_frontier).expect("export succeeds");
+
+        let Some(incremental) = isolated_apply_mode_with_real_worker(&base_snapshot, &update, WindowMode::Incremental)
+        else {
+            eprintln_test("skipped: collab-isolated-apply-worker binary not found");
+            return;
+        };
+        let incremental = incremental.expect("a one-character edit is accepted");
+        assert!(
+            incremental.window_report.is_some(),
+            "the incremental window decides this update"
+        );
+        let full = isolated_apply_mode_with_real_worker(&base_snapshot, &update, WindowMode::Full)
+            .expect("the worker binary was found a moment ago")
+            .expect("the same update is accepted by the full computation");
+        assert!(
+            full.window_report.is_none(),
+            "the full window reports no incremental result"
+        );
+        let value = |snapshot: &[u8]| {
+            LoroCollabEngine::load(snapshot)
+                .expect("returned snapshot reloads")
+                .semantic_snapshot()
+                .expect("projects")
+        };
+        assert_eq!(value(&incremental.snapshot), value(&full.snapshot));
     }
 
     #[test]

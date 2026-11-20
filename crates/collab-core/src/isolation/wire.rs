@@ -16,6 +16,13 @@ pub const OPERATION_ENV: &str = "COLLAB_ISOLATION_OPERATION";
 pub const OPERATION_APPLY: &str = "apply";
 pub const OPERATION_DIFF: &str = "diff";
 
+/// Child-only window selector, set by the trusted host for a spawn that must run the full
+/// computation in the metered window. The only value the worker acts on is [`WINDOW_FULL`]; the
+/// variable can only ask for more checking (the worker then computes no base facts, so its window
+/// is today's full projection and `check_snapshot`), never for less: no value turns a check off.
+pub const WINDOW_ENV: &str = "COLLAB_ISOLATION_WINDOW";
+pub const WINDOW_FULL: &str = "full";
+
 /// Response payload cap. Sized well above `bootstrap_response_bytes_max` (12 MiB,
 /// `contracts/limits-v1.md`) with headroom for a real exported document snapshot -- unlike
 /// `spikes/collab-shared`'s calibration frame (1 MiB, sized for a tiny synthetic report), this

@@ -5,7 +5,7 @@
 //! fallback exists on purpose: decoding an untrusted update here would bypass the CPU/wall/memory
 //! ceilings the boundary exists to enforce.
 
-use super::outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess};
+use super::outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode};
 use super::wire;
 
 /// Always [`IsolatedApplyError::UnsupportedPlatform`] on this target.
@@ -13,6 +13,18 @@ use super::wire;
 /// # Errors
 /// Always.
 pub const fn isolated_apply(_base_snapshot: &[u8], _update: &[u8]) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+    Err(unsupported())
+}
+
+/// Always [`IsolatedApplyError::UnsupportedPlatform`] on this target.
+///
+/// # Errors
+/// Always.
+pub const fn isolated_apply_with(
+    _base_snapshot: &[u8],
+    _update: &[u8],
+    _mode: WindowMode,
+) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
     Err(unsupported())
 }
 

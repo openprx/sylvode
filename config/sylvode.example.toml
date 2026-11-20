@@ -214,6 +214,12 @@ allow_private = false
 # (their run crashed or was abandoned), so they can be retried. The API also sweeps once at
 # startup. Default: 60. Must be between 1 and 86400.
 # conversion_reap_interval_secs = 60
+#
+# Whether the collab write window may decide a write's structural limits incrementally, from the
+# facts of the page and the units the update touched. Set false to make every write run the full
+# computation (the incremental check is then never used); the limits enforced are the same.
+# Default: true.
+# incremental_window = true
 
 
 # ---------------------------------------------------------------------------------------------

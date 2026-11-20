@@ -48,10 +48,10 @@ mod unsupported;
 pub mod wire;
 
 #[cfg(target_os = "linux")]
-pub use host::{WORKER_BINARY_PATH_ENV, isolated_apply, isolated_diff};
-pub use outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess};
+pub use host::{WORKER_BINARY_PATH_ENV, isolated_apply, isolated_apply_with, isolated_diff};
+pub use outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode};
 #[cfg(not(target_os = "linux"))]
-pub use unsupported::{isolated_apply, isolated_diff};
+pub use unsupported::{isolated_apply, isolated_apply_with, isolated_diff};
 // Single source of truth for these three (`isolation::limits`'s own module doc explains why):
 // `host`, `alloc`, and `child_runtime` all `use` them from there rather than declaring their own
 // copies, so this re-export and every enforcement site name the identical constant.

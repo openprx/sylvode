@@ -120,7 +120,13 @@ fn main() {
     // Also setup: the facts of the trusted base that the incremental window check corrects by
     // what the update touched (D2b). A pure function of the base; absent for a base the check does
     // not describe, and then the window takes the full computation.
-    let facts = BaseFacts::compute(&base_engine);
+    // The host can ask for the full computation (`wire::WINDOW_FULL`): then there are no facts, which
+    // is the same as a base the check does not describe. Nothing can ask for less checking.
+    let facts = if std::env::var(wire::WINDOW_ENV).as_deref() == Ok(wire::WINDOW_FULL) {
+        None
+    } else {
+        BaseFacts::compute(&base_engine)
+    };
 
     write_marker_or_exit();
     respond_and_exit(&decode_apply_check_and_export(base_engine, facts.as_ref(), &update));
