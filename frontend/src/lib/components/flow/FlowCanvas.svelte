@@ -1405,7 +1405,7 @@
 		padding: 0 0.25rem;
 		font-size: 0.7rem;
 		line-height: 1.2rem;
-		color: white;
+		color: var(--flow-presence-ink, white);
 		user-select: none;
 	}
 	:global(.flow-canvas .flow-presence-avatar::after) {
