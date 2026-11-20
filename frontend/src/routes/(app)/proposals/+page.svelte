@@ -227,14 +227,14 @@
 					type="button"
 					onclick={() => goPage(page - 1)}
 					disabled={page <= 1 || loading}
-					class="rounded-control border border-fg bg-raised px-3 py-1 text-fg disabled:bg-surface disabled:text-control"
+					class="rounded-control border border-fg bg-raised px-3 py-1 text-fg disabled:bg-surface disabled:text-fg-muted"
 					>{$t('governance.prevPage')}</button
 				>
 				<button
 					type="button"
 					onclick={() => goPage(page + 1)}
 					disabled={page >= totalPages || loading}
-					class="rounded-control border border-fg bg-raised px-3 py-1 text-fg disabled:bg-surface disabled:text-control"
+					class="rounded-control border border-fg bg-raised px-3 py-1 text-fg disabled:bg-surface disabled:text-fg-muted"
 					>{$t('governance.nextPage')}</button
 				>
 			</div>

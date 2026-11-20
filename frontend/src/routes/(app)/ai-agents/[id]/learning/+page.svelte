@@ -218,7 +218,7 @@
 					type="button"
 					onclick={() => goPage(pageNum - 1)}
 					disabled={pageNum <= 1}
-					class="rounded border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-control"
+					class="rounded border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 				>
 					{$t('governance.prevPage')}
 				</button>
@@ -226,7 +226,7 @@
 					type="button"
 					onclick={() => goPage(pageNum + 1)}
 					disabled={totalPages > 0 && pageNum >= totalPages}
-					class="rounded border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-control"
+					class="rounded border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 				>
 					{$t('governance.nextPage')}
 				</button>

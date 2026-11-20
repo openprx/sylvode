@@ -82,7 +82,7 @@
 			<button
 				type="submit"
 				disabled={loading}
-				class="w-full flex justify-center py-2 px-4 border border-transparent rounded-control text-sm font-medium text-on-primary bg-primary disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
+				class="w-full flex justify-center py-2 px-4 border border-transparent rounded-control text-sm font-medium text-on-primary bg-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 			>
 				{loading ? $t('auth.loginLoading') : $t('auth.login')}
 			</button>

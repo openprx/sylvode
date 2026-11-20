@@ -547,7 +547,7 @@
 					type="button"
 					onclick={submit}
 					disabled={submitting}
-					class="rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+					class="rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				>
 					{submitting ? $t('common.processing') : $t('governance.saveDraft')}
 				</button>
