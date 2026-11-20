@@ -220,9 +220,11 @@ fn run_isolated_apply(
         Outcome::Success {
             snapshot,
             window_cpu_us,
+            window_report,
         } => Ok(IsolatedApplySuccess {
             snapshot,
             window_cpu_us,
+            window_report,
         }),
         Outcome::Rejected(err) => Err(IsolatedApplyError::Collab(err)),
     }

@@ -14,6 +14,10 @@ pub struct IsolatedApplySuccess {
     /// Process CPU time the worker spent inside its metered window, in microseconds, as reported
     /// by the worker (`CLOCK_PROCESS_CPUTIME_ID`). Telemetry only; `None` if it was not reported.
     pub window_cpu_us: Option<u64>,
+    /// What the worker's incremental window check established about the accepted document, when
+    /// it decided (`None` when the full computation did). The host compares it with its own
+    /// projection of the document.
+    pub window_report: Option<crate::window_check::WindowReport>,
 }
 
 pub type IsolatedDiffSuccess = wire::ReplayDiffResult;
