@@ -1,0 +1,7 @@
+{
+	"surface": {
+		"report": "{object}: {written} written.",
+		"reportUnchanged": "{object}: {written} written. Left unchanged: {unchanged}.",
+		"reportNone": "{object}: nothing was written."
+	}
+}
