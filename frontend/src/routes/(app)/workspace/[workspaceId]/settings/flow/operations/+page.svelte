@@ -67,7 +67,7 @@
 	<div>
 		<a
 			href={resolve('/(app)/workspace/[workspaceId]/settings/flow', { workspaceId })}
-			class="inline-flex min-h-11 items-center text-sm text-blue-700 hover:underline dark:text-blue-300"
+			class="inline-flex min-h-11 items-center text-sm text-fg underline"
 		>
 			{$t('flow.operations.backToSettings')}
 		</a>
@@ -79,7 +79,7 @@
 
 	{#if !panel || panel.view === 'loading'}
 		<div
-			class="rounded-lg border border-line bg-white p-6 text-fg-muted dark:bg-slate-900"
+			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
 			role="status"
 			aria-live="polite"
 		>
