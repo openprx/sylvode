@@ -155,6 +155,11 @@ fn full_router(state: &AppState) -> Router {
                 .route_layer(from_fn_with_state(state.clone(), admin_middleware)),
         )
         .route(
+            "/api/v1/workspaces/{id}",
+            delete(crate::routes::workspace::delete_workspace)
+                .route_layer(from_fn_with_state(state.clone(), bot_or_user_auth_middleware)),
+        )
+        .route(
             "/api/v1/workspaces/{workspace_id}/members/{user_id}",
             delete(crate::routes::member::remove_member)
                 .route_layer(from_fn_with_state(state.clone(), bot_or_user_auth_middleware)),
@@ -1605,6 +1610,8 @@ async fn a_rolled_back_hook_leaves_the_grant_active_and_notifies_nobody() {
     );
     h.finish().await;
 }
+
+mod races;
 
 // ---------------------------------------------------------------------------------------------
 // Races with the token endpoint

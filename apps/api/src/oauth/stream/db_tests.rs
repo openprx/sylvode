@@ -1392,13 +1392,10 @@ async fn api_reaches_project(world: &World, grant: &Grant, project: Uuid) -> boo
         user_id: world.user(),
         workspace_id: world.ws(),
     };
-    match resolve_target(world.db(), Resolver::Project("project_id"), &params, grantee)
+    resolve_target(world.db(), Resolver::Project("project_id"), &params, grantee)
         .await
         .expect("the resolver runs")
-    {
-        Some(target) => target.is_reachable_by(world.ws(), &scope),
-        None => false,
-    }
+        .is_some_and(|target| target.is_reachable_by(world.ws(), &scope))
 }
 
 async fn grant_scope(world: &World, grant: &Grant) -> crate::oauth::scopes::ProjectScope {

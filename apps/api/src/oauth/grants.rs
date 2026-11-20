@@ -9,6 +9,24 @@
 //!
 //! Revocation is idempotent. The grant row is updated only while it is `active`, so a second call
 //! changes nothing, writes no second audit row and sends no second notification.
+//!
+//! # Lock order
+//!
+//! Every helper here takes its locks in one order: the grant rows it ends first (by `id`), then
+//! the unredeemed authorization codes of those grants (by `code_hash`), then their live tokens
+//! (by `id`), and only then updates anything. The token endpoint takes the same order for the one
+//! grant it serves: the grant row, then the code or refresh token row it redeems. The grant row
+//! is therefore the serialization point of everything that issues or revokes tokens of a grant:
+//! tokens of a grant are only ever inserted by a transaction that holds the grant row, so a
+//! revocation that holds it sees every token that exists and no new one can appear while it
+//! works, and no two transactions wait for each other's token rows in a circle. (An order that
+//! locks tokens first and the grant after cannot promise the second part: a revocation that
+//! waited on a token row being rotated misses the tokens the rotation inserted, and two such
+//! revocations then lock the late tokens in opposite orders; the first draft of this module had
+//! that deadlock.)
+//!
+//! The complete order of every transaction that touches these tables is in
+//! `docs/runbooks/oauth-authorization-server.md`.
 
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, DbErr, FromQueryResult, Statement};
 use uuid::Uuid;
@@ -100,9 +118,96 @@ struct GrantId {
     id: Uuid,
 }
 
-/// Revokes one grant and everything issued under it. Returns whether this call ended it: `false`
-/// means it was already revoked (or does not exist) and nothing was written.
-pub async fn revoke_grant(
+/// The grants a revocation reaches. The filters are literals chosen here, never built from input.
+#[derive(Clone, Copy)]
+enum Reach<'a> {
+    Grant(Uuid),
+    User(Uuid),
+    UserWorkspace(Uuid, Uuid),
+    Workspace(Uuid),
+    Client(&'a str),
+}
+
+/// The three locking statements for one filter: unredeemed codes, live tokens, grant rows. The
+/// filter is a literal chosen at the call site, never built from input; values are bound.
+macro_rules! lock_statements {
+    ($filter:literal) => {
+        (
+            concat!(
+                "SELECT c.code_hash FROM oauth_authorization_codes c WHERE c.consumed_at IS NULL AND c.grant_id IN \
+                 (SELECT g.id FROM oauth_grants g WHERE g.status = 'active' AND ",
+                $filter,
+                ") ORDER BY c.code_hash FOR UPDATE"
+            ),
+            concat!(
+                "SELECT t.id FROM oauth_tokens t WHERE t.revoked_at IS NULL AND t.grant_id IN \
+                 (SELECT g.id FROM oauth_grants g WHERE g.status = 'active' AND ",
+                $filter,
+                ") ORDER BY t.id FOR UPDATE"
+            ),
+            concat!(
+                "SELECT g.id FROM oauth_grants g WHERE g.status = 'active' AND ",
+                $filter,
+                " ORDER BY g.id FOR NO KEY UPDATE"
+            ),
+        )
+    };
+}
+
+impl Reach<'_> {
+    /// Locking statements (codes, tokens, grants) and their bind values.
+    fn statements(&self) -> (&'static str, &'static str, &'static str, Vec<sea_orm::Value>) {
+        match self {
+            Self::Grant(id) => {
+                let (c, t, g) = lock_statements!("g.id = $1");
+                (c, t, g, vec![(*id).into()])
+            }
+            Self::User(user) => {
+                let (c, t, g) = lock_statements!("g.user_id = $1");
+                (c, t, g, vec![(*user).into()])
+            }
+            Self::UserWorkspace(user, workspace) => {
+                let (c, t, g) = lock_statements!("g.user_id = $1 AND g.workspace_id = $2");
+                (c, t, g, vec![(*user).into(), (*workspace).into()])
+            }
+            Self::Workspace(workspace) => {
+                let (c, t, g) = lock_statements!("g.workspace_id = $1");
+                (c, t, g, vec![(*workspace).into()])
+            }
+            Self::Client(client) => {
+                let (c, t, g) = lock_statements!("g.client_id = $1");
+                (c, t, g, vec![(*client).into()])
+            }
+        }
+    }
+}
+
+/// Steps 1 and 2 of the lock order: the unredeemed codes, then the live tokens, of the active
+/// grants in `scope`.
+async fn lock_artifacts(tx: &DatabaseTransaction, scope: Reach<'_>) -> Result<(), DbErr> {
+    let (codes, tokens, _, values) = scope.statements();
+    for sql in [codes, tokens] {
+        tx.execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values.clone()))
+            .await?;
+    }
+    Ok(())
+}
+
+/// Step 3: the active grant rows of `scope`, in id order. Returns their ids.
+async fn lock_grants(tx: &DatabaseTransaction, scope: Reach<'_>) -> Result<Vec<Uuid>, DbErr> {
+    let (_, _, grants, values) = scope.statements();
+    Ok(
+        GrantId::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, grants, values))
+            .all(tx)
+            .await?
+            .into_iter()
+            .map(|row| row.id)
+            .collect(),
+    )
+}
+
+/// The writes: revokes one grant whose row, codes and tokens the caller has already locked.
+async fn revoke_locked(
     tx: &DatabaseTransaction,
     grant_id: Uuid,
     reason: RevokeReason,
@@ -120,7 +225,8 @@ pub async fn revoke_grant(
     .await?;
 
     // Tokens are revoked even when the grant was already revoked, so a token that somehow
-    // survived (a manual edit, an older build) is closed by the next revocation attempt.
+    // survived (a manual edit, an older build) is closed by the next revocation attempt. The grant
+    // row is held, so every token of the grant is visible here and none can be added.
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE oauth_tokens SET revoked_at = now() WHERE grant_id = $1 AND revoked_at IS NULL",
@@ -152,21 +258,31 @@ pub async fn revoke_grant(
     Ok(true)
 }
 
-/// Locks and revokes every active grant selected by `select_sql`, which takes one bind value and
-/// returns grant ids. The statement text is chosen by the callers below, never built from input.
-async fn revoke_selected(
+/// Revokes one grant and everything issued under it. Returns whether this call ended it: `false`
+/// means it was already revoked (or does not exist) and nothing was written.
+pub async fn revoke_grant(
     tx: &DatabaseTransaction,
-    select_sql: &'static str,
-    values: Vec<sea_orm::Value>,
+    grant_id: Uuid,
+    reason: RevokeReason,
+    actor: Actor,
+) -> Result<bool, DbErr> {
+    lock_grants(tx, Reach::Grant(grant_id)).await?;
+    lock_artifacts(tx, Reach::Grant(grant_id)).await?;
+    revoke_locked(tx, grant_id, reason, actor).await
+}
+
+/// Locks in the order of the module comment and revokes every active grant in `scope`.
+async fn revoke_scope(
+    tx: &DatabaseTransaction,
+    scope: Reach<'_>,
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<Vec<Uuid>, DbErr> {
-    let ids = GrantId::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, select_sql, values))
-        .all(tx)
-        .await?;
+    let ids = lock_grants(tx, scope).await?;
+    lock_artifacts(tx, scope).await?;
     let mut revoked = Vec::with_capacity(ids.len());
-    for GrantId { id } in ids {
-        if revoke_grant(tx, id, reason, actor).await? {
+    for id in ids {
+        if revoke_locked(tx, id, reason, actor).await? {
             revoked.push(id);
         }
     }
@@ -180,14 +296,7 @@ pub async fn revoke_all_user_grants(
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<Vec<Uuid>, DbErr> {
-    revoke_selected(
-        tx,
-        "SELECT id FROM oauth_grants WHERE user_id = $1 AND status = 'active' ORDER BY id FOR UPDATE",
-        vec![user_id.into()],
-        reason,
-        actor,
-    )
-    .await
+    revoke_scope(tx, Reach::User(user_id), reason, actor).await
 }
 
 /// Every active grant of one user in one workspace (membership removed).
@@ -198,15 +307,7 @@ pub async fn revoke_user_workspace_grants(
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<Vec<Uuid>, DbErr> {
-    revoke_selected(
-        tx,
-        "SELECT id FROM oauth_grants WHERE user_id = $1 AND workspace_id = $2 AND status = 'active' \
-         ORDER BY id FOR UPDATE",
-        vec![user_id.into(), workspace_id.into()],
-        reason,
-        actor,
-    )
-    .await
+    revoke_scope(tx, Reach::UserWorkspace(user_id, workspace_id), reason, actor).await
 }
 
 /// Every active grant in a workspace (connected applications switched off).
@@ -216,14 +317,7 @@ pub async fn revoke_workspace_grants(
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<Vec<Uuid>, DbErr> {
-    revoke_selected(
-        tx,
-        "SELECT id FROM oauth_grants WHERE workspace_id = $1 AND status = 'active' ORDER BY id FOR UPDATE",
-        vec![workspace_id.into()],
-        reason,
-        actor,
-    )
-    .await
+    revoke_scope(tx, Reach::Workspace(workspace_id), reason, actor).await
 }
 
 /// Every active grant of a client (client disabled).
@@ -233,14 +327,7 @@ pub async fn revoke_client_grants(
     reason: RevokeReason,
     actor: Actor,
 ) -> Result<Vec<Uuid>, DbErr> {
-    revoke_selected(
-        tx,
-        "SELECT id FROM oauth_grants WHERE client_id = $1 AND status = 'active' ORDER BY id FOR UPDATE",
-        vec![client_id.into()],
-        reason,
-        actor,
-    )
-    .await
+    revoke_scope(tx, Reach::Client(client_id), reason, actor).await
 }
 
 /// Stamps `last_used_at` on a token and its grant. Callers run it best effort and log a failure.
