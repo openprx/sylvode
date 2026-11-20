@@ -1,28 +1,64 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
+	import X from '@lucide/svelte/icons/x';
+	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
+
 	interface Props {
 		label: string;
+		/** Colour of the leading dot; a label colour chosen by a user, so it is data, not a token. */
 		color?: string;
 		removable?: boolean;
 		onremove?: () => void;
 	}
 
-	let { label, color = '#64748b', removable = false, onremove }: Props = $props();
+	let { label, color = 'var(--rf-secondary)', removable = false, onremove }: Props = $props();
 </script>
 
-<span
-	class="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300"
->
-	<span class="h-2 w-2 rounded-full" style={`background-color: ${color};`}></span>
-	<span>{label}</span>
-	{#if removable}
-		<button
-			type="button"
-			onclick={onremove}
-			class="rounded p-0.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 hover:text-slate-700 dark:text-slate-300"
-			aria-label={$t('activity.labelRemoved', { values: { name: label } })}
-		>
-			x
-		</button>
-	{/if}
-</span>
+<StatusChip tone="neutral">
+	<span class="tag">
+		<span class="dot" style:background-color={color}></span>
+		<span>{label}</span>
+		{#if removable}
+			<button
+				type="button"
+				class="remove"
+				onclick={onremove}
+				aria-label={$t('activity.labelRemoved', { values: { name: label } })}
+			>
+				<X size={12} aria-hidden="true" />
+			</button>
+		{/if}
+	</span>
+</StatusChip>
+
+<style>
+	.tag {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--rf-space-2);
+	}
+	.dot {
+		width: 8px;
+		height: 8px;
+		flex: none;
+		border-radius: var(--rf-radius-full);
+	}
+	.remove {
+		display: inline-grid;
+		place-items: center;
+		padding: 0;
+		border: 0;
+		border-radius: var(--rf-radius-xs);
+		background: transparent;
+		color: var(--rf-secondary);
+		cursor: pointer;
+	}
+	.remove:hover {
+		background: var(--rf-hover);
+		color: var(--rf-text);
+	}
+	.remove:focus-visible {
+		outline: var(--rf-border-width-focus) solid var(--rf-focus);
+		outline-offset: 1px;
+	}
+</style>

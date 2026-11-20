@@ -61,8 +61,18 @@ scripts/smoke-forms-mcp.sh
 bun run --cwd frontend smoke:restaurant-ordering
 cd frontend && bun run check && bun run build
 cd frontend && bun run smoke:project-template && bun run smoke:template-work-items
-cd frontend && bun run smoke:forms-ui && bun run smoke:restaurant-ordering
+cd frontend && bun run smoke:forms-page-interactions && bun run smoke:forms-record-list && bun run smoke:restaurant-ordering
 ```
+
+The forms browser smokes run against the mock in `frontend/scripts/forms-smoke-server.mjs`.
+`smoke:forms-page-interactions` covers import, page modes, every view type, the durable record
+route, the field design, detail-section and role-permission saves (with their request payloads)
+and the 390 px no-horizontal-overflow check in the table, kanban, calendar and card views. Retired
+checks that no browser smoke covers any more are listed in the header of
+`frontend/scripts/smoke-forms-page-interactions.mjs`: the header, highlights, composition and
+widgets detail builders, the relation, formula and attachment field configuration saves,
+attachment and comment payloads, gantt drag, and the permission list/export filtering checks.
+They need a manual pass in the acceptance runbook until a smoke covers them.
 
 Generated reports and screenshots go to `.flow-gate/universal-forms/` in the checkout (`docs/`
 for reports, `artifacts/` for screenshots); set `SYLVODE_UF_REPORT_ROOT` to use another

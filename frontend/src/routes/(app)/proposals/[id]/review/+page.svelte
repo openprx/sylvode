@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { proposalsApi, type Proposal } from '#lib/api/proposals.js';
@@ -11,10 +13,14 @@
 		type ReviewStatus
 	} from '#lib/api/impact-reviews.js';
 	import { toast } from '#lib/stores/toast.js';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
+	import { isMissingResult } from '#lib/utils/api-helpers.js';
 
 	const proposalId = $derived(page.params.id || '');
 
 	let loading = $state(true);
+	let loadFailure = $state<'missing' | 'failed' | null>(null);
+	let loadFailureMessage = $state('');
 	let proposal = $state<Proposal | null>(null);
 	let impactReviewDetail = $state<ImpactReviewDetail | null>(null);
 	let loadingImpactReview = $state(false);
@@ -40,6 +46,7 @@
 
 	async function init() {
 		loading = true;
+		loadFailure = null;
 		if (!proposalId) {
 			loading = false;
 			return;
@@ -47,7 +54,10 @@
 
 		const proposalRes = await proposalsApi.get(proposalId);
 		if (proposalRes.code !== 0 || !proposalRes.data) {
-			toast.error(proposalRes.message || get(t)('governance.notFound'));
+			loadFailureMessage = proposalRes.message || get(t)('governance.notFound');
+			loadFailure = isMissingResult(proposalRes) ? 'missing' : 'failed';
+			// A missing proposal is announced in the tip slot; a failed request by the block's own alert.
+			if (loadFailure === 'missing') toast.error(loadFailureMessage);
 			loading = false;
 			return;
 		}
@@ -130,48 +140,56 @@
 </svelte:head>
 
 <div class="mx-auto max-w-4xl space-y-4">
-	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
-	>
+	<div class="rounded-card border border-line bg-raised p-5">
 		<div class="mb-2 flex items-center justify-between gap-3">
-			<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+			<h1 class="text-xl font-semibold text-fg">
 				{$t('impactReview.title')}
 			</h1>
-			<a href={`/proposals/${proposalId}`} class="text-sm text-blue-600 hover:underline"
+			<a href={`/proposals/${proposalId}`} class="text-sm text-fg underline"
 				>{$t('impactReview.backToProposal')}</a
 			>
 		</div>
-		<p class="text-sm text-slate-500">{$t('impactReview.detailSubtitle')}</p>
+		<p class="text-sm text-fg-muted">{$t('impactReview.detailSubtitle')}</p>
 	</div>
 
-	<div
-		class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800"
-	>
+	<div class="rounded-card border border-line bg-raised p-5">
 		{#if loading}
-			<p class="text-sm text-slate-500">{$t('common.loading')}</p>
+			<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
+		{:else if loadFailure === 'failed'}
+			<StateBlock
+				kind="loadFailed"
+				message={loadFailureMessage}
+				action={{ run: () => void init() }}
+				data-testid="proposal-review-load-failed"
+			/>
 		{:else if !proposal}
-			<p class="text-sm text-slate-500">{$t('governance.notFound')}</p>
+			<StateBlock
+				kind="notFound"
+				place={$t('governance.place')}
+				action={{ run: () => goto(resolve('/(app)/proposals')) }}
+				data-testid="proposal-review-not-found"
+			/>
 		{:else}
-			<div class="mb-3 text-xs text-slate-500">
+			<div class="mb-3 text-xs text-fg-muted">
 				<p>{$t('impactReview.proposalId')}: {proposal.id}</p>
 				<p>{$t('governance.createdAtLabel')}: {new Date(proposal.created_at).toLocaleString()}</p>
 			</div>
 
 			{#if loadingImpactReview}
-				<p class="text-sm text-slate-500">{$t('common.loading')}</p>
+				<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 			{:else if !impactReviewDetail}
-				<p class="text-sm text-slate-500">{$t('impactReview.notCreated')}</p>
+				<p class="text-sm text-fg-muted">{$t('impactReview.notCreated')}</p>
 				{#if proposal.status === 'approved'}
 					<button
 						type="button"
 						onclick={createImpactReview}
-						class="mt-3 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+						class="mt-3 rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 					>
 						{$t('impactReview.create')}
 					</button>
 				{/if}
 			{:else}
-				<div class="mb-3 grid grid-cols-1 gap-2 text-xs text-slate-500 md:grid-cols-4">
+				<div class="mb-3 grid grid-cols-1 gap-2 text-xs text-fg-muted md:grid-cols-4">
 					<p>{$t('impactReview.reviewId')}: {impactReviewDetail.review.id}</p>
 					<p>
 						{$t('impactReview.scheduledAt')}: {impactReviewDetail.review.scheduled_at
@@ -192,13 +210,13 @@
 				<div class="space-y-3">
 					<div class="grid grid-cols-1 gap-3 md:grid-cols-2">
 						<div>
-							<label for="proposal-review-status" class="mb-1 block text-sm text-slate-600"
+							<label for="proposal-review-status" class="mb-1 block text-sm text-fg-muted"
 								>{$t('common.status')}</label
 							>
 							<select
 								id="proposal-review-status"
 								bind:value={impactStatus}
-								class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 							>
 								<option value="pending">{$t('impactReview.status.pending')}</option>
 								<option value="collecting">{$t('impactReview.status.collecting')}</option>
@@ -207,13 +225,13 @@
 							</select>
 						</div>
 						<div>
-							<label for="proposal-review-rating" class="mb-1 block text-sm text-slate-600"
+							<label for="proposal-review-rating" class="mb-1 block text-sm text-fg-muted"
 								>{$t('impactReview.rating')}</label
 							>
 							<select
 								id="proposal-review-rating"
 								bind:value={impactRating}
-								class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 							>
 								<option value="">{`- ${$t('impactReview.ratingAll')} -`}</option>
 								<option value="S">S</option>
@@ -225,43 +243,43 @@
 						</div>
 					</div>
 					<div>
-						<label for="proposal-review-goals" class="mb-1 block text-sm text-slate-600"
+						<label for="proposal-review-goals" class="mb-1 block text-sm text-fg-muted"
 							>{$t('impactReview.goalAchievements')}</label
 						>
 						<textarea
 							id="proposal-review-goals"
 							bind:value={impactGoalAchievementsText}
 							rows="6"
-							class="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs"
 						></textarea>
 					</div>
 					<div>
-						<label for="proposal-review-achievements" class="mb-1 block text-sm text-slate-600"
+						<label for="proposal-review-achievements" class="mb-1 block text-sm text-fg-muted"
 							>{$t('impactReview.achievements')}</label
 						>
 						<textarea
 							id="proposal-review-achievements"
 							bind:value={impactAchievements}
 							rows="4"
-							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 						></textarea>
 					</div>
 					<div>
-						<label for="proposal-review-lessons" class="mb-1 block text-sm text-slate-600"
+						<label for="proposal-review-lessons" class="mb-1 block text-sm text-fg-muted"
 							>{$t('impactReview.lessons')}</label
 						>
 						<textarea
 							id="proposal-review-lessons"
 							bind:value={impactLessons}
 							rows="4"
-							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 						></textarea>
 					</div>
 					<div class="flex justify-end">
 						<button
 							type="button"
 							onclick={saveImpactReview}
-							class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+							class="rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 							disabled={impactSaving}
 						>
 							{impactSaving ? $t('common.saving') : $t('common.save')}

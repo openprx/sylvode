@@ -1,0 +1,16 @@
+{
+	"shell": {
+		"app": {
+			"skipToContent": "跳到内容",
+			"signOutTitle": "退出登录并放弃未保存的内容？",
+			"signOutBody": "部分任务标签页有未保存的输入。退出登录会放弃这些内容，且无法恢复。",
+			"signOutConfirm": "放弃并退出登录",
+			"restoreTitle": "恢复默认导航？",
+			"restoreBody": "你添加的快捷入口会从导航栏移除，四个主要入口保持不变。",
+			"restoreConfirm": "恢复导航"
+		},
+		"content": {
+			"dismissTip": "关闭消息"
+		}
+	}
+}

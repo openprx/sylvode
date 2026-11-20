@@ -413,7 +413,9 @@ for path in \
   frontend/src/lib/utils/scenario-template.ts \
   'frontend/src/routes/(app)/settings/+page.svelte' \
   'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' \
-  frontend/scripts/smoke-forms-ui.mjs \
+  frontend/scripts/forms-smoke-server.mjs \
+  frontend/scripts/smoke-forms-page-interactions.mjs \
+  frontend/scripts/smoke-forms-record-list.mjs \
   frontend/scripts/smoke-project-template-wizard.mjs \
   frontend/scripts/smoke-template-work-items.mjs \
   frontend/scripts/smoke-restaurant-ordering.mjs; do
@@ -426,21 +428,30 @@ contains "frontend forms API previews record imports" "frontend/src/lib/api/form
 contains "frontend forms API commits record imports" "frontend/src/lib/api/forms.ts" "importRecords"
 contains "frontend forms API gets permissions" "frontend/src/lib/api/forms.ts" "getPermissions"
 contains "frontend forms API updates permissions" "frontend/src/lib/api/forms.ts" "updatePermissions"
-contains "frontend forms route loads form records" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "loadRecords"
-contains "frontend forms route supports record edit" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "editingRecordId"
-contains "frontend forms route supports record links" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "createRecordLink"
-contains "frontend forms route shows print jobs" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "print_job"
-contains "frontend forms route supports import modal" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "showImportRecords"
-contains "frontend forms route parses CSV imports" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "parseCsvImport"
-contains "frontend forms route supports permission panel" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "saveMemberPermissions"
-contains "frontend forms route renders permission actions" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "formPermissionActions"
+contains "frontend forms route loads form records" frontend/src/lib/forms/state/loaders.ts "loadRecords"
+contains "frontend forms route supports record edit" frontend/src/lib/forms/state/forms-page-state.svelte.ts "editingRecordId"
+contains "frontend forms route supports record links" frontend/src/lib/forms/state/record-detail.ts "createRecordLink"
+contains "frontend forms route shows print jobs" frontend/src/lib/forms/state/forms-page-state.svelte.ts "print_job"
+contains "frontend forms route supports import modal" frontend/src/lib/forms/state/forms-page-state.svelte.ts "showImportRecords"
+contains "frontend forms route parses CSV imports" frontend/src/lib/forms/state/import.ts "parseCsvImport"
+contains "frontend forms route supports permission panel" frontend/src/lib/forms/state/permissions.ts "saveMemberPermissions"
+contains "frontend forms route renders permission actions" frontend/src/lib/forms/page-constants.ts "formPermissionActions"
 contains "frontend settings saves profile through API" 'frontend/src/routes/(app)/settings/+page.svelte' "authApi.updateProfile"
 contains "frontend settings updates password through API" 'frontend/src/routes/(app)/settings/+page.svelte' "authApi.updatePassword"
 contains "frontend settings saves notification prefs through API" 'frontend/src/routes/(app)/settings/+page.svelte' "authApi.updatePreferences"
 not_contains "frontend settings does not fake save with timeout" 'frontend/src/routes/(app)/settings/+page.svelte' "setTimeout"
 not_contains "frontend i18n does not expose placeholder settings copy" "frontend/src/lib/i18n/en.json" "placeholder)"
 not_contains "frontend zh i18n does not expose placeholder settings copy" "frontend/src/lib/i18n/zh.json" "占位实现"
-contains "forms browser smoke covers mobile overflow" "frontend/scripts/smoke-forms-ui.mjs" "horizontal overflow"
+contains "forms browser smoke covers mobile overflow" "frontend/scripts/smoke-forms-page-interactions.mjs" "horizontal overflow"
+contains "forms browser smoke checks overflow at 390 px" "frontend/scripts/smoke-forms-page-interactions.mjs" "document.documentElement.scrollWidth"
+contains "forms browser smoke covers the durable record route" "frontend/scripts/smoke-forms-page-interactions.mjs" "the durable record page opens from its own route"
+contains "forms browser smoke covers field designer save payload" "frontend/scripts/smoke-forms-page-interactions.mjs" "field design: add a text field with help text and save the schema"
+contains "forms browser smoke covers detail layout save payload" "frontend/scripts/smoke-forms-page-interactions.mjs" "detail layout: a section title and description are saved"
+contains "forms browser smoke covers permissions save payload" "frontend/scripts/smoke-forms-page-interactions.mjs" "permissions: a role policy is saved with its scope and field denial"
+contains "forms browser smoke records its uncovered retired checks" "frontend/scripts/smoke-forms-page-interactions.mjs" "Not covered (the retired smoke asserted them"
+contains "forms record list smoke is wired into package scripts" "frontend/package.json" "smoke:forms-record-list"
+contains "forms page interactions smoke is wired into package scripts" "frontend/package.json" "smoke:forms-page-interactions"
+not_contains "package scripts do not keep the retired forms UI smoke" "frontend/package.json" "smoke:forms-ui"
 contains "project template wizard smoke covers template cards" "frontend/scripts/smoke-project-template-wizard.mjs" "data-template-card-seen"
 contains "project template wizard smoke covers scenario setup" "frontend/scripts/smoke-project-template-wizard.mjs" "data-scenario-dashboard-seen"
 contains "project template wizard smoke captures screenshots" "frontend/scripts/smoke-project-template-wizard.mjs" "OPENPR_PROJECT_TEMPLATE_SCREENSHOT_DIR"
@@ -452,7 +463,8 @@ contains "restaurant browser smoke captures screenshots" "frontend/scripts/smoke
 contains "acceptance uses resolved Bun frontend check" "scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run check'
 contains "acceptance includes project template wizard smoke" "scripts/acceptance-universal-forms.sh" "smoke:project-template"
 contains "acceptance includes template work items smoke" "scripts/acceptance-universal-forms.sh" "smoke:template-work-items"
-contains "acceptance uses resolved Bun frontend smoke" "scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-ui'
+contains "acceptance uses resolved Bun frontend smoke" "scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-page-interactions'
+contains "acceptance includes forms record list smoke" "scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-record-list'
 contains "acceptance resolves common Bun install path" "scripts/acceptance-universal-forms.sh" '$HOME/.bun/bin'
 contains "UI artifact collector uses Bun frontend build" "scripts/collect-universal-forms-ui-artifacts.sh" "FRONTEND_BUN"
 contains "UI artifact collector captures project template screenshots" "scripts/collect-universal-forms-ui-artifacts.sh" "OPENPR_PROJECT_TEMPLATE_SCREENSHOT_DIR"

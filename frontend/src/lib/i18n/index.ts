@@ -1,8 +1,25 @@
 import { browser } from '$app/env';
 import { init, locale, register } from 'svelte-i18n';
+import { mergeMessages, type Messages } from '../ui/foundations/messages';
 
-register('zh', () => import('./zh.json'));
-register('en', () => import('./en.json'));
+// Each `lib/ui` component (and each `lib/shell`, `lib/surface` and `lib/project` folder) keeps its own
+// messages in `locale.<lang>.json` next to the code (`ui.*`, `states.*`, `shell.*`, `surface.*`); they are merged into the app dictionary here, so adding a component never
+// edits the shared locale files.
+const uiZh = import.meta.glob<Messages>('../{ui,shell,surface,project}/**/locale.zh.json', {
+	eager: true,
+	import: 'default'
+});
+const uiEn = import.meta.glob<Messages>('../{ui,shell,surface,project}/**/locale.en.json', {
+	eager: true,
+	import: 'default'
+});
+
+register('zh', async () =>
+	mergeMessages((await import('./zh.json')).default as Messages, ...Object.values(uiZh))
+);
+register('en', async () =>
+	mergeMessages((await import('./en.json')).default as Messages, ...Object.values(uiEn))
+);
 
 const supportedLocales = new Set(['zh', 'en']);
 

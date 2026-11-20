@@ -1,0 +1,23 @@
+{
+	"ui": {
+		"toast": {
+			"region": "通知",
+			"notification": "通知",
+			"dismiss": "关闭通知",
+			"undo": "撤销",
+			"open": "打开",
+			"retry": "重试",
+			"restoring": "正在恢复",
+			"actionAvailable": "{message}，可{action}",
+			"sampleResult": "已在“线索”中创建记录“Northwind 订单”。",
+			"sampleDeleted": "已删除“Northwind 订单”。",
+			"sampleUndoFailed": "无法恢复“Northwind 订单”，服务器没有响应。",
+			"showResult": "显示结果",
+			"showUndo": "显示撤销",
+			"showNeutral": "显示提示",
+			"sampleNeutral": "导出已完成。",
+			"undoCalls": "撤销次数：{count}",
+			"field": "文本框"
+		}
+	}
+}

@@ -1,0 +1,39 @@
+{
+	"ui": {
+		"date": {
+			"placeholder": "YYYY-MM-DD",
+			"placeholderTime": "YYYY-MM-DD HH:mm",
+			"chooseDate": "选择日期",
+			"chooseDates": "选择日期范围",
+			"chooseDateTime": "选择日期和时间",
+			"previousMonth": "上个月",
+			"nextMonth": "下个月",
+			"previousYear": "上一年",
+			"nextYear": "下一年",
+			"clear": "清除",
+			"today": "今天",
+			"time": "时间",
+			"start": "开始日期",
+			"end": "结束日期",
+			"rangeStart": "范围开始",
+			"rangeEnd": "范围结束",
+			"error": {
+				"pattern": "请使用 YYYY-MM-DD 格式，例如 2026-11-24。",
+				"patternTime": "请使用 YYYY-MM-DD HH:mm 格式，例如 2026-11-24 14:30。",
+				"invalid": "该日期不存在。请使用 YYYY-MM-DD 格式，例如 2026-11-24。",
+				"min": "请选择 {min} 或之后的日期。",
+				"max": "请选择 {max} 或之前的日期。",
+				"unavailable": "该日期不可选。",
+				"order": "结束日期不能早于开始日期。",
+				"time": "请使用 HH:mm 格式，例如 14:30。"
+			},
+			"sample": {
+				"due": "截止日期",
+				"starts": "开始时间",
+				"period": "时间段",
+				"zone": "无时区：按输入保存。",
+				"required": "请选择截止日期。"
+			}
+		}
+	}
+}

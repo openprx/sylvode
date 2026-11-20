@@ -527,7 +527,7 @@ Smoke commands:
 ```bash
 cd frontend && bun run check && bun run build
 cd frontend && bun run smoke:project-template && bun run smoke:template-work-items
-cd frontend && bun run smoke:forms-ui && bun run smoke:restaurant-ordering
+cd frontend && bun run smoke:forms-page-interactions && bun run smoke:forms-record-list && bun run smoke:restaurant-ordering
 scripts/collect-universal-forms-ui-artifacts.sh
 scripts/verify-universal-forms-ui-artifacts.sh
 scripts/verify-universal-forms-ui-review-gallery.sh

@@ -99,10 +99,10 @@
 	const fieldLabel = (field: FormField) => field.label?.trim() || field.key.replaceAll('_', ' ');
 
 	const toneClass: Record<GridBadge['tone'], string> = {
-		amber: 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200',
-		slate: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
-		blue: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-200',
-		cyan: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200'
+		amber: 'bg-warning-soft text-warning',
+		slate: 'bg-surface text-fg-muted',
+		blue: 'bg-surface text-fg',
+		cyan: 'bg-surface text-fg'
 	};
 
 	export function focusRow(recordId: string | null) {
@@ -198,7 +198,7 @@
 	}
 
 	const headerButton =
-		'inline-flex min-h-6 items-center gap-1 rounded text-start font-medium hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:hover:text-slate-100';
+		'inline-flex min-h-6 items-center gap-1 rounded-control text-start font-medium hover:text-fg';
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -- title links are full record page paths built by the caller -->
@@ -210,20 +210,17 @@
 				aria-hidden="true"
 			/>{:else}<ArrowUp class="h-3.5 w-3.5" aria-hidden="true" />{/if}
 	{:else}
-		<ArrowUpDown class="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+		<ArrowUpDown class="h-3.5 w-3.5 text-fg-muted" aria-hidden="true" />
 	{/if}
 {/snippet}
 
 <div class="overflow-x-auto" data-view-renderer="grid">
 	<p id="record-table-hint" class="sr-only">{$t('forms.recordPanel.tableHint')}</p>
-	<table
-		class="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-700"
-		aria-describedby="record-table-hint"
-	>
-		<thead class="bg-slate-50 dark:bg-slate-950">
+	<table class="min-w-full divide-y divide-line text-sm" aria-describedby="record-table-hint">
+		<thead class="bg-nav">
 			<tr>
 				<th
-					class="w-56 px-4 py-3 text-start font-medium text-slate-600 dark:text-slate-300"
+					class="w-56 px-4 py-3 text-start font-medium text-fg-muted"
 					aria-sort={ariaSort('title')}
 				>
 					<button
@@ -237,7 +234,7 @@
 				{#each fields as field (field.key)}
 					{@const sortable = sortableKeys.includes(field.key)}
 					<th
-						class="px-4 py-3 text-start font-medium text-slate-600 dark:text-slate-300"
+						class="px-4 py-3 text-start font-medium text-fg-muted"
 						aria-sort={sortable ? ariaSort(field.key) : undefined}
 					>
 						<div class="flex flex-wrap items-center gap-1.5">
@@ -254,7 +251,7 @@
 							{/if}
 							{#each headerBadges(field) as badge (badge.attr)}
 								<span
-									class="rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase {toneClass[
+									class="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[10px] font-medium uppercase {toneClass[
 										badge.tone
 									]}"
 									{...{ [`data-${badge.attr}`]: badge.value }}>{badge.label}</span
@@ -263,32 +260,27 @@
 						</div>
 					</th>
 				{/each}
-				<th class="px-4 py-3 text-end font-medium text-slate-600 dark:text-slate-300"
-					>{$t('common.actions')}</th
-				>
+				<th class="px-4 py-3 text-end font-medium text-fg-muted">{$t('common.actions')}</th>
 			</tr>
 		</thead>
-		<tbody bind:this={tbody} class="divide-y divide-slate-100 dark:divide-slate-800">
+		<tbody bind:this={tbody} class="divide-y divide-line">
 			{#each records as record (record.id)}
 				{@const selected = record.id === currentId}
 				<tr
 					class="cursor-pointer transition-colors duration-[120ms] ease-out motion-reduce:transition-none {selected
-						? 'bg-blue-50 dark:bg-blue-950/40'
-						: 'hover:bg-slate-50 dark:hover:bg-slate-800/70'}"
+						? 'bg-selected'
+						: 'hover:bg-surface'}"
 					aria-current={selected ? 'true' : undefined}
 					data-record-row={record.id}
 					onclick={(event) => onRowClick(event, record)}
 				>
 					<td class="relative px-4 py-3">
 						{#if selected}
-							<span
-								class="absolute inset-y-0 start-0 w-[3px] bg-blue-600 dark:bg-blue-400"
-								aria-hidden="true"
-							></span>
+							<span class="absolute inset-y-0 start-0 w-[3px] bg-primary" aria-hidden="true"></span>
 						{/if}
 						<a
 							href={recordHref(record.id)}
-							class="rounded-sm font-medium text-blue-700 hover:text-blue-800 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-blue-300"
+							class="rounded-[var(--radius-sm)] font-medium text-fg hover:underline"
 							tabindex={record.id === rovingId ? 0 : -1}
 							aria-controls="record-panel"
 							aria-expanded={selected}
@@ -296,12 +288,12 @@
 							onfocus={() => (focusedId = record.id)}
 							onkeydown={(event) => onKeydown(event, record)}>{record.title}</a
 						>
-						<div class="mt-1 font-mono text-xs text-slate-400" dir="ltr">
+						<div class="mt-1 font-mono text-xs text-fg-muted" dir="ltr">
 							{record.id.slice(0, 8)}
 						</div>
 					</td>
 					{#each fields as field (field.key)}
-						<td class="max-w-64 px-4 py-3 text-slate-700 dark:text-slate-300">
+						<td class="max-w-64 px-4 py-3 text-fg">
 							<div class="flex min-w-0 flex-wrap items-center gap-1.5">
 								<span class="min-w-0 max-w-full truncate"
 									><FieldValue
@@ -313,7 +305,7 @@
 								>
 								{#each cellBadges(field, record) as badge (badge.attr)}
 									<span
-										class="rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase {toneClass[
+										class="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[10px] font-medium uppercase {toneClass[
 											badge.tone
 										]}"
 										{...{ [`data-${badge.attr}`]: badge.value }}>{badge.label}</span
@@ -326,7 +318,7 @@
 						{#if canEdit(record)}
 							<button
 								type="button"
-								class="me-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+								class="me-1 inline-flex h-8 w-8 items-center justify-center rounded-control text-fg hover:bg-surface"
 								tabindex={record.id === rovingId ? 0 : -1}
 								onclick={() => onedit(record)}
 								aria-label={$t('forms.editRecord')}
@@ -336,7 +328,7 @@
 						{#if canDelete(record)}
 							<button
 								type="button"
-								class="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+								class="inline-flex h-8 w-8 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:text-fg-muted"
 								tabindex={record.id === rovingId ? 0 : -1}
 								disabled={deletingId === record.id}
 								onclick={() => ondelete(record)}
@@ -354,10 +346,10 @@
 
 {#if pageCount > 1}
 	<div
-		class="flex flex-col gap-2 border-t border-slate-200 px-4 py-3 text-sm dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between"
+		class="flex flex-col gap-2 border-t border-line px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
 		data-record-pagination
 	>
-		<span class="text-slate-500 dark:text-slate-400">
+		<span class="text-fg-muted">
 			{$t('forms.recordPageLabel', { values: { page, total: pageCount, count: total } })}
 		</span>
 		<div class="flex items-center gap-2">

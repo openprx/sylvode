@@ -227,17 +227,13 @@ for (const locale of ['en', 'zh'] as const) {
 }
 
 suite.check('the layout title table: every pageTitle key it returns carries "Sylvode - "', () => {
-	const layout = readFileSync(join(root, 'src/routes/(app)/+layout.svelte'), 'utf8');
-	const start = layout.indexOf('const appPageTitle');
-	const end = layout.indexOf('const currentWorkspaceId');
-	assert(start > 0 && end > start, 'appPageTitle block not found');
-	const block = layout.slice(start, end);
-	assert(block.includes('isWorkspaceHomePath(pathname)'), 'no workspace home branch');
+	const table = readFileSync(join(root, 'src/lib/shell/page-titles.ts'), 'utf8');
+	assert(table.includes('WORKSPACE_HOME'), 'no workspace home branch');
 	assert(
-		block.indexOf('isWorkspaceHomePath(pathname)') < block.indexOf('/workspace\\/[^/]+\\/members'),
-		'home branch must precede the workspace sub-page branches'
+		table.indexOf('const home = WORKSPACE_HOME.exec') < table.indexOf('for (const r of RULES)'),
+		'home branch must precede the workspace sub-page rules'
 	);
-	const keys = [...block.matchAll(/\$t\('(pageTitle\.[A-Za-z]+)'/g)].map((m) => m[1] as string);
+	const keys = [...table.matchAll(/'(pageTitle\.[A-Za-z]+)'/g)].map((m) => m[1] as string);
 	keys.push('pageTitle.workspaceHome', 'pageTitle.workspaceHomeWithName');
 	for (const required of [
 		'pageTitle.workspaceConnections',
