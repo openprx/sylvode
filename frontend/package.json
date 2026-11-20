@@ -67,6 +67,7 @@
 		"test:surface-host": "bun tests/surface-host.test.ts",
 		"test:project-nav": "bun tests/project-nav.test.ts",
 		"test:shell-redirects": "bun tests/shell-redirects.test.ts",
+		"test:surface-embed": "bun tests/surface-embed.test.ts",
 		"test:component-adapters": "bun tests/component-adapters.test.ts",
 		"test:toast-routing": "bun tests/toast-routing.test.ts",
 		"test:workbench-tabs": "bun tests/workbench-tabs.test.ts",
