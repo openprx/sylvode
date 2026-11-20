@@ -7,6 +7,8 @@
  * old URL are carried to the new one.
  */
 
+import { settingsLanding } from '#lib/project/nav.js';
+
 /** Temporary redirect: the old URLs stay valid, nothing is cached as moved for good. */
 export const REDIRECT_STATUS = 307;
 
@@ -71,12 +73,6 @@ export function legacyProjectTarget(
 	return projectPath(workspaceId, legacy.projectId, legacy.rest, search, hash);
 }
 
-/** Section a project's settings land on. Differs by project type once more sections exist. */
-export function projectSettingsLanding(typeKey: string | null | undefined): string {
-	void typeKey;
-	return 'plugins';
-}
-
 /** `/workspace/{w}/projects/{p}/settings` → its landing section. */
 export function projectSettingsTarget(
 	workspaceId: string,
@@ -85,11 +81,5 @@ export function projectSettingsTarget(
 	search = '',
 	hash = ''
 ): string {
-	return projectPath(
-		workspaceId,
-		projectId,
-		`settings/${projectSettingsLanding(typeKey)}`,
-		search,
-		hash
-	);
+	return withTail(settingsLanding(workspaceId, projectId, typeKey ?? ''), search, hash);
 }
