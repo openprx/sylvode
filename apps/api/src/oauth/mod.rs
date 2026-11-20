@@ -17,6 +17,7 @@ pub mod redirect;
 pub mod revoke;
 pub mod router;
 pub mod scopes;
+pub mod stream;
 pub mod token;
 pub mod tokens;
 pub mod validate;

@@ -11,6 +11,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 mod ai_tasks;
 mod flow;
+mod oauth_feed;
 
 /// Operation-log retention runs once per day; the first run happens at worker startup.
 const OPERATION_LOG_CLEANUP_INTERVAL: std::time::Duration = std::time::Duration::from_hours(24);
@@ -69,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
     let db = connect_db(&config.database_runtime()?).await?;
     api::flow::scope_runtime::spawn(db.clone(), "worker").await?;
     api::flow::scope_runtime::spawn(db.clone(), "maintenance").await?;
+    tokio::spawn(oauth_feed::run(db.clone(), runtime.oauth.clone()));
     let state = AppState {
         cfg: cfg.clone(),
         db: db.clone(),
