@@ -105,6 +105,7 @@
 	} from '#lib/forms/record-values.js';
 
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { safeImageUrl, safeLinkUrl } from '#lib/utils/safe-url.js';
 
 	import {
@@ -1324,7 +1325,16 @@
 		return result;
 	}
 	async function reloadFormsSession() {
-		if (formsSessionDirty() && !window.confirm($t('forms.session.discardPrompt'))) return;
+		if (
+			formsSessionDirty() &&
+			!(await confirmAction({
+				tone: 'destructive',
+				title: $t('forms.session.discardPrompt'),
+				verb: 'discard',
+				object: $t('forms.session.mine').toLowerCase()
+			}))
+		)
+			return;
 		const id = selectedFormId;
 		const recordId = editingRecordId;
 		formsSessionGeneration++;
@@ -2019,7 +2029,13 @@
 	async function handleDeleteRecord(record: FormRecord) {
 		const label = record.title || record.id;
 
-		if (!window.confirm($t('forms.deleteRecordConfirm', { values: { title: label } }))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: $t('forms.deleteRecordConfirm', { values: { title: label } }),
+				confirmLabel: $t('forms.deleteRecord')
+			}))
+		) {
 			return;
 		}
 
@@ -3691,7 +3707,13 @@
 	async function deleteChildRecord(child: FormChildRecord) {
 		const label = child.record.title || child.record.id;
 
-		if (!window.confirm($t('forms.deleteChildRecordConfirm', { values: { title: label } }))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: $t('forms.deleteChildRecordConfirm', { values: { title: label } }),
+				confirmLabel: $t('forms.deleteChildRecord')
+			}))
+		) {
 			return;
 		}
 
@@ -4843,7 +4865,7 @@
 	}
 
 	function cardCoverObjectClass(fit: CardCoverFit): string {
-		return fit === 'contain' ? 'bg-slate-100 object-contain dark:bg-slate-800' : 'object-cover';
+		return fit === 'contain' ? 'bg-surface object-contain' : 'object-cover';
 	}
 
 	function cardCoverImageClass(
@@ -12526,7 +12548,7 @@
 {#snippet formsSessionNotice()}
 	{#if formsSessionRefreshFailed}
 		<p
-			class="rounded border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950"
+			class="rounded border border-line bg-warning-soft p-3 text-sm"
 			role="status"
 			data-testid="task-refresh-stale"
 		>
@@ -12535,7 +12557,7 @@
 	{/if}
 	{#if formsSessionRemoteChanged || formsSessionConflict}
 		<section
-			class="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950"
+			class="rounded border border-line bg-warning-soft p-3 text-sm"
 			role="status"
 			data-testid="task-remote-change"
 		>
@@ -12617,16 +12639,16 @@
 	>
 		<div>
 			<div class="text-sm text-fg-muted">
-				<a href="/workspace" class="hover:text-blue-600">{$t('forms.workspace')}</a>
-				<span class="mx-1 text-slate-400">/</span>
+				<a href="/workspace" class="hover:text-fg">{$t('forms.workspace')}</a>
+				<span class="mx-1 text-fg-muted">/</span>
 
-				<a href={`/workspace/${workspaceId}/projects`} class="hover:text-blue-600"
+				<a href={`/workspace/${workspaceId}/projects`} class="hover:text-fg"
 					>{$t('forms.projects')}</a
 				>
 
-				<span class="mx-1 text-slate-400">/</span>
+				<span class="mx-1 text-fg-muted">/</span>
 
-				<a href={`/workspace/${workspaceId}/projects/${projectId}`} class="hover:text-blue-600"
+				<a href={`/workspace/${workspaceId}/projects/${projectId}`} class="hover:text-fg"
 					>{project?.name ?? $t('forms.projectFallback')}</a
 				>
 			</div>
@@ -12652,14 +12674,14 @@
 
 	{#if loading}
 		<div
-			class="rounded-md border border-line bg-white p-6 text-sm text-fg-muted dark:bg-slate-900"
+			class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted"
 		>
 			{$t('forms.loadingForms')}
 		</div>
 	{:else}
 		{#if showCreateForm || forms.length === 0}
 			<section
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
+				class="rounded-card border border-line bg-raised p-4"
 			>
 				<div class="mb-4 flex items-start justify-between gap-4">
 					<div>
@@ -12674,7 +12696,7 @@
 				</div>
 
 				<div
-					class="mb-5 rounded-md border border-line bg-slate-50 p-3 dark:bg-slate-950"
+					class="mb-5 rounded-card border border-line bg-nav p-3"
 				>
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<div>
@@ -12702,7 +12724,7 @@
 						<div class="mt-3 grid gap-2 lg:grid-cols-3">
 							{#each scenarioTemplates as template}
 								<div
-									class="rounded-md border border-line bg-white p-3 dark:bg-slate-900"
+									class="rounded-card border border-line bg-raised p-3"
 								>
 									<div class="flex items-start justify-between gap-3">
 										<div class="min-w-0">
@@ -12714,7 +12736,7 @@
 												</h4>
 
 												<span
-													class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-fg-muted dark:bg-slate-800"
+													class="rounded bg-surface px-1.5 py-0.5 text-[11px] text-fg-muted"
 													>{scenarioTemplateIndustry(template.industry, $t)}</span
 												>
 											</div>
@@ -12723,7 +12745,7 @@
 												{scenarioTemplateDescription(template, $t)}
 											</p>
 
-											<p class="mt-2 font-mono text-[11px] text-slate-400">{template.key}</p>
+											<p class="mt-2 font-mono text-[11px] text-fg-muted">{template.key}</p>
 										</div>
 									</div>
 
@@ -12761,7 +12783,7 @@
 						>
 
 						<input
-							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 							bind:value={formDraft.key}
 						/>
 					</label>
@@ -12772,7 +12794,7 @@
 						>
 
 						<input
-							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 							bind:value={formDraft.name}
 						/>
 					</label>
@@ -12783,7 +12805,7 @@
 						>
 
 						<input
-							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 							bind:value={formDraft.title_template}
 						/>
 					</label>
@@ -12794,13 +12816,13 @@
 						>
 
 						<input
-							class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 							bind:value={formDraft.description}
 						/>
 					</label>
 				</div>
 
-				<div class="mt-5 rounded-lg border border-line">
+				<div class="mt-5 rounded-card border border-line">
 					<div
 						class="flex flex-col gap-2 border-b border-line px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
 					>
@@ -12816,7 +12838,7 @@
 
 						<button
 							type="button"
-							class="rounded-md border border-line px-3 py-1.5 text-sm text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+							class="rounded-control border border-line px-3 py-1.5 text-sm text-fg hover:bg-surface"
 							onclick={addFieldDraft}>{$t('forms.addField')}</button
 						>
 					</div>
@@ -12830,7 +12852,7 @@
 									>
 
 									<input
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 										placeholder="customer_name"
 										bind:value={field.key}
 									/>
@@ -12842,7 +12864,7 @@
 									>
 
 									<input
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 										placeholder={$t('forms.fieldLabelPlaceholder')}
 										bind:value={field.label}
 									/>
@@ -12854,7 +12876,7 @@
 									>
 
 									<select
-										class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 										bind:value={field.type}
 									>
 										{#each fieldTypeOptions as type}
@@ -12866,7 +12888,7 @@
 								<label class="flex items-end gap-2 pb-2 text-sm text-fg">
 									<input
 										type="checkbox"
-										class="h-4 w-4 rounded border-slate-300 text-blue-600"
+										class="h-4 w-4 rounded border-input accent-primary"
 										bind:checked={field.required}
 									/>
 
@@ -12876,7 +12898,7 @@
 								<div class="flex items-end justify-end">
 									<button
 										type="button"
-										class="inline-flex h-9 w-9 items-center justify-center rounded-md text-red-600 hover:bg-red-50 disabled:opacity-40 dark:hover:bg-red-950/30"
+										class="inline-flex h-9 w-9 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:opacity-40"
 										disabled={fieldDrafts.length === 1}
 										onclick={() => removeFieldDraft(index)}
 										aria-label={$t('forms.removeField')}
@@ -12891,7 +12913,7 @@
 										>
 
 										<textarea
-											class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+											class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 											placeholder={$t('forms.optionListPlaceholder')}
 											bind:value={field.optionsText}></textarea>
 									</label>
@@ -12905,7 +12927,7 @@
 											>
 
 											<input
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm uppercase text-fg dark:border-slate-600 dark:bg-slate-800"
+												class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm uppercase text-fg"
 												maxlength="3"
 												bind:value={field.currency}
 											/>
@@ -12920,7 +12942,7 @@
 												type="number"
 												min="0"
 												max="8"
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+												class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 												bind:value={field.scale}
 											/>
 										</label>
@@ -12931,10 +12953,10 @@
 					</div>
 				</div>
 
-				<div class="mt-4 rounded-lg border border-line">
+				<div class="mt-4 rounded-card border border-line">
 					<button
 						type="button"
-						class="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+						class="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-fg hover:bg-surface"
 						onclick={() => {
 							if (!showAdvancedSchema) buildSchemaFromDrafts();
 
@@ -12942,7 +12964,7 @@
 						}}
 					>
 						<span>{$t('forms.advancedSchema')}</span>
-						<span class="text-xs text-slate-500"
+						<span class="text-xs text-fg-muted"
 							>{showAdvancedSchema ? $t('forms.hideAdvanced') : $t('forms.showAdvanced')}</span
 						>
 					</button>
@@ -12954,7 +12976,7 @@
 							>
 
 							<textarea
-								class="h-56 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+								class="h-56 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 								bind:value={formDraft.schemaText}></textarea>
 						</label>
 					{/if}
@@ -12970,7 +12992,7 @@
 
 		{#if forms.length > 0 && !selectedForm}
 			<section
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
+				class="rounded-card border border-line bg-raised p-4"
 				data-form-list-home
 			>
 				<div class="mb-4">
@@ -12989,14 +13011,14 @@
 					{#each forms as form}
 						<button
 							type="button"
-							class="min-h-40 rounded-lg border border-line bg-slate-50 p-4 text-left transition-colors hover:border-blue-200 hover:bg-blue-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+							class="min-h-40 rounded-card border border-line bg-nav p-4 text-left transition-colors hover:border-input hover:bg-surface"
 							onclick={() => openForm(form.id)}
 						>
 							<div class="flex items-start justify-between gap-3">
 								<div class="min-w-0">
 									<div class="flex items-center gap-2">
 										<TableProperties
-											class="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-300"
+											class="h-4 w-4 shrink-0 text-fg-muted"
 											aria-hidden="true"
 										/>
 
@@ -13011,7 +13033,7 @@
 								</div>
 
 								<span
-									class="rounded bg-white px-2 py-0.5 text-xs font-medium text-fg-muted ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
+									class="rounded bg-raised px-2 py-0.5 text-xs font-medium text-fg-muted ring-1 ring-line"
 									>{$t('forms.fieldCount', {
 										values: { count: formListFields(form).length }
 									})}</span
@@ -13031,7 +13053,7 @@
 									>{$t('forms.updatedAt', { values: { date: formatDate(form.updated_at) } })}</span
 								>
 
-								<span class="font-medium text-blue-700 dark:text-blue-300"
+								<span class="font-medium text-fg"
 									>{$t('forms.openForm')}</span
 								>
 							</div>
@@ -13045,7 +13067,7 @@
 			<section class="space-y-4">
 				{#if activeMode === 'data'}
 					<section
-						class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
+						class="rounded-card border border-line bg-raised p-4"
 						data-form-data-list-toolbar
 					>
 						<div class="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -13056,7 +13078,7 @@
 									</h3>
 
 									<span
-										class="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-800"
+										class="rounded-control bg-surface px-2 py-0.5 text-xs text-fg-muted"
 									>
 										{#if recordsLoading}
 											{$t('common.loading')}
@@ -13081,7 +13103,7 @@
 										id="form-switcher"
 										value={selectedFormId}
 										onchange={handleFormChange}
-										class="h-8 min-w-40 rounded-md border border-slate-300 bg-white px-2 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+										class="h-8 min-w-40 rounded-control border border-input bg-field px-2 text-xs text-fg"
 									>
 										{#each forms as form}
 											<option value={form.id}>{form.name}</option>
@@ -13098,7 +13120,7 @@
 
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+									class="inline-flex h-8 items-center rounded-control border border-input px-2.5 text-xs font-medium text-fg hover:bg-surface"
 									onclick={() => handleModeChange('design')}
 								>
 									<TableProperties class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -13107,7 +13129,7 @@
 
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+									class="inline-flex h-8 items-center rounded-control border border-input px-2.5 text-xs font-medium text-fg hover:bg-surface"
 									onclick={() => handleModeChange('layout')}
 								>
 									<FileText class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -13116,7 +13138,7 @@
 
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+									class="inline-flex h-8 items-center rounded-control border border-input px-2.5 text-xs font-medium text-fg hover:bg-surface"
 									onclick={() => handleModeChange('permissions')}
 								>
 									<Shield class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -13125,7 +13147,7 @@
 
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+									class="inline-flex h-8 items-center rounded-control border border-input px-2.5 text-xs font-medium text-fg hover:bg-surface"
 									onclick={() => handleModeChange('importExport')}
 								>
 									<FileUp class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -13136,7 +13158,7 @@
 					</section>
 				{:else}
 					<section
-						class="rounded-lg border border-line bg-white dark:bg-slate-900"
+						class="rounded-card border border-line bg-raised"
 						data-form-config-workbench
 					>
 						<div
@@ -13164,7 +13186,7 @@
 
 				{#if formPermissions && activeMode !== 'permissions' && activeMode !== 'data'}
 					<section
-						class="rounded-md border border-line bg-white px-3 py-2 text-sm dark:bg-slate-900"
+						class="rounded-card border border-line bg-raised px-3 py-2 text-sm"
 						data-permission-state-summary
 						data-permission-state-mode={activeMode}
 						data-permission-state-scope={memberRecordScopeDraft}
@@ -13175,27 +13197,27 @@
 							<span
 								class="inline-flex items-center gap-1 font-medium text-fg"
 							>
-								<Shield class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+								<Shield class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 								{$t('forms.permissionState')}
 							</span>
 
 							<span
-								class="rounded-md border border-line bg-slate-50 px-2 py-1 text-fg dark:bg-slate-950"
+								class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
 								>{$t('forms.recordScope')}: {$t(
 									`forms.recordScopes.${memberRecordScopeDraft}`
 								)}</span
 							>
 
 							<span
-								class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-warning dark:border-amber-900/60 dark:bg-amber-950/30"
+								class="rounded-control border border-line bg-warning-soft px-2 py-1 text-warning"
 								>{$t('forms.hiddenFieldEffect')}: {permissionFieldList(
 									memberHiddenFieldLabels
 								)}</span
 							>
 
 							<span
-								class="rounded-md border border-line bg-slate-50 px-2 py-1 text-fg dark:bg-slate-950"
+								class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
 								>{$t('forms.lockedFieldEffect')}: {permissionFieldList(
 									memberLockedFieldLabels
 								)}</span
@@ -13206,13 +13228,13 @@
 
 				{#if activeMode === 'permissions'}
 					<section
-						class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
+						class="rounded-card border border-line bg-raised p-4"
 						data-form-mode="permissions"
 					>
 						<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 							<div>
 								<div class="flex items-center gap-2">
-									<Shield class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+									<Shield class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 									<h3 class="text-base font-semibold text-fg">
 										{$t('forms.permissions')}
@@ -13234,7 +13256,7 @@
 						{:else}
 							<div class="grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)]">
 								<div
-									class="rounded-md border border-line bg-slate-50 p-3 text-sm dark:bg-slate-950"
+									class="rounded-card border border-line bg-nav p-3 text-sm"
 								>
 									<p class="font-medium text-fg">{$t('roles.member')}</p>
 
@@ -13246,11 +13268,11 @@
 								<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
 									{#each formPermissionActions as action}
 										<label
-											class="flex min-h-12 items-center gap-2 rounded-md border border-line px-3 py-2 text-sm text-fg"
+											class="flex min-h-12 items-center gap-2 rounded-control border border-line px-3 py-2 text-sm text-fg"
 										>
 											<input
 												type="checkbox"
-												class="h-4 w-4 rounded border-slate-300 text-blue-600"
+												class="h-4 w-4 rounded border-input accent-primary"
 												checked={memberPermissionDraft[action]}
 												onchange={(event) =>
 													setMemberPermission(
@@ -13267,7 +13289,7 @@
 								</div>
 
 								<label
-									class="rounded-md border border-line px-3 py-2 text-sm text-fg"
+									class="rounded-control border border-line px-3 py-2 text-sm text-fg"
 								>
 									<span
 										class="block text-xs font-medium uppercase text-fg-muted"
@@ -13278,7 +13300,7 @@
 										value={memberRecordScopeDraft}
 										onchange={(event) =>
 											setMemberRecordScope(selectValue(event) as FormRecordScope)}
-										class="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+										class="mt-2 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									>
 										<option value="all">{$t('forms.recordScopeAll')}</option>
 										<option value="owned">{$t('forms.recordScopeOwned')}</option>
@@ -13290,7 +13312,7 @@
 								</label>
 
 								<div
-									class="lg:col-span-2 rounded-md border border-line px-3 py-2 text-sm"
+									class="lg:col-span-2 rounded-card border border-line px-3 py-2 text-sm"
 								>
 									<div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
 										<div>
@@ -13336,7 +13358,7 @@
 
 									<div class="mt-3 grid gap-2 md:grid-cols-2" data-permission-effect-summary>
 										<div
-											class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/20"
+											class="rounded-card border border-line bg-warning-soft px-3 py-2"
 											data-permission-effect-hidden-fields={memberHiddenFieldLabels.join('|')}
 										>
 											<div class="flex items-center gap-2">
@@ -13350,7 +13372,7 @@
 												</p>
 											</div>
 
-											<p class="mt-1 text-xs text-amber-900 dark:text-amber-100">
+											<p class="mt-1 text-xs text-warning">
 												{permissionFieldList(memberHiddenFieldLabels)}
 											</p>
 
@@ -13360,7 +13382,7 @@
 										</div>
 
 										<div
-											class="rounded-md border border-line bg-slate-50 px-3 py-2 dark:bg-slate-950"
+											class="rounded-card border border-line bg-nav px-3 py-2"
 											data-permission-effect-locked-fields={memberLockedFieldLabels.join('|')}
 										>
 											<div class="flex items-center gap-2">
@@ -13387,14 +13409,14 @@
 									<div class="mt-3 grid gap-2">
 										{#each fields as field}
 											<div
-												class="grid min-h-10 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-md border border-line px-3 py-2 text-sm text-fg"
+												class="grid min-h-10 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-card border border-line px-3 py-2 text-sm text-fg"
 											>
 												<span class="min-w-0 truncate">{field.label ?? field.key}</span>
 
 												<label class="flex items-center gap-2 text-xs">
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-slate-300 text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={memberFieldReadDraft[field.key] ?? true}
 														data-field-read-permission={field.key}
 														onchange={(event) =>
@@ -13412,7 +13434,7 @@
 												<label class="flex items-center gap-2 text-xs">
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-slate-300 text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={memberFieldWriteDraft[field.key] ?? true}
 														data-field-write-permission={field.key}
 														onchange={(event) =>
@@ -13434,7 +13456,7 @@
 
 							{#if formPermissions}
 								<div
-									class="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-fg-muted dark:bg-slate-950"
+									class="mt-3 rounded-control bg-nav px-3 py-2 text-xs text-fg-muted"
 								>
 									{$t('forms.currentEffectiveRole', {
 										values: { role: formPermissions.effective.role }
@@ -13450,13 +13472,13 @@
 					</section>
 				{:else if activeMode === 'importExport'}
 					<section
-						class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
+						class="rounded-card border border-line bg-raised p-4"
 						data-form-mode="import-export"
 					>
 						<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 							<div>
 								<div class="flex items-center gap-2">
-									<FileUp class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+									<FileUp class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 									<h3 class="text-base font-semibold text-fg">
 										{$t('forms.modes.importExport')}
@@ -13473,7 +13495,7 @@
 						<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface"
 								onclick={exportImportTemplate}
 								disabled={!selectedForm || visibleFields.length === 0}
 								data-import-template-export
@@ -13488,7 +13510,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={exportCurrentView}
 								disabled={exportingRecords}
 							>
@@ -13501,7 +13523,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={exportCurrentViewJson}
 								disabled={exportingRecords}
 								data-current-view-export-json
@@ -13516,7 +13538,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={exportAttachmentManifest}
 								disabled={exportingRecords}
 								data-attachment-manifest-export
@@ -13531,7 +13553,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={() => void exportAttachmentBundle()}
 								disabled={exportingRecords}
 								data-attachment-bundle-export
@@ -13546,7 +13568,7 @@
 
 							<button
 								type="button"
-								class="flex min-h-24 flex-col items-start justify-between rounded-md border border-line bg-slate-50 p-3 text-left text-sm hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50 dark:bg-slate-950 dark:hover:border-blue-900 dark:hover:bg-blue-950/30"
+								class="flex min-h-24 flex-col items-start justify-between rounded-card border border-line bg-nav p-3 text-left text-sm hover:border-input hover:bg-surface disabled:opacity-50"
 								onclick={() => void exportAttachmentPackage()}
 								disabled={exportingRecords}
 								data-attachment-package-export
@@ -13591,16 +13613,16 @@
 						{#if activeMode === 'layout'}
 							<div class="space-y-4">
 								<div
-									class="flex flex-wrap gap-1 rounded-lg border border-line bg-white p-1 dark:bg-slate-900"
+									class="flex flex-wrap gap-1 rounded-card border border-line bg-raised p-1"
 									data-detail-layout-tabs
 								>
 									{#each detailLayoutModes as mode}
 										<button
 											type="button"
-											class="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium transition-colors {detailLayoutMode ===
+											class="inline-flex h-9 items-center rounded-control px-3 text-sm font-medium transition-colors {detailLayoutMode ===
 											mode.key
-												? 'bg-blue-600 text-white dark:bg-blue-500'
-												: 'text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800'}"
+												? 'bg-primary text-on-primary'
+												: 'text-fg-muted hover:bg-surface hover:text-fg'}"
 											aria-current={detailLayoutMode === mode.key ? 'page' : undefined}
 											data-detail-layout-tab={mode.key}
 											onclick={() => (detailLayoutMode = mode.key)}>{$t(mode.labelKey)}</button
@@ -13609,7 +13631,7 @@
 								</div>
 
 								<section
-									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
 									'header'
 										? ''
 										: 'hidden'}"
@@ -13634,7 +13656,7 @@
 											<select
 												value={detailHeaderDraft.subtitleField}
 												disabled={detailHeaderSaving}
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+												class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 												data-detail-header-subtitle-field
 												onchange={(event) =>
 													setDetailHeaderDraft({
@@ -13660,7 +13682,7 @@
 											<select
 												value={detailHeaderDraft.badgeField}
 												disabled={detailHeaderSaving}
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+												class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 												data-detail-header-badge-field
 												onchange={(event) =>
 													setDetailHeaderDraft({
@@ -13689,7 +13711,7 @@
 								</section>
 
 								<section
-									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
 									'highlights'
 										? ''
 										: 'hidden'}"
@@ -13719,14 +13741,14 @@
 											{@const isChecked = highlightIndex >= 0}
 
 											<div
-												class="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-line px-3 py-2"
+												class="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-card border border-line px-3 py-2"
 												data-detail-highlight-field={field.key}
 												data-detail-highlight-selected={`${field.key}:${isChecked}`}
 											>
 												<label class="flex h-10 w-10 items-center justify-center">
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-slate-300 text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={isChecked}
 														disabled={detailHighlightSaving ||
 															(!isChecked && detailHighlightDraft.fields.length >= 4)}
@@ -13759,7 +13781,7 @@
 												<div class="flex items-center gap-1">
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
 														disabled={!isChecked || highlightIndex === 0 || detailHighlightSaving}
 														aria-label={$t('forms.moveHighlightUp')}
 														title={$t('forms.moveHighlightUp')}
@@ -13770,7 +13792,7 @@
 
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
 														disabled={!isChecked ||
 															highlightIndex === detailHighlightDraft.fields.length - 1 ||
 															detailHighlightSaving}
@@ -13803,7 +13825,7 @@
 								</section>
 
 								<section
-									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
 									'composition'
 										? ''
 										: 'hidden'}"
@@ -13827,7 +13849,7 @@
 										<select
 											value={detailPageCompositionDraft.widgetRegion}
 											disabled={detailPageCompositionSaving}
-											class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+											class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 											data-detail-page-widget-region
 											onchange={(event) =>
 												(detailPageCompositionDraft = {
@@ -13851,7 +13873,7 @@
 										<select
 											value={String(detailPageCompositionDraft.fieldColumns)}
 											disabled={detailPageCompositionSaving}
-											class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+											class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 											data-detail-page-field-columns
 											onchange={(event) =>
 												(detailPageCompositionDraft = {
@@ -13880,7 +13902,7 @@
 								</section>
 
 								<section
-									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
 									'sections'
 										? ''
 										: 'hidden'}"
@@ -13906,7 +13928,7 @@
 									<div class="space-y-3">
 										{#each detailLayoutSectionDrafts as section, sectionIndex}
 											<div
-												class="rounded-md border border-line p-3"
+												class="rounded-card border border-line p-3"
 												data-detail-layout-section-row={section.key}
 											>
 												<div
@@ -13920,7 +13942,7 @@
 
 														<input
 															value={section.title}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+															class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															data-detail-layout-section-title={section.key}
 															oninput={(event) =>
 																updateDetailLayoutSectionTitle(
@@ -13941,7 +13963,7 @@
 														<select
 															value={String(section.columns)}
 															disabled={detailLayoutSectionSaving}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+															class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															data-detail-layout-section-columns={section.key}
 															onchange={(event) =>
 																updateDetailLayoutSectionColumns(
@@ -13968,7 +13990,7 @@
 														<select
 															value={section.density}
 															disabled={detailLayoutSectionSaving}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+															class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															data-detail-layout-section-density={section.key}
 															onchange={(event) =>
 																updateDetailLayoutSectionDensity(
@@ -13991,7 +14013,7 @@
 													<div class="flex items-center gap-1">
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
 															disabled={sectionIndex === 0 || detailLayoutSectionSaving}
 															aria-label={$t('forms.moveSectionUp')}
 															title={$t('forms.moveSectionUp')}
@@ -14002,7 +14024,7 @@
 
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
 															disabled={sectionIndex === detailLayoutSectionDrafts.length - 1 ||
 																detailLayoutSectionSaving}
 															aria-label={$t('forms.moveSectionDown')}
@@ -14014,7 +14036,7 @@
 
 														<button
 															type="button"
-															class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-red-600 hover:bg-red-50 disabled:opacity-40 dark:hover:bg-red-950/30"
+															class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-danger hover:bg-danger-soft disabled:opacity-40"
 															disabled={detailLayoutSectionDrafts.length <= 1 ||
 																detailLayoutSectionSaving}
 															aria-label={$t('forms.removeDetailSection')}
@@ -14037,7 +14059,7 @@
 														rows="2"
 														disabled={detailLayoutSectionSaving}
 														placeholder={$t('forms.detailLayoutSectionDescriptionPlaceholder')}
-														class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800"
+														class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 														data-detail-layout-section-description={section.key}
 														oninput={(event) =>
 															updateDetailLayoutSectionDescription(
@@ -14053,7 +14075,7 @@
 												>
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-slate-300 text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={section.hideEmptyFields}
 														disabled={detailLayoutSectionSaving}
 														data-detail-layout-section-hide-empty-fields={section.key}
@@ -14075,7 +14097,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-slate-300 text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={section.collapsible}
 															disabled={detailLayoutSectionSaving}
 															data-detail-layout-section-collapsible={section.key}
@@ -14096,7 +14118,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-slate-300 text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={section.defaultCollapsed}
 															disabled={detailLayoutSectionSaving || !section.collapsible}
 															data-detail-layout-section-default-collapsed={section.key}
@@ -14119,14 +14141,14 @@
 														{@const fieldIndex = section.fields.indexOf(field.key)}
 
 														<div
-															class="grid min-h-9 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+															class="grid min-h-9 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-control px-2 py-1 text-sm hover:bg-surface"
 															data-detail-layout-section-field={`${section.key}:${field.key}`}
 															data-detail-layout-section-field-assigned={assignedSectionKey ||
 																'unassigned'}
 														>
 															<input
 																type="checkbox"
-																class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																class="h-4 w-4 rounded border-input accent-primary"
 																checked={section.fields.includes(field.key)}
 																disabled={detailLayoutSectionSaving}
 																aria-label={`${$t('forms.detailLayoutField')}: ${fieldLabel(field)} / ${section.title}`}
@@ -14155,7 +14177,7 @@
 															<div class="flex items-center gap-1">
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
 																	disabled={fieldIndex <= 0 || detailLayoutSectionSaving}
 																	aria-label={$t('forms.moveFieldUp')}
 																	title={$t('forms.moveFieldUp')}
@@ -14167,7 +14189,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
 																	disabled={fieldIndex < 0 ||
 																		fieldIndex === section.fields.length - 1 ||
 																		detailLayoutSectionSaving}
@@ -14198,7 +14220,7 @@
 								</section>
 
 								<section
-									class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900 {detailLayoutMode ===
+									class="rounded-card border border-line bg-raised p-4 {detailLayoutMode ===
 									'widgets'
 										? ''
 										: 'hidden'}"
@@ -14227,14 +14249,14 @@
 											{@const option = detailPageWidgetOption(widget.key)}
 
 											<div
-												class="grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-line px-3 py-2"
+												class="grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-card border border-line px-3 py-2"
 												data-detail-page-widget-row={widget.key}
 												data-detail-page-widget-enabled={`${widget.key}:${widget.enabled}`}
 											>
 												<label class="flex h-10 w-10 items-center justify-center">
 													<input
 														type="checkbox"
-														class="h-4 w-4 rounded border-slate-300 text-blue-600"
+														class="h-4 w-4 rounded border-input accent-primary"
 														checked={widget.enabled}
 														disabled={detailPageWidgetSaving}
 														aria-label={$t(option.labelKey)}
@@ -14270,7 +14292,7 @@
 															value={widget.title}
 															disabled={detailPageWidgetSaving}
 															placeholder={$t(option.labelKey)}
-															class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+															class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 															data-detail-page-widget-title={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetTitle(
@@ -14293,7 +14315,7 @@
 															disabled={detailPageWidgetSaving}
 															rows="2"
 															placeholder={$t('forms.detailPageWidgetDescriptionPlaceholder')}
-															class="w-full resize-y rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+															class="w-full resize-y rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 															data-detail-page-widget-description={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetDescription(
@@ -14317,7 +14339,7 @@
 															value={widget.limit}
 															disabled={detailPageWidgetSaving}
 															placeholder={$t('forms.detailPageWidgetLimitDefault')}
-															class="w-28 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+															class="w-28 rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 															data-detail-page-widget-limit={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetLimit(
@@ -14338,7 +14360,7 @@
 														<select
 															value={widget.density}
 															disabled={detailPageWidgetSaving}
-															class="w-40 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+															class="w-40 rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 															data-detail-page-widget-density={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetDensity(
@@ -14363,7 +14385,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-slate-300 text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.showCount}
 															disabled={detailPageWidgetSaving}
 															data-detail-page-widget-show-count={widget.key}
@@ -14384,7 +14406,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-slate-300 text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.hideEmpty}
 															disabled={detailPageWidgetSaving}
 															data-detail-page-widget-hide-empty={widget.key}
@@ -14405,7 +14427,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-slate-300 text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.collapsible}
 															disabled={detailPageWidgetSaving}
 															data-detail-page-widget-collapsible={widget.key}
@@ -14426,7 +14448,7 @@
 													>
 														<input
 															type="checkbox"
-															class="h-4 w-4 rounded border-slate-300 text-blue-600"
+															class="h-4 w-4 rounded border-input accent-primary"
 															checked={widget.defaultCollapsed}
 															disabled={detailPageWidgetSaving || !widget.collapsible}
 															data-detail-page-widget-default-collapsed={widget.key}
@@ -14453,7 +14475,7 @@
 															disabled={detailPageWidgetSaving}
 															rows="2"
 															placeholder={$t('forms.detailPageWidgetEmptyTextPlaceholder')}
-															class="w-full resize-y rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+															class="w-full resize-y rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 															data-detail-page-widget-empty-text={widget.key}
 															onchange={(event) =>
 																void setDetailPageWidgetEmptyText(
@@ -14468,7 +14490,7 @@
 												<div class="flex items-center gap-1">
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
 														disabled={index === 0 || detailPageWidgetSaving}
 														aria-label={$t('forms.moveWidgetUp')}
 														title={$t('forms.moveWidgetUp')}
@@ -14479,7 +14501,7 @@
 
 													<button
 														type="button"
-														class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+														class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:opacity-40"
 														disabled={index === selectedDetailPageWidgetEntries.length - 1 ||
 															detailPageWidgetSaving}
 														aria-label={$t('forms.moveWidgetDown')}
@@ -14508,7 +14530,7 @@
 									<section class="w-full" data-view-tools-expanded-panel>
 										<div class="space-y-4">
 											<div
-												class="rounded-md border border-line bg-white dark:bg-slate-900"
+												class="rounded-control border border-line bg-raised"
 												data-view-setup
 											>
 												<div class="space-y-2 border-t border-line p-3">
@@ -14716,7 +14738,7 @@
 																		wipLimits:
 																			selectValue(event) === 'kanban' ? viewDraft.wipLimits : {}
 																	})}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																class="w-full rounded-card border border-input bg-raised px-3 py-2 text-sm text-fg"
 															>
 																<option value="grid">Grid</option>
 																<option value="detail">Detail</option>
@@ -14782,7 +14804,7 @@
 																					: viewDraft.timelineSubtitleField
 																		};
 																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="records"
 																		>{$t('forms.timelineSourceRecords')}</option
@@ -14805,7 +14827,7 @@
 																			...viewDraft,
 																			timelineEventLayout: timelineEventLayout(selectValue(event))
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="summary"
 																		>{$t('forms.timelineEventLayoutSummary')}</option
@@ -14830,7 +14852,7 @@
 																			...viewDraft,
 																			timelineEventType: selectValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="">{$t('forms.timelineEventTypeAll')}</option>
 
@@ -14854,7 +14876,7 @@
 																			...viewDraft,
 																			timelineEventActor: selectValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="">{$t('forms.timelineEventActorAll')}</option>
 
@@ -14878,7 +14900,7 @@
 																			...viewDraft,
 																			timelineEventAggregate: selectValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="">{$t('forms.timelineEventAggregateAll')}</option>
 
@@ -14902,7 +14924,7 @@
 																			...viewDraft,
 																			timelineEventQuery: inputValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	placeholder={$t('forms.timelineEventSearchPlaceholder')}
 																/>
 															</label>
@@ -14922,7 +14944,7 @@
 																			...viewDraft,
 																			timelineEventFrom: inputValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																/>
 															</label>
 
@@ -14941,7 +14963,7 @@
 																			...viewDraft,
 																			timelineEventTo: inputValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																/>
 															</label>
 
@@ -14966,7 +14988,7 @@
 																					: viewDraft.timelineSubtitleField
 																		};
 																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="">{$t('forms.recordTitle')}</option>
 
@@ -14990,7 +15012,7 @@
 																			...viewDraft,
 																			timelineSubtitleField: selectValue(event)
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15015,7 +15037,7 @@
 																			...viewDraft,
 																			cardCoverAspect: viewCardCoverAspect(selectValue(event))
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="auto">{$t('forms.cardCoverAspectAuto')}</option>
 																	<option value="wide">{$t('forms.cardCoverAspectWide')}</option>
@@ -15040,7 +15062,7 @@
 																			...viewDraft,
 																			cardCoverFit: viewCardCoverFit(selectValue(event))
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="cover">{$t('forms.cardCoverFitCover')}</option>
 																	<option value="contain">{$t('forms.cardCoverFitContain')}</option>
@@ -15060,7 +15082,7 @@
 																			...viewDraft,
 																			cardCoverPosition: viewCardCoverPosition(selectValue(event))
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="top">{$t('forms.cardCoverPositionTop')}</option>
 																	<option value="left">{$t('forms.cardCoverPositionLeft')}</option>
@@ -15073,7 +15095,7 @@
 													</div>
 
 													<div
-														class="space-y-3 rounded-md border border-line bg-slate-50 p-3 dark:bg-slate-950"
+														class="space-y-3 rounded-card border border-line bg-nav p-3"
 														data-view-config-panel
 													>
 														<div>
@@ -15119,7 +15141,7 @@
 
 															{#if visibleViewDraftFilterGroups().every((group) => group.filters.length === 0)}
 																<p
-																	class="rounded-md border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-fg-muted dark:border-slate-700 dark:bg-slate-900"
+																	class="rounded-card border border-dashed border-input bg-raised px-3 py-2 text-xs text-fg-muted"
 																>
 																	{$t('forms.noFilterConditions')}
 																</p>
@@ -15149,7 +15171,7 @@
 																				updateViewDraftFilterRootLogic(
 																					selectValue(event) as ViewFilterLogic
 																				)}
-																			class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																			class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																		>
 																			<option value="all">{$t('forms.filterGroupsMatchAll')}</option
 																			>
@@ -15159,7 +15181,7 @@
 																	</label>
 
 																	<span
-																		class="rounded-md border border-blue-200 bg-blue-50 px-2.5 py-2 text-xs font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200"
+																		class="rounded-control border border-line bg-surface px-2.5 py-2 text-xs font-semibold text-fg-muted"
 																		data-filter-expression-match-count
 																		data-record-count={expressionMatchCount ?? ''}
 																	>
@@ -15172,7 +15194,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionRecordIds(
 																				expressionMatchingRecords
@@ -15191,7 +15213,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionJson(expressionJsonText)}
 																		disabled={!expressionJsonText}
@@ -15208,7 +15230,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionConfigJson(expressionJsonText)}
 																		disabled={!expressionJsonText}
@@ -15225,7 +15247,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionSummary(expressionSummaryText)}
 																		disabled={!expressionSummaryText}
@@ -15242,7 +15264,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionSummary(expressionSummaryText)}
 																		disabled={!expressionSummaryText}
@@ -15259,7 +15281,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			focusViewDraftFilterExpressionRecords(
 																				expressionMatchingRecords
@@ -15274,7 +15296,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionCsv(expressionMatchingRecords)}
 																		disabled={!expressionRecordIdsText}
@@ -15291,7 +15313,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionCsvRecords(
 																				expressionMatchingRecords
@@ -15310,7 +15332,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			copyViewDraftFilterExpressionJsonRecords(
 																				expressionMatchingRecords
@@ -15329,7 +15351,7 @@
 
 																	<button
 																		type="button"
-																		class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+																		class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-2 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																		onclick={() =>
 																			exportViewDraftFilterExpressionJson(
 																				expressionMatchingRecords
@@ -15352,9 +15374,9 @@
 																{@const groupMatchCount = viewDraftFilterGroupMatchCount(group)}
 
 																<div
-																	class={`space-y-2 rounded-md border border-line bg-white p-2 dark:bg-slate-900 ${
+																	class={`space-y-2 rounded-card border border-line bg-raised p-2 ${
 																		group.disabled
-																			? 'opacity-70 ring-1 ring-amber-300 dark:ring-amber-700'
+																			? 'opacity-70 ring-1 ring-warning'
 																			: ''
 																	}`}
 																	data-filter-group-disabled-state={group.disabled
@@ -15375,7 +15397,7 @@
 																						groupIndex,
 																						selectValue(event) as ViewFilterLogic
 																					)}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																			>
 																				<option value="all">{$t('forms.filterMatchAll')}</option>
 																				<option value="any">{$t('forms.filterMatchAny')}</option>
@@ -15393,7 +15415,7 @@
 																		</Button>
 
 																		<span
-																			class="self-end rounded-md border border-line bg-slate-50 px-2.5 py-2 text-xs font-medium text-fg-muted dark:bg-slate-950"
+																			class="self-end rounded-control border border-line bg-nav px-2.5 py-2 text-xs font-medium text-fg-muted"
 																			data-filter-group-match-count={groupIndex + 1}
 																			data-record-count={groupMatchCount ?? ''}
 																		>
@@ -15405,11 +15427,11 @@
 																		</span>
 
 																		<div
-																			class="flex items-center rounded-md border border-line bg-slate-50 p-0.5 dark:bg-slate-950"
+																			class="flex items-center rounded-control border border-line bg-nav p-0.5"
 																		>
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg dark:hover:bg-slate-800"
+																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg"
 																				onclick={() =>
 																					toggleViewDraftFilterGroupDisabled(groupIndex)}
 																				aria-label={`${
@@ -15434,7 +15456,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
 																				onclick={() =>
 																					mergeViewDraftFilterGroupWithPrevious(groupIndex)}
 																				disabled={!canMergeViewDraftFilterGroup(groupIndex)}
@@ -15445,7 +15467,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
 																				onclick={() => duplicateViewDraftFilterGroup(groupIndex)}
 																				disabled={!canDuplicateViewDraftFilterGroup(groupIndex)}
 																				aria-label={`${$t('forms.duplicateFilterGroup')} ${groupIndex + 1}`}
@@ -15455,7 +15477,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
 																				onclick={() => moveViewDraftFilterGroup(groupIndex, -1)}
 																				disabled={groupIndex === 0}
 																				aria-label={`${$t('forms.moveFilterGroupUp')} ${groupIndex + 1}`}
@@ -15465,7 +15487,7 @@
 
 																			<button
 																				type="button"
-																				class="rounded p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																				class="rounded p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
 																				onclick={() => moveViewDraftFilterGroup(groupIndex, 1)}
 																				disabled={groupIndex >=
 																					visibleViewDraftFilterGroups().length - 1}
@@ -15478,7 +15500,7 @@
 																		{#if viewDraft.filterGroups.length > 1}
 																			<button
 																				type="button"
-																				class="rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-danger dark:hover:bg-slate-800"
+																				class="rounded-control p-2 text-fg-muted hover:bg-surface hover:text-danger"
 																				onclick={() => removeViewDraftFilterGroup(groupIndex)}
 																				aria-label={$t('forms.removeFilterGroup')}
 																				data-filter-group-remove={groupIndex + 1}
@@ -15491,9 +15513,9 @@
 																		{@const filterMatchCount = viewDraftFilterMatchCount(filter)}
 
 																		<div
-																			class={`grid gap-2 rounded-md border border-line bg-slate-50 p-2 dark:bg-slate-950 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_auto_auto_auto_auto_auto_auto] ${
+																			class={`grid gap-2 rounded-card border border-line bg-nav p-2 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_auto_auto_auto_auto_auto_auto] ${
 																				filter.disabled
-																					? 'opacity-70 ring-1 ring-amber-300 dark:ring-amber-700'
+																					? 'opacity-70 ring-1 ring-warning'
 																					: ''
 																			}`}
 																			data-filter-disabled-state={filter.disabled
@@ -15515,7 +15537,7 @@
 																							{ field: selectValue(event) },
 																							groupIndex
 																						)}
-																					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																				>
 																					<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15543,7 +15565,7 @@
 																							},
 																							groupIndex
 																						)}
-																					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-950"
+																					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																				>
 																					<option value="contains"
 																						>{$t('forms.filterContains')}</option
@@ -15566,7 +15588,7 @@
 																				>
 
 																				<input
-																					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-950"
+																					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																					value={filter.value}
 																					disabled={!filter.field ||
 																						filter.operator === 'not_empty'}
@@ -15580,7 +15602,7 @@
 																			</label>
 
 																			<span
-																				class="self-end rounded-md border border-line bg-white px-2.5 py-2 text-xs font-medium text-fg-muted dark:bg-slate-900"
+																				class="self-end rounded-control border border-line bg-raised px-2.5 py-2 text-xs font-medium text-fg-muted"
 																				data-filter-match-count={`${groupIndex + 1}.${filterIndex + 1}`}
 																				data-record-count={filterMatchCount ?? ''}
 																			>
@@ -15593,7 +15615,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
+																				class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg"
 																				onclick={() =>
 																					toggleViewDraftFilterDisabled(groupIndex, filterIndex)}
 																				aria-label={`${filter.disabled ? $t('forms.enableFilter') : $t('forms.disableFilter')} ${filterLabelSuffix(groupIndex, filterIndex)}`}
@@ -15612,7 +15634,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-danger dark:hover:bg-slate-800"
+																				class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-danger"
 																				onclick={() =>
 																					removeViewDraftFilter(filterIndex, groupIndex)}
 																				aria-label={$t('forms.removeFilter')}
@@ -15622,7 +15644,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																				class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																				onclick={() =>
 																					duplicateViewDraftFilter(groupIndex, filterIndex)}
 																				disabled={hasReachedFilterLimit()}
@@ -15633,7 +15655,7 @@
 
 																			<button
 																				type="button"
-																				class="self-end rounded-md p-2 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																				class="self-end rounded-control p-2 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																				onclick={() =>
 																					splitViewDraftFilterToGroup(groupIndex, filterIndex)}
 																				disabled={!canSplitViewDraftFilterToGroup(
@@ -15649,11 +15671,11 @@
 																			>
 
 																			<div
-																				class="self-end flex items-center rounded-md border border-line bg-white p-0.5 dark:bg-slate-900"
+																				class="self-end flex items-center rounded-control border border-line bg-raised p-0.5"
 																			>
 																				<button
 																					type="button"
-																					class="rounded p-1.5 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																					class="rounded p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																					onclick={() =>
 																						moveViewDraftFilter(groupIndex, filterIndex, -1)}
 																					disabled={filterIndex === 0}
@@ -15664,7 +15686,7 @@
 
 																				<button
 																					type="button"
-																					class="rounded p-1.5 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																					class="rounded p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																					onclick={() =>
 																						moveViewDraftFilter(groupIndex, filterIndex, 1)}
 																					disabled={filterIndex >= group.filters.length - 1}
@@ -15690,7 +15712,7 @@
 																	value={viewDraft.sortField}
 																	onchange={(event) =>
 																		(viewDraft = { ...viewDraft, sortField: selectValue(event) })}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15714,7 +15736,7 @@
 																			...viewDraft,
 																			sortDirection: selectValue(event) as ViewSortDirection
 																		})}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																>
 																	<option value="asc">{$t('forms.sortAscending')}</option>
 																	<option value="desc">{$t('forms.sortDescending')}</option>
@@ -15742,7 +15764,7 @@
 																			wipLimits: {}
 																		};
 																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15773,7 +15795,7 @@
 																						: viewDraft.pivotColumnField
 																			};
 																		}}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15796,7 +15818,7 @@
 																				...viewDraft,
 																				pivotColumnField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15819,7 +15841,7 @@
 																				...viewDraft,
 																				pivotValueField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -15842,7 +15864,7 @@
 																				...viewDraft,
 																				pivotAggregate: viewPivotAggregate(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="sum">{$t('forms.pivotAggregateSum')}</option>
 																		<option value="count">{$t('forms.pivotAggregateCount')}</option>
@@ -15863,7 +15885,7 @@
 																				...viewDraft,
 																				pivotTotals: viewPivotTotalsMode(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="all">{$t('forms.pivotTotalsAll')}</option>
 																		<option value="rows">{$t('forms.pivotTotalsRows')}</option>
@@ -15886,7 +15908,7 @@
 																				...viewDraft,
 																				pivotValueDisplay: viewPivotValueDisplay(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="value"
 																			>{$t('forms.pivotValueDisplayValue')}</option
@@ -15916,7 +15938,7 @@
 																				...viewDraft,
 																				pivotSort: viewPivotSortMode(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="label">{$t('forms.pivotSortLabel')}</option>
 																		<option value="row_total_desc"
@@ -15947,7 +15969,7 @@
 																				...viewDraft,
 																				pivotRowLimit: viewPivotRowLimit(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="0">{$t('forms.pivotRowLimitAll')}</option>
 																		<option value="2">{$t('forms.pivotRowLimitTwo')}</option>
@@ -15969,7 +15991,7 @@
 																				...viewDraft,
 																				pivotColumnLimit: viewPivotColumnLimit(selectValue(event))
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="0">{$t('forms.pivotColumnLimitAll')}</option>
 																		<option value="2">{$t('forms.pivotColumnLimitTwo')}</option>
@@ -15979,11 +16001,11 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
+																	class="flex items-center gap-2 rounded-control border border-line bg-nav px-3 py-2 text-sm text-fg"
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.pivotEmptyBuckets}
 																		data-pivot-empty-buckets-control
 																		onchange={(event) =>
@@ -16002,11 +16024,11 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
+																	class="flex items-center gap-2 rounded-control border border-line bg-nav px-3 py-2 text-sm text-fg"
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.pivotHideZeroBuckets}
 																		data-pivot-hide-zero-buckets-control
 																		onchange={(event) =>
@@ -16025,11 +16047,11 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
+																	class="flex items-center gap-2 rounded-control border border-line bg-nav px-3 py-2 text-sm text-fg"
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.pivotShowCounts}
 																		data-pivot-show-counts-control
 																		onchange={(event) =>
@@ -16047,11 +16069,11 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
+																	class="flex items-center gap-2 rounded-control border border-line bg-nav px-3 py-2 text-sm text-fg"
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.pivotHeatmap}
 																		data-pivot-heatmap-control
 																		onchange={(event) =>
@@ -16072,7 +16094,7 @@
 																		type="button"
 																		disabled={!viewDraft.pivotRowField ||
 																			!viewDraft.pivotColumnField}
-																		class="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-fg hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700"
+																		class="inline-flex h-10 items-center gap-2 rounded-control border border-input bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
 																		data-pivot-swap-axes
 																		onclick={swapViewDraftPivotAxes}
 																	>
@@ -16111,7 +16133,7 @@
 																						: viewDraft.ganttDependencyField
 																			};
 																		}}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16145,7 +16167,7 @@
 																						: viewDraft.ganttDependencyField
 																			};
 																		}}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.ganttNoEndField')}</option>
 
@@ -16172,7 +16194,7 @@
 																						? ''
 																						: viewDraft.ganttDependencyField
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16195,7 +16217,7 @@
 																				...viewDraft,
 																				ganttDependencyField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16218,7 +16240,7 @@
 																				...viewDraft,
 																				ganttScale: selectValue(event) as GanttScale
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="day">{$t('forms.ganttScaleDay')}</option>
 																		<option value="week">{$t('forms.ganttScaleWeek')}</option>
@@ -16241,7 +16263,7 @@
 																				...viewDraft,
 																				swimlaneBy: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16276,7 +16298,7 @@
 																					: viewDraft.calendarResourceBy
 																		};
 																	}}
-																	class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																	class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																>
 																	<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16300,7 +16322,7 @@
 																				...viewDraft,
 																				calendarEndField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16323,7 +16345,7 @@
 																				...viewDraft,
 																				calendarResourceBy: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16346,7 +16368,7 @@
 																				...viewDraft,
 																				calendarRange: selectValue(event) as ViewCalendarRange
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="week">{$t('forms.calendarRangeWeek')}</option>
 																		<option value="month">{$t('forms.calendarRangeMonth')}</option>
@@ -16362,7 +16384,7 @@
 																	<div class="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-1">
 																		<button
 																			type="button"
-																			class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
+																			class="inline-flex h-9 w-9 items-center justify-center rounded-control border border-input text-fg-muted hover:bg-surface disabled:opacity-40"
 																			onclick={() => shiftViewDraftCalendarFocus(-1)}
 																			aria-label={$t('forms.calendarPreviousRange')}
 																			title={$t('forms.calendarPreviousRange')}
@@ -16380,12 +16402,12 @@
 																					...viewDraft,
 																					calendarFocusDate: inputValue(event)
 																				})}
-																			class="min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																			class="min-w-0 rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																		/>
 
 																		<button
 																			type="button"
-																			class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-fg-muted hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
+																			class="inline-flex h-9 w-9 items-center justify-center rounded-control border border-input text-fg-muted hover:bg-surface disabled:opacity-40"
 																			onclick={() => shiftViewDraftCalendarFocus(1)}
 																			aria-label={$t('forms.calendarNextRange')}
 																			title={$t('forms.calendarNextRange')}
@@ -16410,7 +16432,7 @@
 																					event
 																				) as ViewCalendarRecurrence
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="none"
 																			>{$t('forms.calendarRecurrenceNone')}</option
@@ -16440,7 +16462,7 @@
 																				...viewDraft,
 																				calendarDayScope: selectValue(event) as ViewCalendarDayScope
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="all">{$t('forms.calendarDayScopeAll')}</option>
 																		<option value="workweek"
@@ -16462,7 +16484,7 @@
 																				...viewDraft,
 																				calendarLayout: selectValue(event) as ViewCalendarLayout
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="grid">{$t('forms.calendarLayoutGrid')}</option>
 																		<option value="agenda"
@@ -16472,11 +16494,11 @@
 																</label>
 
 																<label
-																	class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
+																	class="flex items-center gap-2 rounded-control border border-line bg-nav px-3 py-2 text-sm text-fg"
 																>
 																	<input
 																		type="checkbox"
-																		class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																		class="h-4 w-4 rounded border-input accent-primary"
 																		checked={viewDraft.calendarHideEmptyDays}
 																		data-calendar-hide-empty-days-control
 																		onchange={(event) =>
@@ -16496,7 +16518,7 @@
 															{/if}
 
 															<div
-																class="space-y-2 rounded-md border border-line p-3 lg:col-span-2"
+																class="space-y-2 rounded-card border border-line p-3 lg:col-span-2"
 															>
 																<div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px_auto]">
 																	{#if viewDraft.view_type === 'calendar'}
@@ -16513,7 +16535,7 @@
 																						...viewDraft,
 																						calendarExceptionRecordId: selectValue(event)
 																					})}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																			>
 																				<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16538,7 +16560,7 @@
 																						...viewDraft,
 																						cardFieldLimit: viewCardFieldLimit(selectValue(event))
 																					})}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																			>
 																				<option value="3">{$t('forms.cardFieldLimitThree')}</option>
 																				<option value="6">{$t('forms.cardFieldLimitSix')}</option>
@@ -16548,11 +16570,11 @@
 																		</label>
 
 																		<label
-																			class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
+																			class="flex items-center gap-2 rounded-control border border-line bg-nav px-3 py-2 text-sm text-fg"
 																		>
 																			<input
 																				type="checkbox"
-																				class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																				class="h-4 w-4 rounded border-input accent-primary"
 																				checked={viewDraft.cardHideEmptyFields}
 																				data-card-hide-empty-fields-control
 																				onchange={(event) =>
@@ -16571,11 +16593,11 @@
 																		</label>
 
 																		<label
-																			class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
+																			class="flex items-center gap-2 rounded-control border border-line bg-nav px-3 py-2 text-sm text-fg"
 																		>
 																			<input
 																				type="checkbox"
-																				class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																				class="h-4 w-4 rounded border-input accent-primary"
 																				checked={viewDraft.cardShowTimestamps}
 																				data-card-show-timestamps-control
 																				onchange={(event) =>
@@ -16594,11 +16616,11 @@
 																		</label>
 
 																		<label
-																			class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
+																			class="flex items-center gap-2 rounded-control border border-line bg-nav px-3 py-2 text-sm text-fg"
 																		>
 																			<input
 																				type="checkbox"
-																				class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																				class="h-4 w-4 rounded border-input accent-primary"
 																				checked={viewDraft.cardShowRecordId}
 																				data-card-show-record-id-control
 																				onchange={(event) =>
@@ -16632,7 +16654,7 @@
 																						...viewDraft,
 																						calendarExceptionDate: inputValue(event)
 																					})}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																			/>
 																		</label>
 																	{/if}
@@ -16642,7 +16664,7 @@
 																			type="button"
 																			disabled={!viewDraft.calendarExceptionRecordId ||
 																				!isIsoDate(viewDraft.calendarExceptionDate)}
-																			class="inline-flex h-10 items-center gap-2 rounded-md bg-slate-900 px-3 text-sm font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+																			class="inline-flex h-10 items-center gap-2 rounded-control bg-primary text-on-primary px-3 text-sm font-medium disabled:opacity-50"
 																			onclick={addViewDraftCalendarException}
 																		>
 																			<Plus class="h-4 w-4" aria-hidden="true" />
@@ -16666,7 +16688,7 @@
 																		<div class="flex flex-wrap gap-2">
 																			{#each viewDraftCalendarExceptionItems() as exception (`${exception.recordId}:${exception.date}`)}
 																				<span
-																					class="inline-flex max-w-full items-center gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs text-fg dark:bg-slate-800"
+																					class="inline-flex max-w-full items-center gap-2 rounded-control bg-surface px-2 py-1 text-xs text-fg"
 																				>
 																					<span class="truncate"
 																						>{exception.label} · {exception.date}</span
@@ -16674,7 +16696,7 @@
 
 																					<button
 																						type="button"
-																						class="rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-fg dark:hover:bg-slate-700"
+																						class="rounded p-0.5 text-fg-muted hover:bg-selected hover:text-fg"
 																						onclick={() =>
 																							removeViewDraftCalendarException(
 																								exception.recordId,
@@ -16704,7 +16726,7 @@
 																				...viewDraft,
 																				cardLayout: selectValue(event) as CardLayoutMode
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="standard"
 																			>{$t('forms.cardLayoutStandard')}</option
@@ -16749,7 +16771,7 @@
 																						: viewDraft.cardFieldKeys
 																			};
 																		}}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.recordTitle')}</option>
 
@@ -16776,7 +16798,7 @@
 																						? ''
 																						: viewDraft.cardBadgeField
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16799,7 +16821,7 @@
 																				...viewDraft,
 																				cardBadgeField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16822,7 +16844,7 @@
 																				...viewDraft,
 																				cardCoverField: selectValue(event)
 																			})}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-900"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-control"
 																	>
 																		<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -16836,7 +16858,7 @@
 
 														{#if viewDraft.view_type === 'card' && viewDraftCardFields().length > 0}
 															<div
-																class="space-y-2 rounded-md border border-line bg-white p-3 dark:bg-slate-900"
+																class="space-y-2 rounded-card border border-line bg-raised p-3"
 															>
 																<div>
 																	<h5
@@ -16849,7 +16871,7 @@
 																<div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
 																	{#each viewDraftCardFields() as field, fieldIndex}
 																		<div
-																			class="flex min-w-0 items-center justify-between gap-2 rounded-md border border-line bg-slate-50 px-2 py-1.5 text-sm dark:bg-slate-950"
+																			class="flex min-w-0 items-center justify-between gap-2 rounded-control border border-line bg-nav px-2 py-1.5 text-sm"
 																			data-card-field-order={`${fieldIndex + 1}:${field.key}`}
 																		>
 																			<span
@@ -16858,11 +16880,11 @@
 																			>
 
 																			<div
-																				class="flex shrink-0 items-center rounded-md border border-line bg-white p-0.5 dark:bg-slate-900"
+																				class="flex shrink-0 items-center rounded-control border border-line bg-raised p-0.5"
 																			>
 																				<button
 																					type="button"
-																					class="rounded p-1 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																					class="rounded p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																					disabled={fieldIndex === 0}
 																					onclick={() => moveViewDraftCardField(fieldIndex, -1)}
 																					aria-label={`${$t('forms.moveCardFieldUp')} ${fieldLabel(field)}`}
@@ -16875,7 +16897,7 @@
 
 																				<button
 																					type="button"
-																					class="rounded p-1 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																					class="rounded p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																					disabled={fieldIndex >= viewDraftCardFields().length - 1}
 																					onclick={() => moveViewDraftCardField(fieldIndex, 1)}
 																					aria-label={`${$t('forms.moveCardFieldDown')} ${fieldLabel(field)}`}
@@ -16894,7 +16916,7 @@
 
 														{#if viewDraftKanbanWipOptions().length > 0}
 															<div
-																class="space-y-3 rounded-md border border-line bg-white p-3 dark:bg-slate-900"
+																class="space-y-3 rounded-card border border-line bg-raised p-3"
 															>
 																<div>
 																	<h5
@@ -16927,7 +16949,7 @@
 																				value={viewDraft.wipLimits[option] ?? ''}
 																				oninput={(event) =>
 																					setViewDraftWipLimit(option, inputValue(event))}
-																				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																			/>
 																		</label>
 																	{/each}
@@ -16939,7 +16961,7 @@
 											</div>
 
 											<details
-												class="rounded-md border border-line bg-white dark:bg-slate-900"
+												class="rounded-card border border-line bg-raised"
 												open
 												data-view-columns-disclosure
 											>
@@ -16974,11 +16996,11 @@
 													<div class="grid gap-2 sm:grid-cols-2">
 														{#each fields.filter((field) => field.visibility?.list !== false) as field}
 															<div
-																class="flex items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-950"
+																class="flex items-center gap-2 rounded-card border border-line bg-nav px-3 py-2 text-sm text-fg"
 															>
 																<input
 																	type="checkbox"
-																	class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																	class="h-4 w-4 rounded border-input accent-primary"
 																	checked={viewDraftHasColumn(field.key)}
 																	aria-label={`${$t('forms.visibleColumns')}: ${fieldLabel(field)}`}
 																	onchange={(event) =>
@@ -16994,7 +17016,7 @@
 
 																{#if memberFieldHidden(field)}
 																	<span
-																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																		class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																		data-view-column-permission-hidden={field.key}
 																		>{$t('forms.fieldHiddenBadge')}</span
 																	>
@@ -17002,7 +17024,7 @@
 
 																{#if memberFieldLocked(field)}
 																	<span
-																		class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																		data-view-column-permission-locked={field.key}
 																		>{$t('forms.fieldLockedBadge')}</span
 																	>
@@ -17010,7 +17032,7 @@
 
 																{#if fieldHasConditionalHidden(field)}
 																	<span
-																		class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																		data-view-column-conditional-hidden={field.key}
 																		>{$t('forms.fieldConditionHiddenBadge')}</span
 																	>
@@ -17018,14 +17040,14 @@
 
 																{#if fieldHasConditionalReadOnly(field)}
 																	<span
-																		class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																		data-view-column-conditional-readonly={field.key}
 																		>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																	>
 																{/if}
 
 																<span
-																	class="ml-auto hidden font-mono text-[11px] text-slate-400 2xl:inline"
+																	class="ml-auto hidden font-mono text-[11px] text-fg-muted 2xl:inline"
 																	>{field.key}</span
 																>
 															</div>
@@ -17040,7 +17062,7 @@
 								{#if recordEditorOpen}
 									<div
 										use:recordEditorAction
-										class="pointer-events-auto absolute inset-0 z-30 flex justify-end bg-slate-950/30"
+										class="pointer-events-auto absolute inset-0 z-30 flex justify-end bg-scrim"
 										data-record-editor-drawer
 										role="dialog"
 										aria-modal="false"
@@ -17056,7 +17078,7 @@
 
 										<section
 											bind:this={recordEditorPanel}
-											class="relative z-10 flex h-full w-full max-w-3xl flex-col overflow-y-auto bg-white p-4 shadow-xl dark:bg-slate-900"
+											class="relative z-10 flex h-full w-full max-w-3xl flex-col overflow-y-auto bg-overlay p-4 shadow-sheet"
 										>
 											<div class="mb-3 flex items-center justify-between gap-3">
 												<div>
@@ -17086,7 +17108,7 @@
 													>
 
 													<input
-														class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+														class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 														bind:value={recordTitle}
 														placeholder={selectedForm.title_template}
 													/>
@@ -17114,12 +17136,12 @@
 															<span>{fieldLabel(field)}</span>
 
 															{#if field.required}
-																<span class="text-red-500">*</span>
+																<span class="text-danger">*</span>
 															{/if}
 
 															{#if memberFieldHidden(field)}
 																<span
-																	class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																	class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[11px] font-medium uppercase text-warning"
 																	data-record-edit-permission-hidden={field.key}
 																	>{$t('forms.fieldHiddenBadge')}</span
 																>
@@ -17127,7 +17149,7 @@
 
 															{#if memberFieldLocked(field)}
 																<span
-																	class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+																	class="rounded-control bg-surface px-1.5 py-0.5 text-[11px] font-medium uppercase text-fg-muted"
 																	data-record-edit-permission-locked={field.key}
 																	>{$t('forms.fieldLockedBadge')}</span
 																>
@@ -17146,14 +17168,14 @@
 																			? event.currentTarget.checked
 																			: false
 																	)}
-																class="h-5 w-5 rounded border-slate-300 text-blue-600"
+																class="h-5 w-5 rounded border-input accent-primary"
 															/>
 														{:else if fieldType(field) === 'single_select'}
 															<select
 																value={draftString(field.key)}
 																disabled={fieldReadOnlyByCondition(field, recordDraft)}
 																onchange={(event) => setDraftValue(field.key, selectValue(event))}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															>
 																<option value="">{$t('forms.selectPlaceholder')}</option>
 
@@ -17176,7 +17198,7 @@
 															</select>
 														{:else if fieldType(field) === 'multi_select' && fieldOptions(field).length > 0}
 															<div
-																class="grid gap-2 rounded-md border border-slate-300 bg-white p-2 text-sm dark:border-slate-600 dark:bg-slate-800"
+																class="grid gap-2 rounded-control border border-input bg-field p-2 text-sm"
 															>
 																{#each recordSelectOptions(field, recordDraft) as option}
 																	<label
@@ -17187,7 +17209,7 @@
 																	>
 																		<input
 																			type="checkbox"
-																			class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																			class="h-4 w-4 rounded border-input accent-primary"
 																			checked={isDraftOptionSelected(field.key, option)}
 																			disabled={fieldReadOnlyByCondition(field, recordDraft) ||
 																				optionDisabledForMultiDraft(field, option)}
@@ -17226,7 +17248,7 @@
 																disabled={fieldReadOnlyByCondition(field, recordDraft) ||
 																	relationTargetsLoading}
 																onchange={(event) => setDraftValue(field.key, selectValue(event))}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															>
 																<option value="">
 																	{relationTargetsLoading
@@ -17242,7 +17264,7 @@
 															</select>
 														{:else if fieldType(field) === 'child_table'}
 															<div
-																class="rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg-muted dark:bg-slate-800/60"
+																class="rounded-card border border-line bg-nav px-3 py-2 text-sm text-fg-muted"
 																data-child-table-field={field.key}
 															>
 																{$t('forms.childRecords')}
@@ -17253,7 +17275,7 @@
 																disabled={fieldReadOnlyByCondition(field, recordDraft) ||
 																	workspaceMembersLoading}
 																onchange={(event) => setDraftValue(field.key, selectValue(event))}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 															>
 																<option value="">
 																	{workspaceMembersLoading
@@ -17272,7 +17294,7 @@
 																<div class="flex gap-2">
 																	<input
 																		type="url"
-																		class="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																		class="min-w-0 flex-1 rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																		value={attachmentUrl(field)}
 																		placeholder={fieldPlaceholder(field) ||
 																			$t('forms.attachmentUrlPlaceholder')}
@@ -17297,7 +17319,7 @@
 
 																<div class="flex flex-wrap items-center gap-2">
 																	<label
-																		class="inline-flex cursor-pointer items-center rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-fg hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+																		class="inline-flex cursor-pointer items-center rounded-control border border-input px-3 py-1.5 text-sm font-medium text-fg hover:bg-surface"
 																	>
 																		<FileUp class="mr-2 h-4 w-4" aria-hidden="true" />
 																		{$t('forms.attachmentChooseFile')}
@@ -17333,7 +17355,7 @@
 																	<img
 																		src={attachmentPreviewUrl(field)}
 																		alt={fieldLabel(field)}
-																		class="h-24 w-full rounded-md border border-line object-cover"
+																		class="h-24 w-full rounded-card border border-line object-cover"
 																		data-attachment-preview={field.key}
 																	/>
 																{/if}
@@ -17342,7 +17364,7 @@
 																	<div class="space-y-2">
 																		{#each fieldAttachments(field.key) as attachment}
 																			<div
-																				class="flex flex-wrap items-center gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-xs dark:bg-slate-950"
+																				class="flex flex-wrap items-center gap-2 rounded-card border border-line bg-nav px-3 py-2 text-xs"
 																				data-attachment-item={attachment.id}
 																			>
 																				{#if attachment.url && attachmentIsPreviewableImage(attachment)}
@@ -17378,7 +17400,7 @@
 																						href={attachmentSignedUrl(attachment) || undefined}
 																						target="_blank"
 																						rel="noreferrer"
-																						class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																						class="inline-flex items-center rounded-control px-2 py-1 text-xs font-medium text-fg underline hover:bg-surface"
 																						data-attachment-open={attachment.id}
 																						data-attachment-signed-url={attachmentSignedUrl(
 																							attachment
@@ -17388,7 +17410,7 @@
 																					<a
 																						href={attachmentSignedUrl(attachment) || undefined}
 																						download={attachment.file_name}
-																						class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+																						class="inline-flex items-center rounded-control px-2 py-1 text-xs font-medium text-fg hover:bg-surface"
 																						data-attachment-download={attachment.id}
 																						data-attachment-signed-download={attachmentSignedUrl(
 																							attachment
@@ -17414,7 +17436,7 @@
 															</div>
 														{:else if fieldType(field) === 'textarea' || fieldType(field) === 'rich_text'}
 															<textarea
-																class="min-h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																class="min-h-24 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																value={draftString(field.key)}
 																placeholder={fieldPlaceholder(field)}
 																readonly={fieldReadOnlyByCondition(field, recordDraft)}
@@ -17424,7 +17446,7 @@
 														{:else if fieldType(field) === 'signature'}
 															<div class="space-y-2" data-signature-field={field.key}>
 																<canvas
-																	class="h-28 w-full touch-none rounded-md border border-dashed border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900"
+																	class="h-28 w-full touch-none rounded-card border border-dashed border-input bg-white"
 																	data-signature-canvas={field.key}
 																	aria-label={$t('forms.signatureCanvas')}
 																	onpointerdown={(event) =>
@@ -17474,14 +17496,14 @@
 																		<img
 																			src={signatureImageValue(recordDraft, field.key)}
 																			alt={fieldLabel(field)}
-																			class="h-10 max-w-48 rounded border border-line bg-white object-contain"
+																			class="h-10 max-w-48 rounded border border-line bg-raised object-contain"
 																			data-signature-preview={field.key}
 																		/>
 																	{/if}
 																</div>
 
 																<textarea
-																	class="min-h-16 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+																	class="min-h-16 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs text-fg"
 																	value={draftString(field.key)}
 																	placeholder={fieldPlaceholder(field)}
 																	readonly={fieldReadOnlyByCondition(field, recordDraft)}
@@ -17492,7 +17514,7 @@
 														{:else if fieldType(field) === 'autonumber'}
 															<input
 																type="text"
-																class="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-fg-muted dark:border-slate-600 dark:bg-slate-800/60"
+																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg-muted"
 																value={draftString(field.key)}
 																placeholder={$t('forms.autonumberGeneratedAfterSave')}
 																readonly
@@ -17522,7 +17544,7 @@
 																	: ['amount', 'number'].includes(fieldType(field))
 																		? '0.01'
 																		: undefined}
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																value={draftString(field.key)}
 																placeholder={fieldPlaceholder(field)}
 																readonly={fieldReadOnlyByCondition(field, recordDraft)}
@@ -17567,7 +17589,7 @@
 								{/if}
 
 								<section
-									class="w-full min-w-0 flex-1 overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900"
+									class="w-full min-w-0 flex-1 overflow-hidden rounded-card border border-line bg-raised"
 									data-record-list-panel
 									inert={panelMode === 'sheet' && !!panelRecordId}
 								>
@@ -17645,7 +17667,7 @@
 									/>
 									{#if lastDeletedRecord}
 										<div
-											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-warning-soft px-4 py-2 text-sm text-warning"
 											data-record-restore-banner={lastDeletedRecord.id}
 										>
 											<span
@@ -17674,7 +17696,7 @@
 
 									{#if focusedRecords.length > 0}
 										<div
-											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-blue-50 px-4 py-2 text-sm text-blue-900 dark:bg-blue-950/30 dark:text-blue-100"
+											class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 py-2 text-sm text-fg-muted"
 											data-record-focus={focusedRecords.map((record) => record.id).join('|')}
 										>
 											<span class="min-w-0 truncate">
@@ -17687,7 +17709,7 @@
 
 											<button
 												type="button"
-												class="rounded-md px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 dark:text-blue-200 dark:hover:bg-blue-900/40"
+												class="rounded-control px-2 py-1 text-xs font-medium text-fg hover:bg-surface"
 												onclick={clearFocusedRecord}
 												data-record-focus-clear>{$t('forms.clearFocusedRecord')}</button
 											>
@@ -17696,7 +17718,7 @@
 
 									{#if records.length === 0}
 										<div class="p-8 text-center text-sm text-fg-muted">
-											<FileText class="mx-auto mb-3 h-8 w-8 text-slate-400" aria-hidden="true" />
+											<FileText class="mx-auto mb-3 h-8 w-8 text-fg-muted" aria-hidden="true" />
 
 											{$t('forms.noRecords')}
 										</div>
@@ -17705,7 +17727,7 @@
 											class="p-8 text-center text-sm text-fg-muted"
 											data-view-empty-filter
 										>
-											<FileText class="mx-auto mb-3 h-8 w-8 text-slate-400" aria-hidden="true" />
+											<FileText class="mx-auto mb-3 h-8 w-8 text-fg-muted" aria-hidden="true" />
 
 											{$t('forms.noMatchingRecords')}
 										</div>
@@ -17750,7 +17772,7 @@
 										<div class="overflow-x-auto p-4" data-view-renderer="gantt">
 											{#if !ganttTimeline.startField}
 												<div
-													class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-fg-muted dark:border-slate-700 dark:bg-slate-950/50"
+													class="rounded-card border border-dashed border-input bg-nav px-4 py-6 text-sm text-fg-muted"
 												>
 													{$t('forms.ganttConfigureFields')}
 												</div>
@@ -17766,7 +17788,7 @@
 
 													{#if fieldHasConditionalHidden(ganttTimeline.startField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-start-field-conditional-hidden={ganttTimeline.startField
 																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -17774,7 +17796,7 @@
 
 													{#if fieldHasConditionalReadOnly(ganttTimeline.startField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-start-field-conditional-readonly={ganttTimeline.startField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -17790,7 +17812,7 @@
 
 													{#if ganttTimeline.endField && fieldHasConditionalHidden(ganttTimeline.endField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-end-field-conditional-hidden={ganttTimeline.endField.key}
 															>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -17798,7 +17820,7 @@
 
 													{#if ganttTimeline.endField && fieldHasConditionalReadOnly(ganttTimeline.endField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-end-field-conditional-readonly={ganttTimeline.endField.key}
 															>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -17814,7 +17836,7 @@
 
 													{#if ganttTimeline.groupField && fieldHasConditionalHidden(ganttTimeline.groupField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-group-field-conditional-hidden={ganttTimeline.groupField
 																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -17822,7 +17844,7 @@
 
 													{#if ganttTimeline.groupField && fieldHasConditionalReadOnly(ganttTimeline.groupField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-group-field-conditional-readonly={ganttTimeline.groupField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -17840,7 +17862,7 @@
 
 													{#if ganttTimeline.dependencyField && fieldHasConditionalHidden(ganttTimeline.dependencyField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-dependency-field-conditional-hidden={ganttTimeline
 																.dependencyField.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -17848,7 +17870,7 @@
 
 													{#if ganttTimeline.dependencyField && fieldHasConditionalReadOnly(ganttTimeline.dependencyField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-gantt-dependency-field-conditional-readonly={ganttTimeline
 																.dependencyField.key}
 															>{$t('forms.fieldConditionReadOnlyBadge')}</span
@@ -17858,19 +17880,19 @@
 
 												{#if ganttTimeline.dates.length === 0}
 													<div
-														class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-fg-muted dark:border-slate-700 dark:bg-slate-950/50"
+														class="rounded-card border border-dashed border-input bg-nav px-4 py-6 text-sm text-fg-muted"
 													>
 														{$t('forms.noRecords')}
 													</div>
 												{:else}
 													<div
-														class="min-w-[980px] rounded-md border border-line bg-white text-sm dark:bg-slate-900"
+														class="min-w-[980px] rounded-control border border-line bg-raised text-sm"
 														data-gantt-scale={ganttTimeline.scale}
 														data-gantt-start={ganttTimeline.dates[0]}
 														data-gantt-end={ganttTimeline.dates[ganttTimeline.dates.length - 1]}
 													>
 														<div
-															class="grid grid-cols-[180px_minmax(0,1fr)] border-b border-line bg-slate-50 dark:bg-slate-950"
+															class="grid grid-cols-[180px_minmax(0,1fr)] border-b border-line bg-nav"
 														>
 															<div
 																class="px-4 py-3 text-xs font-semibold uppercase text-fg-muted"
@@ -17904,14 +17926,14 @@
 																data-gantt-lane={lane.label}
 															>
 																<div
-																	class="bg-slate-50 px-4 py-2 text-xs font-semibold uppercase text-fg-muted dark:bg-slate-950"
+																	class="bg-nav px-4 py-2 text-xs font-semibold uppercase text-fg-muted"
 																>
 																	{lane.label}
 																</div>
 
 																{#if lane.tasks.length === 0}
 																	<div class="grid grid-cols-[180px_minmax(0,1fr)]">
-																		<div class="px-4 py-3 text-xs text-slate-400">
+																		<div class="px-4 py-3 text-xs text-fg-muted">
 																			{$t('forms.noRecords')}
 																		</div>
 																		<div class="min-h-10"></div>
@@ -17940,7 +17962,7 @@
 																			<div class="mt-1 flex flex-wrap items-center gap-1.5">
 																				{#if recordFieldHiddenByCondition(ganttTimeline.startField, task.record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-gantt-task-start-conditional-hidden={`${task.record.id}:${ganttTimeline.startField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -17948,7 +17970,7 @@
 
 																				{#if recordFieldReadOnlyByCondition(ganttTimeline.startField, task.record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-gantt-task-start-conditional-readonly={`${task.record.id}:${ganttTimeline.startField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -17956,7 +17978,7 @@
 
 																				{#if ganttTimeline.endField && recordFieldHiddenByCondition(ganttTimeline.endField, task.record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-gantt-task-end-conditional-hidden={`${task.record.id}:${ganttTimeline.endField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -17964,7 +17986,7 @@
 
 																				{#if ganttTimeline.endField && recordFieldReadOnlyByCondition(ganttTimeline.endField, task.record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-gantt-task-end-conditional-readonly={`${task.record.id}:${ganttTimeline.endField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -17982,7 +18004,7 @@
 
 																			{#if ganttTimeline.dependencyField && recordFieldHiddenByCondition(ganttTimeline.dependencyField, task.record)}
 																				<span
-																					class="mt-1 inline-flex rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																					class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-gantt-task-dependency-conditional-hidden={`${task.record.id}:${ganttTimeline.dependencyField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
@@ -17990,7 +18012,7 @@
 
 																			{#if ganttTimeline.dependencyField && recordFieldReadOnlyByCondition(ganttTimeline.dependencyField, task.record)}
 																				<span
-																					class="mt-1 inline-flex rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																					class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-gantt-task-dependency-conditional-readonly={`${task.record.id}:${ganttTimeline.dependencyField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
@@ -18002,7 +18024,7 @@
 																			style={`grid-template-columns: repeat(${ganttTimeline.dates.length}, minmax(72px, 1fr));`}
 																		>
 																			<div
-																				class="flex items-center justify-between gap-2 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition-opacity dark:bg-emerald-500 dark:text-slate-950"
+																				class="flex items-center justify-between gap-2 rounded-control bg-success px-3 py-2 text-xs font-semibold text-on-success transition-opacity"
 																				style={`grid-column: ${task.startOffset + 1} / span ${task.span};`}
 																				draggable="true"
 																				role="button"
@@ -18024,7 +18046,7 @@
 
 																				{#if ganttTimeline.dependencyField && task.dependencyValue && task.dependencyValue !== '-'}
 																					<span
-																						class="hidden shrink-0 rounded bg-white/15 px-1.5 py-0.5 text-[11px] font-medium text-white/90 md:inline dark:text-slate-950"
+																						class="hidden shrink-0 rounded bg-on-success/15 px-1.5 py-0.5 text-[11px] font-medium text-on-success md:inline"
 																						data-gantt-bar-dependency-label={task.record.id}
 																						>{task.dependencyValue}</span
 																					>
@@ -18033,7 +18055,7 @@
 																				{#if ganttTimeline.endField}
 																					<button
 																						type="button"
-																						class="shrink-0 rounded bg-white/20 px-1.5 py-0.5 text-[11px] leading-none text-white hover:bg-white/30 dark:text-slate-950"
+																						class="shrink-0 rounded bg-on-success/20 px-1.5 py-0.5 text-[11px] leading-none text-on-success hover:bg-on-success/30"
 																						onclick={(event) => {
 																							event.stopPropagation();
 																							extendGanttTaskEnd(task);
@@ -18057,7 +18079,7 @@
 										<div class="overflow-x-auto p-4" data-view-renderer="pivot">
 											{#if !pivotTable.rowField || !pivotTable.columnField || !pivotTable.valueField}
 												<div
-													class="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-fg-muted dark:border-slate-700 dark:bg-slate-950/50"
+													class="rounded-card border border-dashed border-input bg-nav px-4 py-6 text-sm text-fg-muted"
 												>
 													{$t('forms.pivotConfigureFields')}
 												</div>
@@ -18071,7 +18093,7 @@
 
 													{#if fieldHasConditionalHidden(pivotTable.rowField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-row-field-conditional-hidden={pivotTable.rowField.key}
 															>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -18079,7 +18101,7 @@
 
 													{#if fieldHasConditionalReadOnly(pivotTable.rowField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-row-field-conditional-readonly={pivotTable.rowField.key}
 															>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -18095,7 +18117,7 @@
 
 													{#if fieldHasConditionalHidden(pivotTable.columnField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-column-field-conditional-hidden={pivotTable.columnField
 																.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -18103,7 +18125,7 @@
 
 													{#if fieldHasConditionalReadOnly(pivotTable.columnField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-column-field-conditional-readonly={pivotTable.columnField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -18118,7 +18140,7 @@
 
 													{#if fieldHasConditionalHidden(pivotTable.valueField)}
 														<span
-															class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-value-field-conditional-hidden={pivotTable.valueField.key}
 															>{$t('forms.fieldConditionHiddenBadge')}</span
 														>
@@ -18126,7 +18148,7 @@
 
 													{#if fieldHasConditionalReadOnly(pivotTable.valueField)}
 														<span
-															class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+															class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 															data-pivot-value-field-conditional-readonly={pivotTable.valueField
 																.key}>{$t('forms.fieldConditionReadOnlyBadge')}</span
 														>
@@ -18231,7 +18253,7 @@
 												<div class="mb-3 flex flex-wrap justify-end gap-2">
 													<button
 														type="button"
-														class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+														class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface"
 														onclick={copyPivotTableMatrix}
 														data-pivot-copy-table
 														data-pivot-table-copied={copiedPivotTableMatrix ? 'true' : undefined}
@@ -18242,7 +18264,7 @@
 
 													<button
 														type="button"
-														class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+														class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface"
 														onclick={exportPivotTableMatrixCsv}
 														data-pivot-export-table
 														data-pivot-table-exported={exportedPivotTableMatrix
@@ -18258,7 +18280,7 @@
 													class="min-w-full divide-y divide-line text-sm"
 												>
 													<thead
-														class="bg-slate-50 text-left text-xs uppercase tracking-wide text-fg-muted dark:bg-slate-900"
+														class="bg-nav text-left text-xs uppercase tracking-wide text-fg-muted"
 													>
 														<tr>
 															<th class="px-4 py-3 font-medium">
@@ -18267,7 +18289,7 @@
 
 																	{#if fieldHasConditionalHidden(pivotTable.rowField)}
 																		<span
-																			class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																			class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																			data-pivot-table-row-field-conditional-hidden={pivotTable
 																				.rowField.key}>{$t('forms.fieldConditionHiddenBadge')}</span
 																		>
@@ -18275,7 +18297,7 @@
 
 																	{#if fieldHasConditionalReadOnly(pivotTable.rowField)}
 																		<span
-																			class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																			class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																			data-pivot-table-row-field-conditional-readonly={pivotTable
 																				.rowField.key}
 																			>{$t('forms.fieldConditionReadOnlyBadge')}</span
@@ -18294,7 +18316,7 @@
 
 																		{#if recordsFieldHiddenByCondition(pivotTable.columnField, pivotColumnRecords(column))}
 																			<span
-																				class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-pivot-column-conditional-hidden={`${column.label}:${pivotTable.columnField.key}`}
 																				>{$t('forms.fieldConditionHiddenBadge')}</span
 																			>
@@ -18302,7 +18324,7 @@
 
 																		{#if recordsFieldReadOnlyByCondition(pivotTable.columnField, pivotColumnRecords(column))}
 																			<span
-																				class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-pivot-column-conditional-readonly={`${column.label}:${pivotTable.columnField.key}`}
 																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																			>
@@ -18322,7 +18344,7 @@
 													<tbody class="divide-y divide-line">
 														{#each pivotTable.rows as row}
 															<tr
-																class="hover:bg-slate-50 dark:hover:bg-slate-800/70"
+																class="hover:bg-surface"
 																data-pivot-row={row.label}
 															>
 																<th
@@ -18333,7 +18355,7 @@
 
 																		{#if recordsFieldHiddenByCondition(pivotTable.rowField, pivotRowRecords(row))}
 																			<span
-																				class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-pivot-row-conditional-hidden={`${row.label}:${pivotTable.rowField.key}`}
 																				>{$t('forms.fieldConditionHiddenBadge')}</span
 																			>
@@ -18341,7 +18363,7 @@
 
 																		{#if recordsFieldReadOnlyByCondition(pivotTable.rowField, pivotRowRecords(row))}
 																			<span
-																				class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-pivot-row-conditional-readonly={`${row.label}:${pivotTable.rowField.key}`}
 																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																			>
@@ -18358,7 +18380,7 @@
 																	>
 																		<button
 																			type="button"
-																			class="flex w-full flex-col items-end rounded px-2 py-1 text-right font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="flex w-full flex-col items-end rounded px-2 py-1 text-right font-medium text-fg hover:bg-surface"
 																			style={pivotCellHeatmapStyle(cellValue, pivotTable)}
 																			onclick={() => selectPivotDrilldown(row, column)}
 																			data-pivot-cell-button={`${row.label}:${column.label}`}
@@ -18389,7 +18411,7 @@
 
 																			{#if recordsFieldHiddenByCondition(pivotTable.rowField, pivotCellRecords(row, column))}
 																				<span
-																					class="mt-0.5 rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																					class="mt-0.5 rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-pivot-cell-row-conditional-hidden={`${row.label}:${column.label}:${pivotTable.rowField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
@@ -18397,7 +18419,7 @@
 
 																			{#if recordsFieldReadOnlyByCondition(pivotTable.columnField, pivotCellRecords(row, column))}
 																				<span
-																					class="mt-0.5 rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																					class="mt-0.5 rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-pivot-cell-column-conditional-readonly={`${row.label}:${column.label}:${pivotTable.columnField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
@@ -18406,7 +18428,7 @@
 
 																		<button
 																			type="button"
-																			class="mt-1 inline-flex items-center rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
+																			class="mt-1 inline-flex items-center rounded p-1 text-fg-muted hover:bg-surface hover:text-fg"
 																			onclick={() => copyPivotCellValue(row, column, cellValue)}
 																			aria-label={$t('forms.copyPivotCellValue')}
 																			data-pivot-cell-copy={`${row.label}:${column.label}`}
@@ -18426,7 +18448,7 @@
 																	>
 																		<button
 																			type="button"
-																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-fg hover:bg-surface"
 																			onclick={() => selectPivotDrilldown(row, null)}
 																			data-pivot-row-total-button={row.label}
 																			>{formatPivotTotalDisplayValue(
@@ -18443,7 +18465,7 @@
 
 													{#if pivotShowColumnTotals(pivotTable.totalsMode)}
 														<tfoot
-															class="bg-slate-50 text-sm font-semibold text-fg dark:bg-slate-900"
+															class="bg-nav text-sm font-semibold text-fg"
 														>
 															<tr>
 																<th class="px-4 py-3 text-left">{$t('forms.pivotTotal')}</th>
@@ -18455,7 +18477,7 @@
 																	>
 																		<button
 																			type="button"
-																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-fg hover:bg-surface"
 																			onclick={() => selectPivotDrilldown(null, column)}
 																			data-pivot-column-total-button={column.label}
 																			>{formatPivotTotalDisplayValue(
@@ -18471,7 +18493,7 @@
 																	<td class="px-4 py-3 text-right" data-pivot-grand-total>
 																		<button
 																			type="button"
-																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+																			class="inline-flex justify-end rounded px-2 py-1 text-right font-semibold text-fg hover:bg-surface"
 																			onclick={() => selectPivotDrilldown(null, null)}
 																			data-pivot-grand-total-button
 																			>{formatPivotTotalDisplayValue(
@@ -18489,7 +18511,7 @@
 
 												{#if pivotDrilldown}
 													<section
-														class="mt-4 rounded-md border border-line bg-white p-4 dark:bg-slate-900"
+														class="mt-4 rounded-card border border-line bg-raised p-4"
 														data-pivot-drilldown={`${pivotDrilldown.rowLabel}:${pivotDrilldown.columnLabel}`}
 														data-pivot-drilldown-copied={copiedPivotDrilldownKey ===
 														pivotDrilldownKey()
@@ -18527,7 +18549,7 @@
 															<div class="flex shrink-0 items-center gap-2">
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																	onclick={copyPivotDrilldownRecordIds}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-copy-ids
@@ -18538,7 +18560,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																	onclick={exportPivotDrilldownRecordsCsv}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-export-csv
@@ -18553,7 +18575,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																	onclick={applyPivotDrilldownFilters}
 																	disabled={!canApplyPivotDrilldownFilters()}
 																	data-pivot-drilldown-apply-filters
@@ -18568,7 +18590,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+																	class="inline-flex items-center gap-1 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 																	onclick={focusPivotDrilldownRecords}
 																	disabled={pivotDrilldownRecords.length === 0}
 																	data-pivot-drilldown-focus
@@ -18579,7 +18601,7 @@
 
 																<button
 																	type="button"
-																	class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
+																	class="rounded-control p-1.5 text-fg-muted hover:bg-surface hover:text-fg"
 																	onclick={() => (pivotDrilldown = null)}
 																	aria-label={$t('common.close')}>x</button
 																>
@@ -18613,7 +18635,7 @@
 																			<div class="mt-1 flex flex-wrap items-center gap-1.5">
 																				{#if recordFieldHiddenByCondition(pivotTable.rowField, record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-pivot-drilldown-row-conditional-hidden={`${record.id}:${pivotTable.rowField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -18621,7 +18643,7 @@
 
 																				{#if recordFieldReadOnlyByCondition(pivotTable.rowField, record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-pivot-drilldown-row-conditional-readonly={`${record.id}:${pivotTable.rowField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -18629,7 +18651,7 @@
 
 																				{#if recordFieldHiddenByCondition(pivotTable.columnField, record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-pivot-drilldown-column-conditional-hidden={`${record.id}:${pivotTable.columnField.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -18637,7 +18659,7 @@
 
 																				{#if recordFieldReadOnlyByCondition(pivotTable.columnField, record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-pivot-drilldown-column-conditional-readonly={`${record.id}:${pivotTable.columnField.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -18647,7 +18669,7 @@
 
 																		<button
 																			type="button"
-																			class="shrink-0 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+																			class="shrink-0 rounded-control border border-input px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface"
 																			onclick={() => selectRecord(record)}
 																			data-pivot-drilldown-open={record.id}
 																			>{$t('forms.openRecord')}</button
@@ -18666,7 +18688,7 @@
 											data-view-renderer="detail"
 										>
 											{#each viewRecords as record}
-												<article class="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60">
+												<article class="p-4 hover:bg-surface">
 													<div class="flex items-start justify-between gap-3">
 														<button
 															type="button"
@@ -18675,7 +18697,7 @@
 															aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 														>
 															<span
-																class="block truncate font-medium text-blue-700 dark:text-blue-300"
+																class="block truncate font-medium text-fg"
 																>{record.title}</span
 															>
 
@@ -18688,7 +18710,7 @@
 
 														<button
 															type="button"
-															class="inline-flex shrink-0 items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+															class="inline-flex shrink-0 items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 															disabled={deletingRecordId === record.id}
 															onclick={() => handleDeleteRecord(record)}
 															aria-label={$t('forms.deleteRecord')}
@@ -18777,7 +18799,7 @@
 
 											{#if kanbanGroupField && kanbanMoveOptions(kanbanGroupField).length > 0}
 												<div
-													class="mb-3 flex min-w-[760px] flex-wrap items-end gap-2 rounded-md border border-line bg-white p-2 dark:bg-slate-900"
+													class="mb-3 flex min-w-[760px] flex-wrap items-end gap-2 rounded-control border border-line bg-raised p-2"
 												>
 													<div class="min-w-40 flex-1 text-xs text-fg-muted">
 														<span class="font-medium text-fg"
@@ -18798,7 +18820,7 @@
 														<select
 															value={bulkKanbanTarget}
 															onchange={(event) => (bulkKanbanTarget = selectValue(event))}
-															class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+															class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 														>
 															<option value="">{$t('forms.viewNoRule')}</option>
 
@@ -18832,7 +18854,7 @@
 												{#each kanbanSwimlaneRows() as swimlane}
 													<section
 														class={kanbanSwimlaneField
-															? 'rounded-lg border border-line bg-slate-100/70 p-3 dark:bg-slate-950/40'
+															? 'rounded-card border border-line bg-surface p-3'
 															: ''}
 														data-kanban-swimlane={kanbanSwimlaneField ? swimlane.label : undefined}
 														data-record-count={swimlane.records.length}
@@ -18856,7 +18878,7 @@
 																</div>
 
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-900"
+																	class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: swimlane.records.length }
 																	})}</span
@@ -18867,9 +18889,9 @@
 														<div class="grid gap-3 lg:grid-cols-3 xl:grid-cols-4">
 															{#each swimlane.groups as group}
 																<section
-																	class={`rounded-lg border bg-slate-50 transition-colors dark:bg-slate-950/60 ${
+																	class={`rounded-card border bg-nav transition-colors ${
 																		kanbanColumnWipExceeded(group.label)
-																			? 'border-amber-300 dark:border-amber-700'
+																			? 'border-line'
 																			: 'border-line'
 																	}`}
 																	data-record-count={group.records.length}
@@ -18891,8 +18913,8 @@
 																		<span
 																			class={`rounded px-2 py-0.5 text-xs ${
 																				kanbanColumnWipExceeded(group.label)
-																					? 'bg-amber-100 text-warning dark:bg-amber-950/60'
-																					: 'bg-white text-fg-muted dark:bg-slate-900'
+																					? 'bg-warning-soft text-warning'
+																					: 'bg-raised text-fg-muted'
 																			}`}
 																			>{kanbanWipLabel(
 																				group.label,
@@ -18904,7 +18926,7 @@
 																	<div class="space-y-2 p-2">
 																		{#each group.records as record}
 																			<article
-																				class={`rounded-md border border-line bg-white p-3 transition-opacity dark:bg-slate-900 ${draggingKanbanRecordId === record.id ? 'opacity-60' : ''}`}
+																				class={`rounded-card border border-line bg-raised p-3 transition-opacity ${draggingKanbanRecordId === record.id ? 'opacity-60' : ''}`}
 																				draggable={Boolean(kanbanGroupField)}
 																				data-kanban-card={record.id}
 																				role="listitem"
@@ -18916,7 +18938,7 @@
 																					<div class="flex min-w-0 items-start gap-2">
 																						<input
 																							type="checkbox"
-																							class="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600"
+																							class="mt-0.5 h-4 w-4 rounded border-input accent-primary"
 																							checked={isKanbanRecordSelected(record.id)}
 																							disabled={bulkMovingKanban}
 																							onchange={(event) =>
@@ -18931,7 +18953,7 @@
 
 																						<button
 																							type="button"
-																							class="min-w-0 text-left text-sm font-medium text-blue-700 dark:text-blue-300"
+																							class="min-w-0 text-left text-sm font-medium text-fg"
 																							onclick={() => selectRecord(record)}
 																							aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 																							><span class="block truncate">{record.title}</span
@@ -18941,7 +18963,7 @@
 
 																					<button
 																						type="button"
-																						class="inline-flex shrink-0 items-center rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																						class="inline-flex shrink-0 items-center rounded-control p-1 text-danger hover:bg-danger-soft disabled:opacity-50"
 																						disabled={deletingRecordId === record.id}
 																						onclick={() => handleDeleteRecord(record)}
 																						aria-label={$t('forms.deleteRecord')}
@@ -18964,7 +18986,7 @@
 
 																								{#if memberFieldHidden(field)}
 																									<span
-																										class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																										class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																										data-kanban-card-field-permission-hidden={`${record.id}:${field.key}`}
 																										>{$t('forms.fieldHiddenBadge')}</span
 																									>
@@ -18972,7 +18994,7 @@
 
 																								{#if memberFieldLocked(field)}
 																									<span
-																										class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+																										class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																										data-kanban-card-field-permission-locked={`${record.id}:${field.key}`}
 																										>{$t('forms.fieldLockedBadge')}</span
 																									>
@@ -18980,7 +19002,7 @@
 
 																								{#if recordFieldHiddenByCondition(field, record)}
 																									<span
-																										class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																										class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																										data-kanban-card-field-conditional-hidden={`${record.id}:${field.key}`}
 																										>{$t('forms.fieldConditionHiddenBadge')}</span
 																									>
@@ -18988,7 +19010,7 @@
 
 																								{#if recordFieldReadOnlyByCondition(field, record)}
 																									<span
-																										class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																										class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																										data-kanban-card-field-conditional-readonly={`${record.id}:${field.key}`}
 																										>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																									>
@@ -19016,7 +19038,7 @@
 																								kanbanGroupField,
 																								selectValue(event)
 																							)}
-																						class="mt-3 w-full rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-fg disabled:opacity-50 dark:bg-slate-950"
+																						class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:opacity-50"
 																					>
 																						{#each kanbanMoveOptions(kanbanGroupField) as option}
 																							<option value={option}>{option}</option>
@@ -19048,7 +19070,7 @@
 
 												{#if calendarDateField && memberFieldHidden(calendarDateField)}
 													<span
-														class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+														class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 														data-calendar-date-field-permission-hidden={calendarDateField.key}
 														>{$t('forms.fieldHiddenBadge')}</span
 													>
@@ -19056,7 +19078,7 @@
 
 												{#if calendarDateField && memberFieldLocked(calendarDateField)}
 													<span
-														class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+														class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 														data-calendar-date-field-permission-locked={calendarDateField.key}
 														>{$t('forms.fieldLockedBadge')}</span
 													>
@@ -19064,7 +19086,7 @@
 
 												{#if calendarDateField && fieldHasConditionalHidden(calendarDateField)}
 													<span
-														class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+														class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 														data-calendar-date-field-conditional-hidden={calendarDateField.key}
 														>{$t('forms.fieldConditionHiddenBadge')}</span
 													>
@@ -19072,7 +19094,7 @@
 
 												{#if calendarDateField && fieldHasConditionalReadOnly(calendarDateField)}
 													<span
-														class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+														class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 														data-calendar-date-field-conditional-readonly={calendarDateField.key}
 														>{$t('forms.fieldConditionReadOnlyBadge')}</span
 													>
@@ -19094,7 +19116,7 @@
 												{#each calendarResourceRows() as resource}
 													<section
 														class={calendarResourceField
-															? 'rounded-lg border border-line bg-slate-100/70 p-3 dark:bg-slate-950/40'
+															? 'rounded-card border border-line bg-surface p-3'
 															: ''}
 														data-calendar-resource={calendarResourceField
 															? resource.label
@@ -19113,7 +19135,7 @@
 
 																		{#if memberFieldHidden(calendarResourceField)}
 																			<span
-																				class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-warning dark:bg-amber-950/50"
+																				class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning"
 																				data-calendar-resource-field-permission-hidden={calendarResourceField.key}
 																				>{$t('forms.fieldHiddenBadge')}</span
 																			>
@@ -19121,7 +19143,7 @@
 
 																		{#if memberFieldLocked(calendarResourceField)}
 																			<span
-																				class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-fg-muted dark:bg-slate-800"
+																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-calendar-resource-field-permission-locked={calendarResourceField.key}
 																				>{$t('forms.fieldLockedBadge')}</span
 																			>
@@ -19129,7 +19151,7 @@
 
 																		{#if fieldHasConditionalHidden(calendarResourceField)}
 																			<span
-																				class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-calendar-resource-field-conditional-hidden={calendarResourceField.key}
 																				>{$t('forms.fieldConditionHiddenBadge')}</span
 																			>
@@ -19137,7 +19159,7 @@
 
 																		{#if fieldHasConditionalReadOnly(calendarResourceField)}
 																			<span
-																				class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																				class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																				data-calendar-resource-field-conditional-readonly={calendarResourceField.key}
 																				>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																			>
@@ -19152,7 +19174,7 @@
 																</div>
 
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-900"
+																	class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: resource.records.length }
 																	})}</span
@@ -19170,7 +19192,7 @@
 															>
 																{#each calendarAgendaGroups(resource) as group}
 																	<section
-																		class="rounded-lg border border-line bg-white dark:bg-slate-900"
+																		class="rounded-card border border-line bg-raised"
 																		data-calendar-agenda-date={group.date}
 																		data-record-count={group.records.length}
 																	>
@@ -19186,7 +19208,7 @@
 																			<div class="flex shrink-0 items-center gap-1">
 																				<button
 																					type="button"
-																					class="rounded-md p-1.5 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																					class="rounded-control p-1.5 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																					onclick={() =>
 																						applyCalendarBucketFilters(group.date, resource)}
 																					disabled={!canApplyCalendarBucketFilters(
@@ -19204,7 +19226,7 @@
 																				>
 
 																				<span
-																					class="rounded bg-slate-50 px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-950"
+																					class="rounded bg-nav px-2 py-0.5 text-xs text-fg-muted"
 																					>{$t('forms.groupRecordCount', {
 																						values: { count: group.records.length }
 																					})}</span
@@ -19275,7 +19297,7 @@
 
 																						{#if visibleFields[0] && recordFieldHiddenByCondition(visibleFields[0], record)}
 																							<span
-																								class="mt-1 inline-flex rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																								class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																								data-calendar-summary-conditional-hidden={`${record.id}:${visibleFields[0].key}`}
 																								>{$t('forms.fieldConditionHiddenBadge')}</span
 																							>
@@ -19283,7 +19305,7 @@
 
 																						{#if visibleFields[0] && recordFieldReadOnlyByCondition(visibleFields[0], record)}
 																							<span
-																								class="mt-1 inline-flex rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																								class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																								data-calendar-summary-conditional-readonly={`${record.id}:${visibleFields[0].key}`}
 																								>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																							>
@@ -19291,7 +19313,7 @@
 
 																						{#if occurrence.recurring}
 																							<span
-																								class="mt-2 inline-flex rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																								class="mt-2 inline-flex rounded bg-surface px-2 py-0.5 text-xs font-medium text-fg-muted"
 																								>{$t('forms.calendarRecurringOccurrence')}</span
 																							>
 																						{/if}
@@ -19300,7 +19322,7 @@
 																					<div class="flex items-center justify-end gap-1">
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																							onclick={() =>
 																								shiftCalendarOccurrence(occurrence, -1)}
 																							disabled={updatingCalendarRecordId === record.id ||
@@ -19318,7 +19340,7 @@
 
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																							onclick={() => shiftCalendarOccurrence(occurrence, 1)}
 																							disabled={updatingCalendarRecordId === record.id ||
 																								!canShiftCalendarOccurrence(occurrence)}
@@ -19335,7 +19357,7 @@
 
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface hover:text-fg"
 																							onclick={() => copyCalendarSchedule(occurrence)}
 																							aria-label={$t('forms.copyCalendarSchedule')}
 																							title={$t('forms.copyCalendarSchedule')}
@@ -19350,7 +19372,7 @@
 
 																						<button
 																							type="button"
-																							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																							class="inline-flex h-8 w-8 items-center justify-center rounded-control text-danger hover:bg-danger-soft disabled:opacity-50"
 																							disabled={deletingRecordId === record.id}
 																							onclick={() => handleDeleteRecord(record)}
 																							aria-label={$t('forms.deleteRecord')}
@@ -19377,7 +19399,7 @@
 															>
 																{#each resource.groups as group}
 																	<section
-																		class="min-h-48 rounded-lg border border-line bg-slate-50 dark:bg-slate-950/60"
+																		class="min-h-48 rounded-card border border-line bg-nav"
 																		data-calendar-date={group.date}
 																		data-record-count={group.records.length}
 																		role="list"
@@ -19396,7 +19418,7 @@
 																			<div class="flex shrink-0 items-center gap-1">
 																				<button
 																					type="button"
-																					class="rounded-md p-1.5 text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																					class="rounded-control p-1.5 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
 																					onclick={() =>
 																						applyCalendarBucketFilters(group.date, resource)}
 																					disabled={!canApplyCalendarBucketFilters(
@@ -19414,7 +19436,7 @@
 																				>
 
 																				<span
-																					class="rounded bg-white px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-900"
+																					class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
 																					>{$t('forms.groupRecordCount', {
 																						values: { count: group.records.length }
 																					})}</span
@@ -19427,7 +19449,7 @@
 																				{@const record = occurrence.record}
 
 																				<article
-																					class={`rounded-md border border-line bg-white p-3 transition-opacity dark:bg-slate-900 ${draggingCalendarRecordId === record.id ? 'opacity-60' : ''}`}
+																					class={`rounded-card border border-line bg-raised p-3 transition-opacity ${draggingCalendarRecordId === record.id ? 'opacity-60' : ''}`}
 																					draggable={Boolean(calendarDateField) &&
 																						!occurrence.recurring}
 																					data-calendar-card={record.id}
@@ -19461,7 +19483,7 @@
 																							aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 																						>
 																							<span
-																								class="block truncate text-sm font-medium text-blue-700 dark:text-blue-300"
+																								class="block truncate text-sm font-medium text-fg"
 																								>{record.title}</span
 																							>
 
@@ -19475,7 +19497,7 @@
 
 																							{#if visibleFields[0] && recordFieldHiddenByCondition(visibleFields[0], record)}
 																								<span
-																									class="mt-1 inline-flex rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																									class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																									data-calendar-summary-conditional-hidden={`${record.id}:${visibleFields[0].key}`}
 																									>{$t('forms.fieldConditionHiddenBadge')}</span
 																								>
@@ -19483,7 +19505,7 @@
 
 																							{#if visibleFields[0] && recordFieldReadOnlyByCondition(visibleFields[0], record)}
 																								<span
-																									class="mt-1 inline-flex rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																									class="mt-1 inline-flex rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																									data-calendar-summary-conditional-readonly={`${record.id}:${visibleFields[0].key}`}
 																									>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																								>
@@ -19493,7 +19515,7 @@
 																						<div class="flex shrink-0 items-center gap-1">
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																								class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																								onclick={() =>
 																									shiftCalendarOccurrence(occurrence, -1)}
 																								disabled={updatingCalendarRecordId === record.id ||
@@ -19511,7 +19533,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1 text-fg-muted hover:bg-slate-100 hover:text-fg disabled:opacity-40 dark:hover:bg-slate-800"
+																								class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg disabled:opacity-40"
 																								onclick={() =>
 																									shiftCalendarOccurrence(occurrence, 1)}
 																								disabled={updatingCalendarRecordId === record.id ||
@@ -19529,7 +19551,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1 text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
+																								class="inline-flex items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg"
 																								onclick={() => copyCalendarSchedule(occurrence)}
 																								aria-label={$t('forms.copyCalendarSchedule')}
 																								title={$t('forms.copyCalendarSchedule')}
@@ -19544,7 +19566,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																								class="inline-flex items-center rounded-control p-1 text-danger hover:bg-danger-soft disabled:opacity-50"
 																								disabled={deletingRecordId === record.id}
 																								onclick={() => handleDeleteRecord(record)}
 																								aria-label={$t('forms.deleteRecord')}
@@ -19559,7 +19581,7 @@
 																					{#if occurrence.recurring}
 																						<div class="mt-3 space-y-2">
 																							<span
-																								class="inline-flex rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																								class="inline-flex rounded bg-surface px-2 py-0.5 text-xs font-medium text-fg-muted"
 																								>{$t('forms.calendarRecurringOccurrence')}</span
 																							>
 
@@ -19586,7 +19608,7 @@
 																												calendarDateField,
 																												inputValue(event)
 																											)}
-																										class="w-full rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-900 disabled:opacity-50 dark:border-blue-900/70 dark:bg-blue-950/30 dark:text-blue-100"
+																										class="w-full rounded-control border border-input bg-selected px-2 py-1.5 text-xs text-fg disabled:opacity-50"
 																									/>
 																								</label>
 																							{/if}
@@ -19595,7 +19617,7 @@
 
 																					{#if occurrence.spanDays > 1}
 																						<div
-																							class="mt-3 inline-flex max-w-full items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+																							class="mt-3 inline-flex max-w-full items-center gap-1 rounded bg-success-soft px-2 py-0.5 text-xs font-medium text-success"
 																						>
 																							<span class="truncate">
 																								{$t('forms.calendarDateSpan', {
@@ -19623,7 +19645,7 @@
 																									calendarDateField,
 																									inputValue(event)
 																								)}
-																							class="mt-3 w-full rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-fg disabled:opacity-50 dark:bg-slate-950"
+																							class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:opacity-50"
 																						/>
 																					{/if}
 
@@ -19649,7 +19671,7 @@
 																										calendarEndField,
 																										inputValue(event)
 																									)}
-																								class="w-full rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-xs text-emerald-900 disabled:opacity-50 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-100"
+																								class="w-full rounded-control border border-line bg-success-soft px-2 py-1.5 text-xs text-success disabled:opacity-50"
 																							/>
 																						</label>
 																					{/if}
@@ -19672,10 +19694,10 @@
 
 											<article
 												class={selectedCardLayout === 'gallery'
-													? 'overflow-hidden rounded-lg border border-line bg-white ring-1 ring-transparent transition-shadow hover:shadow-md dark:bg-slate-900'
+													? 'overflow-hidden rounded-card border border-line bg-raised ring-1 ring-transparent transition-shadow hover:shadow-md'
 													: selectedCardLayout === 'compact' || selectedCardLayout === 'list'
-														? 'overflow-visible rounded-md border border-line bg-white dark:bg-slate-900'
-														: 'overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900'}
+														? 'overflow-visible rounded-control border border-line bg-raised'
+														: 'overflow-hidden rounded-card border border-line bg-raised'}
 												data-card-copied={copiedCardRecordId === record.id ? record.id : undefined}
 												data-card-exported={exportedCardRecordId === record.id
 													? record.id
@@ -19715,7 +19737,7 @@
 														<img
 															src={coverUrl}
 															alt={cardTitle(record)}
-															class={`h-24 w-28 shrink-0 rounded-md ${cardCoverObjectClass(selectedCardCoverFit)}`}
+															class={`h-24 w-28 shrink-0 rounded-control ${cardCoverObjectClass(selectedCardCoverFit)}`}
 															data-card-cover={record.id}
 															data-card-cover-aspect={selectedCardCoverAspect}
 															data-card-cover-fit={selectedCardCoverFit}
@@ -19727,7 +19749,7 @@
 														<img
 															src={coverUrl}
 															alt={cardTitle(record)}
-															class={`h-12 w-12 shrink-0 rounded-md ${cardCoverObjectClass(selectedCardCoverFit)}`}
+															class={`h-12 w-12 shrink-0 rounded-control ${cardCoverObjectClass(selectedCardCoverFit)}`}
 															data-card-cover={record.id}
 															data-card-cover-aspect={selectedCardCoverAspect}
 															data-card-cover-fit={selectedCardCoverFit}
@@ -19746,7 +19768,7 @@
 																? 'block truncate text-base font-semibold text-fg'
 																: selectedCardLayout === 'compact' || selectedCardLayout === 'list'
 																	? 'block truncate text-sm font-semibold text-fg'
-																	: 'block truncate font-medium text-blue-700 dark:text-blue-300'}
+																	: 'block truncate font-medium text-fg'}
 															data-card-title={record.id}>{cardTitle(record)}</span
 														>
 
@@ -19757,7 +19779,7 @@
 
 														{#if selectedCardShowTimestamps}
 															<span
-																class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-slate-400 dark:text-slate-500"
+																class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-fg-muted"
 																data-card-timestamps={record.id}
 															>
 																<span data-card-created-at={record.id}
@@ -19775,7 +19797,7 @@
 
 														{#if selectedCardShowRecordId}
 															<span
-																class="mt-1 block truncate font-mono text-[11px] text-slate-400 dark:text-slate-500"
+																class="mt-1 block truncate font-mono text-[11px] text-fg-muted"
 																data-card-record-id={record.id}
 																>{$t('forms.cardRecordId')}: {record.id}</span
 															>
@@ -19791,17 +19813,17 @@
 
 														<details class="group relative shrink-0" data-card-menu={record.id}>
 															<summary
-																class="inline-flex cursor-pointer list-none items-center rounded-md p-1.5 text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
+																class="inline-flex cursor-pointer list-none items-center rounded-control p-1.5 text-fg-muted hover:bg-surface hover:text-fg"
 																aria-label={$t('forms.cardActions')}
 																><MoreVertical class="h-4 w-4" aria-hidden="true" /></summary
 															>
 
 															<div
-																class="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-md border border-line bg-white py-1 text-sm shadow-lg dark:bg-slate-900"
+																class="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-float border border-line bg-overlay py-1 text-sm shadow-overlay"
 															>
 																<button
 																	type="button"
-																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																	data-card-action={`${record.id}:open`}
 																	onclick={() => selectRecord(record)}
 																>
@@ -19811,7 +19833,7 @@
 
 																<button
 																	type="button"
-																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																	data-card-action={`${record.id}:copy-id`}
 																	onclick={() => copyRecordId(record)}
 																>
@@ -19821,7 +19843,7 @@
 
 																<button
 																	type="button"
-																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																	data-card-action={`${record.id}:export-record`}
 																	onclick={() => exportCardRecordDetails(record)}
 																>
@@ -19831,7 +19853,7 @@
 
 																<button
 																	type="button"
-																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																	class="flex w-full items-center gap-2 px-3 py-2 text-left text-danger hover:bg-danger-soft disabled:opacity-50"
 																	disabled={deletingRecordId === record.id}
 																	data-card-action={`${record.id}:delete`}
 																	onclick={() => handleDeleteRecord(record)}
@@ -19869,7 +19891,7 @@
 
 																{#if memberFieldHidden(field)}
 																	<span
-																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-warning dark:bg-amber-950/50"
+																		class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning"
 																		data-card-field-permission-hidden={`${record.id}:${field.key}`}
 																		>{$t('forms.fieldHiddenBadge')}</span
 																	>
@@ -19877,7 +19899,7 @@
 
 																{#if memberFieldLocked(field)}
 																	<span
-																		class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-fg-muted dark:bg-slate-800"
+																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-card-field-permission-locked={`${record.id}:${field.key}`}
 																		>{$t('forms.fieldLockedBadge')}</span
 																	>
@@ -19885,7 +19907,7 @@
 
 																{#if recordFieldHiddenByCondition(field, record)}
 																	<span
-																		class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-card-field-conditional-hidden={`${record.id}:${field.key}`}
 																		>{$t('forms.fieldConditionHiddenBadge')}</span
 																	>
@@ -19893,7 +19915,7 @@
 
 																{#if recordFieldReadOnlyByCondition(field, record)}
 																	<span
-																		class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-card-field-conditional-readonly={`${record.id}:${field.key}`}
 																		>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																	>
@@ -19920,7 +19942,7 @@
 
 																	{#if memberFieldHidden(field)}
 																		<span
-																			class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																			class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																			data-card-select-permission-hidden={`${record.id}:${field.key}`}
 																			>{$t('forms.fieldHiddenBadge')}</span
 																		>
@@ -19928,7 +19950,7 @@
 
 																	{#if memberFieldLocked(field)}
 																		<span
-																			class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+																			class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																			data-card-select-permission-locked={`${record.id}:${field.key}`}
 																			>{$t('forms.fieldLockedBadge')}</span
 																		>
@@ -19936,7 +19958,7 @@
 
 																	{#if recordFieldHiddenByCondition(field, record)}
 																		<span
-																			class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																			class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																			data-card-select-conditional-hidden={`${record.id}:${field.key}`}
 																			>{$t('forms.fieldConditionHiddenBadge')}</span
 																		>
@@ -19944,7 +19966,7 @@
 
 																	{#if recordFieldReadOnlyByCondition(field, record)}
 																		<span
-																			class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																			class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																			data-card-select-conditional-readonly={`${record.id}:${field.key}`}
 																			>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																		>
@@ -19958,7 +19980,7 @@
 																	data-card-select={`${record.id}:${field.key}`}
 																	onchange={(event) =>
 																		updateCardRecordSelectField(record, field, selectValue(event))}
-																	class="w-full rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-fg disabled:opacity-50 dark:bg-slate-950"
+																	class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:opacity-50"
 																>
 																	{#each kanbanMoveOptions(field) as option}
 																		<option value={option}>{option}</option>
@@ -19993,7 +20015,7 @@
 													{@const collapsed = cardGroupCollapsed(group)}
 
 													<section
-														class="rounded-lg border border-line bg-slate-50 p-3 dark:bg-slate-950/50"
+														class="rounded-card border border-line bg-nav p-3"
 														data-card-group={group.label}
 														data-card-group-collapsed={collapsed ? 'true' : 'false'}
 														data-record-count={group.records.length}
@@ -20025,7 +20047,7 @@
 
 															<div class="flex shrink-0 items-center gap-2">
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-xs text-fg-muted dark:bg-slate-900"
+																	class="rounded bg-raised px-2 py-0.5 text-xs text-fg-muted"
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: group.records.length }
 																	})}</span
@@ -20033,7 +20055,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-900"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
 																	aria-label={$t('forms.copyCardGroupRecordIds')}
 																	title={$t('forms.copyCardGroupRecordIds')}
 																	disabled={group.records.length === 0}
@@ -20044,7 +20066,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-900"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
 																	aria-label={$t('forms.exportCardGroupRecords')}
 																	title={$t('forms.exportCardGroupRecords')}
 																	disabled={group.records.length === 0}
@@ -20055,7 +20077,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-900"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
 																	aria-label={$t('forms.focusCardGroupRecords')}
 																	title={$t('forms.focusCardGroupRecords')}
 																	disabled={group.records.length === 0}
@@ -20066,7 +20088,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg disabled:opacity-40 dark:hover:bg-slate-900"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-40"
 																	aria-label={$t('forms.applyCardGroupFilter')}
 																	title={$t('forms.applyCardGroupFilter')}
 																	disabled={!canApplyCardGroupFilter(group)}
@@ -20081,7 +20103,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:bg-white hover:text-fg dark:hover:bg-slate-900"
+																	class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-raised hover:text-fg"
 																	aria-label={collapsed
 																		? $t('forms.expandCardGroup')
 																		: $t('forms.collapseCardGroup')}
@@ -20100,7 +20122,7 @@
 
 														{#if collapsed}
 															<p
-																class="rounded-md border border-dashed border-line bg-white px-3 py-2 text-xs text-fg-muted dark:bg-slate-900"
+																class="rounded-card border border-dashed border-line bg-raised px-3 py-2 text-xs text-fg-muted"
 															>
 																{$t('forms.cardGroupCollapsed', {
 																	values: { count: group.records.length }
@@ -20171,7 +20193,7 @@
 														<div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
 																disabled={timelineEventRows.length === 0}
 																onclick={() => copyTimelineEventIds(timelineEventRows)}
 																data-timeline-copy-event-ids
@@ -20182,7 +20204,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
 																disabled={timelineEventAggregateKeys(timelineEventRows).length ===
 																	0}
 																onclick={() => copyTimelineAggregateIds(timelineEventRows)}
@@ -20194,7 +20216,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
 																disabled={timelineEventLinkedRecordIds(timelineEventRows).length ===
 																	0}
 																onclick={() => focusTimelineEventRecords(timelineEventRows)}
@@ -20206,7 +20228,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
 																disabled={timelineEventRows.length === 0}
 																onclick={() => exportTimelineEventsJson(timelineEventRows)}
 																data-timeline-export-events-json
@@ -20217,7 +20239,7 @@
 
 															<button
 																type="button"
-																class="inline-flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+																class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-40"
 																disabled={timelineEventRows.length === 0}
 																onclick={() => exportTimelineEventsCsv(timelineEventRows)}
 																data-timeline-export-events-csv
@@ -20262,13 +20284,13 @@
 
 																	<div class="flex shrink-0 items-center gap-2">
 																		<span
-																			class="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-fg-muted dark:bg-slate-800"
+																			class="rounded bg-surface px-2 py-0.5 text-xs font-medium text-fg-muted"
 																			>{event.event_type}</span
 																		>
 
 																		{#if pinned}
 																			<span
-																				class="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-warning dark:bg-amber-950/50"
+																				class="rounded bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning"
 																				>{$t('forms.timelineEventPinnedBadge')}</span
 																			>
 																		{/if}
@@ -20288,7 +20310,7 @@
 																				: undefined}
 																		>
 																			<summary
-																				class="inline-flex cursor-pointer list-none items-center rounded-md p-1 text-fg-muted hover:bg-slate-100 hover:text-fg dark:hover:bg-slate-800"
+																				class="inline-flex cursor-pointer list-none items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg"
 																				aria-label={$t('forms.timelineEventActions')}
 																				><MoreVertical
 																					class="h-4 w-4"
@@ -20297,11 +20319,11 @@
 																			>
 
 																			<div
-																				class="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-md border border-line bg-white py-1 text-sm shadow-lg dark:bg-slate-900"
+																				class="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-float border border-line bg-overlay py-1 text-sm shadow-overlay"
 																			>
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
 																					disabled={!linkedRecord}
 																					data-timeline-event-action={`${event.id}:open-record`}
 																					onclick={() => {
@@ -20314,7 +20336,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
 																					disabled={!linkedRecord}
 																					data-timeline-event-action={`${event.id}:focus-record`}
 																					onclick={() => focusTimelineEventRecord(event)}
@@ -20325,7 +20347,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																					data-timeline-event-action={`${event.id}:${pinned ? 'unpin-event' : 'pin-event'}`}
 																					onclick={() => toggleTimelineEventPinned(event)}
 																				>
@@ -20338,7 +20360,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																					data-timeline-event-action={`${event.id}:filter-type`}
 																					onclick={() =>
 																						applyTimelineEventQuickFilter(event, 'type')}
@@ -20349,7 +20371,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
 																					disabled={!event.actor_id}
 																					data-timeline-event-action={`${event.id}:filter-actor`}
 																					onclick={() =>
@@ -20361,7 +20383,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																					data-timeline-event-action={`${event.id}:filter-aggregate`}
 																					onclick={() =>
 																						applyTimelineEventQuickFilter(event, 'aggregate')}
@@ -20372,7 +20394,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																					data-timeline-event-action={`${event.id}:filter-day`}
 																					onclick={() => applyTimelineEventDayWindow(event)}
 																				>
@@ -20382,7 +20404,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																					data-timeline-event-action={`${event.id}:copy-event-id`}
 																					onclick={() =>
 																						copyTimelineEventValue(event, event.id, 'event-id')}
@@ -20393,7 +20415,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																					data-timeline-event-action={`${event.id}:copy-aggregate`}
 																					onclick={() =>
 																						copyTimelineEventValue(
@@ -20408,7 +20430,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																					data-timeline-event-action={`${event.id}:copy-details`}
 																					onclick={() =>
 																						copyTimelineEventValue(
@@ -20423,7 +20445,7 @@
 
 																				<button
 																					type="button"
-																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-slate-50 dark:hover:bg-slate-800"
+																					class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 																					data-timeline-event-action={`${event.id}:export-details`}
 																					onclick={() => exportTimelineEventDetails(event)}
 																				>
@@ -20436,15 +20458,15 @@
 																</div>
 
 																<details
-																	class="mt-3 rounded-md border border-line bg-slate-50 dark:bg-slate-950/40"
+																	class="mt-3 rounded-card border border-line bg-nav"
 																	data-timeline-event-detail={event.id}
 																	open={selectedTimelineEventLayout() === 'detailed'}
 																>
 																	<summary
-																		class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+																		class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-fg hover:bg-surface"
 																	>
 																		<span>{$t('forms.timelineEventDetails')}</span>
-																		<span class="text-slate-400">{event.id}</span>
+																		<span class="text-fg-muted">{event.id}</span>
 																	</summary>
 
 																	<div
@@ -20487,7 +20509,7 @@
 																				</div>
 
 																				<pre
-																					class="max-h-44 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-fg dark:bg-slate-900"
+																					class="max-h-44 overflow-auto rounded bg-raised p-2 text-[11px] leading-relaxed text-fg"
 																					data-timeline-event-payload={event.id}>{timelineEventJson(
 																						event.payload
 																					)}</pre>
@@ -20501,7 +20523,7 @@
 																				</div>
 
 																				<pre
-																					class="max-h-44 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-fg dark:bg-slate-900"
+																					class="max-h-44 overflow-auto rounded bg-raised p-2 text-[11px] leading-relaxed text-fg"
 																					data-timeline-event-metadata={event.id}>{timelineEventJson(
 																						event.metadata
 																					)}</pre>
@@ -20515,7 +20537,7 @@
 																				</div>
 
 																				<pre
-																					class="max-h-44 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-fg dark:bg-slate-900"
+																					class="max-h-44 overflow-auto rounded bg-raised p-2 text-[11px] leading-relaxed text-fg"
 																					data-timeline-event-source-detail={event.id}>{timelineEventJson(
 																						event.source
 																					)}</pre>
@@ -20545,7 +20567,7 @@
 																	aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 																>
 																	<span
-																		class="block truncate font-medium text-blue-700 dark:text-blue-300"
+																		class="block truncate font-medium text-fg"
 																		data-timeline-title={record.id}>{timelineTitle(record)}</span
 																	>
 
@@ -20553,7 +20575,7 @@
 																		<span class="mt-1 flex flex-wrap items-center gap-1.5">
 																			{#if memberFieldHidden(timelineTitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																					class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																					data-timeline-title-permission-hidden={`${record.id}:${timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldHiddenBadge')}</span
 																				>
@@ -20561,7 +20583,7 @@
 
 																			{#if memberFieldLocked(timelineTitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-title-permission-locked={`${record.id}:${timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldLockedBadge')}</span
 																				>
@@ -20569,7 +20591,7 @@
 
 																			{#if recordFieldHiddenByCondition(timelineTitlePermissionField, record)}
 																				<span
-																					class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-title-conditional-hidden={`${record.id}:${timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
@@ -20577,7 +20599,7 @@
 
 																			{#if recordFieldReadOnlyByCondition(timelineTitlePermissionField, record)}
 																				<span
-																					class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-title-conditional-readonly={`${record.id}:${timelineTitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
@@ -20595,7 +20617,7 @@
 																		<span class="mt-1 flex flex-wrap items-center gap-1.5">
 																			{#if memberFieldHidden(timelineSubtitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																					class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																					data-timeline-subtitle-permission-hidden={`${record.id}:${timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldHiddenBadge')}</span
 																				>
@@ -20603,7 +20625,7 @@
 
 																			{#if memberFieldLocked(timelineSubtitlePermissionField)}
 																				<span
-																					class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-subtitle-permission-locked={`${record.id}:${timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldLockedBadge')}</span
 																				>
@@ -20611,7 +20633,7 @@
 
 																			{#if recordFieldHiddenByCondition(timelineSubtitlePermissionField, record)}
 																				<span
-																					class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-subtitle-conditional-hidden={`${record.id}:${timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionHiddenBadge')}</span
 																				>
@@ -20619,7 +20641,7 @@
 
 																			{#if recordFieldReadOnlyByCondition(timelineSubtitlePermissionField, record)}
 																				<span
-																					class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																					class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																					data-timeline-subtitle-conditional-readonly={`${record.id}:${timelineSubtitlePermissionField.key}`}
 																					>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																				>
@@ -20630,7 +20652,7 @@
 
 																<button
 																	type="button"
-																	class="inline-flex shrink-0 items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																	class="inline-flex shrink-0 items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																	disabled={deletingRecordId === record.id}
 																	onclick={() => handleDeleteRecord(record)}
 																	aria-label={$t('forms.deleteRecord')}
@@ -20649,7 +20671,7 @@
 
 																				{#if memberFieldHidden(field)}
 																					<span
-																						class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning dark:bg-amber-950/50"
+																						class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
 																						data-timeline-select-permission-hidden={`${record.id}:${field.key}`}
 																						>{$t('forms.fieldHiddenBadge')}</span
 																					>
@@ -20657,7 +20679,7 @@
 
 																				{#if memberFieldLocked(field)}
 																					<span
-																						class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted dark:bg-slate-800"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-timeline-select-permission-locked={`${record.id}:${field.key}`}
 																						>{$t('forms.fieldLockedBadge')}</span
 																					>
@@ -20665,7 +20687,7 @@
 
 																				{#if recordFieldHiddenByCondition(field, record)}
 																					<span
-																						class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-timeline-select-conditional-hidden={`${record.id}:${field.key}`}
 																						>{$t('forms.fieldConditionHiddenBadge')}</span
 																					>
@@ -20673,7 +20695,7 @@
 
 																				{#if recordFieldReadOnlyByCondition(field, record)}
 																					<span
-																						class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																						class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
 																						data-timeline-select-conditional-readonly={`${record.id}:${field.key}`}
 																						>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																					>
@@ -20691,7 +20713,7 @@
 																						field,
 																						selectValue(event)
 																					)}
-																				class="w-full rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-fg disabled:opacity-50 dark:bg-slate-950"
+																				class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:opacity-50"
 																			>
 																				{#each kanbanMoveOptions(field) as option}
 																					<option value={option}>{option}</option>
@@ -20789,7 +20811,7 @@
 
 						{#if activeMode === 'detail'}
 							<aside
-								class="rounded-lg border border-line bg-white dark:bg-slate-900"
+								class="rounded-card border border-line bg-raised"
 								data-record-detail-drawer={selectedRecord?.id ?? ''}
 								data-record-detail-url-record={detailUrlRecordId}
 							>
@@ -20840,7 +20862,7 @@
 
 												<button
 													type="button"
-													class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-fg-muted hover:bg-slate-50 hover:text-slate-700 dark:hover:bg-slate-800"
+													class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface hover:text-fg"
 													aria-label={$t('common.close')}
 													onclick={closeRecordDetail}
 													data-record-detail-close={selectedRecord.id}
@@ -20919,7 +20941,7 @@
 
 																{#if memberFieldHidden(field)}
 																	<span
-																		class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-warning dark:bg-amber-950/50"
+																		class="rounded-control bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning"
 																		data-record-detail-permission-hidden={field.key}
 																		>{$t('forms.fieldHiddenBadge')}</span
 																	>
@@ -20927,7 +20949,7 @@
 
 																{#if memberFieldLocked(field)}
 																	<span
-																		class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-fg-muted dark:bg-slate-800"
+																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-record-detail-permission-locked={field.key}
 																		>{$t('forms.fieldLockedBadge')}</span
 																	>
@@ -20935,7 +20957,7 @@
 
 																{#if recordFieldHiddenByCondition(field, selectedRecord)}
 																	<span
-																		class="rounded-sm bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-record-detail-conditional-hidden={field.key}
 																		>{$t('forms.fieldConditionHiddenBadge')}</span
 																	>
@@ -20943,7 +20965,7 @@
 
 																{#if recordFieldReadOnlyByCondition(field, selectedRecord)}
 																	<span
-																		class="rounded-sm bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-200"
+																		class="rounded-control bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 																		data-record-detail-conditional-readonly={field.key}
 																		>{$t('forms.fieldConditionReadOnlyBadge')}</span
 																	>
@@ -20959,7 +20981,7 @@
 																	{@const childForm = childFormForRelationField(field)}
 
 																	<div
-																		class="overflow-hidden rounded-md border border-line"
+																		class="overflow-hidden rounded-control border border-line"
 																		data-record-detail-child-table-widget={`${selectedRecord.id}:${section.key}:${field.key}`}
 																		data-record-detail-child-table-relation-key={childRelationKeyForField(
 																			field
@@ -20967,7 +20989,7 @@
 																		data-record-detail-child-table-child-form={childForm?.key}
 																	>
 																		<div
-																			class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-slate-50 px-3 py-2 dark:bg-slate-950"
+																			class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-nav px-3 py-2"
 																		>
 																			<div class="min-w-0">
 																				<div
@@ -20988,7 +21010,7 @@
 																			</div>
 
 																			<span
-																				class="rounded bg-white px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
+																				class="rounded bg-raised px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-line"
 																				data-record-detail-child-table-count={`${field.key}:${childRecords.length}`}
 																				>{$t('forms.groupRecordCount', {
 																					values: { count: childRecords.length }
@@ -21002,7 +21024,7 @@
 																					class="min-w-full divide-y divide-line text-xs"
 																					data-record-detail-child-table-grid={field.key}
 																				>
-																					<thead class="bg-white dark:bg-slate-900">
+																					<thead class="bg-nav">
 																						<tr>
 																							<th
 																								class="min-w-40 px-3 py-2 text-left font-medium text-fg-muted"
@@ -21052,7 +21074,7 @@
 																									<div class="flex justify-end gap-1">
 																										<button
 																											type="button"
-																											class="inline-flex items-center rounded-md p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																											class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:opacity-50"
 																											onclick={() => startEditChildRecord(child)}
 																											aria-label={$t('forms.editChildRecord')}
 																											data-record-detail-child-table-edit-row={`${field.key}:${child.record.id}`}
@@ -21064,7 +21086,7 @@
 
 																										<button
 																											type="button"
-																											class="inline-flex items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																											class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																											disabled={deletingChildRecordId ===
 																												child.record.id}
 																											onclick={() => deleteChildRecord(child)}
@@ -21122,7 +21144,7 @@
 														{@const childForm = childFormForRelationField(relationField)}
 
 														<div
-															class="overflow-hidden rounded-md border border-line"
+															class="overflow-hidden rounded-control border border-line"
 															data-record-detail-child-table-widget={`${selectedRecord.id}:child_tables:${relationField.key}`}
 															data-record-detail-child-table-relation-key={childRelationKeyForField(
 																relationField
@@ -21130,7 +21152,7 @@
 															data-record-detail-child-table-child-form={childForm?.key}
 														>
 															<div
-																class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-slate-50 px-3 py-2 dark:bg-slate-950"
+																class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-nav px-3 py-2"
 															>
 																<div class="min-w-0">
 																	<div
@@ -21151,7 +21173,7 @@
 																</div>
 
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
+																	class="rounded bg-raised px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-line"
 																	data-record-detail-child-table-count={`${relationField.key}:${childRecords.length}`}
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: childRecords.length }
@@ -21165,7 +21187,7 @@
 																		class="min-w-full divide-y divide-line text-xs"
 																		data-record-detail-child-table-grid={relationField.key}
 																	>
-																		<thead class="bg-white dark:bg-slate-900">
+																		<thead class="bg-nav">
 																			<tr>
 																				<th
 																					class="min-w-40 px-3 py-2 text-left font-medium text-fg-muted"
@@ -21213,7 +21235,7 @@
 																						<div class="flex justify-end gap-1">
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																								class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:opacity-50"
 																								onclick={() => startEditChildRecord(child)}
 																								aria-label={$t('forms.editChildRecord')}
 																								data-record-detail-child-table-edit-row={`${relationField.key}:${child.record.id}`}
@@ -21225,7 +21247,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																								class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																								disabled={deletingChildRecordId === child.record.id}
 																								onclick={() => deleteChildRecord(child)}
 																								aria-label={$t('forms.deleteChildRecord')}
@@ -21262,7 +21284,7 @@
 											<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 												<div class="flex items-center gap-2">
 													<TableProperties
-														class="h-4 w-4 text-blue-600 dark:text-blue-300"
+														class="h-4 w-4 text-fg-muted"
 														aria-hidden="true"
 													/>
 
@@ -21287,7 +21309,7 @@
 
 											{#if childEditor}
 												<div
-													class="mb-3 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/60 dark:bg-blue-950/30"
+													class="mb-3 rounded-card border border-line bg-surface p-3"
 												>
 													<div class="mb-3 flex items-center justify-between gap-3">
 														<h5 class="text-sm font-semibold text-fg">
@@ -21309,7 +21331,7 @@
 															>
 
 															<input
-																class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																value={childEditor.title}
 																oninput={(event) => updateChildTitle(inputValue(event))}
 															/>
@@ -21341,17 +21363,17 @@
 																	{fieldLabel(childField)}
 
 																	{#if childField.required}
-																		<span class="text-red-500">*</span>
+																		<span class="text-danger">*</span>
 																	{/if}
 																</span>
 
 																{#if fieldType(childField) === 'boolean'}
 																	<div
-																		class="flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-800"
+																		class="flex min-h-10 items-center rounded-card border border-input bg-field px-3 py-2"
 																	>
 																		<input
 																			type="checkbox"
-																			class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																			class="h-4 w-4 rounded border-input accent-primary"
 																			checked={childEditor.draft[childField.key] === true}
 																			disabled={fieldReadOnlyByCondition(
 																				childField,
@@ -21375,7 +21397,7 @@
 																		)}
 																		onchange={(event) =>
 																			updateChildDraftValue(childField.key, selectValue(event))}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																	>
 																		<option value="">{$t('forms.selectPlaceholder')}</option>
 
@@ -21404,7 +21426,7 @@
 																	</select>
 																{:else if fieldType(childField) === 'multi_select' && fieldOptions(childField).length > 0}
 																	<div
-																		class="grid gap-2 rounded-md border border-slate-300 bg-white p-2 text-sm dark:border-slate-600 dark:bg-slate-800"
+																		class="grid gap-2 rounded-control border border-input bg-field p-2 text-sm"
 																	>
 																		{#each recordSelectOptions(childField, childEditor.draft) as option}
 																			<label
@@ -21418,7 +21440,7 @@
 																			>
 																				<input
 																					type="checkbox"
-																					class="h-4 w-4 rounded border-slate-300 text-blue-600"
+																					class="h-4 w-4 rounded border-input accent-primary"
 																					checked={isChildDraftOptionSelected(
 																						childField.key,
 																						option
@@ -21467,7 +21489,7 @@
 																		) || workspaceMembersLoading}
 																		onchange={(event) =>
 																			updateChildDraftValue(childField.key, selectValue(event))}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																	>
 																		<option value="">
 																			{workspaceMembersLoading
@@ -21483,7 +21505,7 @@
 																	</select>
 																{:else if fieldType(childField) === 'textarea' || fieldType(childField) === 'rich_text'}
 																	<textarea
-																		class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																		class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																		value={draftStringFrom(childEditor.draft, childField.key)}
 																		placeholder={fieldPlaceholder(childField)}
 																		readonly={fieldReadOnlyByCondition(
@@ -21500,7 +21522,7 @@
 																		data-child-signature-field={childField.key}
 																	>
 																		<canvas
-																			class="h-24 w-full touch-none rounded-md border border-dashed border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900"
+																			class="h-24 w-full touch-none rounded-card border border-dashed border-input bg-white"
 																			data-child-signature-canvas={childField.key}
 																			aria-label={$t('forms.signatureCanvas')}
 																			onpointerdown={(event) =>
@@ -21581,14 +21603,14 @@
 																						childField.key
 																					)}
 																					alt={fieldLabel(childField)}
-																					class="h-10 max-w-48 rounded border border-line bg-white object-contain"
+																					class="h-10 max-w-48 rounded border border-line bg-raised object-contain"
 																					data-child-signature-preview={childField.key}
 																				/>
 																			{/if}
 																		</div>
 
 																		<textarea
-																			class="min-h-16 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-fg dark:border-slate-600 dark:bg-slate-800"
+																			class="min-h-16 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-xs text-fg"
 																			value={draftStringFrom(childEditor.draft, childField.key)}
 																			placeholder={fieldPlaceholder(childField)}
 																			readonly={fieldReadOnlyByCondition(
@@ -21603,7 +21625,7 @@
 																{:else if fieldType(childField) === 'autonumber'}
 																	<input
 																		type="text"
-																		class="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-fg-muted dark:border-slate-600 dark:bg-slate-800/60"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg-muted"
 																		value={draftStringFrom(childEditor.draft, childField.key)}
 																		placeholder={$t('forms.autonumberGeneratedAfterSave')}
 																		readonly
@@ -21611,7 +21633,7 @@
 																	/>
 																{:else if fieldType(childField) === 'child_table'}
 																	<div
-																		class="rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg-muted dark:bg-slate-800/60"
+																		class="rounded-card border border-line bg-nav px-3 py-2 text-sm text-fg-muted"
 																		data-child-table-field={childField.key}
 																	>
 																		{$t('forms.childRecords')}
@@ -21642,7 +21664,7 @@
 																			: ['amount', 'number'].includes(fieldType(childField))
 																				? '0.01'
 																				: undefined}
-																		class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+																		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 																		value={draftStringFrom(childEditor.draft, childField.key)}
 																		placeholder={fieldPlaceholder(childField)}
 																		readonly={fieldReadOnlyByCondition(
@@ -21688,7 +21710,7 @@
 														{@const childForm = childFormForRelationField(relationField)}
 
 														<section
-															class="overflow-hidden rounded-md border border-line"
+															class="overflow-hidden rounded-card border border-line"
 															data-child-table-grid={relationField.key}
 															data-child-table-relation-key={childRelationKeyForField(
 																relationField
@@ -21696,7 +21718,7 @@
 															data-child-table-child-form={childForm?.key}
 														>
 															<div
-																class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-slate-50 px-3 py-2 dark:bg-slate-950"
+																class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-nav px-3 py-2"
 															>
 																<div class="min-w-0">
 																	<div
@@ -21717,7 +21739,7 @@
 																</div>
 
 																<span
-																	class="rounded bg-white px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700"
+																	class="rounded bg-raised px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-line"
 																	data-child-table-grid-count={`${relationField.key}:${childRecords.length}`}
 																	>{$t('forms.groupRecordCount', {
 																		values: { count: childRecords.length }
@@ -21731,7 +21753,7 @@
 																		class="min-w-full divide-y divide-line text-xs"
 																		data-child-table-grid-table={relationField.key}
 																	>
-																		<thead class="bg-white dark:bg-slate-900">
+																		<thead class="bg-nav">
 																			<tr>
 																				<th
 																					class="min-w-40 px-3 py-2 text-left font-medium text-fg-muted"
@@ -21779,7 +21801,7 @@
 																						<div class="flex justify-end gap-1">
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																								class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:opacity-50"
 																								onclick={() => startEditChildRecord(child)}
 																								aria-label={$t('forms.editChildRecord')}
 																								data-child-table-edit-row={`${relationField.key}:${child.record.id}`}
@@ -21791,7 +21813,7 @@
 
 																							<button
 																								type="button"
-																								class="inline-flex items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																								class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																								disabled={deletingChildRecordId === child.record.id}
 																								onclick={() => deleteChildRecord(child)}
 																								aria-label={$t('forms.deleteChildRecord')}
@@ -21821,12 +21843,12 @@
 												</div>
 											{:else if selectedRecordChildren.length > 0}
 												<div
-													class="overflow-hidden rounded-md border border-line"
+													class="overflow-hidden rounded-control border border-line"
 												>
 													<table
 														class="min-w-full divide-y divide-line text-xs"
 													>
-														<thead class="bg-slate-50 dark:bg-slate-950">
+														<thead class="bg-nav">
 															<tr>
 																<th
 																	class="px-3 py-2 text-left font-medium text-fg-muted"
@@ -21865,7 +21887,7 @@
 																	<td class="px-3 py-2 text-fg">
 																		{#each childRecordFields(child).slice(0, 4) as childField, index}
 																			{#if index > 0}
-																				<span class="mx-1 text-slate-300">/</span>
+																				<span class="mx-1 text-fg-muted">/</span>
 																			{/if}
 
 																			<span
@@ -21880,7 +21902,7 @@
 																		<div class="flex justify-end gap-1">
 																			<button
 																				type="button"
-																				class="inline-flex items-center rounded-md p-1.5 text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																				class="inline-flex items-center rounded-control p-1.5 text-fg hover:bg-surface disabled:opacity-50"
 																				onclick={() => startEditChildRecord(child)}
 																				aria-label={$t('forms.editChildRecord')}
 																				><Pencil class="h-4 w-4" aria-hidden="true" /></button
@@ -21888,7 +21910,7 @@
 
 																			<button
 																				type="button"
-																				class="inline-flex items-center rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+																				class="inline-flex items-center rounded-control p-1.5 text-danger hover:bg-danger-soft disabled:opacity-50"
 																				disabled={deletingChildRecordId === child.record.id}
 																				onclick={() => deleteChildRecord(child)}
 																				aria-label={$t('forms.deleteChildRecord')}
@@ -21909,7 +21931,7 @@
 										</div>
 
 										<div class="mb-3 flex items-center gap-2">
-											<Link class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+											<Link class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 
 											<h4 class="text-sm font-semibold text-fg">
 												{$t('forms.recordLinks')}
@@ -21919,7 +21941,7 @@
 										<div class="space-y-2">
 											{#each selectedRecordLinks as item}
 												<div
-													class="rounded-md border border-line px-3 py-2 text-xs"
+													class="rounded-card border border-line px-3 py-2 text-xs"
 												>
 													<div class="font-medium text-fg">
 														{item.relation_key} / {item.relation_type}
@@ -21940,20 +21962,20 @@
 
 										<div class="mt-3 space-y-2">
 											<input
-												class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+												class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 												bind:value={linkDraft.target_id}
 												placeholder={$t('forms.targetPlaceholder')}
 											/>
 
 											<div class="grid grid-cols-2 gap-2">
 												<input
-													class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+													class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 													bind:value={linkDraft.relation_key}
 													placeholder={$t('forms.relationKeyPlaceholder')}
 												/>
 
 												<input
-													class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+													class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 													bind:value={linkDraft.relation_type}
 													placeholder={$t('forms.relationTypePlaceholder')}
 												/>
@@ -21978,7 +22000,7 @@
 										>
 											<div class="mb-3 flex items-center gap-2">
 												<FileText
-													class="h-4 w-4 text-blue-600 dark:text-blue-300"
+													class="h-4 w-4 text-fg-muted"
 													aria-hidden="true"
 												/>
 
@@ -21990,7 +22012,7 @@
 											<div class="space-y-2">
 												{#each selectedRecordComments.slice(0, 5) as comment}
 													<div
-														class="rounded-md border border-line px-3 py-2 text-xs"
+														class="rounded-card border border-line px-3 py-2 text-xs"
 														data-record-detail-comment={comment.id}
 													>
 														<div class="flex flex-wrap items-center justify-between gap-2">
@@ -22034,7 +22056,7 @@
 
 												<div class="space-y-2 pt-1">
 													<textarea
-														class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+														class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 														bind:value={recordCommentDraft}
 														placeholder={$t('forms.recordCommentPlaceholder')}
 														data-record-detail-comment-input={selectedRecord.id}></textarea>
@@ -22062,7 +22084,7 @@
 											>
 												<div class="mb-3 flex items-center gap-2">
 													<FileDown
-														class="h-4 w-4 text-blue-600 dark:text-blue-300"
+														class="h-4 w-4 text-fg-muted"
 														aria-hidden="true"
 													/>
 
@@ -22077,7 +22099,7 @@
 														{@const valueUrls = selectedRecordAttachmentValueUrls(field)}
 
 														<section
-															class="rounded-md border border-line px-3 py-2 text-xs"
+															class="rounded-card border border-line px-3 py-2 text-xs"
 															data-record-detail-attachment-field={field.key}
 															data-record-detail-attachment-field-count={`${field.key}:${metadataAttachments.length + valueUrls.length}`}
 														>
@@ -22088,14 +22110,14 @@
 															<div class="space-y-2">
 																{#each metadataAttachments as attachment}
 																	<div
-																		class="flex flex-wrap items-center gap-2 rounded bg-slate-50 px-2 py-1.5 dark:bg-slate-950"
+																		class="flex flex-wrap items-center gap-2 rounded bg-nav px-2 py-1.5"
 																		data-record-detail-attachment-item={attachment.id}
 																	>
 																		{#if attachmentIsPreviewableImage(attachment)}
 																			<img
 																				src={attachmentThumbnailUrl(attachment)}
 																				alt={attachment.file_name}
-																				class="h-10 w-10 rounded object-cover ring-1 ring-slate-200 dark:ring-slate-700"
+																				class="h-10 w-10 rounded object-cover ring-1 ring-line"
 																				data-record-detail-attachment-thumbnail={attachment.id}
 																			/>
 																		{/if}
@@ -22119,7 +22141,7 @@
 																			href={attachmentSignedUrl(attachment) || undefined}
 																			target="_blank"
 																			rel="noreferrer"
-																			class="rounded px-2 py-1 font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																			class="rounded px-2 py-1 font-medium text-fg underline hover:bg-surface"
 																			data-record-detail-attachment-open={attachment.id}
 																			data-record-detail-attachment-signed-url={attachmentSignedUrl(
 																				attachment
@@ -22129,7 +22151,7 @@
 																		<a
 																			href={attachmentSignedUrl(attachment) || undefined}
 																			download={attachment.file_name}
-																			class="rounded px-2 py-1 font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+																			class="rounded px-2 py-1 font-medium text-fg hover:bg-surface"
 																			data-record-detail-attachment-download={attachment.id}
 																			data-record-detail-attachment-signed-download={attachmentSignedUrl(
 																				attachment
@@ -22140,7 +22162,7 @@
 
 																{#each valueUrls as url}
 																	<div
-																		class="flex flex-wrap items-center gap-2 rounded bg-slate-50 px-2 py-1.5 dark:bg-slate-950"
+																		class="flex flex-wrap items-center gap-2 rounded bg-nav px-2 py-1.5"
 																		data-record-detail-attachment-value={`${field.key}:${url}`}
 																	>
 																		<div
@@ -22154,7 +22176,7 @@
 																				href={safeLinkUrl(url)}
 																				target="_blank"
 																				rel="noreferrer"
-																				class="rounded px-2 py-1 font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																				class="rounded px-2 py-1 font-medium text-fg underline hover:bg-surface"
 																				data-record-detail-attachment-value-open={field.key}
 																				>{$t('forms.attachmentOpen')}</a
 																			>
@@ -22190,7 +22212,7 @@
 										>
 											<div class="mb-3 flex items-center gap-2">
 												<FileText
-													class="h-4 w-4 text-blue-600 dark:text-blue-300"
+													class="h-4 w-4 text-fg-muted"
 													aria-hidden="true"
 												/>
 
@@ -22202,7 +22224,7 @@
 											<div class="space-y-2">
 												{#each selectedRecordEvents.slice(0, 5) as event}
 													<details
-														class="rounded-md border border-line px-3 py-2 text-xs"
+														class="rounded-card border border-line px-3 py-2 text-xs"
 														data-record-detail-event={event.id}
 														data-record-detail-event-type={event.event_type}
 													>
@@ -22225,7 +22247,7 @@
 																</div>
 
 																<span
-																	class="rounded bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-fg-muted dark:bg-slate-800"
+																	class="rounded bg-surface px-2 py-0.5 font-mono text-[11px] text-fg-muted"
 																	data-record-detail-event-created={event.id}
 																	>{formatDate(event.created_at)}</span
 																>
@@ -22248,13 +22270,13 @@
 
 														<div class="mt-3 grid gap-2 lg:grid-cols-2">
 															<pre
-																class="max-h-40 overflow-auto rounded bg-slate-50 p-2 font-mono text-[11px] text-fg-muted dark:bg-slate-950"
+																class="max-h-40 overflow-auto rounded bg-nav p-2 font-mono text-[11px] text-fg-muted"
 																data-record-detail-event-payload={event.id}>{timelineEventJson(
 																	event.payload
 																)}</pre>
 
 															<pre
-																class="max-h-40 overflow-auto rounded bg-slate-50 p-2 font-mono text-[11px] text-fg-muted dark:bg-slate-950"
+																class="max-h-40 overflow-auto rounded bg-nav p-2 font-mono text-[11px] text-fg-muted"
 																data-record-detail-event-source={event.id}>{timelineEventJson(
 																	event.source
 																)}</pre>
@@ -22307,10 +22329,10 @@
 
 				<div
 					class={current
-						? 'rounded-md border border-blue-200 bg-blue-50 p-3 text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-100'
+						? 'rounded-card border border-line bg-surface p-3 text-fg'
 						: complete
-							? 'rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100'
-							: 'rounded-md border border-line bg-white p-3 text-fg-muted dark:bg-slate-900'}
+							? 'rounded-card border border-line bg-success-soft p-3 text-success'
+							: 'rounded-card border border-line bg-raised p-3 text-fg-muted'}
 					data-import-step={step}
 					data-import-step-active={current ? 'true' : undefined}
 				>
@@ -22319,7 +22341,7 @@
 					</p>
 
 					<p class="mt-1 text-sm font-medium">{$t(`forms.importSteps.${step}.title`)}</p>
-					<p class="mt-1 text-xs opacity-80">{$t(`forms.importSteps.${step}.description`)}</p>
+					<p class="mt-1 text-xs">{$t(`forms.importSteps.${step}.description`)}</p>
 				</div>
 			{/each}
 		</div>
@@ -22334,7 +22356,7 @@
 
 					<div class="flex flex-wrap items-center gap-2">
 						<label
-							class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+							class="inline-flex cursor-pointer items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface"
 							for="form-import-file"
 						>
 							<FileUp class="h-3.5 w-3.5" aria-hidden="true" />
@@ -22354,7 +22376,7 @@
 
 						<button
 							type="button"
-							class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+							class="inline-flex items-center gap-1 rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 							onclick={exportImportTemplate}
 							disabled={!selectedForm || visibleFields.length === 0}
 							data-import-template-export
@@ -22374,7 +22396,7 @@
 
 				<textarea
 					id="form-import-text"
-					class="min-h-72 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+					class="min-h-72 w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
 					value={importText}
 					oninput={(event) => {
 						importText = inputValue(event);
@@ -22390,7 +22412,7 @@
 
 		{#if importWizardStep === 'mapping'}
 			<section
-				class="space-y-3 rounded-md border border-line bg-slate-50/60 p-3 dark:bg-slate-950/40"
+				class="space-y-3 rounded-card border border-line bg-nav p-3"
 				data-import-wizard-panel="mapping"
 				data-import-mapping-wizard
 				data-import-mapping-applied={importMappingApplied ? 'true' : undefined}
@@ -22412,14 +22434,14 @@
 					<div class="flex flex-wrap items-center gap-2">
 						<button
 							type="button"
-							class="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+							class="inline-flex items-center rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface"
 							onclick={saveImportMappingTemplate}
 							data-import-mapping-template-save>{$t('forms.saveImportMappingTemplate')}</button
 						>
 
 						<button
 							type="button"
-							class="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+							class="inline-flex items-center rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:opacity-50"
 							onclick={restoreImportMappingTemplate}
 							disabled={!importMappingTemplateAvailable}
 							data-import-mapping-template-restore
@@ -22428,7 +22450,7 @@
 
 						<button
 							type="button"
-							class="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
+							class="inline-flex items-center rounded-control border border-input bg-raised px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface"
 							onclick={applyImportMapping}
 							data-import-mapping-apply>{$t('forms.applyImportMapping')}</button
 						>
@@ -22443,7 +22465,7 @@
 							>
 
 							<select
-								class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-900"
+								class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 								bind:value={importMappingSelections[index]}
 								onchange={() => {
 									importMappingApplied = false;
@@ -22463,7 +22485,7 @@
 							>
 
 							<select
-								class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-fg dark:border-slate-600 dark:bg-slate-900"
+								class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg"
 								bind:value={importMappingTransforms[index]}
 								onchange={() => {
 									importMappingApplied = false;
@@ -22495,7 +22517,7 @@
 				{#if importPreview}
 					<div class="grid gap-2 sm:grid-cols-3">
 						<div
-							class="rounded-md border border-line bg-white p-3 dark:bg-slate-900"
+							class="rounded-card border border-line bg-raised p-3"
 						>
 							<p class="text-xs text-fg-muted">
 								{$t('forms.importTotalRows')}
@@ -22507,29 +22529,29 @@
 						</div>
 
 						<div
-							class="rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/60 dark:bg-emerald-950/30"
+							class="rounded-card border border-line bg-success-soft p-3"
 						>
-							<p class="text-xs text-emerald-700 dark:text-emerald-200">
+							<p class="text-xs text-success">
 								{$t('forms.importValidRows')}
 							</p>
 
-							<p class="mt-1 text-2xl font-semibold text-emerald-800 dark:text-emerald-100">
+							<p class="mt-1 text-2xl font-semibold text-success">
 								{importPreview.valid_rows}
 							</p>
 						</div>
 
 						<div
-							class="rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900/60 dark:bg-red-950/30"
+							class="rounded-card border border-line bg-danger-soft p-3"
 						>
 							<p class="text-xs text-danger">{$t('forms.importInvalidRows')}</p>
 
-							<p class="mt-1 text-2xl font-semibold text-red-800 dark:text-red-100">
+							<p class="mt-1 text-2xl font-semibold text-danger">
 								{importPreview.invalid_rows}
 							</p>
 						</div>
 					</div>
 
-					<div class="rounded-md border border-line">
+					<div class="rounded-control border border-line">
 						<div
 							class="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2 text-sm"
 						>
@@ -22551,7 +22573,7 @@
 						<div class="max-h-64 overflow-auto">
 							<table class="min-w-full divide-y divide-line text-sm">
 								<thead
-									class="bg-slate-50 text-left text-xs font-medium uppercase text-fg-muted dark:bg-slate-950"
+									class="bg-nav text-left text-xs font-medium uppercase text-fg-muted"
 								>
 									<tr>
 										<th class="px-3 py-2">{$t('forms.importRow')}</th>
@@ -22564,13 +22586,13 @@
 								<tbody class="divide-y divide-line">
 									{#each importPreview.rows as row}
 										<tr>
-											<td class="px-3 py-2 font-mono text-xs text-slate-500">{row.row_number}</td>
+											<td class="px-3 py-2 font-mono text-xs text-fg-muted">{row.row_number}</td>
 
 											<td class="px-3 py-2">
 												<span
 													class={row.valid
-														? 'rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-success dark:bg-emerald-950/40'
-														: 'rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-danger dark:bg-red-950/40'}
+														? 'rounded-full bg-success-soft px-2 py-0.5 text-xs font-medium text-success'
+														: 'rounded-full bg-danger-soft px-2 py-0.5 text-xs font-medium text-danger'}
 													>{row.valid ? $t('forms.importValid') : $t('forms.importInvalid')}</span
 												>
 											</td>
@@ -22594,14 +22616,14 @@
 
 		{#if importWizardStep === 'commit'}
 			<section
-				class="rounded-md border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30"
+				class="rounded-card border border-line bg-success-soft p-4"
 				data-import-wizard-panel="commit"
 			>
-				<p class="text-sm font-semibold text-emerald-900 dark:text-emerald-100">
+				<p class="text-sm font-semibold text-success">
 					{$t('forms.importReadyToCommit')}
 				</p>
 
-				<p class="mt-1 text-sm text-emerald-700 dark:text-emerald-200">
+				<p class="mt-1 text-sm text-success">
 					{#if importPreview}
 						{$t('forms.importReadyToCommitDescription', {
 							values: { count: importPreview.valid_rows }
@@ -22675,18 +22697,18 @@
 >
 	<div class="space-y-4">
 		<div
-			class="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/30"
+			class="rounded-card border border-line bg-warning-soft p-3"
 		>
-			<div class="flex items-start gap-2 text-sm text-amber-900 dark:text-amber-100">
+			<div class="flex items-start gap-2 text-sm text-warning">
 				<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
 				<p>{$t('forms.schemaChangeConfirmDescription')}</p>
 			</div>
 		</div>
 
-		<div class="overflow-hidden rounded-md border border-line">
+		<div class="overflow-hidden rounded-control border border-line">
 			<table class="min-w-full divide-y divide-line text-sm">
 				<thead
-					class="bg-slate-50 text-left text-xs font-medium uppercase text-fg-muted dark:bg-slate-900"
+					class="bg-nav text-left text-xs font-medium uppercase text-fg-muted"
 				>
 					<tr>
 						<th class="px-3 py-2">{$t('forms.changeType')}</th>
@@ -22698,7 +22720,7 @@
 					</tr>
 				</thead>
 
-				<tbody class="divide-y divide-line bg-white dark:bg-slate-900">
+				<tbody class="divide-y divide-line bg-raised">
 					{#each pendingDesignerChanges as change}
 						<tr>
 							<td class="px-3 py-2 text-fg">
