@@ -417,6 +417,17 @@ pub async fn update_user(
     Ok(ApiResponse::success(map_user_summary(user)))
 }
 
+/// Ends the user's connected applications inside the caller's transaction. The administrator's
+/// identity is not available to these handlers, so the revocation is attributed to the system.
+async fn revoke_connected_apps_for(
+    tx: &sea_orm::DatabaseTransaction,
+    user_id: Uuid,
+    reason: crate::oauth::grants::RevokeReason,
+) -> Result<(), ApiError> {
+    crate::oauth::manage::revoke_user_grants(tx, user_id, reason, crate::oauth::grants::Actor::System).await?;
+    Ok(())
+}
+
 pub async fn toggle_user_status(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
@@ -429,8 +440,8 @@ pub async fn toggle_user_status(
         !user.is_active
     };
 
-    let result = state
-        .db
+    let tx = state.db.begin().await?;
+    let result = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE users SET is_active = $1, session_version = CASE WHEN $1 THEN session_version ELSE session_version + 1 END, updated_at = now() WHERE id = $2".to_string(),
@@ -441,6 +452,10 @@ pub async fn toggle_user_status(
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("user not found".to_string()));
     }
+    if !is_active {
+        revoke_connected_apps_for(&tx, user_id, crate::oauth::grants::RevokeReason::AccountDisabled).await?;
+    }
+    tx.commit().await?;
 
     let user = find_user_by_id(&state, user_id).await?;
     Ok(ApiResponse::success(map_user_summary(user)))
@@ -458,8 +473,8 @@ pub async fn reset_user_password(
     }
 
     let password_hash = crate::routes::auth::hash_password(req.new_password).await?;
-    let result = state
-        .db
+    let tx = state.db.begin().await?;
+    let result = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "UPDATE users SET password_hash = $1, session_version = session_version + 1, updated_at = now() WHERE id = $2".to_string(),
@@ -470,6 +485,8 @@ pub async fn reset_user_password(
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("user not found".to_string()));
     }
+    revoke_connected_apps_for(&tx, user_id, crate::oauth::grants::RevokeReason::PasswordChanged).await?;
+    tx.commit().await?;
 
     Ok(ApiResponse::ok())
 }
@@ -509,6 +526,7 @@ pub async fn delete_user(
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("user not found".to_string()));
     }
+    revoke_connected_apps_for(&tx, user_id, crate::oauth::grants::RevokeReason::AccountDisabled).await?;
     tx.commit().await?;
     Ok(ApiResponse::ok())
 }

@@ -394,6 +394,15 @@ pub async fn remove_member(
     ))
     .await?;
 
+    crate::oauth::manage::revoke_user_workspace_grants(
+        &tx,
+        target_user_id,
+        workspace_id,
+        crate::oauth::grants::RevokeReason::MembershipRemoved,
+        crate::oauth::grants::Actor::User(user_id),
+    )
+    .await?;
+
     // Personal form views are visible to their creator alone; nobody could see or clean them up
     // once the creator has left.
     crate::routes::form::archive_departed_member_private_views(&tx, workspace_id, target_user_id).await?;
