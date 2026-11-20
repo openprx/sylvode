@@ -49,6 +49,7 @@
 	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
 	import FieldValue from './FieldValue.svelte';
 	import Popover from './Popover.svelte';
+	import Dialog from '#lib/ui/dialog/Dialog.svelte';
 
 	interface Props {
 		record: FormRecord | null;
@@ -170,7 +171,6 @@
 	let preview = $state<{ items: ImageItem[]; index: number; trigger: HTMLElement | null } | null>(
 		null
 	);
-	let previewDialog = $state<HTMLElement | null>(null);
 
 	const mode = $derived<PanelMode>(
 		hosted
@@ -419,7 +419,6 @@
 	// Image preview dialog.
 	function openPreview(items: ImageItem[], index: number, trigger: HTMLElement) {
 		preview = { items, index, trigger };
-		void tick().then(() => previewDialog?.focus());
 	}
 
 	function closePreview() {
@@ -430,25 +429,11 @@
 
 	function onPreviewKey(event: KeyboardEvent) {
 		if (!preview) return;
-		if (event.key === 'Escape') {
-			event.preventDefault();
-			event.stopPropagation();
-			closePreview();
-		} else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+		if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
 			event.preventDefault();
 			const forward = (event.key === 'ArrowRight') !== isRtl();
 			const total = preview.items.length;
 			preview = { ...preview, index: (preview.index + (forward ? 1 : total - 1)) % total };
-		} else if (event.key === 'Tab') {
-			// The preview is modal: keep focus on its controls.
-			const controls = Array.from(previewDialog?.querySelectorAll<HTMLElement>('button') ?? []);
-			if (controls.length === 0) return;
-			const index = controls.indexOf(document.activeElement as HTMLElement);
-			event.preventDefault();
-			const next = event.shiftKey
-				? (index <= 0 ? controls.length : index) - 1
-				: (index + 1) % controls.length;
-			controls[next]?.focus();
 		}
 	}
 
@@ -1173,21 +1158,18 @@
 
 {#if preview}
 	{@const item = preview.items[preview.index]}
-	<div
-		class="fixed inset-0 z-[60] flex items-center justify-center bg-scrim p-4"
-		role="presentation"
-		onclick={(event) => {
-			if (event.target === event.currentTarget) closePreview();
-		}}
+	<Dialog
+		open
+		headless
+		size="wide"
+		title={$t('forms.recordPanel.previewTitle')}
+		onclose={closePreview}
 	>
+		<!-- Escape, the focus trap and focus return belong to the dialog; the arrows page through the images. -->
 		<div
-			bind:this={previewDialog}
-			role="dialog"
-			aria-modal="true"
-			aria-label={$t('forms.recordPanel.previewTitle')}
-			tabindex="-1"
-			class="relative flex max-h-full max-w-full flex-col items-center gap-3"
+			class="relative flex max-h-full max-w-full flex-col items-center gap-3 p-3"
 			data-record-panel-preview
+			role="presentation"
 			onkeydown={onPreviewKey}
 		>
 			<img
@@ -1195,11 +1177,11 @@
 				alt={item.alt}
 				class="max-h-[80dvh] max-w-full rounded-control bg-raised object-contain"
 			/>
-			<div class="flex items-center gap-2 text-sm text-white">
+			<div class="flex items-center gap-2 text-sm text-fg">
 				{#if preview.items.length > 1}
 					<button
 						type="button"
-						class="inline-flex h-8 w-8 items-center justify-center rounded-control bg-white/10 hover:bg-white/20"
+						class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line bg-surface hover:bg-selected"
 						aria-label={$t('forms.recordPanel.previewPrevious')}
 						onclick={() =>
 							preview &&
@@ -1215,7 +1197,7 @@
 					>
 					<button
 						type="button"
-						class="inline-flex h-8 w-8 items-center justify-center rounded-control bg-white/10 hover:bg-white/20"
+						class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line bg-surface hover:bg-selected"
 						aria-label={$t('forms.recordPanel.previewNext')}
 						onclick={() =>
 							preview &&
@@ -1225,13 +1207,13 @@
 				{/if}
 				<button
 					type="button"
-					class="inline-flex h-8 w-8 items-center justify-center rounded-control bg-white/10 hover:bg-white/20"
+					class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line bg-surface hover:bg-selected"
 					aria-label={$t('forms.recordPanel.close')}
 					onclick={closePreview}><X class="h-4 w-4" aria-hidden="true" /></button
 				>
 			</div>
 		</div>
-	</div>
+	</Dialog>
 {/if}
 
 <style>
