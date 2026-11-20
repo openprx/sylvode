@@ -260,6 +260,11 @@ pub async fn create_issue(
 
     require_workspace_access(&state, &extensions, project.workspace_id).await?;
 
+    // A connected application may not assign a work item to an agent (nothing is written yet).
+    if let Some(assignee_id) = req.assignee_id {
+        crate::oauth::delegated::refuse_agent_dispatch(&state.db, &[assignee_id]).await?;
+    }
+
     // Validate state by effective workflow (project > workspace > system)
     let issue_state = if let Some(requested) = req.state {
         validate_project_state(&state, project_id, &requested).await?;
@@ -791,6 +796,11 @@ pub async fn update_issue(
 
     require_workspace_access(&state, &extensions, current_issue.workspace_id).await?;
 
+    // A connected application may not assign a work item to an agent (nothing is written yet).
+    if let Some(assignee_id) = req.assignee_id {
+        crate::oauth::delegated::refuse_agent_dispatch(&state.db, &[assignee_id]).await?;
+    }
+
     // Validate state and priority if provided
     if let Some(ref state_val) = req.state {
         validate_project_state(&state, current_issue.project_id, state_val).await?;
@@ -1302,11 +1312,11 @@ pub async fn delete_issue(
     Ok(ApiResponse::ok())
 }
 
-/// GET /api/v1/issues/by-identifier/:identifier (bot-auth)
+/// GET /api/v1/issues/by-identifier/:identifier (bot-auth, or a connected application)
 /// Get a work item by its short identifier, e.g. "PRX-42".
 pub async fn get_issue_by_identifier(
     State(state): State<AppState>,
-    Extension(bot): Extension<BotAuthContext>,
+    crate::oauth::delegated::CallerWorkspace(workspace_id): crate::oauth::delegated::CallerWorkspace,
     Path(identifier): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Parse "PREFIX-N"
@@ -1350,7 +1360,7 @@ pub async fn get_issue_by_identifier(
               AND UPPER(p.key) = UPPER($2)
               AND wi.sequence_number = $3
         ",
-        vec![bot.workspace_id.into(), prefix.into(), seq_num.into()],
+        vec![workspace_id.into(), prefix.into(), seq_num.into()],
     ))
     .one(&state.db)
     .await?
