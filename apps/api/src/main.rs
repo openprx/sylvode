@@ -1604,6 +1604,8 @@ fn build_router(state: AppState) -> Router {
         // The Flow surface: every `routes::flow` / `routes::collab` route, behind the one boundary
         // that renders its database failures as typed envelopes.
         .merge(routes::flow_surface::seal(flow_surface_routes(&auth_state)))
+        // OAuth authorization server: metadata documents and, with later packages, the endpoints.
+        .merge(api::oauth::router::routes(&auth_state))
         // Label routes (protected)
         .route(
             "/api/v1/workspaces/{workspace_id}/labels",
