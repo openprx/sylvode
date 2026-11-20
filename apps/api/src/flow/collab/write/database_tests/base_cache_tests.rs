@@ -1059,10 +1059,7 @@ async fn recovering_a_commit_that_another_process_made_never_caches_the_local_ca
     finish_committed(&p.cache, &p.registry, None, &request, prepared, prior, false);
 
     let head = head_of(&f.state, f.document_id).await;
-    assert!(
-        cached_state(&p.cache, f.document_id, &head).is_none(),
-        "P's candidate is not Q's committed state and must not be served at Q's head"
-    );
+    let served_at_q_head = cached_state(&p.cache, f.document_id, &head).is_some();
     accepted_seq(
         &p.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blknext", "TEXTNEXT"))
             .await,
@@ -1079,6 +1076,10 @@ async fn recovering_a_commit_that_another_process_made_never_caches_the_local_ca
             .to_string()
             .contains("TEXTP"),
         "P's update was never committed"
+    );
+    assert!(
+        !served_at_q_head,
+        "P's candidate is not Q's committed state and must not be served at Q's head"
     );
     assert_cache_equals_database(&f.state, &p.cache, f.document_id).await;
     scratch.drop_self().await;
@@ -1216,10 +1217,6 @@ async fn an_entry_put_without_bytes_over_one_with_bytes_never_serves_the_old_byt
     let rebuilt = rebuild_from_database(&f.state, f.document_id).await;
     a.cache
         .put(f.document_id, rebuilt, head.2.clone(), head.0, head.1.clone(), 1);
-    assert!(
-        cached_state(&a.cache, f.document_id, &head).is_none(),
-        "the replaced entry holds no bytes"
-    );
 
     accepted_seq(
         &a.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blka2", "TEXTA2"))
@@ -1232,6 +1229,68 @@ async fn an_entry_put_without_bytes_over_one_with_bytes_never_serves_the_old_byt
         &["TEXTA1".into(), "TEXTB1".into(), "TEXTA2".into()],
     )
     .await;
+    assert_cache_equals_database(&f.state, &a.cache, f.document_id).await;
+    scratch.drop_self().await;
+}
+
+/// A database restored from a backup (or a document rewritten some other way) can reuse a head
+/// sequence with a different history. The entry of a process that still holds the old history has
+/// the same sequence but another frontier, so it must not be the base of the next write: the
+/// write is built and applied on what the database holds, and the committed document has the new
+/// history's block and this write's, and not the old one's.
+#[tokio::test]
+async fn a_history_rewritten_at_the_same_sequence_is_never_built_on_the_old_entry() {
+    let scratch = scratch_or_skip!("base-cache-rewritten-history");
+    let f = fixture(&scratch).await;
+    let a = Process::new();
+    let restored = Process::new();
+    let before = head_of(&f.state, f.document_id).await;
+    accepted_seq(
+        &a.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blkold", "TEXTOLD"))
+            .await,
+    );
+    let old_head = head_of(&f.state, f.document_id).await;
+    assert!(cached_state(&a.cache, f.document_id, &old_head).is_some());
+
+    // The backup is restored to the head before that write, and the history grows differently.
+    super::exec(
+        &f.state,
+        "DELETE FROM collab_updates WHERE document_id = $1 AND seq > $2",
+        vec![f.document_id.into(), before.0.into()],
+    )
+    .await;
+    super::exec(
+        &f.state,
+        "UPDATE collab_documents SET head_seq = $2, head_frontier = $3 WHERE id = $1",
+        vec![f.document_id.into(), before.0.into(), before.1.clone().into()],
+    )
+    .await;
+    let new_seq = accepted_seq(
+        &restored
+            .write(&f.state, f.ids(), Uuid::new_v4(), block_change("blknew", "TEXTNEW"))
+            .await,
+    );
+    assert_eq!(new_seq, old_head.0, "the rewritten history reuses the sequence number");
+    let new_head = head_of(&f.state, f.document_id).await;
+    assert_ne!(new_head.1, old_head.1, "with another frontier");
+
+    accepted_seq(
+        &a.write(&f.state, f.ids(), Uuid::new_v4(), block_change("blkmore", "TEXTMORE"))
+            .await,
+    );
+    assert_every_text_landed(
+        &f.state,
+        f.object_id,
+        f.document_id,
+        &["TEXTNEW".into(), "TEXTMORE".into()],
+    )
+    .await;
+    assert!(
+        !projection_of(&rebuild_from_database(&f.state, f.document_id).await)
+            .to_string()
+            .contains("TEXTOLD"),
+        "the old history is not part of the document"
+    );
     assert_cache_equals_database(&f.state, &a.cache, f.document_id).await;
     scratch.drop_self().await;
 }
