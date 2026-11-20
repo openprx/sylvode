@@ -228,6 +228,7 @@
 	import RecordDetailAside from '#lib/components/forms/page/RecordDetailAside.svelte';
 
 	// forms-split slot W2-01
+	import LayoutSettingsContent from '#lib/components/forms/page/LayoutSettingsContent.svelte';
 
 	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
 	const recordEditorAction = taskEditorAction();
@@ -750,44 +751,7 @@
 									viewName={s.selectedView?.name ?? ''}
 									onclose={() => (s.viewToolsExpanded = false)}
 								>
-									<section class="w-full" data-view-tools-expanded-panel>
-										<div class="space-y-4">
-											<div class="rounded-control border border-line bg-raised" data-view-setup>
-												<div class="space-y-2 border-t border-line p-3">
-													<ViewSetupBasics />
-
-													<div
-														class="space-y-3 rounded-card border border-line bg-nav p-3"
-														data-view-config-panel
-													>
-														<div>
-															<h4 class="text-sm font-semibold text-fg">
-																{$t('forms.viewRules')}
-															</h4>
-
-															<p class="mt-1 text-xs text-fg-muted">
-																{$t('forms.viewRulesDescription')}
-															</p>
-														</div>
-
-														<ViewFilterEditor />
-
-														<ViewTypeOptions />
-
-														{#if s.viewDraft.view_type === 'card' && viewDraftCardFields().length > 0}
-															<ViewCardFieldOrder />
-														{/if}
-
-														{#if viewDraftKanbanWipOptions().length > 0}
-															<ViewKanbanWipPolicy />
-														{/if}
-													</div>
-												</div>
-											</div>
-
-												<ViewColumnsDisclosure />
-										</div>
-									</section>
+									<LayoutSettingsContent />
 								</LayoutSettingsSheet>
 
 								{#if s.recordEditorOpen}
