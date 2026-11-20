@@ -24,14 +24,23 @@
 		shortcuts: RailShortcuts;
 		currentPage: Shortcut | null;
 		confirmRestore: () => Promise<boolean>;
+		/** Whether the shortcut editor is open; the palette's "Edit navigation" sets it. */
+		editorOpen?: boolean;
 	}
 
-	let { model, ondestination, account, shortcuts, currentPage, confirmRestore }: Props = $props();
+	let {
+		model,
+		ondestination,
+		account,
+		shortcuts,
+		currentPage,
+		confirmRestore,
+		editorOpen = $bindable(false)
+	}: Props = $props();
 
 	let list = $state<HTMLElement | null>(null);
 	let moreOpen = $state(false);
 	let moreButton = $state<HTMLElement | null>(null);
-	let editorOpen = $state(false);
 	let accountOpen = $state(false);
 	let accountButton = $state<HTMLElement | null>(null);
 	let focusedId = $state<string | null>(null);
