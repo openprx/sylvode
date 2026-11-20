@@ -3,6 +3,35 @@
 		"dialog": {
 			"close": "关闭",
 			"cancel": "取消"
+		},
+		"confirm": {
+			"verb": {
+				"delete": "删除{object}",
+				"remove": "移除{object}",
+				"discard": "放弃{object}",
+				"revoke": "撤销{object}",
+				"leave": "离开{object}",
+				"restore": "恢复{object}"
+			},
+			"gallery": {
+				"open": "删除成员",
+				"openTwo": "连续询问两次",
+				"openNeutral": "恢复导航",
+				"openNested": "打开带确认的对话框",
+				"ask": "在对话框内询问",
+				"title": "删除成员 Ana？",
+				"body": "Ana 将失去工作区的访问权限，她的评论会保留。此操作无法撤销。",
+				"object": "成员 Ana",
+				"second": "移除 Webhook hooks.example？",
+				"secondObject": "Webhook hooks.example",
+				"neutralTitle": "恢复默认导航？",
+				"neutralLabel": "恢复导航",
+				"result": "结果：{value}",
+				"none": "无",
+				"yes": "已确认",
+				"no": "已取消",
+				"nestedTitle": "带确认的对话框"
+			}
 		}
 	}
 }
