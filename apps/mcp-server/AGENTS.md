@@ -41,6 +41,7 @@
 - Authentication:
   - `stdio` and the CLI subcommands: `mcp.bot_token` in the configuration file (prefix `opr_`). Not used by `http`/`sse`.
   - `http`/`sse`: no `mcp.bot_token`, no shared secret. Every request must carry its own caller account token as `Authorization: Bearer opr_...`; the server forwards it to the API as-is. Missing/malformed header = `401` (except `/health`). The token's workspace must match this server's `mcp.workspace_id`, or the API returns `403`.
+  - Delegated (OAuth) callers: `Authorization: Bearer sva_...` on `POST /mcp/rpc` of the `http` transport, enabled by `mcp.oauth_issuer`, `mcp.oauth_resource` and `mcp.oauth_forward_secret` (all three or none). The server asks the API for the token context on every request (`401` invalid token, `503` no verdict), serves the caller in its grant's workspace (never `mcp.workspace_id`), filters `tools/list` and refuses `tools/call` by the table in `src/oauth_scopes.rs` (default deny; read tools only in the first release), and forwards the token to the API with the internal forwarding credential (`X-Sylvode-Forwarded-By`, `X-Sylvode-Forward-Auth`). This forwarding is a deliberate deviation from the MCP authorization specification (D2); keep it stated in release notes. `sva_` tokens are never forwarded without that credential and never accepted on `/sse`, `/messages`, the `sse` transport or `--flow-only`.
   - `mcp.auth_token` does not exist any more. If a configuration file still has it, the server refuses to start — remove the key, do not try to set a value for it.
 - Skill package: `skills/openpr-mcp/SKILL.md`
 
@@ -124,5 +125,7 @@ curl -X POST http://localhost:8090/mcp/rpc \
 - The configuration file is the source of all secrets (`mcp.bot_token`, `mcp.workspace_id`); Sylvode reads no environment variables. Never commit the file itself.
 - Bot tokens are workspace-scoped; each creates a bot user (`entity_type = bot`, `agent_type = mcp`) for audit integrity.
 - `mcp.bot_token` is only required for `stdio` transport and CLI subcommands (no per-request caller to act on). `http`/`sse` transports ignore it: every request supplies its own caller bot token via `Authorization: Bearer opr_...`, forwarded to the API unchanged. There is no server-side fallback identity and no shared inbound secret for these transports, so `mcp.bind_addr` can be bound to any reachable address without extra configuration.
+- Adding a tool: decide it for delegated callers in `src/oauth_scopes.rs` (`SCOPED_TOOLS` with its scope, or `WITHHELD_TOOLS`); `oauth_scopes::tests::every_registered_tool_has_a_decision` fails until you do. A tool that is not in `SCOPED_TOOLS` is invisible and uncallable for delegated callers.
+- Never log, echo or store a delegated token or `mcp.oauth_forward_secret`; delegated tokens come from the `Authorization` header only.
 - `mcp.auth_token` was removed. A configuration file that still sets it fails to start; when asked to fix a broken MCP config, delete the key rather than filling in a value.
 - File uploads: server-side type validation and size limits.

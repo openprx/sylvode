@@ -128,7 +128,10 @@ not renamed; see the
 | --- | --- | --- |
 | `mcp.api_url` | no, default `http://localhost:8081` | Base URL of the Sylvode API. |
 | `mcp.bot_token` | conditional | Workspace bot token, used only by `stdio` and the CLI subcommands, which have no per-request caller to act on. Ignored by `http`/`sse`. |
-| `mcp.workspace_id` | yes | Workspace UUID the calls are scoped to. |
+| `mcp.workspace_id` | yes | Workspace UUID the calls are scoped to. Not used for delegated (OAuth) callers, whose workspace comes from their token. |
+| `mcp.oauth_issuer` | with the two keys below | Issuer of the Sylvode authorization server. |
+| `mcp.oauth_resource` | with the other two | Identifier of this server as a protected resource: the exact URL that receives JSON-RPC posts, for example `http://127.0.0.1:8090/mcp/rpc`, or `https://sv.example.com/mcp` behind a proxy that maps that path to `/mcp/rpc`. Must equal `[oauth] mcp_resource` of the API. |
+| `mcp.oauth_forward_secret` | with the other two | Internal forwarding credential, at least 32 bytes, never logged. Must equal `[oauth] internal_forward_secret` of the API. |
 
 There is no `mcp.auth_token` key any more. If your configuration file still has one, delete
 it — the server refuses to start rather than run with a key that no longer does anything.
@@ -169,6 +172,61 @@ curl -H "Authorization: Bearer opr_your_own_account_token" \
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
      http://localhost:8090/mcp/rpc
 ```
+
+### Delegated access (OAuth)
+
+Sylvode can act as an OAuth 2.1 authorization server for its own API and for this MCP server;
+Ramflux is the one pre-registered client. A delegated caller presents an access token that
+starts with `sva_` and was issued for this server's resource. Setting the three `mcp.oauth_*`
+keys together enables it on the **`http` transport**, on `POST /mcp/rpc` only. A partial set
+refuses to start with a message naming the missing keys. Without them `sva_` tokens are
+refused with `401` and nothing else changes. The `sse` transport and `serve --flow-only` never
+serve delegated callers.
+
+What the server does for a delegated caller:
+
+- **Discovery.** `GET /.well-known/oauth-protected-resource` and the path-based form (for the
+  resource `http://127.0.0.1:8090/mcp/rpc`: `/.well-known/oauth-protected-resource/mcp/rpc`)
+  publish the RFC 9728 document. Both need no token. A request without a token gets `401` with
+  `WWW-Authenticate: Bearer realm="sylvode", resource_metadata="...", scope="projects:read work_items:read"`.
+- **Verification.** Before anything else, the server asks the API what the token allows
+  (`GET /api/v1/oauth/internal/token-context`). The API's `401` becomes our `401`
+  (`error="invalid_token"`; unknown, expired, revoked and wrong-audience tokens are not told
+  apart). If the API cannot be asked or its answer cannot be understood the request is refused
+  with `503`; it is never served with broader access.
+- **Workspace.** The caller acts in the workspace of its grant, taken from the token context,
+  never from `mcp.workspace_id` and never from a tool argument. A `workspace_id` argument that
+  differs from the grant is refused, not replaced.
+- **Tools.** `tools/list` shows only the tools the token's scopes allow; `tools/call` for a
+  tool outside them answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope",
+  scope="...", resource_metadata="..."` and a JSON-RPC error `-32001`. The first release
+  exposes **read tools only** (projects, work items and their comments and labels, forms and
+  records): `projects:read` (`projects.list`, `projects.get`, `context.get_project`),
+  `work_items:read` (`work_items.list`, `.get`, `.get_by_identifier`, `.search`,
+  `.list_labels`, `comments.list`, `labels.list_by_project`) and `forms:read` (`forms.list`,
+  `.get`, `.schema_summary`, `form_views.list`, `form_records.list`, `.get`, `.children`). A
+  `:write` scope implies its `:read` scope but unlocks no tool that changes data. Every other
+  tool, including anything that writes, deletes, administers, imports or exports, or dispatches
+  an agent, is refused with JSON-RPC error `-32002` (`tool not available to connected
+  applications`) whatever the scopes say; a tool that is not in the table of
+  `src/oauth_scopes.rs` is refused too. `resources/read` serves the static guides only.
+- **Forwarding (deviation from the MCP authorization specification).** The specification says an
+  MCP server must not pass through the token it received. This server forwards the caller's
+  MCP-audience token to the Sylvode API together with an internal forwarding credential
+  (`X-Sylvode-Forwarded-By: mcp-server`, `X-Sylvode-Forward-Auth: <mcp.oauth_forward_secret>`),
+  and the API accepts an MCP-audience token only with that credential. The MCP server is a
+  stateless facade over its own API, holds no signing key and no database, and the API is the
+  issuer and the policy point for both audiences; a token for one audience is still refused at
+  the other. It costs one shared secret in the API and MCP configurations. Release notes must
+  state this deviation.
+- **Protocol version.** The server keeps declaring `2024-11-05`; delegated clients use plain
+  JSON-RPC over `POST /mcp/rpc`.
+- **Tokens and secrets.** The token is read from the `Authorization` header only: never from a
+  query string, a cookie, a tool argument or the environment. Neither it nor the forwarding
+  credential is logged, echoed in an error or a tool result, or written anywhere.
+
+`opr_` bot tokens and user tokens behave exactly as before: they are forwarded verbatim, the
+configured `mcp.workspace_id` applies, and they never carry the forwarding headers.
 
 ### Build
 
@@ -520,6 +578,11 @@ signing key and no bot registry, so it forwards the token it holds and lets the 
   and must belong to the workspace named by this server's `mcp.workspace_id` — a token from
   another workspace gets `403`.
 - JWT user tokens still use the normal API JWT validation path.
+- Delegated (OAuth) callers present `sva_` tokens on `POST /mcp/rpc` of the `http` transport
+  when `mcp.oauth_*` is configured; see [Delegated access (OAuth)](#delegated-access-oauth).
+  They are checked against the API on every request, see only the read tools their scopes
+  allow, act in their grant's workspace, and are forwarded to the API with an internal
+  forwarding credential (deviation D2 of the authorization contract).
 - For public HTTP exposure, place MCP behind your reverse proxy or tunnel and
   apply deployment-level rate limits.
 
