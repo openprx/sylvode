@@ -1,0 +1,30 @@
+{
+	"states": {
+		"empty": {
+			"title": "No {thing} yet",
+			"body": "{Thing} you add appear here."
+		},
+		"loading": {
+			"label": "Loading {thing}"
+		},
+		"loadFailed": {
+			"title": "Could not load {thing}",
+			"body": "The server did not respond. Your filters are kept.",
+			"action": "Retry"
+		},
+		"forbidden": {
+			"title": "You do not have access",
+			"body": "Ask a {role} to give you access to {place}."
+		}
+	},
+	"ui": {
+		"stateBlock": {
+			"sample": {
+				"thing": "projects",
+				"create": "New project",
+				"grantor": "administrator",
+				"place": "Northwind workspace"
+			}
+		}
+	}
+}
