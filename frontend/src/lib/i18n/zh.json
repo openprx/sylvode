@@ -4454,17 +4454,9 @@
 		}
 	},
 	"workbench": {
-		"openTasks": "已打开的任务",
 		"forms": "万能表单",
 		"project": "项目",
 		"projects": "项目列表",
-		"close": "关闭页签 {title}",
-		"unsaved": "有未保存的更改",
-		"updated": "有新变化",
-		"limit": "已打开8个页签，请先保存并关闭一个，再打开新的。",
-		"closeDirty": "关闭此页签？",
-		"closeDirtyBody": "此页签有未提交内容，关闭后将丢弃内存草稿。",
-		"discardClose": "放弃并关闭",
 		"leaveDirty": "仍有未提交内容，退出后内存草稿不会保留，继续退出？",
 		"restoredLimit": "已优先打开当前链接，并恢复最多8个页签。",
 		"conflictBody": "远端内容已有变化，本地草稿已保留，请核对后再保存。",
@@ -4472,9 +4464,9 @@
 		"remoteValue": "服务器：",
 		"reviewRetry": "核对当前内容并保留我的改动",
 		"resourceUnavailable": "此资源已不可访问或权限已变化，草稿已保留。",
-		"reorderHint": "拖动页签换序，或按 Alt+Shift+左右方向键。",
-		"moved": "已将 {title} 移至第 {position} 位，共 {total} 个页签。",
-		"sharedBlock": "共享正文块"
+		"sharedBlock": "共享正文块",
+		"droppedTab": "为打开“{next}”，已关闭最久未使用的“{title}”。",
+		"reopen": "重新打开"
 	},
 	"plugins": {
 		"projectSettings": "项目设置 · 插件",
