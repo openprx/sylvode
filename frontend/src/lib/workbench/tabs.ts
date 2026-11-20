@@ -8,13 +8,41 @@ export interface TaskTab {
 	dirty: boolean;
 	changed: boolean;
 	scroll: number;
+	/** Monotonic activation stamp (ms); the smallest value is the least recently used tab. */
+	lastActive: number;
+}
+export interface PendingOpen {
+	href: string;
+	key: string;
+	title: string;
 }
 export interface TaskState {
 	userId: string | null;
 	tabs: TaskTab[];
 	active: string | null;
-	limit: boolean;
+	/** A new item that has no free tab because all eight are unsaved. */
+	pending: PendingOpen | null;
 	restoredTrimmed?: boolean;
+}
+export interface DroppedTab {
+	key: string;
+	title: string;
+	url: string;
+}
+export type VisitResult =
+	| { kind: 'none' }
+	| { kind: 'opened' }
+	| { kind: 'replaced'; dropped: DroppedTab; title: string }
+	| { kind: 'blocked' };
+export type ResolvePendingResult =
+	| { kind: 'cleared' }
+	| { kind: 'confirm' }
+	| { kind: 'missing' }
+	| { kind: 'closed'; href: string; wasActive: boolean };
+interface ClosedHint {
+	index: number;
+	scroll: number;
+	title: string;
 }
 export interface TaskViewHooks {
 	capture(): unknown;
@@ -73,18 +101,27 @@ export function taskResource(href: string): TaskResource | null {
 	return null;
 }
 export class TaskWorkbench {
-	private store = writable<TaskState>({ userId: null, tabs: [], active: null, limit: false });
+	private store = writable<TaskState>({ userId: null, tabs: [], active: null, pending: null });
 	readonly subscribe = this.store.subscribe;
 	private snapshots = new Map<string, unknown>();
 	private hooks = new Map<string, TaskViewHooks>();
 	private releases = new Map<string, () => void>();
 	private auxiliary = new Map<string, Map<string, { dirty(): boolean; dispose(): void }>>();
 	private intrinsicDirty = new Map<string, boolean>();
+	private closedHints = new Map<string, ClosedHint>();
+	private stamp = 0;
 	private refreshing = false;
 	private freshRestore = false;
 	onViewReady: ((key: string) => void) | null = null;
+	/** Called when opening a new item closed the least recently used saved tab. */
+	onReplaced: ((dropped: DroppedTab, title: string) => void) | null = null;
 	get current(): TaskState {
 		return get(this.store);
+	}
+	/** Strictly increasing activation stamp, so equal clock readings never tie. */
+	private nextStamp(): number {
+		this.stamp = Math.max(Date.now(), this.stamp + 1);
+		return this.stamp;
 	}
 	activateUser(userId: string | null): void {
 		if (this.current.userId === userId) return;
@@ -95,6 +132,7 @@ export class TaskWorkbench {
 		for (const release of this.releases.values()) release();
 		for (const hook of this.hooks.values()) hook.dispose?.();
 		this.snapshots.clear();
+		this.closedHints.clear();
 		this.hooks.clear();
 		this.releases.clear();
 		let tabs: TaskTab[] = [];
@@ -115,7 +153,11 @@ export class TaskWorkbench {
 								title: typeof entry.title === 'string' ? entry.title : resource.title,
 								dirty: false,
 								changed: false,
-								scroll: typeof entry.scroll === 'number' ? entry.scroll : 0
+								scroll: typeof entry.scroll === 'number' ? entry.scroll : 0,
+								lastActive:
+									typeof entry.lastActive === 'number' && Number.isFinite(entry.lastActive)
+										? entry.lastActive
+										: 0
 							}
 						];
 					});
@@ -128,7 +170,8 @@ export class TaskWorkbench {
 				/* Invalid position metadata never prevents sign-in. */
 			}
 		this.freshRestore = true;
-		this.store.set({ userId, tabs, active, limit: false });
+		this.stamp = tabs.reduce((max, tab) => Math.max(max, tab.lastActive), 0);
+		this.store.set({ userId, tabs, active, pending: null });
 	}
 	private storageKey(userId: string): string {
 		return `sv-task-tabs:v1:${userId}`;
@@ -142,14 +185,20 @@ export class TaskWorkbench {
 				JSON.stringify({
 					userId: state.userId,
 					active: state.active,
-					tabs: state.tabs.map(({ key, url, title, scroll }) => ({ key, url, title, scroll }))
+					tabs: state.tabs.map(({ key, url, title, scroll, lastActive }) => ({
+						key,
+						url,
+						title,
+						scroll,
+						lastActive
+					}))
 				})
 			);
 		} catch {
 			/* Quota affects restoration, not current edits. */
 		}
 	}
-	restoreRoute(href: string): boolean {
+	restoreRoute(href: string): VisitResult {
 		if (!this.freshRestore) return this.visit(href);
 		this.freshRestore = false;
 		const item = taskResource(href);
@@ -157,52 +206,146 @@ export class TaskWorkbench {
 		const state = this.current;
 		const existing = state.tabs.find((tab) => tab.key === item.key);
 		const others = state.tabs.filter((tab) => tab.key !== item.key);
-		const trimmed = others.length >= MAX_TASK_TABS;
-		this.store.set({
-			...state,
-			active: item.key,
-			limit: false,
-			restoredTrimmed: trimmed,
-			tabs: existing
-				? state.tabs.map((tab) => (tab.key === item.key ? { ...tab, url: item.url } : tab))
-				: [
-						...(trimmed ? others.slice(1) : others),
-						{ ...item, dirty: false, changed: false, scroll: 0 }
-					]
-		});
+		const trimmed = !existing && others.length >= MAX_TASK_TABS;
+		const stamp = this.nextStamp();
+		let tabs: TaskTab[];
+		if (existing) {
+			tabs = state.tabs.map((tab) =>
+				tab.key === item.key ? { ...tab, url: item.url, lastActive: stamp } : tab
+			);
+		} else {
+			// Restored tabs are always clean, so a candidate exists; the oldest entry is the fallback.
+			const dropKey = trimmed
+				? (this.evictionCandidate(state.tabs, null)?.key ?? others[0]?.key)
+				: null;
+			tabs = [
+				...others.filter((tab) => tab.key !== dropKey),
+				{ ...item, dirty: false, changed: false, scroll: 0, lastActive: stamp }
+			];
+		}
+		this.store.set({ ...state, active: item.key, pending: null, restoredTrimmed: trimmed, tabs });
 		this.persist();
-		return true;
+		return { kind: 'opened' };
 	}
 
+	private isDirty(tab: TaskTab): boolean {
+		return tab.dirty || (this.hooks.get(tab.key)?.dirty() ?? false) || this.auxiliaryDirty(tab.key);
+	}
+	/** The clean tab that is not active and was used least recently, or null when none qualifies. */
+	private evictionCandidate(tabs: TaskTab[], active: string | null): TaskTab | null {
+		let best: TaskTab | null = null;
+		for (const tab of tabs) {
+			if (tab.key === active || this.isDirty(tab)) continue;
+			if (!best || tab.lastActive < best.lastActive) best = tab;
+		}
+		return best;
+	}
+
+	/** False only when the key is new, eight tabs are open and none can be closed to make room. */
 	canOpen(href: string): boolean {
 		const item = taskResource(href);
-		return (
-			!item ||
-			this.current.tabs.some((tab) => tab.key === item.key) ||
-			this.current.tabs.length < MAX_TASK_TABS
-		);
+		if (!item) return true;
+		const { tabs } = this.current;
+		if (tabs.some((tab) => tab.key === item.key) || tabs.length < MAX_TASK_TABS) return true;
+		return this.evictionCandidate(tabs, this.current.active) !== null;
 	}
-	visit(href: string): boolean {
-		if (!this.current.userId) return true;
+	/** Remembers a refused navigation so the strip can show its blocking menu. */
+	block(href: string): void {
+		const item = taskResource(href);
+		if (!item) return;
+		this.store.update((state) => ({
+			...state,
+			pending: { href, key: item.key, title: item.title }
+		}));
+	}
+	/**
+	 * Transitional alias for the forms page, which still calls it without a target (its
+	 * `openForm` gate). Remove it when that call becomes `block(target.href)`.
+	 */
+	showLimit(): void {
+		if (typeof window !== 'undefined') this.block(window.location.href);
+	}
+	visit(href: string): VisitResult {
+		if (!this.current.userId) return { kind: 'none' };
 		const item = taskResource(href);
 		if (!item) {
 			this.store.update((state) => ({ ...state, active: null }));
-			return true;
+			return { kind: 'none' };
 		}
-		if (!this.canOpen(href)) {
-			this.store.update((state) => ({ ...state, limit: true }));
-			return false;
+		const state = this.current;
+		if (state.tabs.some((tab) => tab.key === item.key)) {
+			const stamp = this.nextStamp();
+			this.store.set({
+				...state,
+				active: item.key,
+				pending: null,
+				tabs: state.tabs.map((tab) =>
+					tab.key === item.key ? { ...tab, url: item.url, lastActive: stamp } : tab
+				)
+			});
+			this.persist();
+			return { kind: 'opened' };
 		}
-		this.store.update((state) => ({
-			...state,
+		let dropped: DroppedTab | null = null;
+		let index = -1;
+		let scroll = 0;
+		if (state.tabs.length >= MAX_TASK_TABS) {
+			const candidate = this.evictionCandidate(state.tabs, state.active);
+			if (!candidate) {
+				this.block(href);
+				return { kind: 'blocked' };
+			}
+			dropped = { key: candidate.key, title: candidate.title, url: candidate.url };
+			index = state.tabs.findIndex((tab) => tab.key === candidate.key);
+			scroll = candidate.scroll;
+			this.close(candidate.key);
+			this.closedHints.set(candidate.key, { index, scroll, title: candidate.title });
+		}
+		const hint = this.closedHints.get(item.key);
+		this.closedHints.delete(item.key);
+		const tabs = this.current.tabs;
+		const tab: TaskTab = {
+			...item,
+			title: hint?.title ?? item.title,
+			dirty: false,
+			changed: false,
+			scroll: hint?.scroll ?? 0,
+			lastActive: this.nextStamp()
+		};
+		const at = hint ? Math.min(hint.index, tabs.length) : tabs.length;
+		this.store.set({
+			...this.current,
 			active: item.key,
-			limit: false,
-			tabs: state.tabs.some((tab) => tab.key === item.key)
-				? state.tabs.map((tab) => (tab.key === item.key ? { ...tab, url: item.url } : tab))
-				: [...state.tabs, { ...item, dirty: false, changed: false, scroll: 0 }]
-		}));
+			pending: null,
+			tabs: [...tabs.slice(0, at), tab, ...tabs.slice(at)]
+		});
 		this.persist();
-		return true;
+		if (!dropped) return { kind: 'opened' };
+		this.onReplaced?.(dropped, tab.title);
+		return { kind: 'replaced', dropped, title: tab.title };
+	}
+	/**
+	 * Settles a refused open. `null` cancels it. A key closes that tab (the caller confirms the
+	 * discard first) and hands back the href to open.
+	 */
+	resolvePending(closeKey: string | null, discardDraft = false): ResolvePendingResult {
+		const pending = this.current.pending;
+		if (closeKey === null || !pending) {
+			this.store.update((state) => ({ ...state, pending: null }));
+			return { kind: 'cleared' };
+		}
+		const result = this.close(closeKey, discardDraft);
+		if (result.kind !== 'closed') return result;
+		this.store.update((state) => ({ ...state, pending: null }));
+		return { kind: 'closed', href: pending.href, wasActive: result.wasActive };
+	}
+	/** Closes every clean tab except `exceptKey`; returns the closed keys. */
+	closeSaved(exceptKey?: string): string[] {
+		const closed: string[] = [];
+		for (const tab of [...this.current.tabs])
+			if (tab.key !== exceptKey && !this.isDirty(tab) && this.close(tab.key).kind === 'closed')
+				closed.push(tab.key);
+		return closed;
 	}
 	register(key: string, hooks: TaskViewHooks): () => void {
 		this.hooks.set(key, hooks);
@@ -275,9 +418,6 @@ export class TaskWorkbench {
 			tabs: state.tabs.map((tab) => (tab.key === key ? { ...tab, changed } : tab))
 		}));
 	}
-	showLimit(): void {
-		this.store.update((state) => ({ ...state, limit: true }));
-	}
 	setScroll(key: string, scroll: number): void {
 		this.store.update((state) => ({
 			...state,
@@ -342,7 +482,7 @@ export class TaskWorkbench {
 		const next =
 			state.active === key ? (tabs[Math.min(index, tabs.length - 1)]?.key ?? null) : state.active;
 		const active = state.active === key ? null : state.active;
-		this.store.set({ ...state, tabs, active, limit: false });
+		this.store.set({ ...state, tabs, active });
 		this.persist();
 		return {
 			kind: 'closed',
