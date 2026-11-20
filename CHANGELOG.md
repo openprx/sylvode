@@ -15,6 +15,52 @@ name.
 - **Forms page restructured.** The Forms page is split into a state object, controllers, pure
   modules and components, with unit tests for the modules and a browser smoke for the
   interactions. Internal refactor, no behaviour change.
+- **Flow writes no longer walk the whole page to guard the editor-model floor.** The isolated
+  apply step used to read every editor block once before each import (twice on model 5 pages)
+  only to refuse an update that lowers a page from editor model 5. It now reads the model 5
+  marker before and after the import and scans the imported operations, which costs the same for
+  a 200-block page and a 5,000-block page. The few updates that remove or re-type a block
+  container, or touch the document root, fall back to an exact check. The same updates are
+  refused as before (`editor_model_floor_downgrade`). The semantic snapshot now also yields the
+  floor of the state it read, so the host no longer walks a second time. The guard never trusts
+  the fields of an operation that a client chooses: every deletion on the top-level block list
+  goes to the exact check, which decides from the document's actual state. Four differences
+  affect invalid or hostile input only: a base document that fails the current rules is no
+  longer re-checked before the import (the check after the import still rejects an invalid
+  result); an update that is invalid in several ways at once may report a different first
+  reason; and the editor document, the structure index and its metadata are read through their
+  typed root containers everywhere, so a second root container with the same name and another
+  type no longer makes the floor check and the page reader disagree (before, such a page could
+  fail the floor check on replay until the next snapshot compaction); and, as the fourth, an
+  update from a client that creates or writes a root container with a reserved name
+  (`doc`, `flow_editor_structure`, `flow_editor_structure_meta`, `flow_editor_aliases`, `order`,
+  `tree`, `meta`) and a container type other than the expected one is refused as an invalid update
+  (`reserved_root_container_type`), as is an update whose operations cannot all be inspected
+  (`reserved_root_scan_incomplete`). Such a second root made every later write of that page read
+  the whole document more than once, and compaction does not remove it. No product client
+  creates one. The rule applies to updates a client offers for acceptance only: replay of stored
+  history, snapshot rebuilds and integrity checks still accept a page that already carries such a
+  root, and the check costs the update, not the page. An uploaded package whose document carries
+  such a root, in its snapshot or in its update tail, is refused the same way on import.
+
+### Fixed
+
+- **Deleting a workspace or a project that holds content works.** A workspace with a Flow Page
+  that had an accepted collaboration update answered `database error` and stayed, because the
+  delete cascade reached the event row before the update that references it. Workspace and project
+  deletion now remove the rows that block the cascade first (accepted updates, event dispatch and
+  delivery rows, import jobs, scope command receipts, conversion jobs, previews and lineage,
+  plugin bindings, activities and notifications) inside the same transaction, and remove the
+  workspace's legacy Flow scope with it. No foreign key changed. If content outside the deleted
+  workspace or project still restricts it, the request is refused with a typed `invalid_update`
+  (`details.reason = "retained_by_external_reference"`) and nothing is deleted.
+- **Flow: large Pages stay writable on slower databases.** Every statement of the block registry
+  whose size depended on the Page (the locking read, the removal of absent blocks, the legacy
+  comment seal and the bulk writes) now carries at most 500 rows. The first registration of an
+  existing Page is resumable: each accepted write registers new blocks only while it fits its
+  staging budget and records the rest in `flow_block_checkpoints.pending_registrations`
+  (migration `0107`, additive). Comment lists, anchored comments, block shares and transfers
+  finish the registration in short capped steps before they read block identities.
 
 ## [0.5.0] - 2026-11-19
 

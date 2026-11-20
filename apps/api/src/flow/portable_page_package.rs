@@ -251,7 +251,7 @@ pub async fn export(db: &DatabaseConnection, object: Uuid, actor: Uuid) -> Resul
         return Err(super::policy::authorization_read_unstable());
     }
     let mut engine = super::document::engine_from_boot(&boot)?;
-    if !engine.has_editor_doc() {
+    if !engine.has_editor_doc().map_err(map)? {
         engine.initialize_page_editor().map_err(|_| invalid_content())?;
     }
     let title = engine.title().map_err(map)?;
@@ -758,7 +758,14 @@ pub async fn import(
             vec![id.into(),parent.scope_id.into(),object.into(),upload.kind.as_str().into(),upload.filename.into(),upload.content_type.into(),size.into(),upload.sha256.into(),upload.bytes.into(),actor.into()]
         )).await?;
     }
-    super::block_registry::reconcile_accepted(&tx, object, 0, &registry).await?;
+    super::block_registry::reconcile_accepted(
+        &tx,
+        object,
+        0,
+        &registry,
+        super::block_registry::RegistrationAllowance::Complete,
+    )
+    .await?;
     body_assets::reconcile_accepted(&tx, object, 0, &refs).await?;
     super::child_pages::reconcile_accepted(&tx, object, Some(actor), 0, &child_refs).await?;
     let identity = scope::identity(&tx, object).await?;

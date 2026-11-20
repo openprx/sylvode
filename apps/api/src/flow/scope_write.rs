@@ -169,6 +169,7 @@ async fn accept_inner(
             super::collab::snapshot::Trigger::Soft => true,
             super::collab::snapshot::Trigger::None => false,
         };
+        let started = std::time::Instant::now();
         let tx = db.begin().await?;
         if editor_init {
             super::scope_editor::require_write(&tx, &identity).await?;
@@ -283,7 +284,14 @@ async fn accept_inner(
         tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_object_projections SET document_seq=$2,document_frontier=$3,title=$4,state=$5,plain_text=$6,updated_at=now() WHERE object_id=$1",vec![object.into(),seq.into(),prepared.after_frontier.clone().into(),prepared.title.clone().into(),prepared.state_json.clone().into(),prepared.plain_text.clone().into()])).await?;
         super::body_assets::reconcile_accepted(&tx, object, seq, &prepared.asset_references).await?;
         super::child_pages::reconcile_accepted(&tx, object, Some(user), seq, &prepared.child_references).await?;
-        super::block_registry::reconcile_accepted(&tx, object, seq, &prepared.logical_blocks).await?;
+        super::block_registry::reconcile_accepted(
+            &tx,
+            object,
+            seq,
+            &prepared.logical_blocks,
+            super::block_registry::RegistrationAllowance::within(started, write::LOCKED_PHASE_STAGING_BUDGET),
+        )
+        .await?;
         if let Some(permit) = shared.as_ref() {
             permit.record(&tx).await?;
         }

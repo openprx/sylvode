@@ -802,7 +802,14 @@ async fn create_object_inner(
     let event_id = outcome.event_id;
 
     if input.object_type == "page" {
-        super::block_registry::reconcile_accepted(&tx, object_id, 0, &initial_logical_blocks).await?;
+        super::block_registry::reconcile_accepted(
+            &tx,
+            object_id,
+            0,
+            &initial_logical_blocks,
+            super::block_registry::RegistrationAllowance::Complete,
+        )
+        .await?;
         super::body_assets::reconcile_accepted(&tx, object_id, 0, &initial_asset_references).await?;
     }
     tx.commit().await?;
@@ -1949,7 +1956,9 @@ fn apply_content_command(
             }
             if let Some(text) = payload.text {
                 let existing = engine.semantic_snapshot().map_err(|err| map_collab_error(&err))?;
-                let canonical_id = engine.resolve_content_node_id(&id);
+                let canonical_id = engine
+                    .resolve_content_node_id(&id)
+                    .map_err(|err| map_collab_error(&err))?;
                 let node = existing
                     .nodes
                     .get(&canonical_id)

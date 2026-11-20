@@ -42,13 +42,17 @@ pub mod editor_media;
 pub mod editor_structure;
 pub mod engine;
 pub mod error;
+mod floor_guard;
 pub mod frontier;
 pub mod isolation;
 pub mod limits;
 pub mod operation;
 pub mod page_inline;
 mod prose_projection;
+pub mod reserved_roots;
 pub mod semantic;
+#[cfg(test)]
+mod test_alloc;
 #[cfg(test)]
 mod walk_counter;
 

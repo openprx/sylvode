@@ -3620,6 +3620,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0106_flow_capabilities_default_on.sql",
         include_str!("../../../migrations/0106_flow_capabilities_default_on.sql"),
     ),
+    (
+        "0107_flow_block_registration_progress.sql",
+        include_str!("../../../migrations/0107_flow_block_registration_progress.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4162,6 +4166,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0106_flow_capabilities_default_on.sql",
         SchemaProbe::Relation("flow_runtime_capability_rollouts"),
+    ),
+    (
+        "0107_flow_block_registration_progress.sql",
+        SchemaProbe::Column("flow_block_checkpoints", "pending_registrations"),
     ),
 ];
 
@@ -4723,6 +4731,7 @@ mod tests {
                 "0104_project_resource_kinds.sql",
                 "0105_token_bot_entity_type.sql",
                 "0106_flow_capabilities_default_on.sql",
+                "0107_flow_block_registration_progress.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -6297,6 +6306,74 @@ mod migration_runner_database_tests {
         );
         assert_schema_complete(&scratch.db).await;
 
+        scratch.drop_self().await;
+    }
+
+    const REGISTRATION_PROGRESS_MIGRATION: &str = "0107_flow_block_registration_progress.sql";
+
+    /// A database that already applied 0001-0106 and holds registry checkpoints gets the new column
+    /// with 0 on every existing row (those were written by complete registrations), and executing
+    /// the file again changes nothing. The 0106 state is reproduced by dropping the column from a
+    /// fully migrated database that has a registered Page.
+    #[tokio::test]
+    async fn the_registration_progress_migration_keeps_existing_checkpoints_complete() {
+        let scratch = scratch_or_skip!("flow_registration_progress");
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+        register_running_readers(&scratch.db).await;
+        ordinary_user_creates_a_personal_page(&scratch.db)
+            .await
+            .expect("a Page registers a checkpoint");
+        let heads = scratch
+            .db
+            .query_all(Statement::from_string(
+                DbBackend::Postgres,
+                "SELECT accepted_head FROM flow_block_checkpoints ORDER BY page_id".to_string(),
+            ))
+            .await
+            .expect("checkpoints readable");
+        assert_eq!(heads.len(), 1, "the created Page has one checkpoint");
+        scratch
+            .db
+            .execute_unprepared("ALTER TABLE flow_block_checkpoints DROP COLUMN pending_registrations")
+            .await
+            .expect("the 0106 state has no progress column");
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == REGISTRATION_PROGRESS_MIGRATION)
+            .map(|(_, sql)| *sql)
+            .expect("0107 is registered");
+        for _ in 0..2 {
+            scratch.db.execute_unprepared(sql).await.expect("0107 executes");
+            let row = scratch
+                .db
+                .query_one(Statement::from_string(
+                    DbBackend::Postgres,
+                    "SELECT pending_registrations, accepted_head FROM flow_block_checkpoints".to_string(),
+                ))
+                .await
+                .expect("checkpoint readable")
+                .expect("the checkpoint survives");
+            assert_eq!(row.try_get::<i32>("", "pending_registrations").expect("column"), 0);
+            assert_eq!(
+                row.try_get::<i64>("", "accepted_head").expect("column"),
+                heads
+                    .first()
+                    .expect("one checkpoint")
+                    .try_get::<i64>("", "accepted_head")
+                    .expect("column")
+            );
+        }
+        assert!(
+            scratch
+                .db
+                .execute_unprepared("UPDATE flow_block_checkpoints SET pending_registrations=-1")
+                .await
+                .is_err(),
+            "a negative pending count is refused"
+        );
+        assert_schema_complete(&scratch.db).await;
         scratch.drop_self().await;
     }
 }

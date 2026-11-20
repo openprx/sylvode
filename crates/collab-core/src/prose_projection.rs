@@ -17,17 +17,20 @@ pub fn project_legacy_editor_prose(doc: &LoroDoc, semantic: &mut SemanticSnapsho
 /// node so marked and clears the same text again. The only lasting effect of the legacy step is
 /// therefore that tree nodes whose ids equal a legacy block id are gone, plus its errors, which
 /// still take precedence over the current step's.
+///
+/// Also returns the editor-model floor facts of the pass (all false without an editor document).
 pub fn project_legacy_then_current_editor_prose(
     doc: &LoroDoc,
     semantic: &mut SemanticSnapshot,
-) -> Result<(), CollabError> {
-    let Some((legacy_ids, blocks)) = crate::editor_doc_bridge::legacy_ids_and_editor_blocks(doc)? else {
-        return Ok(());
+) -> Result<crate::editor_doc_bridge::FloorFacts, CollabError> {
+    let Some((legacy_ids, blocks, facts)) = crate::editor_doc_bridge::legacy_ids_and_editor_blocks(doc)? else {
+        return Ok(crate::editor_doc_bridge::FloorFacts::default());
     };
     for id in &legacy_ids {
         semantic.nodes.remove(id.as_str());
     }
-    project_blocks(doc, semantic, blocks, false)
+    project_blocks(doc, semantic, blocks, false)?;
+    Ok(facts)
 }
 fn project(doc: &LoroDoc, semantic: &mut SemanticSnapshot, legacy: bool) -> Result<(), CollabError> {
     let Some(blocks) = (if legacy {
@@ -59,7 +62,7 @@ fn project_blocks(
         }
     }
     // The document does not change while projecting: read the structure model once.
-    let structure_model = (!legacy && !blocks.is_empty() && crate::editor_structure::ready(doc)).then(|| {
+    let structure_model = (!legacy && !blocks.is_empty() && crate::editor_structure::ready(doc)?).then(|| {
         match doc.get_map(crate::editor_structure::META).get("model") {
             Some(loro::ValueOrContainer::Value(loro::LoroValue::String(value))) => value.to_string(),
             _ => "rich_page_v4".into(),

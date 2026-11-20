@@ -1,14 +1,19 @@
 //! Private comments never move between Pages. A CID is never used to rebind a known anchor.
+use super::block_registry::{
+    PreparedBlock, REGISTRY_ROWS_PER_STATEMENT, RegistrationAllowance, execute, query_all, query_one,
+};
 use super::collab::bootstrap;
+use super::collab::write::LOCKED_PHASE_STAGING_BUDGET;
 use crate::error::ApiError;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement};
+use std::time::Instant;
 use uuid::Uuid;
 
 pub(crate) struct Prepared {
     document: Uuid,
     head_seq: i64,
     frontier: Vec<u8>,
-    blocks: Vec<super::block_registry::PreparedBlock>,
+    blocks: Vec<PreparedBlock>,
 }
 pub(crate) async fn prepare(
     db: &DatabaseConnection,
@@ -38,7 +43,10 @@ pub(crate) async fn prepare(
     if !engine.matches_frontier(&boot.head_frontier) {
         return Err(ApiError::resync_required("comment anchor head did not replay", None));
     }
-    if !engine.has_editor_doc() {
+    if !engine
+        .has_editor_doc()
+        .map_err(|error| super::command::map_collab_error(&error))?
+    {
         if anchored && !reply {
             return Err(ApiError::invalid_update(
                 "initialize Page editor before creating a block anchor",
@@ -82,61 +90,85 @@ pub(crate) async fn ensure(
             "comment anchor busy; retry",
         ));
     }
-    super::block_registry::reconcile_accepted(tx, object, prepared.head_seq, &prepared.blocks).await
+    super::block_registry::reconcile_accepted(
+        tx,
+        object,
+        prepared.head_seq,
+        &prepared.blocks,
+        RegistrationAllowance::within(Instant::now(), LOCKED_PHASE_STAGING_BUDGET),
+    )
+    .await
 }
 
 /// Adopt the current legacy Page+identifier meaning exactly once under its accepted-head lock.
 /// This defines the first UUID baseline; it never claims prior UUID history or runs after seal.
+/// Callers run it only when no block of the Page is still pending registration.
+///
+/// The seal is driven by the aliases that comments actually use: the distinct comment block ids are
+/// read in keyset pages of `REGISTRY_ROWS_PER_STATEMENT`, and the adoption statement carries at
+/// most that many aliases, so its cost depends on commented blocks and not on Page size.
 pub(crate) async fn sync_legacy(
     tx: &DatabaseTransaction,
     page: Uuid,
-    blocks: &[super::block_registry::PreparedBlock],
+    blocks: &[PreparedBlock],
 ) -> Result<(), ApiError> {
-    #[cfg(test)]
-    super::block_registry::statement_probe::note();
-    let checkpoint = tx
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT accepted_head,legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1 FOR UPDATE",
+    let checkpoint = query_one(
+        tx,
+        "SELECT accepted_head,legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1 FOR UPDATE",
+        vec![page.into()],
+    )
+    .await?
+    .ok_or_else(ApiError::internal)?;
+    if !checkpoint.try_get::<bool>("", "legacy_anchors_sealed")? {
+        let head = query_one(
+            tx,
+            "SELECT head_seq FROM collab_documents WHERE object_id=$1 FOR UPDATE",
             vec![page.into()],
-        ))
+        )
         .await?
         .ok_or_else(ApiError::internal)?;
-    if !checkpoint.try_get::<bool>("", "legacy_anchors_sealed")? {
-        #[cfg(test)]
-        super::block_registry::statement_probe::note();
-        let head = tx
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT head_seq FROM collab_documents WHERE object_id=$1 FOR UPDATE",
-                vec![page.into()],
-            ))
-            .await?
-            .ok_or_else(ApiError::internal)?;
         if head.try_get::<i64>("", "head_seq")? != checkpoint.try_get::<i64>("", "accepted_head")? {
             return Err(ApiError::policy_rejected("legacy anchor baseline head changed"));
         }
-        let mut aliases = std::collections::BTreeMap::<String, Vec<&super::block_registry::PreparedBlock>>::new();
+        let mut aliases = std::collections::HashMap::<&str, Vec<&PreparedBlock>>::new();
         for block in blocks {
-            aliases.entry(block.physical_cid.clone()).or_default().push(block);
+            aliases.entry(block.physical_cid.as_str()).or_default().push(block);
             if let Some(alias) = &block.legacy_alias
                 && alias != &block.physical_cid
             {
-                aliases.entry(alias.clone()).or_default().push(block);
+                aliases.entry(alias.as_str()).or_default().push(block);
             }
         }
         let mut alias_names = Vec::new();
         let mut alias_cids = Vec::new();
-        for (alias, candidates) in aliases {
-            if let [block] = candidates.as_slice() {
-                alias_names.push(alias);
-                alias_cids.push(block.physical_cid.clone());
+        let mut cursor = String::new();
+        let page_limit = i64::try_from(REGISTRY_ROWS_PER_STATEMENT).map_err(|_| ApiError::internal())?;
+        loop {
+            let rows = query_all(
+                tx,
+                REGISTRY_ROWS_PER_STATEMENT,
+                "SELECT DISTINCT block_id FROM flow_comments WHERE object_id=$1 AND block_id IS NOT NULL AND block_id>$2 ORDER BY block_id LIMIT $3",
+                vec![page.into(), cursor.clone().into(), page_limit.into()],
+            )
+            .await?;
+            let round = rows.len();
+            for row in rows {
+                cursor = row.try_get::<String>("", "block_id")?;
+                // Only an unambiguous alias is adopted.
+                if let Some([block]) = aliases.get(cursor.as_str()).map(Vec::as_slice) {
+                    alias_names.push(cursor.clone());
+                    alias_cids.push(block.physical_cid.clone());
+                }
+            }
+            if round < REGISTRY_ROWS_PER_STATEMENT {
+                break;
             }
         }
-        if !alias_names.is_empty() {
-            #[cfg(test)]
-            super::block_registry::statement_probe::note();
-            tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,r"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,logical_id,origin_placement_id,origin_generation,state)
+        for (names, cids) in alias_names
+            .chunks(REGISTRY_ROWS_PER_STATEMENT)
+            .zip(alias_cids.chunks(REGISTRY_ROWS_PER_STATEMENT))
+        {
+            execute(tx, names.len(), r"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,logical_id,origin_placement_id,origin_generation,state)
 SELECT DISTINCT ON (c.id) c.id,c.object_id,c.block_id,p.logical_id,p.id,p.generation,'known'
 FROM unnest($2::text[],$3::text[]) AS a(alias,cid)
 JOIN flow_comments c ON c.object_id=$1 AND c.block_id=a.alias
@@ -144,27 +176,158 @@ JOIN flow_block_placements p ON p.page_id=c.object_id AND p.physical_cid=a.cid A
 JOIN flow_block_alias_fences f ON f.page_id=p.page_id AND f.scope_id=p.scope_id AND f.physical_cid=p.physical_cid AND f.first_logical_id=p.logical_id AND NOT f.ever_retired
 WHERE NOT EXISTS(SELECT 1 FROM flow_block_alias_fences retired WHERE retired.page_id=$1 AND retired.physical_cid=a.alias AND retired.ever_retired)
 ORDER BY c.id,p.alias_order DESC
-ON CONFLICT(comment_id) DO UPDATE SET logical_id=EXCLUDED.logical_id,origin_placement_id=EXCLUDED.origin_placement_id,origin_generation=EXCLUDED.origin_generation,state='known' WHERE flow_block_comment_anchors.logical_id IS NULL",vec![page.into(),alias_names.into(),alias_cids.into()])).await?;
+ON CONFLICT(comment_id) DO UPDATE SET logical_id=EXCLUDED.logical_id,origin_placement_id=EXCLUDED.origin_placement_id,origin_generation=EXCLUDED.origin_generation,state='known' WHERE flow_block_comment_anchors.logical_id IS NULL",vec![page.into(),names.to_vec().into(),cids.to_vec().into()]).await?;
         }
-        #[cfg(test)]
-        super::block_registry::statement_probe::note();
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+        execute(
+            tx,
+            1,
             "UPDATE flow_block_checkpoints SET legacy_anchors_sealed=true WHERE page_id=$1",
             vec![page.into()],
-        ))
+        )
         .await?;
     }
     // After sealing, even a currently matching CID cannot nominate a new identity for old rows.
-    #[cfg(test)]
-    super::block_registry::statement_probe::note();
-    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,state) SELECT id,object_id,block_id,'orphaned' FROM flow_comments WHERE object_id=$1 AND block_id IS NOT NULL ON CONFLICT(comment_id) DO NOTHING",vec![page.into()])).await?;
+    execute(tx, 1,"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,state) SELECT id,object_id,block_id,'orphaned' FROM flow_comments WHERE object_id=$1 AND block_id IS NOT NULL ON CONFLICT(comment_id) DO NOTHING",vec![page.into()]).await?;
     Ok(())
 }
 
-/// A private metadata baseline does not alter the Loro document, native structure or history.
-pub(crate) async fn baseline_for_read(db: &DatabaseConnection, page: Uuid) -> Result<(), ApiError> {
+/// Upper bound on the transactions one `complete_registration` call may run.
+const COMPLETION_STEPS_MAX: usize = 64;
+/// How often the Page head may move under one `complete_registration` call before it gives up.
+const COMPLETION_HEAD_MOVES_MAX: usize = 3;
+
+/// The head, frontier and prepared blocks of one Page, as one consistent read.
+async fn load_snapshot(db: &DatabaseConnection, page: Uuid) -> Result<Prepared, ApiError> {
+    let document = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM collab_documents WHERE object_id=$1",
+            vec![page.into()],
+        ))
+        .await?
+        .ok_or_else(ApiError::internal)?
+        .try_get::<Uuid>("", "id")?;
+    let boot = bootstrap::load(db, document).await?;
+    let engine = super::document::engine_from_boot(&boot)?;
+    if !engine.matches_frontier(&boot.head_frontier) {
+        return Err(ApiError::resync_required("comment baseline head did not replay", None));
+    }
+    let blocks = super::block_registry::prepare(
+        &engine
+            .semantic_snapshot()
+            .map_err(|error| super::command::map_collab_error(&error))?,
+    )?;
+    Ok(Prepared {
+        document,
+        head_seq: boot.head_seq,
+        frontier: boot.head_frontier,
+        blocks,
+    })
+}
+
+/// Result of one bounded registration transaction.
+#[derive(Debug, PartialEq, Eq)]
+enum RegistrationStep {
+    /// Nothing is pending any more and the legacy seal is done.
+    Complete,
+    /// The transaction committed and blocks are still pending.
+    Progress,
+    /// The Page head moved since the snapshot was read; nothing was written.
+    HeadMoved,
+}
+
+fn contention(message: &'static str) -> ApiError {
+    ApiError::server_draining(crate::error::ServerDrainingReason::Contention, 200, message)
+}
+
+/// One transaction of the completion loop: the lock sequence of an accepted write, the production
+/// statement caps, and between `rows_min` (guaranteeing progress) and `rows_max` newly registered
+/// rows while the registration stays inside the staging budget.
+async fn registration_step(
+    db: &DatabaseConnection,
+    page: Uuid,
+    snapshot: &Prepared,
+    rows_min: usize,
+    rows_max: usize,
+) -> Result<RegistrationStep, ApiError> {
     use sea_orm::TransactionTrait;
+    let identity = super::scope::identity(db, page).await?;
+    let tx = db.begin().await?;
+    if let Some(workspace) = identity.workspace_id {
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM workspaces WHERE id=$1 FOR KEY SHARE",
+            vec![workspace.into()],
+        ))
+        .await?;
+    }
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM flow_scopes WHERE id=$1 FOR KEY SHARE",
+        vec![identity.scope_id.into()],
+    ))
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM flow_objects WHERE id=$1 FOR KEY SHARE",
+        vec![page.into()],
+    ))
+    .await?;
+    super::collab::write::set_locked_phase_statement_budgets(&tx, 1).await?;
+    let head = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT head_seq,head_frontier FROM collab_documents WHERE id=$1 FOR UPDATE",
+            vec![snapshot.document.into()],
+        ))
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    if head.try_get::<i64>("", "head_seq")? != snapshot.head_seq
+        || !super::frontier::same(&head.try_get::<Vec<u8>>("", "head_frontier")?, &snapshot.frontier)?
+    {
+        tx.rollback().await?;
+        return Ok(RegistrationStep::HeadMoved);
+    }
+    let started = Instant::now();
+    let allowance = RegistrationAllowance::bounded(started, LOCKED_PHASE_STAGING_BUDGET, rows_max, rows_min);
+    let staged = tokio::time::timeout(
+        LOCKED_PHASE_STAGING_BUDGET,
+        super::block_registry::reconcile(
+            &tx,
+            identity.scope_id,
+            page,
+            snapshot.head_seq,
+            &snapshot.blocks,
+            allowance,
+        ),
+    )
+    .await;
+    match staged {
+        Ok(Ok(outcome)) => {
+            tx.commit().await?;
+            Ok(if outcome.pending == 0 {
+                RegistrationStep::Complete
+            } else {
+                RegistrationStep::Progress
+            })
+        }
+        Ok(Err(error)) => {
+            let _ = tx.rollback().await;
+            Err(error)
+        }
+        Err(_) => {
+            let _ = tx.rollback().await;
+            Err(contention("comment baseline busy; retry"))
+        }
+    }
+}
+
+/// Register every block of a Page and seal its legacy comment anchors, in short capped
+/// transactions, before an identity consumer (comment list, anchored comment, block share,
+/// transfer) reads the registry. A private metadata baseline does not alter the Loro document,
+/// native structure or history. Returns a retryable `server_draining{contention}` if the Page
+/// keeps changing or needs more than `COMPLETION_STEPS_MAX` steps.
+pub(crate) async fn complete_registration(db: &DatabaseConnection, page: Uuid) -> Result<(), ApiError> {
     if super::scope::capabilities(db).await?.minimum_reader_version < 5
         || super::scope::identity(db, page).await?.object_type != "page"
     {
@@ -173,7 +336,7 @@ pub(crate) async fn baseline_for_read(db: &DatabaseConnection, page: Uuid) -> Re
     if db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT page_id FROM flow_block_checkpoints WHERE page_id=$1 AND legacy_anchors_sealed",
+            "SELECT page_id FROM flow_block_checkpoints WHERE page_id=$1 AND legacy_anchors_sealed AND pending_registrations=0",
             vec![page.into()],
         ))
         .await?
@@ -181,72 +344,25 @@ pub(crate) async fn baseline_for_read(db: &DatabaseConnection, page: Uuid) -> Re
     {
         return Ok(());
     }
-    for _ in 0..3 {
-        let document = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT id FROM collab_documents WHERE object_id=$1",
-                vec![page.into()],
-            ))
-            .await?
-            .ok_or_else(ApiError::internal)?
-            .try_get::<Uuid>("", "id")?;
-        let boot = bootstrap::load(db, document).await?;
-        let engine = super::document::engine_from_boot(&boot)?;
-        if !engine.matches_frontier(&boot.head_frontier) {
-            return Err(ApiError::resync_required("comment baseline head did not replay", None));
+    let mut snapshot: Option<Prepared> = None;
+    let mut head_moves = 0;
+    for _ in 0..COMPLETION_STEPS_MAX {
+        let current = match snapshot.take() {
+            Some(current) => current,
+            None => load_snapshot(db, page).await?,
+        };
+        match registration_step(db, page, &current, REGISTRY_ROWS_PER_STATEMENT, usize::MAX).await? {
+            RegistrationStep::Complete => return Ok(()),
+            RegistrationStep::Progress => snapshot = Some(current),
+            RegistrationStep::HeadMoved => {
+                head_moves += 1;
+                if head_moves >= COMPLETION_HEAD_MOVES_MAX {
+                    break;
+                }
+            }
         }
-        let blocks = super::block_registry::prepare(
-            &engine
-                .semantic_snapshot()
-                .map_err(|error| super::command::map_collab_error(&error))?,
-        )?;
-        let identity = super::scope::identity(db, page).await?;
-        let tx = db.begin().await?;
-        if let Some(workspace) = identity.workspace_id {
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT id FROM workspaces WHERE id=$1 FOR KEY SHARE",
-                vec![workspace.into()],
-            ))
-            .await?;
-        }
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id FROM flow_scopes WHERE id=$1 FOR KEY SHARE",
-            vec![identity.scope_id.into()],
-        ))
-        .await?;
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id FROM flow_objects WHERE id=$1 FOR KEY SHARE",
-            vec![page.into()],
-        ))
-        .await?;
-        let head = tx
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT head_seq,head_frontier FROM collab_documents WHERE id=$1 FOR UPDATE",
-                vec![document.into()],
-            ))
-            .await?
-            .ok_or_else(ApiError::internal)?;
-        if head.try_get::<i64>("", "head_seq")? != boot.head_seq
-            || !super::frontier::same(&head.try_get::<Vec<u8>>("", "head_frontier")?, &boot.head_frontier)?
-        {
-            tx.rollback().await?;
-            continue;
-        }
-        let scope = super::scope::identity(&tx, page).await?.scope_id;
-        super::block_registry::reconcile(&tx, scope, page, boot.head_seq, &blocks).await?;
-        tx.commit().await?;
-        return Ok(());
     }
-    Err(ApiError::server_draining(
-        crate::error::ServerDrainingReason::Contention,
-        200,
-        "comment baseline busy; retry",
-    ))
+    Err(contention("comment baseline busy; retry"))
 }
 
 pub(crate) async fn bind_new<C: ConnectionTrait>(
@@ -272,7 +388,23 @@ pub(crate) async fn bind_new<C: ConnectionTrait>(
         }
         return Ok(());
     }
-    let row=db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT p.id,p.logical_id,p.generation FROM flow_block_placements p JOIN flow_block_checkpoints c ON c.page_id=p.page_id AND c.scope_id=p.scope_id JOIN collab_documents d ON d.object_id=p.page_id AND d.head_seq=c.accepted_head WHERE p.page_id=$1 AND p.physical_cid=$2 AND p.state='active' FOR SHARE OF p,c,d",vec![page.into(),block.to_string().into()])).await?.ok_or_else(||ApiError::invalid_update("block anchor unavailable"))?;
+    let row=db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT p.id,p.logical_id,p.generation FROM flow_block_placements p JOIN flow_block_checkpoints c ON c.page_id=p.page_id AND c.scope_id=p.scope_id JOIN collab_documents d ON d.object_id=p.page_id AND d.head_seq=c.accepted_head WHERE p.page_id=$1 AND p.physical_cid=$2 AND p.state='active' FOR SHARE OF p,c,d",vec![page.into(),block.to_string().into()])).await?;
+    let Some(row) = row else {
+        // A block that is still pending registration has no identity yet; that is retryable.
+        let pending = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT pending_registrations FROM flow_block_checkpoints WHERE page_id=$1",
+                vec![page.into()],
+            ))
+            .await?
+            .map(|row| row.try_get::<i32>("", "pending_registrations"))
+            .transpose()?;
+        if pending.is_none_or(|pending| pending > 0) {
+            return Err(contention("block anchor registration pending; retry"));
+        }
+        return Err(ApiError::invalid_update("block anchor unavailable"));
+    };
     db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,logical_id,origin_placement_id,origin_generation,state) VALUES($1,$2,$3,$4,$5,$6,'known')",vec![comment.into(),page.into(),block.to_string().into(),row.try_get::<Uuid>("","logical_id")?.into(),row.try_get::<Uuid>("","id")?.into(),row.try_get::<i64>("","generation")?.into()])).await?;
     Ok(())
 }
@@ -405,6 +537,7 @@ mod tests {
             .unwrap();
         let aliased = source
             .resolve_content_node_id(&"legacy-readable-alias".into())
+            .unwrap()
             .to_string();
         let original_snapshot = source.export_snapshot().unwrap();
         let replayed = LoroCollabEngine::load(&original_snapshot).unwrap();
@@ -568,7 +701,7 @@ mod tests {
         exec(db,"INSERT INTO flow_comments(id,scope_id,object_id,block_id,author_id,body) VALUES($1,$2,$3,$4,$5,'Unproven late legacy note')",vec![late.into(),scopes[0].into(),pages[0].into(),cid.clone().into(),owners[0].into()]).await;
         let blocks = super::super::block_registry::prepare(&source.semantic_snapshot().unwrap()).unwrap();
         let tx = db.begin().await.unwrap();
-        super::super::block_registry::reconcile(&tx, scopes[0], pages[0], 0, &blocks)
+        super::super::block_registry::reconcile(&tx, scopes[0], pages[0], 0, &blocks, RegistrationAllowance::Complete)
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -602,17 +735,27 @@ mod tests {
                 kind: collab_core::NodeKind::Block,
             })
             .unwrap();
-        let destination_cid = destination.resolve_content_node_id(&"moved-carrier".into()).to_string();
+        let destination_cid = destination
+            .resolve_content_node_id(&"moved-carrier".into())
+            .unwrap()
+            .to_string();
         assert_ne!(destination_cid, cid);
         exec(db,"UPDATE collab_documents SET snapshot=$2,snapshot_checksum=encode(digest($2,'sha256'),'hex'),byte_count=octet_length($2),snapshot_frontier=$3,head_frontier=$3 WHERE id=$1",vec![documents[1].into(),destination.export_snapshot().unwrap().into(),destination.frontier().as_bytes().to_vec().into()]).await;
         exec(db,"INSERT INTO flow_block_placements(id,logical_id,scope_id,page_id,physical_cid,generation,state,content_hash) VALUES($1,$2,$3,$4,$5,2,'active',decode(repeat('00',32),'hex'))",vec![Uuid::new_v4().into(),logical.into(),scopes[1].into(),pages[1].into(),destination_cid.into()]).await;
         let destination_blocks =
             super::super::block_registry::prepare(&destination.semantic_snapshot().unwrap()).unwrap();
         let tx = db.begin().await.unwrap();
-        super::super::block_registry::reconcile(&tx, scopes[1], pages[1], 0, &destination_blocks)
-            .await
-            .unwrap();
-        super::super::block_registry::reconcile(&tx, scopes[0], pages[0], 0, &blocks)
+        super::super::block_registry::reconcile(
+            &tx,
+            scopes[1],
+            pages[1],
+            0,
+            &destination_blocks,
+            RegistrationAllowance::Complete,
+        )
+        .await
+        .unwrap();
+        super::super::block_registry::reconcile(&tx, scopes[0], pages[0], 0, &blocks, RegistrationAllowance::Complete)
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -824,6 +967,151 @@ mod tests {
                 "{refused} must stay orphaned: {new_rows:?}"
             );
         }
+        scratch.drop_self().await;
+    }
+
+    async fn pending_registrations(db: &sea_orm::DatabaseConnection, page: Uuid) -> i32 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT pending_registrations FROM flow_block_checkpoints WHERE page_id=$1",
+            vec![page.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "pending_registrations")
+        .unwrap()
+    }
+
+    async fn active_hashes(db: &sea_orm::DatabaseConnection, page: Uuid) -> std::collections::BTreeMap<String, String> {
+        db.query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT physical_cid,encode(content_hash,'hex') AS hash FROM flow_block_placements WHERE page_id=$1 AND state='active'",
+            vec![page.into()],
+        ))
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row.try_get::<String>("", "physical_cid").unwrap(),
+                row.try_get::<String>("", "hash").unwrap(),
+            )
+        })
+        .collect()
+    }
+
+    /// The completion loop reloads its snapshot when the Page head moves between steps and still
+    /// ends with exactly the registry of the final snapshot.
+    #[tokio::test]
+    async fn completion_loop_survives_interleaved_writes() {
+        use super::super::block_registry::fixtures::{blocks, page};
+        let scratch = scratch_or_skip!(&format!("block_anchor_loop_{}", Uuid::new_v4().simple()));
+        let db = &scratch.db;
+        super::super::scope_runtime::fixture::register_running_readers(db).await;
+        let (_, _, page_id) = page(db).await;
+        let mut snapshot = load_snapshot(db, page_id).await.unwrap();
+        snapshot.blocks = blocks(1_200, 1);
+        // Step 1 registers 500 blocks and leaves 700 pending.
+        assert_eq!(
+            registration_step(db, page_id, &snapshot, 0, REGISTRY_ROWS_PER_STATEMENT)
+                .await
+                .unwrap(),
+            RegistrationStep::Progress
+        );
+        assert_eq!(pending_registrations(db, page_id).await, 700);
+        // A write moves the head: the stale snapshot writes nothing.
+        exec(
+            db,
+            "UPDATE collab_documents SET head_seq=head_seq+1 WHERE object_id=$1",
+            vec![page_id.into()],
+        )
+        .await;
+        assert_eq!(
+            registration_step(db, page_id, &snapshot, 0, REGISTRY_ROWS_PER_STATEMENT)
+                .await
+                .unwrap(),
+            RegistrationStep::HeadMoved
+        );
+        assert_eq!(pending_registrations(db, page_id).await, 700);
+        // The reloaded snapshot of the new head also changed content and dropped a block.
+        // (A real reload would replay the document; the bumped head has no update behind it, so the
+        // new snapshot is assembled from the same document at the new head.)
+        let mut snapshot = Prepared {
+            document: snapshot.document,
+            head_seq: snapshot.head_seq + 1,
+            frontier: snapshot.frontier.clone(),
+            blocks: Vec::new(),
+        };
+        let mut final_blocks = blocks(1_200, 1);
+        final_blocks[3] = super::super::block_registry::fixtures::block(3, 2);
+        let removed = final_blocks.remove(7).physical_cid;
+        snapshot.blocks = final_blocks.clone();
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            match registration_step(db, page_id, &snapshot, 0, REGISTRY_ROWS_PER_STATEMENT)
+                .await
+                .unwrap()
+            {
+                RegistrationStep::Complete => break,
+                RegistrationStep::Progress => assert!(steps < 10, "the loop must converge"),
+                RegistrationStep::HeadMoved => panic!("the head did not move again"),
+            }
+        }
+        assert_eq!(
+            steps, 2,
+            "700 pending blocks need two groups of {REGISTRY_ROWS_PER_STATEMENT}"
+        );
+        assert_eq!(pending_registrations(db, page_id).await, 0);
+        let sealed = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1",
+                vec![page_id.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(sealed.try_get::<bool>("", "legacy_anchors_sealed").unwrap());
+        let active = active_hashes(db, page_id).await;
+        let expected = final_blocks
+            .iter()
+            .map(|block| {
+                (
+                    block.physical_cid.clone(),
+                    block.content_hash.iter().fold(String::new(), |mut hex, byte| {
+                        use std::fmt::Write as _;
+                        let _ = write!(hex, "{byte:02x}");
+                        hex
+                    }),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(active, expected);
+        assert!(!active.contains_key(&removed));
+        scratch.drop_self().await;
+    }
+
+    /// `complete_registration` recognises a page that is registered and sealed but still has
+    /// pending blocks, registers the real document and clears the counter.
+    #[tokio::test]
+    async fn complete_registration_finishes_a_partly_registered_page() {
+        use super::super::block_registry::fixtures::page;
+        let scratch = scratch_or_skip!(&format!("block_anchor_complete_{}", Uuid::new_v4().simple()));
+        let db = &scratch.db;
+        super::super::scope_runtime::fixture::register_running_readers(db).await;
+        let (_, _, page_id) = page(db).await;
+        assert_eq!(pending_registrations(db, page_id).await, 0);
+        complete_registration(db, page_id).await.unwrap();
+        exec(
+            db,
+            "UPDATE flow_block_checkpoints SET pending_registrations=3 WHERE page_id=$1",
+            vec![page_id.into()],
+        )
+        .await;
+        complete_registration(db, page_id).await.unwrap();
+        assert_eq!(pending_registrations(db, page_id).await, 0);
         scratch.drop_self().await;
     }
 }

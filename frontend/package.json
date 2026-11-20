@@ -23,6 +23,7 @@
 		"test:forms-view-precedence": "bun tests/forms-view-precedence.test.ts",
 		"test:forms-view-arrangement": "bun tests/forms-view-arrangement.test.ts",
 		"test:forms-field-display": "bun tests/forms-field-display.test.ts",
+		"test:forms-csv-export": "bun tests/forms-csv-export.test.ts",
 		"test:forms-detail-layout": "bun tests/forms-detail-layout.test.ts",
 		"test:flow-conversion-availability": "bun test tests/flow-conversion-availability.test.ts",
 		"test:flow-package-kinds": "bun test tests/flow-package-kinds.test.ts tests/flow-personal-package.test.ts",

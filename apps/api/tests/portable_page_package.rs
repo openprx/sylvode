@@ -487,7 +487,7 @@ async fn portable_page_copies_assets_and_links_atomically() {
     let mut engine = document::load_head_engine(db, source_doc).await.unwrap();
     let base = engine.frontier();
     let head_token = bootstrap::load(db, source_doc).await.unwrap().head_frontier;
-    let image_cid = engine.resolve_content_node_id(&"media-image".into());
+    let image_cid = engine.resolve_content_node_id(&"media-image".into()).unwrap();
     engine
         .apply_content_operation(&Operation::DeleteNode { id: image_cid })
         .unwrap();

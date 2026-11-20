@@ -97,6 +97,31 @@ pub fn inner_reference_refusal() -> ApiError {
         serde_json::json!({"reason":"package_inner_reference_remap_unsupported"}),
     )
 }
+/// The refusal of an uploaded document that holds a shadow root.
+///
+/// The document carries a reserved root container of another type, or its history cannot be
+/// inspected for one. It is not imported. Replay of this server's own stored history never reaches
+/// this refusal.
+pub fn shadow_root_refusal(reason: &str) -> ApiError {
+    ApiError::invalid_update_with_details(
+        "package document carries a reserved root container of another type",
+        serde_json::json!({ "reason": reason }),
+    )
+}
+/// Refuses a package document that carries a shadow root (see [`shadow_root_refusal`]). The
+/// check reads the whole history of the document, so it belongs to package ingestion only.
+pub(crate) fn require_no_shadow_roots(engine: &collab_core::LoroCollabEngine) -> Result<(), ApiError> {
+    match engine.refuse_shadow_roots() {
+        Ok(()) => Ok(()),
+        Err(collab_core::CollabError::OperationFailed { reason })
+            if reason == collab_core::reserved_roots::SHADOW_ROOT_REASON
+                || reason == collab_core::reserved_roots::SCAN_INCOMPLETE_REASON =>
+        {
+            Err(shadow_root_refusal(&reason))
+        }
+        Err(_) => Err(ApiError::checksum_mismatch("package snapshot cannot be inspected")),
+    }
+}
 pub(crate) fn require_supported_snapshot(engine: &collab_core::LoroCollabEngine) -> Result<(), ApiError> {
     if collab_core::isolation::wire::package_reference_remap_required(engine)
         .map_err(|_| ApiError::checksum_mismatch("package snapshot cannot be inspected"))?

@@ -1,7 +1,7 @@
 import type { BusinessEvent } from '#lib/api/forms.js';
 import type { TimelineEventLayout } from '#lib/forms/page-types.js';
 import { translate } from '#lib/forms/i18n.js';
-import { csvCell } from '#lib/forms/import-csv.js';
+import { csvExportCell } from '#lib/utils/csv.js';
 import { eventValue, isRecord } from '#lib/forms/record-format.js';
 
 export function timelineEventAggregateKeys(events: BusinessEvent[]): string[] {
@@ -34,7 +34,7 @@ export function timelineEventsCsv(events: BusinessEvent[]): string {
 		'Metadata',
 		'Source'
 	]
-		.map(csvCell)
+		.map((cell) => csvExportCell(cell))
 		.join(',');
 
 	const rows = events.map((event) =>
@@ -51,7 +51,7 @@ export function timelineEventsCsv(events: BusinessEvent[]): string {
 			timelineEventJson(event.metadata),
 			timelineEventJson(event.source)
 		]
-			.map(csvCell)
+			.map((cell) => csvExportCell(cell))
 			.join(',')
 	);
 

@@ -513,7 +513,7 @@ fn capture_retained(
     seq: i64,
     capture: &mut impl FnMut(&mut LoroCollabEngine, i64) -> Result<(), ApiError>,
 ) -> Result<(), ApiError> {
-    if engine.has_editor_doc() {
+    if engine.has_editor_doc().map_err(map)? {
         capture(engine, seq)
     } else {
         let mut clone = LoroCollabEngine::load(&engine.export_snapshot().map_err(map)?).map_err(map)?;
@@ -527,7 +527,7 @@ fn capture_version(
     source_recorded_at: Option<Timestamp>,
 ) -> Result<Version, ApiError> {
     let build = || {
-        if !selected.has_editor_doc() {
+        if !selected.has_editor_doc().map_err(map)? {
             selected.initialize_page_editor().map_err(map)?;
         }
         let mut blocks = read_blocks(&selected.semantic_snapshot().map_err(map)?)?;
@@ -1167,7 +1167,14 @@ async fn store_timeline(tx: &DatabaseTransaction, input: PagePromotion<'_>) -> R
         let registry = super::block_registry::prepare(&frame.semantic)?;
         body_assets::reconcile_accepted(tx, object, seq, &refs).await?;
         super::child_pages::reconcile_accepted(tx, object, Some(actor), seq, &child_refs).await?;
-        super::block_registry::reconcile_accepted(tx, object, seq, &registry).await?;
+        super::block_registry::reconcile_accepted(
+            tx,
+            object,
+            seq,
+            &registry,
+            super::block_registry::RegistrationAllowance::Complete,
+        )
+        .await?;
         if offset + 1 == source.versions.len() {
             if seq > 0 {
                 tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,

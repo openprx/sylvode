@@ -5,6 +5,10 @@ import { fieldLabel, fieldOptions, fieldType } from '#lib/forms/field-options.js
 import { translate } from '#lib/forms/i18n.js';
 import { isRecord } from '#lib/forms/record-format.js';
 
+/**
+ * Quoting only, for the import template and the import round trip: those cells are parsed back
+ * into records, so they must not be formula-neutralised. Exports use `csvExportCell`.
+ */
 export function csvCell(value: string): string {
 	return `"${value.replaceAll('"', '""')}"`;
 }

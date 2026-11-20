@@ -250,11 +250,11 @@ suite.check('timelineEventsCsv writes a quoted header and one quoted row per eve
 	);
 });
 
-suite.check('timelineEventsCsv writes titles that start with = + - @ as they are', () => {
-	// CURRENT BEHAVIOUR: titles come from user content and are exported without a guard against
-	// spreadsheet formula injection.
+suite.check('timelineEventsCsv neutralises titles that start with = + - @', () => {
+	// Titles come from user content; the export prefixes a ' so a spreadsheet reads text.
 	const csv = timeline.timelineEventsCsv([event({ payload: { title: '=1+1' } })]);
-	assert(csv.includes(',"=1+1",'), 'formula-like title written unchanged');
+	assert(csv.includes(`,"'=1+1",`), 'formula-like title is prefixed with a quote');
+	assert(!csv.includes(',"=1+1",'), 'no cell starts with the bare formula');
 });
 
 suite.check('timelineEventSearchText is one lower-case text of every searchable property', () => {
