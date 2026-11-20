@@ -1,3 +1,4 @@
+<svelte:options runes />
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { FileDown, FileText, FileUp, Pencil, Plus, X } from '@lucide/svelte';

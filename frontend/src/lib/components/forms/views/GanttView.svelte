@@ -1,3 +1,4 @@
+<svelte:options runes />
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { ganttDateLabel } from '#lib/forms/calendar-dates.js';
