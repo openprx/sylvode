@@ -161,7 +161,7 @@
 					<button
 						type="button"
 						onclick={createImpactReview}
-						class="mt-3 rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+						class="mt-3 rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 					>
 						{$t('impactReview.create')}
 					</button>
@@ -257,7 +257,7 @@
 						<button
 							type="button"
 							onclick={saveImpactReview}
-							class="rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
+							class="rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary"
 							disabled={impactSaving}
 						>
 							{impactSaving ? $t('common.saving') : $t('common.save')}

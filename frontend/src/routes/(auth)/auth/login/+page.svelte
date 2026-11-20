@@ -51,9 +51,7 @@
 		<form class="mt-8 space-y-6 rounded-card bg-raised p-8" on:submit|preventDefault={handleLogin}>
 			<div class="space-y-4">
 				<div>
-					<label for="email" class="block text-sm font-medium text-fg"
-						>{$t('auth.email')}</label
-					>
+					<label for="email" class="block text-sm font-medium text-fg">{$t('auth.email')}</label>
 					<input
 						id="email"
 						type="email"
@@ -82,7 +80,7 @@
 			<button
 				type="submit"
 				disabled={loading}
-				class="w-full flex justify-center py-2 px-4 border border-transparent rounded-control text-sm font-medium text-on-primary bg-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
+				class="w-full flex justify-center py-2 px-4 border border-transparent rounded-control text-sm font-medium text-on-primary rf-filled bg-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 			>
 				{loading ? $t('auth.loginLoading') : $t('auth.login')}
 			</button>

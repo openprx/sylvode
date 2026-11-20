@@ -13539,7 +13539,7 @@
 											type="button"
 											class="inline-flex h-9 items-center rounded-control px-3 text-sm font-medium transition-colors {detailLayoutMode ===
 											mode.key
-												? 'bg-primary text-on-primary'
+												? 'rf-filled bg-primary text-on-primary'
 												: 'text-fg-muted hover:bg-surface hover:text-fg'}"
 											aria-current={detailLayoutMode === mode.key ? 'page' : undefined}
 											data-detail-layout-tab={mode.key}
@@ -16490,7 +16490,7 @@
 																			type="button"
 																			disabled={!viewDraft.calendarExceptionRecordId ||
 																				!isIsoDate(viewDraft.calendarExceptionDate)}
-																			class="inline-flex h-10 items-center gap-2 rounded-control bg-primary text-on-primary px-3 text-sm font-medium disabled:bg-surface disabled:text-fg-muted"
+																			class="inline-flex h-10 items-center gap-2 rounded-control rf-filled bg-primary text-on-primary px-3 text-sm font-medium disabled:bg-surface disabled:text-fg-muted"
 																			onclick={addViewDraftCalendarException}
 																		>
 																			<Plus class="h-4 w-4" aria-hidden="true" />

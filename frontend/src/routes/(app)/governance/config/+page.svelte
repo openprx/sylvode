@@ -212,7 +212,7 @@
 					<button
 						type="button"
 						onclick={saveConfig}
-						class="rounded-control bg-primary px-4 py-2 text-sm text-on-primary"
+						class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary"
 						disabled={saving}
 					>
 						{saving ? $t('common.saving') : $t('common.save')}

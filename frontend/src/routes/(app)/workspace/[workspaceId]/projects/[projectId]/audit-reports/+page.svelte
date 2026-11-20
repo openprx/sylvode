@@ -116,7 +116,7 @@
 				type="button"
 				onclick={generateReport}
 				disabled={generating}
-				class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
+				class="w-full rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 			>
 				{generating ? $t('common.processing') : $t('governanceExt.generateReport')}
 			</button>

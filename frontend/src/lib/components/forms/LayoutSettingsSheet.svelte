@@ -49,9 +49,7 @@
 		data-layout-settings-sheet
 		onkeydown={onKeydown}
 	>
-		<header
-			class="flex items-center justify-between gap-3 border-b border-line px-4 py-3"
-		>
+		<header class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
 			<h2
 				id="layout-settings-title"
 				tabindex="-1"
@@ -76,7 +74,7 @@
 			<p class="text-xs text-fg-muted">{$t('forms.views.layoutHint')}</p>
 			<button
 				type="button"
-				class="h-8 rounded-control bg-primary px-3 text-sm font-medium text-on-primary"
+				class="h-8 rounded-control rf-filled bg-primary px-3 text-sm font-medium text-on-primary"
 				data-layout-settings-done
 				onclick={onclose}>{$t('forms.views.done')}</button
 			>

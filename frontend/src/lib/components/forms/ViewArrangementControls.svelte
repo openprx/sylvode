@@ -204,7 +204,7 @@
 							role="radio"
 							aria-checked={filterLogic === value}
 							class="h-7 rounded-control px-2 text-xs font-medium {filterLogic === value
-								? 'bg-primary text-on-primary'
+								? 'rf-filled bg-primary text-on-primary'
 								: 'bg-surface text-fg'}"
 							onclick={() => onfilters(filters, value as 'all' | 'any')}>{label}</button
 						>
@@ -312,7 +312,7 @@
 					disabled={!sort}
 					class="h-8 flex-1 rounded-control px-2 text-sm font-medium disabled:text-fg-muted {sort?.direction ===
 					value
-						? 'bg-primary text-on-primary'
+						? 'rf-filled bg-primary text-on-primary'
 						: 'bg-surface text-fg'}"
 					data-view-sort-direction={value}
 					onclick={() => sort && onsort({ field: sort.field, direction: value as 'asc' | 'desc' })}

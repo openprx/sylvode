@@ -867,7 +867,7 @@
 							{#if canEdit}
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-control bg-primary px-3 text-sm font-medium text-on-primary"
+									class="inline-flex h-8 items-center rounded-control rf-filled bg-primary px-3 text-sm font-medium text-on-primary"
 									onclick={onedit}>{$t('forms.recordPanel.edit')}</button
 								>
 							{/if}

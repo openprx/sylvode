@@ -138,7 +138,7 @@
 			type="button"
 			bind:this={saveButton}
 			class="h-8 rounded-control px-3 text-sm font-medium {props.modified
-				? 'bg-primary text-on-primary'
+				? 'rf-filled bg-primary text-on-primary'
 				: 'border border-input text-fg hover:bg-surface'}"
 			aria-haspopup="dialog"
 			aria-expanded={props.saveOpen}

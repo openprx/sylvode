@@ -292,7 +292,7 @@
 			</div>
 			<button
 				type="button"
-				class="inline-flex items-center justify-center rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary transition"
+				class="inline-flex items-center justify-center rounded-control rf-filled bg-primary px-4 py-2 text-sm font-medium text-on-primary transition"
 				onclick={() => (showCreateModal = true)}>+ {$t('issue.create')}</button
 			>
 		</div>

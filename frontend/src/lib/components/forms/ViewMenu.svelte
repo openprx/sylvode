@@ -177,7 +177,7 @@
 					>
 					<button
 						type="submit"
-						class="h-8 rounded-control bg-primary px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
+						class="h-8 rounded-control rf-filled bg-primary px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 						disabled={!renameValue.trim()}
 						data-view-rename-save>{$t('common.save')}</button
 					>
