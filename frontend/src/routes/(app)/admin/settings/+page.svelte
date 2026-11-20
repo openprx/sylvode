@@ -53,7 +53,7 @@
 					id="allowWorkspaceCreate"
 					bind:value={basicSettings.allowWorkspaceCreate}
 					disabled
-					class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="admin_only">{$t('admin.adminOnly')}</option>
 					<option value="all_users">{$t('admin.allUsers')}</option>
@@ -80,7 +80,7 @@
 				disabled
 			/>
 			<label
-				class="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm text-fg"
+				class="flex items-center gap-2 rounded-control border border-line px-3 py-2 text-sm text-fg"
 			>
 				<input type="checkbox" bind:checked={securitySettings.requireStrongPassword} disabled />
 				{$t('admin.strongPasswordPolicy')}
@@ -88,9 +88,7 @@
 		</div>
 	</Card>
 
-	<div
-		class="rounded-md border border-line bg-white px-4 py-3 text-sm text-fg-muted dark:bg-slate-800"
-	>
+	<div class="rounded-card border border-line bg-raised px-4 py-3 text-sm text-fg-muted">
 		{$t('admin.settingsReadOnly')}
 	</div>
 </div>
