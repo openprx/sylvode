@@ -80,3 +80,39 @@ changes but does not remove access granted by existing mounts; remove those moun
 
 Do not lower `minimum_reader_version` on a database that has run at 5: content written with the
 block registry, block shares and transfers relies on reader-5 processes.
+
+## The incremental write window
+
+Every Page write is decided inside the isolated worker's 50 ms CPU window. For flat (model 1) and
+legacy tree Pages the window works from facts about the accepted Page that the worker computes
+before the window opens, and evaluates only the units the update touched; for anything else
+(structured Pages, tree moves and deletes, edits of the `doc` map, lists longer than 15,000
+elements, and any shape the check cannot be certain about) it runs the full computation, as it
+always did. The limits and the refusals are the same either way.
+
+After the worker returns, the API computes the full projection of the accepted document and compares
+it with what the worker established. If they disagree, the API does not accept the write on the
+worker's word: it logs
+
+```
+incremental_check_divergence: the worker's window check disagrees with the full projection; deciding again with the full window
+```
+
+at error level (fields `flow_window_check_divergence_total`, `field`, `reported`, `projected`,
+`document_id`, `update_id`, `base_head_seq`; never content), and asks the worker for the full window,
+which cannot skip a check. The write is accepted or refused by that second result, so a client sees
+an ordinary rejection (or success), not an internal error. Any such line is a defect of the
+incremental check: report it with the document and update ids. The total is only a log field; the
+API exports no other counters.
+
+To make every write run the full computation, set in the API's configuration file:
+
+```toml
+[flow]
+incremental_window = false
+```
+
+The default is `true`. With `false` the worker computes no facts and every window is the full
+computation, so a Page above roughly 3,000 flat blocks (or the equivalent in legacy nodes) can again
+exceed the 50 ms window on small runners, exactly as before the incremental window existed.
+The API reads it at startup: restart it to apply the change.
