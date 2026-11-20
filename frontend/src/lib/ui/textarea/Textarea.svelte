@@ -1,12 +1,18 @@
 <script lang="ts">
 	import type { HTMLTextareaAttributes } from 'svelte/elements';
+	import { t } from 'svelte-i18n';
 	import { uid } from '../foundations/ids';
+	import { markingWord, type Marking } from '../form/field-state';
 
 	interface Props extends Omit<HTMLTextareaAttributes, 'class' | 'children'> {
 		label: string;
 		value?: string;
 		helper?: string;
 		error?: string;
+		/** This field's kind, for the marking word; same rule as `form/Field.svelte`. */
+		requirement?: Marking;
+		/** What the form marks (the minority kind); without it no word is shown. */
+		marking?: Marking;
 	}
 
 	let {
@@ -19,15 +25,20 @@
 		disabled = false,
 		readonly = false,
 		required = false,
+		requirement,
+		marking,
 		...rest
 	}: Props = $props();
 
 	const messageId = $derived(`${id}-message`);
 	const message = $derived(error ?? helper);
+	const word = $derived(markingWord(requirement, marking));
 </script>
 
 <div class="ui-textarea">
-	<label class="label" for={id}>{label}</label>
+	<label class="label" for={id}
+		>{label}{#if word}<span class="word">&nbsp;{$t(`ui.form.${word}`)}</span>{/if}</label
+	>
 	<textarea
 		{...rest}
 		{id}
@@ -35,7 +46,7 @@
 		bind:value
 		{disabled}
 		{readonly}
-		{required}
+		required={required || requirement === 'required'}
 		class:invalid={!!error}
 		aria-invalid={error ? 'true' : undefined}
 		aria-describedby={message ? messageId : undefined}
