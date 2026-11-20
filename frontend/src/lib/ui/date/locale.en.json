@@ -1,0 +1,39 @@
+{
+	"ui": {
+		"date": {
+			"placeholder": "YYYY-MM-DD",
+			"placeholderTime": "YYYY-MM-DD HH:mm",
+			"chooseDate": "Choose date",
+			"chooseDates": "Choose dates",
+			"chooseDateTime": "Choose date and time",
+			"previousMonth": "Previous month",
+			"nextMonth": "Next month",
+			"previousYear": "Previous year",
+			"nextYear": "Next year",
+			"clear": "Clear",
+			"today": "Today",
+			"time": "Time",
+			"start": "Start date",
+			"end": "End date",
+			"rangeStart": "start of range",
+			"rangeEnd": "end of range",
+			"error": {
+				"pattern": "Use YYYY-MM-DD, for example 2026-11-24.",
+				"patternTime": "Use YYYY-MM-DD HH:mm, for example 2026-11-24 14:30.",
+				"invalid": "That date does not exist. Use YYYY-MM-DD, for example 2026-11-24.",
+				"min": "Choose a date on or after {min}.",
+				"max": "Choose a date on or before {max}.",
+				"unavailable": "That date is not available.",
+				"order": "The end date must not be before the start date.",
+				"time": "Use HH:mm, for example 14:30."
+			},
+			"sample": {
+				"due": "Due date",
+				"starts": "Starts",
+				"period": "Period",
+				"zone": "No time zone: saved as entered.",
+				"required": "Choose a due date."
+			}
+		}
+	}
+}
