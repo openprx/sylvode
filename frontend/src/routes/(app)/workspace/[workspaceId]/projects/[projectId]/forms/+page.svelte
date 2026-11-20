@@ -227,10 +227,7 @@
 
 	import RecordDetailAside from '#lib/components/forms/page/RecordDetailAside.svelte';
 
-	// forms-split slot W2-01
-	import LayoutSettingsContent from '#lib/components/forms/page/LayoutSettingsContent.svelte';
-	import RecordListPanel from '#lib/components/forms/page/RecordListPanel.svelte';
-	import RecordListStack from '#lib/components/forms/page/RecordListStack.svelte';
+	import FormWorkspace from '#lib/components/forms/page/FormWorkspace.svelte';
 
 	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
 	const recordEditorAction = taskEditorAction();
@@ -716,46 +713,7 @@
 		{/if}
 
 		{#if s.forms.length > 0 && s.selectedForm}
-			<section class="space-y-4">
-				{#if s.activeMode === 'data'}
-					<FormDataToolbar />
-				{:else}
-					<FormConfigHeader />
-				{/if}
-
-				{#if s.formPermissions && s.activeMode !== 'permissions' && s.activeMode !== 'data'}
-					<PermissionStateSummary />
-				{/if}
-
-				{#if s.activeMode === 'permissions'}
-					<FormPermissionsMode />
-				{:else if s.activeMode === 'importExport'}
-					<FormImportExportMode />
-				{:else if s.activeMode === 'design' || s.activeMode === 'layout'}
-					<div
-						class="grid min-w-0 gap-4"
-						data-form-mode={s.activeMode === 'design' ? 'field-design' : 'detail-layout'}
-					>
-						{#if s.activeMode === 'design'}
-							<FormDesignMode />
-						{/if}
-
-						{#if s.activeMode === 'layout'}
-							<DetailLayoutMode />
-						{/if}
-					</div>
-				{:else}
-					<div class="grid min-w-0 gap-4">
-						{#if s.activeMode === 'data'}
-							<RecordListStack />
-						{/if}
-
-						{#if s.activeMode === 'detail'}
-							<RecordDetailAside />
-						{/if}
-					</div>
-				{/if}
-			</section>
+			<FormWorkspace />
 		{/if}
 	{/if}
 </div>
