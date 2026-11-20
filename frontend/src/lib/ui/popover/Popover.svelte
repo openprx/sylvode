@@ -1,11 +1,16 @@
 <script lang="ts">
 	import { tick, type Snippet } from 'svelte';
+	import { t } from 'svelte-i18n';
+	import { uid } from '../foundations/ids';
 	import { pushLayer } from '../foundations/layers';
 	import { portal } from '../foundations/portal';
 	import { autoPosition, type Placement } from '../foundations/position';
 	import { captureFocus, tabbables } from '../foundations/focus';
 
-	interface Props {
+	/** Data attributes (`data-testid`, ...) are passed to the surface element. */
+	type DataAttributes = { [K in `data-${string}`]?: string | undefined };
+
+	interface Props extends DataAttributes {
 		open: boolean;
 		/** The element the popover hangs from; it gets focus back when the popover closes. */
 		anchor: HTMLElement | null;
@@ -13,6 +18,7 @@
 		/** Accessible name; or use `labelledby`. */
 		label?: string;
 		labelledby?: string;
+		describedby?: string;
 		role?: 'dialog' | 'menu' | 'listbox' | 'none';
 		placement?: Placement;
 		width?: number;
@@ -21,6 +27,13 @@
 		/** Move focus in on open; menus and listboxes do it themselves. Default true. */
 		autofocus?: boolean;
 		padding?: 'default' | 'menu' | 'none';
+		/** Sets `aria-modal` on the surface (a dialog that takes the user's attention). Default off. */
+		modal?: boolean;
+		/**
+		 * Title of the bottom sheet under 640px, centred above the body. Defaults to `label` for a
+		 * `dialog`; without any title the sheet shows only the grabber.
+		 */
+		sheetTitle?: string;
 		id?: string;
 		testId?: string;
 		children: Snippet;
@@ -32,15 +45,19 @@
 		onclose,
 		label,
 		labelledby,
+		describedby,
 		role = 'dialog',
 		placement = 'bottom-start',
 		width = 320,
 		initialFocus,
 		autofocus = true,
 		padding = 'default',
+		modal,
+		sheetTitle,
 		id,
 		testId,
-		children
+		children,
+		...rest
 	}: Props = $props();
 
 	let panel = $state<HTMLElement | null>(null);
@@ -59,6 +76,8 @@
 		return anchor.tabIndex >= 0 ? anchor : (tabbables(anchor)[0] ?? null);
 	}
 	let sheet = $state(false);
+	const titleId = uid('popover-title');
+	const heading = $derived(sheetTitle ?? (role === 'dialog' ? label : undefined));
 
 	// Below 640px a floating layer becomes a bottom sheet (specification 3.6).
 	$effect(() => {
@@ -126,11 +145,14 @@
 
 {#if open}
 	<div
+		{...rest}
 		bind:this={panel}
 		{id}
 		role={role === 'none' ? undefined : role}
 		aria-label={label}
 		aria-labelledby={labelledby}
+		aria-describedby={describedby}
+		aria-modal={modal ? 'true' : undefined}
 		tabindex="-1"
 		class="ui-popover pad-{padding}"
 		class:sheet
@@ -141,7 +163,18 @@
 		onkeydown={onKeydown}
 		onfocusout={onFocusOut}
 	>
+		{#if sheet}
+			<div class="grabber" aria-hidden="true"></div>
+			{#if heading}<h2 class="sheet-title" id={titleId}>{heading}</h2>{/if}
+		{/if}
 		{@render children()}
+		{#if sheet && heading}
+			<div class="sheet-foot">
+				<button type="button" class="sheet-close" onclick={() => onclose()}>
+					{$t('ui.popover.close')}
+				</button>
+			</div>
+		{/if}
 	</div>
 {/if}
 
@@ -189,6 +222,43 @@
 		border-radius: var(--rf-radius-sheet) var(--rf-radius-sheet) 0 0;
 		box-shadow: var(--rf-shadow-sheet);
 		padding-bottom: max(var(--rf-space-5), env(safe-area-inset-bottom));
+	}
+	.grabber {
+		width: 36px;
+		height: 5px;
+		margin: var(--rf-space-4) auto var(--rf-space-3);
+		border-radius: var(--rf-radius-full);
+		background: var(--rf-line-strong);
+	}
+	.sheet-title {
+		margin: 0;
+		padding: var(--rf-space-2) var(--rf-space-5) var(--rf-space-4);
+		text-align: center;
+		font-size: var(--rf-size-subheading);
+		font-weight: 600;
+		line-height: var(--rf-leading-title);
+		color: var(--rf-text);
+	}
+	.sheet-foot {
+		padding: var(--rf-space-4) var(--rf-space-5) 0;
+	}
+	.sheet-close {
+		width: 100%;
+		min-height: var(--rf-touch-target);
+		border: var(--rf-border-width) solid var(--rf-text);
+		border-radius: var(--rf-radius-button);
+		background: var(--rf-surface-white);
+		color: var(--rf-text);
+		font: inherit;
+		font-size: var(--rf-size-button);
+		cursor: pointer;
+	}
+	.sheet-close:active {
+		background: var(--rf-pressed);
+	}
+	.sheet-close:focus-visible {
+		outline: var(--rf-border-width-focus) solid var(--rf-focus);
+		outline-offset: -1px;
 	}
 	@keyframes ui-popover-in {
 		from {

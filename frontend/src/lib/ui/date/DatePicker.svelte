@@ -224,6 +224,7 @@
 	anchor={box}
 	onclose={onPopoverClose}
 	label={title}
+	sheetTitle={label}
 	id={popupId}
 	padding="none"
 	width={248}

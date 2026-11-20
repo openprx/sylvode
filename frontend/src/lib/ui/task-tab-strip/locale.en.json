@@ -8,9 +8,18 @@
 			"unsavedShort": "Unsaved changes",
 			"updated": "new changes",
 			"close": "Close {title}",
-			"allTabs": "Show all {count} tabs",
-			"tabCount": "{count} tabs",
-			"openTabs": "{count} open tabs",
+			"allTabs": {
+				"one": "Show the {count} tab",
+				"other": "Show all {count} tabs"
+			},
+			"tabCount": {
+				"one": "{count} tab",
+				"other": "{count} tabs"
+			},
+			"openTabs": {
+				"one": "{count} open tab",
+				"other": "{count} open tabs"
+			},
 			"closeSaved": "Close all saved tabs",
 			"closeTab": "Close",
 			"closeOthers": "Close other saved tabs",

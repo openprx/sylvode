@@ -2,7 +2,9 @@
 	"ui": {
 		"contextLine": {
 			"label": "位置",
-			"showHidden": "显示 {count} 个已隐藏的位置",
+			"showHidden": {
+				"other": "显示 {count} 个已隐藏的位置"
+			},
 			"noAccess": "{label}，你没有访问权限",
 			"restricted": "受限页面",
 			"unavailable": "不可用",

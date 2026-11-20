@@ -2,7 +2,10 @@
 	"ui": {
 		"contextLine": {
 			"label": "Location",
-			"showHidden": "Show {count} hidden locations",
+			"showHidden": {
+				"one": "Show {count} hidden location",
+				"other": "Show {count} hidden locations"
+			},
 			"noAccess": "{label}, you do not have access",
 			"restricted": "Restricted page",
 			"unavailable": "Unavailable",
