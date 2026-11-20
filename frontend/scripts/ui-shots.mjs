@@ -2,13 +2,18 @@
 // Browser harness for the interface redesign: screenshots, token probe, LEGACY-SCAN and pixel diff.
 //
 //   node scripts/ui-shots.mjs list
-//   node scripts/ui-shots.mjs capture --out DIR [--base-url URL] [--widths 1440,1024]
+//   node scripts/ui-shots.mjs capture --out DIR [--base-url URL] [--widths 1440,800]
 //                                     [--themes light,dark] [--routes name,name] [--now ISO]
 //   node scripts/ui-shots.mjs diff DIR_A DIR_B [--report FILE] [--tolerance N] [--diff-dir DIR]
 //
 // Capture is read-only. It signs in once through the API (one session is created), then only
 // navigates. Every non-GET request the pages try to make is aborted and listed in scan.json
 // under `blockedWrites`; the sign-in refresh endpoint is the only exception.
+//
+// The project-issue route needs an issue. The harness never creates data: it takes the issue from
+// UI_SHOTS_ISSUE (`workspaceId/projectId/issueId`) or finds the first existing issue through
+// read-only API calls. When the environment has none, the route is recorded as
+// `skipped: no issue in the environment` in scan.json and counted in the summary line.
 //
 // Browser: the locally installed open-source Chromium, headless (CHROMIUM_BIN overrides the path).
 // Credentials: read at run time from the environment (P3X_U1_EMAIL, P3X_U1_PASSWORD) or from the
@@ -31,8 +36,10 @@ const DEFAULT_CHROMIUM = '/Applications/Chromium.app/Contents/MacOS/Chromium';
 const VIEWPORT_HEIGHT = 900;
 
 /**
- * Route list. `{ws}`, `{project}` and `{issue}` are resolved at run time from read-only API calls;
- * a route whose placeholder cannot be resolved is skipped and reported.
+ * Route list. `{ws}` and `{project}` are resolved at run time from read-only API calls. `{issue}`
+ * comes with its own workspace and project (`{issue_ws}`, `{issue_project}`), because the first
+ * issue found may live in another project. A route whose placeholder cannot be resolved is
+ * skipped and reported with its reason (SKIP_REASONS).
  * `auth: false` routes are captured without a session.
  * Not listed on purpose: the Flow page editor (`flow/[objectId]`), which opens a collaboration
  * WebSocket that the API only accepts from the origin of the deployed UI.
@@ -45,6 +52,9 @@ export const ROUTES = [
 	{ name: 'search', path: '/search' },
 	{ name: 'settings', path: '/settings' },
 	{ name: 'plugins', path: '/plugins' },
+	{ name: 'plugins-creator', path: '/plugins/creator' },
+	{ name: 'agents', path: '/agents' },
+	{ name: 'flow-package', path: '/flow/package' },
 	{ name: 'flow-list', path: '/flow' },
 	{ name: 'governance', path: '/governance' },
 	{ name: 'governance-config', path: '/governance/config' },
@@ -58,6 +68,7 @@ export const ROUTES = [
 	{ name: 'admin', path: '/admin' },
 	{ name: 'admin-users', path: '/admin/users' },
 	{ name: 'admin-settings', path: '/admin/settings' },
+	{ name: 'admin-ui', path: '/admin/ui' },
 	{ name: 'workspace-list', path: '/workspace' },
 	{ name: 'workspace-home', path: '/workspace/{ws}' },
 	{ name: 'workspace-projects', path: '/workspace/{ws}/projects' },
@@ -67,18 +78,35 @@ export const ROUTES = [
 	{ name: 'workspace-workflows', path: '/workspace/{ws}/workflows' },
 	{ name: 'workspace-settings', path: '/workspace/{ws}/settings' },
 	{ name: 'workspace-settings-flow', path: '/workspace/{ws}/settings/flow' },
+	{ name: 'workspace-settings-flow-operations', path: '/workspace/{ws}/settings/flow/operations' },
+	{ name: 'workspace-settings-flow-package', path: '/workspace/{ws}/settings/flow/package' },
 	{ name: 'workspace-flow', path: '/workspace/{ws}/flow' },
 	{ name: 'project-home', path: '/workspace/{ws}/projects/{project}' },
 	{ name: 'project-board', path: '/workspace/{ws}/projects/{project}/board' },
 	{ name: 'project-cycles', path: '/workspace/{ws}/projects/{project}/cycles' },
 	{ name: 'project-issues', path: '/workspace/{ws}/projects/{project}/issues' },
-	{ name: 'project-issue', path: '/workspace/{ws}/projects/{project}/issues/{issue}' },
+	{
+		name: 'project-issue',
+		path: '/workspace/{issue_ws}/projects/{issue_project}/issues/{issue}'
+	},
 	{ name: 'project-forms', path: '/workspace/{ws}/projects/{project}/forms' },
+	{ name: 'project-apps', path: '/workspace/{ws}/projects/{project}/apps' },
+	{ name: 'project-ai-agents', path: '/workspace/{ws}/projects/{project}/ai-agents' },
+	{ name: 'project-audit-reports', path: '/workspace/{ws}/projects/{project}/audit-reports' },
 	{
 		name: 'project-settings-plugins',
 		path: '/workspace/{ws}/projects/{project}/settings/plugins'
 	}
 ];
+
+/** Why a route is skipped, by the placeholder that could not be resolved. */
+export const SKIP_REASONS = {
+	issue: 'no issue in the environment',
+	issue_ws: 'no issue in the environment',
+	issue_project: 'no issue in the environment',
+	ws: 'no workspace in the environment',
+	project: 'no project in the environment'
+};
 
 // The raw palette utilities and `dark:` variants of the legacy language (plan section 4).
 export const LEGACY_PALETTE_SOURCE =
@@ -146,30 +174,56 @@ async function signIn(api, user) {
 	return body.data;
 }
 
+/** `workspaceId/projectId/issueId` from UI_SHOTS_ISSUE, or null. */
+export function parseIssueRef(value) {
+	const parts = String(value ?? '')
+		.trim()
+		.split('/');
+	return parts.length === 3 && parts.every(Boolean)
+		? { issue_ws: parts[0], issue_project: parts[1], issue: parts[2] }
+		: null;
+}
+
+/** First existing issue over the user's workspaces and projects (read-only, bounded). */
+async function findIssue(api, token, workspaces) {
+	for (const workspace of workspaces.slice(0, 40)) {
+		const projects = await apiJson(api, token, `/api/v1/workspaces/${workspace.id}/projects`);
+		for (const project of (projects?.items ?? projects ?? []).slice(0, 40)) {
+			const issues = await apiJson(api, token, `/api/v1/projects/${project.id}/issues`);
+			const issue = (issues?.items ?? issues ?? [])[0];
+			if (issue) return { issue_ws: workspace.id, issue_project: project.id, issue: issue.id };
+		}
+	}
+	return null;
+}
+
 async function resolvePlaceholders(api, token) {
 	const found = {};
 	const workspaces = await apiJson(api, token, '/api/v1/workspaces');
-	const workspace = (workspaces?.items ?? workspaces ?? [])[0];
-	if (!workspace) return found;
-	found.ws = workspace.id;
-	const projects = await apiJson(api, token, `/api/v1/workspaces/${workspace.id}/projects`);
-	const list = projects?.items ?? projects ?? [];
-	const project = list.find((p) => / A$/.test(p.name)) ?? list[0];
-	if (!project) return found;
-	found.project = project.id;
-	const issues = await apiJson(api, token, `/api/v1/projects/${project.id}/issues`);
-	const issue = (issues?.items ?? issues ?? [])[0];
-	if (issue) found.issue = issue.id;
+	const workspaceList = workspaces?.items ?? workspaces ?? [];
+	const workspace = workspaceList[0];
+	if (workspace) {
+		found.ws = workspace.id;
+		const projects = await apiJson(api, token, `/api/v1/workspaces/${workspace.id}/projects`);
+		const list = projects?.items ?? projects ?? [];
+		const project = list.find((p) => / A$/.test(p.name)) ?? list[0];
+		if (project) found.project = project.id;
+	}
+	Object.assign(
+		found,
+		parseIssueRef(process.env.UI_SHOTS_ISSUE) ?? (await findIssue(api, token, workspaceList)) ?? {}
+	);
 	return found;
 }
 
-function fillPath(template, values) {
-	let missing = false;
+/** Returns the filled path, or `{ missing: key }` for the first placeholder without a value. */
+export function fillPath(template, values) {
+	let missing = null;
 	const path = template.replace(/\{(\w+)\}/g, (_, key) => {
-		if (!values[key]) missing = true;
+		if (!values[key]) missing = missing ?? key;
 		return values[key] ?? '';
 	});
-	return missing ? null : path;
+	return missing ? { missing } : { path };
 }
 
 const FREEZE_CSS = `*, *::before, *::after {
@@ -184,7 +238,7 @@ async function capture(flags) {
 	if (!flags.out) throw new Error('capture needs --out DIR');
 	const baseUrl = String(flags['base-url'] || DEFAULT_BASE_URL).replace(/\/$/, '');
 	const api = String(flags.api || DEFAULT_API_ORIGIN).replace(/\/$/, '');
-	const widths = String(flags.widths || '1440')
+	const widths = String(flags.widths || '1440,800')
 		.split(',')
 		.map(Number);
 	const themes = String(flags.themes || 'light,dark').split(',');
@@ -211,11 +265,21 @@ async function capture(flags) {
 			for (const width of widths) {
 				for (const route of ROUTES) {
 					if (only && !only.has(route.name)) continue;
-					const path = fillPath(route.path, values);
-					if (!path) {
-						if (!skipped.includes(route.name)) skipped.push(route.name);
+					const filled = fillPath(route.path, values);
+					if (!filled.path) {
+						const reason = SKIP_REASONS[filled.missing] ?? `unresolved {${filled.missing}}`;
+						if (!skipped.some((entry) => entry.route === route.name))
+							skipped.push({ route: route.name, reason });
+						results.push({
+							route: route.name,
+							theme,
+							width,
+							status: 'skipped',
+							reason: `skipped: ${reason}`
+						});
 						continue;
 					}
+					const path = filled.path;
 					const context = await browser.newContext({
 						viewport: { width, height: VIEWPORT_HEIGHT },
 						deviceScaleFactor: 1,
@@ -338,11 +402,12 @@ async function capture(flags) {
 	};
 	await writeFile(join(out, 'scan.json'), JSON.stringify(summary, null, 2) + '\n');
 	const failed = results.filter((r) => r.status === 'error');
+	const captured = results.filter((r) => r.status !== 'error' && r.status !== 'skipped');
 	console.log(
-		`captured ${results.length - failed.length} screens into ${out} (${failed.length} failed, ${skipped.length} routes skipped)`
+		`captured ${captured.length} screens into ${out} (${failed.length} failed, ${skipped.length} routes skipped)`
 	);
 	for (const r of failed) console.log(`  FAILED ${r.route} ${r.theme} ${r.width}: ${r.error}`);
-	if (skipped.length) console.log(`  skipped (placeholder not resolved): ${skipped.join(', ')}`);
+	for (const entry of skipped) console.log(`  SKIPPED ${entry.route}: ${entry.reason}`);
 	if (summary.blockedWrites.length)
 		console.log(`  blocked write requests: ${summary.blockedWrites.join(', ')}`);
 	process.exitCode = failed.length ? 1 : 0;
