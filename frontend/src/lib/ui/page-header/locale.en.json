@@ -1,0 +1,13 @@
+{
+	"ui": {
+		"pageHeader": {
+			"more": "More actions",
+			"loading": "Loading",
+			"sampleTitle": "Leads",
+			"sampleExport": "Export",
+			"sampleImport": "Import",
+			"sampleNew": "New record",
+			"sampleReason": "You need edit access to add records"
+		}
+	}
+}
