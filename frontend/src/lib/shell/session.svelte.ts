@@ -42,7 +42,14 @@ export class ShellSession {
 	workspaceRole = $state<WorkspaceRole | null>(null);
 	flowWorkspaces = $state.raw<Record<string, boolean>>({});
 	/** Workspace id of the current URL, or null. */
-	workspaceId = $derived(/^\/workspace\/([^/]+)/.exec(page.url.pathname)?.[1] ?? null);
+	urlWorkspaceId = $derived(/^\/workspace\/([^/]+)/.exec(page.url.pathname)?.[1] ?? null);
+	/** Workspace of the shell's current scope (null for Personal); the shell keeps it up to date. */
+	scopeWorkspaceId = $state<string | null>(null);
+	/**
+	 * The workspace the role and the Flow flag are read for: the URL's, else the scope's, so the
+	 * workspace settings and the Flow column also work on pages that have no workspace in the URL.
+	 */
+	workspaceId = $derived(this.urlWorkspaceId ?? this.scopeWorkspaceId);
 
 	readonly userId = $derived(this.user?.id ?? null);
 	readonly isInstanceAdmin = $derived(isAdminUser(this.user));

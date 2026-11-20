@@ -286,6 +286,9 @@
 
 	$effect(() => host.setTheme($resolvedTheme));
 	$effect(() => {
+		session.scopeWorkspaceId = shell.scope === PERSONAL_SCOPE ? null : shell.scope;
+	});
+	$effect(() => {
 		void data.loadWorkspaces();
 	});
 	// Rail shortcuts are checked once per session, after the project list is known.
