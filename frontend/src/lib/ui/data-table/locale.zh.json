@@ -3,24 +3,13 @@
 		"dataTable": {
 			"selectAll": "选择本页所有行",
 			"selectRow": "选择 {title}",
-			"selectedOne": "已选择 1 行",
-			"selectedMany": "已选择 {count} 行",
+			"selected": {
+				"other": "已选择 {count} 行"
+			},
 			"sortBy": "按{column}排序",
 			"actions": "操作",
 			"loading": "正在加载",
 			"empty": "空",
-			"state": {
-				"empty": { "title": "还没有内容", "body": "添加的内容会显示在这里。" },
-				"noResults": {
-					"title": "没有符合筛选条件的结果",
-					"body": "调整或清除筛选条件以查看更多。"
-				},
-				"failed": { "title": "无法加载数据", "body": "服务器没有响应，筛选条件已保留。" },
-				"offline": { "title": "当前处于离线状态", "body": "仍显示之前加载的内容，草稿已保留。" },
-				"clearFilters": "清除筛选",
-				"retry": "重试",
-				"retryConnection": "重试连接"
-			},
 			"sampleName": "名称",
 			"sampleOwner": "负责人",
 			"sampleAmount": "金额",

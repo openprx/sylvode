@@ -213,7 +213,9 @@ await suite.checkAsync(
 			stateAction: () => {}
 		});
 		assert(
-			failed.includes('role="alert"') && failed.includes('ui.dataTable.state.retry'),
+			failed.includes('role="alert"') &&
+				failed.includes('states.loadFailed.action') &&
+				failed.includes('data-kind="loadFailed"'),
 			'failed with retry'
 		);
 		assert(!failed.includes('data-row'), 'no rows');

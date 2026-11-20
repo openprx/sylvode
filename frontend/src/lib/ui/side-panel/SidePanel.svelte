@@ -7,11 +7,10 @@
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import X from '@lucide/svelte/icons/x';
 	import Info from '@lucide/svelte/icons/info';
-	import Lock from '@lucide/svelte/icons/lock';
-	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import IconButton from '../icon-button/IconButton.svelte';
 	import Menu from '../menu/Menu.svelte';
+	import StateBlock from '../state-block/StateBlock.svelte';
 	import { tooltip } from '../tooltip/tooltip';
 	import { focusTrap } from '../foundations/focus-trap';
 	import { uid } from '../foundations/ids';
@@ -30,7 +29,7 @@
 		title: string;
 		identifier?: string;
 		status: PanelStatus;
-		/** Replaces the default sentence of a failed, forbidden or missing status. */
+		/** Replaces the body sentence of a failed, forbidden or missing status. */
 		statusMessage?: string;
 		/** Hosted in a frame: the host draws header, close and Escape; only body and footer render. */
 		hosted?: boolean;
@@ -237,29 +236,17 @@
 			? `${$t('ui.sidePanel.next')}, ${nextDisabledReason}`
 			: $t('ui.sidePanel.next')
 	);
-	const statusText = $derived(
-		statusMessage ??
-			(status === 'failed'
-				? $t('ui.sidePanel.failed')
-				: status === 'forbidden'
-					? $t('ui.sidePanel.forbidden')
-					: status === 'missing'
-						? $t('ui.sidePanel.missing')
-						: '')
-	);
 </script>
 
 {#snippet tip(
 	kind: 'neutral' | 'danger',
 	text: string,
 	action?: { label: string; run: () => void },
-	icon?: 'info' | 'lock' | 'alert' | 'offline'
+	icon?: 'info' | 'offline'
 )}
 	<div class="tip" class:danger={kind === 'danger'} role={kind === 'danger' ? 'alert' : 'status'}>
 		<span class="tip-glyph">
-			{#if icon === 'lock'}<Lock size={16} aria-hidden="true" />
-			{:else if icon === 'alert'}<CircleAlert size={16} aria-hidden="true" />
-			{:else if icon === 'offline'}<WifiOff size={16} aria-hidden="true" />
+			{#if icon === 'offline'}<WifiOff size={16} aria-hidden="true" />
 			{:else}<Info size={16} aria-hidden="true" />{/if}
 		</span>
 		<span class="tip-text">{text}</span>
@@ -279,16 +266,16 @@
 		{@render tip('neutral', $t('ui.sidePanel.offline'), undefined, 'offline')}
 	{/if}
 	{#if status === 'failed'}
-		{@render tip(
-			'danger',
-			statusText,
-			onretry ? { label: $t('ui.sidePanel.retry'), run: onretry } : undefined,
-			'alert'
-		)}
+		<StateBlock
+			kind="loadFailed"
+			thing={$t('ui.sidePanel.thisRecord')}
+			message={statusMessage}
+			action={onretry ? { run: onretry } : undefined}
+		/>
 	{:else if status === 'forbidden'}
-		{@render tip('neutral', statusText, undefined, 'lock')}
+		<StateBlock kind="forbidden" message={statusMessage ?? $t('ui.sidePanel.forbiddenBody')} />
 	{:else if status === 'missing'}
-		{@render tip('neutral', statusText)}
+		<StateBlock kind="notFound" object={$t('ui.sidePanel.record')} message={statusMessage} />
 	{:else if status === 'loading'}
 		<div class="skeletons" aria-hidden="true">
 			{#each [0, 1, 2, 3, 4] as row (row)}<span class="skeleton"></span>{/each}

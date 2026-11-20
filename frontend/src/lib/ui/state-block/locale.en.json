@@ -2,28 +2,67 @@
 	"states": {
 		"empty": {
 			"title": "No {thing} yet",
-			"body": "{Thing} you add appear here."
+			"body": "{Thing} you add appear here.",
+			"titleGeneric": "Nothing here yet",
+			"bodyGeneric": "Items you add appear here."
 		},
 		"loading": {
 			"label": "Loading {thing}"
 		},
+		"noResults": {
+			"title": "Nothing matches these filters",
+			"body": {
+				"one": "{count} filter is applied.",
+				"other": "{count} filters are applied."
+			},
+			"action": "Clear filters"
+		},
+		"noSearchResults": {
+			"title": "No results for “{query}”",
+			"action": "Clear search"
+		},
+		"offline": {
+			"title": "You are offline",
+			"body": "What was loaded before is still shown. Your draft is kept.",
+			"action": "Retry connection"
+		},
 		"loadFailed": {
 			"title": "Could not load {thing}",
+			"titleGeneric": "Could not load the content",
 			"body": "The server did not respond. Your filters are kept.",
 			"action": "Retry"
 		},
 		"forbidden": {
 			"title": "You do not have access",
-			"body": "Ask a {role} to give you access to {place}."
+			"body": "Ask a {role} to give you access to {place}.",
+			"bodyGeneric": "Ask someone who has access to add you."
+		},
+		"notFound": {
+			"title": "This {object} no longer exists",
+			"titleGeneric": "This item no longer exists",
+			"body": "It may have been deleted or moved.",
+			"action": "Back to {place}"
+		},
+		"expired": {
+			"title": "This confirmation has expired",
+			"body": "The request changed after you viewed it. Nothing was done. Review it again.",
+			"action": "Review again"
+		},
+		"identityChanged": {
+			"title": "You signed in as a different account",
+			"body": "Drafts from the other account are not shown here.",
+			"action": "Reload"
 		}
 	},
 	"ui": {
 		"stateBlock": {
 			"sample": {
 				"thing": "projects",
+				"object": "project",
 				"create": "New project",
 				"grantor": "administrator",
-				"place": "Northwind workspace"
+				"place": "Northwind workspace",
+				"query": "invoice"
 			}
 		}
 	}

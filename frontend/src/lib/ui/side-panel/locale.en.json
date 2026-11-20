@@ -9,12 +9,8 @@
 			"resize": "Resize panel",
 			"unsaved": "Unsaved changes",
 			"loading": "Loading",
-			"failed": "Could not load this record.",
-			"forbidden": "You do not have access to this record. Ask a project admin.",
-			"missing": "This record no longer exists. It may have been deleted.",
 			"changed": "This record changed elsewhere.",
 			"offline": "You are offline. Showing what was loaded.",
-			"retry": "Retry",
 			"refresh": "Refresh",
 			"sampleIdentifier": "LEAD-128",
 			"sampleTitle": "Northwind purchase order",
@@ -27,7 +23,10 @@
 			"sampleRow": "Row",
 			"sampleMenu": "Duplicate",
 			"firstRecord": "this is the first record",
-			"lastRecord": "this is the last record"
+			"lastRecord": "this is the last record",
+			"thisRecord": "this record",
+			"record": "record",
+			"forbiddenBody": "Ask a project admin to give you access to this record."
 		}
 	}
 }

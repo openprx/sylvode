@@ -123,7 +123,10 @@ await suite.checkAsync('a disabled previous tool carries its reason in its name'
 });
 await suite.checkAsync('failed status shows an alert with Retry and hides the body', async () => {
 	const html = await renderToHtml(SidePanel, { ...base, status: 'failed', onretry: () => {} });
-	assert(html.includes('role="alert"') && html.includes('ui.sidePanel.retry'), 'alert and retry');
+	assert(
+		html.includes('role="alert"') && html.includes('states.loadFailed.action'),
+		'alert and retry'
+	);
 	assert(!html.includes('<p>body</p>'), 'no body');
 });
 await suite.checkAsync(
