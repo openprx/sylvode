@@ -604,7 +604,7 @@
 				</p>
 			{:else}
 				{#each searchResults as user (user.id)}
-					<div class="flex items-center justify-between rounded-control px-2 py-2 hover:bg-surface">
+					<div class="flex items-center justify-between rounded-row px-2 py-2 hover:bg-surface">
 						<div>
 							<p class="text-sm font-medium text-fg">{user.name}</p>
 							<p class="text-xs text-fg-muted">{user.email}</p>

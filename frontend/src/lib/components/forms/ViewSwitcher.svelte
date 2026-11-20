@@ -134,7 +134,7 @@
 	}
 
 	const optionClass =
-		'flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-start text-sm text-fg';
+		'flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-row px-2 py-1.5 text-start text-sm text-fg';
 </script>
 
 <button

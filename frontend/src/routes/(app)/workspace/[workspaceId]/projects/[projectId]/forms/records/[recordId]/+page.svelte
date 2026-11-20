@@ -600,9 +600,7 @@
 		</a>
 
 		{#if loading}
-			<div
-				class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted"
-			>
+			<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">
 				{$t('common.loading')}
 			</div>
 		{:else if errorMessage}
@@ -691,10 +689,7 @@
 				>
 					<div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
 						<div class="flex min-w-0 items-center gap-2">
-							<Shield
-								class="h-4 w-4 shrink-0 text-fg"
-								aria-hidden="true"
-							/>
+							<Shield class="h-4 w-4 shrink-0 text-fg" aria-hidden="true" />
 							<div class="min-w-0">
 								<p class="font-medium text-fg">
 									{$t('forms.permissionState')}
@@ -705,9 +700,7 @@
 							</div>
 						</div>
 						<div class="grid gap-2 text-xs sm:grid-cols-3 lg:min-w-[520px]">
-							<div
-								class="rounded-card border border-line bg-raised px-3 py-2"
-							>
+							<div class="rounded-card border border-line bg-raised px-3 py-2">
 								<span class="block font-medium uppercase text-fg-muted">
 									{$t('forms.recordScope')}
 								</span>
@@ -715,9 +708,7 @@
 									{$t(`forms.recordScopes.${memberRecordScope}`)}
 								</span>
 							</div>
-							<div
-								class="rounded-card border border-line bg-raised px-3 py-2"
-							>
+							<div class="rounded-card border border-line bg-raised px-3 py-2">
 								<span class="block font-medium uppercase text-warning">
 									{$t('forms.hiddenFieldEffect')}
 								</span>
@@ -725,9 +716,7 @@
 									{permissionFieldList(memberHiddenFieldLabels)}
 								</span>
 							</div>
-							<div
-								class="rounded-card border border-line bg-raised px-3 py-2"
-							>
+							<div class="rounded-card border border-line bg-raised px-3 py-2">
 								<span class="block font-medium uppercase text-fg-muted">
 									{$t('forms.lockedFieldEffect')}
 								</span>
@@ -753,15 +742,11 @@
 							class="min-w-0 rounded-card border border-line bg-raised p-4"
 							data-durable-record-detail-highlight={`${record.id}:${field.key}`}
 						>
-							<div
-								class="truncate text-xs font-medium uppercase text-fg-muted"
-							>
+							<div class="truncate text-xs font-medium uppercase text-fg-muted">
 								{fieldLabel(field)}
 							</div>
 
-							<div
-								class="mt-2 break-words text-sm font-semibold text-fg"
-							>
+							<div class="mt-2 break-words text-sm font-semibold text-fg">
 								<FieldValue
 									{field}
 									value={record.values[field.key]}
@@ -813,9 +798,7 @@
 									? 'cursor-pointer list-none'
 									: 'cursor-default list-none'}
 							>
-								<h2
-									class="inline text-xs font-semibold uppercase text-fg-muted"
-								>
+								<h2 class="inline text-xs font-semibold uppercase text-fg-muted">
 									{section.title}
 								</h2>
 							</summary>
@@ -860,9 +843,7 @@
 										</dt>
 										<dd class="mt-1 break-words text-sm text-fg">
 											{#if fieldType(field) === 'child_table'}
-												<span class="text-fg-muted"
-													>{$t('forms.childRecords')}</span
-												>
+												<span class="text-fg-muted">{$t('forms.childRecords')}</span>
 											{:else}
 												<FieldValue
 													{field}
@@ -901,10 +882,7 @@
 									data-durable-record-detail-widget-open={`children:${record.id}:${detailPageWidgetOpen('children')}`}
 								>
 									<summary class={detailPageWidgetSummaryClass('children')}>
-										<TableProperties
-											class="h-4 w-4 text-fg"
-											aria-hidden="true"
-										/>
+										<TableProperties class="h-4 w-4 text-fg" aria-hidden="true" />
 										<div class="min-w-0">
 											<div class="flex min-w-0 flex-wrap items-center gap-2">
 												<h2
@@ -934,19 +912,13 @@
 									</summary>
 									{#if children.length > 0}
 										<div class="overflow-x-auto">
-											<table
-												class="min-w-full divide-y divide-line text-xs"
-											>
+											<table class="min-w-full divide-y divide-line text-xs">
 												<thead>
 													<tr>
-														<th
-															class="px-3 py-2 text-left font-medium text-fg-muted"
-														>
+														<th class="px-3 py-2 text-left font-medium text-fg-muted">
 															{$t('forms.recordTitle')}
 														</th>
-														<th
-															class="px-3 py-2 text-left font-medium text-fg-muted"
-														>
+														<th class="px-3 py-2 text-left font-medium text-fg-muted">
 															{$t('forms.recordLinks')}
 														</th>
 													</tr>
@@ -1021,9 +993,7 @@
 									</summary>
 									<div class={detailPageWidgetBodyClass('links')}>
 										{#each links.slice(0, detailPageWidgetLimit('links', 50)) as item}
-											<div
-												class="rounded-card border border-line px-3 py-2 text-xs"
-											>
+											<div class="rounded-card border border-line px-3 py-2 text-xs">
 												<div class="font-medium text-fg">
 													{item.relation_key} / {item.relation_type}
 												</div>
@@ -1060,10 +1030,7 @@
 									data-durable-record-detail-widget-open={`comments:${record.id}:${detailPageWidgetOpen('comments')}`}
 								>
 									<summary class={detailPageWidgetSummaryClass('comments')}>
-										<MessageSquare
-											class="h-4 w-4 text-fg"
-											aria-hidden="true"
-										/>
+										<MessageSquare class="h-4 w-4 text-fg" aria-hidden="true" />
 										<div class="min-w-0">
 											<div class="flex min-w-0 flex-wrap items-center gap-2">
 												<h2
@@ -1108,9 +1075,7 @@
 														{formatDate(comment.created_at)}
 													</span>
 												</div>
-												<p
-													class="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-fg"
-												>
+												<p class="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-fg">
 													{comment.body}
 												</p>
 											</div>
@@ -1215,15 +1180,11 @@
 																/>
 															{/if}
 															<div class="min-w-0 flex-1">
-																<div
-																	class="truncate font-medium text-fg"
-																>
+																<div class="truncate font-medium text-fg">
 																	{attachment.file_name}
 																</div>
 
-																<div
-																	class="truncate font-mono text-[11px] text-fg-muted"
-																>
+																<div class="truncate font-mono text-[11px] text-fg-muted">
 																	{attachment.url}
 																</div>
 															</div>
@@ -1289,9 +1250,7 @@
 															{attachment.file_name}
 														</div>
 
-														<div
-															class="truncate font-mono text-[11px] text-fg-muted"
-														>
+														<div class="truncate font-mono text-[11px] text-fg-muted">
 															{attachment.field_key} · {attachment.url}
 														</div>
 													</div>
@@ -1381,9 +1340,7 @@
 																{eventTitle(event)}
 															</div>
 
-															<div
-																class="mt-1 font-mono text-[11px] text-fg-muted"
-															>
+															<div class="mt-1 font-mono text-[11px] text-fg-muted">
 																{event.event_type}
 															</div>
 														</div>
@@ -1421,7 +1378,7 @@
 							data-conversion-count={flowLineage.conversions.length}
 						>
 							<summary
-								class="mb-3 flex min-h-11 cursor-pointer list-none items-start gap-2 rounded-[var(--radius-sm)]"
+								class="mb-3 flex min-h-11 cursor-pointer list-none items-start gap-2 rounded-row"
 							>
 								<Workflow class="h-4 w-4 text-fg" aria-hidden="true" />
 								<div class="min-w-0">
@@ -1469,10 +1426,7 @@
 														>
 													</div>
 												{:else}
-													<span
-														class="text-fg-muted"
-														data-testid="record-flow-lineage-unavailable"
-													>
+													<span class="text-fg-muted" data-testid="record-flow-lineage-unavailable">
 														{$t('forms.flowLineage.sourceUnavailable')}
 													</span>
 												{/if}
@@ -1508,9 +1462,7 @@
 														>{row.sourceTitle ?? $t('forms.flowLineage.untitled')}</a
 													>
 
-													<div
-														class="flex flex-wrap items-center gap-x-3 text-fg-muted"
-													>
+													<div class="flex flex-wrap items-center gap-x-3 text-fg-muted">
 														<span data-testid="record-flow-lineage-status"
 															>{$t(`forms.flowLineage.status.${row.status}`)}</span
 														>
@@ -1536,10 +1488,7 @@
 														{/if}
 													</div>
 												{:else}
-													<span
-														class="text-fg-muted"
-														data-testid="record-flow-lineage-unavailable"
-													>
+													<span class="text-fg-muted" data-testid="record-flow-lineage-unavailable">
 														{$t('forms.flowLineage.sourceUnavailable')}
 													</span>
 												{/if}

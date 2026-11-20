@@ -352,9 +352,7 @@
 				{@const field = fields.find((item) => item.key === key)}
 				{#if field}
 					{@const blocked = hiddenByPermission.has(key)}
-					<li
-						class="flex min-h-8 items-center gap-2 rounded-[var(--radius-sm)] px-1 hover:bg-surface"
-					>
+					<li class="flex min-h-8 items-center gap-2 rounded-row px-1 hover:bg-surface">
 						<input
 							type="checkbox"
 							id={`view-column-${key}`}

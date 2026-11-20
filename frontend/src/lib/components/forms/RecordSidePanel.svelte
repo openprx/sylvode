@@ -467,7 +467,7 @@
 	const iconButton =
 		'inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] text-fg-muted hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:text-fg-muted';
 	const menuItem =
-		'flex min-h-8 w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-start text-sm text-fg hover:bg-surface focus:bg-surface';
+		'flex min-h-8 w-full items-center gap-2 rounded-row px-2 py-1.5 text-start text-sm text-fg hover:bg-surface focus:bg-surface';
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -- links are full record page paths built by the caller -->
