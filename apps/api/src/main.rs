@@ -3626,6 +3626,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ),
 ];
 
+    (
+        "0108_oauth_authorization_server.sql",
+        include_str!("../../../migrations/0108_oauth_authorization_server.sql"),
+    ),
 /// Newest migration an existing database may claim without executing it.
 ///
 /// Frozen on purpose. Everything past it is executed on every database that has no ledger row for
@@ -4173,6 +4177,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     ),
 ];
 
+    (
+        "0108_oauth_authorization_server.sql",
+        SchemaProbe::Relation("oauth_grants"),
+    ),
 /// One recorded migration outcome.
 struct RecordedMigration {
     checksum: String,
@@ -4734,6 +4742,7 @@ mod tests {
                 "0107_flow_block_registration_progress.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
+                "0108_oauth_authorization_server.sql",
         );
     }
 
@@ -4791,7 +4800,14 @@ mod tests {
                 continue;
             }
             for relation in dropped {
-                if !sql.contains(relation) {
+                // Whole identifiers only: `oauth_event_outbox` is not the retired `event_outbox`.
+                let mentioned = sql.match_indices(relation).any(|(at, _)| {
+                    !sql[..at]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|prev| prev.is_ascii_alphanumeric() || prev == '_')
+                });
+                if !mentioned {
                     continue;
                 }
                 assert!(
