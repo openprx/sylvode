@@ -16,6 +16,8 @@
 		"smoke:template-work-items": "node scripts/smoke-template-work-items.mjs",
 		"smoke:forms-ui": "node scripts/smoke-forms-ui.mjs",
 		"smoke:forms-record-list": "node scripts/smoke-forms-record-list.mjs",
+		"test:forms-page": "node scripts/run-forms-page-tests.mjs",
+		"forms-split:dom": "node scripts/forms-split/forms-dom-equivalence.mjs",
 		"test:record-values": "bun tests/record-values-roundtrip.test.ts",
 		"test:markdown-sanitize": "bun tests/markdown-sanitize.test.ts",
 		"test:forms-flow-lineage": "bun tests/forms-flow-lineage.test.ts",
