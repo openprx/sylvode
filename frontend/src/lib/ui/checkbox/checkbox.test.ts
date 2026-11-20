@@ -46,4 +46,11 @@ await suite.checkAsync('children snippet replaces the label text', async () => {
 	assert(html.includes('<b>Rich</b>'), html);
 });
 
+// Handler composition is a behaviour of the DOM event; the pure helper is tested in the
+// foundations suite and the browser run clicks a checkbox with a caller `onchange`.
+await suite.checkAsync('a caller onchange does not stop the checkbox from rendering', async () => {
+	const html = input(await renderToHtml(Checkbox, { label: 'A', onchange: () => {} }));
+	assert(html.includes('type="checkbox"'), html);
+});
+
 finish(suite.result());
