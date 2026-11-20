@@ -41,7 +41,7 @@
 </script>
 
 <section
-	class="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100"
+	class="border-b border-line bg-danger-soft px-6 py-3 text-sm text-danger"
 	aria-label={$t('flow.recovery.title')}
 	data-testid="flow-recovery-draft"
 	data-count={entries.length}

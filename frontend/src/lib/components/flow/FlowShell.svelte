@@ -79,7 +79,7 @@
 		</p>
 		<button
 			type="button"
-			class="min-h-11 rounded-md border border-slate-300 px-3 text-sm"
+			class="min-h-11 rounded-control border border-fg px-3 text-sm bg-raised"
 			onclick={() => invalidateAll()}>{$t('flow.personal.retry')}</button
 		>
 	</div>
@@ -95,7 +95,7 @@
 		>
 			<button
 				type="button"
-				class="inline-flex min-h-[44px] min-w-[44px] items-center gap-2 rounded-md px-3 text-sm font-medium text-fg hover:bg-slate-100 dark:hover:bg-slate-800"
+				class="inline-flex min-h-[44px] min-w-[44px] items-center gap-2 rounded-control px-3 text-sm font-medium text-fg hover:bg-surface"
 				aria-expanded={navOpen}
 				aria-controls="flow-navigator-drawer"
 				data-testid="flow-nav-toggle"
@@ -125,7 +125,7 @@
 					id="flow-navigator-drawer"
 					class="flow-nav-wrapper {navOpen
 						? 'flex'
-						: 'hidden'} absolute inset-y-0 left-0 z-30 max-w-[85vw] shadow-xl"
+						: 'hidden'} absolute inset-y-0 left-0 z-30 max-w-[85vw] shadow-overlay"
 					data-testid="flow-nav-drawer"
 				>
 					<FlowResizablePane side="left" label={$t('flow.layout.resizeNavigation')}>

@@ -26,7 +26,7 @@
 </script>
 
 <section
-	class="min-h-0 min-w-0 flex-1 overflow-y-auto bg-white px-5 py-6 sm:px-8 dark:bg-slate-950"
+	class="min-h-0 min-w-0 flex-1 overflow-y-auto bg-canvas px-5 py-6 sm:px-8"
 	data-testid="flow-legacy-editor-preview"
 	data-flow-scroll-owner
 	aria-busy={busy}
@@ -34,10 +34,7 @@
 	<h1 class="break-words text-2xl font-semibold text-fg">
 		{object.title || $t('flow.nav.untitled')}
 	</h1>
-	<div
-		class="my-5 rounded-lg border border-line bg-slate-50 p-4 text-sm dark:bg-slate-900"
-		role="status"
-	>
+	<div class="my-5 rounded-card border border-line bg-surface p-4 text-sm" role="status">
 		<p class="font-medium">{$t('flow.legacyEditor.title')}</p>
 		<p class="mt-1 text-fg-muted">
 			{$t(
@@ -51,7 +48,7 @@
 		{#if canEnableLegacyEditor(object)}
 			<button
 				type="button"
-				class="mt-3 rounded-md bg-slate-900 px-3 py-2 font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+				class="mt-3 rounded-control bg-primary rf-filled px-3 py-2 font-medium text-on-primary disabled:bg-surface disabled:text-control"
 				onclick={onEnable}
 				disabled={busy}
 				>{$t(busy ? 'flow.legacyEditor.enabling' : 'flow.legacyEditor.enable')}</button
@@ -59,7 +56,7 @@
 		{/if}
 		<button
 			type="button"
-			class="ml-3 mt-3 rounded-md border border-slate-300 px-3 py-2 disabled:opacity-50 dark:border-slate-700"
+			class="ml-3 mt-3 rounded-control border border-fg bg-raised px-3 py-2 disabled:bg-surface disabled:text-control disabled:border-line"
 			onclick={onRefresh}
 			disabled={busy}>{$t('flow.legacyEditor.refresh')}</button
 		>
@@ -87,6 +84,6 @@
 						<FlowInlineText text={block.text} spans={block.inline_spans} />
 					</p>{/if}
 			</div>
-		{:else}<p class="text-sm text-slate-500">{$t('flow.legacyEditor.empty')}</p>{/each}
+		{:else}<p class="text-sm text-fg-muted">{$t('flow.legacyEditor.empty')}</p>{/each}
 	</div>
 </section>

@@ -694,7 +694,7 @@
 		role="status"
 		data-testid="flow-transfer-resolution"
 		class="mx-auto my-2 flex max-w-3xl items-center justify-between gap-2 rounded border p-3 text-sm"
-		class:border-amber-400={!applied}
+		class:border-warning={!applied}
 	>
 		<p>{applied ? $t('flow.transfer.applied') : $t('flow.transfer.pending')}</p>
 		<button
@@ -801,8 +801,8 @@
 		data-testid="flow-typed-unavailable"
 	>
 		<h1 class="text-lg font-semibold">{$t('flow.pageOnly.title')}</h1>
-		<p class="text-sm text-slate-500">{$t('flow.pageOnly.body')}</p>
-		<a class="min-h-11 py-2 text-blue-600 underline" href={resolve('/(app)/flow')}
+		<p class="text-sm text-fg-muted">{$t('flow.pageOnly.body')}</p>
+		<a class="min-h-11 py-2 text-fg underline" href={resolve('/(app)/flow')}
 			>{$t('flow.pageOnly.back')}</a
 		>
 	</section>
@@ -882,13 +882,13 @@
 	/>
 	<div class="relative flex min-h-0 flex-1 overflow-hidden">
 		<div
-			class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-slate-950"
+			class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-canvas"
 			data-testid="flow-body-scroll"
 			data-flow-scroll-owner
 		>
 			{#if runtimeError}
 				<div
-					class="flex flex-wrap items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+					class="flex flex-wrap items-center gap-3 border-b border-line bg-warning-soft px-6 py-2 text-sm text-fg"
 					role="alert"
 				>
 					<!-- Key selection lives in `#lib/flow/errors.js`, not in this template: the inline
@@ -926,7 +926,7 @@
 						</button>
 						<button
 							type="button"
-							class="font-medium underline underline-offset-2 hover:no-underline disabled:opacity-50"
+							class="font-medium underline underline-offset-2 hover:no-underline disabled:text-control disabled:hover:bg-transparent"
 							disabled={reloading || editorWritePaused}
 							onclick={reloadFromServer}
 						>
@@ -969,7 +969,7 @@
 			{#if canvasRenderer}
 				{#if upgradingRichEditor}<p
 						role="status"
-						class="mx-auto mb-2 max-w-3xl text-xs text-slate-500"
+						class="mx-auto mb-2 max-w-3xl text-xs text-fg-muted"
 					>
 						{$t('flow.canvas.upgrading')}
 					</p>{/if}
@@ -1035,7 +1035,7 @@
 			inset: 0 0 0 auto;
 			z-index: 40;
 			max-width: 100%;
-			box-shadow: -8px 0 24px #0002;
+			box-shadow: -8px 0 24px var(--rf-shadow);
 		}
 		.flow-tool-pane :global(.flow-pane) {
 			width: min(90vw, 400px);

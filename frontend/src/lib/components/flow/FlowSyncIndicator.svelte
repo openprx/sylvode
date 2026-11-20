@@ -14,15 +14,15 @@
 	// `prefers-reduced-motion: reduce` must stop the pulsing dot -- the sync state is still
 	// conveyed by color and the text label next to it, never by motion alone.
 	const DOT_CLASS: Record<SyncState, string> = {
-		local: 'bg-slate-400',
-		saving: 'bg-amber-500 animate-pulse motion-reduce:animate-none',
-		saved: 'bg-emerald-500',
-		offline: 'bg-slate-400',
-		reconnecting: 'bg-amber-500 animate-pulse motion-reduce:animate-none',
-		resyncing: 'bg-amber-500 animate-pulse motion-reduce:animate-none',
-		auth_required: 'bg-red-500',
-		read_only: 'bg-slate-400',
-		error: 'bg-red-500'
+		local: 'bg-control',
+		saving: 'bg-warning animate-pulse motion-reduce:animate-none',
+		saved: 'bg-success',
+		offline: 'bg-control',
+		reconnecting: 'bg-warning animate-pulse motion-reduce:animate-none',
+		resyncing: 'bg-warning animate-pulse motion-reduce:animate-none',
+		auth_required: 'bg-danger',
+		read_only: 'bg-control',
+		error: 'bg-danger'
 	};
 
 	const displayedState = $derived(state === 'saved' && pending > 0 ? 'saving' : state);
@@ -34,7 +34,7 @@
 </script>
 
 <div
-	class="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1 text-xs font-medium text-fg-muted dark:bg-slate-900"
+	class="flex items-center gap-2 rounded-full border border-line bg-raised px-3 py-1 text-xs font-medium text-fg-muted"
 	role="status"
 	aria-live="polite"
 	data-testid="flow-sync-indicator"

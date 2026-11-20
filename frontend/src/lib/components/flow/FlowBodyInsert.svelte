@@ -155,12 +155,12 @@
 	>
 		{#each jobsState.uploads as upload (upload.job.key)}{@const job = upload.job}
 			<div
-				class="rounded-md border border-line p-3 text-sm"
+				class="rounded-card border border-line p-3 text-sm"
 				data-testid="flow-body-upload-job"
 				data-state={upload.state.phase}
 			>
 				<p class="truncate">{job.file.name}</p>
-				<p role="status" class="text-xs text-slate-500">
+				<p role="status" class="text-xs text-fg-muted">
 					{$t(BODY_UPLOAD_LABELS[upload.state.phase])}
 				</p>
 				{#if upload.state.phase === 'uploading'}<progress
@@ -173,7 +173,7 @@
 						class="mt-2 text-xs underline"
 						onclick={() => job.cancel()}>{$t('common.cancel')}</button
 					>{/if}
-				{#if upload.state.error}<p role="alert" class="mt-1 text-xs text-red-600">
+				{#if upload.state.error}<p role="alert" class="mt-1 text-xs text-danger">
 						{$t(BODY_ERROR_LABELS[upload.state.error], {
 							values: { limit: bytes(upload.state.maxBytes ?? 0) }
 						})}
@@ -197,13 +197,13 @@
 			</div>{/each}
 		{#each jobsState.children as child (child.job.id)}{@const job = child.job}
 			<div
-				class="rounded-md border border-line p-3 text-sm"
+				class="rounded-card border border-line p-3 text-sm"
 				data-testid="flow-body-child-job"
 				data-state={child.state.phase}
 			>
 				<p>{child.state.title}</p>
-				<p role="status" class="text-xs text-slate-500">{$t('flow.body.creatingPage')}</p>
-				{#if child.state.error}<p role="alert" class="text-xs text-red-600">
+				<p role="status" class="text-xs text-fg-muted">{$t('flow.body.creatingPage')}</p>
+				{#if child.state.error}<p role="alert" class="text-xs text-danger">
 						{$t(BODY_ERROR_LABELS[child.state.error])}
 					</p>
 					<button type="button" disabled={readOnly} onclick={() => jobs.retryChild(job)}
@@ -256,7 +256,7 @@
 						required
 					/></label
 				>
-				<p class="text-xs text-slate-500">{$t('flow.body.childOwnership')}</p>
+				<p class="text-xs text-fg-muted">{$t('flow.body.childOwnership')}</p>
 			{:else if draft.mode === 'link'}<label class="block text-sm"
 					>{$t('flow.body.findPage')}
 					<div class="mt-1 flex gap-2">
@@ -271,7 +271,7 @@
 					{#each results as page (page.id)}<li>
 							<button
 								type="button"
-								class="w-full rounded px-2 py-1 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+								class="w-full rounded px-2 py-1 text-left text-sm hover:bg-surface"
 								aria-pressed={draft.targetId === page.id}
 								onclick={() => update({ targetId: page.id })}
 								>{page.title || $t('flow.nav.untitled')}</button
@@ -286,7 +286,7 @@
 						required
 					/></label
 				>
-				<p class="text-xs text-slate-500">{$t('flow.body.linkOwnership')}</p>
+				<p class="text-xs text-fg-muted">{$t('flow.body.linkOwnership')}</p>
 			{:else}
 				{#if draft.kind === 'image'}<label class="block text-sm"
 						>{$t('flow.body.altText')}<input
@@ -314,12 +314,12 @@
 								if (file) update({ file });
 								event.currentTarget.value = '';
 							}}
-						/>{#if draft.file}<span class="mt-1 block text-xs text-slate-500"
+						/>{#if draft.file}<span class="mt-1 block text-xs text-fg-muted"
 								>{draft.file.name} · {bytes(draft.file.size)}</span
 							>{/if}</label
 					>{/if}
 			{/if}
-			{#if error}<p role="alert" class="text-sm text-red-600">{$t(BODY_ERROR_LABELS[error])}</p>
+			{#if error}<p role="alert" class="text-sm text-danger">{$t(BODY_ERROR_LABELS[error])}</p>
 				{#if error === 'position'}<button
 						type="button"
 						class="text-sm underline"
@@ -329,7 +329,7 @@
 				<button type="button" onclick={close}>{$t('common.cancel')}</button><button
 					type="submit"
 					disabled={submitting || readOnly}
-					class="rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+					class="rounded bg-primary rf-filled px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control"
 					>{$t(
 						draft.mode === 'details'
 							? 'common.save'
