@@ -231,40 +231,38 @@
 
 {#if loading}
 	<div
-		class="mx-auto max-w-3xl rounded-lg border border-line bg-white p-8 text-center text-slate-500 dark:bg-slate-800"
+		class="mx-auto max-w-3xl rounded-card border border-line bg-raised p-8 text-center text-fg-muted"
 	>
 		{$t('governance.loading')}
 	</div>
 {:else}
 	<div class="mx-auto max-w-3xl">
-		<div
-			class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
-		>
+		<div class="rounded-card border border-line bg-raised p-5">
 			<h1 class="mb-4 text-xl font-semibold text-fg">
 				{$t('governance.editTitle')}
 			</h1>
 			<div class="space-y-4">
 				<div>
-					<label for="proposal-title" class="mb-1 block text-sm text-slate-600"
+					<label for="proposal-title" class="mb-1 block text-sm text-fg-muted"
 						>{$t('governance.field.title')}</label
 					>
 					<input
 						id="proposal-title"
 						type="text"
 						bind:value={title}
-						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					/>
 				</div>
 
 				<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
 					<div>
-						<label for="proposal-type" class="mb-1 block text-sm text-slate-600"
+						<label for="proposal-type" class="mb-1 block text-sm text-fg-muted"
 							>{$t('governance.field.type')}</label
 						>
 						<select
 							id="proposal-type"
 							bind:value={proposalType}
-							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 						>
 							{#each proposalTypeOptions as option}
 								<option value={option.value}>{$t(option.labelKey)}</option>
@@ -272,30 +270,30 @@
 						</select>
 					</div>
 					<div>
-						<label for="proposal-voting-rule" class="mb-1 block text-sm text-slate-600"
+						<label for="proposal-voting-rule" class="mb-1 block text-sm text-fg-muted"
 							>{$t('governance.field.votingRule')}</label
 						>
 						<select
 							id="proposal-voting-rule"
 							bind:value={votingRule}
-							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 						>
 							{#each votingRuleOptions as option}
 								<option value={option.value}>{$t(option.labelKey)}</option>
 							{/each}
 						</select>
-						<p class="mt-1 text-xs text-slate-500">
+						<p class="mt-1 text-xs text-fg-muted">
 							{$t(`governance.votingRuleDescription.${votingRule}`)}
 						</p>
 					</div>
 					<div>
-						<label for="proposal-cycle-template" class="mb-1 block text-sm text-slate-600"
+						<label for="proposal-cycle-template" class="mb-1 block text-sm text-fg-muted"
 							>{$t('governance.field.cycleTemplate')}</label
 						>
 						<select
 							id="proposal-cycle-template"
 							bind:value={cycleTemplate}
-							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 						>
 							{#each cycleTemplateOptions as option}
 								<option value={option.value}>{$t(option.labelKey)}</option>
@@ -305,31 +303,29 @@
 				</div>
 
 				<div>
-					<label for="proposal-domains" class="mb-1 block text-sm text-slate-600"
+					<label for="proposal-domains" class="mb-1 block text-sm text-fg-muted"
 						>{$t('governance.field.domains')}</label
 					>
 					<input
 						id="proposal-domains"
 						type="text"
 						bind:value={domains}
-						class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					/>
 				</div>
 
 				<div>
-					<label for="proposal-content" class="mb-1 block text-sm text-slate-600"
+					<label for="proposal-content" class="mb-1 block text-sm text-fg-muted"
 						>{$t('governance.field.content')}</label
 					>
 
 					<div
-						class="mb-2 inline-flex overflow-hidden rounded-md border border-slate-300 text-xs dark:border-slate-600"
+						class="mb-2 inline-flex overflow-hidden rounded-control border border-input bg-field text-xs"
 					>
 						<button
 							type="button"
 							class={`px-2 py-1 ${
-								contentMode === 'edit'
-									? 'bg-blue-600 text-white'
-									: 'bg-white text-fg-muted dark:bg-slate-900'
+								contentMode === 'edit' ? 'bg-primary text-on-primary' : 'bg-raised text-fg-muted'
 							}`}
 							onclick={() => (contentMode = 'edit')}>{$t('issue.editMode')}</button
 						>
@@ -337,9 +333,7 @@
 						<button
 							type="button"
 							class={`px-2 py-1 ${
-								contentMode === 'preview'
-									? 'bg-blue-600 text-white'
-									: 'bg-white text-fg-muted dark:bg-slate-900'
+								contentMode === 'preview' ? 'bg-primary text-on-primary' : 'bg-raised text-fg-muted'
 							}`}
 							onclick={() => (contentMode = 'preview')}>{$t('issue.previewMode')}</button
 						>
@@ -350,11 +344,11 @@
 							bind:value={content}
 							bind:this={contentTextareaEl}
 							rows="12"
-							class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 							onpaste={handleContentPaste}></textarea>
 						<div class="mt-2">
 							<label
-								class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+								class="inline-flex cursor-pointer items-center gap-1 text-sm text-fg underline"
 							>
 								<span
 									>{uploadingContentImage ? $t('search.searching') : $t('issue.uploadImage')}</span
@@ -370,12 +364,12 @@
 						</div>
 					{:else}
 						<div
-							class="markdown-body min-h-[280px] rounded-md border border-line bg-slate-50 px-3 py-2 text-sm text-fg dark:bg-slate-900"
+							class="markdown-body min-h-[280px] rounded-control border border-line bg-surface px-3 py-2 text-sm text-fg"
 						>
 							{#if content.trim()}
 								{@html renderMarkdown(content)}
 							{:else}
-								<p class="text-slate-400">{$t('issue.noDescriptionPreview')}</p>
+								<p class="text-fg-muted">{$t('issue.noDescriptionPreview')}</p>
 							{/if}
 						</div>
 					{/if}
@@ -384,13 +378,14 @@
 				<div class="flex items-center justify-end gap-2">
 					<a
 						href={`/proposals/${proposalId}`}
-						class="rounded-md border border-slate-300 px-4 py-2 text-sm">{$t('common.cancel')}</a
+						class="rounded-control border border-input bg-field px-4 py-2 text-sm"
+						>{$t('common.cancel')}</a
 					>
 					<button
 						type="button"
 						onclick={submit}
 						disabled={saving}
-						class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+						class="rounded-control bg-primary px-4 py-2 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 					>
 						{saving ? $t('common.saving') : $t('governance.saveDraft')}
 					</button>

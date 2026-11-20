@@ -118,40 +118,32 @@
 			event.preventDefault();
 			runSearch();
 		}}
-		class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4"
+		class="rounded-card border border-line bg-raised p-4"
 	>
 		<div class="flex gap-3">
 			<input
 				type="search"
 				bind:value={query}
 				placeholder={$t('search.placeholder')}
-				class="flex-1 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500"
+				class="flex-1 rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 			/>
 			<Button type="submit" loading={searching}>{$t('common.search')}</Button>
 		</div>
 	</form>
 
 	{#if searching}
-		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('search.searching')}
 		</div>
 	{:else if query.trim() && results.length === 0}
-		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-10 text-center text-fg-muted"
-		>
+		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
 			{$t('search.noResults')}
 		</div>
 	{:else if results.length > 0}
 		<div class="space-y-4">
 			{#if issues.length > 0}
-				<section
-					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4"
-				>
-					<h2
-						class="text-sm font-semibold uppercase tracking-wide text-fg-muted"
-					>
+				<section class="rounded-card border border-line bg-raised p-4">
+					<h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
 						Issues ({issues.length})
 					</h2>
 					<div class="mt-3 space-y-2">
@@ -159,7 +151,7 @@
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
-								class="block rounded-md border border-line p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="block rounded-control border border-line p-3 hover:bg-surface"
 							>
 								<p class="font-medium text-fg">{item.title}</p>
 								{#if item.description}
@@ -174,12 +166,8 @@
 			{/if}
 
 			{#if projects.length > 0}
-				<section
-					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4"
-				>
-					<h2
-						class="text-sm font-semibold uppercase tracking-wide text-fg-muted"
-					>
+				<section class="rounded-card border border-line bg-raised p-4">
+					<h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
 						Projects ({projects.length})
 					</h2>
 					<div class="mt-3 space-y-2">
@@ -187,7 +175,7 @@
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
-								class="block rounded-md border border-line p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="block rounded-control border border-line p-3 hover:bg-surface"
 							>
 								<p class="font-medium text-fg">{item.name}</p>
 								{#if item.description}
@@ -202,12 +190,8 @@
 			{/if}
 
 			{#if comments.length > 0}
-				<section
-					class="rounded-lg border border-line bg-white dark:bg-slate-900 p-4"
-				>
-					<h2
-						class="text-sm font-semibold uppercase tracking-wide text-fg-muted"
-					>
+				<section class="rounded-card border border-line bg-raised p-4">
+					<h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
 						Comments ({comments.length})
 					</h2>
 					<div class="mt-3 space-y-2">
@@ -215,7 +199,7 @@
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
-								class="block rounded-md border border-line p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="block rounded-control border border-line p-3 hover:bg-surface"
 							>
 								<p class="font-medium text-fg">{$t('issue.comments')}</p>
 								<p class="mt-1 text-sm text-fg-muted line-clamp-2">
