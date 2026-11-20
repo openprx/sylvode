@@ -451,6 +451,57 @@ async fn a_rolled_back_revocation_leaves_the_grant_active() {
 }
 
 #[tokio::test]
+async fn revoke_grant_leaves_tokens_that_expired_long_ago_to_the_prune() {
+    let scratch = oauth_scratch_or_skip!("rev_old_tokens", Start::Complete);
+    let db = &scratch.db;
+    let (tenant, grant, _, _) = fixture(db, "ro").await;
+    for (label, hash, expires) in [
+        ("live", "01", "now() + interval '10 minutes'"),
+        ("expired_hours_ago", "02", "now() - interval '12 hours'"),
+        ("expired_days_ago", "03", "now() - interval '3 days'"),
+    ] {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO oauth_tokens (id, token_hash, kind, grant_id, client_id, scopes, expires_at, last_used_at) \
+                 VALUES ($1, $2, 'refresh', $3, 'ramflux', ARRAY['projects:read'], {expires}, NULL)"
+            ),
+            vec![Uuid::new_v4().into(), format!("{:0>64}", format!("{hash}{label}")).into(), grant.into()],
+        )
+        .await;
+    }
+    let tx = db.begin().await.expect("tx");
+    assert!(
+        revoke_grant(&tx, grant, RevokeReason::UserRevoked, Actor::User(tenant.member_id))
+            .await
+            .expect("revoke")
+    );
+    tx.commit().await.expect("commit");
+    let unrevoked = count(
+        db,
+        "SELECT count(*) AS n FROM oauth_tokens WHERE grant_id = $1 AND revoked_at IS NULL",
+        vec![grant.into()],
+    )
+    .await;
+    assert_eq!(
+        unrevoked, 1,
+        "only the token that expired days ago is left unmarked (it is unusable, and the daily prune deletes it)"
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT count(*) AS n FROM oauth_tokens WHERE grant_id = $1 AND revoked_at IS NULL \
+             AND expires_at > now() - interval '1 day'",
+            vec![grant.into()]
+        )
+        .await,
+        0,
+        "no live or recently expired token survives"
+    );
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
 async fn revoke_grant_notifies_listeners_after_commit_only() {
     let scratch = oauth_scratch_or_skip!("rev_notify", Start::Complete);
     let db = &scratch.db;
