@@ -23,6 +23,9 @@
 // Credentials: read at run time from the environment (P3X_U1_EMAIL, P3X_U1_PASSWORD) or from the
 // env file named by UI_SHOTS_ENV_FILE. They are never printed or written anywhere.
 //
+// CONTRAST: per screen, the lowest text contrast from computed styles (see contrastProbeSource);
+// disabled controls are measured apart.
+//
 // LEGACY-SCAN: per screen, the number of elements whose class attribute holds a raw palette
 // utility (slate, blue, red, amber, emerald, green, cyan, yellow, gray with a 2-3 digit shade) or
 // a `dark:` variant. A migrated screen scans to 0.
@@ -129,6 +132,88 @@ export const SKIP_REASONS = {
 // The raw palette utilities and `dark:` variants of the legacy language (plan section 4).
 export const LEGACY_PALETTE_SOURCE =
 	'\\b(slate|blue|red|amber|emerald|green|cyan|yellow|gray)-\\d{2,3}\\b';
+
+/**
+ * Lowest text contrast on the rendered page, from computed styles. Every visible text node's
+ * parent is measured: foreground colour (times the element's own and ancestors' opacity) against
+ * the background composited from the ancestors' background colours (images and gradients are not
+ * resolved, so text over them is measured against the colour under them). Disabled controls
+ * (`:disabled`, `aria-disabled="true"`) are counted apart. Runs in the page.
+ */
+export function contrastProbeSource() {
+	return `(() => {
+		const canvas = document.createElement('canvas');
+		canvas.width = canvas.height = 1;
+		const context = canvas.getContext('2d', { willReadFrequently: true });
+		const rgba = (value) => {
+			context.clearRect(0, 0, 1, 1);
+			context.fillStyle = '#000';
+			context.fillStyle = value;
+			context.fillRect(0, 0, 1, 1);
+			const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+			return [r, g, b, a / 255];
+		};
+		const over = (top, under) => {
+			const a = top[3];
+			return [0, 1, 2].map((i) => top[i] * a + under[i] * (1 - a)).concat(1);
+		};
+		const lum = ([r, g, b]) => {
+			const f = (v) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+			return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+		};
+		const ratio = (a, b) => {
+			const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+			return (hi + 0.05) / (lo + 0.05);
+		};
+		const canvasColour = rgba(getComputedStyle(document.documentElement).backgroundColor);
+		const groundOf = (element) => {
+			const layers = [];
+			for (let node = element; node; node = node.parentElement) {
+				const colour = rgba(getComputedStyle(node).backgroundColor);
+				if (colour[3] > 0) layers.push(colour);
+				if (colour[3] >= 1) break;
+			}
+			let ground = canvasColour[3] > 0 ? canvasColour : [255, 255, 255, 1];
+			for (const layer of layers.reverse()) ground = over(layer, ground);
+			return ground;
+		};
+		const seen = new Map();
+		const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+		while (walker.nextNode()) {
+			const node = walker.currentNode;
+			if (!node.nodeValue || !node.nodeValue.trim()) continue;
+			const element = node.parentElement;
+			if (!element || seen.has(element)) continue;
+			if (element.closest('script, style, noscript, [hidden], [aria-hidden="true"]')) continue;
+			const box = element.getBoundingClientRect();
+			const style = getComputedStyle(element);
+			if (box.width < 1 || box.height < 1 || style.visibility === 'hidden' || style.display === 'none')
+				continue;
+			let opacity = 1;
+			for (let n = element; n; n = n.parentElement) opacity *= Number(getComputedStyle(n).opacity);
+			const colour = rgba(style.color);
+			colour[3] *= opacity;
+			if (colour[3] <= 0.01) continue;
+			const ground = groundOf(element);
+			const value = ratio(over(colour, ground), ground);
+			const disabled = !!element.closest(':disabled, [aria-disabled="true"]');
+			const name = element.tagName.toLowerCase() + (element.className && typeof element.className === 'string' ? '.' + element.className.trim().split(/\\s+/).slice(0, 3).join('.') : '');
+			seen.set(element, { ratio: value, disabled, text: node.nodeValue.trim().slice(0, 40), element: name });
+		}
+		const all = [...seen.values()];
+		const live = all.filter((entry) => !entry.disabled).sort((a, b) => a.ratio - b.ratio);
+		const off = all.filter((entry) => entry.disabled).sort((a, b) => a.ratio - b.ratio);
+		const round = (entry) => ({ ...entry, ratio: Math.round(entry.ratio * 100) / 100 });
+		return {
+			measured: all.length,
+			min: live[0] ? Math.round(live[0].ratio * 100) / 100 : null,
+			below45: live.filter((entry) => entry.ratio < 4.5).length,
+			worst: live.slice(0, 3).map(round),
+			minDisabled: off[0] ? Math.round(off[0].ratio * 100) / 100 : null,
+			worstDisabled: off.slice(0, 2).map(round)
+		};
+	})()`;
+}
 
 function parseArgs(argv) {
 	const positional = [];
@@ -387,6 +472,7 @@ async function capture(flags) {
 								textLength: (document.body.innerText || '').length
 							};
 						}, LEGACY_PALETTE_SOURCE);
+						const contrast = await page.evaluate(contrastProbeSource());
 						const file = `${route.name}.${theme}.${width}.png`;
 						await page.screenshot({
 							path: join(out, file),
@@ -400,6 +486,7 @@ async function capture(flags) {
 							file,
 							status,
 							...probe,
+							contrast,
 							problems: problems.slice(0, 5),
 							ms: Date.now() - started
 						});
