@@ -131,6 +131,12 @@ async fn main() -> anyhow::Result<()> {
 
 /// The application router: every REST route, with the global layers applied.
 fn build_router(state: AppState) -> Router {
+    build_router_with(state, api::config::runtime().oauth.as_ref())
+}
+
+/// [`build_router`] with an explicit `[oauth]` configuration (tests; the server passes the
+/// installed one).
+fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::config::OAuthConfig>>) -> Router {
     let auth_state = state.clone();
 
     // Uploaded object downloads are gated by `uploads_access_middleware`: it accepts either a
@@ -1605,7 +1611,7 @@ fn build_router(state: AppState) -> Router {
         // that renders its database failures as typed envelopes.
         .merge(routes::flow_surface::seal(flow_surface_routes(&auth_state)))
         // OAuth authorization server: metadata documents and, with later packages, the endpoints.
-        .merge(api::oauth::router::routes(&auth_state))
+        .merge(api::oauth::router::routes_with(&auth_state, oauth))
         // Label routes (protected)
         .route(
             "/api/v1/workspaces/{workspace_id}/labels",

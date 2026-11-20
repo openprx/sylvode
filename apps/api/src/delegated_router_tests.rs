@@ -20,7 +20,7 @@
 )]
 
 use super::migration_runner_database_tests::{Scratch, scratch};
-use super::{MigrationOptions, build_router, run_migrations_with};
+use super::{MigrationOptions, build_router, build_router_with, run_migrations_with};
 use api::oauth::delegated::{DELEGATED_ROUTES, OAuthConfigOverride, Required, Resolver, RouteEntry, lookup};
 use api::oauth::scopes::{Scope, ScopeSet};
 use api::oauth::tokens::{TokenKind, mint};
@@ -46,10 +46,6 @@ const FORWARD_SECRET: &str = "delegated-forward-secret-0123456789abcdef";
 const ISSUER: &str = "https://sv.test";
 const METADATA_URL: &str = "https://sv.test/.well-known/oauth-protected-resource/api";
 const ROUTE_REFUSED: &str = "route not available to connected applications";
-
-/// Routes of the allow-list that another package registers. Remove an entry when that package is
-/// merged; until then the table names a route this router does not have yet.
-const NOT_REGISTERED_YET: &[(&str, &str)] = &[("GET", "/api/v1/oauth/events/stream")];
 
 /// Every scope a read-and-write connection can hold in the first release's vocabulary, for tests
 /// where the scope must not be what limits the request.
@@ -140,7 +136,7 @@ impl Reply {
 
     /// Whether the middleware itself refused the request (as opposed to a handler answering).
     fn refused_by_delegation(&self) -> bool {
-        self.bearer_error().is_some() || self.header("www-authenticate").is_some()
+        self.header("www-authenticate").is_some() || self.bearer_error().is_some()
     }
 }
 
@@ -188,7 +184,8 @@ impl World {
             .await
             .expect("migrations apply");
         let state = state_for(db.clone());
-        let router = build_router(state).layer(axum::Extension(OAuthConfigOverride(oauth_config())));
+        let config = oauth_config();
+        let router = build_router_with(state, Some(&config)).layer(axum::Extension(OAuthConfigOverride(config)));
 
         let [ws1, ws2, alice, bob, carol, agent, p1, p2, p3, i1, i2, i3, label1] =
             std::array::from_fn(|_| Uuid::new_v4());
@@ -487,6 +484,18 @@ async fn send_to(
     let response = router.clone().oneshot(request).await.expect("the router answers");
     let status = response.status();
     let headers = response.headers().clone();
+    // An event stream never ends by itself: the headers are the answer.
+    if headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"))
+    {
+        return Reply {
+            status,
+            headers,
+            body: Vec::new(),
+        };
+    }
     let body = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
         .await
         .expect("the body is readable")
@@ -600,6 +609,8 @@ enum Class {
     /// Behind another authentication middleware (user JWT, administrator): the token is no
     /// credential there and the request is refused.
     OtherAuthDenied,
+    /// An OAuth management route that needs a first-party session and refuses the token itself.
+    HandlerDenied,
     /// Needs no bearer credential at all: a delegated token adds nothing to what anyone can do.
     Public,
 }
@@ -624,6 +635,10 @@ const PUBLIC_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/api/v1/oauth/internal/token-context"),
     ("PATCH", "/api/v1/oauth/internal/token-context"),
     ("DELETE", "/api/v1/oauth/internal/token-context"),
+    // The token and revoke endpoints authenticate by the code, the refresh token and the PKCE
+    // verifier in the form body (`client_id` only, the client is public).
+    ("POST", "/api/v1/oauth/token"),
+    ("POST", "/api/v1/oauth/revoke"),
     // Signed downloads: authorised by a signature in the query, not by a bearer token.
     ("GET", "/api/v1/uploads/signatures/{file_name}/download"),
     ("GET", "/api/v1/form-attachments/{attachment_id}/download"),
@@ -636,6 +651,30 @@ const PUBLIC_ROUTES: &[(&str, &str)] = &[
     // WebSocket upgrades: the handshake is authorised by a single-use ticket, not a bearer token.
     ("GET", "/api/v1/collab/ws"),
     ("GET", "/api/v2/flow/collab/ws"),
+];
+
+/// OAuth routes that need a first-party session (or an instance administrator) and refuse a
+/// delegated token in their own handler. They are not on the delegated allow-list, and they are
+/// not behind the bearer middleware either, so this list is the explicit record that each one
+/// refuses a connected application. A route added to the OAuth surface fails the enumeration
+/// until it is listed here or in `PUBLIC_ROUTES`.
+const DENIED_TO_DELEGATED: &[(&str, &str)] = &[
+    // The user's connected applications.
+    ("GET", "/api/v1/me/connected-apps"),
+    ("DELETE", "/api/v1/me/connected-apps/{grant_id}"),
+    // The workspace's connected applications and their switch.
+    ("GET", "/api/v1/workspaces/{workspace_id}/connected-apps"),
+    ("DELETE", "/api/v1/workspaces/{workspace_id}/connected-apps/{grant_id}"),
+    ("GET", "/api/v1/workspaces/{workspace_id}/connected-apps/settings"),
+    ("PUT", "/api/v1/workspaces/{workspace_id}/connected-apps/settings"),
+    // The instance administrator's client list and switch.
+    ("GET", "/api/v1/admin/oauth-clients"),
+    ("PATCH", "/api/v1/admin/oauth-clients/{client_id}"),
+    // The authorization request is open to anonymous callers (they are sent to sign in) but a
+    // bearer token is not a person: the endpoint refuses it.
+    ("POST", "/api/v1/oauth/authorization-requests"),
+    // The consent decision is the signed-in user's own act.
+    ("POST", "/api/v1/oauth/authorization-requests/{request_id}/decision"),
 ];
 
 fn concrete_unlisted(path: &str) -> String {
@@ -706,17 +745,10 @@ async fn every_route_is_on_the_allow_list_with_a_scope_or_denied() {
         .collect();
     for entry in DELEGATED_ROUTES {
         let known = registered.contains(&(entry.method.to_string(), entry.pattern.to_string()));
-        let pending = NOT_REGISTERED_YET.contains(&(entry.method, entry.pattern));
         assert!(
-            known != pending,
-            "{} {}: {}",
-            entry.method,
-            entry.pattern,
-            if known {
-                "is registered, so it must leave NOT_REGISTERED_YET"
-            } else {
-                "is on the allow-list but is not a route of the router"
-            }
+            known,
+            "{} {}: is on the allow-list but is not a route of the router",
+            entry.method, entry.pattern
         );
     }
 
@@ -726,6 +758,7 @@ async fn every_route_is_on_the_allow_list_with_a_scope_or_denied() {
     let mut public_seen = BTreeSet::new();
     let mut undecided: Vec<String> = Vec::new();
     let mut allowed_seen = BTreeSet::new();
+    let mut denied_seen = BTreeSet::new();
     let mut pairs = 0_u32;
     for route in &routes {
         for method in &route.methods {
@@ -744,7 +777,16 @@ async fn every_route_is_on_the_allow_list_with_a_scope_or_denied() {
             let anonymous = w.send(method, &uri, None, &[], body.as_ref()).await;
             let label = format!("{method} {}", route.path);
 
-            let class = if let Some(entry) = entry {
+            let class = if DENIED_TO_DELEGATED.contains(&(method, route.path.as_str())) {
+                assert!(
+                    matches!(delegated.status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+                    "{label}: must refuse a delegated token, answered {} {}",
+                    delegated.status,
+                    delegated.text()
+                );
+                denied_seen.insert((*method, route.path.clone()));
+                Class::HandlerDenied
+            } else if let Some(entry) = entry {
                 assert!(
                     !delegated.refused_by_delegation(),
                     "{label}: on the allow-list with every scope, but refused: {}",
@@ -796,6 +838,7 @@ async fn every_route_is_on_the_allow_list_with_a_scope_or_denied() {
                     Class::Allowed => "allowed",
                     Class::RouteDenied => "denied by route",
                     Class::OtherAuthDenied => "denied by other authentication",
+                    Class::HandlerDenied => "denied by the management handler",
                     Class::Public => "public",
                 })
                 .or_default() += 1;
@@ -807,23 +850,27 @@ async fn every_route_is_on_the_allow_list_with_a_scope_or_denied() {
          (add each to PUBLIC_ROUTES with the reason, or protect it):\n{}",
         undecided.join("\n")
     );
+    for (method, path) in DENIED_TO_DELEGATED {
+        assert!(
+            denied_seen.contains(&(*method, (*path).to_string())),
+            "{method} {path} is in DENIED_TO_DELEGATED but is not a registered route"
+        );
+    }
     for (method, path) in PUBLIC_ROUTES {
         assert!(
             public_seen.contains(&(*method, (*path).to_string())),
             "{method} {path} is in PUBLIC_ROUTES but is no longer a public route"
         );
     }
-    let table_registered = DELEGATED_ROUTES.len() - NOT_REGISTERED_YET.len();
     assert_eq!(
         allowed_seen.len(),
-        table_registered,
-        "every registered table entry was probed"
+        DELEGATED_ROUTES.len(),
+        "every table entry was probed"
     );
     eprintln!(
-        "route enumeration: {} routes, {pairs} method/route pairs: {tally:?}; allow-list has {} entries ({} not registered yet)",
+        "route enumeration: {} routes, {pairs} method/route pairs: {tally:?}; allow-list has {} entries",
         routes.len(),
-        DELEGATED_ROUTES.len(),
-        NOT_REGISTERED_YET.len()
+        DELEGATED_ROUTES.len()
     );
     w.finish().await;
 }
@@ -847,9 +894,6 @@ async fn each_allowed_route_works_with_its_scope_and_is_refused_without_it() {
     };
     let mut checked = 0;
     for entry in DELEGATED_ROUTES {
-        if NOT_REGISTERED_YET.contains(&(entry.method, entry.pattern)) {
-            continue;
-        }
         let uri = w.concrete(entry);
         let body = request_body(entry.method, entry.pattern);
         let label = format!("{} {}", entry.method, entry.pattern);
@@ -894,7 +938,7 @@ async fn each_allowed_route_works_with_its_scope_and_is_refused_without_it() {
         }
         checked += 1;
     }
-    assert_eq!(checked, DELEGATED_ROUTES.len() - NOT_REGISTERED_YET.len());
+    assert_eq!(checked, DELEGATED_ROUTES.len());
 
     // Hierarchy: write implies its read (work items), and nothing else is implied.
     let write_only = w.session(w.alice, w.ws1, &[], &["work_items:write"]).await;
