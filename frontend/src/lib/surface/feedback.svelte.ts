@@ -1,20 +1,8 @@
+import type { SurfaceTip } from '#lib/surface/context.js';
 import { appToasts } from '#lib/ui/toast/app-toasts.js';
 
-/**
- * Same shape as `SurfaceTip` in `lib/surface/context.ts` (contract section 1.1). It is repeated
- * here so this module builds before the surface contract files are merged; after the merge,
- * replace it with `import type { SurfaceTip } from '#lib/surface/context.js'`.
- */
-export interface FeedbackTip {
-	id: string;
-	tone: 'neutral' | 'success' | 'warning' | 'danger';
-	message: string;
-	action?: { label: string; run: () => void | Promise<void> };
-	dismissible?: boolean;
-}
-
 /** Puts a tip into the current page's tip slot; `null` clears it. */
-export type TipSink = (tip: FeedbackTip | null) => void;
+export type TipSink = (tip: SurfaceTip | null) => void;
 
 export const ERROR_TIP_ID = 'feedback:error';
 export const WARNING_TIP_ID = 'feedback:warning';

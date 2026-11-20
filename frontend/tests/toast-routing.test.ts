@@ -1,20 +1,16 @@
 import { Suite, assert, assertEqual, finish } from './support/harness';
 import { toast } from '../src/lib/stores/toast';
 import { appToasts } from '../src/lib/ui/toast/app-toasts';
-import {
-	clearFeedback,
-	registerTipSink,
-	hasTipSink,
-	type FeedbackTip
-} from '../src/lib/surface/feedback.svelte';
+import { clearFeedback, registerTipSink, hasTipSink } from '../src/lib/surface/feedback.svelte';
+import type { SurfaceTip } from '../src/lib/surface/context';
 
 const suite = new Suite('toast-routing');
 
 function reset() {
 	for (const item of [...appToasts.items]) appToasts.dismiss(item.id);
 }
-function withSink(): { tips: Array<FeedbackTip | null>; stop: () => void } {
-	const tips: Array<FeedbackTip | null> = [];
+function withSink(): { tips: Array<SurfaceTip | null>; stop: () => void } {
+	const tips: Array<SurfaceTip | null> = [];
 	return { tips, stop: registerTipSink((tip) => tips.push(tip)) };
 }
 
