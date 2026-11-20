@@ -11,6 +11,7 @@
 		type WebhookDelivery
 	} from '#lib/api/webhooks.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import Button from '#lib/components/Button.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
@@ -143,7 +144,15 @@
 	}
 
 	async function deleteWebhook(webhook: Webhook) {
-		if (!confirm(get(t)('webhook.deleteConfirm', { values: { url: webhook.url } }))) {
+		const urlValues = { values: { url: webhook.url } };
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('webhook.deleteTitle', urlValues),
+				body: get(t)('webhook.deleteBody'),
+				confirmLabel: get(t)('webhook.deleteAction', urlValues)
+			}))
+		) {
 			return;
 		}
 

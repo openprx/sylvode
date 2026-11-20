@@ -13,6 +13,7 @@
 	} from '#lib/api/ai-agents.js';
 	import { projectsApi } from '#lib/api/projects.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import Button from '#lib/components/Button.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import Input from '#lib/components/Input.svelte';
@@ -200,7 +201,14 @@
 
 	async function removeAgent(agentId: string) {
 		if (!canManage) return;
-		if (!confirm(get(t)('aiAgents.removeConfirm'))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('aiAgents.removeTitle'),
+				body: get(t)('aiAgents.removeBody'),
+				confirmLabel: get(t)('aiAgents.removeAction')
+			}))
+		) {
 			return;
 		}
 		const res = await aiAgentsApi.delete(projectId, agentId);
