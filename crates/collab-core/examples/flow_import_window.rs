@@ -20,10 +20,15 @@
 //! narrow a run.
 //!
 //! Besides the window, the binary reports standalone costs of the parts inside it:
-//! `minimum_editor_model` on the freshly loaded base (the pre-import floor), the same call on the
-//! imported state (the post-import floor check model-5 documents perform), and a host-side
-//! rebuild that replays the last `REBUILD_TAIL` batches onto an older snapshot with
-//! `import_update`.
+//! - `raw`: `LoroDoc::import` of the same update on a freshly loaded base, with nothing around it;
+//! - `guard`: `import - raw`, the cost the update-scoped downgrade guard (plus the id-cache
+//!   rebuild) adds inside `import_update_causally_complete`;
+//! - `floor_pre`: a full `minimum_editor_model` walk on a freshly loaded base, the work the old
+//!   importer did before every import (kept as the reference cost);
+//! - `floor_post`: `minimum_editor_model` on the imported state after the window, which the fused
+//!   projection has already memoized, so it costs no walk;
+//! - a host-side rebuild that replays the last `REBUILD_TAIL` batches onto an older snapshot with
+//!   `import_update`.
 
 #![allow(unsafe_code)]
 
@@ -34,7 +39,7 @@ use collab_core::limits::{DocumentLimits, check_snapshot};
 use collab_core::{CollabEngine, LoroCollabEngine, NodeId, NodeKind, Operation};
 
 const BLOCKS_PER_BATCH: usize = 50;
-const SIZES: [usize; 2] = [1_400, 5_000];
+const SIZES: [usize; 3] = [1_000, 5_000, 9_950];
 const REBUILD_TAIL: usize = 20;
 
 fn cpu_time_now() -> Result<Duration, String> {
@@ -147,6 +152,8 @@ fn build(blocks: usize, model: u32) -> Result<Fixture, String> {
 #[derive(Default)]
 struct Samples {
     import: Vec<f64>,
+    raw: Vec<f64>,
+    guard: Vec<f64>,
     semantic: Vec<f64>,
     check: Vec<f64>,
     window: Vec<f64>,
@@ -167,6 +174,13 @@ fn sample(fixture: &Fixture, samples: &mut Samples) -> Result<(), String> {
     })?;
     let (semantic, semantic_ms) = timed(|| engine.semantic_snapshot().map_err(err))?;
     let ((), check) = timed(|| check_snapshot(&semantic, &DocumentLimits::default()).map_err(|v| format!("{v:?}")))?;
+    // The same update applied by Loro alone, on its own freshly loaded copy of the base.
+    let raw_doc = loro::LoroDoc::new();
+    collab_core::page_inline::configure(&raw_doc);
+    raw_doc.import(&fixture.base).map_err(|e| e.to_string())?;
+    let ((), raw) = timed(|| raw_doc.import(&fixture.update).map(|_| ()).map_err(|e| e.to_string()))?;
+    samples.raw.push(raw);
+    samples.guard.push((import - raw).max(0.0));
     samples.import.push(import);
     samples.semantic.push(semantic_ms);
     samples.check.push(check);
@@ -210,7 +224,7 @@ fn main() {
     );
     let _ = writeln!(
         out,
-        "model blocks | window import semantic check | floor_pre(cold) floor_post | rebuild({REBUILD_TAIL} tail)"
+        "model blocks | window import raw guard semantic check | floor_pre(cold) floor_post | rebuild({REBUILD_TAIL} tail)"
     );
     for model in models.iter().copied() {
         for blocks in SIZES {
@@ -230,9 +244,11 @@ fn main() {
             }
             let _ = writeln!(
                 out,
-                "{model:>5} {blocks:>6} | {:>6.2} {:>6.2} {:>8.2} {:>5.2} | {:>15.2} {:>10.2} | {:>8.2}",
+                "{model:>5} {blocks:>6} | {:>6.2} {:>6.2} {:>5.2} {:>5.2} {:>8.2} {:>5.2} | {:>15.2} {:>10.2} | {:>8.2}",
                 median(&mut samples.window),
                 median(&mut samples.import),
+                median(&mut samples.raw),
+                median(&mut samples.guard),
                 median(&mut samples.semantic),
                 median(&mut samples.check),
                 median(&mut samples.floor_pre),
