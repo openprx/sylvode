@@ -5,12 +5,16 @@
 //! validation, grant revocation, audit records, rate limiting and the metadata documents.
 
 pub mod audit;
+pub mod authorize;
 pub mod error;
 pub mod grants;
 pub mod metadata;
 pub mod rate;
+pub mod redirect;
+pub mod revoke;
 pub mod router;
 pub mod scopes;
+pub mod token;
 pub mod tokens;
 pub mod validate;
 
