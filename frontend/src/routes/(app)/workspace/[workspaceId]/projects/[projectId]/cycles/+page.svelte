@@ -13,6 +13,7 @@
 		type UpdateSprintData
 	} from '#lib/api/sprints.js';
 	import ProgressBar from '#lib/components/ProgressBar.svelte';
+	import Modal from '#lib/components/Modal.svelte';
 	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import { isMissingResult } from '#lib/utils/api-helpers.js';
 	import { toast } from '#lib/stores/toast.js';
@@ -591,153 +592,154 @@
 	{/if}
 </div>
 
-{#if showCreateModal}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
-		<div class="w-full max-w-lg rounded-float bg-overlay p-6 shadow-overlay">
-			<h2 class="mb-4 text-lg font-semibold text-fg">
-				{$t('cycles.create')}
-			</h2>
-			<div class="space-y-4">
-				<div>
-					<label for="create-name" class="mb-1 block text-sm font-medium text-fg"
-						>{$t('cycles.name')}</label
-					>
-					<input
-						id="create-name"
-						type="text"
-						bind:value={createForm.name}
-						placeholder={$t('cycles.namePlaceholder')}
-						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
-					/>
-				</div>
-				<div>
-					<label for="create-goal" class="mb-1 block text-sm font-medium text-fg"
-						>{$t('cycles.goal')}</label
-					>
-					<textarea
-						id="create-goal"
-						bind:value={createForm.goal}
-						rows="3"
-						placeholder={$t('cycles.goalPlaceholder')}
-						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
-					></textarea>
-				</div>
-				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-					<div>
-						<label for="create-start-date" class="mb-1 block text-sm font-medium text-fg"
-							>{$t('cycles.startDate')}</label
-						>
-						<input
-							id="create-start-date"
-							type="date"
-							bind:value={createForm.start_date}
-							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-						/>
-					</div>
-					<div>
-						<label for="create-end-date" class="mb-1 block text-sm font-medium text-fg"
-							>{$t('cycles.endDate')}</label
-						>
-						<input
-							id="create-end-date"
-							type="date"
-							bind:value={createForm.end_date}
-							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-						/>
-					</div>
-				</div>
-			</div>
-			<div class="mt-6 flex justify-end gap-2">
-				<button
-					onclick={() => (showCreateModal = false)}
-					class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
-				>
-					{$t('common.cancel')}
-				</button>
-				<button
-					onclick={submitCreate}
-					disabled={saving}
-					class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
-				>
-					{saving ? $t('common.creating') : $t('common.create')}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
+{#snippet createFooter()}
+		<button
+			onclick={() => (showCreateModal = false)}
+			class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
+		>
+			{$t('common.cancel')}
+		</button>
+		<button
+			onclick={submitCreate}
+			disabled={saving}
+			class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
+		>
+			{saving ? $t('common.creating') : $t('common.create')}
+		</button>
+{/snippet}
 
-{#if showEditModal}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
-		<div class="w-full max-w-lg rounded-float bg-overlay p-6 shadow-overlay">
-			<h2 class="mb-4 text-lg font-semibold text-fg">
-				{$t('cycles.edit')}
-			</h2>
-			<div class="space-y-4">
-				<div>
-					<label for="edit-name" class="mb-1 block text-sm font-medium text-fg"
-						>{$t('cycles.name')}</label
-					>
-					<input
-						id="edit-name"
-						type="text"
-						bind:value={editForm.name}
-						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-					/>
-				</div>
-				<div>
-					<label for="edit-goal" class="mb-1 block text-sm font-medium text-fg"
-						>{$t('cycles.goal')}</label
-					>
-					<textarea
-						id="edit-goal"
-						bind:value={editForm.goal}
-						rows="3"
-						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-					></textarea>
-				</div>
-				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-					<div>
-						<label for="edit-start-date" class="mb-1 block text-sm font-medium text-fg"
-							>{$t('cycles.startDate')}</label
-						>
-						<input
-							id="edit-start-date"
-							type="date"
-							bind:value={editForm.start_date}
-							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-						/>
-					</div>
-					<div>
-						<label for="edit-end-date" class="mb-1 block text-sm font-medium text-fg"
-							>{$t('cycles.endDate')}</label
-						>
-						<input
-							id="edit-end-date"
-							type="date"
-							bind:value={editForm.end_date}
-							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-						/>
-					</div>
-				</div>
+<Modal
+	bind:open={showCreateModal}
+	title={$t('cycles.create')}
+	maxWidthClass="max-w-lg"
+	footer={createFooter}
+>
+	<div class="space-y-4">
+		<div>
+			<label for="create-name" class="mb-1 block text-sm font-medium text-fg"
+				>{$t('cycles.name')}</label
+			>
+			<input
+				id="create-name"
+				type="text"
+				bind:value={createForm.name}
+				placeholder={$t('cycles.namePlaceholder')}
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
+			/>
+		</div>
+		<div>
+			<label for="create-goal" class="mb-1 block text-sm font-medium text-fg"
+				>{$t('cycles.goal')}</label
+			>
+			<textarea
+				id="create-goal"
+				bind:value={createForm.goal}
+				rows="3"
+				placeholder={$t('cycles.goalPlaceholder')}
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
+			></textarea>
+		</div>
+		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+			<div>
+				<label for="create-start-date" class="mb-1 block text-sm font-medium text-fg"
+					>{$t('cycles.startDate')}</label
+				>
+				<input
+					id="create-start-date"
+					type="date"
+					bind:value={createForm.start_date}
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+				/>
 			</div>
-			<div class="mt-6 flex justify-end gap-2">
-				<button
-					onclick={() => {
-						showEditModal = false;
-						editingSprint = null;
-					}}
-					class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
+			<div>
+				<label for="create-end-date" class="mb-1 block text-sm font-medium text-fg"
+					>{$t('cycles.endDate')}</label
 				>
-					{$t('common.cancel')}
-				</button>
-				<button
-					onclick={submitEdit}
-					disabled={saving}
-					class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
-				>
-					{saving ? $t('common.saving') : $t('common.save')}
-				</button>
+				<input
+					id="create-end-date"
+					type="date"
+					bind:value={createForm.end_date}
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+				/>
 			</div>
 		</div>
 	</div>
-{/if}
+</Modal>
+
+{#snippet editFooter()}
+		<button
+			onclick={() => {
+				showEditModal = false;
+				editingSprint = null;
+			}}
+			class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
+		>
+			{$t('common.cancel')}
+		</button>
+		<button
+			onclick={submitEdit}
+			disabled={saving}
+			class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
+		>
+			{saving ? $t('common.saving') : $t('common.save')}
+		</button>
+{/snippet}
+
+<Modal
+	bind:open={showEditModal}
+	title={$t('cycles.edit')}
+	maxWidthClass="max-w-lg"
+	onclose={() => {
+		editingSprint = null;
+	}}
+	footer={editFooter}
+>
+	<div class="space-y-4">
+		<div>
+			<label for="edit-name" class="mb-1 block text-sm font-medium text-fg"
+				>{$t('cycles.name')}</label
+			>
+			<input
+				id="edit-name"
+				type="text"
+				bind:value={editForm.name}
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+			/>
+		</div>
+		<div>
+			<label for="edit-goal" class="mb-1 block text-sm font-medium text-fg"
+				>{$t('cycles.goal')}</label
+			>
+			<textarea
+				id="edit-goal"
+				bind:value={editForm.goal}
+				rows="3"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+			></textarea>
+		</div>
+		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+			<div>
+				<label for="edit-start-date" class="mb-1 block text-sm font-medium text-fg"
+					>{$t('cycles.startDate')}</label
+				>
+				<input
+					id="edit-start-date"
+					type="date"
+					bind:value={editForm.start_date}
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+				/>
+			</div>
+			<div>
+				<label for="edit-end-date" class="mb-1 block text-sm font-medium text-fg"
+					>{$t('cycles.endDate')}</label
+				>
+				<input
+					id="edit-end-date"
+					type="date"
+					bind:value={editForm.end_date}
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+				/>
+			</div>
+		</div>
+	</div>
+</Modal>
