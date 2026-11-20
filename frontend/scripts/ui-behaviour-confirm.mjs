@@ -164,6 +164,62 @@ await check('focus starts on Cancel and the confirm button names verb and object
 	await page.keyboard.press('Escape');
 	await gone();
 });
+for (const width of [1440, 390]) {
+	await check(
+		`a long confirm label stays inside the dialog and never covers Cancel at ${width} wide`,
+		async () => {
+			await page.setViewportSize({ width, height: 900 });
+			await open('confirm-long-opener');
+			const info = await page.evaluate((s) => {
+				const dialog = document.querySelector(s);
+				const box = (el) => {
+					const r = el.getBoundingClientRect();
+					return { l: r.left, t: r.top, r: r.right, b: r.bottom };
+				};
+				const buttons = [...dialog.querySelectorAll('footer button')];
+				const confirm = buttons.at(-1);
+				const label = confirm.querySelector('.confirm-label');
+				return {
+					dialog: box(dialog),
+					cancel: box(buttons[0]),
+					confirm: box(confirm),
+					cancelText: buttons[0].textContent.trim(),
+					aria: confirm.getAttribute('aria-label'),
+					title: confirm.getAttribute('title'),
+					text: label.textContent.trim(),
+					truncated: label.scrollWidth > label.clientWidth,
+					ellipsis: getComputedStyle(label).textOverflow
+				};
+			}, DIALOG);
+			const inside = (b) =>
+				b.l >= info.dialog.l - 0.5 && b.r <= info.dialog.r + 0.5 && b.t >= info.dialog.t - 0.5;
+			const overlap = !(
+				info.cancel.r <= info.confirm.l + 0.5 ||
+				info.confirm.r <= info.cancel.l + 0.5 ||
+				info.cancel.b <= info.confirm.t + 0.5 ||
+				info.confirm.b <= info.cancel.t + 0.5
+			);
+			expect(info.text.length >= 80, `label has ${info.text.length} characters`);
+			expect(info.cancelText === 'Cancel', info.cancelText);
+			expect(
+				inside(info.cancel) && inside(info.confirm),
+				`buttons leave the dialog ${JSON.stringify(info)}`
+			);
+			expect(!overlap, `Cancel is covered ${JSON.stringify(info)}`);
+			expect(
+				info.aria === info.text && info.title === info.text,
+				'full label is the name and title'
+			);
+			expect(info.truncated, 'a label this long is cut');
+			expect(info.ellipsis === 'ellipsis', `text-overflow ${info.ellipsis}`);
+			const stacked = info.confirm.t >= info.cancel.b - 0.5;
+			await page.keyboard.press('Escape');
+			await gone();
+			await page.setViewportSize({ width: 1280, height: 900 });
+			return `${stacked ? 'two rows' : 'one row'}, truncated ${info.truncated}`;
+		}
+	);
+}
 await check('Escape resolves false and focus returns to the caller', async () => {
 	await open('confirm-opener');
 	await page.keyboard.press('Escape');

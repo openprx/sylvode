@@ -72,6 +72,8 @@
 <style>
 	.ui-button-wrap {
 		display: inline-flex;
+		min-width: 0;
+		max-width: 100%;
 	}
 	.ui-button-wrap.with-reason {
 		flex-direction: column;
@@ -81,7 +83,9 @@
 	.ui-button {
 		position: relative;
 		display: inline-grid;
+		grid-template-columns: minmax(0, 1fr);
 		place-items: center;
+		max-width: 100%;
 		min-height: var(--rf-control-height);
 		padding: 0 var(--rf-space-5);
 		border: var(--rf-border-width) solid transparent;
@@ -107,6 +111,8 @@
 	.content,
 	.busy {
 		grid-area: 1 / 1;
+		min-width: 0;
+		max-width: 100%;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;

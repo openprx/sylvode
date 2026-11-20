@@ -111,6 +111,8 @@
 		inset: 0;
 		z-index: var(--rf-z-scrim);
 		display: grid;
+		/* The track is the scrim's width, never the dialog's content width. */
+		grid-template-columns: minmax(0, 1fr);
 		place-items: center;
 		padding: var(--rf-space-9);
 		background: var(--rf-scrim);
@@ -176,9 +178,16 @@
 		font-size: var(--rf-size-body);
 		line-height: var(--rf-leading-body-tight);
 	}
+	/* Buttons that do not fit side by side wrap onto a second row instead of overlapping. */
 	footer {
 		display: flex;
+		flex-wrap: wrap;
 		justify-content: flex-end;
 		gap: var(--rf-space-4);
+	}
+	footer > :global(.ui-button-wrap) {
+		flex: 0 1 auto;
+		min-width: 0;
+		max-width: 100%;
 	}
 </style>

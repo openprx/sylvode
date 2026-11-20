@@ -35,6 +35,16 @@
 		await second;
 	}
 
+	// A confirm label with a very long object name must stay inside the dialog.
+	async function askLong(): Promise<void> {
+		const ok = await confirmAction({
+			title: $t('ui.confirm.gallery.longTitle'),
+			verb: 'delete',
+			object: $t('ui.confirm.gallery.longObject')
+		});
+		outcome = ok ? 'yes' : 'no';
+	}
+
 	async function askNeutral(): Promise<void> {
 		const ok = await confirmAction({
 			tone: 'neutral',
@@ -81,6 +91,11 @@
 		<span data-gallery="confirm:neutral">
 			<Button data-testid="confirm-neutral-opener" onclick={askNeutral}>
 				{$t('ui.confirm.gallery.openNeutral')}
+			</Button>
+		</span>
+		<span data-gallery="confirm:long-label">
+			<Button data-testid="confirm-long-opener" onclick={askLong}>
+				{$t('ui.confirm.gallery.openLong')}
 			</Button>
 		</span>
 		<span data-gallery="confirm:nested">
