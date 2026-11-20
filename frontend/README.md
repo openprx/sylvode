@@ -186,6 +186,49 @@ Add the method to the matching module in `src/lib/api/` and send requests with `
 
 Create a new store file in `src/lib/stores/`.
 
+### Forms page structure
+
+The Forms page (`src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte`,
+about 180 lines) only creates the page, wires its lifecycle and renders the top-level components.
+Everything else lives in:
+
+- **State object.** `FormsPageState` (`src/lib/forms/state/forms-page-state.svelte.ts`) holds all
+  reactive fields and deriveds of the page. `FormsPage` (`state/forms-page.ts`) is the root: its
+  dependencies, the state and one controller per stateful module. The route creates it and
+  provides it with `setFormsPageContext()`; components read it with `getFormsPageContext()`
+  (context key `FORMS_PAGE`, `state/context.ts`).
+- **Controllers.** One class per area in `src/lib/forms/state/` (session, loaders, records, record
+  panel and detail, attachments, designer, detail layout, permissions, views, the per-view-type
+  controllers, export, import). They hold the functions of the page and take the state from the
+  base class `FormsController`; components destructure only what they call.
+- **Pure modules.** Stateless helpers in `src/lib/forms/` (record formatting, view configuration,
+  field conditions, designer schema, CSV import, zip, calendar dates, and so on) and
+  `src/lib/forms/views/` (pivot formatting, timeline events). They have unit tests in
+  `tests/forms-page/`.
+- **Components.** Region components bound to the page context are in
+  `src/lib/components/forms/page/`, view renderers in `src/lib/components/forms/views/`. They take
+  no props; their script is imports plus the context lines.
+
+Rules:
+
+- No file of the page is above 3,000 lines; the route stays at most 600 lines and a component at
+  most 800.
+- Every component under `components/forms/page/` and `components/forms/views/` starts with
+  `<svelte:options runes />`. Without it Svelte compiles the component in legacy mode, where
+  state from the context object is not tracked as in the rest of the page and the component can
+  throw only after the user changes a value, which a first-render check does not see.
+  `tests/forms-page/structure.test.ts` enforces this rule and the line budgets.
+
+Tests:
+
+```bash
+bun run test:forms-page                 # unit tests of the pure modules and the structure guard
+bun run build && bun run smoke:forms-page-interactions   # browser interactions (needs CHROMIUM_BIN)
+```
+
+`smoke:forms-page-interactions` drives the built page with real input events against the mock in
+`scripts/forms-smoke-server.mjs` and fails on any page error or console error.
+
 ## FAQ
 
 ### Q: Why Bun instead of npm/pnpm?
