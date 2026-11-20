@@ -1799,6 +1799,8 @@ mod reserved_root_tests;
 #[cfg(test)]
 mod root_read_cost_tests;
 #[cfg(test)]
+mod window_check_pins_tests;
+#[cfg(test)]
 mod window_differential_tests;
 #[cfg(test)]
 mod window_fixtures;
