@@ -295,13 +295,13 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
+			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
 		>
 			{$t('workflow.loading')}
 		</div>
 	{:else if workflows.length === 0}
 		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-10 text-center text-fg-muted"
+			class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted"
 		>
 			{$t('workflow.noWorkflows')}
 		</div>
@@ -317,13 +317,13 @@
 								>
 								{#if wf.is_system_default}
 									<span
-										class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+										class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-surface text-fg"
 									>
 										{$t('workflow.systemDefault')}
 									</span>
 								{:else}
 									<span
-										class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-slate-100 text-fg dark:bg-slate-800"
+										class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-surface text-fg"
 									>
 										{$t('workflow.custom')}
 									</span>
@@ -389,7 +389,7 @@
 			</label>
 			<textarea
 				id="create-wf-description"
-				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500 resize-y"
+				class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted resize-y"
 				placeholder={$t('workflow.descriptionPlaceholder')}
 				bind:value={createForm.description}
 				rows={3}></textarea>
@@ -428,7 +428,7 @@
 			</label>
 			<textarea
 				id="edit-wf-description"
-				class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400 dark:placeholder-slate-500 resize-y"
+				class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted resize-y"
 				placeholder={$t('workflow.descriptionPlaceholder')}
 				bind:value={editForm.description}
 				rows={3}></textarea>
@@ -456,10 +456,10 @@
 			{#if managingWorkflow.states.length === 0}
 				<p class="text-sm text-fg-muted">{$t('workflow.noStates')}</p>
 			{:else}
-				<div class="overflow-x-auto rounded-md border border-line">
+				<div class="overflow-x-auto rounded-control border border-line">
 					<table class="w-full text-left text-sm">
 						<thead>
-							<tr class="bg-slate-50 dark:bg-slate-950">
+							<tr class="bg-nav">
 								<th
 									class="px-3 py-2 text-xs font-medium uppercase text-fg-muted w-10"
 								></th>
@@ -492,7 +492,7 @@
 						<tbody>
 							{#each managingWorkflow.states as state, idx (state.id)}
 								<tr
-									class={`border-b border-line transition-colors ${draggingStateId === state.id ? 'opacity-40' : ''} ${dropTargetIdx === idx ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-white dark:bg-slate-900'}`}
+									class={`border-b border-line transition-colors ${draggingStateId === state.id ? 'opacity-40' : ''} ${dropTargetIdx === idx ? 'bg-surface' : 'bg-raised'}`}
 									draggable={true}
 									ondragstart={() => handleDragStart(state.id)}
 									ondragend={handleDragEnd}
@@ -501,7 +501,7 @@
 									ondrop={(e) => handleDrop(e, idx)}
 								>
 									<td
-										class="px-3 py-2 text-slate-400 cursor-grab select-none text-center"
+										class="px-3 py-2 text-fg-muted cursor-grab select-none text-center"
 										title={$t('workflow.dragToReorder')}
 									>
 										<span class="text-lg leading-none">⠿</span>
@@ -518,13 +518,13 @@
 									<td class="px-3 py-2">
 										{#if state.category === 'done'}
 											<span
-												class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-green-100 text-success dark:bg-green-900/50"
+												class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-success-soft text-success"
 											>
 												{$t('workflow.categoryDone')}
 											</span>
 										{:else}
 											<span
-												class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
+												class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-surface text-fg"
 											>
 												{$t('workflow.categoryActive')}
 											</span>
@@ -534,14 +534,14 @@
 										<div class="flex gap-1 flex-wrap">
 											{#if state.is_initial}
 												<span
-													class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-100 text-warning dark:bg-amber-900/50"
+													class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-warning-soft text-warning"
 												>
 													{$t('workflow.initial')}
 												</span>
 											{/if}
 											{#if state.is_terminal}
 												<span
-													class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300"
+													class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-surface text-fg"
 												>
 													{$t('workflow.terminal')}
 												</span>
@@ -581,7 +581,7 @@
 				</div>
 			{:else}
 				<div
-					class="rounded-md border border-line bg-slate-50 dark:bg-slate-950 p-4 space-y-3"
+					class="rounded-control border border-line bg-surface p-4 space-y-3"
 				>
 					<h3 class="text-sm font-semibold text-fg">
 						{editingState ? $t('workflow.editState') : $t('workflow.addState')}
@@ -593,14 +593,14 @@
 									class="block text-sm font-medium text-fg"
 									for="state-key"
 								>
-									{$t('workflow.stateKey')} <span class="text-red-500">*</span>
+									{$t('workflow.stateKey')} <span class="text-danger">*</span>
 								</label>
 								<input
 									id="state-key"
 									type="text"
 									placeholder={$t('workflow.stateKeyPlaceholder')}
 									bind:value={stateForm.key}
-									class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400"
+									class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 								/>
 							</div>
 						{/if}
@@ -609,14 +609,14 @@
 								class="block text-sm font-medium text-fg"
 								for="state-display-name"
 							>
-								{$t('workflow.displayName')} <span class="text-red-500">*</span>
+								{$t('workflow.displayName')} <span class="text-danger">*</span>
 							</label>
 							<input
 								id="state-display-name"
 								type="text"
 								placeholder={$t('workflow.displayNamePlaceholder')}
 								bind:value={stateForm.display_name}
-								class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg placeholder:text-slate-400"
+								class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 							/>
 						</div>
 						<div class="space-y-1">
@@ -629,7 +629,7 @@
 							<select
 								id="state-category"
 								bind:value={stateForm.category}
-								class="block w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-fg"
+								class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 							>
 								<option value="active">{$t('workflow.categoryActive')}</option>
 								<option value="done">{$t('workflow.categoryDone')}</option>
@@ -646,7 +646,7 @@
 								id="state-color"
 								type="color"
 								bind:value={stateForm.color}
-								class="block h-9 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-1 py-1 cursor-pointer"
+								class="block h-9 w-full rounded-control border border-input bg-field px-1 py-1 cursor-pointer"
 							/>
 						</div>
 					</div>
@@ -657,7 +657,7 @@
 							<input
 								type="checkbox"
 								bind:checked={stateForm.is_initial}
-								class="h-4 w-4 rounded border-slate-300 text-blue-600"
+								class="h-4 w-4 rounded border-input accent-primary"
 							/>
 							{$t('workflow.isInitial')}
 						</label>
@@ -667,7 +667,7 @@
 							<input
 								type="checkbox"
 								bind:checked={stateForm.is_terminal}
-								class="h-4 w-4 rounded border-slate-300 text-blue-600"
+								class="h-4 w-4 rounded border-input accent-primary"
 							/>
 							{$t('workflow.isTerminal')}
 						</label>

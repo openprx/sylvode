@@ -88,7 +88,7 @@
 	<header class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 		<div>
 			<div class="flex items-center gap-2">
-				<Activity class="h-6 w-6 text-cyan-700 dark:text-cyan-300" aria-hidden="true" />
+				<Activity class="h-6 w-6 text-fg-muted" aria-hidden="true" />
 				<h1 class="text-2xl font-semibold text-fg">
 					{$t('connections.title')}
 				</h1>
@@ -102,7 +102,7 @@
 	</header>
 
 	<section
-		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-900"
+		class="rounded-card border border-line bg-raised p-4"
 	>
 		<div class="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto] md:items-end">
 			<div>
@@ -138,7 +138,7 @@
 				<select
 					id="operation-outcome-filter"
 					bind:value={outcomeFilter}
-					class="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-fg dark:border-slate-600 dark:bg-slate-800"
+					class="h-10 w-full rounded-control border border-input bg-field px-3 text-sm text-fg"
 				>
 					<option value="">{$t('connections.allResults')}</option>
 					<option value="ok">{$t('connections.resultOk')}</option>
@@ -155,7 +155,7 @@
 	</section>
 
 	<section
-		class="overflow-hidden rounded-lg border border-line bg-white dark:bg-slate-900"
+		class="overflow-hidden rounded-card border border-line bg-raised"
 	>
 		{#if loading}
 			<div class="p-8 text-center text-sm text-fg-muted">
@@ -169,7 +169,7 @@
 			<div class="overflow-x-auto">
 				<table class="min-w-full divide-y divide-line text-sm">
 					<thead
-						class="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-fg-muted dark:bg-slate-800"
+						class="bg-surface text-left text-xs font-semibold uppercase tracking-wide text-fg-muted"
 					>
 						<tr>
 							<th class="px-4 py-3">{$t('connections.time')}</th>
@@ -182,19 +182,19 @@
 					</thead>
 					<tbody class="divide-y divide-line">
 						{#each logs as log (log.id)}
-							<tr class="align-top hover:bg-slate-50/70 dark:hover:bg-slate-800/60">
+							<tr class="align-top hover:bg-surface">
 								<td class="whitespace-nowrap px-4 py-3 text-fg-muted"
 									>{formatDate(log.created_at)}</td
 								>
 								<td class="px-4 py-3">
 									<div class="font-medium text-fg">{botLabel(log)}</div>
-									<div class="font-mono text-xs text-slate-400">{log.bot_id.slice(0, 8)}</div>
+									<div class="font-mono text-xs text-fg-muted">{log.bot_id.slice(0, 8)}</div>
 								</td>
 								<td class="px-4 py-3">
 									<div class="font-mono text-xs font-medium text-fg">
 										{log.tool_name || $t('connections.directRest')}
 									</div>
-									<div class="mt-1 max-w-md truncate font-mono text-xs text-slate-400">
+									<div class="mt-1 max-w-md truncate font-mono text-xs text-fg-muted">
 										{log.method}
 										{log.path}
 									</div>
@@ -202,7 +202,7 @@
 
 								<td class="px-4 py-3">
 									<span
-										class="rounded bg-slate-100 px-2 py-1 font-mono text-xs text-fg dark:bg-slate-800"
+										class="rounded bg-surface px-2 py-1 font-mono text-xs text-fg"
 										>{log.surface}</span
 									>
 								</td>
@@ -211,14 +211,14 @@
 									<span
 										class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 {log.outcome ===
 										'ok'
-											? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-											: 'bg-red-50 text-red-700 ring-red-200'}"
+											? 'bg-success-soft text-success'
+											: 'bg-danger-soft text-danger'}"
 									>
 										{log.outcome === 'ok'
 											? $t('connections.resultOk')
 											: $t('connections.resultError')}
 									</span>
-									{#if log.business_code !== 0}<div class="mt-1 text-xs text-slate-500">
+									{#if log.business_code !== 0}<div class="mt-1 text-xs text-fg-muted">
 											{log.business_code} · {log.error_message || '-'}
 										</div>{/if}
 								</td>

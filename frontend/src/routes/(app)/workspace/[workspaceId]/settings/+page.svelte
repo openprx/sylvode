@@ -96,7 +96,7 @@
 
 	{#if loading}
 		<div
-			class="rounded-lg border border-line bg-white dark:bg-slate-900 p-6 text-fg-muted"
+			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
 		>
 			{$t('common.loading')}
 		</div>
@@ -172,7 +172,7 @@
 		{/if}
 
 		<Card>
-			<h2 class="text-lg font-semibold text-red-700">{$t('workspace.dangerZone')}</h2>
+			<h2 class="text-lg font-semibold text-danger">{$t('workspace.dangerZone')}</h2>
 			<p class="mt-2 text-sm text-fg-muted">{$t('workspace.deleteDesc')}</p>
 			<div class="mt-4">
 				<Button variant="danger" loading={deleting} onclick={handleDeleteWorkspace}
