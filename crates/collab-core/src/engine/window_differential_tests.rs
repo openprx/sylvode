@@ -40,10 +40,15 @@ use super::window_fixtures::{
 };
 use super::{CollabEngine, LoroCollabEngine};
 use crate::error::CollabError;
+use crate::facts::BaseFacts;
 use crate::frontier::Frontier;
 use crate::limits::{DocumentLimits, check_snapshot};
 use crate::operation::{NodeId, NodeKind, Operation};
 use crate::semantic::SemanticSnapshot;
+use crate::window_check::fault::Fault;
+use crate::window_check::{
+    FallbackReason, WindowAccepted, WindowDivergence, WindowReport, compare_with_projection, run_window,
+};
 use crate::{test_alloc, walk_counter};
 
 // ---------------------------------------------------------------------------------------------
@@ -169,6 +174,36 @@ pub(super) fn aggregates(snapshot: &SemanticSnapshot) -> Aggregates {
     }
 }
 
+/// `None` when an incremental implementation's report agrees with the aggregates of the full
+/// projection: the totals are equal and the bounds are at least the exact maxima.
+pub(super) fn report_against_facts(report: &WindowReport, facts: &Aggregates) -> Option<String> {
+    let exact = [
+        ("blocks", report.blocks, facts.live_blocks as u64),
+        ("navigators", report.navigators, facts.live_navigators as u64),
+        ("chars", report.chars, facts.total_live_text as u64),
+    ];
+    for (name, reported, projected) in exact {
+        if reported != projected {
+            return Some(format!(
+                "report differs: {name} is {reported}, the projection has {projected}"
+            ));
+        }
+    }
+    if (facts.max_depth as u64) > report.depth_bound {
+        return Some(format!(
+            "report differs: depth bound {} below the projection's {}",
+            report.depth_bound, facts.max_depth
+        ));
+    }
+    if (facts.longest_live_text as u64) > report.longest_bound {
+        return Some(format!(
+            "report differs: longest bound {} below the projection's {}",
+            report.longest_bound, facts.longest_live_text
+        ));
+    }
+    None
+}
+
 /// What an implementation returns for one case.
 pub(super) struct WindowResult {
     pub decision: Decision,
@@ -177,6 +212,9 @@ pub(super) struct WindowResult {
     pub engine: Option<LoroCollabEngine>,
     /// The aggregates the implementation derived for the accepted document, when it derives them.
     pub facts: Option<Aggregates>,
+    /// What an incremental implementation established: exact totals and bounds on the maxima
+    /// (see [`report_against_facts`]).
+    pub report: Option<WindowReport>,
 }
 
 /// One implementation of the write window.
@@ -195,6 +233,7 @@ fn refused(error: CollabError) -> WindowResult {
         decision: Decision::Refuse(error),
         engine: None,
         facts: None,
+        report: None,
     }
 }
 
@@ -222,8 +261,96 @@ impl WindowImpl for FullComputation {
                 decision: Decision::Accept,
                 engine: Some(engine),
                 facts: Some(facts),
+                report: None,
             },
             Err(error) => refused(error),
+        }
+    }
+}
+
+/// Today's full computation after the worker's setup prewarm.
+pub(super) struct PrewarmedFull;
+
+impl WindowImpl for PrewarmedFull {
+    fn name(&self) -> &'static str {
+        "full computation after prewarm_for_writes"
+    }
+
+    fn run(&self, base: &[u8], update: &[u8]) -> WindowResult {
+        let mut engine = LoroCollabEngine::load(base).expect("the trusted base loads");
+        engine.prewarm_for_writes();
+        match decode_apply_and_check(&mut engine, update) {
+            Ok(facts) => WindowResult {
+                decision: Decision::Accept,
+                engine: Some(engine),
+                facts: Some(facts),
+                report: None,
+            },
+            Err(error) => refused(error),
+        }
+    }
+}
+
+/// How an [`Incremental`] window is made wrong on purpose.
+#[derive(Clone, Copy)]
+pub(super) enum Defect {
+    /// The window as the worker runs it.
+    None,
+    /// A fault inside the check itself.
+    Fault(Fault),
+    /// Base facts that are stale: every unit's pre-image has one character less than the totals
+    /// were built from.
+    StaleBaseFacts,
+}
+
+/// The write window as the worker runs it: setup (load, prewarm, base facts), then the metered
+/// part, `window_check::run_window`.
+pub(super) struct Incremental {
+    pub name: &'static str,
+    pub defect: Defect,
+}
+
+impl Incremental {
+    pub(super) const WORKER: Self = Self {
+        name: "incremental",
+        defect: Defect::None,
+    };
+
+    /// The window, keeping how the check decided.
+    pub(super) fn window(&self, base: &[u8], update: &[u8]) -> (Result<WindowAccepted, CollabError>, LoroCollabEngine) {
+        let mut engine = LoroCollabEngine::load(base).expect("the trusted base loads");
+        engine.prewarm_for_writes();
+        let mut facts = BaseFacts::compute(&engine);
+        if matches!(self.defect, Defect::StaleBaseFacts)
+            && let Some(facts) = facts.as_mut()
+        {
+            for unit in facts.units.values_mut() {
+                unit.chars = unit.chars.saturating_sub(1);
+            }
+        }
+        let _injected = match self.defect {
+            Defect::Fault(fault) => Some(crate::window_check::fault::inject(fault)),
+            _ => None,
+        };
+        let outcome = run_window(&mut engine, facts.as_ref(), update);
+        (outcome, engine)
+    }
+}
+
+impl WindowImpl for Incremental {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn run(&self, base: &[u8], update: &[u8]) -> WindowResult {
+        match self.window(base, update) {
+            (Ok(accepted), engine) => WindowResult {
+                decision: Decision::Accept,
+                engine: Some(engine),
+                facts: None,
+                report: accepted.report,
+            },
+            (Err(error), _) => refused(error),
         }
     }
 }
@@ -239,6 +366,12 @@ struct Outputs {
     deep_value: u64,
     roots: u64,
     snapshot: u64,
+    /// The op log as exported updates: independent of which containers' states were decoded, so
+    /// equal histories give equal bytes whatever the reads that came before.
+    history: u64,
+    /// The exported snapshot, loaded again: its value and its projection. Equal documents must
+    /// reload to the same document even when their snapshot bytes differ.
+    reloaded: (u64, Result<String, CollabError>),
     semantic: Result<(String, u32), CollabError>,
     title: Result<String, CollabError>,
     navigator_order: Result<BTreeMap<String, String>, CollabError>,
@@ -263,6 +396,10 @@ fn output_diff_with(a: &Outputs, b: &Outputs, snapshot_bytes: bool) -> Option<&'
         Some("get_deep_value (a root was registered or a value differs)")
     } else if a.roots != b.roots {
         Some("get_value (the list of roots differs)")
+    } else if a.history != b.history {
+        Some("export(all updates) bytes (the history differs)")
+    } else if a.reloaded != b.reloaded {
+        Some("the exported snapshot reloads to another document")
     } else if snapshot_bytes && a.snapshot != b.snapshot {
         Some("export(Snapshot) bytes")
     } else if a.semantic != b.semantic {
@@ -283,11 +420,19 @@ fn outputs(engine: &LoroCollabEngine) -> Outputs {
     let deep_value = digest(&format!("{:?}", engine.doc.get_deep_value()));
     let roots = digest(&format!("{:?}", engine.doc.get_value()));
     let snapshot = digest(&engine.export_snapshot().unwrap());
+    let history = digest(&engine.doc.export(loro::ExportMode::all_updates()).unwrap());
+    let reloaded = LoroCollabEngine::load(&engine.export_snapshot().unwrap()).unwrap();
+    let reloaded = (
+        digest(&format!("{:?}", reloaded.doc.get_deep_value())),
+        reloaded.semantic_snapshot().map(|semantic| semantic.semantic_hash()),
+    );
     Outputs {
         frontier: engine.frontier(),
         deep_value,
         roots,
         snapshot,
+        history,
+        reloaded,
         semantic: engine
             .semantic_snapshot_with_floor()
             .map(|(semantic, floor)| (semantic.semantic_hash(), floor)),
@@ -302,6 +447,7 @@ pub(super) struct Observed {
     name: &'static str,
     decision: Decision,
     facts: Option<Aggregates>,
+    report: Option<WindowReport>,
     outputs: Option<Outputs>,
 }
 
@@ -319,6 +465,7 @@ pub(super) fn observe(implementation: &dyn WindowImpl, case: &Case) -> Observed 
         name: implementation.name(),
         decision: result.decision,
         facts: result.facts,
+        report: result.report,
         outputs: result.engine.as_ref().map(outputs),
     }
 }
@@ -345,6 +492,13 @@ pub(super) fn difference_with(a: &Observed, b: &Observed, snapshot_bytes: bool) 
         && x != y
     {
         return Some(format!("facts differ: {x:?} against {y:?}"));
+    }
+    for (report, facts) in [(&a.report, &b.facts), (&b.report, &a.facts)] {
+        if let (Some(report), Some(facts)) = (report, facts)
+            && let Some(message) = report_against_facts(report, facts)
+        {
+            return Some(message);
+        }
     }
     match (&a.outputs, &b.outputs) {
         (Some(x), Some(y)) => output_diff_with(x, y, snapshot_bytes).map(|field| format!("output differs: {field}")),
@@ -634,6 +788,7 @@ fn mutant_run(
             decision: Decision::Accept,
             engine: Some(engine),
             facts: None,
+            report: None,
         },
         Err(error) => refused(error),
     }
@@ -853,6 +1008,356 @@ fn an_implementation_agrees_with_itself_on_every_case() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The incremental window against the full computation
+// ---------------------------------------------------------------------------------------------
+
+/// The prewarmed full computation on every case of [`all_cases`], in the same order, computed once:
+/// the reference for the byte-exact comparison of the incremental window, which prewarms too.
+fn prewarmed_references() -> &'static [Observed] {
+    static CELL: OnceLock<Vec<Observed>> = OnceLock::new();
+    CELL.get_or_init(|| parallel(&all_cases(), &|case| observe(&PrewarmedFull, case)))
+}
+
+/// How the incremental window decided one case.
+struct Decided {
+    observed: Observed,
+    fallback: Option<FallbackReason>,
+    /// The oracle of the host: the report against the full projection of the accepted document.
+    oracle: Option<Result<(), WindowDivergence>>,
+}
+
+fn decide(implementation: &Incremental, case: &Case) -> Decided {
+    let (outcome, engine) = implementation.window(&case.base, &case.update);
+    match outcome {
+        Ok(accepted) => {
+            // The host's oracle: a document it cannot project at all is a divergence too.
+            let oracle = accepted.report.as_ref().map(|report| {
+                engine.semantic_snapshot().map_or(
+                    Err(WindowDivergence {
+                        field: "projection_error",
+                        reported: 0,
+                        projected: 0,
+                    }),
+                    |projection| compare_with_projection(report, &projection),
+                )
+            });
+            let result = WindowResult {
+                decision: Decision::Accept,
+                engine: Some(engine),
+                facts: None,
+                report: accepted.report,
+            };
+            Decided {
+                observed: Observed {
+                    name: implementation.name,
+                    decision: result.decision,
+                    facts: None,
+                    report: result.report,
+                    outputs: result.engine.as_ref().map(outputs),
+                },
+                fallback: accepted.fallback,
+                oracle,
+            }
+        }
+        Err(error) => Decided {
+            observed: Observed {
+                name: implementation.name,
+                decision: Decision::Refuse(error),
+                facts: None,
+                report: None,
+                outputs: None,
+            },
+            fallback: None,
+            oracle: None,
+        },
+    }
+}
+
+/// The incremental window against the full computation on every generated, boundary and hostile
+/// case: the same decision (the whole error, so the same reason, limit kind, `observed` and
+/// `limit`), the same frontier, exported value, roots, history and projection, and a snapshot that
+/// reloads to the same document. The snapshot bytes themselves are not compared: Loro encodes a
+/// container from its decoded state when that exists and copies the stored bytes when it does not,
+/// so they depend on which reads preceded the export, and the incremental window reads less than
+/// the projection does (the count of accepted cases with identical bytes is printed). Every report
+/// the incremental check produced agrees with the projection of the accepted document, and the
+/// oracle the host runs never fires.
+#[test]
+fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
+    let cases = all_cases();
+    let started = Instant::now();
+    let decided = run_parallel(&cases, &|index, case| {
+        let decided = decide(&Incremental::WORKER, case);
+        // Snapshot bytes are not independent of which reads came before the export (see
+        // `output_diff_with`), and the incremental window reads far less than the projection: they
+        // are compared only where the reads agree. The reloaded document is always compared.
+        let exact = difference_with(&prewarmed_references()[index], &decided.observed, false);
+        let against_plain = difference_with(&references()[index], &decided.observed, false);
+        let same_bytes = prewarmed_references()[index].same_snapshot_bytes(&decided.observed);
+        (
+            decided.fallback,
+            decided.observed.report,
+            decided.oracle,
+            exact,
+            against_plain,
+            same_bytes,
+        )
+    });
+    let elapsed = started.elapsed();
+    let mut incremental = 0;
+    let mut accepted_full = 0;
+    let mut refused = 0;
+    let mut by_reason: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_model: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut same_bytes_count = 0;
+    for (case, (fallback, report, oracle, exact, against_plain, same_bytes)) in cases.iter().zip(&decided) {
+        same_bytes_count += usize::from(*same_bytes == Some(true));
+        assert!(exact.is_none(), "{}: {}", case.label, exact.clone().unwrap());
+        assert!(
+            against_plain.is_none(),
+            "{}: {}",
+            case.label,
+            against_plain.clone().unwrap()
+        );
+        if let Some(Err(divergence)) = oracle {
+            panic!("{}: the oracle fires: {divergence:?}", case.label);
+        }
+        let group = if case.family == "generated" {
+            case.label.split('/').next().unwrap().to_owned()
+        } else {
+            case.family.to_owned()
+        };
+        let entry = by_model.entry(group).or_default();
+        if report.is_some() {
+            incremental += 1;
+            entry.0 += 1;
+        } else if let Some(reason) = fallback {
+            accepted_full += 1;
+            entry.1 += 1;
+            *by_reason.entry(format!("{reason:?}")).or_default() += 1;
+        } else {
+            refused += 1;
+        }
+    }
+    println!(
+        "incremental window: {} cases in {} ms: {incremental} decided incrementally, {accepted_full} accepted by the \
+         full computation after a fallback, {refused} refused by the import; snapshot bytes identical to the \
+         prewarmed full computation in {same_bytes_count} accepted cases",
+        cases.len(),
+        elapsed.as_millis()
+    );
+    println!("  by model (incremental, accepted after fallback): {by_model:?}");
+    println!("  fallbacks of accepted updates by reason: {by_reason:?}");
+    assert!(incremental > 0 && accepted_full > 0);
+    // The incremental path must carry the ordinary updates of the models it describes.
+    for model in ["model1", "legacy", "mixed"] {
+        let (done, fell_back) = by_model.get(model).copied().unwrap_or_default();
+        assert!(
+            done * 2 > fell_back,
+            "{model}: only {done} incremental decisions against {fell_back} fallbacks"
+        );
+    }
+}
+
+/// The incremental window with a default prewarm and facts, refused cases included, hands the host
+/// exactly what the full computation would: a refused update fell back, so the error is the full
+/// computation's. This counts, per refusal code, the refusals that came out of a fallback.
+#[test]
+fn every_refusal_of_the_incremental_window_is_the_full_computations() {
+    let cases = all_cases();
+    let verdicts = run_parallel(&cases, &|index, case| {
+        let decided = decide(&Incremental::WORKER, case);
+        (references()[index].decision.clone(), decided.observed.decision)
+    });
+    let mut refusals = 0;
+    for (case, (full, incremental)) in cases.iter().zip(&verdicts) {
+        assert_eq!(full, incremental, "{}", case.label);
+        refusals += usize::from(matches!(full, Decision::Refuse(_)));
+    }
+    assert!(refusals > 100, "the corpus has too few refusals: {refusals}");
+}
+
+/// The id caches of an engine after an import that rebuilt them from the update's ops are the
+/// caches a full rebuild gives (the replay import of the same update into the same base rebuilds
+/// them in full), on every case the window accepts, and so are the uncached nodes and the
+/// duplicate flag.
+#[test]
+fn the_incremental_id_cache_rebuild_equals_the_full_rebuild() {
+    let cases = all_cases();
+    let checked = run_parallel(&cases, &|_, case| {
+        let (outcome, engine) = Incremental::WORKER.window(&case.base, &case.update);
+        if outcome.is_err() {
+            return Ok(false);
+        }
+        // The same base and update through the replay import, which rebuilds the caches in full.
+        let mut full = LoroCollabEngine::load(&case.base).unwrap();
+        if full.import_update(&case.update).is_err() {
+            return Ok(false);
+        }
+        let same = engine.id_to_tree == full.id_to_tree
+            && engine.tree_to_id == full.tree_to_id
+            && engine.uncached_tree_nodes == full.uncached_tree_nodes
+            && engine.duplicate_logical_ids == full.duplicate_logical_ids;
+        if same {
+            Ok(true)
+        } else {
+            Err(format!(
+                "{}: the id caches differ from a full rebuild: id_to_tree {} vs {}, tree_to_id {} vs {}, uncached {:?} vs {:?}, duplicate {} vs {}",
+                case.label,
+                engine.id_to_tree.len(),
+                full.id_to_tree.len(),
+                engine.tree_to_id.len(),
+                full.tree_to_id.len(),
+                engine.uncached_tree_nodes,
+                full.uncached_tree_nodes,
+                engine.duplicate_logical_ids,
+                full.duplicate_logical_ids
+            ))
+        }
+    });
+    let mut compared = 0;
+    for result in checked {
+        compared += usize::from(result.unwrap());
+    }
+    assert!(compared > 1_000, "only {compared} cases compared");
+    println!("id caches equal the full rebuild's in {compared} cases");
+}
+
+/// Which way the incremental window decided every hostile and boundary shape, printed so that a
+/// change of path is visible in review. A shape the full computation refuses never ends as an
+/// incremental accept (the decision comparison above); this records where each one went.
+#[test]
+fn hostile_and_boundary_shapes_report_their_path() {
+    let cases: Vec<&Case> = [boundary(), hostile()]
+        .into_iter()
+        .flat_map(|family| family.cases.iter())
+        .collect();
+    let paths = run_parallel(&cases, &|_, case| {
+        let decided = decide(&Incremental::WORKER, case);
+        match (&decided.observed.decision, decided.observed.report, decided.fallback) {
+            (Decision::Refuse(_), _, _) => "refused by the import".to_owned(),
+            (Decision::Accept, Some(_), _) => "incremental accept".to_owned(),
+            (Decision::Accept, None, Some(reason)) => format!("accept after fallback {reason:?}"),
+            (Decision::Accept, None, None) => "accept (no report)".to_owned(),
+        }
+    });
+    for (case, path) in cases.iter().zip(&paths) {
+        println!("  {:<12} {:<95} {path}", case.family, case.label);
+    }
+}
+
+/// Two peers concurrently move A under B and B under A in the legacy tree: the library resolves
+/// the cycle by ignoring one move, which changes a node the second update does not name. The
+/// incremental check does not model tree moves, so the update takes the full computation, with the
+/// same decision and the same document.
+#[test]
+fn a_legacy_cycle_through_concurrent_moves_is_decided_by_the_full_computation() {
+    use super::window_fixtures::{BaseSpec, History, Model, author_update, build_base};
+    let built = build_base(BaseSpec {
+        model: Model::LegacyTree,
+        blocks: 12,
+        seed: 21,
+        history: History::None,
+    });
+    let (a, b) = (built.ids[0].clone(), built.ids[1].clone());
+    let mv = |id: String, parent: String| {
+        move |engine: &mut LoroCollabEngine| {
+            engine
+                .apply_operation(&Operation::MoveNode {
+                    id: NodeId::from(id.as_str()),
+                    new_parent: Some(NodeId::from(parent.as_str())),
+                    index: 0,
+                })
+                .expect("the move applies locally");
+        }
+    };
+    // Both nodes sit under the root, so both moves are valid on the base.
+    let first = author_update(&built.author, 98_101, mv(a.clone(), b.clone()));
+    let second = author_update(&built.author, 98_102, mv(b, a));
+    let mut base_engine = LoroCollabEngine::load(&built.snapshot).unwrap();
+    base_engine.import_update(&first).unwrap();
+    let base = base_engine.export_snapshot().unwrap();
+    let case = Case {
+        label: "legacy cycle".into(),
+        family: "hostile",
+        kind: "cycle",
+        base: std::sync::Arc::new(base),
+        update: second,
+        expect: None,
+    };
+    let decided = decide(&Incremental::WORKER, &case);
+    assert_eq!(
+        decided.fallback,
+        Some(FallbackReason::TreeStructure),
+        "a tree move is not decided incrementally"
+    );
+    let reference = observe(&FullComputation, &case);
+    assert_eq!(difference_with(&reference, &decided.observed, false), None);
+}
+
+/// The mutants of the incremental window: ways it goes wrong that the harness must catch, each by
+/// at least one case, with the case that catches it first.
+fn incremental_mutants() -> Vec<Incremental> {
+    vec![
+        Incremental {
+            name: "mutant: stale base facts",
+            defect: Defect::StaleBaseFacts,
+        },
+        Incremental {
+            name: "mutant: a touched unit is missed",
+            defect: Defect::Fault(Fault::TouchedUnitMissed),
+        },
+        Incremental {
+            name: "mutant: the delta is applied twice",
+            defect: Defect::Fault(Fault::DeltaAppliedTwice),
+        },
+        Incremental {
+            name: "mutant: removed blocks are not subtracted",
+            defect: Defect::Fault(Fault::RemovedBlocksIgnored),
+        },
+        Incremental {
+            name: "mutant: no fallback on a structural change",
+            defect: Defect::Fault(Fault::StructuralFallbackSkipped),
+        },
+    ]
+}
+
+/// Every mutant of the incremental window is caught by the harness (a different decision, output
+/// or report from the full computation) and, separately, by the oracle the host runs (the report
+/// against the full projection of the accepted document).
+#[test]
+fn the_harness_detects_every_incremental_mutant() {
+    let cases = all_cases();
+    for mutant in incremental_mutants() {
+        let results = run_parallel(&cases, &|index, case| {
+            let decided = decide(&mutant, case);
+            (
+                difference_with(&prewarmed_references()[index], &decided.observed, false),
+                matches!(decided.oracle, Some(Err(_))),
+            )
+        });
+        let mut by_family: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut first: Option<(String, String)> = None;
+        let mut oracle_catches = 0;
+        let mut caught = 0;
+        for (case, (diff, oracle)) in cases.iter().zip(&results) {
+            oracle_catches += usize::from(*oracle);
+            if let Some(diff) = diff {
+                caught += 1;
+                *by_family.entry(case.family).or_default() += 1;
+                first.get_or_insert_with(|| (case.label.clone(), diff.clone()));
+            }
+        }
+        println!(
+            "  {}\n    harness catches it in {caught} cases {by_family:?}; first: {first:?}\n    oracle fires in {oracle_catches} cases",
+            mutant.name
+        );
+        assert!(caught > 0, "{} was not detected by the harness", mutant.name);
+        assert!(oracle_catches > 0, "{} was not detected by the oracle", mutant.name);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The counting test
 // ---------------------------------------------------------------------------------------------
 
@@ -861,6 +1366,21 @@ fn an_implementation_agrees_with_itself_on_every_case() {
 struct WindowWork {
     counts: walk_counter::WindowCounts,
     allocated: usize,
+    /// Why the incremental check did not decide, when it did not.
+    fallback: Option<FallbackReason>,
+    /// The bytes Loro's own import of the same update allocates on an identically prepared
+    /// document, with nothing around it. In a build with debug assertions the library checks its
+    /// history against the block headers on every import, which reads the whole change store;
+    /// that is the library's cost, not the window's, and it is what `allocated - raw_import`
+    /// leaves out.
+    raw_import: usize,
+}
+
+impl WindowWork {
+    /// What the window itself allocated: everything but the library's import.
+    const fn own(&self) -> usize {
+        self.allocated.saturating_sub(self.raw_import)
+    }
 }
 
 /// The shape of the update of a counting run.
@@ -872,9 +1392,9 @@ enum Shape {
     OneBlockInsert,
 }
 
-/// Measures the metered part of one window (import, projection, check) for `shape` on a page of
-/// `blocks` blocks of `model`. The base is loaded before the counters start, as the worker loads
-/// it before the window opens.
+/// Measures the metered part of one window (`run_window`: import and check) for `shape` on a page of
+/// `blocks` blocks of `model`. The base is loaded, prewarmed and its facts computed before the
+/// counters start, as the worker does in its unmetered setup.
 fn measure_window(model: Model, blocks: usize, shape: Shape) -> WindowWork {
     let built = build_base(BaseSpec {
         model,
@@ -929,30 +1449,39 @@ fn measure_window(model: Model, blocks: usize, shape: Shape) -> WindowWork {
                 .unwrap();
         }
     });
+    let raw = LoroCollabEngine::load(&built.snapshot).unwrap();
+    raw.prewarm_for_writes();
+    let raw_before = test_alloc::allocated_bytes();
+    raw.doc.import(&update).unwrap();
+    let raw_import = test_alloc::allocated_bytes().saturating_sub(raw_before);
     let mut engine = LoroCollabEngine::load(&built.snapshot).unwrap();
+    engine.prewarm_for_writes();
+    let facts = BaseFacts::compute(&engine);
     walk_counter::reset();
     let allocated_before = test_alloc::allocated_bytes();
-    decode_apply_and_check(&mut engine, &update).expect("the update is accepted");
+    let accepted = run_window(&mut engine, facts.as_ref(), &update).expect("the update is accepted");
     let allocated = test_alloc::allocated_bytes().saturating_sub(allocated_before);
     WindowWork {
         counts: walk_counter::window_counts(),
         allocated,
+        fallback: accepted.fallback,
+        raw_import,
     }
 }
 
 const SMALL_PAGE: usize = 200;
 const LARGE_PAGE: usize = 2_000;
 
-/// Today's behaviour, documented: the work of one window for a one-block update grows with the
-/// page. Every window makes at least one pass over the whole block list, and the bytes it
-/// allocates grow roughly with the number of blocks.
+/// The structured pages (models 4 and 5) still take the full computation until the structured
+/// path of the incremental check exists (work package C2), so the work of one window for a
+/// one-block update still grows with the page: every window makes at least one pass over the whole
+/// block list and the bytes it allocates grow roughly with the number of blocks.
 ///
-/// Work package C1 inverts this test: see [`one_window_does_not_grow_with_the_page`] below, which
-/// is ready and ignored until the incremental window exists. When C1 lands, delete this test and
-/// remove the `#[ignore]` there.
+/// Work package C2 inverts this test for the structured models: add them to the list of
+/// [`one_window_does_not_grow_with_the_page`] and delete this one.
 #[test]
-fn one_window_grows_with_the_page_today() {
-    for model in [Model::Flat, Model::Structured4, Model::Structured5, Model::LegacyTree] {
+fn structured_pages_window_grows_with_the_page_until_c2() {
+    for model in [Model::Structured4, Model::Structured5] {
         for shape in [Shape::OneBlockEdit, Shape::OneBlockInsert] {
             let small = measure_window(model, SMALL_PAGE, shape);
             let large = measure_window(model, LARGE_PAGE, shape);
@@ -970,8 +1499,13 @@ fn one_window_grows_with_the_page_today() {
                 tenths / 10,
                 tenths % 10,
             );
-            // C1 MUST INVERT THESE: an incremental window makes no full block pass and allocates
-            // about the same on a page ten times larger.
+            // C2 MUST INVERT THESE.
+            assert_eq!(
+                (small.fallback, large.fallback),
+                (Some(FallbackReason::FactsAbsent), Some(FallbackReason::FactsAbsent)),
+                "{} {shape:?}: a structured page no longer falls back; if C2 exists, invert this test",
+                model.name()
+            );
             assert!(
                 small.counts.block_reads >= 1 && large.counts.block_reads >= 1,
                 "{} {shape:?}: the window no longer reads the whole block list ({:?}, {:?}); \
@@ -993,27 +1527,76 @@ fn one_window_grows_with_the_page_today() {
     }
 }
 
-/// The counting test of the incremental window: no full block pass, no placement walk and no
-/// fallback; exactly one unit evaluated for a one-block edit; allocation within 1.2x on a page
-/// ten times larger. Fails today by construction.
+/// The counting test of the incremental window, for flat, legacy tree and mixed pages: no full
+/// block pass, no placement walk and no fallback; exactly one unit evaluated for a one-block edit
+/// (and for a one-block insert); allocation within 1.2x on a page ten times larger (the window's own
+/// allocation in every build, the whole window too in a build without debug assertions).
 #[test]
-#[ignore = "C1: the incremental window_check does not exist yet; invert one_window_grows_with_the_page_today and enable this"]
 fn one_window_does_not_grow_with_the_page() {
-    for model in [Model::Flat, Model::Structured4, Model::Structured5, Model::LegacyTree] {
-        let small = measure_window(model, SMALL_PAGE, Shape::OneBlockEdit);
-        let large = measure_window(model, LARGE_PAGE, Shape::OneBlockEdit);
-        for work in [small, large] {
-            assert_eq!(work.counts.block_reads, 0, "{}: full block passes", model.name());
-            assert_eq!(work.counts.placement_walks, 0, "{}: placement walks", model.name());
-            assert_eq!(work.counts.fallbacks, 0, "{}: fallbacks", model.name());
-            assert_eq!(work.counts.unit_evaluations, 1, "{}: units evaluated", model.name());
+    for model in [Model::Flat, Model::LegacyTree, Model::Mixed] {
+        for shape in [Shape::OneBlockEdit, Shape::OneBlockInsert] {
+            let small = measure_window(model, SMALL_PAGE, shape);
+            let large = measure_window(model, LARGE_PAGE, shape);
+            println!(
+                "{:<8} {:<15} {SMALL_PAGE} blocks: {:>9} bytes, {:?}\n{:<8} {:<15} {LARGE_PAGE} blocks: {:>9} bytes, {:?}",
+                model.name(),
+                format!("{shape:?}"),
+                small.allocated,
+                small.counts,
+                model.name(),
+                format!("{shape:?}"),
+                large.allocated,
+                large.counts,
+            );
+            for work in [small, large] {
+                assert_eq!(work.fallback, None, "{} {shape:?}: the check fell back", model.name());
+                assert_eq!(
+                    work.counts.block_reads,
+                    0,
+                    "{} {shape:?}: full block passes",
+                    model.name()
+                );
+                assert_eq!(
+                    work.counts.placement_walks,
+                    0,
+                    "{} {shape:?}: placement walks",
+                    model.name()
+                );
+                assert_eq!(work.counts.fallbacks, 0, "{} {shape:?}: fallbacks", model.name());
+                assert_eq!(
+                    work.counts.unit_evaluations,
+                    1,
+                    "{} {shape:?}: units evaluated",
+                    model.name()
+                );
+            }
+            // What the window allocates besides Loro's own import: within 1.2x on a page ten times
+            // larger, plus 8 KiB for the difference between two separate runs of the library's
+            // import, which is what this subtracts (a growth that is linear in the page is hundreds
+            // of KiB at 2,000 blocks, far above it).
+            assert!(
+                large.own() * 10 <= small.own() * 12 + 80 * 1024,
+                "{} {shape:?}: the window allocated {} bytes of its own on {LARGE_PAGE} blocks against {} on \
+                 {SMALL_PAGE} (whole window {} and {}, Loro's import alone {} and {})",
+                model.name(),
+                large.own(),
+                small.own(),
+                large.allocated,
+                small.allocated,
+                large.raw_import,
+                small.raw_import
+            );
+            // Without debug assertions in the library nothing but the update's own work remains, and
+            // the whole window, import included, stays within 1.2x.
+            if !cfg!(debug_assertions) {
+                assert!(
+                    large.allocated * 10 <= small.allocated * 12,
+                    "{} {shape:?}: allocated {} bytes on {LARGE_PAGE} blocks against {} on {SMALL_PAGE}",
+                    model.name(),
+                    large.allocated,
+                    small.allocated
+                );
+            }
         }
-        assert!(
-            large.allocated * 10 <= small.allocated * 12,
-            "{}: allocated {} bytes on {LARGE_PAGE} blocks against {} on {SMALL_PAGE}",
-            model.name(),
-            large.allocated,
-            small.allocated
-        );
     }
 }

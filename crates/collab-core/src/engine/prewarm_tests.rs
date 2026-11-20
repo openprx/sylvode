@@ -17,10 +17,9 @@ use loro::{ExportMode, LoroDoc, LoroMap};
 
 use super::floor_equivalence_tests::{children, page, raw_update};
 use super::read_side_effect_tests::{assert_unchanged, documents};
-use super::window_differential_tests::{Decision, WindowImpl, WindowResult, difference_with, observe};
+use super::window_differential_tests::{PrewarmedFull, difference_with, observe};
 use super::window_fixtures::{Case, boundary_cases, generated_cases, hostile_cases, run_parallel};
 use super::{CollabEngine, LoroCollabEngine, PrewarmParts};
-use crate::error::CollabError;
 use crate::operation::{NodeId, NodeKind, Operation};
 use crate::reserved_roots::{ALIASES, ORDER, TREE};
 use crate::test_alloc;
@@ -258,38 +257,6 @@ fn prewarm_is_idempotent_and_does_not_change_reads() {
     }
 }
 
-/// Today's full computation with the worker's prewarm in front of it.
-struct Prewarmed;
-
-impl WindowImpl for Prewarmed {
-    fn name(&self) -> &'static str {
-        "full computation after prewarm_for_writes"
-    }
-
-    fn run(&self, base: &[u8], update: &[u8]) -> WindowResult {
-        let mut engine = LoroCollabEngine::load(base).expect("the trusted base loads");
-        engine.prewarm_for_writes();
-        let outcome: Result<(), CollabError> = (|| {
-            engine.import_client_update(update)?;
-            let semantic = engine.semantic_snapshot()?;
-            crate::limits::check_snapshot(&semantic, &crate::limits::DocumentLimits::default())?;
-            Ok(())
-        })();
-        match outcome {
-            Ok(()) => WindowResult {
-                decision: Decision::Accept,
-                engine: Some(engine),
-                facts: None,
-            },
-            Err(error) => WindowResult {
-                decision: Decision::Refuse(error),
-                engine: None,
-                facts: None,
-            },
-        }
-    }
-}
-
 /// Same decision (the whole error), same frontier, same exported value, same roots and same
 /// projection: the prewarmed window against the plain one on every generated, boundary and hostile
 /// case. The exported snapshot bytes are compared too, and a case in which they differ must be one
@@ -305,7 +272,7 @@ fn prewarm_changes_no_decision_and_no_output() {
     let refs: Vec<&Case> = cases.iter().collect();
     let results = run_parallel(&refs, &|_, case| {
         let plain = observe(&super::window_differential_tests::FullComputation, case);
-        let warm = observe(&Prewarmed, case);
+        let warm = observe(&PrewarmedFull, case);
         (
             difference_with(&plain, &warm, false),
             difference_with(&plain, &warm, true),
