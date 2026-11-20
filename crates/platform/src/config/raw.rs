@@ -23,7 +23,7 @@ use super::{
     AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS, AiTasksConfig, AuditConfig, AuthConfig, ConfigError,
     DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
     DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS,
-    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig,
+    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
     LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
     MIN_JWT_SECRET_LEN, McpConfig, McpTransport, MigrationsConfig, OpenPrConfig, OutboundConfig, S3Config,
     ServerConfig, StorageBackend, StorageConfig,
@@ -81,6 +81,7 @@ pub(super) struct RawConfig {
 struct RawServer {
     app_name: Option<String>,
     bind_addr: Option<String>,
+    trusted_proxies: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -272,7 +273,20 @@ impl RawServer {
         let bind_addr = self.bind_addr.and_then(|addr| {
             issues.record(validate_bind_addr("server.bind_addr", &addr).map(|()| addr.trim().to_string()))
         });
-        ServerConfig { app_name, bind_addr }
+        let trusted_proxies = self.trusted_proxies.map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    issues
+                        .record(IpCidr::parse(entry).map_err(|reason| format!("server.trusted_proxies entry {reason}")))
+                })
+                .collect()
+        });
+        ServerConfig {
+            app_name,
+            bind_addr,
+            trusted_proxies,
+        }
     }
 }
 
