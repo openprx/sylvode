@@ -69,7 +69,7 @@
 		{@render face()}
 	</a>
 {:else}
-	<!-- Unavailable: visible at reduced strength, not a link; the reason is its description. -->
+	<!-- Unavailable: visible in the disabled colour, not a link; the reason is its description. -->
 	<button
 		type="button"
 		class="rail-item layout-{layout} unavailable"
@@ -111,8 +111,9 @@
 	.rail-item[aria-current='page'] {
 		background: var(--rf-selected);
 	}
+	/* Disabled is its own look, never opacity: secondary text (deviation D8). */
 	.unavailable {
-		opacity: var(--rf-disabled-opacity);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	.unavailable:hover {
