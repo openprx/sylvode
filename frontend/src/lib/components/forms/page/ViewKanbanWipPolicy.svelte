@@ -1,3 +1,4 @@
+<svelte:options runes />
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { inputValue } from '#lib/forms/record-format.js';
