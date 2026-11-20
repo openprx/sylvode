@@ -89,6 +89,41 @@ use super::snapshot::{self, SnapshotAdvancer, Trigger};
 pub(crate) const LOCKED_PHASE_STAGING_BUDGET: Duration =
     Duration::from_millis(DOCUMENT_LOCK_HOLD_MS_MAX.saturating_mul(4));
 
+/// Debug-level timing of one step of the write path, for attributing a write's wall clock to its
+/// steps (`scripts/flow-bench/window-attribution.sh` parses these events). Created at the start of
+/// a step; the step ends when the value is finished or dropped, including on an early return, and
+/// one `flow write step` event with the step name and `elapsed_us` is emitted inside the step's
+/// `flow_write_step` span. Observation only: it changes no control flow and costs one clock read
+/// per end when debug logging is off.
+struct WriteStep {
+    name: &'static str,
+    started: Instant,
+    span: tracing::Span,
+}
+
+impl WriteStep {
+    fn start(name: &'static str) -> Self {
+        Self {
+            name,
+            started: Instant::now(),
+            span: tracing::debug_span!("flow_write_step", step = name),
+        }
+    }
+
+    fn finish(self) {
+        drop(self);
+    }
+}
+
+impl Drop for WriteStep {
+    fn drop(&mut self) {
+        let elapsed_us = u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let name = self.name;
+        self.span
+            .in_scope(|| tracing::debug!(step = name, elapsed_us, "flow write step"));
+    }
+}
+
 #[cfg(test)]
 struct PreparedPause {
     document_id: Uuid,
@@ -587,6 +622,7 @@ pub(crate) async fn hydrate_and_apply(
     bytes: &[u8],
     expected_frontier: Option<&[u8]>,
 ) -> Result<HydrateOutcome, ApiError> {
+    let observed_head_step = WriteStep::start("read_observed_head");
     let Some(observed) = read_observed_head(db, document_id).await? else {
         return Ok(HydrateOutcome::Rejected(rejected(
             RejectedCode::NotFound,
@@ -595,6 +631,7 @@ pub(crate) async fn hydrate_and_apply(
             WriteState::NotApplied,
         )));
     };
+    observed_head_step.finish();
 
     // Optimistic-concurrency guard (`UpdateRequest::expected_frontier`'s doc comment): checked
     // against the *observed* head on every hydrate/rebase attempt, never a value read once
@@ -619,6 +656,7 @@ pub(crate) async fn hydrate_and_apply(
         })));
     }
 
+    let base_load_step = WriteStep::start("base_load");
     let base_engine = match cache.fork_matching(document_id, observed.head_seq, &observed.format_version) {
         Ok(Some(engine)) => engine,
         Ok(None) => {
@@ -654,14 +692,19 @@ pub(crate) async fn hydrate_and_apply(
         }
     };
 
+    base_load_step.finish();
+
     // Seed the observed-head base back into the cache (the base, not the post-update candidate
     // below) so a hot document's next write hits cache even after this one started from a miss.
+    let export_base_step = WriteStep::start("export_base_snapshot");
     let base_snapshot_bytes = base_engine.export_snapshot().map_err(|err| {
         tracing::error!(error = %err, "collab write: base engine export_snapshot failed before isolated apply");
         ApiError::internal()
     })?;
+    export_base_step.finish();
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let decoded_bytes_hint = base_snapshot_bytes.len() as u64;
+    let seed_cache_step = WriteStep::start("seed_cache_fork");
     if let Ok(seed) = base_engine.fork() {
         cache.put(
             document_id,
@@ -672,6 +715,7 @@ pub(crate) async fn hydrate_and_apply(
             decoded_bytes_hint,
         );
     }
+    seed_cache_step.finish();
 
     // `ADR-0010`'s write algorithm: decode -> limit -> diff -> policy -> projection prepare, all
     // outside any lock and before the DB transaction begins. Unlike `hydrate_and_apply`'s
@@ -689,6 +733,7 @@ pub(crate) async fn hydrate_and_apply(
     // `spawn_blocking`: `isolated_apply` performs blocking process spawn/pipe I/O/`wait`
     // synchronously, which must never run directly on a Tokio worker thread.
     let update_bytes_owned = bytes.to_vec();
+    let isolated_step = WriteStep::start("isolated_apply");
     let isolated_result = tokio::task::spawn_blocking(move || {
         collab_core::isolation::isolated_apply(&base_snapshot_bytes, &update_bytes_owned)
     })
@@ -698,8 +743,18 @@ pub(crate) async fn hydrate_and_apply(
         ApiError::internal()
     })?;
 
+    isolated_step.finish();
+
     let candidate_snapshot = match isolated_result {
-        Ok(success) => success.snapshot,
+        Ok(success) => {
+            tracing::debug!(
+                window_cpu_us = success.window_cpu_us,
+                base_bytes = decoded_bytes_hint,
+                update_bytes = bytes.len(),
+                "flow write isolated window"
+            );
+            success.snapshot
+        }
         Err(err) => return isolated_apply_rejection(update_id, document_id, err).map(HydrateOutcome::Rejected),
     };
 
@@ -708,27 +763,37 @@ pub(crate) async fn hydrate_and_apply(
     // count/block count/text volume inside the metered window above, so this load and the
     // `semantic_snapshot`/`title` reads below operate on state with a known worst-case size, not
     // on attacker-controlled input directly.
+    let candidate_load_step = WriteStep::start("candidate_load");
     let candidate = LoroCollabEngine::load(&candidate_snapshot).map_err(|err| {
         tracing::error!(error = %err, "collab write: reload of isolated-apply result snapshot failed");
         ApiError::internal()
     })?;
+    candidate_load_step.finish();
     let after_frontier = candidate.frontier().as_bytes().to_vec();
 
     // The floor comes from the same block pass as the projection, so it costs no second walk.
+    let host_snapshot_step = WriteStep::start("host_semantic_snapshot");
     let (semantic, minimum_editor_model) = candidate.semantic_snapshot_with_floor().map_err(|err| {
         tracing::error!(error = %err, "collab write: semantic_snapshot failed after a successful isolated apply");
         ApiError::internal()
     })?;
+    host_snapshot_step.finish();
 
     let title = candidate.title().map_err(|err| {
         tracing::error!(error = %err, "collab write: title read failed after a successful isolated apply");
         ApiError::internal()
     })?;
+    let registry_prepare_step = WriteStep::start("registry_prepare");
     let logical_blocks = crate::flow::block_registry::prepare(&semantic)?;
+    registry_prepare_step.finish();
+    let references_step = WriteStep::start("typed_references");
     let asset_references = crate::flow::body_assets::typed_references(&semantic)?;
     let child_references = crate::flow::child_pages::typed_references(&semantic)?;
+    references_step.finish();
+    let projection_step = WriteStep::start("projection_json_and_text");
     let state_json = projection::state_json(&semantic).map_err(|_| ApiError::internal())?;
     let plain_text = projection::plain_text(&semantic);
+    projection_step.finish();
     let content_hash_hex = content_hash(bytes);
 
     Ok(HydrateOutcome::Prepared(Box::new(Prepared {
@@ -940,6 +1005,7 @@ pub(crate) async fn stage_one_document(
     // sat inside the single-document coordinator, so 50 clients multiplied them into hundreds of
     // milliseconds of queueing. The data-modifying CTE keeps the same transaction and constraints;
     // dependencies flow through RETURNING rows, and any failing branch aborts the whole statement.
+    let cte_step = WriteStep::start("locked_write_cte");
     let accepted_event = AcceptedEventRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -1026,6 +1092,9 @@ pub(crate) async fn stage_one_document(
     .await?
     .ok_or_else(ApiError::internal)?;
 
+    cte_step.finish();
+
+    let reconcile_assets_step = WriteStep::start("reconcile_body_assets");
     crate::flow::body_assets::reconcile_accepted(
         tx,
         prepared.observed.object_id,
@@ -1033,6 +1102,8 @@ pub(crate) async fn stage_one_document(
         &prepared.asset_references,
     )
     .await?;
+    reconcile_assets_step.finish();
+    let reconcile_children_step = WriteStep::start("reconcile_child_pages");
     crate::flow::child_pages::reconcile_accepted(
         tx,
         prepared.observed.object_id,
@@ -1045,6 +1116,8 @@ pub(crate) async fn stage_one_document(
         &prepared.child_references,
     )
     .await?;
+    reconcile_children_step.finish();
+    let reconcile_registry_step = WriteStep::start("reconcile_block_registry");
     crate::flow::block_registry::reconcile_accepted(
         tx,
         prepared.observed.object_id,
@@ -1053,6 +1126,7 @@ pub(crate) async fn stage_one_document(
         registration,
     )
     .await?;
+    reconcile_registry_step.finish();
     Ok(StagedOutcome::Ready(StagedWrite {
         event_id: accepted_event.event_id,
         new_head_seq,
@@ -1099,6 +1173,7 @@ async fn run_locked_phase(
     #[cfg(test)]
     let _locked_phase_measurement = begin_locked_phase_measurement(request.document_id);
     let started = Instant::now();
+    let begin_step = WriteStep::start("begin");
     let tx = match db.begin().await {
         Ok(tx) => tx,
         Err(err) => {
@@ -1106,9 +1181,11 @@ async fn run_locked_phase(
             return LockedOutcome::NotApplied("write transaction could not be opened");
         }
     };
+    begin_step.finish();
 
     // Bound to its own statement so the borrow of `tx` taken by `stage_locked_writes` ends here,
     // before the arms below move `tx` into `rollback`/`commit`.
+    let staging_step = WriteStep::start("locked_staging");
     let staged = tokio::time::timeout(
         staging_budget,
         stage_locked_writes(
@@ -1120,6 +1197,7 @@ async fn run_locked_phase(
         ),
     )
     .await;
+    staging_step.finish();
 
     let staged = match staged {
         Ok(Ok(StagedOutcome::Ready(staged))) => staged,
@@ -1165,7 +1243,10 @@ async fn run_locked_phase(
         }
     };
 
-    match tx.commit().await {
+    let commit_step = WriteStep::start("commit");
+    let commit_result = tx.commit().await;
+    commit_step.finish();
+    match commit_result {
         Ok(()) => LockedOutcome::Committed(Accepted {
             update_id: request.update_id,
             head_seq: staged.new_head_seq,
@@ -1443,10 +1524,13 @@ pub async fn accept_update_model(
     // ever produce a `SeqDecision::Duplicate` a receiving session's `egress::EgressSequencer`
     // drops anyway (`collab-protocol-v1.md`: "seq<=last_applied_seq 是幂等重复,忽略") — wasted work
     // on every other open session's channel for no observable effect.
+    let prior_lookup_step = WriteStep::start("find_prior_update");
     if let Some(prior) = find_prior_update(db, request.document_id, request.update_id).await? {
         return Ok(AcceptOutcome::Accepted(prior));
     }
+    prior_lookup_step.finish();
 
+    let coordinator_step = WriteStep::start("coordinator_acquire");
     let Ok(_permit) = coordinator.acquire(request.document_id).await else {
         // Nothing has been opened, let alone written: this attempt never got past the
         // instance-local admission gate.
@@ -1456,6 +1540,7 @@ pub async fn accept_update_model(
             WriteState::NotApplied,
         ));
     };
+    coordinator_step.finish();
 
     let mut should_advance_snapshot = false;
     let mut prepared_before_first_attempt = {
