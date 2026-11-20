@@ -1,3 +1,5 @@
+<svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import Button from '#lib/components/Button.svelte';

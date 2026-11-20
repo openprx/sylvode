@@ -1,3 +1,5 @@
+<svelte:options runes />
+
 <script lang="ts">
 	import { AlertTriangle } from '@lucide/svelte';
 	import { t } from 'svelte-i18n';

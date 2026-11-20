@@ -40,6 +40,15 @@ const IDLE_BOUND_MS = Number(process.env.FORMS_DOM_IDLE_MS || 10_000);
 const FIXED_TIME = '2026-05-31T12:00:00.000Z';
 const HEIGHT = 900;
 const READY_TIMEOUT_MS = 15_000;
+// The shell's project tree (sidebar) is only laid out from this viewport width up. Its "Apps"
+// and "Settings" rows appear after asynchronous requests (project plugin contributions, workspace
+// membership), so a wide state is not settled until both rows exist.
+const TREE_MIN_WIDTH = 1024;
+const TREE_QUIET_MS = 1000;
+const TREE_TIMEOUT_MS = Number(process.env.FORMS_DOM_TREE_MS || 45_000);
+const TREE_POLL_MS = 100;
+const TREE_RETRIES = 2;
+const TREE_REASON = 'shell project tree not settled';
 
 // Software rasterisation with fixed text rendering: GPU raster and subpixel text positioning
 // produced single-pixel differences between identical runs.
@@ -415,8 +424,44 @@ function stopServer(server) {
 
 // --- capture ---------------------------------------------------------------------------------
 
+// Readiness of the shell's project tree, independent of timing: every /api/ request has
+// finished, the tree has its "Apps" and "Settings" rows, and the tree's row set has not changed
+// for TREE_QUIET_MS. Returns null when settled, otherwise the reason (after READY_TIMEOUT_MS).
+async function waitForShellTree(page, pending) {
+	const snapshot = () =>
+		page.evaluate(() =>
+			[...document.querySelectorAll('[data-nav-row][data-row-id]')]
+				.map((row) => row.getAttribute('data-row-id'))
+				.join('|')
+		);
+	const deadline = Date.now() + TREE_TIMEOUT_MS;
+	let last = null;
+	let stableSince = Date.now();
+	let reason = 'no tree rows';
+	while (Date.now() < deadline) {
+		const rows = await snapshot();
+		if (rows !== last) {
+			last = rows;
+			stableSince = Date.now();
+		}
+		const ids = rows.split('|');
+		const hasApps = ids.some((id) => id.startsWith('apps:'));
+		const hasSettings = ids.some((id) => id.startsWith('settings:'));
+		if (pending.size > 0) reason = `${pending.size} API requests still pending`;
+		else if (!hasApps || !hasSettings)
+			reason = `tree rows missing: ${[hasApps ? '' : 'Apps', hasSettings ? '' : 'Settings']
+				.filter(Boolean)
+				.join(', ')}`;
+		else if (Date.now() - stableSince < TREE_QUIET_MS) reason = 'tree rows still changing';
+		else return null;
+		await page.waitForTimeout(TREE_POLL_MS);
+	}
+	return `${TREE_REASON}: ${reason}`;
+}
+
 async function captureState(browser, baseUrl, state, outDir) {
 	const stem = fileStem(state);
+	await rm(join(outDir, `${stem}.skipped.txt`), { force: true });
 	const context = await browser.newContext({
 		viewport: { width: state.width, height: HEIGHT },
 		deviceScaleFactor: 1,
@@ -446,7 +491,12 @@ async function captureState(browser, baseUrl, state, outDir) {
 		if (state.mock) await state.mock(context);
 		const page = await context.newPage();
 		const requests = [];
+		const pending = new Set();
+		const done = (request) => pending.delete(request);
+		page.on('requestfinished', done);
+		page.on('requestfailed', done);
 		page.on('request', (request) => {
+			if (new URL(request.url()).pathname.startsWith('/api/')) pending.add(request);
 			const url = new URL(request.url());
 			if (request.method() === 'GET' && url.pathname.startsWith('/api/')) {
 				requests.push(`GET ${url.pathname}${url.search}`);
@@ -460,10 +510,14 @@ async function captureState(browser, baseUrl, state, outDir) {
 			for (const step of state.steps) await step(page);
 			await page.waitForSelector(state.ready, { timeout: READY_TIMEOUT_MS });
 			if (state.finalWait) await state.finalWait(page);
+			if (state.width >= TREE_MIN_WIDTH) {
+				const unsettled = await waitForShellTree(page, pending);
+				if (unsettled) throw new Error(unsettled);
+			}
 		} catch (error) {
 			await writeFile(
 				join(outDir, `${stem}.skipped.txt`),
-				`ready selector or step failed: ${String(error.message).split('\n')[0]}\n`
+				`ready selector, step or shell tree failed: ${String(error.message).split('\n')[0]}\n`
 			);
 			return { stem, skipped: String(error.message).split('\n')[0] };
 		}
@@ -519,7 +573,18 @@ async function capture(flags) {
 			args: RASTER_ARGS
 		});
 		for (const state of states) {
-			const result = await captureState(browser, baseUrl, state, outDir);
+			let result = await captureState(browser, baseUrl, state, outDir);
+			// The tree's rows depend on the viewer's workspace role arriving; when that never
+			// happens inside the bound the state is replayed from navigation, and the retry is
+			// logged. A state that stays unsettled is reported as skipped with the reason.
+			for (
+				let attempt = 1;
+				attempt <= TREE_RETRIES && result.skipped?.startsWith(TREE_REASON);
+				attempt += 1
+			) {
+				console.log(`RETRY ${result.stem} (${attempt}/${TREE_RETRIES}): ${result.skipped}`);
+				result = await captureState(browser, baseUrl, state, outDir);
+			}
 			if (result.skipped) {
 				failed += 1;
 				console.log(`SKIPPED ${result.stem}: ${result.skipped}`);
@@ -535,6 +600,16 @@ async function capture(flags) {
 				console.log(
 					`ok ${result.stem} requests=${result.count} idle=${result.idleMs}ms ${flagsText}`.trimEnd()
 				);
+				if (flagsText) {
+					const reasons = [
+						result.idle ? '' : 'network did not reach idle',
+						result.quiet ? '' : 'requests kept growing in the quiet window'
+					].filter(Boolean);
+					console.log(
+						`FLAGGED ${result.stem}: ${[...reasons, ...result.problems].join('; ') || flagsText}`
+					);
+					for (const problem of result.problems) console.log(`  ${problem}`);
+				}
 			}
 		}
 	} finally {
@@ -616,6 +691,16 @@ async function compare(positional, flags) {
 			const setB = new Set(requestsB.requests);
 			for (const request of setA) if (!setB.has(request)) console.log(`  only in A: ${request}`);
 			for (const request of setB) if (!setA.has(request)) console.log(`  only in B: ${request}`);
+		}
+		const problemsA = requestsA.problems ?? [];
+		const problemsB = requestsB.problems ?? [];
+		if (JSON.stringify(problemsA) !== JSON.stringify(problemsB)) {
+			differing += 1;
+			console.log(
+				`DIFF ${stem}: recorded problems differ (A ${problemsA.length}, B ${problemsB.length})`
+			);
+			for (const problem of problemsA) console.log(`  A: ${problem}`);
+			for (const problem of problemsB) console.log(`  B: ${problem}`);
 		}
 		if (!requestsB.idle || !requestsB.quiet) {
 			differing += 1;
