@@ -328,6 +328,102 @@ fn read_blocks(
     Ok(Some(blocks))
 }
 
+/// What the current reader made of one block map.
+#[derive(Debug)]
+pub enum CurrentRead {
+    /// Not read: the caller did not ask, the block is of an unsupported kind, or it is a
+    /// dependency node.
+    Skipped,
+    /// The block the current reader returns.
+    Block(EditorBlock),
+    /// The error the current reader holds for this block.
+    Invalid(CollabError),
+}
+
+/// What [`evaluate_block`] found in one block map.
+#[derive(Debug)]
+pub struct BlockVisit {
+    /// The map's `nodeName` is an atom kind, placed or not, supported or not.
+    pub physical_atom: bool,
+    /// The legacy reader lists this block: a model-1 prose kind that is not a dependency node.
+    pub legacy_listed: bool,
+    pub current: CurrentRead,
+}
+
+/// The per-block body of [`legacy_ids_and_editor_blocks`]: everything the legacy reader and the
+/// current reader do with one physical block map, in one place, so that the full projection and the
+/// incremental window check (`window_check`) cannot disagree about a block. It reads only the
+/// map's own containers (`nodeName`, `attributes`, the inline texts and their marks).
+///
+/// The legacy reader's error is `Err`: it returns immediately in the full pass and takes
+/// precedence over everything the current reader reports. The current reader's outcome for this
+/// block is `current`; it is evaluated only when `want_current` (the caller has no earlier current
+/// error and the block is placed), so a block the full pass would not read is not read here.
+///
+/// # Errors
+/// `editor_block_missing_node_name`, or the `text_children` error of a legacy-listed block.
+pub fn evaluate_block(
+    map: &LoroMap,
+    cid: &str,
+    want_current: bool,
+    reverse_aliases: &std::collections::BTreeMap<String, String>,
+) -> Result<BlockVisit, CollabError> {
+    let kind = string(map, "nodeName");
+    let physical_atom = kind.as_deref().is_some_and(crate::editor_media::is_atom);
+    let mut attributes = None;
+    let mut texts = None;
+    let mut legacy_listed = false;
+
+    // Legacy reader: every block, model-1 kinds only.
+    let Some(kind) = kind else {
+        return Err(invalid("editor_block_missing_node_name"));
+    };
+    if supported(&kind) && is_legacy_kind(&kind) {
+        let legacy_attributes = attributes.insert(block_attributes(map));
+        if !is_dependency(legacy_attributes) {
+            texts = Some(text_children(map)?);
+            legacy_listed = true;
+        }
+    }
+
+    let current = if want_current {
+        current_read(map, cid, kind, attributes, texts, reverse_aliases)
+    } else {
+        CurrentRead::Skipped
+    };
+    Ok(BlockVisit {
+        physical_atom,
+        legacy_listed,
+        current,
+    })
+}
+
+/// The current reader's half of [`evaluate_block`], reusing what the legacy half already read.
+fn current_read(
+    map: &LoroMap,
+    cid: &str,
+    kind: String,
+    attributes: Option<Value>,
+    texts: Option<Vec<LoroText>>,
+    reverse_aliases: &std::collections::BTreeMap<String, String>,
+) -> CurrentRead {
+    if !supported(&kind) {
+        return CurrentRead::Skipped;
+    }
+    let attributes = attributes.unwrap_or_else(|| block_attributes(map));
+    if !crate::editor_media::is_atom(&kind) && is_dependency(&attributes) {
+        return CurrentRead::Skipped;
+    }
+    let texts = match texts.map_or_else(|| text_children(map), Ok) {
+        Ok(texts) => texts,
+        Err(error) => return CurrentRead::Invalid(error),
+    };
+    match finish_block(cid.to_owned(), kind, attributes, &texts, true, reverse_aliases) {
+        Ok(block) => CurrentRead::Block(block),
+        Err(error) => CurrentRead::Invalid(error),
+    }
+}
+
 /// What the editor-model floor needs from the single pass in [`legacy_ids_and_editor_blocks`]:
 /// the two block signals of [`editor_model_signals`], and whether any *physical* block map (placed
 /// or not, supported or not) has an atom `nodeName`.
@@ -383,49 +479,19 @@ pub fn legacy_ids_and_editor_blocks(doc: &LoroDoc) -> Result<Option<LegacyIdsAnd
             return Err(invalid("editor_doc_unsupported_block_container"));
         };
         let cid = map.id().to_string();
-        let kind = string(&map, "nodeName");
-        physical_atom |= kind.as_deref().is_some_and(crate::editor_media::is_atom);
-        let mut attributes = None;
-        let mut texts = None;
-
-        // Legacy reader: every block, model-1 kinds only; its errors return immediately.
-        let Some(legacy_kind) = kind.as_deref() else {
-            return Err(invalid("editor_block_missing_node_name"));
-        };
-        if supported(legacy_kind) && is_legacy_kind(legacy_kind) {
-            let legacy_attributes = attributes.insert(block_attributes(&map));
-            if !is_dependency(legacy_attributes) {
-                texts = Some(text_children(&map)?);
-                legacy_ids.push(cid.clone());
-            }
+        // The current reader's first error is held until the legacy reader has visited every
+        // block, and it reads placed blocks only.
+        let want_current = current_error.is_none() && index.as_ref().is_none_or(|index| index.contains(&cid));
+        // A legacy reader error returns immediately.
+        let visit = evaluate_block(&map, &cid, want_current, &reverse_aliases)?;
+        physical_atom |= visit.physical_atom;
+        if visit.legacy_listed {
+            legacy_ids.push(cid);
         }
-
-        // Current reader: placed blocks only; its first error is held until the legacy reader
-        // has visited every block.
-        if current_error.is_some() || index.as_ref().is_some_and(|index| !index.contains(&cid)) {
-            continue;
-        }
-        let Some(kind) = kind else {
-            current_error = Some(invalid("editor_block_missing_node_name"));
-            continue;
-        };
-        if !supported(&kind) {
-            continue;
-        }
-        let attributes = attributes.unwrap_or_else(|| block_attributes(&map));
-        if !crate::editor_media::is_atom(&kind) && is_dependency(&attributes) {
-            continue;
-        }
-        let texts = match texts.map_or_else(|| text_children(&map), Ok) {
-            Ok(texts) => texts,
-            Err(error) => {
-                current_error = Some(error);
-                continue;
-            }
-        };
-        match finish_block(cid, kind, attributes, &texts, true, &reverse_aliases) {
-            Ok(block) => blocks.push(block),
-            Err(error) => current_error = Some(error),
+        match visit.current {
+            CurrentRead::Skipped => {}
+            CurrentRead::Block(block) => blocks.push(block),
+            CurrentRead::Invalid(error) => current_error = Some(error),
         }
     }
     if let Some(error) = current_error {
