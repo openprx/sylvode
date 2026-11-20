@@ -6,10 +6,10 @@
 //   node scripts/run-forms-page-tests.mjs
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 const root = new URL('../', import.meta.url).pathname;
-const dir = join(root, 'tests/forms-page');
+const dir = process.argv[2] ? resolve(process.argv[2]) : join(root, 'tests/forms-page');
 
 function find(folder, found = []) {
 	if (!existsSync(folder)) return found;
@@ -29,4 +29,4 @@ for (const file of files) {
 	if (result.status !== 0) failed += 1;
 }
 console.log(`\n${files.length} suites, ${failed} failed`);
-process.exit(failed > 0 ? 1 : 0);
+process.exit(failed > 0 || files.length === 0 ? 1 : 0);
