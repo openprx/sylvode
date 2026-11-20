@@ -1144,6 +1144,203 @@ await check('dark container: toast, tab strip and table keep the dark tokens', a
 	return JSON.stringify(r);
 });
 
+// Phase 2 closing checks: composed handlers, sheet, menu roles, type-ahead, links, toasts.
+await check(
+	'checkbox in the table: a caller onchange composes with the checkbox (click, Shift-click, header, plural)',
+	async () => {
+		await load(1440);
+		const boxes = `${DT} tbody input[type="checkbox"]`;
+		const selected = () => page.getAttribute(`${DT} [data-selected]`, 'data-selected');
+		const status = () =>
+			page.evaluate(
+				(root) => document.querySelector(`${root} [role="status"]`).textContent.trim(),
+				DT
+			);
+		await page.locator(boxes).nth(0).click({ force: true });
+		const one = await selected();
+		const oneStatus = await status();
+		expect(one === 'r1' && oneStatus === '1 row selected', `${one} / ${oneStatus}`);
+		await page
+			.locator(boxes)
+			.nth(2)
+			.click({ force: true, modifiers: ['Shift'] });
+		const range = await selected();
+		expect(range === 'r1,r2,r3', `range ${range}`);
+		await page.locator(`${DT} thead input[type="checkbox"]`).click({ force: true });
+		const afterHeader = await selected();
+		expect(afterHeader !== range, `header toggled: ${afterHeader}`);
+		return `${oneStatus}; ${range}; header -> ${JSON.stringify(afterHeader)}`;
+	}
+);
+await check(
+	'date picker at 390: the popover is a bottom sheet with a grabber, a title and Close',
+	async () => {
+		await load(390);
+		const root = '[data-gallery="date:default"]';
+		await page.locator(`${root} button[aria-haspopup="dialog"]`).click();
+		await page.waitForSelector('[data-ui-layer="popover"]');
+		const r = await page.evaluate(() => {
+			const el = document.querySelector('[data-ui-layer="popover"]');
+			const rect = el.getBoundingClientRect();
+			const style = getComputedStyle(el);
+			const grabber = el.querySelector('.grabber');
+			return {
+				sheet: el.className.includes('sheet'),
+				title: el.querySelector('h2')?.textContent.trim(),
+				grabber: grabber
+					? `${getComputedStyle(grabber).width} x ${getComputedStyle(grabber).height}`
+					: null,
+				close: [...el.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Close'),
+				left: Math.round(rect.left),
+				width: Math.round(rect.width),
+				bottom: Math.round(window.innerHeight - rect.bottom),
+				topRadius: style.borderTopLeftRadius,
+				label: document.querySelector(`[data-gallery="date:default"] label`)?.textContent.trim()
+			};
+		});
+		expect(
+			r.sheet &&
+				r.title &&
+				r.title.startsWith(r.label.split(/\s/)[0]) &&
+				r.grabber === '36px x 5px' &&
+				r.close,
+			JSON.stringify(r)
+		);
+		expect(
+			r.left === 0 && r.width === 390 && r.bottom === 0 && r.topRadius === '12px',
+			JSON.stringify(r)
+		);
+		await page.keyboard.press('Escape');
+		await page.waitForSelector('[data-ui-layer="popover"]', { state: 'detached' });
+		await load(1440);
+		return JSON.stringify(r);
+	}
+);
+await check('date picker at 1440 stays a floating popover without sheet chrome', async () => {
+	const root = '[data-gallery="date:default"]';
+	await page.locator(`${root} button[aria-haspopup="dialog"]`).click();
+	await page.waitForSelector('[data-ui-layer="popover"]');
+	const r = await page.evaluate(() => {
+		const el = document.querySelector('[data-ui-layer="popover"]');
+		return { sheet: el.className.includes('sheet'), grabber: !!el.querySelector('.grabber') };
+	});
+	expect(!r.sheet && !r.grabber, JSON.stringify(r));
+	await page.keyboard.press('Escape');
+	await page.waitForSelector('[data-ui-layer="popover"]', { state: 'detached' });
+});
+await check(
+	'tab strip overflow menu: radio items with exactly one aria-checked, set from the active tab',
+	async () => {
+		const OV = '[data-gallery="task-tab-strip:overflow"]';
+		await page.locator(`${OV} [data-testid="task-tab-overflow"]`).click();
+		await page.waitForSelector('[data-testid="task-tab-overflow-menu"]');
+		const r = await page.evaluate(() => {
+			const items = [...document.querySelectorAll('[data-testid="task-tab-overflow-item"]')];
+			return {
+				roles: [...new Set(items.map((i) => i.getAttribute('role')))],
+				checked: items.filter((i) => i.getAttribute('aria-checked') === 'true').length,
+				unchecked: items.filter((i) => i.getAttribute('aria-checked') === 'false').length,
+				total: items.length,
+				menuRole: document
+					.querySelector('[data-testid="task-tab-overflow-menu"]')
+					.getAttribute('role')
+			};
+		});
+		expect(
+			r.roles.length === 1 &&
+				r.roles[0] === 'menuitemradio' &&
+				r.checked === 1 &&
+				r.unchecked === r.total - 1 &&
+				r.menuRole === 'menu',
+			JSON.stringify(r)
+		);
+		await page.keyboard.press('Escape');
+		await page.waitForSelector('[role="menu"]', { state: 'detached' });
+		return JSON.stringify(r);
+	}
+);
+await check('menu type-ahead: a letter focuses the next item that starts with it', async () => {
+	const trigger = '[data-gallery="menu:trigger"] button';
+	await tabTo(trigger);
+	await page.keyboard.press('Enter');
+	await page.waitForSelector('[role="menu"][data-popover="demo"]');
+	await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
+	await page.keyboard.press('d');
+	const first = await active();
+	await page.keyboard.press('z');
+	const none = await active();
+	await wait(700);
+	await page.keyboard.press('s');
+	const second = await active();
+	await page.keyboard.press('Escape');
+	await page.waitForSelector('[role="menu"]', { state: 'detached' });
+	expect(
+		first.text.startsWith('Delete') && none.text.startsWith('Delete'),
+		JSON.stringify({ first, none })
+	);
+	expect(second.text.startsWith('Sample'), JSON.stringify(second));
+	return `d -> ${first.text}; z keeps; after the pause s -> ${second.text}`;
+});
+await check(
+	'collapsed breadcrumb items are real links: Cmd-click opens a new tab, a plain click navigates',
+	async () => {
+		await load(1440);
+		const COLLAPSED = '[data-gallery="context-line:collapsed"]';
+		const open = async () => {
+			await page.locator(`${COLLAPSED} nav button[aria-haspopup="menu"]`).click();
+			await page.waitForSelector('[data-popover="context-line-menu"]');
+		};
+		await open();
+		const tags = await page.evaluate(() =>
+			[...document.querySelectorAll('[data-popover="context-line-menu"] [role="menuitem"]')].map(
+				(el) => ({
+					tag: el.tagName.toLowerCase(),
+					href: el.getAttribute('href')
+				})
+			)
+		);
+		expect(tags.length > 0 && tags.every((t) => t.tag === 'a' && t.href), JSON.stringify(tags));
+		const before = page.url();
+		const opened = context.waitForEvent('page', { timeout: 5000 });
+		await page
+			.locator('[data-popover="context-line-menu"] [role="menuitem"]')
+			.first()
+			.click({ modifiers: ['Meta'] });
+		const tab = await opened;
+		await tab.close();
+		expect(page.url() === before, `current tab navigated to ${page.url()}`);
+		await page.keyboard.press('Escape');
+		await page.waitForSelector('[data-popover="context-line-menu"]', { state: 'detached' });
+		await open();
+		await page.locator('[data-popover="context-line-menu"] [role="menuitem"]').first().click();
+		await page.waitForSelector('[data-popover="context-line-menu"]', { state: 'detached' });
+		expect(page.url() !== before && page.url().includes('#'), `plain click went to ${page.url()}`);
+		return JSON.stringify(tags);
+	}
+);
+await check('toasts wait while a dialog is open and appear when it closes', async () => {
+	await load(1440);
+	await tabTo('[data-testid="dialog-opener"]');
+	await page.keyboard.press('Enter');
+	await page.waitForSelector('[data-testid="dialog-demo"]');
+	await page.evaluate(() =>
+		document.querySelector('[data-gallery="toast:neutral"] button').click()
+	);
+	await wait(400);
+	const during = await page.locator('[data-toast]').count();
+	expect(during === 0, `${during} toasts shown behind the dialog`);
+	await page.keyboard.press('Escape');
+	await page.waitForSelector('[data-testid="dialog-demo"]', { state: 'detached' });
+	await page.waitForSelector('[data-toast]');
+	const after = await page.locator('[data-toast]').count();
+	expect(after === 1, `${after} toasts after close`);
+	await page.evaluate(() =>
+		document.querySelector('[data-gallery="toast:neutral"] button').click()
+	);
+	await wait(200);
+	return 'held while open (0), shown after close (1)';
+});
+
 console.log(results.join('\n'));
 console.log(`\n${results.length - failures} passed, ${failures} failed`);
 await browser.close();
