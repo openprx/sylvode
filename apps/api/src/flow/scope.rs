@@ -631,7 +631,14 @@ async fn insert_object_with_identity_model(
     )
     .await?;
     if kind == "page" {
-        super::block_registry::reconcile_accepted(tx, object, 0, &super::block_registry::prepare(&semantic)?).await?;
+        super::block_registry::reconcile_accepted(
+            tx,
+            object,
+            0,
+            &super::block_registry::prepare(&semantic)?,
+            super::block_registry::RegistrationAllowance::Complete,
+        )
+        .await?;
         super::body_assets::reconcile_accepted(tx, object, 0, &super::body_assets::typed_references(&semantic)?)
             .await?;
     }
@@ -916,6 +923,13 @@ pub(crate) async fn insert_child_page(
         },
     )
     .await?;
-    super::block_registry::reconcile_accepted(tx, object, 0, &super::block_registry::prepare(&semantic)?).await?;
+    super::block_registry::reconcile_accepted(
+        tx,
+        object,
+        0,
+        &super::block_registry::prepare(&semantic)?,
+        super::block_registry::RegistrationAllowance::Complete,
+    )
+    .await?;
     Ok(())
 }

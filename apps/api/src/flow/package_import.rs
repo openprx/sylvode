@@ -1286,6 +1286,7 @@ async fn promote_objects(
                     target_object,
                     object.accepted_seq,
                     &super::block_registry::prepare(&semantic)?,
+                    super::block_registry::RegistrationAllowance::Complete,
                 )
                 .await?;
                 super::body_assets::reconcile_accepted(
