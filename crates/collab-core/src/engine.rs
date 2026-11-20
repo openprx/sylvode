@@ -1386,6 +1386,10 @@ mod read_side_effect_tests;
 mod reserved_root_tests;
 #[cfg(test)]
 mod root_read_cost_tests;
+#[cfg(test)]
+mod window_differential_tests;
+#[cfg(test)]
+mod window_fixtures;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
