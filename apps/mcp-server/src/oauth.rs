@@ -285,8 +285,12 @@ pub struct TokenContext {
     pub grant_id: Uuid,
     pub workspace_id: Uuid,
     pub scopes: ScopeSet,
-    /// `all` or `selected`. The project set itself is enforced by the API before any handler.
+    /// `all` or `selected`.
     pub project_mode: String,
+    /// The projects of a `selected` grant; `None` for an `all` grant. The API enforces the set
+    /// before any handler; this server also refuses a project argument outside it before it calls
+    /// the API.
+    pub project_ids: Option<Arc<[Uuid]>>,
     /// Expiry of the access token, seconds since the Unix epoch.
     pub expires_at: i64,
 }
@@ -325,6 +329,18 @@ pub fn parse_token_context(body: &Value) -> ContextOutcome {
     let id = |key: &str| text(key).and_then(|value| Uuid::parse_str(value).ok());
     let parsed = (|| {
         let project_mode = text("project_mode").filter(|mode| matches!(*mode, "all" | "selected"))?;
+        // A grant limited to some projects must say which: an answer that does not is not
+        // understood, and the request is refused rather than served with broader access.
+        let project_ids = if project_mode == "selected" {
+            let ids = map.get("project_ids")?.as_array()?;
+            let parsed: Option<Vec<Uuid>> = ids
+                .iter()
+                .map(|value| value.as_str().and_then(|text| Uuid::parse_str(text).ok()))
+                .collect();
+            Some(Arc::from(parsed?))
+        } else {
+            None
+        };
         Some(TokenContext {
             client_id: text("client_id").filter(|value| !value.is_empty())?.to_string(),
             subject: id("sub")?,
@@ -332,6 +348,7 @@ pub fn parse_token_context(body: &Value) -> ContextOutcome {
             workspace_id: id("workspace_id")?,
             scopes: text("scope").and_then(|scope| ScopeSet::parse(scope).ok())?,
             project_mode: project_mode.to_string(),
+            project_ids,
             expires_at: map.get("exp").and_then(Value::as_i64)?,
         })
     })();
@@ -471,10 +488,12 @@ pub struct DelegatedCaller {
 }
 
 /// What a delegated caller was granted, as the scope gate sees it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DelegatedGrant {
     pub scopes: ScopeSet,
     pub workspace_id: Uuid,
+    /// The projects of a grant limited to some; `None` reaches every project of the workspace.
+    pub projects: Option<Arc<[Uuid]>>,
 }
 
 /// How the inbound layer authenticates: always the legacy way, and the delegated way as well when
@@ -657,6 +676,10 @@ pub enum ToolRefusal {
     NotAvailable,
     /// A `workspace_id` argument names a workspace other than the grant's.
     WorkspaceMismatch,
+    /// A `project_id` argument names a project outside the grant's project set (or is not a
+    /// project id at all). The answer is the one the API gives for every object outside a grant,
+    /// whether it exists or not.
+    OutsideGrant,
 }
 
 impl ToolRefusal {
@@ -669,6 +692,7 @@ impl ToolRefusal {
             ),
             Self::NotAvailable => "tool not available to connected applications".to_string(),
             Self::WorkspaceMismatch => "workspace_id does not match the connected workspace".to_string(),
+            Self::OutsideGrant => "the requested object is not available to this connection".to_string(),
         }
     }
 }
@@ -678,9 +702,10 @@ impl ToolRefusal {
 /// The tool must be callable under the token's scopes ([`oauth_scopes`], the same table that
 /// filters `tools/list`, so a tool that is not listed can not be called by guessing its name), and
 /// a `workspace_id` argument, if present, must be the grant's workspace. A mismatch is refused,
-/// never replaced: the caller learns nothing about the grant's workspace from the refusal. A
-/// project id argument is not checked here (this server does not know the grant's project set);
-/// the API refuses a project outside the grant before any handler runs.
+/// never replaced: the caller learns nothing about the grant's workspace from the refusal. For a
+/// grant limited to some projects, a `project_id` argument outside the set is refused here too,
+/// before the API is called, with the answer the API gives for any object outside a grant, so the
+/// refusal does not tell whether the project exists. The API checks the set again on every route.
 pub fn gate_tool_call(grant: &DelegatedGrant, tool: &str, arguments: Option<&Value>) -> Result<(), ToolRefusal> {
     match oauth_scopes::decision(tool) {
         ToolDecision::NotAvailable => return Err(ToolRefusal::NotAvailable),
@@ -690,9 +715,17 @@ pub fn gate_tool_call(grant: &DelegatedGrant, tool: &str, arguments: Option<&Val
         ToolDecision::Requires(_) => {}
     }
     match arguments.and_then(|arguments| arguments.get("workspace_id")) {
+        None | Some(Value::Null) => {}
+        Some(Value::String(text)) if Uuid::parse_str(text).is_ok_and(|id| id == grant.workspace_id) => {}
+        Some(_) => return Err(ToolRefusal::WorkspaceMismatch),
+    }
+    let Some(projects) = &grant.projects else {
+        return Ok(());
+    };
+    match arguments.and_then(|arguments| arguments.get("project_id")) {
         None | Some(Value::Null) => Ok(()),
-        Some(Value::String(text)) if Uuid::parse_str(text).is_ok_and(|id| id == grant.workspace_id) => Ok(()),
-        Some(_) => Err(ToolRefusal::WorkspaceMismatch),
+        Some(Value::String(text)) if Uuid::parse_str(text).is_ok_and(|id| projects.contains(&id)) => Ok(()),
+        Some(_) => Err(ToolRefusal::OutsideGrant),
     }
 }
 
@@ -703,7 +736,9 @@ fn refusal_response(id: Option<Value>, refusal: ToolRefusal, settings: &OAuthSet
             "insufficient_scope".to_string(),
             Some(json!({"scope": ScopeSet::challenge_for(scope).to_scope_string()})),
         ),
-        ToolRefusal::NotAvailable | ToolRefusal::WorkspaceMismatch => (JSONRPC_NOT_AVAILABLE, refusal.message(), None),
+        ToolRefusal::NotAvailable | ToolRefusal::WorkspaceMismatch | ToolRefusal::OutsideGrant => {
+            (JSONRPC_NOT_AVAILABLE, refusal.message(), None)
+        }
     };
     let body = JsonRpcResponse::error(id, JsonRpcError { code, message, data });
     match refusal {
@@ -714,7 +749,7 @@ fn refusal_response(id: Option<Value>, refusal: ToolRefusal, settings: &OAuthSet
         ),
         // No challenge: no other scope would make the call succeed, and a step-up that cannot
         // succeed would only send the client round a loop.
-        ToolRefusal::NotAvailable | ToolRefusal::WorkspaceMismatch => {
+        ToolRefusal::NotAvailable | ToolRefusal::WorkspaceMismatch | ToolRefusal::OutsideGrant => {
             (StatusCode::FORBIDDEN, Json(json!(body))).into_response()
         }
     }
@@ -752,6 +787,7 @@ pub async fn handle_rpc(
                 DelegatedGrant {
                     scopes: context.scopes,
                     workspace_id: context.workspace_id,
+                    projects: context.project_ids.clone(),
                 },
             );
             if request.method == "tools/call"
@@ -783,6 +819,8 @@ mod tests {
     const TOKEN: &str = "opr_caller_bot_token_example";
     const DELEGATED: &str = "sva_0000000000000000000000000000000000000000000000000000000000000000";
     const WORKSPACE: Uuid = Uuid::from_u128(0x1111_1111_1111_4111_8111_1111_1111_1111);
+    const PROJECT_ONE: Uuid = Uuid::from_u128(0x2222_2222_2222_4222_8222_2222_2222_2222);
+    const PROJECT_TWO: Uuid = Uuid::from_u128(0x3333_3333_3333_4333_8333_3333_3333_3333);
 
     fn runtime(resource: &str) -> McpOAuthRuntime {
         McpOAuthRuntime {
@@ -1034,7 +1072,8 @@ mod tests {
             "sub": "33333333-3333-4333-8333-333333333333",
             "grant_id": "44444444-4444-4444-8444-444444444444",
             "workspace_id": WORKSPACE.to_string(),
-            "scope": "projects:read work_items:read", "project_mode": "selected", "exp": 4_102_444_800_i64
+            "scope": "projects:read work_items:read", "project_mode": "selected",
+            "project_ids": [PROJECT_ONE.to_string(), PROJECT_TWO.to_string()], "exp": 4_102_444_800_i64
         })
     }
 
@@ -1045,6 +1084,11 @@ mod tests {
                 assert_eq!(context.workspace_id, WORKSPACE);
                 assert_eq!(context.scopes.to_scope_string(), "projects:read work_items:read");
                 assert_eq!(context.project_mode, "selected");
+                assert_eq!(
+                    context.project_ids.as_deref(),
+                    Some(&[PROJECT_ONE, PROJECT_TWO][..]),
+                    "the project set of a selected grant"
+                );
                 assert_eq!(context.client_id, "ramflux");
             }
             other => assert!(matches!(other, ContextOutcome::Active(_)), "not active: {other:?}"),
@@ -1108,7 +1152,97 @@ mod tests {
         Ok(DelegatedGrant {
             scopes: ScopeSet::parse(scope)?,
             workspace_id: WORKSPACE,
+            projects: None,
         })
+    }
+
+    fn set(body: &mut Value, key: &str, value: Value) {
+        if let Some(map) = body.as_object_mut() {
+            map.insert(key.to_string(), value);
+        }
+    }
+
+    #[test]
+    fn a_selected_grant_must_name_its_projects_and_an_all_grant_has_none() {
+        let mut body = active_body();
+        for broken in [
+            // Missing, not a list, or holding something that is not a project id.
+            None,
+            Some(json!("2222")),
+            Some(json!([PROJECT_ONE.to_string(), "not-a-uuid"])),
+            Some(json!([42])),
+        ] {
+            match &broken {
+                Some(value) => set(&mut body, "project_ids", value.clone()),
+                None => {
+                    body.as_object_mut().map(|map| map.remove("project_ids"));
+                }
+            }
+            assert!(
+                matches!(
+                    parse_token_context(&body),
+                    ContextOutcome::Unavailable(UnavailableReason::Malformed)
+                ),
+                "{broken:?}"
+            );
+        }
+        // An empty set is a valid, empty grant: nothing is reachable.
+        set(&mut body, "project_ids", json!([]));
+        match parse_token_context(&body) {
+            ContextOutcome::Active(context) => assert_eq!(context.project_ids.as_deref(), Some(&[][..])),
+            other => assert!(matches!(other, ContextOutcome::Active(_)), "{other:?}"),
+        }
+        // `all` carries no set, and a stray one is ignored.
+        set(&mut body, "project_mode", json!("all"));
+        match parse_token_context(&body) {
+            ContextOutcome::Active(context) => assert!(context.project_ids.is_none()),
+            other => assert!(matches!(other, ContextOutcome::Active(_)), "{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_project_argument_outside_a_selected_grant_is_refused_without_saying_why()
+    -> Result<(), api::oauth::scopes::ScopeError> {
+        let mut selected = grant("projects:read work_items:read")?;
+        selected.projects = Some(Arc::from(vec![PROJECT_ONE]));
+        let ask = |project: Value| gate_tool_call(&selected, "work_items.list", Some(&json!({"project_id": project})));
+        assert_eq!(ask(json!(PROJECT_ONE.to_string())), Ok(()));
+        // Another project of the workspace, an unknown one, a malformed one and a non-string all
+        // get the one answer.
+        for outside in [
+            json!(PROJECT_TWO.to_string()),
+            json!(Uuid::from_u128(9).to_string()),
+            json!("not-a-uuid"),
+            json!(7),
+            json!(["x"]),
+        ] {
+            assert_eq!(ask(outside.clone()), Err(ToolRefusal::OutsideGrant), "{outside}");
+        }
+        assert!(!ToolRefusal::OutsideGrant.message().contains("2222"));
+        // No project argument: nothing to refuse here (the API checks what the tool resolves).
+        assert_eq!(gate_tool_call(&selected, "projects.list", None), Ok(()));
+        // An all-projects grant takes any project argument to the API.
+        let all = grant("projects:read work_items:read")?;
+        assert_eq!(
+            gate_tool_call(
+                &all,
+                "work_items.list",
+                Some(&json!({"project_id": PROJECT_TWO.to_string()}))
+            ),
+            Ok(())
+        );
+        // An empty selection reaches no project.
+        let mut empty = grant("work_items:read")?;
+        empty.projects = Some(Arc::from(Vec::<Uuid>::new()));
+        assert_eq!(
+            gate_tool_call(
+                &empty,
+                "work_items.list",
+                Some(&json!({"project_id": PROJECT_ONE.to_string()}))
+            ),
+            Err(ToolRefusal::OutsideGrant)
+        );
+        Ok(())
     }
 
     #[test]

@@ -771,7 +771,7 @@ impl McpServer {
             } else {
                 Arc::clone(&self.project_id_cache)
             },
-            delegated: self.delegated,
+            delegated: self.delegated.clone(),
         };
         if scoped.client.is_flow_only() {
             let request = match tools::flow_scope::prepare(&scoped.client, name, &args).await {

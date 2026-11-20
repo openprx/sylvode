@@ -65,6 +65,7 @@ fn active_until(scope: &str, exp: i64) -> ContextOutcome {
         "workspace_id": GRANT_WORKSPACE,
         "scope": scope,
         "project_mode": "selected",
+        "project_ids": [PROJECT],
         "exp": exp,
     }))
 }
@@ -741,6 +742,71 @@ async fn a_tool_that_is_not_available_is_refused_whatever_the_scopes_claim() -> 
     Ok(())
 }
 
+/// A project argument outside a grant limited to some projects is refused before the API is
+/// called, with one answer for a project that exists, one that does not and one that is not even
+/// an id; a project inside the grant goes through, and a grant for all projects is not narrowed.
+#[tokio::test]
+async fn a_project_argument_outside_the_grant_is_refused_before_the_api_is_called() -> TestResult {
+    let other_existing = "55555555-5555-4555-8555-555555555555";
+    let unknown = "66666666-6666-4666-8666-666666666666";
+    let token = delegated('a');
+    let source = FakeSource::new([(token.clone(), active("projects:read work_items:read"))]);
+    let server = Harness::delegated(&source).await?;
+
+    let mut answers = Vec::new();
+    for project in [other_existing, unknown, "not-a-project-id"] {
+        for tool in ["work_items.list", "projects.get", "context.get_project"] {
+            let reply = server
+                .post(Some(&token), &call(tool, &json!({"project_id": project})))
+                .await?;
+            assert_eq!(reply.status, StatusCode::FORBIDDEN, "{tool} {project}");
+            let body = reply.json()?;
+            assert_eq!(body.pointer("/error/code").and_then(Value::as_i64), Some(-32002));
+            assert!(
+                !reply.text.contains(project) && !reply.text.contains(tool),
+                "the refusal repeats what was asked: {}",
+                reply.text
+            );
+            answers.push((reply.status, body.pointer("/error").cloned()));
+        }
+    }
+    assert!(
+        answers.windows(2).all(|pair| pair.first() == pair.get(1)),
+        "refusals differ: {answers:?}"
+    );
+    assert!(server.seen().await.is_empty(), "a refused call reached the API");
+
+    // The grant's own project is served, and the API sees the call.
+    let inside = server
+        .post(Some(&token), &call("work_items.list", &json!({"project_id": PROJECT})))
+        .await?;
+    assert_eq!(inside.status, StatusCode::OK, "{}", inside.text);
+    assert!(!server.seen().await.is_empty());
+
+    // A grant for all projects leaves the project argument to the API.
+    let all_token = delegated('b');
+    let all_source = FakeSource::new([(
+        all_token.clone(),
+        parse_token_context(&json!({
+            "active": true, "client_id": "ramflux",
+            "sub": "33333333-3333-4333-8333-333333333333",
+            "grant_id": "44444444-4444-4444-8444-444444444444",
+            "workspace_id": GRANT_WORKSPACE, "scope": "projects:read work_items:read",
+            "project_mode": "all", "exp": 4_102_444_800_i64,
+        })),
+    )]);
+    let all_server = Harness::delegated(&all_source).await?;
+    let reply = all_server
+        .post(
+            Some(&all_token),
+            &call("work_items.list", &json!({"project_id": other_existing})),
+        )
+        .await?;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+    assert!(!all_server.seen().await.is_empty());
+    Ok(())
+}
+
 /// A value for each required argument of a tool, taken from its own input schema so that a tool
 /// added later needs no entry here: ids and identifiers get values the API's routes accept, any
 /// other required string a plain word.
@@ -1145,7 +1211,7 @@ async fn the_http_token_context_source_asks_with_the_token_and_the_forwarding_cr
                 "sub": "33333333-3333-4333-8333-333333333333",
                 "grant_id": "44444444-4444-4444-8444-444444444444",
                 "workspace_id": GRANT_WORKSPACE, "scope": "projects:read work_items:read",
-                "project_mode": "selected", "exp": 4_102_444_800_i64
+                "project_mode": "selected", "project_ids": [PROJECT], "exp": 4_102_444_800_i64
             }))
         }
     }))

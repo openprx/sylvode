@@ -345,6 +345,7 @@ mod tests {
             let grant = DelegatedGrant {
                 scopes,
                 workspace_id: workspace,
+                projects: None,
             };
             for name in registered().iter().map(String::as_str).chain(["unknown.tool", ""]) {
                 assert_eq!(

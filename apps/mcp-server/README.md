@@ -196,7 +196,10 @@ What the server does for a delegated caller:
   with `503`; it is never served with broader access.
 - **Workspace.** The caller acts in the workspace of its grant, taken from the token context,
   never from `mcp.workspace_id` and never from a tool argument. A `workspace_id` argument that
-  differs from the grant is refused, not replaced.
+  differs from the grant is refused, not replaced. For a grant limited to some projects the token
+  context lists them (`project_ids`; an answer without the list is refused as malformed), and a
+  `project_id` argument outside the list is refused before the API is called with the answer the
+  API gives for any object outside a grant, so it does not reveal whether the project exists.
 - **Tools.** `tools/list` shows only the tools the token's scopes allow; `tools/call` for a
   tool outside them answers `403` with `WWW-Authenticate: Bearer error="insufficient_scope",
   scope="...", resource_metadata="..."` and a JSON-RPC error `-32001`. The first release
