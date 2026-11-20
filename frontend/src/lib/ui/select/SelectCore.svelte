@@ -4,6 +4,7 @@
 	 * Both public components wrap it; `values` is always an array here (zero or one for Select).
 	 */
 	import { untrack } from 'svelte';
+	import '../foundations/visually-hidden.css';
 	import { t } from 'svelte-i18n';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import X from '@lucide/svelte/icons/x';
@@ -483,7 +484,7 @@
 				</Listbox>
 			</Popover>
 		{/if}
-		<span class="sr-only" role="status" aria-live="polite">{announcement}</span>
+		<span class="ui-sr-only" role="status" aria-live="polite">{announcement}</span>
 	{/snippet}
 </Field>
 
@@ -658,14 +659,6 @@
 	.clear-text:focus-visible {
 		outline: var(--rf-border-width-focus) solid var(--rf-focus);
 		outline-offset: -1px;
-	}
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
 	}
 	@media (pointer: coarse) {
 		.box {

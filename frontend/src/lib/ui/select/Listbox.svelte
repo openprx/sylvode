@@ -1,5 +1,6 @@
 <script lang="ts" generics="V extends string = string">
 	import type { Snippet } from 'svelte';
+	import '../foundations/visually-hidden.css';
 	import { t } from 'svelte-i18n';
 	import Check from '@lucide/svelte/icons/check';
 	import Search from '@lucide/svelte/icons/search';
@@ -123,7 +124,7 @@
 					<span class="text" title={option.label}>{option.label}</span>
 					{#if option.meta}<span class="meta">{option.meta}</span>{/if}
 					{#if option.disabled && option.disabledReason}
-						<span class="sr-only"
+						<span class="ui-sr-only"
 							>{$t('ui.select.unavailable', { values: { reason: option.disabledReason } })}</span
 						>
 					{/if}
@@ -132,7 +133,7 @@
 		</div>
 	{:else if status === 'loading'}
 		<div class="status" role="status">
-			<span class="sr-only">{$t('ui.select.loading')}</span>
+			<span class="ui-sr-only">{$t('ui.select.loading')}</span>
 			{#each [0, 1, 2] as row (row)}<span class="skeleton" aria-hidden="true"></span>{/each}
 		</div>
 	{:else if status === 'failed'}
@@ -324,14 +325,6 @@
 	.retry:focus-visible {
 		outline: var(--rf-border-width-focus) solid var(--rf-focus);
 		outline-offset: -1px;
-	}
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
 	}
 	@media (pointer: coarse) {
 		.option {

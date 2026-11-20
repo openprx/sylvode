@@ -7,6 +7,7 @@
 	import { focusTrap } from '../foundations/focus-trap';
 	import { uid } from '../foundations/ids';
 	import { pushLayer } from '../foundations/layers';
+	import { enterModal } from '../foundations/modal';
 	import { portal } from '../foundations/portal';
 	import { lockScroll } from '../foundations/scroll-lock';
 
@@ -53,9 +54,12 @@
 		if (!open) return;
 		const stopLayer = pushLayer({ onEscape: () => onclose() });
 		const unlock = lockScroll();
+		// New toasts wait while the dialog is open (toast design: nothing appears behind a scrim).
+		const leaveModal = enterModal();
 		return () => {
 			stopLayer();
 			unlock();
+			leaveModal();
 			const restore = restoreFocus;
 			restoreFocus = null;
 			// After the dialog has left the DOM, so the opener is focusable again.

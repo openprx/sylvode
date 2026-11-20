@@ -73,7 +73,7 @@ await suite.checkAsync('at 390 the primary is an icon button named by its label'
 	const html = await renderToHtml(PageHeader, { title: 'A', context, primary, width: 390 });
 	assert(html.includes('aria-label="New record"'), 'accessible name equals the label');
 	assert(!html.includes('>New record<'), 'no text button');
-	assert(/class="context[^"]* hidden"/.test(html), 'context hidden visually');
+	assert(/class="context[^"]* ui-sr-only"/.test(html), 'context hidden visually');
 	assert(html.includes('<nav'), 'context stays in the DOM');
 });
 await suite.checkAsync('a disabled primary shows its reason and is described by it', async () => {

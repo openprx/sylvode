@@ -1,5 +1,6 @@
 <script lang="ts" generics="V extends string = string">
 	import { roving } from '../foundations/roving';
+	import '../foundations/visually-hidden.css';
 	import { uid } from '../foundations/ids';
 	import { tabStopIndex, type SegmentOption } from './segmented-state';
 
@@ -67,7 +68,7 @@
 			onclick={() => choose(option)}
 		>
 			<span class="text">{option.label}</span>
-			{#if off && option.disabledReason}<span class="sr-only">{option.disabledReason}</span>{/if}
+			{#if off && option.disabledReason}<span class="ui-sr-only">{option.disabledReason}</span>{/if}
 		</button>
 	{/each}
 </div>
@@ -119,14 +120,6 @@
 	.segment[aria-disabled='true'] {
 		color: var(--rf-control);
 		cursor: not-allowed;
-	}
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
 	}
 	@media (pointer: coarse) {
 		.ui-segmented {

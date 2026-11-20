@@ -30,8 +30,6 @@
 
 <style>
 	.ui-metric {
-		/* Proposed token --rf-leading-metric (batch A, T15): 1.25 gives a 40px line for 32px. */
-		--ui-leading-metric: 1.25;
 		display: flex;
 		flex-direction: column;
 		gap: var(--rf-space-2);
@@ -45,9 +43,9 @@
 	.figure {
 		display: flex;
 		align-items: center;
-		min-height: calc(var(--rf-size-metric) * var(--ui-leading-metric));
+		min-height: calc(var(--rf-size-metric) * var(--rf-leading-metric));
 		font-size: var(--rf-size-metric);
-		line-height: var(--ui-leading-metric);
+		line-height: var(--rf-leading-metric);
 		font-weight: var(--rf-weight-semibold);
 		font-variant-numeric: tabular-nums;
 		color: var(--rf-text);

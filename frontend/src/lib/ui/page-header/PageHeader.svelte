@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
+	import '../foundations/visually-hidden.css';
 	import type { Snippet } from 'svelte';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -86,7 +87,7 @@
 				{title}
 			</h1>
 			{#if context}
-				<div class="context" class:hidden={!layout.contextVisible}>
+				<div class="context" class:ui-sr-only={!layout.contextVisible}>
 					<ContextLine
 						segments={context.segments}
 						current={context.current}
@@ -138,7 +139,7 @@
 							aria-describedby={primary.disabledReason ? reasonId : undefined}
 							onclick={() => void primary.run()}
 						/>
-						{#if primary.disabledReason}<span class="sr-only" id={reasonId}
+						{#if primary.disabledReason}<span class="ui-sr-only" id={reasonId}
 								>{primary.disabledReason}</span
 							>{/if}
 					{:else}
@@ -197,9 +198,7 @@
 		padding: 0 var(--rf-space-9);
 	}
 	.v-compact {
-		/* Proposed token --rf-layout-header-compact: 56px (not in tokens.css yet). */
-		--ui-layout-header-compact: 56px;
-		height: var(--ui-layout-header-compact);
+		height: var(--rf-layout-header-compact);
 		padding: var(--rf-space-5) var(--rf-space-8);
 	}
 	.lead {
@@ -242,14 +241,6 @@
 	.v-compact .context {
 		flex: 1 1 0;
 	}
-	.context.hidden {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		margin: -1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-	}
 	.actions {
 		display: flex;
 		align-items: center;
@@ -272,15 +263,6 @@
 	}
 	.menu-reason {
 		display: block;
-	}
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		margin: -1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
 	}
 	.skeleton {
 		display: block;
