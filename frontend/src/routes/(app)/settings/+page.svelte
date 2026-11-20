@@ -9,6 +9,7 @@
 	import Card from '#lib/components/Card.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Button from '#lib/components/Button.svelte';
+	import ConnectedAppsPersonal from '#lib/oauth/ConnectedAppsPersonal.svelte';
 	import { locale, t } from 'svelte-i18n';
 
 	let loading = $state(true);
@@ -261,5 +262,7 @@
 				>
 			</div>
 		</Card>
+
+		<ConnectedAppsPersonal />
 	{/if}
 </div>
