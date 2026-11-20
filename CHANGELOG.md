@@ -10,6 +10,367 @@ name.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-19
+
+### Added
+
+- **Plugin protocol 3: one package, several locations.** A package with `schema_version`
+  `openpr.plugin.v3` declares 1 to 8 typed contributions, each with a stable id, a kind, a
+  location (`slot`), a label and the entry view it opens, and all of them share one set of
+  grants. Besides the two record locations (`form.record.detail`, `form.record.actions`) there
+  are two new ones: `project.view`, a routed project app listed under the project page's apps
+  and opened at `/workspace/{w}/projects/{p}/apps/{pluginKey}/{route}` (at most two per
+  package, routes isolated by plugin key), and `form.list.toolbar`, a button in the Forms page
+  header that opens the plugin in a side drawer for the selected Form. Protocol 1 and 2
+  packages keep working and are ordered together with protocol 3 contributions in the record
+  locations. New discovery endpoints (project, Form and record level) list the contributions a
+  member can see, and a separate entry endpoint returns the HTML of one of them, so a retained
+  direct link stops working once the contribution is revoked. The whole feature is behind
+  `SV_FORM_PLUGIN_EXTENSIONS_ENABLED`; see **Upgrade notes**. A sample `ui` and `wasm`
+  package and an isolated acceptance script are in `docs/plugins/extension-example`.
+- **UI-only plugins.** A protocol 3 package with `profile` `ui` carries no WebAssembly module
+  and declares no capabilities. An administrator grants it `ui.display` and, per declared read
+  (at most four, of up to 32 fields each), a `read:<id>` grant. Through a read-only data
+  endpoint it can describe a Form, page through its records (up to 50 per page, with a signed
+  cursor bound to the Form and the read) and read one record. The server applies record scope
+  and the field read policy, returns only declared fields of plain value types (never
+  attachments, images, signatures, members, relations, child tables, AI summaries or the
+  record title), limits each user to 30 requests per 10 seconds per project and plugin, and
+  logs each read without its values. Packages with `profile` `wasm` keep the order-amount
+  capabilities and are invoked through a contribution-aware endpoint that records the
+  contribution in the invocation log.
+- **Plugin bridge protocol 2.** Protocol 3 frames talk to the host over a message port with
+  `ready`, `close`, `resize`, `request`, `result` and `event` messages. Requests are limited to
+  an allow list (`host.context`, `host.navigate`, `data.describe`, `data.query`,
+  `data.record`, `amount.preview`, `amount.apply`), each needing its grant; `host.navigate`
+  accepts only an enabled view route of the same package, a record or the project, never a
+  URL. The host sends `context` when theme or language changes and `suspended` when the
+  contribution is revoked, its version changes or the session changes. Both sandbox layers
+  and the content security policy of the plugin frame are unchanged, and a plugin still never
+  receives a session or a token. Protocol 1 frames keep their previous rules.
+- **Project layout and personal preferences for protocol 3.** Project administrators enable,
+  disable and position each contribution; the layout is stored per project, plugin key and
+  contribution, so it carries across upgrades and rollbacks between versions of the same
+  plugin. Each member can hide, collapse into a "More" menu or reorder contributions for
+  themselves (up to 256 preferences per project) from a preference menu at each location,
+  without affecting anyone else. Hiding is a display choice, not an access control.
+  **Configuration reset** (`POST .../plugin-packages/{key}/configuration/reset`,
+  administrators, only while the plugin is disabled) deletes the project layout and every
+  member's preferences for that key.
+- **Creator support for protocol 3.** The plugin Creator picks a template from a registry. The
+  new UI view template builds a `ui` package for any of the four locations; the order-amount
+  template still produces a protocol 2 package. Protocol 3 versions can be previewed with
+  sample data, saved to the personal library, requested for and admitted to projects, and are
+  shown in the library, project settings and history.
+- **Webhook receiver: AI task completion callback.** The worker marks an AI task `processing`
+  when it delivers it, and nothing ended that state. With the new `[ai_task_callback]` section
+  (disabled by default; per-agent `[agents.ai_task_callback]` overrides) the agent that ran a
+  worker AI task calls `POST /api/v1/ai/callbacks/task/{id}/complete` after a successful run
+  and `.../fail` otherwise, using the bot token; refusals are not retried, transport errors and
+  server errors are retried with a doubling delay. With the callback enabled, a worker AI task
+  that no agent matches is failed at once with a message naming the bot, using the token of
+  that bot (see **Webhook receiver: one callback token per bot**). See
+  `apps/webhook/README.md` and `config/sylvode-webhook.example.toml`.
+- **Webhook receiver: one callback token per bot.** A bot token can end only the tasks of its
+  own bot, so a receiver serving several bots needs several tokens. `[[ai_task_callback.bots]]`
+  (`bot_id`, `token`, optional `surface`) gives a bot its token, used for its tasks that no
+  agent token covers and for its tasks no agent matches; the new `ai_task_callback.bot_id`
+  names the owner of the global token, which is then used only for that bot. A task whose bot
+  has no token is no longer reported with another bot's token (which the API refused with
+  403): it is logged once at warn level and answered `"ai_task_callback": "no_token"`.
+  Callbacks now name their attempt (`?attempt=N`), the fail callback of a task the receiver
+  did not run sends `"retry": false`, and a matched agent that cannot start (safe mode,
+  `cli_enabled = false`, an incomplete agent section) is answered `refused` instead of
+  `dispatched`.
+- **Worker: processing timeout for AI tasks.** A delivered AI task that no callback ends within
+  the new `[ai_tasks] processing_timeout_secs` (default 3600, range 60 to 604800) is re-queued
+  while attempts remain and failed after the last one, with an error message naming the timeout
+  and the attempt. The sweep runs on every worker tick, claims rows with `FOR UPDATE SKIP
+  LOCKED` and is safe with several workers.
+- **AI task callbacks: attempt guard and `retry`.** `POST /api/v1/ai/callbacks/task/{id}/complete`
+  and `.../fail` accept an optional `?attempt=N`; with it, the call is accepted only while that
+  attempt is `processing` and refused with code 400 otherwise. `fail` accepts `"retry": false`
+  to fail the task at once instead of scheduling a retry. Who may call them is unchanged: the
+  task's own AI participant or a system administrator.
+- **Webhook signing secrets can be rotated.** The new
+  `POST /api/v1/workspaces/{id}/webhooks/{webhook_id}/rotate-secret` (workspace admin or owner)
+  replaces a webhook's signing secret with a generated one and returns it once. The web client
+  has a matching `webhooksApi.rotateSecret`.
+
+### Changed
+
+- **Forms record list: opens as a table, simpler views, read-only record panel.** Every form
+  now has a built-in **All records** table, and a form opens with it unless the URL names a
+  view (`?view=`), the user chose another view before (remembered per user and form on this
+  device), or an admin set a default view; template-created views no longer decide the landing
+  view. The "Saved views" panel is replaced by a view bar: a view switcher, quick **Filter**,
+  **Sort** and **Fields** controls and sortable column headers that change the list
+  immediately and are kept for the user without saving, a **Modified** state with **Reset**,
+  and **Save view…**, which asks only for a name (and, for form designers, whether everyone or
+  only the user sees it; "Only me" is the default). Renaming, sharing, setting the default,
+  updating and deleting (with a confirmation) live in the view's menu; the per-type parameters
+  moved to a **Layout settings** sheet that shows only the controls of the current view type.
+  Clicking a row (or Enter on it) opens the record read-only in a side panel beside the list:
+  fields follow the detail layout and are rendered by type (formatted numbers, amounts and
+  dates, option badges, members, links, image and signature previews, attachments with name and
+  size, relation chips, rich text as plain text, never HTML), with previous / next, copy,
+  **Edit** (opens the existing editor), **Open full page**, and plugin panels in a collapsed
+  **Apps** section that is mounted only when expanded. The panel docks beside the list on wide
+  screens, floats over it on medium widths and is a modal sheet on phones; `?record=` reflects
+  the open record, Back closes it, the arrow keys move between records without adding history
+  entries, and Esc returns focus to the row. Row edit and delete buttons are shown only to users
+  who may use them. Links, child records and comments are edited from the panel's menu
+  (**Links and child records…**).
+- **Personal views no longer need form design permission.** Saving, renaming, updating and
+  deleting a view that only its creator can see now needs only permission to view the form's
+  records; creating or changing a shared view, or setting the default view, still needs
+  `form.design`. A private view is listed, readable and usable as a `view_id` only by its
+  creator (form admins and bots no longer see other people's private views), cannot be the
+  default view, and can be made private only by its creator. Duplicating a form copies the
+  caller's own private views but not other people's, a personal view no longer blocks removing
+  a field it uses, and removing a member from a workspace archives their private views.
+
+- **Webhook receiver: now part of this repository.** The receiver (crate `sylvode-webhook`,
+  executables `sylvode-webhook` and the legacy `openpr-webhook`, formerly OpenPR Webhook) is
+  imported with its history as `apps/webhook` and built as a workspace member, with its own
+  path-filtered CI job on Linux and macOS. **Its version now follows Sylvode**:
+  `sylvode-webhook --version` reports the workspace version, and the compose `webhook`
+  service builds its image from `apps/webhook/Dockerfile` when no image of that name is
+  present. The standalone 0.3.x line ends here: the last standalone version, 0.3.53, was never
+  released, and the last published standalone release is 0.3.3
+  (`ghcr.io/openprx/openpr-webhook`). The standalone history is frozen in
+  `apps/webhook/CHANGELOG.md`, and the standalone release workflows were removed.
+- **Webhook receiver: CLI executors no longer bypass their permission checks by default.**
+  `claude-code` always ran with `--permission-mode bypassPermissions` and `codex` with
+  `--dangerously-bypass-approvals-and-sandbox`, with no way to restrict tools. Permissions are
+  now set per agent in `[agents.cli]`: claude-code `permission_mode`, `allowed_tools`,
+  `disallowed_tools` and `strict_mcp_config`; codex `sandbox`. The defaults are claude-code
+  `--permission-mode dontAsk` with `--allowedTools mcp__<server>` for every server named in
+  `mcp_config_path` and `--strict-mcp-config`, and codex `--sandbox read-only`: an agent can
+  use its MCP tools and read its working directory, but cannot run shell commands or edit
+  files unless configured to. `opencode` is unchanged and accepts none of these keys. Turning
+  the checks off needs `dangerously_bypass_permissions = true` (with
+  `permission_mode = "bypassPermissions"` for claude-code; alone or with
+  `sandbox = "danger-full-access"` for codex) and logs a warning at start-up. An unknown mode,
+  a key of another executor, or a bypass without the flag refuses start-up, and start-up logs
+  the settings of every `cli` agent. See "Executor permissions" in `apps/webhook/README.md`.
+- **Webhook receiver: a route that sets `bot_ids` or `bot_names` matches only those bots.** An
+  unset list used to count as a match, so a route with only `bot_ids = ["bot-1"]` (or only
+  `bot_names`) accepted tasks for every bot. Now a configured list must contain the task's bot;
+  an omitted or empty list restricts nothing; when both lists are set, either one is enough
+  (unchanged). A task that no route matches any more is answered `no_agent`.
+- **Webhook receiver: Unix only.** The receiver relies on process groups and signals. On a
+  non-Unix target the library is empty and both executables print
+  `sylvode-webhook is not supported on this platform` and exit 1, so `cargo build --workspace`
+  still succeeds there; no Windows build of the receiver is shipped.
+- **One assignment or mention of a bot is one bot task.** Creating an issue assigned to a bot
+  ran the bot's agent three times (the `issue.created` and `issue.assigned` webhook deliveries
+  with `bot_context`, and the worker `issue_assigned` AI task); assigning an existing issue
+  ran it twice, and so did a mention (`comment.created` with `bot_context` and the
+  `comment_requested` task). An assignment or mention of a bot now queues only the worker AI
+  task, and every webhook delivery of the same request reaches that bot without
+  `bot_context`, as a plain notification. Other activity on a bot's issue still reaches it with
+  `bot_context`. Reassigning an issue back to a bot it was assigned to before now queues a new
+  task instead of being dropped as a duplicate of the first one. See "Bot tasks" in
+  `README.md`.
+- **Token bots are ordinary bots.** `POST /api/v1/workspaces/{id}/bots` created the user behind
+  an `opr_` token with `entity_type = 'bot_mcp'`, while assignment to a bot, a webhook's
+  `bot_user_id`, AI participants, bot mentions, bot context on webhook deliveries and AI
+  authorship in governance all require `entity_type = 'bot'`. There is now one automation
+  identity type: the bots API creates `entity_type = 'bot'` with `agent_type = 'mcp'`, and
+  migration `0105` moves every existing `bot_mcp` user to `bot` (agent type, membership, tokens
+  and history unchanged; every issued token keeps working). Being a bot grants nothing by
+  itself: a token's permissions are still decided by the token, and an AI task can still only
+  be completed or failed by its own participant or a system administrator.
+- **Project resource kinds are reduced to `directory` and `custom`.** The retired kinds
+  (`repo`, `document_library`, `crm_account`, `erp_order`, `equipment`, `site`) are rejected on
+  create and update by the API and the MCP tools. Migration `0104` converts existing `repo`
+  rows to `directory` and every other retired kind to `custom`, keeping the original kind in
+  the new column `project_resources.legacy_kind`, and remaps the suggested resources in project
+  types, scenario templates and projects the same way, dropping entries that become exact
+  duplicates (for example a `repo` and a `directory` suggestion that are otherwise equal).
+- **PostgreSQL 18 is the supported database version.** CI, the benchmark workflow, the compose
+  file, the restore drill and the documentation use `postgres:18`; older major versions are no
+  longer supported. The compose data volume is now mounted at `/var/lib/postgresql` instead of
+  `/var/lib/postgresql/data`, because the 18 image keeps its data directory at
+  `/var/lib/postgresql/18/docker`. Backups and restores need the PostgreSQL 18 client tools.
+- **A protocol 2 manifest that does not parse** is now refused with the typed reason
+  `manifest_malformed` instead of an untyped error. Install and library save dispatch on
+  `schema_version`; an unknown value is `manifest_protocol_unsupported`. The plugin catalog
+  reports `extension_supported`, binding history entries carry `reason`, and invocation log
+  entries carry `contribution_id` (`null` for protocol 1 and 2).
+- **Flow write-path performance.** The isolated-apply worker's CPU window spends most of its
+  time walking every editor block. The editor-model floor is now cached per document state and
+  computed from only what it needs, placements are looked up through a hash index instead of a
+  linear scan per block (which was quadratic on structured pages), each placement's block id is
+  read once, and the semantic snapshot reads the editor document in a single pass instead of
+  two. Output is unchanged: a pinned digest corpus of reader output and typed errors guards it,
+  and walk counters assert the number of document walks per write and per rebuild. This
+  restores headroom under the 50 ms `decode_apply_cpu_ms_max` limit for flat pages; it does not
+  establish that structured (model 4 and 5) pages near 5,000 blocks stay within that limit.
+  `cargo run --release -p collab-core --example flow_import_window` measures the window locally
+  for 1,400 and 5,000 block pages.
+- **The plugin package concurrency budget** (four concurrent runs per process) is now covered by
+  a unit test.
+- **Flow: personal Flow and the shipped installation-wide Flow capabilities are on by default.** Migration `0106_flow_capabilities_default_on.sql` defaults `personal_provisioning`, `personal_writes`, `external_mounts`, `personal_forms_conversion`, `block_transfers_enabled`, `portable_page_packages_enabled` and `portable_graph_packages_enabled` on and raises `minimum_reader_version` to 5, so a fresh installation needs no manual SQL before users can open a personal Flow space and write Pages. `scope_native_legacy`, `personal_package_imports`, `personal_scope_package_exports` and `cross_workspace_forms_conversion` stay off. See `docs/runbooks/flow-runtime-capabilities.md`.
+
+### Fixed
+
+- **A worker AI task no longer stays `processing` for good.** When one webhook receiver served
+  several bots, a task for a bot without an agent was answered `no_agent` and then failed with
+  the receiver's global token, which belonged to another bot; the API refused it (403) and
+  nothing else ever ended the task. The worker now fails a task the receiver declines in its
+  answer (`no_agent`, `ignored`, `refused`, or an HTTP 4xx other than 408, 409, 425 and 429) at
+  once, with an error message quoting the answer, and takes back every task left `processing`
+  past the processing timeout (see **Added**). Each such end writes the `retried` or `failed`
+  task event and business event with a `reason` (`receiver_declined`, `delivery_failed`,
+  `processing_timeout`), and a failed task sends `ai.task_failed`, which tasks the worker failed
+  after their last delivery attempt did not send before.
+- **AI task callbacks no longer race.** `complete` updated the task without checking that it was
+  still `processing`, so a complete and a fail arriving together, or a complete racing a worker
+  retry, could overwrite one another. Both callbacks are now a compare-and-set on the status and
+  attempt they checked, and the loser is refused with code 400 instead of overwriting the
+  winner.
+
+- **Spurious `stale_frontier` rejections in Flow.** Loro serializes a version vector in hash-map
+  order, so the same causal version could encode to different bytes depending on whether a
+  document was imported incrementally or rebuilt from a snapshot and its tail; history restore
+  hit this. Frontiers are now encoded canonically (peer-sorted), and every API and
+  isolated-apply worker check compares frontiers as version vectors, so frontiers already
+  stored in the old byte order keep matching. **Client-visible:** an expected frontier that
+  does not decode is now `invalid_update` (400) instead of `stale_frontier` (409); Page
+  transfer prepare answers it with `policy_rejected` and `details.reason =
+  "transfer_invalid_frontier"` instead of `transfer_source_changed` or
+  `transfer_target_changed`; a collaboration reconnect that names such a frontier falls back to
+  a full snapshot.
+- **A generated webhook secret can be retrieved.** `POST /api/v1/workspaces/{id}/webhooks`
+  generates a signing secret when none is supplied, but no response returned it, so a receiver
+  could never verify deliveries signed with it. The create response now carries `secret`, once;
+  list, get and update responses and the webhook's business events still never contain it. The
+  web client types follow (`WebhookWithSecret`), and the edit form no longer pre-fills a secret
+  it could never receive.
+- **A bot no longer triggers itself.** A bot's own action (a state change, an edit, a comment,
+  assigning an issue to itself, completing its task) was delivered back to that bot with
+  `bot_context`, so an agent that set its issue to done ran again. Such deliveries now go out
+  without `bot_context`, and a self-assignment queues no AI task. A person's or another bot's
+  change to the issue still reaches the assigned bot.
+- **A suspended plugin frame sees the `suspended` event.** The host posted the event and removed
+  the frame in the same update, so the plugin never observed it. A suspended frame now stops
+  being served at once, receives the event, stays mounted but inert for a fixed 300 ms grace
+  period and is then removed, also when its parent unmounts it. `host.navigate` now replies
+  before navigating and refuses other requests from the frame until the navigation settles.
+- **Plugin panels and drawers reopen after a quick Back.** Leaving a page and coming back within
+  the 300 ms grace period of a suspended frame left the record panel, the Forms toolbar drawer
+  and the Creator preview with a "suspended" notice instead of the frame; closing and reopening
+  one within the grace period had the same result. Each open now gets its own frame, and a frame
+  retired that way reopens with a fresh entry, unless the contribution was revoked or changed
+  meanwhile (then the usual notice shows) or the user had closed it. A pending apply
+  confirmation is dismissed and the panel reopens idle.
+- **Webhook receiver: macOS build.** The receiver no longer fails the build on macOS and other
+  non-Linux targets with a dead-code error (`Leader::ExitedUnreaped` is built only on Linux).
+  This failure also broke the standalone 0.3.53 release.
+- **A Page edit while a reader lease is missing is refused as such.** It is now refused with
+  `feature_disabled` (`scope_runtime_not_ready`) on every surface, as the runbook states, instead
+  of `server_draining`/`contention`. Other typed refusals raised while a content write is staged
+  (for example a policy refusal on a child reference) also reach the caller at once instead of
+  being retried and reported as contention.
+
+### Security
+
+- **wasmtime 50.0.2.** Upgraded wasmtime from 49.0.5 to 50.0.2 (Cranelift 0.137.2, wasm-tools
+  0.261), which clears RUSTSEC-2026-0566, RUSTSEC-2026-0567, RUSTSEC-2026-0568,
+  RUSTSEC-2026-0569, RUSTSEC-2026-0570, RUSTSEC-2026-0571, RUSTSEC-2026-0572 and
+  RUSTSEC-2026-0573. The plugin runtime keeps the same engine configuration and store limits,
+  and the guest-visible WebAssembly feature set is unchanged. The unused compilation cache stays
+  disabled; its zstd 0.13 chain now has patched releases, so that is no longer a security
+  constraint. Wasmtime 50 also makes fuel accounting stricter in a few corner cases, so a
+  plugin that runs close to its `runtime.fuel` budget can report slightly more fuel consumed.
+- **Webhook receiver executors run restricted by default.** See **Changed**: the claude-code
+  and codex executors no longer turn off their own permission checks unless a configuration
+  asks for it explicitly.
+
+### Upgrade notes
+
+- **Apply the database migrations `0103`, `0104`, `0105` and `0106`.** `0103` adds the protocol 3
+  layout and preference tables and the `contribution_id` column of the invocation log; `0104`
+  converts project resource kinds; `0105` moves token bots to `bot`. All three are re-runnable
+  and no-ops where nothing matches.
+- **PostgreSQL 18.** Upgrade the database server to PostgreSQL 18 before deploying. A major
+  version upgrade needs `pg_dump`/restore or `pg_upgrade`; PostgreSQL does not open a data
+  directory of an older major version. Compose users with an existing `pgdata` volume: that
+  volume holds a PostgreSQL 16 data directory at its root, which the new mount point and image
+  do not use, so starting the new compose file against it does not bring your data up. Dump
+  the database with the old compose file first, then restore it into a new volume (or a
+  renamed one) under the new file. Use the PostgreSQL 18 `pg_dump` and `psql` for backups and
+  restores from now on.
+- **Protocol 3 plugins are off by default.** Set `SV_FORM_PLUGIN_EXTENSIONS_ENABLED=1`
+  (together with `SV_FORM_PLUGIN_PACKAGES_ENABLED=1`) to enable them. Setting it back to `0`
+  hides every protocol 3 contribution and refuses its data and invoke requests without losing
+  layouts or preferences; administrators can still disable protocol 3 bindings.
+- **Rolling back to 0.2.539.** If any protocol 3 package has been installed or saved to a
+  personal library, start the older API with `SV_FORM_PLUGIN_PACKAGES_ENABLED=0`: its web pages
+  cannot display a protocol 3 manifest. Running 0.2.539 against a database migrated by `0104`
+  has not been verified; an older API that tries to create a resource with a retired kind gets
+  a database error from the tightened constraint instead of a validation error.
+- **Project resource kinds.** Clients and scripts that create or update resources with `repo`,
+  `document_library`, `crm_account`, `erp_order`, `equipment` or `site` must use `directory` or
+  `custom`. Existing rows are converted by `0104`, so code that filtered on a retired kind
+  must filter on the new kind; the original kind is kept only in the database column
+  `project_resources.legacy_kind`, which the API does not return.
+- **Token bots are bots.** After `0105` existing token bots behave like every other bot:
+  proposals, votes, proposal comments, vetoes and appeals they make are recorded as AI
+  (`author_type = ai`) instead of human, and an AI vote or proposal comment by such a bot needs
+  the AI participant permission for the domain. Grant that permission to token bots that take
+  part in governance. Their mentions queue AI tasks, and they appear in the bot pickers of the
+  web UI.
+- **Bot assignments arrive as worker AI tasks only.** The assignment and the mention of a bot
+  never arrive as a webhook delivery with `bot_context.trigger_reason` `created`, `assigned`
+  (for `issue.assigned`) or `mentioned` any more. A `sylvode-webhook` route that relied on
+  those, for example `trigger_kinds = ["created"]` or `events = ["issue.assigned"]`, no longer
+  matches the assignment: match the worker AI task instead (`trigger_kinds = ["assigned",
+  "mention"]`, no `events` list), and make sure the worker is running.
+- **Webhook receiver executor permissions.** A `claude-code` or `codex` agent that edits code or
+  runs commands stops being able to do so after the upgrade. Give it `allowed_tools` (for
+  example `Edit(...)`, `Bash(cargo test *)`) or `permission_mode = "acceptEdits"`, or codex
+  `sandbox = "workspace-write"`. To keep the old unrestricted behaviour, set
+  `dangerously_bypass_permissions = true` with `permission_mode = "bypassPermissions"`
+  (claude-code) or on its own (codex).
+- **Webhook receiver route matching.** A route with only a `bot_ids` or only a `bot_names` list
+  that served as a catch-all for every bot now matches only the listed bots; other bots' tasks
+  are answered `no_agent` (and, with the AI task callback enabled, failed). To keep a
+  catch-all, remove `bot_ids` / `bot_names` from that route, keeping `bot_agent_types` or other
+  lists if you want it narrower.
+- **Webhook receiver version numbers.** The receiver now carries the Sylvode version, starting
+  with 0.5.0, which continues above the standalone 0.3.x line (last published standalone
+  release 0.3.3; 0.3.53 was never released). When upgrading from 0.3.3, also read "Upgrading
+  from 0.3.3" in `apps/webhook/CHANGELOG.md`, which lists the configurations that are now
+  refused at start-up.
+- **Flow capabilities are switched on once.** Upgrading an existing database switches the capabilities listed above on once, including on installations that had them off; values that were already on and a higher `minimum_reader_version` are kept. To keep any of them off, switch it off right after the migration, before opening traffic (personal Flow: `UPDATE flow_runtime_capabilities SET external_mounts=false, personal_writes=false, personal_provisioning=false, updated_at=now() WHERE singleton;`). The choice survives restarts and migration replays; do not delete the `flow_capabilities_default_on` row in `flow_runtime_capability_rollouts`.
+- **Worker AI tasks: new end rules.** After the upgrade a task the receiver answers `no_agent`,
+  `ignored`, `refused` or with an HTTP 4xx (other than 408, 409, 425, 429) is failed on the
+  first delivery instead of being retried until its attempts run out; fix the receiver
+  configuration and assign the task again. Tasks that are `processing` when the new worker
+  starts, including tasks stuck by the defect above, are swept as soon as they are older than
+  `[ai_tasks] processing_timeout_secs`: re-queued (and delivered again) while attempts remain,
+  failed otherwise. To fail old stuck tasks instead of re-delivering them, call `.../fail` with
+  `"retry": false` for them after the new API is up and before the new worker starts. Set the timeout well above the longest run of any receiver's agents,
+  including the wait for a free `cli_max_concurrency` slot, or a slow run is delivered twice.
+  No database migration is needed.
+- **Webhook receiver serving several bots.** Set `ai_task_callback.bot_id` to the bot that owns
+  `ai_task_callback.token` and add a `[[ai_task_callback.bots]]` entry for each other bot;
+  start-up logs a warning while `bot_id` is not set. Integrations that read the `/webhook`
+  answer should expect `refused` (agent not started) besides `dispatched`, and the new
+  `reason` and `ai_task_callback` fields. Business events of attempts the worker ends now carry
+  `source.type = "worker"` and `event_payload.reason`; their `metadata` no longer carries
+  `worker_event`.
+- **Run the worker alongside the API.** With the default `minimum_reader_version` of 5, every
+  Page creation and every Page edit (in workspaces and personal spaces, including plain Pages
+  created through the REST v1 API, MCP or the CLI), every personal-space write, block transfers
+  and portable packages are refused with `scope_runtime_not_ready` until the API and the worker
+  (which registers both the `worker` and the `maintenance` lease) hold live reader-5 leases. An
+  installation that runs the API without the worker can read Flow content but cannot write
+  Pages; a worker that is down for more than 30 seconds stops Page writes until it is back.
+
 ## [0.2.539] - 2026-11-18
 
 ### Added
@@ -1387,7 +1748,8 @@ First public release of the MCP server binaries.
   HTTP, stdio (including Content-Length framing) and SSE.
 - Workspace bot tokens (`opr_` prefix) and their management endpoints.
 
-[Unreleased]: https://github.com/openprx/sylvode/compare/v0.2.539...HEAD
+[Unreleased]: https://github.com/openprx/sylvode/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/openprx/sylvode/compare/v0.2.539...v0.5.0
 [0.2.539]: https://github.com/openprx/sylvode/compare/v0.2.21...v0.2.539
 [0.2.21]: https://github.com/openprx/sylvode/compare/v0.2.8...v0.2.21
 [0.2.8]: https://github.com/openprx/sylvode/compare/v0.2.7...v0.2.8

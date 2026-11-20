@@ -80,6 +80,16 @@ pub const DEFAULT_STORAGE_DIR: &str = "./uploads";
 /// Days bot operation records are retained unless `[audit]` overrides it.
 pub const DEFAULT_OPERATION_LOG_RETENTION_DAYS: u32 = 30;
 
+/// Seconds an AI task may stay `processing` before the worker ends that attempt.
+///
+/// Applies unless `[ai_tasks]` overrides it. Four times the receiver's default agent run limit
+/// (`sylvode-webhook` `cli.timeout_secs = 900`), so a run that is merely slow, or waits for a free
+/// executor slot, is not delivered a second time.
+pub const DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS: u64 = 3_600;
+
+/// Accepted range of `ai_tasks.processing_timeout_secs`: one minute to seven days.
+pub const AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS: std::ops::RangeInclusive<u64> = 60..=604_800;
+
 /// `event_dispatch` expansion-failure retry ceiling assumed unless `[flow]` overrides it.
 ///
 /// `limits-v1.md`'s own `dispatch_max_attempts` rationale ("与 `delivery_max_attempts` 同量级即可")
@@ -118,6 +128,7 @@ pub struct OpenPrConfig {
     pub logging: LoggingConfig,
     pub storage: StorageConfig,
     pub audit: AuditConfig,
+    pub ai_tasks: AiTasksConfig,
     pub migrations: MigrationsConfig,
     pub outbound: OutboundConfig,
     pub mcp: McpConfig,
@@ -476,6 +487,24 @@ impl Default for AuditConfig {
     fn default() -> Self {
         Self {
             operation_log_retention_days: DEFAULT_OPERATION_LOG_RETENTION_DAYS,
+        }
+    }
+}
+
+/// `[ai_tasks]` — the worker's handling of AI tasks it has delivered.
+///
+/// `processing_timeout_secs` bounds how long a delivered task may stay `processing` without the
+/// receiver completing or failing it. After that the worker ends the attempt: the task goes back
+/// to `pending` while attempts remain and is failed otherwise.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AiTasksConfig {
+    pub processing_timeout_secs: u64,
+}
+
+impl Default for AiTasksConfig {
+    fn default() -> Self {
+        Self {
+            processing_timeout_secs: DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS,
         }
     }
 }

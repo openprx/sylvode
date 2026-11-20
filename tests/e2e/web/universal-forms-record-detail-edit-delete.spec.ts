@@ -82,13 +82,21 @@ test.describe('Universal forms / Code Task detail edit delete', () => {
 				const row = page.getByRole('row', { name: new RegExp(record.repo) });
 				await expect(row).toBeVisible();
 
-				await row.getByRole('button', { name: record.title }).click();
+				// The title opens the read-only side panel; Edit there opens the editor.
+				await row.getByRole('link', { name: record.title }).click();
+				const panel = page.locator(`[data-record-panel="${record.id}"]`);
+				await expect(panel).toBeVisible();
+				await expect(panel.locator('input, textarea, select')).toHaveCount(0);
+				await panel.locator('[data-record-panel-edit]').click();
 				await expect(page.locator('[data-record-editor-drawer]')).toBeVisible();
 				await expect(page.getByRole('heading', { name: '编辑记录' })).toBeVisible();
 				await page.getByRole('textbox', { name: 'Verification' }).fill(updatedVerification);
 				await page.getByRole('button', { name: '保存记录' }).click();
 				await expect(page.getByText('记录已更新')).toBeVisible();
-				await expect(page.getByText(updatedVerification)).toBeVisible();
+				await expect(page.getByText(updatedVerification).first()).toBeVisible();
+				await expect(panel).toContainText(updatedVerification);
+				await panel.locator('[data-record-panel-close]').click();
+				await expect(panel).toHaveCount(0);
 
 			const updatedRow = page.getByRole('row', { name: new RegExp(record.repo) });
 			await updatedRow.getByRole('button', { name: '删除记录' }).click();

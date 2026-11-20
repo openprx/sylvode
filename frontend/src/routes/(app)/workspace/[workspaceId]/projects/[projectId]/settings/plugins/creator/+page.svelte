@@ -10,5 +10,6 @@
 		projectId: page.params.projectId ?? ''
 	}}
 	initialSlot={page.url.searchParams.get('slot')}
-	formKey={page.url.searchParams.get('form') ?? 'order_line'}
+	formKey={page.url.searchParams.get('form')}
+	initialTemplateId={page.url.searchParams.get('template')}
 />

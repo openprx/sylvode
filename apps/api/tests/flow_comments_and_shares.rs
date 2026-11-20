@@ -22,6 +22,7 @@ use axum::body::to_bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use collab_core::{CollabEngine, LoroCollabEngine, NodeId, NodeKind, Operation};
 use platform::app::{AppState, FlowPermissionCacheSlot};
 use platform::auth::{JwtClaims, TokenType};
 use platform::config::{AppConfig, Secret};
@@ -245,6 +246,51 @@ async fn comments_and_public_links_follow_object_permissions() {
         vec![child_id.into(), vec![0_u8].into(), "child secret body".into()],
     )
     .await;
+    // Block anchors (reader 5, the shipped floor) build their baseline from the Page's collab
+    // document, and a public share renders the document when there is one. The fixture therefore
+    // gives each Page the document `create_object` would write, carrying the title and text that
+    // the projections hold.
+    for (object_id, title, text) in [
+        (
+            page_id,
+            "Parent <b>title</b>",
+            "Hello <script>alert(1)</script> &amp; world",
+        ),
+        (child_id, "Child", "child secret body"),
+    ] {
+        let mut engine = LoroCollabEngine::new_empty(1);
+        engine.set_title(title).expect("fixture title is written");
+        let block = NodeId::from(format!("{object_id}-body").as_str());
+        engine
+            .apply_operation(&Operation::CreateNode {
+                id: block.clone(),
+                parent: None,
+                index: 0,
+                kind: NodeKind::Block,
+            })
+            .expect("fixture block is created");
+        engine
+            .apply_operation(&Operation::InsertText {
+                id: block,
+                index: 0,
+                text: text.to_string(),
+            })
+            .expect("fixture text is written");
+        let snapshot = engine.export_snapshot().expect("fixture snapshot exports");
+        let frontier = engine.frontier().as_bytes().to_vec();
+        exec(
+            db,
+            "INSERT INTO collab_documents (id, object_id, format_version, snapshot, snapshot_frontier, head_frontier) \
+             VALUES ($1, $2, 'loro-1', $3, $4, $4)",
+            vec![
+                Uuid::new_v4().into(),
+                object_id.into(),
+                snapshot.into(),
+                frontier.into(),
+            ],
+        )
+        .await;
+    }
     for (user, level) in [(commenter, "comment"), (editor, "edit"), (viewer, "view")] {
         exec(
             db,

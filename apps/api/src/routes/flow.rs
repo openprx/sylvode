@@ -2213,6 +2213,8 @@ mod flow_database_tests {
 
         migrate(&db).await;
 
+        // A scratch database models a running api and worker.
+        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 
@@ -6720,9 +6722,9 @@ mod flow_database_tests {
     /// `POST /api/v1/flow/objects/{object_id}/commands`: all eight v0.4 command types, each
     /// exercised at least once against a real database and the real shared write path
     /// (`flow::command::execute_content_command` calls the identical `write::accept_update`
-    /// `flow::collab::session` uses), plus two independent error paths — an `expected_frontier`
-    /// mismatch (`stale_frontier`) and an unregistered `command.type` (`invalid_update`) — both
-    /// surfaced through the envelope `code`, never the HTTP transport status.
+    /// `flow::collab::session` uses), plus three independent error paths — a well-formed stale
+    /// `expected_frontier` (`stale_frontier`), an undecodable `expected_frontier` and an
+    /// unregistered `command.type` (both `invalid_update`) — all surfaced through the envelope `code`, never the HTTP transport status.
     #[tokio::test]
     #[allow(clippy::items_after_statements)]
     async fn commands_endpoint_covers_all_seven_v04_types_and_two_error_paths() {
@@ -6802,6 +6804,12 @@ mod flow_database_tests {
         assert_eq!(body["code"], 0, "{body}");
         assert_eq!(body["data"]["object"]["title"], "Renamed");
         assert_eq!(body["data"]["accepted_seq"], 1);
+        // The frontier a real client holds after this step; it is well formed and, once the head
+        // moves on, genuinely stale.
+        let stale_frontier = body["data"]["head_frontier"]
+            .as_str()
+            .expect("an accepted change carries head_frontier")
+            .to_string();
 
         // 2. insert_block
         let body = run_command(
@@ -6867,16 +6875,15 @@ mod flow_database_tests {
         assert_eq!(body["data"]["object"]["lifecycle_status"], "active");
         assert!(body["data"]["object"]["archived_at"].is_null(), "{body}");
 
-        // ---- error path 1: `expected_frontier` does not match the real current frontier ----
+        // ---- error path 1: `expected_frontier` is a well-formed frontier of an older head ----
         // `stale_frontier` -> `ApiError::Conflict` -> envelope `code = 409`.
-        let bogus_frontier = base64::engine::general_purpose::STANDARD.encode(b"not-the-real-frontier");
         let body = run_command(
             &state,
             &claims,
             object_id,
             "set_title",
             json!({"title": "Must not apply"}),
-            Some(bogus_frontier),
+            Some(stale_frontier),
         )
         .await;
         assert_eq!(
@@ -6901,6 +6908,24 @@ mod flow_database_tests {
             get_after_stale_body["data"]["title"], "Must not apply",
             "the rejected write must not have been applied: {get_after_stale_body}"
         );
+
+        // ---- error path 1b: `expected_frontier` is not a frontier at all ----
+        // `invalid_update` -> envelope `code = 400`, not `stale_frontier`: no rebase can fix it.
+        let garbage_frontier = base64::engine::general_purpose::STANDARD.encode(b"not-the-real-frontier");
+        let body = run_command(
+            &state,
+            &claims,
+            object_id,
+            "set_title",
+            json!({"title": "Must not apply either"}),
+            Some(garbage_frontier),
+        )
+        .await;
+        assert_eq!(
+            body["code"], 400,
+            "an undecodable expected_frontier must surface as body code 400: {body}"
+        );
+        assert_eq!(body["error_code"], "invalid_update", "{body}");
 
         // ---- error path 2: an unregistered command.type ----
         // `invalid_update` -> `ApiError::BadRequest` -> envelope `code = 400`.

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 pub fn code_resources_list_tool() -> ToolDefinition {
     ToolDefinition {
         name: "code.resources.list".to_string(),
-        description: "List code-oriented project resources such as repositories and directories".to_string(),
+        description: "List code-oriented project resources (directory kind)".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -294,7 +294,7 @@ fn governed_result_schema(title_description: &str, summary_description: &str) ->
 
 fn filter_code_resources(value: Value) -> Value {
     map_resources(value, |resource| {
-        matches!(resource.get("kind").and_then(Value::as_str), Some("repo" | "directory"))
+        matches!(resource.get("kind").and_then(Value::as_str), Some("directory"))
     })
 }
 
@@ -302,7 +302,7 @@ fn find_directory_resource(value: &Value, resource_id: Option<&str>, name: Optio
     resource_items(value)
         .into_iter()
         .find(|resource| {
-            let is_directory = matches!(resource.get("kind").and_then(Value::as_str), Some("directory" | "repo"));
+            let is_directory = matches!(resource.get("kind").and_then(Value::as_str), Some("directory"));
             let id_matches = resource_id.is_none_or(|id| resource.get("id").and_then(Value::as_str) == Some(id));
             let name_matches =
                 name.is_none_or(|expected| resource.get("name").and_then(Value::as_str) == Some(expected));
@@ -458,13 +458,13 @@ mod tests {
     }
 
     #[test]
-    fn code_resource_filter_keeps_repo_and_directory_only() {
+    fn code_resource_filter_keeps_directory_only() {
         let filtered = filter_code_resources(json!({
             "data": {
                 "items": [
                     { "id": "1", "kind": "repo" },
                     { "id": "2", "kind": "directory" },
-                    { "id": "3", "kind": "equipment" }
+                    { "id": "3", "kind": "custom" }
                 ]
             }
         }));
@@ -476,7 +476,7 @@ mod tests {
                 .and_then(|items| items.as_array())
                 .expect("items")
                 .len(),
-            2
+            1
         );
     }
 
@@ -485,7 +485,7 @@ mod tests {
         let resources = json!({
             "data": [
                 { "id": "r1", "kind": "directory", "name": "src" },
-                { "id": "r2", "kind": "equipment", "name": "src" }
+                { "id": "r2", "kind": "custom", "name": "src" }
             ]
         });
 

@@ -894,11 +894,14 @@ fn reconstruct_and_verify(object: &ExportObjectRow, updates: &[ExportUpdateRow])
             "canonical update tail has a sequence gap during export",
         ));
     }
+    // Version-vector equality (a retained chain may mix legacy and canonical byte orders); an
+    // undecodable frontier never matches, so it surfaces as the typed `checksum_mismatch` below.
+    let same = |left: &[u8], right: &[u8]| matches!(LoroCollabEngine::frontiers_equivalent(left, right), Ok(true));
     let mut expected_seq = object.snapshot_seq.saturating_add(1);
     let mut retained_frontier = object.snapshot_frontier.as_slice();
     for update in updates {
         if update.seq != expected_seq
-            || update.before_frontier != retained_frontier
+            || !same(&update.before_frontier, retained_frontier)
             || sha256_hex(&update.bytes) != update.content_hash
             || update.bytes.len() > 65_536
         {
@@ -917,9 +920,9 @@ fn reconstruct_and_verify(object: &ExportObjectRow, updates: &[ExportUpdateRow])
         retained_frontier = &update.after_frontier;
         expected_seq = expected_seq.saturating_add(1);
     }
-    if retained_frontier != object.head_frontier
+    if !same(retained_frontier, &object.head_frontier)
         || object.projection_seq != object.head_seq
-        || object.projection_frontier != object.head_frontier
+        || !same(&object.projection_frontier, &object.head_frontier)
     {
         return Err(ApiError::checksum_mismatch(
             "canonical head and projection frontier disagree during export",
@@ -1534,6 +1537,8 @@ mod tests {
 
     async fn fixture(label: &str) -> Option<(crate::routes::context::tenant_fixture::Scratch, AppState, Uuid, Uuid)> {
         let scratch = scratch(label).await?;
+        // A scratch database models a running api and worker.
+        crate::flow::scope_runtime::fixture::register_running_readers(&scratch.db).await;
         let tenant = seed_tenant(&scratch.db, label).await;
         exec(
             &scratch.db,

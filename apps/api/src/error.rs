@@ -22,6 +22,11 @@ use crate::response::{ApiResponse, OperationResponseMeta};
 ///
 /// The distinction this type draws is **"can the underlying error change?"**, which is not the
 /// same question as "have I retried enough times?" — conflating those two was the defect.
+///
+/// Typed refusals decided by the staging logic itself (a missing reader lease, a policy refusal on
+/// a child reference) leave the loop the same way: the head is fixed under the row lock, so they
+/// repeat on every attempt. Only non-deterministic database errors, internal errors and
+/// `server_draining` keep the retry path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DbFailureClass {
     /// The data or the schema refuses this statement, and will go on refusing it: an integrity
@@ -849,6 +854,13 @@ impl ApiError {
     #[must_use]
     pub const fn is_database_failure(&self) -> bool {
         matches!(self, Self::Database(_))
+    }
+
+    /// Whether this error is the untyped internal failure. Lets typed call sites branch on it
+    /// without naming the legacy variant.
+    #[must_use]
+    pub const fn is_internal_failure(&self) -> bool {
+        matches!(self, Self::Internal)
     }
 
     pub fn unauthenticated(message: impl Into<String>) -> Self {

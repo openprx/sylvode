@@ -57,7 +57,8 @@ test.describe('Universal forms / human Code Task flow', () => {
 
 		await expect(page.getByRole('heading', { name: '记录列表' })).toBeVisible();
 		await expect(page.locator('#form-switcher')).toHaveValue(codeTaskFormId);
-		await expect(page.getByRole('button', { name: '保存视图' })).toBeVisible();
+		await expect(page.locator('[data-view-switcher]')).toContainText('全部记录');
+		await expect(page.getByRole('button', { name: '保存视图…' })).toBeVisible();
 		await page.getByRole('button', { name: '新增', exact: true }).click();
 		await expect(page.locator('[data-record-editor-drawer]')).toBeVisible();
 		await expect(page.getByRole('heading', { name: '新建记录' })).toBeVisible();
@@ -71,10 +72,11 @@ test.describe('Universal forms / human Code Task flow', () => {
 		await login(page);
 		await page.goto(formsPath());
 
-		await page.getByRole('button', { name: '保存视图' }).click();
-		const expandedTools = page.locator('[data-view-tools-expanded-panel]');
+		await page.locator('[data-view-menu-button]').click();
+		await page.getByRole('menuitem', { name: '布局设置…' }).click();
+		const expandedTools = page.locator('[data-layout-settings-sheet]');
 		await expect(expandedTools).toBeVisible();
-		await expect(page.getByText('视图设置')).toBeVisible();
+		await expect(expandedTools.getByText('布局设置 · 全部记录')).toBeVisible();
 		await expect(expandedTools.locator('[data-view-columns-disclosure]')).toBeVisible();
 		await expect(page.getByText('视图标识')).toBeHidden();
 		await expect(page.getByRole('button', { name: '导入记录' })).toHaveCount(0);

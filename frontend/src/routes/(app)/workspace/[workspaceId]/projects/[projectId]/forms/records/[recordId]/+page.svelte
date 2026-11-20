@@ -25,32 +25,27 @@
 		type FormChildRecord,
 		type FormField,
 		type FormPermissions,
-		type FormRecord,
 		type FormRecordComment,
 		type FormRecordDetail,
 		type FormRecordLink,
 		type UniversalForm
 	} from '#lib/api/forms.js';
 	import Button from '#lib/components/Button.svelte';
-	import OptionValueBadges from '#lib/components/forms/OptionValueBadges.svelte';
+	import FieldValue from '#lib/components/forms/FieldValue.svelte';
+	import {
+		buildDetailSections,
+		headerFields,
+		sectionFieldsForRecord,
+		type DetailSectionDensity
+	} from '#lib/forms/detail-layout.js';
+	import type { FieldDisplayContext } from '#lib/forms/field-display.js';
 	import { flowLineageView } from '#lib/forms/flow-lineage.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import { safeImageUrl, safeLinkUrl } from '#lib/utils/safe-url.js';
 	import { locale, t } from 'svelte-i18n';
 
-	type DetailLayoutSectionDensity = 'comfortable' | 'compact';
-	type DetailLayoutSection = {
-		key: string;
-		title: string;
-		description: string;
-		columns: 1 | 2 | 3;
-		density: DetailLayoutSectionDensity;
-		hideEmptyFields: boolean;
-		collapsible: boolean;
-		defaultCollapsed: boolean;
-		fields: FormField[];
-	};
+	type DetailLayoutSectionDensity = DetailSectionDensity;
 
 	type DetailPageWidgetKey = 'children' | 'links' | 'comments' | 'attachments' | 'events';
 	type DetailPageWidgetRegion = 'sidebar' | 'below';
@@ -107,9 +102,31 @@
 	const pageWidgetKeys = $derived(detailPageWidgetKeysFromLayout(form?.detail_layout));
 	const pageWidgetRegion = $derived(detailPageWidgetRegionFromLayout(form?.detail_layout));
 	const pageFieldColumns = $derived(detailPageFieldColumnsFromLayout(form?.detail_layout));
-	const detailHeaderSubtitleField = $derived(detailHeaderField('subtitle_field'));
-	const detailHeaderBadgeField = $derived(detailHeaderField('badge_field'));
-	const detailHighlightFields = $derived(detailHighlightFieldsFromLayout(form?.detail_layout));
+	const detailHeader = $derived(headerFields(form, fields));
+	const detailHeaderSubtitleField = $derived(detailHeader.subtitle);
+	const detailHeaderBadgeField = $derived(detailHeader.badge);
+	const detailHighlightFields = $derived(detailHeader.highlights);
+	const detailSections = $derived(
+		buildDetailSections(
+			form,
+			fields,
+			{ main: $t('forms.detailSectionMain'), other: $t('forms.detailSectionAdditional') },
+			pageFieldColumns
+		)
+	);
+	const fieldCtx = $derived<FieldDisplayContext>({
+		locale: $locale ?? 'en',
+		formKey: form?.key ?? '',
+		members: new Map(),
+		attachmentsByField: activeAttachments.reduce<Record<string, FormAttachment[]>>(
+			(groups, item) => {
+				(groups[item.field_key] ??= []).push(item);
+				return groups;
+			},
+			{}
+		),
+		signedUrls: attachmentSignedUrls
+	});
 	const memberRecordScope = $derived(
 		permissions?.effective.record_scope === 'owned' ? 'owned' : 'all'
 	);
@@ -173,20 +190,6 @@
 		return columns === 1 ? 1 : 2;
 	}
 
-	function detailLayoutSectionColumns(value: unknown, fallback: 1 | 2 | 3 = 2): 1 | 2 | 3 {
-		const numericValue =
-			typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-		return numericValue === 1 || numericValue === 2 || numericValue === 3 ? numericValue : fallback;
-	}
-
-	function detailLayoutSectionDescription(value: unknown): string {
-		return typeof value === 'string' ? value.trim() : '';
-	}
-
-	function detailLayoutSectionDensity(value: unknown): DetailLayoutSectionDensity {
-		return value === 'compact' ? 'compact' : 'comfortable';
-	}
-
 	function keepDetailSectionOpen(event: Event, collapsible: boolean) {
 		if (collapsible) return;
 		const details = event.currentTarget;
@@ -211,30 +214,6 @@
 	function detailLayoutSectionFieldClass(field: FormField, columns: 1 | 2 | 3): string {
 		if (fieldType(field) !== 'child_table' || columns === 1) return 'min-w-0';
 		return columns === 3 ? 'min-w-0 md:col-span-2 xl:col-span-3' : 'min-w-0 md:col-span-2';
-	}
-
-	function recordValueIsEmpty(value: unknown): boolean {
-		if (value === null || value === undefined) return true;
-		if (typeof value === 'string') return value.trim().length === 0;
-		if (Array.isArray(value)) return value.length === 0 || value.every(recordValueIsEmpty);
-		if (isRecord(value)) {
-			if (typeof value.display === 'string') return value.display.trim().length === 0;
-			if (typeof value.name === 'string') return value.name.trim().length === 0;
-			if (typeof value.email === 'string') return value.email.trim().length === 0;
-			if (typeof value.title === 'string') return value.title.trim().length === 0;
-			if (typeof value.decimal === 'string') return value.decimal.trim().length === 0;
-			if ('value' in value) return recordValueIsEmpty(value.value);
-			return Object.keys(value).length === 0;
-		}
-		return false;
-	}
-
-	function detailLayoutSectionFieldsForRecord(
-		section: DetailLayoutSection,
-		sourceRecord: FormRecord
-	): FormField[] {
-		if (!section.hideEmptyFields) return section.fields;
-		return section.fields.filter((field) => !recordValueIsEmpty(sourceRecord.values[field.key]));
 	}
 
 	function detailPageWidgetConfig(key: DetailPageWidgetKey): Record<string, unknown> | null {
@@ -345,34 +324,6 @@
 		);
 	}
 
-	function detailHeaderField(key: 'subtitle_field' | 'badge_field'): FormField | null {
-		const header = isRecord(form?.detail_layout?.header) ? form.detail_layout.header : null;
-		const fieldKey = header && typeof header[key] === 'string' ? header[key] : '';
-		return (
-			fields.find((field) => field.key === fieldKey && field.visibility?.detail !== false) ?? null
-		);
-	}
-
-	function detailHighlightFieldsFromLayout(
-		layout: Record<string, unknown> | null | undefined
-	): FormField[] {
-		const rawHighlights =
-			isRecord(layout) && Array.isArray(layout.highlights) ? layout.highlights : [];
-		const highlights: FormField[] = [];
-		const seen = new Set<string>();
-		for (const rawFieldKey of rawHighlights) {
-			if (typeof rawFieldKey !== 'string' || seen.has(rawFieldKey)) continue;
-			const field = fields.find(
-				(item) => item.key === rawFieldKey && item.visibility?.detail !== false
-			);
-			if (!field) continue;
-			highlights.push(field);
-			seen.add(rawFieldKey);
-			if (highlights.length >= 4) break;
-		}
-		return highlights;
-	}
-
 	function parseFields(schema: Record<string, unknown>): FormField[] {
 		const rawFields = Array.isArray(schema.fields) ? schema.fields : [];
 		return rawFields
@@ -458,86 +409,6 @@
 
 	function memberFieldLocked(field: FormField): boolean {
 		return permissions?.effective.fields?.[field.key]?.write === false;
-	}
-
-	function detailLayoutFieldKeys(section: Record<string, unknown>): string[] {
-		const rawFields = Array.isArray(section.fields) ? section.fields : [];
-		return rawFields
-			.map((field) => {
-				if (typeof field === 'string') return field;
-				if (isRecord(field) && typeof field.key === 'string') return field.key;
-				return '';
-			})
-			.filter(Boolean);
-	}
-
-	function detailLayoutSections(): DetailLayoutSection[] {
-		const detailFields = fields.filter((field) => field.visibility?.detail !== false);
-		const byKey = new Map(detailFields.map((field) => [field.key, field]));
-		const usedFieldKeys = new Set<string>();
-		const rawSections = Array.isArray(form?.detail_layout?.sections)
-			? form.detail_layout.sections
-			: [];
-		const sections = rawSections
-			.filter(isRecord)
-			.map((section, index) => {
-				const layoutFields = detailLayoutFieldKeys(section)
-					.map((key) => byKey.get(key))
-					.filter((field): field is FormField => Boolean(field));
-				if (layoutFields.length === 0) return null;
-				for (const field of layoutFields) usedFieldKeys.add(field.key);
-				const key =
-					typeof section.key === 'string' && section.key.trim()
-						? section.key.trim()
-						: `section_${index + 1}`;
-				const title =
-					typeof section.title === 'string' && section.title.trim()
-						? section.title.trim()
-						: typeof section.name === 'string' && section.name.trim()
-							? section.name.trim()
-							: $t('forms.detailSectionMain');
-				return {
-					key,
-					title,
-					description: detailLayoutSectionDescription(section.description),
-					columns: detailLayoutSectionColumns(section.columns, pageFieldColumns),
-					density: detailLayoutSectionDensity(section.density),
-					hideEmptyFields: section.hide_empty_fields === true,
-					collapsible: section.collapsible === true,
-					defaultCollapsed: section.collapsible === true && section.default_collapsed === true,
-					fields: layoutFields
-				};
-			})
-			.filter((section): section is DetailLayoutSection => Boolean(section));
-		const unplacedFields = detailFields.filter((field) => !usedFieldKeys.has(field.key));
-		if (sections.length > 0 && unplacedFields.length > 0) {
-			sections.push({
-				key: 'additional',
-				title: $t('forms.detailSectionAdditional'),
-				description: '',
-				columns: pageFieldColumns,
-				density: 'comfortable',
-				hideEmptyFields: false,
-				collapsible: false,
-				defaultCollapsed: false,
-				fields: unplacedFields
-			});
-		}
-		return sections.length > 0
-			? sections
-			: [
-					{
-						key: 'main',
-						title: $t('forms.detailSectionMain'),
-						description: '',
-						columns: pageFieldColumns,
-						density: 'comfortable',
-						hideEmptyFields: false,
-						collapsible: false,
-						defaultCollapsed: false,
-						fields: detailFields
-					}
-				];
 	}
 
 	function attachmentManifestUrls(value: unknown): string[] {
@@ -766,9 +637,11 @@
 								<span class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
 									{fieldLabel(detailHeaderSubtitleField)}
 								</span>
-								<OptionValueBadges
+								<FieldValue
 									field={detailHeaderSubtitleField}
 									value={record.values[detailHeaderSubtitleField.key]}
+									variant="cell"
+									ctx={fieldCtx}
 								/>
 							</p>
 						{/if}
@@ -780,9 +653,11 @@
 								class="flex justify-end"
 								data-durable-record-detail-header-badge={`${detailHeaderBadgeField.key}:${record.id}`}
 							>
-								<OptionValueBadges
+								<FieldValue
 									field={detailHeaderBadgeField}
 									value={record.values[detailHeaderBadgeField.key]}
+									variant="cell"
+									ctx={fieldCtx}
 								/>
 							</div>
 						{/if}
@@ -887,7 +762,12 @@
 							<div
 								class="mt-2 break-words text-sm font-semibold text-slate-950 dark:text-slate-100"
 							>
-								<OptionValueBadges {field} value={record.values[field.key]} />
+								<FieldValue
+									{field}
+									value={record.values[field.key]}
+									variant="panel"
+									ctx={fieldCtx}
+								/>
 							</div>
 						</div>
 					{/each}
@@ -918,7 +798,7 @@
 							/>
 						{/key}
 					{/if}
-					{#each detailLayoutSections() as section}
+					{#each detailSections as section}
 						<details
 							class={detailLayoutSectionContainerClass(section.density)}
 							open={!section.collapsible || !section.defaultCollapsed}
@@ -952,7 +832,7 @@
 								data-durable-record-detail-field-columns={`${record.id}:${section.columns}`}
 								data-durable-record-detail-section-columns={`${record.id}:${section.key}:${section.columns}`}
 							>
-								{#each detailLayoutSectionFieldsForRecord(section, record) as field}
+								{#each sectionFieldsForRecord(section, record) as field}
 									<div
 										class={detailLayoutSectionFieldClass(field, section.columns)}
 										data-durable-record-detail-field={`${record.id}:${field.key}`}
@@ -984,7 +864,12 @@
 													>{$t('forms.childRecords')}</span
 												>
 											{:else}
-												<OptionValueBadges {field} value={record.values[field.key]} />
+												<FieldValue
+													{field}
+													value={record.values[field.key]}
+													variant="panel"
+													ctx={fieldCtx}
+												/>
 											{/if}
 										</dd>
 									</div>

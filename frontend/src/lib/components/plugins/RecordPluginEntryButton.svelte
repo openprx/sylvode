@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { RecordPluginEntry } from '#lib/plugins/placements.js';
+	import { isContributionEntry, type RecordEntry } from '#lib/plugins/placements.js';
 
 	let {
 		entry,
@@ -8,12 +8,13 @@
 		onToggle,
 		showVersion = false
 	}: {
-		entry: RecordPluginEntry;
+		entry: RecordEntry;
 		expanded: boolean;
 		panelId: string;
-		onToggle: (entry: RecordPluginEntry, trigger: HTMLElement) => void;
+		onToggle: (entry: RecordEntry, trigger: HTMLElement) => void;
 		showVersion?: boolean;
 	} = $props();
+	const version = $derived(isContributionEntry(entry) ? entry.item.version : entry.panel.version);
 </script>
 
 <button
@@ -25,7 +26,5 @@
 	onclick={(event) => onToggle(entry, event.currentTarget)}
 >
 	{entry.label}
-	{#if showVersion}<span class="text-xs text-slate-600 dark:text-slate-300"
-			>v{entry.panel.version}</span
-		>{/if}
+	{#if showVersion}<span class="text-xs text-slate-600 dark:text-slate-300">v{version}</span>{/if}
 </button>

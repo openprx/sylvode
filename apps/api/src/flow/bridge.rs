@@ -1040,7 +1040,7 @@ pub async fn preview_conversion(
         return Err(ApiError::policy_rejected("forms bridge conversion is not permitted"));
     }
     let frontier = current_frontier(&source);
-    if input.source_frontier != frontier {
+    if !super::frontier::client_matches_base64(&input.source_frontier, &frontier)? {
         return Err(ApiError::stale_frontier(
             "source frontier changed",
             Some(source.document_seq),
@@ -1111,7 +1111,7 @@ pub async fn preview_conversion(
     {
         if existing.actor_id != actor.id
             || existing.source_object_id != source.id
-            || existing.source_frontier != frontier
+            || !super::frontier::same_base64(&existing.source_frontier, &frontier)?
             || existing.target_type != input.target_type
             || existing.target_project_id != target_project_id
             || existing.target_form_id != target_form_id
@@ -1678,7 +1678,7 @@ async fn run_conversion(
         .await?
         .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
     let frontier = current_frontier(&source);
-    if frontier != run.source_frontier {
+    if !super::frontier::same_base64(&frontier, &run.source_frontier)? {
         return Err(ApiError::stale_frontier(
             "source frontier changed",
             Some(source.document_seq),
@@ -1909,7 +1909,7 @@ async fn precheck_commit(
     preview: &PreviewRow,
 ) -> Result<(), ApiError> {
     let frontier = current_frontier(source);
-    if frontier != preview.source_frontier {
+    if !super::frontier::same_base64(&frontier, &preview.source_frontier)? {
         return Err(ApiError::stale_frontier(
             "source frontier changed",
             Some(source.document_seq),
@@ -1982,7 +1982,7 @@ pub async fn commit_conversion(
     }
     let preview = load_preview(&state.db, input.preview_id).await?;
     let (source, actor) = conversion_caller(state, extensions, &preview).await?;
-    if input.source_frontier != preview.source_frontier {
+    if !super::frontier::client_matches_base64(&input.source_frontier, &preview.source_frontier)? {
         return Err(ApiError::stale_frontier(
             "source frontier differs from preview",
             None,
@@ -2799,7 +2799,7 @@ pub async fn preview_scope_conversion(
     }
     let source = super::scope::object_view(&state.db, input.source_object_id, user).await?;
     let frontier = source.field("frontier").as_str().ok_or_else(ApiError::internal)?;
-    if input.source_frontier != frontier {
+    if !super::frontier::client_matches_base64(&input.source_frontier, frontier)? {
         return Err(ApiError::stale_frontier(
             "source frontier changed",
             source.field("document_seq").as_i64(),
@@ -3040,7 +3040,7 @@ async fn run_scope_conversion(
         vec![identity.id.into()])).await?.ok_or_else(||ApiError::not_found("conversion source not found"))?;
     use base64::Engine as _;
     let frontier = base64::engine::general_purpose::STANDARD.encode(head.try_get::<Vec<u8>>("", "head_frontier")?);
-    if frontier != run.source_frontier {
+    if !super::frontier::same_base64(&frontier, &run.source_frontier)? {
         return Err(ApiError::stale_frontier(
             "source frontier changed",
             Some(head.try_get("", "head_seq")?),
@@ -3082,7 +3082,7 @@ pub async fn commit_scope_conversion(
     }
     let preview = load_preview(&state.db, input.preview_id).await?;
     let (identity, _, _) = scoped_conversion_actor(state, user, &preview, true).await?;
-    if input.source_frontier != preview.source_frontier {
+    if !super::frontier::client_matches_base64(&input.source_frontier, &preview.source_frontier)? {
         return Err(ApiError::stale_frontier(
             "source frontier differs from preview",
             None,

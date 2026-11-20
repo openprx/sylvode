@@ -124,7 +124,7 @@ covered by `cargo test --workspace`. The collaboration tests start
 Many tests need PostgreSQL. They read one variable, `OPENPR_TEST_DATABASE_URL` (the name
 predates the rename and is kept on purpose):
 
-- It is a **maintenance connection**: a PostgreSQL 13 or newer role that is a superuser, or at
+- It is a **maintenance connection**: a PostgreSQL 18 role that is a superuser, or at
   least has `CREATEDB` and may create the `pgcrypto` extension.
 - Its path must be a bare database name, such as `/postgres`. Tests replace it with the name of
   a scratch database that they create, migrate and drop themselves; the database you point at
@@ -132,7 +132,7 @@ predates the rename and is kept on purpose):
 
 ```bash
 docker run -d --name sylvode-test-pg -e POSTGRES_USER=sylvode_test \
-  -e POSTGRES_PASSWORD=sylvode_test -p 127.0.0.1:55432:5432 postgres:16
+  -e POSTGRES_PASSWORD=sylvode_test -p 127.0.0.1:55432:5432 postgres:18
 export OPENPR_TEST_DATABASE_URL=postgres://sylvode_test:sylvode_test@127.0.0.1:55432/postgres
 cargo test --workspace --no-fail-fast
 ```
@@ -238,7 +238,7 @@ treating the missing input as a pass.
 | `SYLVODE_SCRATCH_ROOT` | Scratch trees, mutation copies and separate cargo target directories | `.flow-gate/cache` |
 | `SYLVODE_UF_REPORT_ROOT` | Universal Forms acceptance reports (`docs/`) and screenshots (`artifacts/`) | `.flow-gate/universal-forms` |
 | `SYLVODE_FLOW_PRIOR_EVIDENCE_ROOT` | Earlier release receipts read by `verify-flow-prior-receipts-v1.0.sh` | `.flow-gate/evidence` |
-| `SYLVODE_WEBHOOK_DIR` | The Sylvode Webhook checkout used by the webhook smokes | none, required |
+| `SYLVODE_WEBHOOK_DIR` | A separate Sylvode Webhook checkout for the webhook smokes to build and run instead of the in-repository `apps/webhook` | none: `apps/webhook`, built with `cargo build -p sylvode-webhook` |
 | `SYLVODE_FLOW_V05_CONTRACT_GAPS` | The v0.5 contract-gap register read by `verify-flow-authz-v0.5.sh`, or `none` | none, required |
 | `OPENPR_V10_CAPACITY_RESULT` | The capacity measurement result read by `verify-flow-slo-v1.0.sh` (or `--capacity-result`) | none, required |
 | `OPENPR_FLOW_V1_ORCHESTRATION_CONFIG` | The v1.0 orchestration config (`[flow_gate]` database URLs) read by `report-flow-v1.0-json.sh` (or `--orchestration-config`) | `.flow-gate/cache/v10-flow-gate.toml` |

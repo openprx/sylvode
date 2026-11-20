@@ -66,6 +66,16 @@ struct OperationRow {
     undo_key: Option<String>,
     undo_body: Option<Value>,
 }
+/// Decodes a caller-supplied base64 frontier token; a token that is not base64 of a version
+/// vector is `transfer_invalid_frontier`, never a mismatch.
+fn client_frontier(token: &str) -> Result<Vec<u8>, ApiError> {
+    let bytes = B64.decode(token).map_err(|_| error("transfer_invalid_frontier"))?;
+    if collab_core::LoroCollabEngine::canonical_frontier(&bytes).is_err() {
+        return Err(error("transfer_invalid_frontier"));
+    }
+    Ok(bytes)
+}
+
 fn error(reason: &str) -> ApiError {
     ApiError::policy_rejected_with_details(
         "Page transfer unavailable",
@@ -426,16 +436,12 @@ pub async fn prepare(
         .iter()
         .find(|page| page.object_id == input.target_object_id)
         .ok_or_else(ApiError::internal)?;
-    let source_token = B64
-        .decode(&input.expected_source_frontier)
-        .map_err(|_| error("transfer_invalid_frontier"))?;
-    let target_token = B64
-        .decode(&input.expected_target_frontier)
-        .map_err(|_| error("transfer_invalid_frontier"))?;
-    if a.head_frontier != source_token {
+    let source_token = client_frontier(&input.expected_source_frontier)?;
+    let target_token = client_frontier(&input.expected_target_frontier)?;
+    if !super::frontier::same(&source_token, &a.head_frontier)? {
         return Err(error("transfer_source_changed"));
     }
-    if b.head_frontier != target_token {
+    if !super::frontier::same(&target_token, &b.head_frontier)? {
         return Err(error("transfer_target_changed"));
     }
     let mut source_engine = super::document::load_head_engine(db, a.document_id).await?;
@@ -894,14 +900,8 @@ async fn commit_once(
         return get_status(db, actor, id).await;
     }
     if row.selection_digest != input.selection_digest
-        || row.source_frontier
-            != B64
-                .decode(&input.expected_source_frontier)
-                .map_err(|_| error("transfer_invalid_frontier"))?
-        || row.target_frontier
-            != B64
-                .decode(&input.expected_target_frontier)
-                .map_err(|_| error("transfer_invalid_frontier"))?
+        || !super::frontier::same(&client_frontier(&input.expected_source_frontier)?, &row.source_frontier)?
+        || !super::frontier::same(&client_frontier(&input.expected_target_frontier)?, &row.target_frontier)?
     {
         return Err(error("transfer_review_mismatch"));
     }
@@ -1072,7 +1072,7 @@ async fn commit_once(
         } else {
             &row.target_frontier
         };
-        if head.try_get::<Vec<u8>>("", "head_frontier")? != *expected {
+        if !super::frontier::same(expected, &head.try_get::<Vec<u8>>("", "head_frontier")?)? {
             return Err(error("transfer_review_stale"));
         }
     }
@@ -1324,17 +1324,14 @@ async fn undo_once(
     }
     let original: wire::Receipt = serde_json::from_value(row.receipt.clone().ok_or_else(ApiError::internal)?)
         .map_err(|_| ApiError::internal())?;
-    if original.source.frontier != input.expected_source_frontier
-        || original.target.frontier != input.expected_target_frontier
+    let expected_source = client_frontier(&input.expected_source_frontier)?;
+    let expected_target = client_frontier(&input.expected_target_frontier)?;
+    let receipt_frontier = |token: &str| B64.decode(token).map_err(|_| ApiError::internal());
+    if !super::frontier::same(&expected_source, &receipt_frontier(&original.source.frontier)?)?
+        || !super::frontier::same(&expected_target, &receipt_frontier(&original.target.frontier)?)?
     {
         return Err(error("transfer_undo_review_mismatch"));
     }
-    let expected_source = B64
-        .decode(&input.expected_source_frontier)
-        .map_err(|_| error("transfer_invalid_frontier"))?;
-    let expected_target = B64
-        .decode(&input.expected_target_frontier)
-        .map_err(|_| error("transfer_invalid_frontier"))?;
     let op_kind = kind(&row.kind);
     let (source_proof, target_proof) = proofs(db, actor, row.source_object_id, row.target_object_id, op_kind).await?;
     let source = scope::identity(db, row.source_object_id).await?;
@@ -1350,7 +1347,9 @@ async fn undo_once(
         .iter()
         .find(|page| page.object_id == target.id)
         .ok_or_else(ApiError::internal)?;
-    if a.head_frontier != expected_source || b.head_frontier != expected_target {
+    if !super::frontier::same(&expected_source, &a.head_frontier)?
+        || !super::frontier::same(&expected_target, &b.head_frontier)?
+    {
         return Err(error("transfer_undo_conflict"));
     }
     let mut doc_ids = vec![a.document_id, b.document_id];
@@ -1503,7 +1502,7 @@ async fn undo_once(
         } else {
             &expected_target
         };
-        if head.try_get::<Vec<u8>>("", "head_frontier")? != *expected {
+        if !super::frontier::same(expected, &head.try_get::<Vec<u8>>("", "head_frontier")?)? {
             return Err(error("transfer_undo_conflict"));
         }
     }

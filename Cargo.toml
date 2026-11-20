@@ -5,6 +5,7 @@ members = [
   "apps/api",
   "apps/worker",
   "apps/mcp-server",
+  "apps/webhook",
   "crates/platform",
   "crates/collab-core",
   "spikes/collab-shared",
@@ -17,7 +18,7 @@ members = [
 authors = ["g1e2x87"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.2.539"
+version = "0.5.0"
 description = "Sylvode open-source project management platform"
 repository = "https://github.com/openprx/sylvode"
 homepage = "https://openprx.dev/sylvode"
@@ -55,11 +56,14 @@ ring = "0.17"
 parking_lot = "0.12"
 bcrypt = "0.16"
 # The on-disk compilation cache is unused: the plugin engine never loads a cache
-# config. It is also the only edge to zstd 0.13, which is vulnerable
-# (RUSTSEC-2026-0391, RUSTSEC-2026-0398, RUSTSEC-2026-0403, RUSTSEC-2026-0410)
-# and which every published wasmtime release through 50.0.1 still requires.
-# Every other wasmtime 49 default feature stays on.
-wasmtime = { version = "49", default-features = false, features = [
+# config and compiles every module from its stored `.wasm` bytes. Leaving the
+# feature off keeps wasmtime-internal-cache and its zstd 0.13 / zstd-safe /
+# zstd-sys chain out of the build. That chain is no longer the reason: with the
+# cache on, wasmtime 50.0.2 resolves zstd 0.13.5, zstd-safe 7.4 and zstd-sys
+# 2.1.3, which are patched for RUSTSEC-2026-0391, RUSTSEC-2026-0398,
+# RUSTSEC-2026-0403 and RUSTSEC-2026-0410.
+# Every other wasmtime 50 default feature stays on.
+wasmtime = { version = "50.0.2", default-features = false, features = [
     "anyhow",
     "async",
     "backtrace",

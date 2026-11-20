@@ -66,6 +66,18 @@ marketplace consumers on the same contract as the generated delivery catalog.
 | `customer_delivery_default` | `customer_delivery` | Customer milestones, acceptance materials, risk and change governance | `customer`, `delivery_milestone`, `change_request` | MCP delivery assistant, customer update webhook, CRM REST suggestion |
 | `restaurant_ordering_default` | `restaurant_ordering` | Menu, SKU, table, order, print job, receipt, and daily revenue reporting | `menu_category`, `sku`, `table`, `order`, `order_line`, `print_job`, `business_report` | MCP kitchen assistant, print connectors, order webhook, `restaurant_calc` WASM plugin |
 
+## Project Resource Kinds
+
+Project resources have exactly two kinds: `directory` (a working directory or
+repository checkout, addressed by a path or URL locator) and `custom` (any other
+context resource). Creating or updating a resource with any other kind returns a
+validation error. A template's `resource_schema` suggests resources using only
+these two kinds. Rows created before migration `0104` with a retired kind
+(`repo`, `document_library`, `crm_account`, `erp_order`, `equipment`, `site`) are
+converted (`repo` to `directory`, every other kind to `custom`), and the original
+kind is kept in
+`project_resources.legacy_kind`.
+
 ## Scenario Details
 
 ### Code Delivery

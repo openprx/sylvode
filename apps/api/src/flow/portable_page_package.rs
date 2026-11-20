@@ -247,7 +247,7 @@ pub async fn export(db: &DatabaseConnection, object: Uuid, actor: Uuid) -> Resul
     let seq: i64 = head.try_get("", "head_seq")?;
     let frontier: Vec<u8> = head.try_get("", "head_frontier")?;
     let boot = super::collab::bootstrap::load(db, document).await?;
-    if boot.head_seq != seq || boot.head_frontier != frontier {
+    if boot.head_seq != seq || !crate::flow::frontier::same(&boot.head_frontier, &frontier)? {
         return Err(super::policy::authorization_read_unstable());
     }
     let mut engine = super::document::engine_from_boot(&boot)?;
@@ -274,7 +274,9 @@ pub async fn export(db: &DatabaseConnection, object: Uuid, actor: Uuid) -> Resul
         ))
         .await?
         .ok_or_else(ApiError::internal)?;
-    if current.try_get::<i64>("", "head_seq")? != seq || current.try_get::<Vec<u8>>("", "head_frontier")? != frontier {
+    if current.try_get::<i64>("", "head_seq")? != seq
+        || !crate::flow::frontier::same(&current.try_get::<Vec<u8>>("", "head_frontier")?, &frontier)?
+    {
         return Err(super::policy::authorization_read_unstable());
     }
 

@@ -1,13 +1,15 @@
 //! Private plugin releases and explicit project admission.
 use super::{
-    ActivePackage, EXECUTIONS, InstallRequest, Package, admin, audited_error, bad, busy, enabled, guest_input,
-    lock_admin, lock_binding, lock_project, runtime_policy, sha256, statement, validate_install,
+    ActivePackage, EXECUTIONS, InstallRequest, Package, admin, audited_error, bad, enabled, guest_input, lock_admin,
+    lock_binding, lock_project, require_extensions, reserve_execution, runtime_policy, sha256, statement,
+    validate_install,
 };
 use crate::{
-    error::ApiError,
+    error::{ApiError, ApiErrorKind},
     forms::permissions::role_is_form_admin,
     plugins::{
         package::{PREVIEW, parse_guest_amount},
+        package_v3::{SCHEMA_V3, plugin_error},
         runtime::{PluginFailureKind, invoke_wasm_plugin},
     },
     response::ApiResponse,
@@ -93,7 +95,7 @@ pub async fn save(
 ) -> Result<impl IntoResponse, ApiError> {
     enabled()?;
     let actor = user(&claims)?;
-    let (manifest, hash, wasm, html) = validate_install(&request).await?;
+    let package = validate_install(request).await?;
     let tx = state.db.begin().await?;
     tx.query_one(statement(
         "SELECT id FROM users WHERE id=$1 FOR UPDATE",
@@ -104,12 +106,12 @@ pub async fn save(
     let previous = PersonalPackage::find_by_statement(statement(
         "SELECT id,manifest,package_sha256,owner_id AS installed_by,installed_at,archived_at,'[]'::jsonb AS project_links
            FROM form_plugin_library WHERE owner_id=$1 AND key=$2 AND version=$3",
-        vec![actor.into(), request.manifest.key.clone().into(), request.manifest.version.clone().into()],
+        vec![actor.into(), package.key.clone().into(), package.version.clone().into()],
     ))
     .one(&tx)
     .await?;
     if let Some(previous) = previous {
-        if previous.package_sha256 != hash || previous.archived_at.is_some() {
+        if previous.package_sha256 != package.package_sha256 || previous.archived_at.is_some() {
             return Err(ApiError::Conflict(
                 "this library key and version is already reserved; publish a new version".into(),
             ));
@@ -132,7 +134,15 @@ pub async fn save(
         "INSERT INTO form_plugin_library (owner_id,key,version,manifest,package_sha256,wasm_bytes,html)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
          RETURNING id,manifest,package_sha256,owner_id AS installed_by,installed_at,archived_at,'[]'::jsonb AS project_links",
-        vec![actor.into(),request.manifest.key.into(),request.manifest.version.into(),manifest.into(),hash.into(),wasm.into(),html.into()],
+        vec![
+            actor.into(),
+            package.key.into(),
+            package.version.into(),
+            package.manifest.into(),
+            package.package_sha256.into(),
+            package.wasm.into(),
+            package.html.into(),
+        ],
     )).one(&tx).await?.ok_or(ApiError::Internal)?;
     tx.commit().await?;
     Ok(ApiResponse::success(package))
@@ -177,9 +187,10 @@ pub async fn panel(
     let row = state
         .db
         .query_one(statement(
-            "SELECT html,manifest->'ui'->'entry'->>'sha256' AS web_sha256 FROM form_plugin_library
+            "SELECT html,CASE WHEN manifest->>'schema_version'=$3 THEN manifest->'entry'->>'sha256'
+                    ELSE manifest->'ui'->'entry'->>'sha256' END AS web_sha256 FROM form_plugin_library
           WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL",
-            vec![source.into(), actor.into()],
+            vec![source.into(), actor.into(), SCHEMA_V3.into()],
         ))
         .await?
         .ok_or_else(package_missing)?;
@@ -209,6 +220,22 @@ pub async fn preview(
             "personal preview input is outside the supported quantity or price range",
         ));
     }
+    let profile = state
+        .db
+        .query_one(statement(
+            "SELECT manifest->>'schema_version'=$3 AND manifest->>'profile'='ui' AS ui_only
+               FROM form_plugin_library WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL",
+            vec![source.into(), actor.into(), SCHEMA_V3.into()],
+        ))
+        .await?
+        .ok_or_else(package_missing)?;
+    if profile.try_get::<bool>("", "ui_only")? {
+        return Err(plugin_error(
+            ApiErrorKind::InvalidUpdate,
+            "profile_mismatch",
+            "a ui profile release has no WASM to preview",
+        ));
+    }
     let package = ActivePackage::find_by_statement(statement(
         "SELECT key,version,wasm_bytes,manifest->'wasm'->>'sha256' AS wasm_sha256
            FROM form_plugin_library WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL",
@@ -220,7 +247,7 @@ pub async fn preview(
     if sha256(&package.wasm_bytes) != package.wasm_sha256 {
         return Err(ApiError::Internal);
     }
-    let _capacity = EXECUTIONS.try_acquire().map_err(|_| busy())?;
+    let _capacity = reserve_execution(&EXECUTIONS)?;
     let runtime = invoke_wasm_plugin(
         package.wasm_bytes,
         guest_input(PREVIEW, request.quantity, request.unit_price_cents),
@@ -316,7 +343,7 @@ async fn install_projection(
         vec![project.into(),source.into(),actor.into()],
     )).one(tx).await?.ok_or_else(package_missing)?;
     set_status(tx, project, source, "attached", actor).await?;
-    item.with_layout()
+    item.with_layout(tx, project).await
 }
 
 pub async fn attach(
@@ -329,12 +356,17 @@ pub async fn attach(
     let tx = state.db.begin().await?;
     let role = member_role(&tx, project, actor).await?;
     lock_project(&tx, project).await?;
-    tx.query_one(statement(
-        "SELECT id FROM form_plugin_library WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL FOR SHARE",
-        vec![source.into(), actor.into()],
-    ))
-    .await?
-    .ok_or_else(package_missing)?;
+    let release = tx
+        .query_one(statement(
+            "SELECT manifest->>'schema_version'=$3 AS v3 FROM form_plugin_library
+              WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL FOR SHARE",
+            vec![source.into(), actor.into(), SCHEMA_V3.into()],
+        ))
+        .await?
+        .ok_or_else(package_missing)?;
+    if release.try_get::<bool>("", "v3")? {
+        require_extensions()?;
+    }
     let response = if role_is_form_admin(&role) {
         let package = install_projection(&tx, project, source, actor).await?;
         json!({"status":"attached","package":package})
@@ -400,12 +432,16 @@ pub async fn decide(
     lock_project(&tx, project).await?;
     let row = tx
         .query_one(statement(
-            "SELECT s.owner_id FROM form_plugin_library_requests r JOIN form_plugin_library s ON s.id=r.source_id
+            "SELECT s.owner_id,s.manifest->>'schema_version'=$3 AS v3
+               FROM form_plugin_library_requests r JOIN form_plugin_library s ON s.id=r.source_id
           WHERE r.project_id=$1 AND r.source_id=$2 AND r.status='pending' AND s.archived_at IS NULL FOR SHARE OF s",
-            vec![project.into(), source.into()],
+            vec![project.into(), source.into(), SCHEMA_V3.into()],
         ))
         .await?
         .ok_or_else(|| ApiError::not_found("pending plugin request not found"))?;
+    if row.try_get::<bool>("", "v3")? {
+        require_extensions()?;
+    }
     let response = if decision.approve {
         // Membership at submission alone cannot authorize a new project install after removal.
         let owner = row.try_get::<Uuid>("", "owner_id")?;

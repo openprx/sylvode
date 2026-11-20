@@ -135,7 +135,8 @@ async function measurePage(page, label, objectId) {
 				result.typed_screenshot = `screenshots/${typedName}`;
 			}
 		}
-		result.ok = result.vitals != null && result.screenshot != null;
+		// A typed text the server did not confirm fails the page: the benchmark must not pass on it.
+		result.ok = result.vitals != null && result.screenshot != null && result.typing.ok === true;
 	} catch (error) {
 		result.ok = false;
 		result.error = error instanceof Error ? error.message : String(error);
@@ -151,6 +152,46 @@ async function measurePage(page, label, objectId) {
 		page.off('pageerror', onError);
 	}
 	return result;
+}
+
+// Typed text only counts as saved once the server has accepted it. The sync indicator
+// (FlowSyncIndicator.svelte) keeps data-pending > 0 while local updates wait for the server,
+// including updates the server rejects with contention, which the outbox keeps resending.
+// So a rejected write leaves the indicator pending and this check fails.
+const SERVER_ACK_TIMEOUT_MS = 15_000;
+
+async function waitForServerAck(page) {
+	const started = Date.now();
+	try {
+		await page.waitForFunction(
+			() => {
+				const indicator = document.querySelector('[data-testid="flow-sync-indicator"]');
+				return Boolean(indicator) && indicator.dataset.pending === '0' && indicator.dataset.state === 'saved';
+			},
+			null,
+			{ timeout: SERVER_ACK_TIMEOUT_MS, polling: 100 }
+		);
+		return { ok: true, server_ack_ms: Date.now() - started };
+	} catch {
+		const last = await page
+			.evaluate(() => {
+				const indicator = document.querySelector('[data-testid="flow-sync-indicator"]');
+				const runtime = document.querySelector('[data-testid="flow-runtime-error"]');
+				return {
+					state: indicator?.dataset.state ?? null,
+					pending: indicator?.dataset.pending ?? null,
+					error_code: runtime?.dataset.errorCode ?? null
+				};
+			})
+			.catch(() => ({ state: null, pending: null, error_code: null }));
+		return {
+			ok: false,
+			error:
+				`server did not acknowledge typed text within ${SERVER_ACK_TIMEOUT_MS} ms: ` +
+				`sync state=${last.state ?? 'missing'}, pending=${last.pending ?? 'unknown'}, ` +
+				`runtime error=${last.error_code ?? 'none'}`
+		};
+	}
 }
 
 async function measureTyping(page) {
@@ -185,7 +226,17 @@ async function measureTyping(page) {
 			});
 		}
 		const samples = await page.evaluate(() => window.__typeSamples);
-		return { ok: true, chars: chars.length, latency: stats(samples), note: 'keydown 到编辑器 DOM 变化' };
+		const ack = await waitForServerAck(page);
+		if (!ack.ok) {
+			return { ok: false, chars: chars.length, latency: stats(samples), error: ack.error };
+		}
+		return {
+			ok: true,
+			chars: chars.length,
+			latency: stats(samples),
+			server_ack_ms: ack.server_ack_ms,
+			note: 'keydown 到编辑器 DOM 变化; server ack = sync indicator saved with 0 pending'
+		};
 	} catch (error) {
 		return { ok: false, error: error instanceof Error ? error.message : String(error) };
 	}
@@ -303,7 +354,7 @@ if (!debugArgsWorked) {
 
 const oneK = pages[0];
 const payload = {
-	ok: Boolean(oneK?.ok && oneK.screenshot),
+	ok: Boolean(oneK?.ok && oneK.screenshot && pages.every((entry) => entry.typing?.ok === true)),
 	pages,
 	lighthouse
 };

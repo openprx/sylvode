@@ -17,10 +17,12 @@
 //! does.
 
 use std::collections::BTreeMap;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use loro::{
-    Container, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer, VersionVector,
+    Container, Frontiers, LoroDoc, LoroMap, LoroText, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer,
+    VersionVector,
 };
 use serde_json::{Map as JsonMap, Number, Value};
 
@@ -105,6 +107,21 @@ pub struct LoroCollabEngine {
     meta: LoroMap,
     id_to_tree: HashMap<NodeId, TreeID>,
     tree_to_id: HashMap<TreeID, NodeId>,
+    /// Memoized [`LoroCollabEngine::minimum_editor_model`] result for the current document state.
+    ///
+    /// Every method that can change the document takes `&mut self` and clears this cell first
+    /// (see [`LoroCollabEngine::invalidate_editor_model_floor`]); no `&self` method writes to the
+    /// document. As a second, independent guard the entry is keyed by the state frontier it was
+    /// computed at and is used only while that frontier is current and no local transaction is
+    /// pending. Errors are never cached, so a malformed document is re-walked and re-rejected
+    /// with the same typed error every time.
+    editor_model_floor: OnceLock<CachedEditorModelFloor>,
+}
+
+#[derive(Debug)]
+struct CachedEditorModelFloor {
+    state: Frontiers,
+    floor: u32,
 }
 
 const fn kind_to_str(kind: NodeKind) -> &'static str {
@@ -284,6 +301,7 @@ impl LoroCollabEngine {
             meta,
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
+            editor_model_floor: OnceLock::new(),
         };
         engine.rebuild_id_cache()?;
         Ok(engine)
@@ -308,6 +326,7 @@ impl LoroCollabEngine {
             meta,
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
+            editor_model_floor: OnceLock::new(),
         }
     }
 
@@ -327,24 +346,40 @@ impl LoroCollabEngine {
 
     /// Validates an engine-derived version against a persisted Loro wire vector.
     ///
-    /// Loro encodes its peer map in iteration order. Independent replay and snapshot decoding
-    /// may reorder entries without changing the causal version. Persisted receipt and CAS tokens
-    /// retain their original bytes, so this comparison is only for reconstructed engine state.
+    /// Loro 1.18 encoded its peer map in hash-map iteration order, so frontiers persisted before
+    /// [`CollabEngine::frontier`] became canonical may list the same entries in any order. The
+    /// comparison is therefore semantic. A wire value that does not decode never matches.
     pub fn matches_frontier(&self, wire: &[u8]) -> bool {
-        let Ok((entries, remaining)) = postcard::take_from_bytes::<Vec<(u64, i32)>>(wire) else {
-            return false;
-        };
-        let version = self.doc.state_vv();
-        if !remaining.is_empty()
-            || entries.len() != version.len()
-            || !postcard::to_allocvec(&entries).is_ok_and(|encoded| encoded == wire)
-        {
-            return false;
+        decode_frontier_entries(wire).is_ok_and(|entries| entries == state_entries(&self.doc.state_vv()))
+    }
+
+    /// Whether two persisted or client-supplied frontiers name the same causal version.
+    ///
+    /// Frontiers are compared as decoded version vectors, never as bytes: the same version may be
+    /// stored in canonical (peer-sorted) order or in the iteration order older releases emitted.
+    /// The empty byte string is the empty version, matching [`CollabEngine::export_from`].
+    ///
+    /// # Errors
+    /// `DecodeFailed` (`input: "frontier"`) when either side is not a well-formed, minimally
+    /// encoded version vector without duplicate peers or trailing bytes. An undecodable frontier
+    /// is never reported as equal to anything.
+    pub fn frontiers_equivalent(left: &[u8], right: &[u8]) -> Result<bool, CollabError> {
+        let left_entries = decode_frontier_entries(left)?;
+        let right_entries = decode_frontier_entries(right)?;
+        Ok(left_entries == right_entries)
+    }
+
+    /// Re-encodes a persisted or client-supplied frontier in canonical (peer-sorted) form.
+    ///
+    /// # Errors
+    /// `DecodeFailed` under the same conditions as [`Self::frontiers_equivalent`].
+    pub fn canonical_frontier(wire: &[u8]) -> Result<Frontier, CollabError> {
+        if wire.is_empty() {
+            return Ok(Frontier::from_bytes(Vec::new()));
         }
-        let mut seen = HashSet::with_capacity(entries.len());
-        entries
-            .into_iter()
-            .all(|(peer, counter)| seen.insert(peer) && version.get(&peer) == Some(&counter))
+        Ok(Frontier::from_bytes(encode_frontier_entries(&decode_frontier_entries(
+            wire,
+        )?)))
     }
 
     /// Creates an independent read-only historical view at an opaque version-vector frontier.
@@ -422,6 +457,7 @@ impl LoroCollabEngine {
             meta,
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
+            editor_model_floor: OnceLock::new(),
         };
         fork.rebuild_id_cache()?;
         Ok(fork)
@@ -438,6 +474,7 @@ impl LoroCollabEngine {
     /// when that version is not in this document's retained history.
     pub fn revert_to_frontier(&mut self, frontier: &Frontier) -> Result<(), CollabError> {
         let prior_model = self.minimum_editor_model()?;
+        self.invalidate_editor_model_floor();
         let vv = if frontier.is_empty() {
             VersionVector::default()
         } else {
@@ -478,6 +515,7 @@ impl LoroCollabEngine {
     /// # Errors
     /// Propagates the underlying engine's map-write failure, if any.
     pub fn set_title(&mut self, title: &str) -> Result<(), CollabError> {
+        self.invalidate_editor_model_floor();
         self.meta
             .insert(META_TITLE, title)
             .map_err(|e| map_loro_error(&e, "<meta.title>"))?;
@@ -501,6 +539,7 @@ impl LoroCollabEngine {
     /// # Errors
     /// Rejects an invalid bounded key or an underlying map mutation failure.
     pub fn set_navigator_order(&mut self, id: &str, key: &str) -> Result<(), CollabError> {
+        self.invalidate_editor_model_floor();
         if id.is_empty()
             || id.len() > 128
             || key.is_empty()
@@ -531,6 +570,7 @@ impl LoroCollabEngine {
     /// Initialize supported tree-only Page prose on a private candidate. Callers must include
     /// this delta in their normal accepted write transaction; reads never invoke this method.
     pub fn initialize_page_editor(&mut self) -> Result<bool, CollabError> {
+        self.invalidate_editor_model_floor();
         if self.has_editor_doc() {
             return Ok(false);
         }
@@ -626,11 +666,45 @@ impl LoroCollabEngine {
 
     /// Prose-command intent is explicit: typed embed planners use tree metadata blocks and
     /// must not accidentally create editor paragraphs. Text CID edits share the same path below.
+    ///
+    /// The result is memoized per document state (see the `editor_model_floor` field); a cached
+    /// value is returned only for the exact state it was computed at.
     pub fn minimum_editor_model(&self) -> Result<u32, CollabError> {
-        let structured = self.has_editor_structure();
-        if structured {
-            crate::editor_structure::placements(&self.doc)?;
+        if let Some(cached) = self.editor_model_floor.get()
+            && self.doc.get_pending_txn_len() == 0
+            && cached.state == self.doc.state_frontiers()
+        {
+            return Ok(cached.floor);
         }
+        let floor = self.compute_minimum_editor_model()?;
+        if self.doc.get_pending_txn_len() == 0 {
+            // A concurrent `&self` caller may have filled the cell first; it computed the same
+            // value from the same unchanged state, so losing that race is harmless.
+            let _ = self.editor_model_floor.set(CachedEditorModelFloor {
+                state: self.doc.state_frontiers(),
+                floor,
+            });
+        }
+        Ok(floor)
+    }
+
+    /// Drops the memoized editor-model floor. Called first by every method that can change the
+    /// document, before any mutation is attempted, so a failed mutation cannot leave a stale entry.
+    fn invalidate_editor_model_floor(&mut self) {
+        self.editor_model_floor.take();
+    }
+
+    /// The full-document walk behind [`Self::minimum_editor_model`].
+    fn compute_minimum_editor_model(&self) -> Result<u32, CollabError> {
+        #[cfg(test)]
+        crate::walk_counter::record_floor_walk();
+        let structured = self.has_editor_structure();
+        // Evaluated once: the block read below needs the same placements for the same state.
+        let placements = if structured {
+            crate::editor_structure::placements(&self.doc)?
+        } else {
+            None
+        };
         // Root map accessors register missing roots; a model query must leave legacy documents untouched.
         let model5 = matches!(
             self.doc.get_by_str_path(crate::editor_structure::META),
@@ -639,25 +713,11 @@ impl LoroCollabEngine {
                     if model.as_ref() == "rich_page_v5")
         );
         let physical_media=self.has_editor_doc() && crate::editor_structure::physical(&self.doc)?.iter().any(|map| matches!(map.get("nodeName"),Some(ValueOrContainer::Value(LoroValue::String(kind))) if crate::editor_media::is_atom(kind.as_ref())));
-        let blocks = crate::editor_doc_bridge::editor_blocks(&self.doc)?.unwrap_or_default();
-        if model5 || physical_media || blocks.iter().any(|block| crate::editor_media::is_atom(&block.kind)) {
+        let signals = crate::editor_doc_bridge::editor_model_signals(&self.doc, placements)?.unwrap_or_default();
+        if model5 || physical_media || signals.atom {
             return Ok(5);
         }
-        Ok(
-            if structured
-                || blocks.iter().any(|block| {
-                    !block.inline_spans.is_empty()
-                        || !matches!(
-                            block.kind.as_str(),
-                            "paragraph" | "heading" | "bulletItem" | "codeBlock"
-                        )
-                })
-            {
-                4
-            } else {
-                1
-            },
-        )
+        Ok(if structured || signals.beyond_model1 { 4 } else { 1 })
     }
     pub fn initialize_page_structure_model(&mut self, model: u32) -> Result<bool, CollabError> {
         if !matches!(model, 4 | 5) {
@@ -674,6 +734,7 @@ impl LoroCollabEngine {
     }
     pub fn initialize_page_structure(&mut self) -> Result<bool, CollabError> {
         let floor = self.minimum_editor_model()?;
+        self.invalidate_editor_model_floor();
         let changed = crate::editor_structure::initialize(&self.doc)?;
         if floor >= 5 {
             self.doc
@@ -697,6 +758,7 @@ impl LoroCollabEngine {
         kind: &str,
         attrs: &Value,
     ) -> Result<String, CollabError> {
+        self.invalidate_editor_model_floor();
         if !self.has_editor_doc() {
             return Err(CollabError::OperationFailed {
                 reason: "explicit_editor_initialization_required".into(),
@@ -708,17 +770,20 @@ impl LoroCollabEngine {
         Ok(cid)
     }
     pub fn replace_page_asset(&mut self, id: &str, kind: &str, attrs: &Value) -> Result<(), CollabError> {
+        self.invalidate_editor_model_floor();
         crate::editor_doc_bridge::replace_atom(&self.doc, id, kind, attrs)?;
         self.doc.commit();
         Ok(())
     }
     pub fn apply_page_marks(&mut self, id: &str, edits: &[crate::page_inline::MarkEdit]) -> Result<(), CollabError> {
+        self.invalidate_editor_model_floor();
         crate::editor_doc_bridge::apply_editor_marks(&self.doc, id, edits)?;
         self.doc.commit();
         Ok(())
     }
 
     pub fn apply_content_operation(&mut self, operation: &Operation) -> Result<(), CollabError> {
+        self.invalidate_editor_model_floor();
         if let Operation::CreateNode { id, .. } = operation
             && self.id_to_tree.contains_key(id)
         {
@@ -732,6 +797,7 @@ impl LoroCollabEngine {
     }
 
     pub fn apply_operation(&mut self, operation: &Operation) -> Result<(), CollabError> {
+        self.invalidate_editor_model_floor();
         let editor_changed = match operation {
             Operation::InsertText { id, index, text } => {
                 crate::editor_doc_bridge::apply_editor_text(&self.doc, id, *index, None, Some(text))?
@@ -835,8 +901,12 @@ impl LoroCollabEngine {
     /// # Errors
     /// Propagates the underlying engine's read failure, if any.
     pub fn semantic_snapshot(&self) -> Result<SemanticSnapshot, CollabError> {
-        let mut snapshot = self.legacy_package_semantic_snapshot_v3()?;
-        crate::prose_projection::project_editor_prose(&self.doc, &mut snapshot)?;
+        // `legacy_package_semantic_snapshot_v3` followed by `project_editor_prose`, reading the
+        // editor document once for both prose steps (see
+        // `project_legacy_then_current_editor_prose`).
+        let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
+        self.project_navigator_order(&mut snapshot);
+        crate::prose_projection::project_legacy_then_current_editor_prose(&self.doc, &mut snapshot)?;
         Ok(snapshot)
     }
 
@@ -853,6 +923,13 @@ impl LoroCollabEngine {
     }
     pub fn legacy_package_semantic_snapshot_v3(&self) -> Result<SemanticSnapshot, CollabError> {
         let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
+        self.project_navigator_order(&mut snapshot);
+        crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
+        Ok(snapshot)
+    }
+
+    /// Package v3's navigator step: order keys from the `order` map override tree positions.
+    fn project_navigator_order(&self, snapshot: &mut SemanticSnapshot) {
         let order = self.navigator_order();
         for (id, node) in &mut snapshot.nodes {
             if node.kind != NodeKind::NavigatorNode {
@@ -876,8 +953,6 @@ impl LoroCollabEngine {
                 node.order_key.clone_from(key);
             }
         }
-        crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
-        Ok(snapshot)
     }
 
     /// Exact package v2 reader before navigator order-map projection (tree plus editor prose).
@@ -987,8 +1062,11 @@ impl LoroCollabEngine {
     /// unchanged), so the caller must discard it -- as the isolated-apply worker, whose engine
     /// lives for one request, does.
     pub fn import_update_causally_complete(&mut self, update: &[u8]) -> Result<Diff, CollabError> {
+        // The pre-import floor is usually already memoized: the previous import's post-import
+        // check, or an earlier read, computed it for exactly this state.
         let prior_model = self.minimum_editor_model()?;
         InputLimits::default().validate_update(update)?;
+        self.invalidate_editor_model_floor();
         let before = self.doc.state_vv();
         let status = self.doc.import(update).map_err(|e| CollabError::DecodeFailed {
             input: "update",
@@ -1029,14 +1107,17 @@ impl CollabEngine for LoroCollabEngine {
             meta,
             id_to_tree: HashMap::new(),
             tree_to_id: HashMap::new(),
+            editor_model_floor: OnceLock::new(),
         };
         engine.rebuild_id_cache()?;
         Ok(engine)
     }
 
     fn import_update(&mut self, update: &[u8]) -> Result<Diff, Self::Error> {
+        // See `import_update_causally_complete` for why the pre-import floor is usually cached.
         let prior_model = self.minimum_editor_model()?;
         InputLimits::default().validate_update(update)?;
+        self.invalidate_editor_model_floor();
         let before = self.doc.state_vv();
         self.doc.import(update).map_err(|e| CollabError::DecodeFailed {
             input: "update",
@@ -1075,8 +1156,61 @@ impl CollabEngine for LoroCollabEngine {
     }
 
     fn frontier(&self) -> Frontier {
-        Frontier::from_bytes(self.doc.state_vv().encode())
+        Frontier::from_bytes(encode_frontier_entries(&state_entries(&self.doc.state_vv())))
     }
+}
+
+/// A version vector as a peer-ordered map, independent of Loro's hash-map layout.
+fn state_entries(version: &VersionVector) -> BTreeMap<u64, i32> {
+    version.iter().map(|(peer, counter)| (*peer, *counter)).collect()
+}
+
+/// Decodes Loro's postcard version-vector wire format (`varint len`, then `len` pairs of
+/// `varint peer`, `zigzag varint counter`) in any entry order.
+fn decode_frontier_entries(wire: &[u8]) -> Result<BTreeMap<u64, i32>, CollabError> {
+    let malformed = |reason: &str| CollabError::DecodeFailed {
+        input: "frontier",
+        reason: reason.to_owned(),
+    };
+    if wire.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let (entries, remaining) =
+        postcard::take_from_bytes::<Vec<(u64, i32)>>(wire).map_err(|e| malformed(&e.to_string()))?;
+    if !remaining.is_empty() {
+        return Err(malformed("trailing bytes after version vector"));
+    }
+    if !postcard::to_allocvec(&entries).is_ok_and(|encoded| encoded == wire) {
+        return Err(malformed("non-minimal version vector encoding"));
+    }
+    let count = entries.len();
+    let decoded: BTreeMap<u64, i32> = entries.into_iter().collect();
+    if decoded.len() != count {
+        return Err(malformed("duplicate peer in version vector"));
+    }
+    Ok(decoded)
+}
+
+/// Encodes a version vector in canonical, peer-sorted order. The bytes are wire-compatible with
+/// `VersionVector::encode`/`decode` (a postcard map and a postcard sequence of pairs share one
+/// layout), so canonical frontiers remain readable by Loro and by older releases.
+fn encode_frontier_entries(entries: &BTreeMap<u64, i32>) -> Vec<u8> {
+    fn push_varint(out: &mut Vec<u8>, mut value: u64) {
+        // `to_le_bytes()[0]` is the low byte: the low seven bits plus the continuation flag.
+        while value >= 0x80 {
+            out.push(value.to_le_bytes()[0] | 0x80);
+            value >>= 7;
+        }
+        out.push(value.to_le_bytes()[0]);
+    }
+    let mut out = Vec::with_capacity(1 + entries.len() * 16);
+    push_varint(&mut out, entries.len() as u64);
+    for (peer, counter) in entries {
+        push_varint(&mut out, *peer);
+        // postcard zigzag-encodes signed integers.
+        push_varint(&mut out, u64::from(((counter << 1) ^ (counter >> 31)).cast_unsigned()));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1437,6 +1571,78 @@ mod tests {
     }
 
     #[test]
+    fn frontier_is_canonical_peer_sorted_and_loro_wire_compatible() {
+        let engine = LoroCollabEngine::new_empty(1);
+        for peer in [u64::MAX - 3, 47, 0x8000_0000_0000_0000, 31, 2] {
+            engine.doc.set_peer_id(peer).unwrap();
+            for i in 0..3 {
+                engine.doc.get_map("proof").insert(&format!("{peer}-{i}"), 1).unwrap();
+                engine.doc.commit();
+            }
+        }
+        let frontier = engine.frontier();
+        let version = engine.doc.state_vv();
+        let mut sorted: Vec<(u64, i32)> = version.iter().map(|(p, c)| (*p, *c)).collect();
+        sorted.sort_unstable();
+        // Byte-identical to postcard's encoding of the sorted entries ...
+        assert_eq!(frontier.as_bytes(), postcard::to_allocvec(&sorted).unwrap().as_slice());
+        // ... and still decodable by Loro, naming the same version.
+        assert_eq!(VersionVector::decode(frontier.as_bytes()).unwrap(), version);
+        // Loro's own iteration-order encoding is equivalent but need not be byte-identical.
+        assert!(LoroCollabEngine::frontiers_equivalent(frontier.as_bytes(), &version.encode()).unwrap());
+        assert_eq!(
+            LoroCollabEngine::canonical_frontier(&version.encode()).unwrap(),
+            frontier
+        );
+        assert!(engine.matches_frontier(frontier.as_bytes()));
+    }
+
+    #[test]
+    fn frontiers_equivalent_compares_versions_and_rejects_undecodable_input() {
+        let first = (31_u64, 4_i32);
+        let second = (47_u64, 9_i32);
+        let canonical = postcard::to_allocvec(&[first, second].as_slice()).unwrap();
+        let legacy_order = postcard::to_allocvec(&[second, first].as_slice()).unwrap();
+        let advanced = postcard::to_allocvec(&[first, (47_u64, 10_i32)].as_slice()).unwrap();
+        let fewer = postcard::to_allocvec(&[first].as_slice()).unwrap();
+
+        assert!(LoroCollabEngine::frontiers_equivalent(&canonical, &legacy_order).unwrap());
+        assert!(LoroCollabEngine::frontiers_equivalent(&legacy_order, &canonical).unwrap());
+        assert!(!LoroCollabEngine::frontiers_equivalent(&canonical, &advanced).unwrap());
+        assert!(!LoroCollabEngine::frontiers_equivalent(&legacy_order, &fewer).unwrap());
+        // The empty byte string is the empty version (`compaction_boundary_frontier` default).
+        assert!(LoroCollabEngine::frontiers_equivalent(&[], &[0]).unwrap());
+        assert!(!LoroCollabEngine::frontiers_equivalent(&[], &canonical).unwrap());
+
+        let mut trailing = legacy_order;
+        trailing.push(0);
+        let duplicate = postcard::to_allocvec(&[first, first].as_slice()).unwrap();
+        // 0x80 0x00 is a non-minimal varint for zero entries.
+        for malformed in [
+            trailing.as_slice(),
+            duplicate.as_slice(),
+            &[2],
+            &[0x80, 0x00],
+            b"fenced",
+        ] {
+            for (left, right) in [
+                (malformed, canonical.as_slice()),
+                (canonical.as_slice(), malformed),
+                (malformed, malformed),
+            ] {
+                assert!(
+                    matches!(
+                        LoroCollabEngine::frontiers_equivalent(left, right),
+                        Err(CollabError::DecodeFailed { input: "frontier", .. })
+                    ),
+                    "{left:?} vs {right:?}"
+                );
+            }
+            assert!(LoroCollabEngine::canonical_frontier(malformed).is_err());
+        }
+    }
+
+    #[test]
     fn frontier_is_stable_for_an_untouched_document_and_advances_after_commit() {
         let engine = LoroCollabEngine::new_empty(7);
         let empty_frontier = engine.frontier();
@@ -1525,5 +1731,379 @@ mod tests {
             .import_update_causally_complete(&dependent)
             .expect("the dependent update now imports");
         assert_eq!(complete.title().expect("title reads"), "second");
+    }
+
+    /// The memoized floor, if `minimum_editor_model` would use it right now, must equal a fresh
+    /// walk of the same state (same value, or the same typed error).
+    fn assert_floor_cache_matches_walk(engine: &LoroCollabEngine, step: &str) -> (Result<u32, CollabError>, bool) {
+        let fresh = engine.compute_minimum_editor_model();
+        let mut hit = false;
+        if let Some(cached) = engine.editor_model_floor.get()
+            && engine.doc.get_pending_txn_len() == 0
+            && cached.state == engine.doc.state_frontiers()
+        {
+            hit = true;
+            assert_eq!(Ok(cached.floor), fresh, "stale cached floor after {step}");
+        }
+        assert_eq!(
+            engine.minimum_editor_model(),
+            fresh,
+            "minimum_editor_model disagrees with a fresh walk after {step}"
+        );
+        (fresh, hit)
+    }
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    const ASSET: &str = "00000000-0000-4000-8000-000000000001";
+
+    fn image_attrs() -> Value {
+        serde_json::json!({"asset_id": ASSET, "alt": "", "caption": "", "indent": 0})
+    }
+
+    /// A raw-Loro update that deletes every top-level editor block and rewrites the structure
+    /// model to v4: the shape of a guest update trying to drop a model-5 floor.
+    fn floor_dropping_update(engine: &LoroCollabEngine) -> Option<Vec<u8>> {
+        let raw = LoroDoc::new();
+        raw.import(&engine.export_snapshot().ok()?).ok()?;
+        raw.set_peer_id(9_999).ok()?;
+        let before = raw.oplog_vv();
+        raw.get_map(crate::editor_structure::META)
+            .insert("model", "rich_page_v4")
+            .ok()?;
+        if let Some(ValueOrContainer::Container(Container::List(list))) = raw.get_map("doc").get("children") {
+            for index in (0..list.len()).rev() {
+                if let Some(ValueOrContainer::Container(Container::Map(map))) = list.get(index)
+                    && matches!(map.get("nodeName"), Some(ValueOrContainer::Value(LoroValue::String(kind))) if crate::editor_media::is_atom(kind.as_ref()))
+                {
+                    list.delete(index, 1).ok()?;
+                }
+            }
+        }
+        raw.commit();
+        raw.export(loro::ExportMode::updates(&before)).ok()
+    }
+
+    /// Rebuilds `engine`'s head from an older snapshot plus one tail update, the way the host
+    /// rebuilds a document from storage. `None` when the tail does not import.
+    fn rebuild_from_snapshot(
+        engine: &LoroCollabEngine,
+        frontier: &Frontier,
+        snapshot: &[u8],
+        label: &str,
+    ) -> Option<LoroCollabEngine> {
+        let tail = engine.export_from(frontier).unwrap();
+        let mut rebuilt = LoroCollabEngine::load(snapshot).unwrap();
+        let _ = assert_floor_cache_matches_walk(&rebuilt, &format!("{label} rebuild base"));
+        rebuilt.import_update(&tail).ok().map(|_| rebuilt)
+    }
+
+    /// Cross-checks the memoized editor-model floor against a fresh walk after every step of
+    /// randomized sequences of local edits, peer imports (lenient and causally complete, including
+    /// rejected floor drops and causally incomplete updates), reverts, snapshot loads, forks, and
+    /// snapshot-plus-tail rebuilds. A missed invalidation on any mutation path fails here.
+    #[test]
+    fn cached_editor_model_floor_matches_a_fresh_walk_across_random_histories() {
+        let mut floors = std::collections::BTreeSet::new();
+        let mut hits = 0;
+        let mut floor_drops_rejected = 0;
+        for seed in [
+            0x9e37_79b9_7f4a_7c15_u64,
+            0x2545_f491_4f6c_dd1d,
+            0xdead_beef_cafe_f00d,
+            7,
+            42,
+        ] {
+            let mut rng = Rng(seed);
+            let mut engine = LoroCollabEngine::new_empty(seed % 1_000);
+            let mut peer = LoroCollabEngine::new_empty(seed % 1_000 + 1);
+            let mut history: Vec<(Frontier, Vec<u8>)> = Vec::new();
+            let mut ids: Vec<String> = Vec::new();
+            let mut next_id = 0_u32;
+            for step in 0..120 {
+                let label = format!("seed {seed:#x} step {step}");
+                if rng.below(3) == 0 {
+                    // Populate the cache so later steps exercise hits as well as misses.
+                    let _ = engine.minimum_editor_model();
+                }
+                match rng.below(16) {
+                    0 => {
+                        let _ = engine.initialize_page_editor();
+                    }
+                    1 => {
+                        let _ = engine.initialize_page_structure_model(if rng.below(2) == 0 { 4 } else { 5 });
+                    }
+                    2 | 3 => {
+                        let id = format!("blk-{next_id}");
+                        next_id += 1;
+                        let index = u32::try_from(rng.below(3)).unwrap();
+                        if engine
+                            .apply_content_operation(&Operation::CreateNode {
+                                id: id.as_str().into(),
+                                parent: None,
+                                index,
+                                kind: NodeKind::Block,
+                            })
+                            .is_ok()
+                        {
+                            ids.push(id);
+                        }
+                    }
+                    4 => {
+                        if let Some(id) = ids.get(usize::try_from(rng.below(ids.len().max(1) as u64)).unwrap()) {
+                            let _ = engine.apply_content_operation(&Operation::InsertText {
+                                id: id.as_str().into(),
+                                index: 0,
+                                text: "word ".into(),
+                            });
+                        }
+                    }
+                    5 => {
+                        if let Some(id) = ids.get(usize::try_from(rng.below(ids.len().max(1) as u64)).unwrap()) {
+                            let _ = engine.apply_content_operation(&Operation::DeleteNode { id: id.as_str().into() });
+                        }
+                    }
+                    6 => {
+                        if let Some(id) = ids.get(usize::try_from(rng.below(ids.len().max(1) as u64)).unwrap()) {
+                            let _ = engine.apply_page_marks(
+                                id,
+                                &[crate::page_inline::MarkEdit {
+                                    start: 0,
+                                    end: 1,
+                                    mark: crate::page_inline::InlineMark::Bold,
+                                    clear: false,
+                                    href: None,
+                                }],
+                            );
+                        }
+                    }
+                    7 => {
+                        let id = format!("atom-{next_id}");
+                        next_id += 1;
+                        let _ = engine.insert_page_atom(&id, None, 0, "image", &image_attrs());
+                    }
+                    8 => {
+                        let _ = engine.set_title(&format!("title {step}"));
+                        let _ = engine.set_navigator_order(&format!("nav-{step}"), "a0");
+                    }
+                    9 => {
+                        if let Some((frontier, _)) =
+                            history.get(usize::try_from(rng.below(history.len().max(1) as u64)).unwrap())
+                        {
+                            let frontier = frontier.clone();
+                            let _ = engine.revert_to_frontier(&frontier);
+                        }
+                    }
+                    10 | 11 => {
+                        // A peer edit arrives as an update.
+                        let _ = peer.import_update(&engine.export_from(&peer.frontier()).unwrap());
+                        let _ = peer.initialize_page_editor();
+                        if rng.below(2) == 0 {
+                            let _ =
+                                peer.insert_page_atom(&format!("peer-atom-{step}"), None, 0, "image", &image_attrs());
+                        } else {
+                            let _ = peer.apply_content_operation(&Operation::CreateNode {
+                                id: format!("peer-{step}").as_str().into(),
+                                parent: None,
+                                index: 0,
+                                kind: NodeKind::Block,
+                            });
+                        }
+                        let update = peer.export_from(&engine.frontier()).unwrap();
+                        let _ = if rng.below(2) == 0 {
+                            engine.import_update(&update)
+                        } else {
+                            engine.import_update_causally_complete(&update)
+                        };
+                    }
+                    12 => {
+                        if let Some(update) = floor_dropping_update(&engine)
+                            && matches!(
+                                engine.import_update_causally_complete(&update),
+                                Err(CollabError::OperationFailed { ref reason }) if reason == "editor_model_floor_downgrade"
+                            )
+                        {
+                            floor_drops_rejected += 1;
+                        }
+                    }
+                    13 => {
+                        // A causally incomplete update: refused, or buffered by the lenient path.
+                        let mut author = engine.fork().unwrap();
+                        author.set_title("dependency").unwrap();
+                        let after = author.frontier();
+                        author.set_title("dependent").unwrap();
+                        let dependent = author.export_from(&after).unwrap();
+                        let _ = if rng.below(2) == 0 {
+                            engine.import_update(&dependent)
+                        } else {
+                            engine.import_update_causally_complete(&dependent)
+                        };
+                    }
+                    14 => {
+                        engine = match rng.below(3) {
+                            0 => LoroCollabEngine::load(&engine.export_snapshot().unwrap()).unwrap(),
+                            1 => engine.fork().unwrap(),
+                            _ => history
+                                .last()
+                                .and_then(|(frontier, _)| engine.fork_at_frontier(frontier).ok())
+                                .unwrap_or_else(|| engine.fork().unwrap()),
+                        };
+                    }
+                    _ => {
+                        // Host-side rebuild: an older snapshot plus the tail since then.
+                        if let Some(rebuilt) = history
+                            .first()
+                            .and_then(|(frontier, snapshot)| rebuild_from_snapshot(&engine, frontier, snapshot, &label))
+                        {
+                            engine = rebuilt;
+                        }
+                    }
+                }
+                let (floor, hit) = assert_floor_cache_matches_walk(&engine, &label);
+                floors.insert(floor.map_err(|error| error.to_string()));
+                hits += usize::from(hit);
+                if step % 10 == 0 {
+                    history.push((engine.frontier(), engine.export_snapshot().unwrap()));
+                }
+            }
+        }
+        // The sequences must actually reach every floor and exercise cache hits and rejections.
+        for floor in [1, 4, 5] {
+            assert!(floors.contains(&Ok(floor)), "floor {floor} never reached: {floors:?}");
+        }
+        assert!(hits > 20, "too few cache hits exercised: {hits}");
+        assert!(floor_drops_rejected > 0, "no floor drop was exercised");
+    }
+
+    fn model5_page_with_tail(blocks: usize, tail: usize) -> (Vec<u8>, Vec<Vec<u8>>) {
+        let mut engine = LoroCollabEngine::new_empty(61);
+        engine.initialize_page_editor().unwrap();
+        engine.initialize_page_structure_model(5).unwrap();
+        engine
+            .insert_page_atom("image", None, 0, "image", &image_attrs())
+            .unwrap();
+        for index in 0..blocks {
+            engine
+                .apply_content_operation(&Operation::CreateNode {
+                    id: format!("b{index}").as_str().into(),
+                    parent: None,
+                    index: 0,
+                    kind: NodeKind::Block,
+                })
+                .unwrap();
+        }
+        assert_eq!(engine.minimum_editor_model().unwrap(), 5);
+        let snapshot = engine.export_snapshot().unwrap();
+        let mut updates = Vec::new();
+        for index in 0..tail {
+            let before = engine.frontier();
+            engine
+                .apply_content_operation(&Operation::CreateNode {
+                    id: format!("t{index}").as_str().into(),
+                    parent: None,
+                    index: 0,
+                    kind: NodeKind::Block,
+                })
+                .unwrap();
+            updates.push(engine.export_from(&before).unwrap());
+        }
+        (snapshot, updates)
+    }
+
+    /// Regression guard (count-based, not wall clock): replaying a tail of k updates onto a
+    /// model-5 snapshot walks the editor-model floor k+1 times (once for the snapshot state, then
+    /// once per post-import check, whose result is the next import's pre-import floor), not 2k.
+    #[test]
+    fn rebuild_tail_walks_the_floor_at_most_once_per_state() {
+        let tail = 6;
+        let (snapshot, updates) = model5_page_with_tail(4, tail);
+        let mut engine = LoroCollabEngine::load(&snapshot).unwrap();
+        crate::walk_counter::reset();
+        for update in &updates {
+            engine.import_update(update).unwrap();
+        }
+        assert_eq!(crate::walk_counter::counts().0, tail + 1);
+        // The head state's floor is now known: a read costs no further walk.
+        assert_eq!(engine.minimum_editor_model().unwrap(), 5);
+        assert_eq!(crate::walk_counter::counts().0, tail + 1);
+    }
+
+    /// Regression guard (count-based, not wall clock) for the isolated-apply worker's metered
+    /// window -- `import_update_causally_complete` then `semantic_snapshot` on a freshly loaded
+    /// base -- and for a later import onto the same engine:
+    /// - model 1: one floor walk (pre-import) and one prose read for the snapshot;
+    /// - model 5: two floor walks (pre-import, plus the post-import downgrade check) and one
+    ///   prose read; the next import reuses the post-import floor as its pre-import floor.
+    ///
+    /// Every floor walk reads the editor blocks once, so block reads = floor walks + 1.
+    #[test]
+    fn worker_window_walks_are_bounded() {
+        for model5 in [false, true] {
+            let mut author = LoroCollabEngine::new_empty(71);
+            author.initialize_page_editor().unwrap();
+            if model5 {
+                author.initialize_page_structure_model(5).unwrap();
+                author
+                    .insert_page_atom("image", None, 0, "image", &image_attrs())
+                    .unwrap();
+            }
+            for index in 0..20 {
+                author
+                    .apply_content_operation(&Operation::CreateNode {
+                        id: format!("b{index}").as_str().into(),
+                        parent: None,
+                        index: 0,
+                        kind: NodeKind::Block,
+                    })
+                    .unwrap();
+            }
+            let base = author.export_snapshot().unwrap();
+            let mut updates = Vec::new();
+            for index in 0..2 {
+                let before = author.frontier();
+                author
+                    .apply_content_operation(&Operation::InsertText {
+                        id: format!("b{index}").as_str().into(),
+                        index: 0,
+                        text: "typed".into(),
+                    })
+                    .unwrap();
+                updates.push(author.export_from(&before).unwrap());
+            }
+            let floor_walks = if model5 { 2 } else { 1 };
+
+            let mut engine = LoroCollabEngine::load(&base).unwrap();
+            crate::walk_counter::reset();
+            engine
+                .import_update_causally_complete(updates.first().unwrap())
+                .unwrap();
+            engine.semantic_snapshot().unwrap();
+            assert_eq!(
+                crate::walk_counter::counts(),
+                (floor_walks, floor_walks + 1),
+                "model5={model5}: (floor walks, block reads) in the worker window"
+            );
+
+            crate::walk_counter::reset();
+            engine.import_update_causally_complete(updates.get(1).unwrap()).unwrap();
+            // Model 1: the pre-import walk (nothing cached it). Model 5: the pre-import floor is
+            // the previous post-import check's, so only the new post-import check walks.
+            assert_eq!(
+                crate::walk_counter::counts().0,
+                1,
+                "model5={model5}: floor walks for a follow-up import"
+            );
+        }
     }
 }

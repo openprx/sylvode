@@ -140,7 +140,7 @@ async fn no_workspace_concurrent_home_creation_replay_and_owner_disposition() {
         .is_err()
     );
     db.execute_unprepared(
-        "UPDATE flow_runtime_capabilities SET personal_writes=false,personal_provisioning=false WHERE singleton",
+        "UPDATE flow_runtime_capabilities SET external_mounts=false,personal_writes=false,personal_provisioning=false WHERE singleton",
     )
     .await
     .unwrap();
@@ -1457,7 +1457,7 @@ async fn personal_assets_publish_only_object_owned_references_and_public_tokens_
         );
     }
     db.execute_unprepared(
-        "UPDATE flow_runtime_capabilities SET personal_writes=false,personal_provisioning=false WHERE singleton",
+        "UPDATE flow_runtime_capabilities SET external_mounts=false,personal_writes=false,personal_provisioning=false WHERE singleton",
     )
     .await
     .unwrap();
@@ -1543,7 +1543,7 @@ async fn personal_inheritance_is_atomic_dry_run_and_request_bound() {
         .unwrap();
     assert!(scope::object_view(db, child, guest).await.is_ok());
     db.execute_unprepared(
-        "UPDATE flow_runtime_capabilities SET personal_writes=false,personal_provisioning=false WHERE singleton",
+        "UPDATE flow_runtime_capabilities SET external_mounts=false,personal_writes=false,personal_provisioning=false WHERE singleton",
     )
     .await
     .unwrap();
@@ -2317,9 +2317,11 @@ async fn editor_admission_is_explicit_and_initialized_noop_replays_without_head_
     assert_eq!(*view.field("editor_initialization_supported"), true);
     let err = api::flow::scope_write::bootstrap(db, object, owner).await.unwrap_err();
     assert!(format!("{err:?}").contains("editor_migration_required"));
-    db.execute_unprepared("UPDATE flow_runtime_capabilities SET personal_writes=false WHERE singleton")
-        .await
-        .unwrap();
+    db.execute_unprepared(
+        "UPDATE flow_runtime_capabilities SET external_mounts=false,personal_writes=false WHERE singleton",
+    )
+    .await
+    .unwrap();
     assert!(
         api::flow::scope_editor::initialize(
             db,
@@ -3046,6 +3048,10 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
         destination_workspace_id: workspace,
         destination_project_id: Some(project),
     };
+    // Default-on since 0106; switch it off to prove the refusal.
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET personal_forms_conversion=false WHERE singleton")
+        .await
+        .unwrap();
     assert!(
         bridge::preview_scope_conversion(&state, owner, preview_input())
             .await

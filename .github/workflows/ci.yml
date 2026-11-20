@@ -22,7 +22,7 @@ env:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -73,14 +73,72 @@ jobs:
           bash scripts/verify-sylvode-brand-residue.sh --json --strict >/dev/null
           bash scripts/verify-sylvode-brand-residue.sh --json --self-test >/dev/null
 
+  # A fast signal for the webhook receiver (apps/webhook): fmt, clippy and its tests on Linux and
+  # macOS, without waiting for the workspace-wide jobs. It runs when the push or pull request
+  # changes apps/webhook or what it builds with; a push whose base is unknown (a new branch) runs
+  # it as well. The workspace-wide Lint and Test jobs still cover the receiver on every run.
+  webhook-changes:
+    name: Webhook changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      webhook: ${{ steps.filter.outputs.webhook }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Compare with the base
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="$PR_BASE"
+          [ "$EVENT_NAME" = "push" ] && base="$PUSH_BEFORE"
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            changed=true
+          elif git diff --name-only "$base" HEAD -- apps/webhook config/sylvode-webhook.example.toml \
+              Cargo.toml Cargo.lock rust-toolchain.toml .github/workflows/ci.yml | grep -q .; then
+            changed=true
+          else
+            changed=false
+          fi
+          echo "webhook=$changed" >>"$GITHUB_OUTPUT"
+
+  webhook:
+    name: Webhook (${{ matrix.os }})
+    needs: webhook-changes
+    if: needs.webhook-changes.outputs.webhook == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: webhook
+      - name: Format check
+        run: cargo fmt -p sylvode-webhook -- --check
+      - name: Clippy
+        run: cargo clippy -p sylvode-webhook --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test -p sylvode-webhook --all-features
+
   test:
     name: Test
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: sylvode_ci
           POSTGRES_PASSWORD: sylvode_ci_local_only
@@ -111,7 +169,7 @@ jobs:
 
   frontend:
     name: Frontend
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -141,11 +199,11 @@ jobs:
 
   universal-forms:
     name: Universal Forms Gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: sylvode_ci
           POSTGRES_PASSWORD: sylvode_ci_local_only
@@ -213,7 +271,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: sylvode_ci
           POSTGRES_PASSWORD: sylvode_ci_local_only
