@@ -76,6 +76,7 @@ use uuid::Uuid;
 use self::cursor::{CursorError, CursorKey, Position};
 use self::envelope::{Candidacy, EventKind, FeedRow, GrantView, ProjectInfo, TypeFilter, control};
 use super::audit::{self, AuditEvent, AuditRecord, DetailValue};
+use super::delegated::{Grantee, reachable_projects};
 use super::error::{OAuthBearerError, OAuthError};
 use super::grants::{Actor, GRANT_CHANGED_CHANNEL, RevokeReason, revoke_grant};
 use super::metadata::api_resource_metadata_url;
@@ -380,44 +381,29 @@ impl StreamContext {
 // The permission function
 // -----------------------------------------------------------------------------------------------
 
-/// Which of `project_ids` the user can see in the workspace right now, with their display data.
+/// Which of `project_ids` the grant can see right now, with their display data.
 ///
-/// This is the one place the delivery filter asks the existing permission model a question. In
-/// Sylvode today a project is visible to every member of its workspace, so the answer is: the
-/// project exists in the workspace and the user is still a member. The delegated-access package
-/// replaces the body with its per-project resolver; the signature stays.
+/// Delivery asks the delegated-access resolver ([`reachable_projects`]) so that what a grant
+/// may see at delivery time is defined once, for the API and for the stream alike. One query per
+/// batch.
 pub async fn visible_projects(
     db: &DatabaseConnection,
-    user_id: Uuid,
-    workspace_id: Uuid,
+    grant: &GrantView,
     project_ids: &[Uuid],
 ) -> Result<HashMap<Uuid, ProjectInfo>, DbErr> {
-    #[derive(FromQueryResult)]
-    struct Row {
-        id: Uuid,
-        key: String,
-        name: String,
-    }
-    if project_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let rows = Row::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT p.id, p.key, p.name FROM projects p \
-         WHERE p.id = ANY($1) AND p.workspace_id = $2 \
-           AND EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = p.workspace_id AND m.user_id = $3)",
-        vec![project_ids.to_vec().into(), workspace_id.into(), user_id.into()],
-    ))
-    .all(db)
-    .await?;
-    Ok(rows
+    let grantee = Grantee {
+        user_id: grant.user_id,
+        workspace_id: grant.workspace_id,
+    };
+    Ok(reachable_projects(db, grantee, &grant.projects, project_ids)
+        .await?
         .into_iter()
-        .map(|row| {
+        .map(|(id, project)| {
             (
-                row.id,
+                id,
                 ProjectInfo {
-                    key: row.key,
-                    name: row.name,
+                    key: project.key,
+                    name: project.name,
                 },
             )
         })
@@ -749,7 +735,7 @@ async fn plan_start(
         })
         .collect();
     let wanted = distinct_projects(&candidacies);
-    let visible = visible_projects(db, grant.user_id, grant.workspace_id, &wanted).await?;
+    let visible = visible_projects(db, grant, &wanted).await?;
     let matching = candidacies
         .iter()
         .filter(|candidacy| is_deliverable(**candidacy, &visible))
@@ -937,7 +923,7 @@ impl Connection {
             .map(|row| envelope::candidacy(&self.grant, self.types, row.routing()))
             .collect();
         let wanted = distinct_projects(&candidacies);
-        let visible = match visible_projects(&self.db, self.grant.user_id, self.grant.workspace_id, &wanted).await {
+        let visible = match visible_projects(&self.db, &self.grant, &wanted).await {
             Ok(visible) => visible,
             Err(error) => {
                 self.db_failed(&error).await?;
