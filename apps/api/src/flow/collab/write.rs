@@ -5533,4 +5533,6 @@ mod database_tests {
         scratch.drop_self().await;
     }
 
+    mod base_cache_tests;
+    mod timing_tests;
 }
