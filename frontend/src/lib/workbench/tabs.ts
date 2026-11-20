@@ -258,13 +258,6 @@ export class TaskWorkbench {
 			pending: { href, key: item.key, title: item.title }
 		}));
 	}
-	/**
-	 * Transitional alias for the forms page, which still calls it without a target (its
-	 * `openForm` gate). Remove it when that call becomes `block(target.href)`.
-	 */
-	showLimit(): void {
-		if (typeof window !== 'undefined') this.block(window.location.href);
-	}
 	visit(href: string): VisitResult {
 		if (!this.current.userId) return { kind: 'none' };
 		const item = taskResource(href);
