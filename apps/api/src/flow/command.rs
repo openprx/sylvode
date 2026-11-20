@@ -28,7 +28,7 @@ use uuid::Uuid;
 use crate::error::{ApiError, ApiErrorKind, ServerDrainingReason};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 
-use super::collab::{authz, bootstrap, frame, limits as collab_limits, runtime, write};
+use super::collab::{authz, frame, limits as collab_limits, runtime, write};
 use super::event_origin::CommandOrigin;
 use super::model::{AcceptedChange, FlowFeatureUpdateView, FlowObjectView};
 use super::move_object::GovernanceCommandType;
@@ -2227,20 +2227,9 @@ async fn execute_content_command(
         .transpose()
         .map_err(|_| ApiError::invalid_update("expected_frontier is not valid base64".to_string()))?;
 
-    let boot = bootstrap::load(&state.db, document_id).await?;
-    let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|err| map_collab_error(&err))?;
-    for tail in &boot.tail_updates {
-        engine
-            .import_update(&tail.bytes)
-            .map_err(|err| map_collab_error(&err))?;
-    }
-    let base_frontier = engine.frontier();
     let is_page = repository::fetch_object_view(&state.db, input.object_id)
         .await?
         .is_some_and(|row| row.object_type == "page");
-    if is_page && kind != ContentCommandType::SetTitle {
-        engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
-    }
     let normalized_payload = super::body_assets::normalize_command_payload(
         &state.db,
         input.object_id,
@@ -2249,6 +2238,48 @@ async fn execute_content_command(
         &input.payload,
     )
     .await?;
+
+    let collab = runtime::runtime();
+    // Never `Uuid::new_v4()`: this function is re-entered from scratch on every REST retry of one
+    // logical command, so a freshly minted id here is a *different* id on every attempt, and the
+    // whole of `write::accept_update`'s replay dedup keys off it. See
+    // `write::replay_stable_update_id`.
+    let update_id = write::replay_stable_update_id(document_id, &input.idempotency_key);
+
+    // The document's coordinator permit is taken *before* the base is read and held until the
+    // write has been accepted: the update is built on exactly the head the database reports under
+    // this permit, and `accept_update_held` applies it to that same head. The base comes from the
+    // warm cache when its entry has exactly the observed head (sequence, frontier, format), else
+    // from the database; it is then handed to the accept path, so the document is loaded and
+    // exported once per write instead of once to build and again to apply.
+    let permit = match write::acquire_document_permit(&collab.coordinator, document_id, update_id).await {
+        Ok(permit) => permit,
+        Err(write::AcceptOutcome::Rejected(rejected)) => return Err(map_write_rejection(&rejected)),
+        Err(write::AcceptOutcome::Accepted(_)) => return Err(ApiError::internal()),
+    };
+    let (write_base, mut engine) = match write::prepare_write_base(
+        &state.db,
+        &collab.cache,
+        document_id,
+        update_id,
+        expected_frontier.as_deref(),
+    )
+    .await?
+    {
+        write::BaseOutcome::Ready {
+            base,
+            engine: Some(engine),
+        } => (base, engine),
+        write::BaseOutcome::Rejected(write::AcceptOutcome::Rejected(rejected)) => {
+            return Err(map_write_rejection(&rejected));
+        }
+        write::BaseOutcome::Ready { engine: None, .. }
+        | write::BaseOutcome::Rejected(write::AcceptOutcome::Accepted(_)) => return Err(ApiError::internal()),
+    };
+    let base_frontier = engine.frontier();
+    if is_page && kind != ContentCommandType::SetTitle {
+        engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
+    }
     if let Err(err) = apply_content_command(&mut engine, kind, &normalized_payload) {
         // The concurrent same-key double submit `rest-api-v1.md` registers as a known residual
         // window: this request's `find_idempotent_event` guard (in `execute_command_authorized`)
@@ -2282,21 +2313,13 @@ async fn execute_content_command(
         .export_from(&base_frontier)
         .map_err(|err| map_collab_error(&err))?;
 
-    let collab = runtime::runtime();
-    // Never `Uuid::new_v4()`: this function is re-entered from scratch on every REST retry of one
-    // logical command, so a freshly minted id here is a *different* id on every attempt, and the
-    // whole of `write::accept_update`'s replay dedup keys off it. See
-    // `write::replay_stable_update_id`.
-    let update_id = write::replay_stable_update_id(document_id, &input.idempotency_key);
-
-    let outcome = write::accept_update(
+    let outcome = write::accept_update_held(
         &state.db,
         &collab.cache,
-        &collab.coordinator,
+        &permit,
         &collab.registry,
         &collab.snapshot,
         crate::config::runtime().flow.dispatch_max_attempts,
-        None,
         write::UpdateRequest {
             document_id,
             update_id,
@@ -2323,8 +2346,12 @@ async fn execute_content_command(
             // `collab_updates.origin_surface` as a WebSocket write.
             origin: input.origin.clone(),
         },
+        write_base,
     )
     .await?;
+    // Committed or refused: the response below is built from the stored projection and needs no
+    // document lock.
+    drop(permit);
 
     let accepted = match outcome {
         write::AcceptOutcome::Accepted(accepted) => accepted,
