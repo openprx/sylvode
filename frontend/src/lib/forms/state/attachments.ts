@@ -58,7 +58,7 @@ export class AttachmentsController extends FormsController {
 			}
 
 			toast.error(result.message || translate('toast.uploadFail'));
-		} catch (_error) {
+		} catch {
 			toast.error(translate('toast.uploadFail'));
 		}
 
