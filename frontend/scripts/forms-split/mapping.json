@@ -1,0 +1,3210 @@
+{
+	"_note": "Appendix A of FORMS-PAGE-DECOMPOSITION.md as data. `line` is the function start in the original page (ordering key). The codemod reads this file only.",
+	"deleted": [
+		"duplicateSelectedForm",
+		"focusableElementsIn",
+		"openPrintJob",
+		"viewDraftFilterExpressionMatchCount",
+		"groupRecordsByDate",
+		"displayAggregate",
+		"recordDateBucket",
+		"sourceRecordsByDate"
+	],
+	"constants": [
+		"fieldTypeOptions",
+		"formPermissionActions",
+		"detailPageWidgetOptions",
+		"detailPageWidgetKeys",
+		"detailLayoutModes",
+		"recordPageSize",
+		"SORTABLE_TYPES"
+	],
+	"instanceConstants": ["recordPluginActions", "formsSessionLatch"],
+	"creationConstants": ["workbench", "recordEditorAction"],
+	"earlyPure": {
+		"blankFieldDraft": "designer-schema",
+		"defaultPermissionActions": "permission-drafts"
+	},
+	"importedFromDetailLayout": {
+		"detailLayoutFieldKeys": "detailLayoutFieldKeys",
+		"detailLayoutSectionColumns": "detailSectionColumns",
+		"detailLayoutSectionDensity": "detailSectionDensity",
+		"recordValueIsEmpty": "recordValueIsEmpty"
+	},
+	"modules": {
+		"state/session": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "formsDraftGroups",
+					"line": 1000
+				},
+				{
+					"name": "cleanFormsGroup",
+					"line": 1016
+				},
+				{
+					"name": "cleanFormsSession",
+					"line": 1023
+				},
+				{
+					"name": "formsSessionDirty",
+					"line": 1030
+				},
+				{
+					"name": "formsSessionSaving",
+					"line": 1036
+				},
+				{
+					"name": "formsSessionState",
+					"line": 1057
+				},
+				{
+					"name": "captureFormsSession",
+					"line": 1096
+				},
+				{
+					"name": "releaseFormsSession",
+					"line": 1106
+				},
+				{
+					"name": "attachFormsSession",
+					"line": 1112
+				},
+				{
+					"name": "refreshFormsSession",
+					"line": 1225
+				},
+				{
+					"name": "updateRecordWithVersion",
+					"line": 1303
+				},
+				{
+					"name": "reloadFormsSession",
+					"line": 1327
+				},
+				{
+					"name": "openForm",
+					"line": 1369
+				},
+				{
+					"name": "rememberFormsFocus",
+					"line": 1413
+				}
+			],
+			"class": "SessionController",
+			"property": "session"
+		},
+		"record-format": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "formsReviewText",
+					"line": 1425
+				},
+				{
+					"name": "isRecord",
+					"line": 3924
+				},
+				{
+					"name": "recordMatchesViewFilterExpression",
+					"line": 5242
+				},
+				{
+					"name": "recordMatchesViewFilter",
+					"line": 5261
+				},
+				{
+					"name": "recordComparableText",
+					"line": 5641
+				},
+				{
+					"name": "cardFieldHasDisplayValue",
+					"line": 5647
+				},
+				{
+					"name": "recordSortValue",
+					"line": 5659
+				},
+				{
+					"name": "compareRecordField",
+					"line": 5694
+				},
+				{
+					"name": "recordNumericValue",
+					"line": 5711
+				},
+				{
+					"name": "recordAmountCurrency",
+					"line": 5739
+				},
+				{
+					"name": "recordDisplay",
+					"line": 6692
+				},
+				{
+					"name": "eventValue",
+					"line": 6762
+				},
+				{
+					"name": "displayValue",
+					"line": 12452
+				},
+				{
+					"name": "formatDate",
+					"line": 12530
+				},
+				{
+					"name": "inputValue",
+					"line": 12540
+				},
+				{
+					"name": "selectValue",
+					"line": 12547
+				}
+			]
+		},
+		"state/loaders": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "loadProject",
+					"line": 1468
+				},
+				{
+					"name": "loadScenarioTemplates",
+					"line": 1476
+				},
+				{
+					"name": "loadWorkspaceMembers",
+					"line": 1493
+				},
+				{
+					"name": "loadForms",
+					"line": 1510
+				},
+				{
+					"name": "clearSelectedFormState",
+					"line": 1533
+				},
+				{
+					"name": "syncFormUrl",
+					"line": 1560
+				},
+				{
+					"name": "loadFormState",
+					"line": 1577
+				},
+				{
+					"name": "loadFormViews",
+					"line": 1618
+				},
+				{
+					"name": "loadRecords",
+					"line": 1716
+				},
+				{
+					"name": "loadFormEvents",
+					"line": 1767
+				},
+				{
+					"name": "loadPrintJobs",
+					"line": 1790
+				},
+				{
+					"name": "loadRelationTargets",
+					"line": 1804
+				},
+				{
+					"name": "loadAggregates",
+					"line": 1841
+				}
+			],
+			"class": "LoadersController",
+			"property": "loaders"
+		},
+		"state/permissions": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "loadFormPermissions",
+					"line": 1648
+				},
+				{
+					"name": "saveMemberPermissions",
+					"line": 1683
+				},
+				{
+					"name": "defaultFieldWriteDraft",
+					"line": 3347
+				},
+				{
+					"name": "defaultFieldReadDraft",
+					"line": 3351
+				},
+				{
+					"name": "roleFieldReadPermissions",
+					"line": 3355
+				},
+				{
+					"name": "roleFieldWritePermissions",
+					"line": 3369
+				},
+				{
+					"name": "memberFieldPolicy",
+					"line": 3383
+				},
+				{
+					"name": "setMemberPermission",
+					"line": 3397
+				},
+				{
+					"name": "setMemberRecordScope",
+					"line": 3401
+				},
+				{
+					"name": "setMemberFieldRead",
+					"line": 3405
+				},
+				{
+					"name": "setMemberFieldWrite",
+					"line": 3413
+				},
+				{
+					"name": "memberFieldHidden",
+					"line": 4501
+				},
+				{
+					"name": "memberFieldLocked",
+					"line": 4505
+				}
+			],
+			"class": "PermissionsController",
+			"property": "permissions"
+		},
+		"state/create-form": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "handleCreateForm",
+					"line": 1865
+				},
+				{
+					"name": "resetFormDraft",
+					"line": 10329
+				},
+				{
+					"name": "applyScenarioTemplate",
+					"line": 10371
+				},
+				{
+					"name": "uniqueTemplateKey",
+					"line": 10387
+				},
+				{
+					"name": "installScenarioTemplate",
+					"line": 10395
+				},
+				{
+					"name": "addFieldDraft",
+					"line": 11266
+				},
+				{
+					"name": "removeFieldDraft",
+					"line": 11270
+				}
+			],
+			"class": "CreateFormController",
+			"property": "createForm"
+		},
+		"state/records": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "handleSaveRecord",
+					"line": 1931
+				},
+				{
+					"name": "createParentChildLinksFromRelationFields",
+					"line": 2000
+				},
+				{
+					"name": "handleDeleteRecord",
+					"line": 2029
+				},
+				{
+					"name": "handleRestoreLastDeletedRecord",
+					"line": 2082
+				},
+				{
+					"name": "dismissLastDeletedRecord",
+					"line": 2104
+				},
+				{
+					"name": "clearFocusedRecord",
+					"line": 2544
+				},
+				{
+					"name": "replaceLocalRecord",
+					"line": 2548
+				},
+				{
+					"name": "startEditRecord",
+					"line": 3226
+				},
+				{
+					"name": "openRecordCreateDrawer",
+					"line": 3243
+				},
+				{
+					"name": "openRecordEditDrawer",
+					"line": 3252
+				},
+				{
+					"name": "closeRecordEditorDrawer",
+					"line": 3257
+				},
+				{
+					"name": "handleGlobalKeydown",
+					"line": 3272
+				},
+				{
+					"name": "cancelEditRecord",
+					"line": 3292
+				},
+				{
+					"name": "handleFormChange",
+					"line": 3746
+				},
+				{
+					"name": "handleModeChange",
+					"line": 3750
+				},
+				{
+					"name": "resetRecordDraft",
+					"line": 3768
+				},
+				{
+					"name": "buildRecordPayload",
+					"line": 3789
+				},
+				{
+					"name": "editedRecordValues",
+					"line": 3793
+				},
+				{
+					"name": "buildValuesFromDraft",
+					"line": 3807
+				},
+				{
+					"name": "relationTargetOptions",
+					"line": 10266
+				},
+				{
+					"name": "relationDraftValue",
+					"line": 10270
+				},
+				{
+					"name": "setDraftValue",
+					"line": 11831
+				},
+				{
+					"name": "draftArray",
+					"line": 12188
+				},
+				{
+					"name": "isDraftOptionSelected",
+					"line": 12196
+				},
+				{
+					"name": "toggleDraftOption",
+					"line": 12200
+				},
+				{
+					"name": "draftString",
+					"line": 12211
+				},
+				{
+					"name": "optionDisabledForSingleDraft",
+					"line": 12263
+				},
+				{
+					"name": "optionDisabledForMultiDraft",
+					"line": 12270
+				}
+			],
+			"class": "RecordsController",
+			"property": "records"
+		},
+		"state/view-cards": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "copyRecordId",
+					"line": 2108
+				},
+				{
+					"name": "cardRecordDetailsPayload",
+					"line": 2214
+				},
+				{
+					"name": "cardRecordDetailsJson",
+					"line": 2231
+				},
+				{
+					"name": "exportCardRecordDetails",
+					"line": 2235
+				},
+				{
+					"name": "cardGroupRecordsDetailsJson",
+					"line": 2254
+				},
+				{
+					"name": "exportCardGroupRecords",
+					"line": 2283
+				},
+				{
+					"name": "updateCardRecordSelectField",
+					"line": 2588
+				},
+				{
+					"name": "cardGroupCollapseKey",
+					"line": 2611
+				},
+				{
+					"name": "cardGroupCollapsed",
+					"line": 2615
+				},
+				{
+					"name": "toggleCardGroup",
+					"line": 2619
+				},
+				{
+					"name": "cardGroupFilterKey",
+					"line": 2627
+				},
+				{
+					"name": "copyCardGroupRecordIds",
+					"line": 2631
+				},
+				{
+					"name": "focusCardGroupRecords",
+					"line": 2654
+				},
+				{
+					"name": "cardGroupFilterDraft",
+					"line": 2664
+				},
+				{
+					"name": "canApplyCardGroupFilter",
+					"line": 2674
+				},
+				{
+					"name": "applyCardGroupFilter",
+					"line": 2693
+				},
+				{
+					"name": "orderedCardFieldsForView",
+					"line": 4661
+				},
+				{
+					"name": "cardDisplayFields",
+					"line": 5653
+				},
+				{
+					"name": "viewCardTitleField",
+					"line": 6467
+				},
+				{
+					"name": "viewCardSubtitleField",
+					"line": 6475
+				},
+				{
+					"name": "viewCardBadgeField",
+					"line": 6483
+				},
+				{
+					"name": "viewCardCoverField",
+					"line": 6495
+				},
+				{
+					"name": "cardTitle",
+					"line": 6696
+				},
+				{
+					"name": "cardSubtitle",
+					"line": 6702
+				},
+				{
+					"name": "cardBadge",
+					"line": 6708
+				},
+				{
+					"name": "cardCoverUrl",
+					"line": 6742
+				}
+			],
+			"class": "ViewCardsController",
+			"property": "viewCards"
+		},
+		"calendar-dates": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "calendarScheduleKey",
+					"line": 2123
+				},
+				{
+					"name": "calendarDateInputValue",
+					"line": 6867
+				},
+				{
+					"name": "calendarRecordIsoDate",
+					"line": 6876
+				},
+				{
+					"name": "addIsoDays",
+					"line": 6883
+				},
+				{
+					"name": "isoDayDiff",
+					"line": 6891
+				},
+				{
+					"name": "addIsoMonths",
+					"line": 6900
+				},
+				{
+					"name": "monthStartIso",
+					"line": 6915
+				},
+				{
+					"name": "weekStartIso",
+					"line": 6923
+				},
+				{
+					"name": "monthDayCount",
+					"line": 6933
+				},
+				{
+					"name": "ganttBucketStartIso",
+					"line": 6939
+				},
+				{
+					"name": "addGanttBucket",
+					"line": 6946
+				},
+				{
+					"name": "ganttBucketLimit",
+					"line": 6953
+				},
+				{
+					"name": "calendarGridLabel",
+					"line": 6959
+				},
+				{
+					"name": "isIsoWorkday",
+					"line": 6970
+				},
+				{
+					"name": "ganttDateLabel",
+					"line": 6982
+				},
+				{
+					"name": "calendarOccurrenceDates",
+					"line": 7000
+				},
+				{
+					"name": "calendarDatePayloadValue",
+					"line": 7027
+				},
+				{
+					"name": "calendarAgendaGroups",
+					"line": 7322
+				},
+				{
+					"name": "calendarAgendaRecordCount",
+					"line": 7331
+				}
+			]
+		},
+		"state/view-calendar": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "copyCalendarSchedule",
+					"line": 2127
+				},
+				{
+					"name": "canShiftCalendarOccurrence",
+					"line": 2155
+				},
+				{
+					"name": "shiftCalendarOccurrence",
+					"line": 2166
+				},
+				{
+					"name": "updateCalendarRecordDate",
+					"line": 2893
+				},
+				{
+					"name": "updateCalendarSeriesDate",
+					"line": 2937
+				},
+				{
+					"name": "updateCalendarRecordEndDate",
+					"line": 2981
+				},
+				{
+					"name": "handleCalendarDragStart",
+					"line": 3017
+				},
+				{
+					"name": "handleCalendarDragEnd",
+					"line": 3026
+				},
+				{
+					"name": "handleCalendarDragOver",
+					"line": 3030
+				},
+				{
+					"name": "handleCalendarDrop",
+					"line": 3038
+				},
+				{
+					"name": "viewDateField",
+					"line": 6457
+				},
+				{
+					"name": "viewCalendarResourceField",
+					"line": 6628
+				},
+				{
+					"name": "viewCalendarEndField",
+					"line": 6636
+				},
+				{
+					"name": "viewCalendarFocusDate",
+					"line": 6648
+				},
+				{
+					"name": "selectedCalendarExceptionDates",
+					"line": 6684
+				},
+				{
+					"name": "calendarExceptionDateSet",
+					"line": 6688
+				},
+				{
+					"name": "calendarDateInScope",
+					"line": 6976
+				},
+				{
+					"name": "groupRecordsByCalendarGrid",
+					"line": 7128
+				},
+				{
+					"name": "groupCalendarResourceLanes",
+					"line": 7220
+				},
+				{
+					"name": "calendarResourceRows",
+					"line": 7229
+				},
+				{
+					"name": "calendarBucketFilterKey",
+					"line": 7242
+				},
+				{
+					"name": "calendarBucketFilterDrafts",
+					"line": 7246
+				},
+				{
+					"name": "canApplyCalendarBucketFilters",
+					"line": 7271
+				},
+				{
+					"name": "applyCalendarBucketFilters",
+					"line": 7292
+				},
+				{
+					"name": "calendarExceptionRecordLabel",
+					"line": 8487
+				}
+			],
+			"class": "ViewCalendarController",
+			"property": "viewCalendar"
+		},
+		"zip": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "safeExportSlug",
+					"line": 2274
+				},
+				{
+					"name": "safeZipSegment",
+					"line": 9576
+				},
+				{
+					"name": "createStoredZipBlob",
+					"line": 9587
+				},
+				{
+					"name": "zipBlobPart",
+					"line": 9658
+				},
+				{
+					"name": "crc32",
+					"line": 9676
+				},
+				{
+					"name": "attachmentManifestUrls",
+					"line": 9686
+				}
+			]
+		},
+		"state/view-timeline": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "copyTimelineEventValue",
+					"line": 2304
+				},
+				{
+					"name": "exportTimelineEventDetails",
+					"line": 2323
+				},
+				{
+					"name": "exportTimelineEventsCsv",
+					"line": 2342
+				},
+				{
+					"name": "exportTimelineEventsJson",
+					"line": 2359
+				},
+				{
+					"name": "copyTimelineEventIds",
+					"line": 2378
+				},
+				{
+					"name": "copyTimelineAggregateIds",
+					"line": 2401
+				},
+				{
+					"name": "timelineEventPinned",
+					"line": 2422
+				},
+				{
+					"name": "orderedTimelineEvents",
+					"line": 2426
+				},
+				{
+					"name": "toggleTimelineEventPinned",
+					"line": 2439
+				},
+				{
+					"name": "focusTimelineEventRecord",
+					"line": 2452
+				},
+				{
+					"name": "timelineEventLinkedRecordIds",
+					"line": 2464
+				},
+				{
+					"name": "focusTimelineEventRecords",
+					"line": 2474
+				},
+				{
+					"name": "applyTimelineEventQuickFilter",
+					"line": 2486
+				},
+				{
+					"name": "applyTimelineEventDayWindow",
+					"line": 2517
+				},
+				{
+					"name": "updateTimelineRecordSelectField",
+					"line": 2725
+				},
+				{
+					"name": "viewTimelineTitleField",
+					"line": 6580
+				},
+				{
+					"name": "viewTimelineSubtitleField",
+					"line": 6588
+				},
+				{
+					"name": "selectedTimelineSource",
+					"line": 6596
+				},
+				{
+					"name": "selectedTimelineEventLayout",
+					"line": 6600
+				},
+				{
+					"name": "selectedTimelineEventType",
+					"line": 6604
+				},
+				{
+					"name": "selectedTimelineEventActor",
+					"line": 6608
+				},
+				{
+					"name": "selectedTimelineEventAggregate",
+					"line": 6612
+				},
+				{
+					"name": "selectedTimelineEventQuery",
+					"line": 6616
+				},
+				{
+					"name": "selectedTimelineEventFrom",
+					"line": 6620
+				},
+				{
+					"name": "selectedTimelineEventTo",
+					"line": 6624
+				},
+				{
+					"name": "timelineTitle",
+					"line": 6746
+				},
+				{
+					"name": "timelineSubtitle",
+					"line": 6752
+				},
+				{
+					"name": "timelineEventRecord",
+					"line": 6790
+				},
+				{
+					"name": "filteredTimelineEvents",
+					"line": 7519
+				}
+			],
+			"class": "ViewTimelineController",
+			"property": "viewTimeline"
+		},
+		"views/timeline-events": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "timelineEventAggregateKeys",
+					"line": 2395
+				},
+				{
+					"name": "timelineEventDateTimeLocal",
+					"line": 2511
+				},
+				{
+					"name": "timelineEventLayout",
+					"line": 4906
+				},
+				{
+					"name": "timelineEventsCsv",
+					"line": 5371
+				},
+				{
+					"name": "timelineEventAggregateKey",
+					"line": 6775
+				},
+				{
+					"name": "timelineEventTitle",
+					"line": 6779
+				},
+				{
+					"name": "timelineEventSubtitle",
+					"line": 6783
+				},
+				{
+					"name": "timelineEventJson",
+					"line": 6796
+				},
+				{
+					"name": "timelineEventDetailsPayload",
+					"line": 6802
+				},
+				{
+					"name": "timelineEventDetailsJson",
+					"line": 6818
+				},
+				{
+					"name": "timelineEventsDetailsJson",
+					"line": 6822
+				},
+				{
+					"name": "timelineEventSearchText",
+					"line": 6830
+				},
+				{
+					"name": "eventsByCreatedAt",
+					"line": 7491
+				},
+				{
+					"name": "eventTypes",
+					"line": 7497
+				},
+				{
+					"name": "eventActors",
+					"line": 7503
+				},
+				{
+					"name": "eventAggregates",
+					"line": 7513
+				},
+				{
+					"name": "timelineEventBoundary",
+					"line": 7541
+				}
+			]
+		},
+		"state/view-kanban": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "updateKanbanRecordField",
+					"line": 2559
+				},
+				{
+					"name": "selectedKanbanRecords",
+					"line": 2752
+				},
+				{
+					"name": "isKanbanRecordSelected",
+					"line": 2758
+				},
+				{
+					"name": "setKanbanRecordSelected",
+					"line": 2762
+				},
+				{
+					"name": "clearKanbanSelection",
+					"line": 2768
+				},
+				{
+					"name": "kanbanBulkMoveAllowed",
+					"line": 2772
+				},
+				{
+					"name": "bulkMoveKanbanRecords",
+					"line": 2789
+				},
+				{
+					"name": "handleKanbanDragStart",
+					"line": 2848
+				},
+				{
+					"name": "handleKanbanDragEnd",
+					"line": 2857
+				},
+				{
+					"name": "handleKanbanDragOver",
+					"line": 2861
+				},
+				{
+					"name": "handleKanbanDrop",
+					"line": 2877
+				},
+				{
+					"name": "viewGroupField",
+					"line": 6365
+				},
+				{
+					"name": "viewSwimlaneField",
+					"line": 6379
+				},
+				{
+					"name": "kanbanWipLimits",
+					"line": 6395
+				},
+				{
+					"name": "kanbanWipLimit",
+					"line": 6413
+				},
+				{
+					"name": "kanbanMoveAllowed",
+					"line": 6419
+				},
+				{
+					"name": "kanbanColumnRecordCount",
+					"line": 6432
+				},
+				{
+					"name": "kanbanWipLabel",
+					"line": 6439
+				},
+				{
+					"name": "kanbanWipExceeded",
+					"line": 6447
+				},
+				{
+					"name": "kanbanColumnWipExceeded",
+					"line": 6453
+				},
+				{
+					"name": "groupKanbanSwimlanes",
+					"line": 7076
+				},
+				{
+					"name": "kanbanSwimlaneRows",
+					"line": 7090
+				}
+			],
+			"class": "ViewKanbanController",
+			"property": "viewKanban"
+		},
+		"state/view-gantt": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "updateGanttRecordDate",
+					"line": 3054
+				},
+				{
+					"name": "updateGanttRecordEndDate",
+					"line": 3101
+				},
+				{
+					"name": "extendGanttTaskEnd",
+					"line": 3133
+				},
+				{
+					"name": "handleGanttDragStart",
+					"line": 3141
+				},
+				{
+					"name": "handleGanttDragEnd",
+					"line": 3150
+				},
+				{
+					"name": "handleGanttDragOver",
+					"line": 3154
+				},
+				{
+					"name": "handleGanttDrop",
+					"line": 3162
+				},
+				{
+					"name": "viewGanttStartField",
+					"line": 6526
+				},
+				{
+					"name": "viewGanttEndField",
+					"line": 6536
+				},
+				{
+					"name": "viewGanttGroupField",
+					"line": 6551
+				},
+				{
+					"name": "viewGanttDependencyField",
+					"line": 6562
+				},
+				{
+					"name": "buildGanttTimeline",
+					"line": 7335
+				}
+			],
+			"class": "ViewGanttController",
+			"property": "viewGantt"
+		},
+		"state/record-panel": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "syncRecordDetailUrl",
+					"line": 3178
+				},
+				{
+					"name": "restoreRecordDetailFromUrl",
+					"line": 3204
+				},
+				{
+					"name": "selectRecord",
+					"line": 3211
+				},
+				{
+					"name": "goToRecordPage",
+					"line": 3288
+				},
+				{
+					"name": "loadSelectedRecordLinks",
+					"line": 3425
+				},
+				{
+					"name": "loadSelectedRecordChildren",
+					"line": 3441
+				},
+				{
+					"name": "loadSelectedRecordComments",
+					"line": 3455
+				},
+				{
+					"name": "reloadSelectedRecord",
+					"line": 3478
+				},
+				{
+					"name": "announce",
+					"line": 9034
+				},
+				{
+					"name": "recordHref",
+					"line": 9039
+				},
+				{
+					"name": "canChangeRecord",
+					"line": 9043
+				},
+				{
+					"name": "setRecordUrl",
+					"line": 9055
+				},
+				{
+					"name": "openRecordPanel",
+					"line": 9075
+				},
+				{
+					"name": "closeRecordPanel",
+					"line": 9121
+				},
+				{
+					"name": "stepRecordPanel",
+					"line": 9153
+				},
+				{
+					"name": "gridBadges",
+					"line": 9177
+				}
+			],
+			"class": "RecordPanelController",
+			"property": "recordPanel"
+		},
+		"state/record-detail": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "closeRecordDetail",
+					"line": 3215
+				},
+				{
+					"name": "handleCreateLink",
+					"line": 3495
+				},
+				{
+					"name": "handleCreateRecordComment",
+					"line": 3522
+				},
+				{
+					"name": "childFormForRelationField",
+					"line": 3558
+				},
+				{
+					"name": "parentChildRelationFields",
+					"line": 3564
+				},
+				{
+					"name": "childFieldsForForm",
+					"line": 3573
+				},
+				{
+					"name": "startAddChildRecord",
+					"line": 3585
+				},
+				{
+					"name": "startEditChildRecord",
+					"line": 3598
+				},
+				{
+					"name": "cancelChildEditor",
+					"line": 3626
+				},
+				{
+					"name": "saveChildRecord",
+					"line": 3630
+				},
+				{
+					"name": "deleteChildRecord",
+					"line": 3708
+				},
+				{
+					"name": "selectedRecordAttachmentFields",
+					"line": 11972
+				},
+				{
+					"name": "selectedRecordAttachmentUrls",
+					"line": 11980
+				},
+				{
+					"name": "selectedRecordAttachmentValueUrls",
+					"line": 11986
+				},
+				{
+					"name": "updateChildDraftValue",
+					"line": 12217
+				},
+				{
+					"name": "updateChildTitle",
+					"line": 12226
+				},
+				{
+					"name": "isChildDraftOptionSelected",
+					"line": 12246
+				},
+				{
+					"name": "toggleChildDraftOption",
+					"line": 12250
+				},
+				{
+					"name": "optionDisabledForChildSingleDraft",
+					"line": 12277
+				},
+				{
+					"name": "optionDisabledForChildMultiDraft",
+					"line": 12284
+				},
+				{
+					"name": "childRecordFields",
+					"line": 12486
+				},
+				{
+					"name": "childRecordsForRelationField",
+					"line": 12498
+				},
+				{
+					"name": "childGridFieldsForRelationField",
+					"line": 12508
+				}
+			],
+			"class": "RecordDetailController",
+			"property": "recordDetail"
+		},
+		"permission-drafts": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "defaultPermissionActions",
+					"line": 3315
+				},
+				{
+					"name": "rolePermissionActions",
+					"line": 3322
+				},
+				{
+					"name": "roleRecordScope",
+					"line": 3336
+				},
+				{
+					"name": "permissionActionLabel",
+					"line": 3421
+				},
+				{
+					"name": "permissionFieldList",
+					"line": 4497
+				}
+			]
+		},
+		"record-draft-values": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "defaultDraftForFields",
+					"line": 3579
+				},
+				{
+					"name": "defaultDraftValueForField",
+					"line": 3781
+				},
+				{
+					"name": "draftValueForField",
+					"line": 3840
+				},
+				{
+					"name": "draftArrayFrom",
+					"line": 12232
+				},
+				{
+					"name": "draftStringFrom",
+					"line": 12240
+				},
+				{
+					"name": "childRelationKeyForField",
+					"line": 12494
+				}
+			]
+		},
+		"designer-schema": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "parseFields",
+					"line": 3844
+				},
+				{
+					"name": "blankFieldDraft",
+					"line": 10279
+				},
+				{
+					"name": "normalizeTemplateSchema",
+					"line": 10342
+				},
+				{
+					"name": "templateFormKey",
+					"line": 10361
+				},
+				{
+					"name": "templateTitleTemplate",
+					"line": 10365
+				},
+				{
+					"name": "fieldDraftsFromSchema",
+					"line": 10425
+				},
+				{
+					"name": "parseOptionsText",
+					"line": 10769
+				},
+				{
+					"name": "parseOptionColorsText",
+					"line": 10776
+				},
+				{
+					"name": "parseOptionMetadataText",
+					"line": 10794
+				},
+				{
+					"name": "optionColorsToText",
+					"line": 10815
+				},
+				{
+					"name": "optionMetadataToText",
+					"line": 10827
+				},
+				{
+					"name": "sanitizeAttachmentDerivativeFormat",
+					"line": 10839
+				},
+				{
+					"name": "attachmentVariantsToText",
+					"line": 10849
+				},
+				{
+					"name": "parseAttachmentVariantsText",
+					"line": 10876
+				},
+				{
+					"name": "formulaArgsToText",
+					"line": 11148
+				},
+				{
+					"name": "parseFormulaArgsText",
+					"line": 11162
+				},
+				{
+					"name": "parseValidationBoundary",
+					"line": 11180
+				},
+				{
+					"name": "parseFieldDefaultValue",
+					"line": 11186
+				},
+				{
+					"name": "parseSelectDefaultValue",
+					"line": 11215
+				},
+				{
+					"name": "parseDefaultMultiSelectValue",
+					"line": 11245
+				},
+				{
+					"name": "fieldIdentity",
+					"line": 11336
+				}
+			]
+		},
+		"detail-layout-drafts": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "detailPageWidgetKey",
+					"line": 3928
+				},
+				{
+					"name": "detailPageWidgetEntriesFromLayout",
+					"line": 3934
+				},
+				{
+					"name": "detailPageWidgetOption",
+					"line": 3995
+				},
+				{
+					"name": "detailPageWidgetPayload",
+					"line": 4001
+				},
+				{
+					"name": "detailPageWidgetLimitNumber",
+					"line": 4019
+				},
+				{
+					"name": "detailPageWidgetLimitText",
+					"line": 4032
+				},
+				{
+					"name": "detailPageWidgetRegion",
+					"line": 4062
+				},
+				{
+					"name": "detailPageFieldColumns",
+					"line": 4066
+				},
+				{
+					"name": "detailLayoutFieldKeys",
+					"line": 5053
+				},
+				{
+					"name": "detailLayoutSectionColumns",
+					"line": 5066
+				},
+				{
+					"name": "detailLayoutSectionDescription",
+					"line": 5073
+				},
+				{
+					"name": "detailLayoutSectionDensity",
+					"line": 5077
+				},
+				{
+					"name": "keepDetailSectionOpen",
+					"line": 5081
+				},
+				{
+					"name": "detailLayoutSectionGridClass",
+					"line": 5089
+				},
+				{
+					"name": "detailLayoutSectionFieldClass",
+					"line": 5101
+				},
+				{
+					"name": "recordValueIsEmpty",
+					"line": 5107
+				},
+				{
+					"name": "detailLayoutSectionFieldsForRecord",
+					"line": 5126
+				}
+			]
+		},
+		"state/detail-layout-editor": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "detailLayoutFingerprint",
+					"line": 4038
+				},
+				{
+					"name": "detailHeaderFingerprint",
+					"line": 4044
+				},
+				{
+					"name": "detailHighlightFingerprint",
+					"line": 4050
+				},
+				{
+					"name": "detailPageCompositionFingerprint",
+					"line": 4056
+				},
+				{
+					"name": "detailPageCompositionDraftFromForm",
+					"line": 4073
+				},
+				{
+					"name": "syncDetailPageCompositionDraft",
+					"line": 4086
+				},
+				{
+					"name": "detailHeaderDraftFromForm",
+					"line": 4102
+				},
+				{
+					"name": "syncDetailHeaderDraft",
+					"line": 4119
+				},
+				{
+					"name": "detailHighlightDraftFromForm",
+					"line": 4135
+				},
+				{
+					"name": "syncDetailHighlightDraft",
+					"line": 4160
+				},
+				{
+					"name": "detailLayoutSectionDraftsFromForm",
+					"line": 4176
+				},
+				{
+					"name": "syncDetailLayoutSectionDrafts",
+					"line": 4276
+				},
+				{
+					"name": "nextDetailLayoutSectionKey",
+					"line": 4292
+				},
+				{
+					"name": "detailLayoutSectionPayload",
+					"line": 4308
+				},
+				{
+					"name": "detailLayoutFieldAssignedTo",
+					"line": 4339
+				},
+				{
+					"name": "updateDetailLayoutSectionTitle",
+					"line": 4345
+				},
+				{
+					"name": "updateDetailLayoutSectionDescription",
+					"line": 4351
+				},
+				{
+					"name": "updateDetailLayoutSectionColumns",
+					"line": 4357
+				},
+				{
+					"name": "updateDetailLayoutSectionDensity",
+					"line": 4363
+				},
+				{
+					"name": "updateDetailLayoutSectionHideEmptyFields",
+					"line": 4369
+				},
+				{
+					"name": "updateDetailLayoutSectionCollapsible",
+					"line": 4375
+				},
+				{
+					"name": "updateDetailLayoutSectionDefaultCollapsed",
+					"line": 4387
+				},
+				{
+					"name": "addDetailLayoutSection",
+					"line": 4398
+				},
+				{
+					"name": "removeDetailLayoutSection",
+					"line": 4417
+				},
+				{
+					"name": "moveDetailLayoutSection",
+					"line": 4425
+				},
+				{
+					"name": "setDetailLayoutSectionField",
+					"line": 4436
+				},
+				{
+					"name": "moveDetailLayoutSectionField",
+					"line": 4449
+				},
+				{
+					"name": "setDetailHeaderDraft",
+					"line": 4470
+				},
+				{
+					"name": "setDetailHighlightField",
+					"line": 4474
+				},
+				{
+					"name": "moveDetailHighlightField",
+					"line": 4482
+				}
+			],
+			"class": "DetailLayoutEditorController",
+			"property": "detailLayoutEditor"
+		},
+		"field-options": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "fieldLabel",
+					"line": 4493
+				},
+				{
+					"name": "fieldType",
+					"line": 4550
+				},
+				{
+					"name": "fieldOptions",
+					"line": 4554
+				},
+				{
+					"name": "fieldDisabledOptions",
+					"line": 4558
+				},
+				{
+					"name": "fieldArchivedOptions",
+					"line": 4562
+				},
+				{
+					"name": "optionDisabled",
+					"line": 4566
+				},
+				{
+					"name": "optionArchived",
+					"line": 4570
+				},
+				{
+					"name": "recordSelectOptions",
+					"line": 4574
+				},
+				{
+					"name": "optionDescription",
+					"line": 4591
+				},
+				{
+					"name": "optionGroup",
+					"line": 4599
+				},
+				{
+					"name": "optionDisplayLabel",
+					"line": 4605
+				},
+				{
+					"name": "sanitizeOptionColor",
+					"line": 4611
+				},
+				{
+					"name": "fieldPlaceholder",
+					"line": 4621
+				},
+				{
+					"name": "formListFields",
+					"line": 12518
+				},
+				{
+					"name": "formFieldSummary",
+					"line": 12522
+				}
+			]
+		},
+		"field-conditions": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "fieldHasConditionalHidden",
+					"line": 4509
+				},
+				{
+					"name": "fieldHasConditionalReadOnly",
+					"line": 4513
+				},
+				{
+					"name": "recordFieldHiddenByCondition",
+					"line": 4517
+				},
+				{
+					"name": "recordFieldReadOnlyByCondition",
+					"line": 4521
+				},
+				{
+					"name": "recordsFieldHiddenByCondition",
+					"line": 4528
+				},
+				{
+					"name": "recordsFieldReadOnlyByCondition",
+					"line": 4539
+				},
+				{
+					"name": "normalizeFieldConditionOperator",
+					"line": 10926
+				},
+				{
+					"name": "fieldConditionOperatorNeedsValue",
+					"line": 10959
+				},
+				{
+					"name": "parseFieldConditionLine",
+					"line": 10963
+				},
+				{
+					"name": "parseFieldConditionText",
+					"line": 10999
+				},
+				{
+					"name": "fieldConditionToText",
+					"line": 11021
+				},
+				{
+					"name": "draftConditionValue",
+					"line": 11073
+				},
+				{
+					"name": "fieldConditionMatches",
+					"line": 11091
+				},
+				{
+					"name": "fieldHiddenByCondition",
+					"line": 11137
+				},
+				{
+					"name": "fieldReadOnlyByCondition",
+					"line": 11141
+				}
+			]
+		},
+		"view-config": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "viewColumns",
+					"line": 4629
+				},
+				{
+					"name": "viewConfigStringArray",
+					"line": 4637
+				},
+				{
+					"name": "orderedFieldsByKeys",
+					"line": 4645
+				},
+				{
+					"name": "viewCardFieldKeys",
+					"line": 4657
+				},
+				{
+					"name": "viewConfigString",
+					"line": 4665
+				},
+				{
+					"name": "viewConfigBoolean",
+					"line": 4671
+				},
+				{
+					"name": "viewConfigRecord",
+					"line": 4675
+				},
+				{
+					"name": "isIsoDate",
+					"line": 4681
+				},
+				{
+					"name": "calendarExceptionDateMap",
+					"line": 4685
+				},
+				{
+					"name": "viewIsDefault",
+					"line": 4707
+				},
+				{
+					"name": "viewVisibility",
+					"line": 4711
+				},
+				{
+					"name": "sortViewsByDefault",
+					"line": 4715
+				},
+				{
+					"name": "normalizeLocalDefaultViews",
+					"line": 4725
+				},
+				{
+					"name": "viewFilterOperator",
+					"line": 4735
+				},
+				{
+					"name": "viewFilterLogic",
+					"line": 4741
+				},
+				{
+					"name": "viewSortDirection",
+					"line": 4745
+				},
+				{
+					"name": "viewCalendarRange",
+					"line": 4749
+				},
+				{
+					"name": "viewCalendarDayScope",
+					"line": 4753
+				},
+				{
+					"name": "viewCalendarLayout",
+					"line": 4757
+				},
+				{
+					"name": "viewGanttScale",
+					"line": 4761
+				},
+				{
+					"name": "viewPivotAggregate",
+					"line": 4765
+				},
+				{
+					"name": "viewPivotTotalsMode",
+					"line": 4771
+				},
+				{
+					"name": "viewPivotValueDisplay",
+					"line": 4777
+				},
+				{
+					"name": "viewPivotSortMode",
+					"line": 4785
+				},
+				{
+					"name": "viewPivotRowLimit",
+					"line": 4798
+				},
+				{
+					"name": "viewPivotColumnLimit",
+					"line": 4806
+				},
+				{
+					"name": "viewCalendarRecurrence",
+					"line": 4842
+				},
+				{
+					"name": "viewCardLayout",
+					"line": 4848
+				},
+				{
+					"name": "viewCardCoverAspect",
+					"line": 4855
+				},
+				{
+					"name": "viewCardCoverFit",
+					"line": 4861
+				},
+				{
+					"name": "viewCardCoverPosition",
+					"line": 4865
+				},
+				{
+					"name": "cardCoverObjectClass",
+					"line": 4871
+				},
+				{
+					"name": "cardCoverImageClass",
+					"line": 4875
+				},
+				{
+					"name": "viewCardFieldLimit",
+					"line": 4894
+				},
+				{
+					"name": "viewTimelineSource",
+					"line": 4902
+				},
+				{
+					"name": "viewFilterNodeDisabled",
+					"line": 4928
+				},
+				{
+					"name": "kanbanMoveOptions",
+					"line": 6387
+				},
+				{
+					"name": "builtInView",
+					"line": 8776
+				}
+			]
+		},
+		"views/pivot-format": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "pivotShowRowTotals",
+					"line": 4814
+				},
+				{
+					"name": "pivotShowColumnTotals",
+					"line": 4818
+				},
+				{
+					"name": "pivotCellIntensity",
+					"line": 4822
+				},
+				{
+					"name": "pivotCellHeatmapStyle",
+					"line": 4830
+				},
+				{
+					"name": "pivotFieldBucket",
+					"line": 5753
+				},
+				{
+					"name": "pivotFieldLabel",
+					"line": 5778
+				},
+				{
+					"name": "formatPivotValue",
+					"line": 5786
+				},
+				{
+					"name": "formatPivotPercent",
+					"line": 5804
+				},
+				{
+					"name": "formatPivotDisplayValue",
+					"line": 5810
+				},
+				{
+					"name": "formatPivotTotalDisplayValue",
+					"line": 5823
+				},
+				{
+					"name": "pivotAggregateValue",
+					"line": 5841
+				},
+				{
+					"name": "sortPivotBuckets",
+					"line": 5848
+				},
+				{
+					"name": "pivotConfiguredBuckets",
+					"line": 5870
+				},
+				{
+					"name": "pivotTableMatrixRows",
+					"line": 6268
+				},
+				{
+					"name": "pivotTableMatrixText",
+					"line": 6302
+				},
+				{
+					"name": "pivotTableMatrixCsv",
+					"line": 6308
+				}
+			]
+		},
+		"state/view-records": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "viewFilterConfigFromRecord",
+					"line": 4910
+				},
+				{
+					"name": "parsedViewFilterExpressionFromValue",
+					"line": 4940
+				},
+				{
+					"name": "viewFilterGroups",
+					"line": 4986
+				},
+				{
+					"name": "viewFilterExpression",
+					"line": 5016
+				},
+				{
+					"name": "viewSortConfig",
+					"line": 5037
+				},
+				{
+					"name": "fieldByKey",
+					"line": 5049
+				},
+				{
+					"name": "detailLayoutSections",
+					"line": 5135
+				},
+				{
+					"name": "applyViewRecordConfig",
+					"line": 5213
+				}
+			],
+			"class": "ViewRecordsController",
+			"property": "viewRecords"
+		},
+		"state/filter-expression-export": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "parsedViewDraftFilter",
+					"line": 5273
+				},
+				{
+					"name": "viewDraftFilterMatchCount",
+					"line": 5288
+				},
+				{
+					"name": "viewDraftFilterGroupMatchCount",
+					"line": 5296
+				},
+				{
+					"name": "viewDraftFilterExpressionRecords",
+					"line": 5311
+				},
+				{
+					"name": "recordsCsv",
+					"line": 5350
+				},
+				{
+					"name": "viewDraftFilterExpressionCsv",
+					"line": 5409
+				},
+				{
+					"name": "viewDraftFilterExpressionConfig",
+					"line": 5413
+				},
+				{
+					"name": "viewDraftFilterExpressionJsonText",
+					"line": 5417
+				},
+				{
+					"name": "viewDraftFilterExpressionSummaryText",
+					"line": 5431
+				},
+				{
+					"name": "viewDraftFilterExpressionJson",
+					"line": 5458
+				},
+				{
+					"name": "copyViewDraftFilterExpressionRecordIds",
+					"line": 5473
+				},
+				{
+					"name": "copyViewDraftFilterExpressionJson",
+					"line": 5492
+				},
+				{
+					"name": "copyViewDraftFilterExpressionSummary",
+					"line": 5509
+				},
+				{
+					"name": "copyViewDraftFilterExpressionJsonRecords",
+					"line": 5526
+				},
+				{
+					"name": "copyViewDraftFilterExpressionCsvRecords",
+					"line": 5544
+				},
+				{
+					"name": "exportViewDraftFilterExpressionConfigJson",
+					"line": 5562
+				},
+				{
+					"name": "exportViewDraftFilterExpressionSummary",
+					"line": 5579
+				},
+				{
+					"name": "focusViewDraftFilterExpressionRecords",
+					"line": 5596
+				},
+				{
+					"name": "exportViewDraftFilterExpressionCsv",
+					"line": 5605
+				},
+				{
+					"name": "exportViewDraftFilterExpressionJson",
+					"line": 5623
+				}
+			],
+			"class": "FilterExpressionExportController",
+			"property": "filterExpressionExport"
+		},
+		"view-draft-parse": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "viewDraftFilterExpressionRecordIdsText",
+					"line": 5342
+				},
+				{
+					"name": "filterOperatorSummary",
+					"line": 5423
+				},
+				{
+					"name": "parseViewFilterDrafts",
+					"line": 7551
+				},
+				{
+					"name": "viewDraftExpressionFromView",
+					"line": 7567
+				},
+				{
+					"name": "viewDraftFilterGroupsFromExpression",
+					"line": 7571
+				},
+				{
+					"name": "viewDraftFilterRootLogicFromView",
+					"line": 7635
+				},
+				{
+					"name": "viewDraftWipLimitsFromView",
+					"line": 7641
+				},
+				{
+					"name": "viewDraftCalendarExceptionDatesFromView",
+					"line": 7656
+				},
+				{
+					"name": "viewDraftFilterGroupsFromView",
+					"line": 7660
+				},
+				{
+					"name": "syncLegacyViewFilterFields",
+					"line": 7714
+				},
+				{
+					"name": "filterLabelSuffix",
+					"line": 8107
+				}
+			]
+		},
+		"import-csv": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "csvCell",
+					"line": 5346
+				},
+				{
+					"name": "sampleImportValue",
+					"line": 9762
+				},
+				{
+					"name": "isValidImportMappingTransform",
+					"line": 9864
+				},
+				{
+					"name": "applyImportMappingTransform",
+					"line": 10016
+				},
+				{
+					"name": "capitalizeImportValue",
+					"line": 10033
+				},
+				{
+					"name": "slugifyImportValue",
+					"line": 10039
+				},
+				{
+					"name": "normalizeImportItem",
+					"line": 10062
+				},
+				{
+					"name": "parseCsvLines",
+					"line": 10123
+				},
+				{
+					"name": "importCellValue",
+					"line": 10182
+				}
+			]
+		},
+		"state/view-pivot": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "buildPivotTable",
+					"line": 5888
+				},
+				{
+					"name": "buildPivotDrilldownRecords",
+					"line": 6065
+				},
+				{
+					"name": "pivotRowRecords",
+					"line": 6081
+				},
+				{
+					"name": "pivotColumnRecords",
+					"line": 6089
+				},
+				{
+					"name": "pivotCellRecords",
+					"line": 6097
+				},
+				{
+					"name": "selectPivotDrilldown",
+					"line": 6107
+				},
+				{
+					"name": "pivotDrilldownKey",
+					"line": 6123
+				},
+				{
+					"name": "pivotDrilldownFilterDrafts",
+					"line": 6129
+				},
+				{
+					"name": "canApplyPivotDrilldownFilters",
+					"line": 6161
+				},
+				{
+					"name": "applyPivotDrilldownFilters",
+					"line": 6182
+				},
+				{
+					"name": "copyPivotCellValue",
+					"line": 6212
+				},
+				{
+					"name": "copyPivotDrilldownRecordIds",
+					"line": 6232
+				},
+				{
+					"name": "exportPivotDrilldownRecordsCsv",
+					"line": 6250
+				},
+				{
+					"name": "copyPivotTableMatrix",
+					"line": 6314
+				},
+				{
+					"name": "exportPivotTableMatrixCsv",
+					"line": 6333
+				},
+				{
+					"name": "focusPivotDrilldownRecords",
+					"line": 6352
+				},
+				{
+					"name": "viewPivotRowField",
+					"line": 6504
+				},
+				{
+					"name": "viewPivotColumnField",
+					"line": 6508
+				},
+				{
+					"name": "viewPivotValueField",
+					"line": 6517
+				}
+			],
+			"class": "ViewPivotController",
+			"property": "viewPivot"
+		},
+		"state/view-draft-fields": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "viewDraftCalendarFocusBaseDate",
+					"line": 6654
+				},
+				{
+					"name": "shiftViewDraftCalendarFocus",
+					"line": 6670
+				},
+				{
+					"name": "validViewDraftCardFieldKeys",
+					"line": 7922
+				},
+				{
+					"name": "viewDraftKanbanGroupField",
+					"line": 8277
+				},
+				{
+					"name": "viewDraftSwimlaneFieldCandidates",
+					"line": 8281
+				},
+				{
+					"name": "validViewDraftSwimlaneBy",
+					"line": 8289
+				},
+				{
+					"name": "viewDraftCalendarResourceFieldCandidates",
+					"line": 8298
+				},
+				{
+					"name": "viewDraftCalendarEndFieldCandidates",
+					"line": 8306
+				},
+				{
+					"name": "validViewDraftCalendarEndField",
+					"line": 8317
+				},
+				{
+					"name": "validViewDraftCalendarResourceBy",
+					"line": 8328
+				},
+				{
+					"name": "viewDraftPivotDimensionFieldCandidates",
+					"line": 8339
+				},
+				{
+					"name": "viewDraftPivotValueFieldCandidates",
+					"line": 8345
+				},
+				{
+					"name": "validViewDraftPivotRowField",
+					"line": 8355
+				},
+				{
+					"name": "validViewDraftPivotColumnField",
+					"line": 8365
+				},
+				{
+					"name": "validViewDraftPivotValueField",
+					"line": 8376
+				},
+				{
+					"name": "swapViewDraftPivotAxes",
+					"line": 8386
+				},
+				{
+					"name": "viewDraftGanttDateFieldCandidates",
+					"line": 8402
+				},
+				{
+					"name": "viewDraftGanttGroupFieldCandidates",
+					"line": 8411
+				},
+				{
+					"name": "viewDraftGanttDependencyFieldCandidates",
+					"line": 8422
+				},
+				{
+					"name": "validViewDraftGanttStartField",
+					"line": 8434
+				},
+				{
+					"name": "validViewDraftGanttEndField",
+					"line": 8444
+				},
+				{
+					"name": "validViewDraftGanttGroupBy",
+					"line": 8455
+				},
+				{
+					"name": "validViewDraftGanttDependencyField",
+					"line": 8465
+				},
+				{
+					"name": "validViewDraftCalendarExceptionDates",
+					"line": 8475
+				},
+				{
+					"name": "viewDraftCalendarExceptionItems",
+					"line": 8493
+				},
+				{
+					"name": "addViewDraftCalendarException",
+					"line": 8512
+				},
+				{
+					"name": "removeViewDraftCalendarException",
+					"line": 8532
+				},
+				{
+					"name": "viewDraftKanbanWipOptions",
+					"line": 8545
+				},
+				{
+					"name": "setViewDraftWipLimit",
+					"line": 8553
+				},
+				{
+					"name": "validViewDraftWipLimits",
+					"line": 8566
+				}
+			],
+			"class": "ViewDraftFieldsController",
+			"property": "viewDraftFields"
+		},
+		"attachment-files": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "recordMediaUrl",
+					"line": 6714
+				},
+				{
+					"name": "attachmentFileName",
+					"line": 11848
+				},
+				{
+					"name": "attachmentContentType",
+					"line": 11867
+				},
+				{
+					"name": "attachmentAcceptAttr",
+					"line": 11885
+				},
+				{
+					"name": "attachmentStorageName",
+					"line": 11893
+				},
+				{
+					"name": "attachmentThumbnailUrl",
+					"line": 11944
+				},
+				{
+					"name": "attachmentIsPreviewableImage",
+					"line": 11992
+				},
+				{
+					"name": "recordValueUrl",
+					"line": 11999
+				},
+				{
+					"name": "signatureImageValue",
+					"line": 12295
+				},
+				{
+					"name": "signaturePoint",
+					"line": 12335
+				}
+			]
+		},
+		"record-grouping": {
+			"kind": "pure",
+			"functions": [
+				{
+					"name": "recordGroupLabel",
+					"line": 6847
+				},
+				{
+					"name": "recordDateSource",
+					"line": 6853
+				},
+				{
+					"name": "groupRecordsByField",
+					"line": 7046
+				},
+				{
+					"name": "recordsByUpdatedAt",
+					"line": 7485
+				}
+			]
+		},
+		"state/view-draft": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "defaultViewColumns",
+					"line": 7728
+				},
+				{
+					"name": "resetViewDraft",
+					"line": 7735
+				},
+				{
+					"name": "startNewViewDraft",
+					"line": 7889
+				},
+				{
+					"name": "setViewDraftColumn",
+					"line": 7895
+				},
+				{
+					"name": "viewDraftHasColumn",
+					"line": 7904
+				},
+				{
+					"name": "viewDraftColumnFields",
+					"line": 7908
+				},
+				{
+					"name": "viewDraftCardFields",
+					"line": 7918
+				},
+				{
+					"name": "moveViewDraftCardField",
+					"line": 7930
+				},
+				{
+					"name": "viewConfigFromDraft",
+					"line": 8584
+				}
+			],
+			"class": "ViewDraftController",
+			"property": "viewDraft"
+		},
+		"state/view-draft-filters": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "setViewDraftFilterGroups",
+					"line": 7947
+				},
+				{
+					"name": "updateViewDraftFilterRootLogic",
+					"line": 7964
+				},
+				{
+					"name": "setViewDraftFilters",
+					"line": 7968
+				},
+				{
+					"name": "updateViewDraftFilterGroupLogic",
+					"line": 7984
+				},
+				{
+					"name": "toggleViewDraftFilterGroupDisabled",
+					"line": 7992
+				},
+				{
+					"name": "addViewDraftFilterGroup",
+					"line": 8004
+				},
+				{
+					"name": "removeViewDraftFilterGroup",
+					"line": 8016
+				},
+				{
+					"name": "canDuplicateViewDraftFilterGroup",
+					"line": 8022
+				},
+				{
+					"name": "duplicateViewDraftFilterGroup",
+					"line": 8030
+				},
+				{
+					"name": "canMergeViewDraftFilterGroup",
+					"line": 8052
+				},
+				{
+					"name": "mergeViewDraftFilterGroupWithPrevious",
+					"line": 8062
+				},
+				{
+					"name": "moveViewDraftFilterGroup",
+					"line": 8084
+				},
+				{
+					"name": "visibleViewDraftFilterGroups",
+					"line": 8101
+				},
+				{
+					"name": "hasReachedFilterLimit",
+					"line": 8111
+				},
+				{
+					"name": "wouldExceedFilterLimit",
+					"line": 8115
+				},
+				{
+					"name": "syncVisibleFilterGroups",
+					"line": 8123
+				},
+				{
+					"name": "updateViewDraftFilter",
+					"line": 8129
+				},
+				{
+					"name": "toggleViewDraftFilterDisabled",
+					"line": 8140
+				},
+				{
+					"name": "addViewDraftFilter",
+					"line": 8149
+				},
+				{
+					"name": "removeViewDraftFilter",
+					"line": 8162
+				},
+				{
+					"name": "duplicateViewDraftFilter",
+					"line": 8171
+				},
+				{
+					"name": "canSplitViewDraftFilterToGroup",
+					"line": 8187
+				},
+				{
+					"name": "splitViewDraftFilterToGroup",
+					"line": 8198
+				},
+				{
+					"name": "moveViewDraftFilter",
+					"line": 8221
+				},
+				{
+					"name": "validViewFilterGroups",
+					"line": 8236
+				},
+				{
+					"name": "viewFilterExpressionConfigFromGroups",
+					"line": 8255
+				}
+			],
+			"class": "ViewDraftFiltersController",
+			"property": "viewDraftFilters"
+		},
+		"state/views": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "isServerSortable",
+					"line": 8770
+				},
+				{
+					"name": "applyView",
+					"line": 8797
+				},
+				{
+					"name": "showView",
+					"line": 8827
+				},
+				{
+					"name": "resetArrangement",
+					"line": 8868
+				},
+				{
+					"name": "undoReset",
+					"line": 8886
+				},
+				{
+					"name": "writeView",
+					"line": 8893
+				},
+				{
+					"name": "saveViewAs",
+					"line": 8912
+				},
+				{
+					"name": "updateCurrentView",
+					"line": 8938
+				},
+				{
+					"name": "deleteView",
+					"line": 8961
+				},
+				{
+					"name": "openSaveView",
+					"line": 8977
+				},
+				{
+					"name": "openLayoutSettings",
+					"line": 8997
+				},
+				{
+					"name": "setDraftFilters",
+					"line": 9002
+				}
+			],
+			"class": "ViewsController",
+			"property": "views"
+		},
+		"state/export": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "exportCurrentView",
+					"line": 9212
+				},
+				{
+					"name": "exportCurrentViewJson",
+					"line": 9244
+				},
+				{
+					"name": "exportAttachmentManifest",
+					"line": 9279
+				},
+				{
+					"name": "collectAttachmentBundle",
+					"line": 9331
+				},
+				{
+					"name": "exportAttachmentBundle",
+					"line": 9453
+				},
+				{
+					"name": "exportAttachmentPackage",
+					"line": 9474
+				},
+				{
+					"name": "fetchAttachmentPackageBytes",
+					"line": 9543
+				},
+				{
+					"name": "sameOriginUrl",
+					"line": 9564
+				}
+			],
+			"class": "ExportController",
+			"property": "exporter"
+		},
+		"state/import": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "openImportRecords",
+					"line": 9701
+				},
+				{
+					"name": "closeImportRecords",
+					"line": 9713
+				},
+				{
+					"name": "resetImportPreviewForSourceChange",
+					"line": 9719
+				},
+				{
+					"name": "continueImportFromSource",
+					"line": 9725
+				},
+				{
+					"name": "continueImportFromMapping",
+					"line": 9738
+				},
+				{
+					"name": "sampleImportText",
+					"line": 9746
+				},
+				{
+					"name": "importTemplateCsv",
+					"line": 9752
+				},
+				{
+					"name": "exportImportTemplate",
+					"line": 9774
+				},
+				{
+					"name": "loadImportFile",
+					"line": 9792
+				},
+				{
+					"name": "refreshImportMappingFromText",
+					"line": 9812
+				},
+				{
+					"name": "resetImportMappingState",
+					"line": 9834
+				},
+				{
+					"name": "defaultImportMappingSelection",
+					"line": 9844
+				},
+				{
+					"name": "importMappingTemplateKey",
+					"line": 9850
+				},
+				{
+					"name": "isValidImportMappingSelection",
+					"line": 9856
+				},
+				{
+					"name": "readImportMappingTemplate",
+					"line": 9878
+				},
+				{
+					"name": "saveImportMappingTemplate",
+					"line": 9918
+				},
+				{
+					"name": "restoreImportMappingTemplate",
+					"line": 9955
+				},
+				{
+					"name": "applyImportMapping",
+					"line": 9972
+				},
+				{
+					"name": "parseImportRowsFromText",
+					"line": 10046
+				},
+				{
+					"name": "parseCsvImport",
+					"line": 10077
+				},
+				{
+					"name": "fieldForImportHeader",
+					"line": 10167
+				},
+				{
+					"name": "previewImportRecords",
+					"line": 10205
+				},
+				{
+					"name": "commitImportRecords",
+					"line": 10236
+				}
+			],
+			"class": "ImportController",
+			"property": "importer"
+		},
+		"state/designer": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "buildSchemaFromDrafts",
+					"line": 10508
+				},
+				{
+					"name": "syncDesignerDrafts",
+					"line": 11277
+				},
+				{
+					"name": "loadDesignerSafety",
+					"line": 11295
+				},
+				{
+					"name": "blockingDependenciesForField",
+					"line": 11327
+				},
+				{
+					"name": "usageForSchemaField",
+					"line": 11340
+				},
+				{
+					"name": "dependenciesForSchemaField",
+					"line": 11349
+				},
+				{
+					"name": "usageCountsForSchemaField",
+					"line": 11357
+				},
+				{
+					"name": "collectDesignerSchemaChanges",
+					"line": 11369
+				},
+				{
+					"name": "closeDesignerConfirm",
+					"line": 11427
+				},
+				{
+					"name": "addDesignerField",
+					"line": 11433
+				},
+				{
+					"name": "nextDesignerFieldKey",
+					"line": 11445
+				},
+				{
+					"name": "updateDesignerField",
+					"line": 11459
+				},
+				{
+					"name": "duplicateDesignerField",
+					"line": 11465
+				},
+				{
+					"name": "removeDesignerField",
+					"line": 11486
+				},
+				{
+					"name": "moveDesignerField",
+					"line": 11501
+				},
+				{
+					"name": "saveDesignerSchema",
+					"line": 11513
+				},
+				{
+					"name": "confirmDesignerSchemaSave",
+					"line": 11539
+				},
+				{
+					"name": "persistDesignerSchema",
+					"line": 11550
+				}
+			],
+			"class": "DesignerController",
+			"property": "designer"
+		},
+		"state/detail-layout-save": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "saveDetailHeader",
+					"line": 11584
+				},
+				{
+					"name": "saveDetailHighlights",
+					"line": 11614
+				},
+				{
+					"name": "saveDetailPageComposition",
+					"line": 11641
+				},
+				{
+					"name": "saveDetailLayoutSections",
+					"line": 11672
+				},
+				{
+					"name": "persistDetailPageWidgets",
+					"line": 11698
+				},
+				{
+					"name": "setDetailPageWidgetEnabled",
+					"line": 11723
+				},
+				{
+					"name": "setDetailPageWidgetTitle",
+					"line": 11731
+				},
+				{
+					"name": "setDetailPageWidgetDescription",
+					"line": 11739
+				},
+				{
+					"name": "setDetailPageWidgetEmptyText",
+					"line": 11747
+				},
+				{
+					"name": "setDetailPageWidgetShowCount",
+					"line": 11755
+				},
+				{
+					"name": "setDetailPageWidgetHideEmpty",
+					"line": 11763
+				},
+				{
+					"name": "setDetailPageWidgetCollapsible",
+					"line": 11771
+				},
+				{
+					"name": "setDetailPageWidgetDefaultCollapsed",
+					"line": 11785
+				},
+				{
+					"name": "setDetailPageWidgetDensity",
+					"line": 11801
+				},
+				{
+					"name": "setDetailPageWidgetLimit",
+					"line": 11812
+				},
+				{
+					"name": "moveDetailPageWidget",
+					"line": 11820
+				}
+			],
+			"class": "DetailLayoutSaveController",
+			"property": "detailLayoutSave"
+		},
+		"state/attachments": {
+			"kind": "controller",
+			"functions": [
+				{
+					"name": "attachmentUrl",
+					"line": 11835
+				},
+				{
+					"name": "attachmentPreviewUrl",
+					"line": 11844
+				},
+				{
+					"name": "uploadFormAttachmentFile",
+					"line": 11897
+				},
+				{
+					"name": "fieldAttachments",
+					"line": 11934
+				},
+				{
+					"name": "attachmentSignedUrl",
+					"line": 11940
+				},
+				{
+					"name": "loadAttachmentSignedUrls",
+					"line": 11948
+				},
+				{
+					"name": "loadRecordAttachments",
+					"line": 12006
+				},
+				{
+					"name": "syncRecordAttachmentValue",
+					"line": 12025
+				},
+				{
+					"name": "createAttachmentForField",
+					"line": 12046
+				},
+				{
+					"name": "createAttachmentFromLocalFile",
+					"line": 12099
+				},
+				{
+					"name": "removeAttachment",
+					"line": 12155
+				},
+				{
+					"name": "prepareSignatureCanvas",
+					"line": 12307
+				},
+				{
+					"name": "setSignatureValue",
+					"line": 12344
+				},
+				{
+					"name": "captureSignatureCanvas",
+					"line": 12352
+				},
+				{
+					"name": "startSignatureStroke",
+					"line": 12360
+				},
+				{
+					"name": "moveSignatureStroke",
+					"line": 12389
+				},
+				{
+					"name": "endSignatureStroke",
+					"line": 12413
+				},
+				{
+					"name": "clearSignatureCanvas",
+					"line": 12431
+				}
+			],
+			"class": "AttachmentsController",
+			"property": "attachments"
+		}
+	},
+	"fieldOwners": {
+		"_note": "Documentation only: the controller that writes the field (contract section 3.3). Explicit lists win over patterns.",
+		"explicit": {
+			"loaders": [
+				"project",
+				"scenarioTemplates",
+				"formViews",
+				"formEvents",
+				"printJobs",
+				"aggregates",
+				"formPermissions",
+				"selectedFormId",
+				"selectedViewId",
+				"serverRecordTotal",
+				"selectedRecordLinks",
+				"selectedRecordChildren",
+				"selectedRecordComments",
+				"workspaceMembers",
+				"workspaceMembersLoading",
+				"relationTargets",
+				"relationTargetsLoading",
+				"templatesLoading",
+				"recordsLoading",
+				"eventsLoading",
+				"recordPage",
+				"loadedRecordQuery",
+				"forms"
+			],
+			"records": [
+				"records",
+				"filterPreviewRecords",
+				"selectedRecord",
+				"focusedRecordIds",
+				"recordSubmitting",
+				"deletingRecordId",
+				"restoringRecordId",
+				"lastDeletedRecord",
+				"editingRecordId",
+				"recordDraft",
+				"recordTitle",
+				"activeMode",
+				"recordEditorOpen",
+				"formsSessionRecordVersion",
+				"recordEditorPanel"
+			],
+			"session": [
+				"collapsedCardGroupKeys",
+				"pinnedTimelineEventIds",
+				"linkDraft",
+				"detailLayoutMode",
+				"viewToolsExpanded",
+				"detailPageCompositionDraft"
+			],
+			"record-panel": [
+				"panelStatus",
+				"panelError",
+				"panelDetailsLoading",
+				"panelWidth",
+				"panelHistoryDepth",
+				"liveMessage",
+				"recordCommentsLoading",
+				"announceTimer",
+				"recordUrlWrite",
+				"pendingRowFocus",
+				"panelRecordId"
+			],
+			"record-detail": [
+				"linkSubmitting",
+				"recordCommentSubmitting",
+				"childEditor",
+				"childSubmitting",
+				"deletingChildRecordId",
+				"recordCommentDraft"
+			],
+			"attachments": [
+				"recordAttachments",
+				"recordAttachmentSignedUrls",
+				"attachmentSubmittingField",
+				"deletingAttachmentId",
+				"activeSignatureCanvas"
+			],
+			"views": [
+				"viewBaseline",
+				"viewConflict",
+				"saveViewOpen",
+				"saveViewName",
+				"saveViewError",
+				"resetUndo",
+				"viewSubmitting"
+			],
+			"view-draft": ["viewDraft"],
+			"create-form": [
+				"formSubmitting",
+				"installingTemplateKey",
+				"showCreateForm",
+				"formDraft",
+				"fieldDrafts",
+				"showAdvancedSchema"
+			],
+			"designer": [
+				"designerFieldDrafts",
+				"designerFieldUsage",
+				"designerFieldDependencies",
+				"designerUsageLoading",
+				"selectedDesignerFieldIndex",
+				"designerSaving",
+				"designerSyncedFormId",
+				"designerConfirmOpen",
+				"pendingDesignerSchema",
+				"pendingDesignerChanges"
+			],
+			"permissions": [
+				"permissionsLoading",
+				"permissionsSaving",
+				"memberPermissionDraft",
+				"memberRecordScopeDraft",
+				"memberFieldReadDraft",
+				"memberFieldWriteDraft"
+			],
+			"exporter": [
+				"exportingRecords",
+				"exportedCurrentViewJsonRecordCount",
+				"exportedAttachmentManifestCount",
+				"exportedAttachmentBundleCount",
+				"exportedAttachmentPackageCount",
+				"exportedAttachmentPackageFileCount"
+			],
+			"importer": ["showImportRecords", "importPreviewing", "importingRecords"],
+			"route": [
+				"loading",
+				"formsSessionReady",
+				"arrangementTimer",
+				"recordQueryTimer",
+				"recordPluginActions"
+			],
+			"markup": [
+				"bulkKanbanTarget",
+				"panelAppsOpen",
+				"panelMode",
+				"recordGrid",
+				"recordPanel",
+				"formsSessionRoot"
+			]
+		},
+		"patterns": [
+			["^formsSession", "session"],
+			["Kanban", "view-kanban"],
+			["Calendar|ScheduleKey", "view-calendar"],
+			["Gantt", "view-gantt"],
+			["Timeline", "view-timeline"],
+			["Pivot", "view-pivot"],
+			["FilterExpression", "filter-expression-export"],
+			["Card", "view-cards"],
+			["^detail(Page|Layout|Header|Highlight)", "detail-layout-editor"],
+			["^(import|exportedImport)", "importer"],
+			["^(designer|pendingDesigner)", "designer"],
+			["^selectedRecord", "loaders"]
+		]
+	}
+}
