@@ -1,0 +1,7 @@
+[
+	{
+		"file": "src/lib/shell/brand/brand.ts",
+		"rules": ["hex"],
+		"reason": "brand favicon colours: the logo's own colours, the single allowed exception to tokens-only colour"
+	}
+]
