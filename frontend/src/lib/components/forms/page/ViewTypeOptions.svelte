@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import ViewPivotOptions from '#lib/components/forms/page/ViewPivotOptions.svelte';
@@ -12,16 +13,12 @@
 
 	const fp = getFormsPageContext();
 	const s = fp.state;
-	const {
-		viewDraftSwimlaneFieldCandidates
-	} = fp.viewDraftFields;
+	const { viewDraftSwimlaneFieldCandidates } = fp.viewDraftFields;
 </script>
 
 <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
 	<label class="space-y-1">
-		<span class="text-xs font-medium uppercase text-fg-muted"
-			>{$t('forms.sortField')}</span
-		>
+		<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.sortField')}</span>
 
 		<select
 			value={s.viewDraft.sortField}
@@ -41,9 +38,7 @@
 	</label>
 
 	<label class="space-y-1">
-		<span class="text-xs font-medium uppercase text-fg-muted"
-			>{$t('forms.sortDirection')}</span
-		>
+		<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.sortDirection')}</span>
 
 		<select
 			value={s.viewDraft.sortDirection}
@@ -61,9 +56,7 @@
 	</label>
 
 	<label class="space-y-1">
-		<span class="text-xs font-medium uppercase text-fg-muted"
-			>{$t('forms.groupField')}</span
-		>
+		<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.groupField')}</span>
 
 		<select
 			value={s.viewDraft.groupBy}
@@ -73,10 +66,7 @@
 				s.viewDraft = {
 					...s.viewDraft,
 					groupBy,
-					swimlaneBy:
-						s.viewDraft.swimlaneBy === groupBy
-							? ''
-							: s.viewDraft.swimlaneBy,
+					swimlaneBy: s.viewDraft.swimlaneBy === groupBy ? '' : s.viewDraft.swimlaneBy,
 					wipLimits: {}
 				};
 			}}
@@ -100,9 +90,7 @@
 
 	{#if s.viewDraft.view_type === 'kanban'}
 		<label class="space-y-1">
-			<span class="text-xs font-medium uppercase text-fg-muted"
-				>{$t('forms.swimlaneField')}</span
-			>
+			<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.swimlaneField')}</span>
 
 			<select
 				value={s.viewDraft.swimlaneBy}
@@ -123,9 +111,7 @@
 	{/if}
 
 	<label class="space-y-1 sm:col-span-2 xl:col-span-1">
-		<span class="text-xs font-medium uppercase text-fg-muted"
-			>{$t('forms.dateField')}</span
-		>
+		<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.dateField')}</span>
 
 		<select
 			value={s.viewDraft.dateField}
@@ -136,13 +122,9 @@
 					...s.viewDraft,
 					dateField,
 					calendarEndField:
-						s.viewDraft.calendarEndField === dateField
-							? ''
-							: s.viewDraft.calendarEndField,
+						s.viewDraft.calendarEndField === dateField ? '' : s.viewDraft.calendarEndField,
 					calendarResourceBy:
-						s.viewDraft.calendarResourceBy === dateField
-							? ''
-							: s.viewDraft.calendarResourceBy
+						s.viewDraft.calendarResourceBy === dateField ? '' : s.viewDraft.calendarResourceBy
 				};
 			}}
 			class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"

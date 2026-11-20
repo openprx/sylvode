@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import {
 		ArrowUp,
@@ -13,7 +14,10 @@
 		Trash2
 	} from '@lucide/svelte';
 	import { t } from 'svelte-i18n';
-	import { recordFieldHiddenByCondition, recordFieldReadOnlyByCondition } from '#lib/forms/field-conditions.js';
+	import {
+		recordFieldHiddenByCondition,
+		recordFieldReadOnlyByCondition
+	} from '#lib/forms/field-conditions.js';
 	import { fieldLabel } from '#lib/forms/field-options.js';
 	import { formatDate, selectValue } from '#lib/forms/record-format.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
@@ -73,11 +77,9 @@
 	data-timeline-event-to={selectedTimelineEventTo()}
 	data-timeline-event-pinned-ids={s.pinnedTimelineEventIds.join('|')}
 	data-timeline-events-exported={s.exportedTimelineEventsCsvCount ?? undefined}
-	data-timeline-events-json-exported={s.exportedTimelineEventsJsonCount ??
-		undefined}
+	data-timeline-events-json-exported={s.exportedTimelineEventsJsonCount ?? undefined}
 	data-timeline-event-ids-copied={s.copiedTimelineEventIdsCount ?? undefined}
-	data-timeline-aggregate-ids-copied={s.copiedTimelineAggregateIdsCount ??
-		undefined}
+	data-timeline-aggregate-ids-copied={s.copiedTimelineAggregateIdsCount ?? undefined}
 >
 	{#if selectedTimelineSource() === 'events'}
 		{#if s.eventsLoading}
@@ -114,8 +116,7 @@
 					<button
 						type="button"
 						class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-						disabled={timelineEventAggregateKeys(s.timelineEventRows).length ===
-							0}
+						disabled={timelineEventAggregateKeys(s.timelineEventRows).length === 0}
 						onclick={() => copyTimelineAggregateIds(s.timelineEventRows)}
 						data-timeline-copy-aggregate-ids
 					>
@@ -126,8 +127,7 @@
 					<button
 						type="button"
 						class="inline-flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-xs font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
-						disabled={timelineEventLinkedRecordIds(s.timelineEventRows)
-							.length === 0}
+						disabled={timelineEventLinkedRecordIds(s.timelineEventRows).length === 0}
 						onclick={() => focusTimelineEventRecords(s.timelineEventRows)}
 						data-timeline-focus-event-records
 					>
@@ -178,26 +178,22 @@
 							<div class="min-w-0">
 								<span
 									class="block truncate font-medium text-fg"
-									data-timeline-event-title={event.id}
-									>{timelineEventTitle(event)}</span
+									data-timeline-event-title={event.id}>{timelineEventTitle(event)}</span
 								>
 
 								<span
 									class="mt-1 block truncate text-xs text-fg-muted"
-									data-timeline-event-subtitle={event.id}
-									>{timelineEventSubtitle(event)}</span
+									data-timeline-event-subtitle={event.id}>{timelineEventSubtitle(event)}</span
 								>
 							</div>
 
 							<div class="flex shrink-0 items-center gap-2">
-								<span
-									class="rounded bg-surface px-2 py-0.5 text-xs font-medium text-fg-muted"
+								<span class="rounded bg-surface px-2 py-0.5 text-xs font-medium text-fg-muted"
 									>{event.event_type}</span
 								>
 
 								{#if pinned}
-									<span
-										class="rounded bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning"
+									<span class="rounded bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning"
 										>{$t('forms.timelineEventPinnedBadge')}</span
 									>
 								{/if}
@@ -219,10 +215,7 @@
 									<summary
 										class="inline-flex cursor-pointer list-none items-center rounded-control p-1 text-fg-muted hover:bg-surface hover:text-fg"
 										aria-label={$t('forms.timelineEventActions')}
-										><MoreVertical
-											class="h-4 w-4"
-											aria-hidden="true"
-										/></summary
+										><MoreVertical class="h-4 w-4" aria-hidden="true" /></summary
 									>
 
 									<div
@@ -260,17 +253,14 @@
 										>
 											<ArrowUp class="h-4 w-4" aria-hidden="true" />
 
-											{pinned
-												? $t('forms.unpinTimelineEvent')
-												: $t('forms.pinTimelineEvent')}
+											{pinned ? $t('forms.unpinTimelineEvent') : $t('forms.pinTimelineEvent')}
 										</button>
 
 										<button
 											type="button"
 											class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 											data-timeline-event-action={`${event.id}:filter-type`}
-											onclick={() =>
-												applyTimelineEventQuickFilter(event, 'type')}
+											onclick={() => applyTimelineEventQuickFilter(event, 'type')}
 										>
 											<FileText class="h-4 w-4" aria-hidden="true" />
 											{$t('forms.timelineQuickFilterType')}
@@ -281,8 +271,7 @@
 											class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface disabled:cursor-not-allowed disabled:bg-surface disabled:text-fg-muted"
 											disabled={!event.actor_id}
 											data-timeline-event-action={`${event.id}:filter-actor`}
-											onclick={() =>
-												applyTimelineEventQuickFilter(event, 'actor')}
+											onclick={() => applyTimelineEventQuickFilter(event, 'actor')}
 										>
 											<Shield class="h-4 w-4" aria-hidden="true" />
 											{$t('forms.timelineQuickFilterActor')}
@@ -292,8 +281,7 @@
 											type="button"
 											class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 											data-timeline-event-action={`${event.id}:filter-aggregate`}
-											onclick={() =>
-												applyTimelineEventQuickFilter(event, 'aggregate')}
+											onclick={() => applyTimelineEventQuickFilter(event, 'aggregate')}
 										>
 											<Link class="h-4 w-4" aria-hidden="true" />
 											{$t('forms.timelineQuickFilterAggregate')}
@@ -313,8 +301,7 @@
 											type="button"
 											class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 											data-timeline-event-action={`${event.id}:copy-event-id`}
-											onclick={() =>
-												copyTimelineEventValue(event, event.id, 'event-id')}
+											onclick={() => copyTimelineEventValue(event, event.id, 'event-id')}
 										>
 											<Copy class="h-4 w-4" aria-hidden="true" />
 											{$t('forms.copyEventId')}
@@ -340,11 +327,7 @@
 											class="flex w-full items-center gap-2 px-3 py-2 text-left text-fg hover:bg-surface"
 											data-timeline-event-action={`${event.id}:copy-details`}
 											onclick={() =>
-												copyTimelineEventValue(
-													event,
-													timelineEventDetailsJson(event),
-													'details'
-												)}
+												copyTimelineEventValue(event, timelineEventDetailsJson(event), 'details')}
 										>
 											<Copy class="h-4 w-4" aria-hidden="true" />
 											{$t('forms.copyEventDetails')}
@@ -383,10 +366,7 @@
 											{$t('forms.timelineEventAggregate')}
 										</div>
 
-										<div
-											class="mt-0.5 break-all text-fg"
-											data-timeline-event-aggregate={event.id}
-										>
+										<div class="mt-0.5 break-all text-fg" data-timeline-event-aggregate={event.id}>
 											{event.aggregate_type}:{event.aggregate_id}
 										</div>
 									</div>
@@ -396,10 +376,7 @@
 											{$t('forms.timelineEventActor')}
 										</div>
 
-										<div
-											class="mt-0.5 break-all text-fg"
-											data-timeline-event-actor={event.id}
-										>
+										<div class="mt-0.5 break-all text-fg" data-timeline-event-actor={event.id}>
 											{event.actor_id || '-'}
 										</div>
 									</div>
@@ -463,9 +440,8 @@
 							onclick={() => selectRecord(record)}
 							aria-label={`${$t('forms.openRecord')}: ${record.title}`}
 						>
-							<span
-								class="block truncate font-medium text-fg"
-								data-timeline-title={record.id}>{timelineTitle(record)}</span
+							<span class="block truncate font-medium text-fg" data-timeline-title={record.id}
+								>{timelineTitle(record)}</span
 							>
 
 							{#if s.timelineTitlePermissionField}
@@ -506,8 +482,7 @@
 
 							<span
 								class="mt-1 block truncate text-xs text-fg-muted"
-								data-timeline-subtitle={record.id}
-								>{timelineSubtitle(record)}</span
+								data-timeline-subtitle={record.id}>{timelineSubtitle(record)}</span
 							>
 
 							{#if s.timelineSubtitlePermissionField}
@@ -605,11 +580,7 @@
 										aria-label={`${$t('forms.timelineUpdateField')} ${fieldLabel(field)}`}
 										data-timeline-select={`${record.id}:${field.key}`}
 										onchange={(event) =>
-											updateTimelineRecordSelectField(
-												record,
-												field,
-												selectValue(event)
-											)}
+											updateTimelineRecordSelectField(record, field, selectValue(event))}
 										class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 									>
 										{#each kanbanMoveOptions(field) as option}

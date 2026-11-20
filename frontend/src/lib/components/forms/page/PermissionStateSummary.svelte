@@ -26,22 +26,15 @@
 		</span>
 
 		<span class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
-			>{$t('forms.recordScope')}: {$t(
-				`forms.recordScopes.${s.memberRecordScopeDraft}`
-			)}</span
+			>{$t('forms.recordScope')}: {$t(`forms.recordScopes.${s.memberRecordScopeDraft}`)}</span
 		>
 
-		<span
-			class="rounded-control border border-line bg-warning-soft px-2 py-1 text-warning"
-			>{$t('forms.hiddenFieldEffect')}: {permissionFieldList(
-				s.memberHiddenFieldLabels
-			)}</span
+		<span class="rounded-control border border-line bg-warning-soft px-2 py-1 text-warning"
+			>{$t('forms.hiddenFieldEffect')}: {permissionFieldList(s.memberHiddenFieldLabels)}</span
 		>
 
 		<span class="rounded-control border border-line bg-nav px-2 py-1 text-fg"
-			>{$t('forms.lockedFieldEffect')}: {permissionFieldList(
-				s.memberLockedFieldLabels
-			)}</span
+			>{$t('forms.lockedFieldEffect')}: {permissionFieldList(s.memberLockedFieldLabels)}</span
 		>
 	</div>
 </section>

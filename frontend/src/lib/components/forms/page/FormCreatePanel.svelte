@@ -86,10 +86,7 @@
 						</div>
 
 						<div class="mt-3 flex flex-wrap justify-end gap-2">
-							<Button
-								size="sm"
-								variant="secondary"
-								onclick={() => applyScenarioTemplate(template)}
+							<Button size="sm" variant="secondary" onclick={() => applyScenarioTemplate(template)}
 								>{$t('forms.applyTemplate')}</Button
 							>
 
@@ -297,8 +294,6 @@
 	</div>
 
 	<div class="mt-4 flex justify-end">
-		<Button loading={s.formSubmitting} onclick={handleCreateForm}
-			>{$t('forms.createForm')}</Button
-		>
+		<Button loading={s.formSubmitting} onclick={handleCreateForm}>{$t('forms.createForm')}</Button>
 	</div>
 </section>

@@ -1,10 +1,18 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { ArrowLeftRight } from '@lucide/svelte';
 	import { fieldLabel } from '#lib/forms/field-options.js';
 	import { selectValue } from '#lib/forms/record-format.js';
-	import { viewPivotAggregate, viewPivotTotalsMode, viewPivotValueDisplay, viewPivotSortMode, viewPivotRowLimit, viewPivotColumnLimit } from '#lib/forms/view-config.js';
+	import {
+		viewPivotAggregate,
+		viewPivotTotalsMode,
+		viewPivotValueDisplay,
+		viewPivotSortMode,
+		viewPivotRowLimit,
+		viewPivotColumnLimit
+	} from '#lib/forms/view-config.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
 
 	const fp = getFormsPageContext();
@@ -17,9 +25,7 @@
 </script>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.pivotRowField')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.pivotRowField')}</span>
 
 	<select
 		value={s.viewDraft.pivotRowField}
@@ -30,9 +36,7 @@
 				...s.viewDraft,
 				pivotRowField,
 				pivotColumnField:
-					s.viewDraft.pivotColumnField === pivotRowField
-						? ''
-						: s.viewDraft.pivotColumnField
+					s.viewDraft.pivotColumnField === pivotRowField ? '' : s.viewDraft.pivotColumnField
 			};
 		}}
 		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -46,9 +50,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.pivotColumnField')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.pivotColumnField')}</span>
 
 	<select
 		value={s.viewDraft.pivotColumnField}
@@ -68,9 +70,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.pivotValueField')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.pivotValueField')}</span>
 
 	<select
 		value={s.viewDraft.pivotValueField}
@@ -90,9 +90,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.pivotAggregate')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.pivotAggregate')}</span>
 
 	<select
 		value={s.viewDraft.pivotAggregate}
@@ -110,9 +108,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.pivotTotals')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.pivotTotals')}</span>
 
 	<select
 		value={s.viewDraft.pivotTotals}
@@ -125,16 +121,13 @@
 	>
 		<option value="all">{$t('forms.pivotTotalsAll')}</option>
 		<option value="rows">{$t('forms.pivotTotalsRows')}</option>
-		<option value="columns">{$t('forms.pivotTotalsColumns')}</option
-		>
+		<option value="columns">{$t('forms.pivotTotalsColumns')}</option>
 		<option value="none">{$t('forms.pivotTotalsNone')}</option>
 	</select>
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.pivotValueDisplay')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.pivotValueDisplay')}</span>
 
 	<select
 		value={s.viewDraft.pivotValueDisplay}
@@ -145,25 +138,15 @@
 			})}
 		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 	>
-		<option value="value"
-			>{$t('forms.pivotValueDisplayValue')}</option
-		>
-		<option value="percent_row"
-			>{$t('forms.pivotValueDisplayPercentRow')}</option
-		>
-		<option value="percent_column"
-			>{$t('forms.pivotValueDisplayPercentColumn')}</option
-		>
-		<option value="percent_total"
-			>{$t('forms.pivotValueDisplayPercentTotal')}</option
-		>
+		<option value="value">{$t('forms.pivotValueDisplayValue')}</option>
+		<option value="percent_row">{$t('forms.pivotValueDisplayPercentRow')}</option>
+		<option value="percent_column">{$t('forms.pivotValueDisplayPercentColumn')}</option>
+		<option value="percent_total">{$t('forms.pivotValueDisplayPercentTotal')}</option>
 	</select>
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.pivotSort')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.pivotSort')}</span>
 
 	<select
 		value={s.viewDraft.pivotSort}
@@ -175,25 +158,15 @@
 		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
 	>
 		<option value="label">{$t('forms.pivotSortLabel')}</option>
-		<option value="row_total_desc"
-			>{$t('forms.pivotSortRowTotalDesc')}</option
-		>
-		<option value="row_total_asc"
-			>{$t('forms.pivotSortRowTotalAsc')}</option
-		>
-		<option value="column_total_desc"
-			>{$t('forms.pivotSortColumnTotalDesc')}</option
-		>
-		<option value="column_total_asc"
-			>{$t('forms.pivotSortColumnTotalAsc')}</option
-		>
+		<option value="row_total_desc">{$t('forms.pivotSortRowTotalDesc')}</option>
+		<option value="row_total_asc">{$t('forms.pivotSortRowTotalAsc')}</option>
+		<option value="column_total_desc">{$t('forms.pivotSortColumnTotalDesc')}</option>
+		<option value="column_total_asc">{$t('forms.pivotSortColumnTotalAsc')}</option>
 	</select>
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.pivotRowLimit')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.pivotRowLimit')}</span>
 
 	<select
 		value={String(s.viewDraft.pivotRowLimit)}
@@ -212,9 +185,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.pivotColumnLimit')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.pivotColumnLimit')}</span>
 
 	<select
 		value={String(s.viewDraft.pivotColumnLimit)}
@@ -244,15 +215,11 @@
 			(s.viewDraft = {
 				...s.viewDraft,
 				pivotEmptyBuckets:
-					event.currentTarget instanceof HTMLInputElement
-						? event.currentTarget.checked
-						: false
+					event.currentTarget instanceof HTMLInputElement ? event.currentTarget.checked : false
 			})}
 	/>
 
-	<span class="min-w-0 truncate"
-		>{$t('forms.pivotEmptyBuckets')}</span
-	>
+	<span class="min-w-0 truncate">{$t('forms.pivotEmptyBuckets')}</span>
 </label>
 
 <label
@@ -267,15 +234,11 @@
 			(s.viewDraft = {
 				...s.viewDraft,
 				pivotHideZeroBuckets:
-					event.currentTarget instanceof HTMLInputElement
-						? event.currentTarget.checked
-						: false
+					event.currentTarget instanceof HTMLInputElement ? event.currentTarget.checked : false
 			})}
 	/>
 
-	<span class="min-w-0 truncate"
-		>{$t('forms.pivotHideZeroBuckets')}</span
-	>
+	<span class="min-w-0 truncate">{$t('forms.pivotHideZeroBuckets')}</span>
 </label>
 
 <label
@@ -290,14 +253,11 @@
 			(s.viewDraft = {
 				...s.viewDraft,
 				pivotShowCounts:
-					event.currentTarget instanceof HTMLInputElement
-						? event.currentTarget.checked
-						: false
+					event.currentTarget instanceof HTMLInputElement ? event.currentTarget.checked : false
 			})}
 	/>
 
-	<span class="min-w-0 truncate">{$t('forms.pivotShowCounts')}</span
-	>
+	<span class="min-w-0 truncate">{$t('forms.pivotShowCounts')}</span>
 </label>
 
 <label
@@ -312,9 +272,7 @@
 			(s.viewDraft = {
 				...s.viewDraft,
 				pivotHeatmap:
-					event.currentTarget instanceof HTMLInputElement
-						? event.currentTarget.checked
-						: false
+					event.currentTarget instanceof HTMLInputElement ? event.currentTarget.checked : false
 			})}
 	/>
 
@@ -324,8 +282,7 @@
 <div class="flex items-end">
 	<button
 		type="button"
-		disabled={!s.viewDraft.pivotRowField ||
-			!s.viewDraft.pivotColumnField}
+		disabled={!s.viewDraft.pivotRowField || !s.viewDraft.pivotColumnField}
 		class="inline-flex h-10 items-center gap-2 rounded-control border border-input bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:cursor-not-allowed disabled:bg-surface disabled:text-fg-muted"
 		data-pivot-swap-axes
 		onclick={swapViewDraftPivotAxes}

@@ -12,10 +12,7 @@
 	const { handleFormChange, openRecordCreateDrawer, handleModeChange } = fp.records;
 </script>
 
-<section
-	class="rounded-card border border-line bg-raised p-4"
-	data-form-data-list-toolbar
->
+<section class="rounded-card border border-line bg-raised p-4" data-form-data-list-toolbar>
 	<div class="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
 		<div>
 			<div class="flex flex-wrap items-center gap-2">

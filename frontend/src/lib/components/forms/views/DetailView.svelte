@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { Trash2 } from '@lucide/svelte';
@@ -53,21 +54,16 @@
 				{#each detailLayoutSections() as section}
 					<details
 						open={!section.collapsible || !section.defaultCollapsed}
-						ontoggle={(event) =>
-							keepDetailSectionOpen(event, section.collapsible)}
+						ontoggle={(event) => keepDetailSectionOpen(event, section.collapsible)}
 						data-detail-view-section={`${record.id}:${section.key}`}
 						data-detail-view-section-density={`${record.id}:${section.key}:${section.density}`}
 						data-detail-view-section-collapsible={`${record.id}:${section.key}:${section.collapsible}:${section.defaultCollapsed}`}
 						data-detail-view-section-open={`${record.id}:${section.key}:${!section.collapsible || !section.defaultCollapsed}`}
 					>
 						<summary
-							class={section.collapsible
-								? 'cursor-pointer list-none'
-								: 'cursor-default list-none'}
+							class={section.collapsible ? 'cursor-pointer list-none' : 'cursor-default list-none'}
 						>
-							<h4
-								class="mb-2 inline text-xs font-semibold uppercase text-fg-muted"
-							>
+							<h4 class="mb-2 inline text-xs font-semibold uppercase text-fg-muted">
 								{section.title}
 							</h4>
 						</summary>
@@ -82,10 +78,7 @@
 						{/if}
 
 						<dl
-							class={detailLayoutSectionGridClass(
-								section.columns,
-								section.density
-							)}
+							class={detailLayoutSectionGridClass(section.columns, section.density)}
 							data-detail-view-section-columns={`${record.id}:${section.key}:${section.columns}`}
 						>
 							{#each detailLayoutSectionFieldsForRecord(section, record) as field}
@@ -93,17 +86,12 @@
 									class={detailLayoutSectionFieldClass(field, section.columns)}
 									data-detail-view-field={`${record.id}:${section.key}:${field.key}`}
 								>
-									<dt
-										class="truncate text-xs font-medium uppercase text-fg-muted"
-									>
+									<dt class="truncate text-xs font-medium uppercase text-fg-muted">
 										{fieldLabel(field)}
 									</dt>
 
 									<dd class="mt-1 truncate text-sm text-fg">
-										<OptionValueBadges
-											{field}
-											value={record.values[field.key]}
-										/>
+										<OptionValueBadges {field} value={record.values[field.key]} />
 									</dd>
 								</div>
 							{/each}

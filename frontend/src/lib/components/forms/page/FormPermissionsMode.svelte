@@ -21,10 +21,7 @@
 	} = fp.permissions;
 </script>
 
-<section
-	class="rounded-card border border-line bg-raised p-4"
-	data-form-mode="permissions"
->
+<section class="rounded-card border border-line bg-raised p-4" data-form-mode="permissions">
 	<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 		<div>
 			<div class="flex items-center gap-2">
@@ -87,16 +84,14 @@
 
 				<select
 					value={s.memberRecordScopeDraft}
-					onchange={(event) =>
-						setMemberRecordScope(selectValue(event) as FormRecordScope)}
+					onchange={(event) => setMemberRecordScope(selectValue(event) as FormRecordScope)}
 					class="mt-2 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="all">{$t('forms.recordScopeAll')}</option>
 					<option value="owned">{$t('forms.recordScopeOwned')}</option>
 				</select>
 
-				<span class="mt-1 block text-xs text-fg-muted">{$t('forms.recordScopeHint')}</span
-				>
+				<span class="mt-1 block text-xs text-fg-muted">{$t('forms.recordScopeHint')}</span>
 			</label>
 
 			<div class="lg:col-span-2 rounded-card border border-line px-3 py-2 text-sm">
@@ -119,9 +114,8 @@
 						>
 							{$t('forms.fieldReadDeniedCount', {
 								values: {
-									count: s.fields.filter(
-										(field) => s.memberFieldReadDraft[field.key] === false
-									).length
+									count: s.fields.filter((field) => s.memberFieldReadDraft[field.key] === false)
+										.length
 								}
 							})}
 						</span>
@@ -133,9 +127,8 @@
 						>
 							{$t('forms.fieldWriteDeniedCount', {
 								values: {
-									count: s.fields.filter(
-										(field) => s.memberFieldWriteDraft[field.key] === false
-									).length
+									count: s.fields.filter((field) => s.memberFieldWriteDraft[field.key] === false)
+										.length
 								}
 							})}
 						</span>
@@ -241,9 +234,7 @@
 				})} · {formPermissionActions
 					.filter((action) => s.formPermissions?.effective.actions[action])
 					.map(permissionActionLabel)
-					.join(' / ')} · {$t(
-					`forms.recordScopes.${s.formPermissions.effective.record_scope}`
-				)}
+					.join(' / ')} · {$t(`forms.recordScopes.${s.formPermissions.effective.record_scope}`)}
 			</div>
 		{/if}
 	{/if}

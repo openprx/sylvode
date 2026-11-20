@@ -18,10 +18,7 @@
 	const { openImportRecords, exportImportTemplate } = fp.importer;
 </script>
 
-<section
-	class="rounded-card border border-line bg-raised p-4"
-	data-form-mode="import-export"
->
+<section class="rounded-card border border-line bg-raised p-4" data-form-mode="import-export">
 	<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div>
 			<div class="flex items-center gap-2">

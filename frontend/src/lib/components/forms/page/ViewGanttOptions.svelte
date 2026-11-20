@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { fieldLabel } from '#lib/forms/field-options.js';
@@ -16,9 +17,7 @@
 </script>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.ganttStartField')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.ganttStartField')}</span>
 
 	<select
 		value={s.viewDraft.ganttStartField}
@@ -29,13 +28,8 @@
 				...s.viewDraft,
 				ganttStartField,
 				ganttEndField:
-					s.viewDraft.ganttEndField === ganttStartField
-						? ''
-						: s.viewDraft.ganttEndField,
-				ganttGroupBy:
-					s.viewDraft.ganttGroupBy === ganttStartField
-						? ''
-						: s.viewDraft.ganttGroupBy,
+					s.viewDraft.ganttEndField === ganttStartField ? '' : s.viewDraft.ganttEndField,
+				ganttGroupBy: s.viewDraft.ganttGroupBy === ganttStartField ? '' : s.viewDraft.ganttGroupBy,
 				ganttDependencyField:
 					s.viewDraft.ganttDependencyField === ganttStartField
 						? ''
@@ -53,9 +47,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.ganttEndField')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.ganttEndField')}</span>
 
 	<select
 		value={s.viewDraft.ganttEndField}
@@ -65,14 +57,9 @@
 			s.viewDraft = {
 				...s.viewDraft,
 				ganttEndField,
-				ganttGroupBy:
-					s.viewDraft.ganttGroupBy === ganttEndField
-						? ''
-						: s.viewDraft.ganttGroupBy,
+				ganttGroupBy: s.viewDraft.ganttGroupBy === ganttEndField ? '' : s.viewDraft.ganttGroupBy,
 				ganttDependencyField:
-					s.viewDraft.ganttDependencyField === ganttEndField
-						? ''
-						: s.viewDraft.ganttDependencyField
+					s.viewDraft.ganttDependencyField === ganttEndField ? '' : s.viewDraft.ganttDependencyField
 			};
 		}}
 		class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg disabled:bg-surface disabled:text-fg-muted"
@@ -86,9 +73,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.ganttGroupField')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.ganttGroupField')}</span>
 
 	<select
 		value={s.viewDraft.ganttGroupBy}
@@ -112,8 +97,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.ganttDependencyField')}</span
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.ganttDependencyField')}</span
 	>
 
 	<select
@@ -134,9 +118,7 @@
 </label>
 
 <label class="space-y-1">
-	<span class="text-xs font-medium uppercase text-fg-muted"
-		>{$t('forms.ganttScale')}</span
-	>
+	<span class="text-xs font-medium uppercase text-fg-muted">{$t('forms.ganttScale')}</span>
 
 	<select
 		value={s.viewDraft.ganttScale}

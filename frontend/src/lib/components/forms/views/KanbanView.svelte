@@ -1,10 +1,14 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { Trash2 } from '@lucide/svelte';
 	import Button from '#lib/components/Button.svelte';
 	import OptionValueBadges from '#lib/components/forms/OptionValueBadges.svelte';
-	import { recordFieldHiddenByCondition, recordFieldReadOnlyByCondition } from '#lib/forms/field-conditions.js';
+	import {
+		recordFieldHiddenByCondition,
+		recordFieldReadOnlyByCondition
+	} from '#lib/forms/field-conditions.js';
 	import { fieldLabel } from '#lib/forms/field-options.js';
 	import { selectValue } from '#lib/forms/record-format.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
@@ -38,9 +42,7 @@
 	<div class="mb-3 text-xs text-fg-muted">
 		{$t('forms.viewGroupBy', {
 			values: {
-				field: s.kanbanGroupField
-					? fieldLabel(s.kanbanGroupField)
-					: $t('forms.recordTitle')
+				field: s.kanbanGroupField ? fieldLabel(s.kanbanGroupField) : $t('forms.recordTitle')
 			}
 		})}
 	</div>
@@ -100,12 +102,8 @@
 	<div class="min-w-[760px] space-y-4">
 		{#each kanbanSwimlaneRows() as swimlane}
 			<section
-				class={s.kanbanSwimlaneField
-					? 'rounded-card border border-line bg-surface p-3'
-					: ''}
-				data-kanban-swimlane={s.kanbanSwimlaneField
-					? swimlane.label
-					: undefined}
+				class={s.kanbanSwimlaneField ? 'rounded-card border border-line bg-surface p-3' : ''}
+				data-kanban-swimlane={s.kanbanSwimlaneField ? swimlane.label : undefined}
 				data-record-count={swimlane.records.length}
 			>
 				{#if s.kanbanSwimlaneField}
@@ -134,9 +132,7 @@
 					{#each swimlane.groups as group}
 						<section
 							class={`rounded-card border bg-nav transition-colors ${
-								kanbanColumnWipExceeded(group.label)
-									? 'border-line'
-									: 'border-line'
+								kanbanColumnWipExceeded(group.label) ? 'border-line' : 'border-line'
 							}`}
 							data-record-count={group.records.length}
 							data-kanban-column={group.label}
@@ -145,9 +141,7 @@
 							ondragover={(event) => handleKanbanDragOver(event, group.label)}
 							ondrop={(event) => handleKanbanDrop(event, group.label)}
 						>
-							<div
-								class="flex items-center justify-between gap-3 border-b border-line px-3 py-2"
-							>
+							<div class="flex items-center justify-between gap-3 border-b border-line px-3 py-2">
 								<h4 class="truncate text-sm font-semibold text-fg">
 									{group.label}
 								</h4>
@@ -157,11 +151,7 @@
 										kanbanColumnWipExceeded(group.label)
 											? 'bg-warning-soft text-warning'
 											: 'bg-raised text-fg-muted'
-									}`}
-									>{kanbanWipLabel(
-										group.label,
-										kanbanColumnRecordCount(group.label)
-									)}</span
+									}`}>{kanbanWipLabel(group.label, kanbanColumnRecordCount(group.label))}</span
 								>
 							</div>
 
@@ -172,8 +162,7 @@
 										draggable={Boolean(s.kanbanGroupField)}
 										data-kanban-card={record.id}
 										role="listitem"
-										ondragstart={(event) =>
-											handleKanbanDragStart(event, record)}
+										ondragstart={(event) => handleKanbanDragStart(event, record)}
 										ondragend={handleKanbanDragEnd}
 									>
 										<div class="flex items-start justify-between gap-2">
@@ -198,8 +187,7 @@
 													class="min-w-0 text-left text-sm font-medium text-fg"
 													onclick={() => selectRecord(record)}
 													aria-label={`${$t('forms.openRecord')}: ${record.title}`}
-													><span class="block truncate">{record.title}</span
-													></button
+													><span class="block truncate">{record.title}</span></button
 												>
 											</div>
 
@@ -209,19 +197,14 @@
 												disabled={s.deletingRecordId === record.id}
 												onclick={() => handleDeleteRecord(record)}
 												aria-label={$t('forms.deleteRecord')}
-												><Trash2
-													class="h-3.5 w-3.5"
-													aria-hidden="true"
-												/></button
+												><Trash2 class="h-3.5 w-3.5" aria-hidden="true" /></button
 											>
 										</div>
 
 										<div class="mt-2 space-y-1">
 											{#each s.cardFields.slice(0, 3) as field}
 												<p class="truncate text-xs text-fg-muted">
-													<span
-														class="inline-flex items-center gap-1 font-medium"
-													>
+													<span class="inline-flex items-center gap-1 font-medium">
 														<span>{fieldLabel(field)}:</span>
 
 														{#if memberFieldHidden(field)}
@@ -257,10 +240,7 @@
 														{/if}
 													</span>
 
-													<OptionValueBadges
-														{field}
-														value={record.values[field.key]}
-													/>
+													<OptionValueBadges {field} value={record.values[field.key]} />
 												</p>
 											{/each}
 										</div>
@@ -268,17 +248,11 @@
 										{#if s.kanbanGroupField && kanbanMoveOptions(s.kanbanGroupField).length > 0}{@const kanbanField =
 												s.kanbanGroupField}
 											<select
-												value={String(
-													record.values[s.kanbanGroupField.key] ?? ''
-												)}
+												value={String(record.values[s.kanbanGroupField.key] ?? '')}
 												disabled={s.updatingKanbanRecordId === record.id}
 												aria-label={`${$t('forms.kanbanMoveTo')} ${fieldLabel(s.kanbanGroupField)}`}
 												onchange={(event) =>
-													updateKanbanRecordField(
-														record,
-														kanbanField,
-														selectValue(event)
-													)}
+													updateKanbanRecordField(record, kanbanField, selectValue(event))}
 												class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 											>
 												{#each kanbanMoveOptions(s.kanbanGroupField) as option}
