@@ -88,25 +88,20 @@
 {#if panel}
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<aside
-		class="flex w-full flex-col border-line bg-white lg:w-96 lg:shrink-0 lg:border-l dark:bg-slate-950"
+		class="flex w-full flex-col border-line bg-canvas lg:w-96 lg:shrink-0 lg:border-l"
 		aria-labelledby={headingId}
 		data-testid="record-panel"
 		data-record-id={panel.recordId}
 		onkeydown={onKeydown}
 	>
-		<header
-			class="flex items-center justify-between gap-2 border-b border-line px-4 py-2"
-		>
-			<h2
-				id={headingId}
-				class="truncate text-base font-semibold text-fg"
-			>
+		<header class="flex items-center justify-between gap-2 border-b border-line px-4 py-2">
+			<h2 id={headingId} class="truncate text-base font-semibold text-fg">
 				{$t('flow.record.title')}
 			</h2>
 			{#if !standalone}
 				<button
 					type="button"
-					class="min-h-11 min-w-11 rounded text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
+					class="min-h-11 min-w-11 rounded text-fg-muted hover:bg-surface"
 					aria-label={$t('flow.record.close')}
 					data-testid="record-panel-close"
 					onclick={() => controller.closePanel()}>✕</button
@@ -115,24 +110,21 @@
 		</header>
 
 		{#if panel.status === 'opening'}
-			<p class="p-4 text-sm text-slate-500" aria-live="polite">{$t('flow.record.opening')}</p>
+			<p class="p-4 text-sm text-fg-muted" aria-live="polite">{$t('flow.record.opening')}</p>
 		{:else if panel.status === 'error'}
-			<p class="p-4 text-sm text-red-600" role="alert">
+			<p class="p-4 text-sm text-danger" role="alert">
 				{$t(panel.errorKey ?? 'flow.record.openFailed')}
 			</p>
 		{:else}
-			{#if !canEdit}<p class="px-4 py-3 text-sm text-slate-500" role="status">
+			{#if !canEdit}<p class="px-4 py-3 text-sm text-fg-muted" role="status">
 					{$t(readOnlyKey)}
 				</p>{/if}
 			{#if panel.contextReviewRequired}
-				<div
-					class="space-y-2 border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm dark:border-amber-900 dark:bg-amber-950"
-					role="status"
-				>
+				<div class="space-y-2 border-t border-line bg-warning-soft px-4 py-3 text-sm" role="status">
 					<p>{$t('flow.personal.recordReviewRequired')}</p>
 					<button
 						type="button"
-						class="min-h-11 rounded-md border border-amber-400 px-3 disabled:opacity-50"
+						class="min-h-11 rounded-control border border-warning px-3 disabled:text-control disabled:hover:bg-transparent"
 						disabled={!canEdit}
 						onclick={() => controller.reviewRecordContext(panel.recordId)}
 						>{$t('flow.personal.recordReviewAction')}</button
@@ -149,21 +141,18 @@
 				class="space-y-3 overflow-y-auto px-4 py-3"
 				aria-label={$t('flow.record.properties')}
 			>
-				<h3 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+				<h3 class="text-xs font-semibold tracking-wide text-fg-muted uppercase">
 					{$t('flow.record.properties')}
 				</h3>
 				{#if !row}
-					<p class="text-sm text-slate-500">{$t('flow.record.notLoaded')}</p>
+					<p class="text-sm text-fg-muted">{$t('flow.record.notLoaded')}</p>
 				{:else}
 					{#each fields as field (field.fieldId)}
 						{@const draft = draftIn(snapshot, panel.recordId, field.fieldId)}
 						{@const status = snapshot.cellStatus[`${panel.recordId}:${field.fieldId}`]}
 						{@const editorId = `record-panel-${panel.recordId}-${field.fieldId}`}
 						<div class="space-y-1" data-testid="record-panel-field" data-field-id={field.fieldId}>
-							<label
-								for={editorId}
-								class="block text-xs font-medium text-fg-muted"
-							>
+							<label for={editorId} class="block text-xs font-medium text-fg-muted">
 								{field.label}
 							</label>
 							{#if isEditableField(field)}
@@ -181,7 +170,7 @@
 									<div class="flex items-center gap-2">
 										<button
 											type="button"
-											class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+											class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 											disabled={!canEdit ||
 												panel.contextReviewRequired ||
 												status?.state === 'saving'}
@@ -191,13 +180,11 @@
 										>
 										<button
 											type="button"
-											class="min-h-11 rounded px-3 text-sm text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
+											class="min-h-11 rounded px-3 text-sm text-fg-muted hover:bg-surface"
 											onclick={() => controller.cancelDraft(panel.recordId, field.fieldId)}
 											>{$t('flow.record.discard')}</button
 										>
-										<span class="text-xs text-warning"
-											>{$t('flow.record.unsaved')}</span
-										>
+										<span class="text-xs text-warning">{$t('flow.record.unsaved')}</span>
 									</div>
 								{/if}
 							{:else}
@@ -206,7 +193,7 @@
 								</div>
 							{/if}
 							{#if panel.contextReviewRequired && draft !== null}<div
-									class="rounded border border-amber-200 p-2 text-xs"
+									class="rounded border border-warning p-2 text-xs"
 								>
 									<span>{$t('flow.personal.recordCurrentValue')}</span><CollectionCellValue
 										{field}
@@ -226,16 +213,13 @@
 				{/if}
 			</section>
 
-			<section
-				class="space-y-2 border-t border-line px-4 py-3"
-				aria-label={$t('flow.record.body')}
-			>
+			<section class="space-y-2 border-t border-line px-4 py-3" aria-label={$t('flow.record.body')}>
 				{#if panel.bodyWithheld}
-					<h3 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+					<h3 class="text-xs font-semibold tracking-wide text-fg-muted uppercase">
 						{$t('flow.record.body')}
 					</h3>
 					<p
-						class="rounded border border-dashed border-slate-300 p-3 text-sm text-fg-muted dark:border-slate-600"
+						class="rounded border border-dashed border-line-strong p-3 text-sm text-fg-muted bg-field"
 						data-testid="record-panel-body-withheld"
 					>
 						{$t('flow.record.bodyWithheld')}
@@ -243,13 +227,13 @@
 				{:else}
 					<label
 						for={`record-body-${panel.recordId}`}
-						class="block text-xs font-semibold tracking-wide text-slate-500 uppercase"
+						class="block text-xs font-semibold tracking-wide text-fg-muted uppercase"
 					>
 						{$t('flow.record.body')}
 					</label>
 					<textarea
 						id={`record-body-${panel.recordId}`}
-						class="min-h-40 w-full rounded border border-slate-300 bg-white p-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
+						class="min-h-40 w-full rounded border border-input bg-field p-2 text-sm text-fg"
 						placeholder={$t('flow.record.bodyPlaceholder')}
 						value={bodyValue}
 						readonly={!canEdit}
@@ -259,7 +243,7 @@
 					<div class="flex flex-wrap items-center gap-2">
 						<button
 							type="button"
-							class="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+							class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
 							disabled={!canEdit ||
 								panel.contextReviewRequired ||
 								bodyDraft === undefined ||
@@ -271,7 +255,7 @@
 						{#if bodyDraft !== undefined}
 							<button
 								type="button"
-								class="min-h-11 rounded px-3 text-sm text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
+								class="min-h-11 rounded px-3 text-sm text-fg-muted hover:bg-surface"
 								onclick={() => controller.discardBodyDraft(panel.recordId)}
 								>{$t('flow.record.discard')}</button
 							>
@@ -280,9 +264,9 @@
 							{#if panel.bodyStatus?.state === 'saving'}
 								{$t('flow.collection.cell.saving')}
 							{:else if panel.bodyStatus?.state === 'conflict'}
-								<span class="text-red-600">{$t('flow.collection.cell.conflict')}</span>
+								<span class="text-danger">{$t('flow.collection.cell.conflict')}</span>
 							{:else if panel.bodyStatus?.state === 'error'}
-								<span class="text-red-600">{$t(panel.bodyStatus.key)}</span>
+								<span class="text-danger">{$t(panel.bodyStatus.key)}</span>
 							{:else if bodyDraft !== undefined}
 								<span class="text-warning">{$t('flow.record.unsaved')}</span>
 							{:else}
@@ -297,27 +281,24 @@
 				class="space-y-2 border-t border-line px-4 py-3"
 				aria-label={$t('flow.record.archive')}
 			>
-				{#if !canArchive}<p class="text-xs text-slate-500">
+				{#if !canArchive}<p class="text-xs text-fg-muted">
 						{$t(readOnlyKey)}
 					</p>{:else if archiveConfirming}
 					<div class="space-y-2" role="group" aria-labelledby={`record-archive-${panel.recordId}`}>
-						<p
-							id={`record-archive-${panel.recordId}`}
-							class="text-sm text-fg"
-						>
+						<p id={`record-archive-${panel.recordId}`} class="text-sm text-fg">
 							{$t('flow.record.archiveConfirmBody')}
 						</p>
 						<div class="flex flex-wrap items-center gap-2">
 							<button
 								type="button"
-								class="min-h-11 rounded bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
+								class="min-h-11 rounded bg-danger-soft px-3 text-sm font-medium text-danger disabled:bg-surface disabled:text-control"
 								disabled={archiveBusy || !canArchive}
 								data-testid="record-panel-archive-confirm"
 								onclick={() => void archive()}>{$t('flow.record.archiveConfirm')}</button
 							>
 							<button
 								type="button"
-								class="min-h-11 rounded px-3 text-sm text-fg-muted hover:bg-slate-100 dark:hover:bg-slate-800"
+								class="min-h-11 rounded px-3 text-sm text-fg-muted hover:bg-surface"
 								disabled={archiveBusy || !canArchive}
 								onclick={() => {
 									archiveConfirming = false;
@@ -329,14 +310,14 @@
 				{:else}
 					<button
 						type="button"
-						class="min-h-11 rounded px-3 text-sm text-danger hover:bg-red-50 dark:hover:bg-red-950"
+						class="min-h-11 rounded px-3 text-sm text-danger hover:bg-danger-soft"
 						data-testid="record-panel-archive"
 						onclick={() => (archiveConfirming = true)}>{$t('flow.record.archive')}</button
 					>
 				{/if}
 				<p class="text-xs text-danger" aria-live="polite">
 					{#if archiveBusy}
-						<span class="text-slate-500">{$t('flow.record.archiving')}</span>
+						<span class="text-fg-muted">{$t('flow.record.archiving')}</span>
 					{:else if archiveErrorKey}
 						<span role="alert">{$t(archiveErrorKey)}</span>
 					{/if}

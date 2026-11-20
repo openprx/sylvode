@@ -67,10 +67,9 @@
 	let previewIntent: { signature: string; key: string } | null = null;
 	let commitKey = '';
 	let alive = true;
-	const input =
-		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-slate-900';
+	const input = 'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm';
 	const button =
-		'min-h-11 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-50 dark:border-slate-600';
+		'min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-control disabled:border-line';
 	onDestroy(() => {
 		alive = false;
 	});
@@ -205,11 +204,7 @@
 	}
 </script>
 
-<section
-	class="space-y-4 rounded-lg border p-4 dark:border-slate-700"
-	aria-busy={busy}
-	data-testid="flow-create-form"
->
+<section class="space-y-4 rounded-card border p-4" aria-busy={busy} data-testid="flow-create-form">
 	{#if !preview}
 		<h2 class="text-base font-semibold" tabindex="-1" bind:this={schemaHeading}>
 			{$t('flow.createForm.definition')}
@@ -246,7 +241,7 @@
 						<span id={`${uid}-key`} class="block text-xs">{$t('flow.createForm.keyHint')}</span>
 					</label>
 					{#each fields as field, index (field.id)}
-						<fieldset class="space-y-2 rounded border p-3 dark:border-slate-700">
+						<fieldset class="space-y-2 rounded border p-3">
 							<legend class="px-2 text-sm font-medium"
 								>{$t('flow.createForm.field', { values: { index: index + 1 } })}</legend
 							>
@@ -306,7 +301,7 @@
 		</h2>
 		<p class="text-sm font-medium">{preview.name} · {preview.project}</p>
 		<p class="break-all text-sm">{preview.key}</p>
-		<ul class="space-y-2 rounded border p-3 dark:border-slate-700">
+		<ul class="space-y-2 rounded border p-3">
 			{#each preview.fields as field (field.id)}
 				<li class="text-sm">
 					{field.label} ({field.key}) · {$t(typeKeys[field.type])}

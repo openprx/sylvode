@@ -49,7 +49,7 @@
 				<li class={opClass[line.op]} data-testid="flow-history-diff-line" data-op={line.op}>
 					<span class="font-semibold">{$t(DIFF_OPERATION_KEYS[line.op])}</span>
 					{#if line.kind}
-						<span class="text-slate-400">· {$t(diffKindKey(line.kind))}</span>
+						<span class="text-fg-muted">· {$t(diffKindKey(line.kind))}</span>
 					{/if}
 					{#if line.op === 'added'}
 						<span class="block break-words">{shown(line.after)}</span>

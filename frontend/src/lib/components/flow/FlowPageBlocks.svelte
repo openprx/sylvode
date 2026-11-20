@@ -212,9 +212,9 @@
 	}
 
 	const selectClass =
-		'mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-fg dark:border-slate-600 dark:bg-slate-900';
+		'mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm text-fg';
 	const buttonClass =
-		'inline-flex min-h-11 items-center rounded-md px-4 text-sm font-medium disabled:opacity-50';
+		'inline-flex min-h-11 items-center rounded-control px-4 text-sm font-medium disabled:text-control disabled:hover:bg-transparent';
 </script>
 
 <div class="sr-only" aria-live="polite" data-testid="flow-page-blocks-live">{announcement}</div>
@@ -227,7 +227,7 @@
 					<EmbeddedCollection {scopeId} collectionId={card.collectionId} blockId={card.blockId} />
 				{:else}
 					<section
-						class="not-prose my-4 rounded border border-line p-4 text-sm text-slate-500"
+						class="not-prose my-4 rounded border border-line p-4 text-sm text-fg-muted"
 						data-testid="flow-hidden-collection"
 					>
 						{$t('flow.pageOnly.embedHidden')}
@@ -235,7 +235,7 @@
 				{/if}
 			{:else if card.kind === 'provisional'}
 				<section
-					class="not-prose my-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 dark:border-slate-600 dark:bg-slate-900"
+					class="not-prose my-4 rounded-card border border-dashed border-line-strong bg-surface p-4"
 					data-testid="flow-embed-provisional"
 					data-status={card.provisional.status}
 					aria-busy="true"
@@ -256,7 +256,7 @@
 				/>
 			{:else}
 				<article
-					class="not-prose my-3 flex flex-wrap items-center gap-2 rounded-lg border border-line p-4"
+					class="not-prose my-3 flex flex-wrap items-center gap-2 rounded-card border border-line p-4"
 					data-testid="flow-bridge-card-unavailable"
 					data-reference-id={card.referenceId}
 				>
@@ -265,7 +265,7 @@
 					</p>
 					<button
 						type="button"
-						class="{buttonClass} text-danger hover:bg-red-50 dark:hover:bg-red-950"
+						class="{buttonClass} text-danger hover:bg-danger-soft"
 						onclick={() => askRemove(card.referenceId)}
 					>
 						{$t('flow.bridge.card.remove')}
@@ -276,7 +276,7 @@
 
 		{#if embedSnap.failure}
 			<div
-				class="not-prose my-3 flex flex-wrap items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100"
+				class="not-prose my-3 flex flex-wrap items-center gap-3 rounded-card border border-line bg-danger-soft p-3 text-sm text-danger"
 				role="alert"
 				data-testid="flow-embed-failed"
 				data-error-code={embedSnap.failure.code}
@@ -291,7 +291,7 @@
 				{#if embedSnap.failure.retryable}
 					<button
 						type="button"
-						class="{buttonClass} bg-red-700 text-white hover:bg-red-800"
+						class="{buttonClass} bg-danger-soft text-danger"
 						disabled={embedSnap.busy}
 						data-testid="flow-embed-retry"
 						onclick={() => void retryCollection()}
@@ -311,7 +311,7 @@
 		{/if}
 
 		{#if referencesFailure}
-			<p class="not-prose my-3 text-sm text-red-600" role="alert">
+			<p class="not-prose my-3 text-sm text-danger" role="alert">
 				{$t(referencesFailure.key)}
 			</p>
 		{/if}
@@ -337,19 +337,19 @@
 			/>
 		</label>
 		{#if collectionInvalid}
-			<p class="text-sm text-red-600" role="alert">{$t(collectionInvalid)}</p>
+			<p class="text-sm text-danger" role="alert">{$t(collectionInvalid)}</p>
 		{/if}
 		<div class="flex justify-end gap-2">
 			<button
 				type="button"
-				class="{buttonClass} text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
+				class="{buttonClass} text-fg hover:bg-surface"
 				onclick={() => (collectionOpen = false)}
 			>
 				{$t('common.cancel')}
 			</button>
 			<button
 				type="submit"
-				class="{buttonClass} bg-blue-600 text-white hover:bg-blue-700"
+				class="{buttonClass} bg-primary rf-filled text-on-primary"
 				disabled={embedSnap.busy}
 				data-testid="flow-slash-collection-submit"
 			>
@@ -399,7 +399,7 @@
 				</select>
 			</label>
 			{#if pickerSnap.projectsState === 'ready' && pickerSnap.projects.length === 0}
-				<p class="text-sm text-slate-500">{$t('flow.bridge.card.picker.noProjects')}</p>
+				<p class="text-sm text-fg-muted">{$t('flow.bridge.card.picker.noProjects')}</p>
 			{/if}
 			{#if pickerSnap.projectId}
 				<label class="block text-sm font-medium text-fg">
@@ -418,7 +418,7 @@
 					</select>
 				</label>
 				{#if pickerSnap.formsState === 'failed'}
-					<p class="text-sm text-red-600" role="alert">
+					<p class="text-sm text-danger" role="alert">
 						{$t('flow.bridge.card.picker.loadFailed')}
 					</p>
 				{/if}
@@ -440,7 +440,7 @@
 					</select>
 				</label>
 				{#if pickerSnap.recordsState === 'failed'}
-					<p class="text-sm text-red-600" role="alert">
+					<p class="text-sm text-danger" role="alert">
 						{$t('flow.bridge.card.picker.loadFailed')}
 					</p>
 				{/if}
@@ -448,7 +448,7 @@
 		{/if}
 		{#if formsFailure}
 			<p
-				class="text-sm text-red-600"
+				class="text-sm text-danger"
 				role="alert"
 				data-error-code={formsFailure.code}
 				data-failure-kind={formsFailure.kind}
@@ -459,14 +459,14 @@
 		<div class="flex justify-end gap-2">
 			<button
 				type="button"
-				class="{buttonClass} text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
+				class="{buttonClass} text-fg hover:bg-surface"
 				onclick={() => (formsOpen = false)}
 			>
 				{$t('common.cancel')}
 			</button>
 			<button
 				type="submit"
-				class="{buttonClass} bg-blue-600 text-white hover:bg-blue-700"
+				class="{buttonClass} bg-primary rf-filled text-on-primary"
 				disabled={!pickerSnap?.target ||
 					formsSubmitting ||
 					(formsFailure !== null && !formsFailure.retryable)}
@@ -492,19 +492,19 @@
 	<div class="space-y-4" data-testid="flow-bridge-remove-dialog">
 		<p class="text-sm text-fg">{$t('flow.bridge.card.removeBody')}</p>
 		{#if removeFailure}
-			<p class="text-sm text-red-600" role="alert">{$t(removeFailure.key)}</p>
+			<p class="text-sm text-danger" role="alert">{$t(removeFailure.key)}</p>
 		{/if}
 		<div class="flex justify-end gap-2">
 			<button
 				type="button"
-				class="{buttonClass} text-fg hover:bg-slate-100 dark:hover:bg-slate-700"
+				class="{buttonClass} text-fg hover:bg-surface"
 				onclick={() => (removingId = null)}
 			>
 				{$t('common.cancel')}
 			</button>
 			<button
 				type="button"
-				class="{buttonClass} bg-red-700 text-white hover:bg-red-800"
+				class="{buttonClass} bg-danger text-on-danger rf-filled"
 				disabled={removeBusy || (removeFailure !== null && !removeFailure.retryable)}
 				data-testid="flow-bridge-remove-confirm"
 				onclick={() => void confirmRemove()}

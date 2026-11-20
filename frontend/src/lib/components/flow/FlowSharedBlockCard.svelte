@@ -31,8 +31,8 @@
 </script>
 
 <p class="font-medium">{$t('flow.shared.blocks')}</p>
-{#if !loaded}<p class="text-xs text-slate-500">{$t('common.loading')}</p>{:else if !available}<p
-		class="text-xs text-slate-500"
+{#if !loaded}<p class="text-xs text-fg-muted">{$t('common.loading')}</p>{:else if !available}<p
+		class="text-xs text-fg-muted"
 	>
 		{$t('flow.shared.unavailable')}
 	</p>{:else if excerpt}<p
@@ -40,7 +40,7 @@
 	>
 		{excerpt}
 	</p>{/if}
-<p class="mt-1 text-xs text-slate-500">
+<p class="mt-1 text-xs text-fg-muted">
 	{(permission ?? item.effective_permission) === 'edit'
 		? $t('flow.shared.canEditLimited')
 		: $t('flow.shared.viewOnly')}

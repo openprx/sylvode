@@ -133,7 +133,7 @@
 		</h2>
 		<p class="mt-1 text-sm text-fg-muted">{$t('flow.export.description')}</p>
 		<p
-			class="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+			class="mt-3 rounded-card border border-line bg-warning-soft p-3 text-sm text-fg"
 			data-testid="flow-package-history-notice"
 		>
 			{$t('flow.package.snapshotHistoryNotice')}
@@ -174,7 +174,7 @@
 				</label>
 				<select
 					id="flow-export-project"
-					class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm"
 					bind:value={projectId}
 					disabled={submitting}
 				>
@@ -196,14 +196,14 @@
 				<span>{$t('flow.export.includeHistory')}</span>
 			</label>
 		</div>
-		{#if !allowHistory}<p class="mt-2 text-xs text-slate-500">
+		{#if !allowHistory}<p class="mt-2 text-xs text-fg-muted">
 				{$t('flow.personal.packageHistoryUnavailable')}
 			</p>{/if}
 
 		<div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
 			<button
 				type="button"
-				class="min-h-11 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 motion-safe:transition-colors"
+				class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors"
 				disabled={submitting || objectTypes.length === 0}
 				onclick={startExport}
 			>
@@ -213,7 +213,7 @@
 
 		{#if failure}
 			<div
-				class="mt-4 flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-danger sm:flex-row sm:items-center sm:justify-between dark:border-red-900 dark:bg-red-950/30"
+				class="mt-4 flex flex-col gap-3 rounded-card border border-line bg-danger-soft p-4 text-sm text-danger sm:flex-row sm:items-center sm:justify-between"
 				role="alert"
 				data-testid="flow-export-error"
 			>
@@ -221,7 +221,7 @@
 				{#if failure.retryable}
 					<button
 						type="button"
-						class="min-h-11 rounded-md border border-red-300 px-4 text-sm font-medium dark:border-red-700"
+						class="min-h-11 rounded-control border border-danger px-4 text-sm font-medium"
 						onclick={startExport}
 					>
 						{$t('flow.package.retry')}
@@ -232,7 +232,7 @@
 
 		{#if downloadFailure}
 			<div
-				class="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-danger dark:border-red-900 dark:bg-red-950/30"
+				class="mt-4 rounded-card border border-line bg-danger-soft p-4 text-sm text-danger"
 				role="alert"
 			>
 				{$t(downloadFailure.messageKey, { values: downloadFailure.values })}
@@ -249,7 +249,7 @@
 				{#each jobs as view (view.jobId)}
 					{@const job = view.job}
 					<li
-						class="rounded-md border border-line p-4 text-sm"
+						class="rounded-card border border-line p-4 text-sm"
 						data-testid="flow-export-job"
 						data-job-id={view.jobId}
 					>
@@ -308,7 +308,7 @@
 							{@const finished = job}
 							<button
 								type="button"
-								class="mt-3 min-h-11 rounded-md border border-blue-300 px-4 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
+								class="mt-3 min-h-11 rounded-control border border-fg px-4 text-sm font-medium text-fg hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
 								disabled={downloading !== null}
 								onclick={() => void download(finished)}
 							>

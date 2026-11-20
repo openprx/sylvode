@@ -66,9 +66,9 @@
 	}
 </script>
 
-<main class="min-h-screen bg-white dark:bg-slate-950" data-testid="flow-public-page">
+<main class="min-h-screen bg-canvas" data-testid="flow-public-page">
 	{#if status === 'loading'}
-		<p class="mx-auto max-w-3xl px-4 py-10 text-slate-500">{$t('flow.publicShare.loading')}</p>
+		<p class="mx-auto max-w-3xl px-4 py-10 text-fg-muted">{$t('flow.publicShare.loading')}</p>
 	{:else if status === 'missing'}
 		<p class="mx-auto max-w-3xl px-4 py-10 text-fg">
 			{$t('flow.publicShare.missing')}
@@ -92,9 +92,7 @@
 				{/if}
 			</div>
 		{/if}
-		<article
-			class="flow-canvas prose prose-slate mx-auto max-w-3xl px-16 pt-8 pb-16 dark:prose-invert"
-		>
+		<article class="flow-canvas prose prose-slate mx-auto max-w-3xl px-16 pt-8 pb-16">
 			{#if emoji}
 				<p class="text-5xl">{emoji}</p>
 			{:else if iconUrl}
@@ -103,7 +101,7 @@
 			<h1 class="mb-6 text-4xl font-semibold text-fg">
 				{title || $t('flow.publicShare.untitled')}
 			</h1>
-			<p class="text-xs text-slate-500">{$t('flow.publicShare.readOnly')}</p>
+			<p class="text-xs text-fg-muted">{$t('flow.publicShare.readOnly')}</p>
 			{#each visibleBlocks as { block, index, order } (`${block.kind}-${index}`)}
 				{@const body = publicBodyAtom(block)}
 				{#if block.kind === 'heading'}
@@ -178,9 +176,7 @@
 						<FlowBodyChild childId="" publicView />
 					</div>
 				{:else if block.kind === 'embed'}
-					<p
-						class="rounded-md border border-line px-3 py-2 text-sm text-slate-500"
-					>
+					<p class="rounded-card border border-line px-3 py-2 text-sm text-fg-muted">
 						{$t('flow.publicShare.embed')}
 					</p>
 				{:else}
@@ -204,12 +200,9 @@
 		left: 0.25rem;
 	}
 	:global(.flow-canvas pre) {
-		background: var(--color-slate-100);
-		border-radius: 0.375rem;
+		background: var(--rf-surface);
+		border-radius: var(--rf-radius-card);
 		padding: 0.75rem;
 		overflow-x: auto;
-	}
-	:global(.dark .flow-canvas pre) {
-		background: var(--color-slate-900);
 	}
 </style>

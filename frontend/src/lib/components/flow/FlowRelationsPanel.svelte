@@ -45,9 +45,9 @@
 	}
 
 	const selectClass =
-		'min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-800';
+		'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm text-fg';
 	const linkButtonClass =
-		'min-h-11 rounded-md px-2 text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400';
+		'min-h-11 rounded-control px-2 text-xs font-medium text-fg underline disabled:text-control disabled:hover:bg-transparent';
 </script>
 
 <div class="space-y-3 text-sm" data-testid="flow-relations-panel">
@@ -110,7 +110,7 @@
 							class="border-l-2 border-line pl-3"
 							data-testid="flow-relation-row"
 						>
-							<p class="text-xs text-slate-400 dark:text-slate-500">
+							<p class="text-xs text-fg-muted">
 								{row.direction === 'outgoing'
 									? $t('flow.relations.row.outgoing')
 									: $t('flow.relations.row.incoming')}
@@ -118,7 +118,7 @@
 							</p>
 							<a
 								href={resolve('/(app)/flow/[objectId]', { objectId: target })}
-								class="inline-flex min-h-11 items-center font-medium text-blue-600 hover:underline dark:text-blue-400"
+								class="inline-flex min-h-11 items-center font-medium text-fg underline"
 							>
 								{row.title}
 							</a>

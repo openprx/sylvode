@@ -29,7 +29,7 @@
 	<div>
 		<a
 			href={resolve('/(app)/flow/package')}
-			class="inline-flex min-h-11 items-center text-sm text-blue-700 hover:underline dark:text-blue-300"
+			class="inline-flex min-h-11 items-center text-sm text-fg underline"
 		>
 			{$t('flow.import.report.back')}
 		</a>
@@ -41,7 +41,7 @@
 
 	{#if reportState.status === 'loading' || reportState.status === 'pending'}
 		<div
-			class="rounded-lg border border-line bg-white p-6 text-fg-muted dark:bg-slate-900"
+			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
 			role="status"
 			aria-live="polite"
 			data-testid="flow-import-report-pending"
@@ -60,7 +60,7 @@
 		</div>
 	{:else if reportState.status === 'failed'}
 		<div
-			class="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-danger dark:border-red-900 dark:bg-red-950/30"
+			class="rounded-card border border-line bg-danger-soft p-6 text-sm text-danger"
 			role="alert"
 		>
 			{$t(reportState.failure.messageKey, { values: reportState.failure.values })}

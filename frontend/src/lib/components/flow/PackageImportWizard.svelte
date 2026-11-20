@@ -215,15 +215,15 @@
 	}
 
 	const buttonPrimary =
-		'min-h-11 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 motion-safe:transition-colors';
+		'min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors';
 	const buttonSecondary =
-		'min-h-11 rounded-md border border-slate-300 px-4 text-sm font-medium text-fg hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800';
+		'min-h-11 rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line';
 	const fieldClass =
-		'mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
+		'mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm';
 </script>
 
 <p
-	class="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+	class="mb-4 rounded-card border border-line bg-warning-soft p-3 text-sm text-fg"
 	data-testid="flow-import-snapshot-history-notice"
 >
 	{$t('flow.package.snapshotHistoryNotice')}
@@ -247,9 +247,9 @@
 						<li class="flex-1">
 							<button
 								type="button"
-								class="flex min-h-11 w-full items-center gap-2 rounded-md border px-3 text-left text-sm disabled:cursor-not-allowed {index ===
+								class="flex min-h-11 w-full items-center gap-2 rounded-control border px-3 text-left text-sm disabled:cursor-not-allowed {index ===
 								stepIndex
-									? 'border-blue-500 bg-blue-50 font-semibold text-blue-800 dark:bg-blue-950/40 dark:text-blue-200'
+									? 'border-fg bg-selected font-semibold text-fg'
 									: 'border-line text-fg-muted'}"
 								aria-current={index === stepIndex ? 'step' : undefined}
 								disabled={index > stepIndex || snap.uploadState === 'uploading' || snap.committing}
@@ -291,7 +291,7 @@
 							id="flow-import-file"
 							type="file"
 							accept=".zip"
-							class="block min-h-11 w-full text-sm text-fg file:mr-3 file:min-h-11 file:rounded-md file:border-0 file:bg-slate-100 file:px-4 file:text-sm file:font-medium dark:file:bg-slate-700"
+							class="block min-h-11 w-full text-sm text-fg file:mr-3 file:min-h-11 file:rounded-control file:border-0 file:bg-surface file:px-4 file:text-sm file:font-medium"
 							onchange={onFileChange}
 						/>
 						<p class="text-xs text-fg-muted">
@@ -437,7 +437,7 @@
 								{$t('flow.import.options.includeHistory')}
 							</span>
 						</label>
-						{#if !allowHistory}<p class="text-xs text-slate-500">
+						{#if !allowHistory}<p class="text-xs text-fg-muted">
 								{$t('flow.personal.packageHistoryUnavailable')}
 							</p>{/if}
 						<fieldset>
@@ -449,7 +449,7 @@
 							</p>
 							{#if snap.unmappedProjects.length > 0}
 								<div
-									class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+									class="mt-3 rounded-card border border-line bg-warning-soft p-3 text-sm text-fg"
 									role="alert"
 									data-testid="flow-import-unmapped"
 								>
@@ -551,7 +551,7 @@
 							{@const summary = preview.manifest_summary}
 							{#if snap.previewHold}
 								<div
-									class="space-y-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+									class="space-y-3 rounded-card border border-line bg-warning-soft p-4 text-sm text-fg"
 									role="alert"
 									data-testid="flow-import-hold"
 									data-hold={snap.previewHold}
@@ -573,7 +573,7 @@
 							{#if summary}
 								<section
 									aria-labelledby="flow-import-manifest-heading"
-									class="rounded-md border border-line p-3 text-sm"
+									class="rounded-card border border-line p-3 text-sm"
 									data-testid="flow-import-manifest"
 								>
 									<h4
@@ -874,7 +874,7 @@
 
 				{#if snap.blockingFailure}
 					<div
-						class="mt-4 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-danger dark:border-red-800 dark:bg-red-950/30"
+						class="mt-4 rounded-card border border-line bg-danger-soft p-4 text-sm text-danger"
 						role="alert"
 						data-testid="flow-import-blocking"
 					>
@@ -885,7 +885,7 @@
 					</div>
 				{:else if snap.failure}
 					<div
-						class="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-danger dark:border-red-900 dark:bg-red-950/30"
+						class="mt-4 rounded-card border border-line bg-danger-soft p-4 text-sm text-danger"
 						role="alert"
 						data-testid="flow-import-error"
 					>

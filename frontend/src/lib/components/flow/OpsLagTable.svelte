@@ -63,7 +63,7 @@
 </script>
 
 <section
-	class="rounded-lg border border-line bg-white p-4 sm:p-6 dark:bg-slate-900"
+	class="rounded-card border border-line bg-raised p-4 sm:p-6"
 	aria-labelledby="flow-ops-lag-heading"
 	data-testid="flow-ops-lag"
 >
@@ -73,7 +73,7 @@
 		</h2>
 		{#if projection}
 			<span
-				class={`rounded-full px-3 py-1 text-xs font-semibold ${projection.max_lag > 0 ? 'bg-amber-100 text-warning dark:bg-amber-950/50' : 'bg-emerald-100 text-success dark:bg-emerald-950/50'}`}
+				class={`rounded-full px-3 py-1 text-xs font-semibold ${projection.max_lag > 0 ? 'bg-warning-soft text-warning' : 'bg-surface text-fg'}`}
 				data-testid="flow-ops-lag-badge"
 			>
 				{projection.max_lag > 0
@@ -93,7 +93,7 @@
 	{#if lag}
 		<dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3" data-testid="flow-ops-lag-groups">
 			{#each groups as item (item.id)}
-				<div class="rounded-md border border-line p-3">
+				<div class="rounded-card border border-line p-3">
 					<dt class="text-sm font-medium text-fg">{$t(item.label)}</dt>
 					<dd class="mt-2 grid grid-cols-2 gap-1 text-sm">
 						<span class="text-fg-muted">{$t('flow.operations.lag.max')}</span>
@@ -152,7 +152,7 @@
 			</table>
 			<ul class="mt-2 space-y-2 md:hidden">
 				{#each documentRows as row (row.documentId)}
-					<li class="rounded-md border border-line p-3 text-sm">
+					<li class="rounded-card border border-line p-3 text-sm">
 						<p class="break-all font-mono text-xs">{row.documentId}</p>
 						<p class="mt-1">
 							{$t('flow.operations.lag.projectionLag')}:
@@ -174,7 +174,7 @@
 			>
 				<button
 					type="button"
-					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm disabled:opacity-50 dark:border-slate-600"
+					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
 					disabled={documentsBusy || !documentsHasPrevious}
 					data-testid="flow-ops-lag-documents-pager-previous"
 					onclick={ondocumentsprevious}
@@ -186,7 +186,7 @@
 				</span>
 				<button
 					type="button"
-					class="min-h-11 rounded-md border border-slate-300 px-4 text-sm disabled:opacity-50 dark:border-slate-600"
+					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
 					disabled={documentsBusy || !documentsHasNext}
 					data-testid="flow-ops-lag-documents-pager-next"
 					onclick={ondocumentsnext}
@@ -240,7 +240,7 @@
 			</table>
 			<ul class="mt-2 space-y-2 md:hidden">
 				{#each projection.items as item (item.object_id)}
-					<li class="rounded-md border border-line p-3 text-sm">
+					<li class="rounded-card border border-line p-3 text-sm">
 						<p class="break-all font-mono text-xs">{item.object_id}</p>
 						<p class="mt-1">
 							{$t('flow.operations.lag.headSeq')}: <span class="font-mono">{item.head_seq}</span> ·
@@ -256,7 +256,7 @@
 		<nav class="mt-3 flex items-center gap-2" aria-label={$t('flow.operations.lag.itemsHeading')}>
 			<button
 				type="button"
-				class="min-h-11 rounded-md border border-slate-300 px-4 text-sm disabled:opacity-50 dark:border-slate-600"
+				class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
 				disabled={busy || !hasPrevious}
 				onclick={onprevious}
 			>
@@ -267,7 +267,7 @@
 			</span>
 			<button
 				type="button"
-				class="min-h-11 rounded-md border border-slate-300 px-4 text-sm disabled:opacity-50 dark:border-slate-600"
+				class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
 				disabled={busy || !hasNext}
 				onclick={onnext}
 			>

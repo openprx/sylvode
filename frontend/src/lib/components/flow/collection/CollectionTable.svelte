@@ -223,7 +223,7 @@
 	{#if status}
 		<span
 			class="ml-1 shrink-0 text-xs {status.state === 'saving'
-				? 'text-slate-500'
+				? 'text-fg-muted'
 				: 'text-danger'}"
 			data-cell-status={status.state}
 		>
@@ -240,7 +240,7 @@
 	<ul class="space-y-3 p-4" data-testid="collection-cards" aria-label={snapshot.collection?.title}>
 		{#each rows as row (row.recordId)}
 			<li
-				class="rounded-lg border border-line p-3"
+				class="rounded-card border border-line p-3"
 				data-testid="collection-card"
 				data-record-id={row.recordId}
 			>
@@ -256,7 +256,7 @@
 				</dl>
 				<button
 					type="button"
-					class="mt-2 min-h-11 w-full rounded border border-slate-300 px-3 text-sm font-medium dark:border-slate-600"
+					class="mt-2 min-h-11 w-full rounded border border-fg bg-raised px-3 text-sm font-medium"
 					onclick={() => void controller.openPanel(row.recordId)}
 				>
 					{$t('flow.collection.table.openRecord')}
@@ -264,13 +264,13 @@
 			</li>
 		{/each}
 		{#if rows.length === 0 && !snapshot.loadingRecords}
-			<li class="text-sm text-slate-500">{$t('flow.collection.table.empty')}</li>
+			<li class="text-sm text-fg-muted">{$t('flow.collection.table.empty')}</li>
 		{/if}
 		{#if snapshot.nextCursor}
 			<li>
 				<button
 					type="button"
-					class="min-h-11 w-full rounded border border-slate-300 px-3 text-sm dark:border-slate-600"
+					class="min-h-11 w-full rounded border border-fg px-3 text-sm bg-raised"
 					disabled={snapshot.loadingRecords}
 					onclick={() => void controller.loadMore()}>{$t('flow.collection.table.loadMore')}</button
 				>
@@ -295,10 +295,10 @@
 			<div
 				role="row"
 				aria-rowindex={1}
-				class="sticky top-0 z-10 grid border-b border-line bg-slate-50 dark:bg-slate-900"
+				class="sticky top-0 z-10 grid border-b border-line bg-nav"
 				style:grid-template-columns={gridTemplate}
 			>
-				<div role="columnheader" class="px-2 py-2 text-xs text-slate-500">
+				<div role="columnheader" class="px-2 py-2 text-xs text-fg-muted">
 					<span class="sr-only">{$t('flow.collection.table.openColumn')}</span>
 				</div>
 				{#each fields as field (field.fieldId)}
@@ -310,7 +310,7 @@
 						<span class="truncate">{field.label}</span>
 						<button
 							type="button"
-							class="absolute top-0 right-0 h-full w-3 cursor-col-resize touch-none focus-visible:bg-blue-500"
+							class="absolute top-0 right-0 h-full w-3 cursor-col-resize touch-none focus-visible:bg-primary"
 							aria-label={$t('flow.collection.table.resize', { values: { field: field.label } })}
 							data-testid="collection-column-resize"
 							onpointerdown={(event) => startResize(event, field)}
@@ -345,7 +345,7 @@
 						<button
 							type="button"
 							tabindex="-1"
-							class="min-h-11 min-w-11 rounded text-xs text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-slate-800"
+							class="min-h-11 min-w-11 rounded text-xs text-fg hover:bg-surface"
 							aria-label={$t('flow.collection.table.openRecord')}
 							data-testid="collection-open-record"
 							onclick={() => void controller.openPanel(row.recordId)}>↗</button
@@ -374,7 +374,7 @@
 			<div style:height={`${windowed.padBottom}px`} aria-hidden="true"></div>
 		</div>
 		{#if rows.length === 0 && !snapshot.loadingRecords}
-			<p class="p-4 text-sm text-slate-500">{$t('flow.collection.table.empty')}</p>
+			<p class="p-4 text-sm text-fg-muted">{$t('flow.collection.table.empty')}</p>
 		{/if}
 	</div>
 {/if}
@@ -384,17 +384,17 @@
 >
 	<button
 		type="button"
-		class="min-h-11 rounded px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-300 dark:hover:bg-slate-800"
+		class="min-h-11 rounded px-3 text-sm font-medium text-fg hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
 		disabled={creating}
 		data-testid="collection-new-record"
 		onclick={() => void createRecord()}
 	>
 		+ {$t('flow.collection.table.newRecord')}
 	</button>
-	<span class="text-xs text-slate-500" aria-live="polite">
+	<span class="text-xs text-fg-muted" aria-live="polite">
 		{$t('flow.collection.table.count', { values: { loaded: rows.length } })}
 	</span>
 	{#if createError}
-		<span class="text-xs text-red-600" role="alert">{$t(createError)}</span>
+		<span class="text-xs text-danger" role="alert">{$t(createError)}</span>
 	{/if}
 </div>
