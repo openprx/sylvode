@@ -27,6 +27,7 @@
 	import { get } from 'svelte/store';
 	import { goto } from '$app/navigation';
 	import { t } from 'svelte-i18n';
+	import Modal from '#lib/components/Modal.svelte';
 	import { flowApi, type FlowObjectView, type FlowTrashItem } from '#lib/api/flow.js';
 	import { FlowCommandService } from '#lib/flow/command-service.js';
 	import {
@@ -1479,43 +1480,35 @@
 {/if}
 
 {#if moveInsideFor}
-	<div class="fixed inset-0 z-40 flex items-center justify-center bg-scrim p-4">
-		<div
-			class="w-full max-w-sm rounded-float border border-overlay-line bg-overlay p-4 shadow-overlay"
-			role="dialog"
-			aria-labelledby="flow-move-inside-title"
-		>
-			<h2 id="flow-move-inside-title" class="mb-3 text-sm font-semibold text-fg">
-				{$t('flow.nav.move.title')}
-			</h2>
-			{#if insideChoices.length === 0}
-				<p class="text-sm text-fg-muted">{$t('flow.nav.move.empty')}</p>
-			{:else}
-				<ul class="max-h-64 space-y-1 overflow-y-auto">
-					{#each insideChoices as choice (choice.id)}
-						<li>
-							<button
-								type="button"
-								class="w-full rounded-row px-2 py-1.5 text-left text-sm text-fg hover:bg-surface"
-								onclick={() => {
-									const sourceId = moveInsideFor;
-									moveInsideFor = null;
-									if (sourceId) void moveToParent(sourceId, choice.id);
-								}}
-							>
-								{$t('flow.nav.move.choose', { values: { title: choice.title } })}
-							</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-			<button
-				type="button"
-				class="mt-3 text-sm text-fg-muted"
-				onclick={() => (moveInsideFor = null)}
-			>
-				{$t('common.cancel')}
-			</button>
-		</div>
-	</div>
+	<Modal
+		open
+		title={$t('flow.nav.move.title')}
+		maxWidthClass="max-w-sm"
+		onclose={() => (moveInsideFor = null)}
+	>
+		{#if insideChoices.length === 0}
+			<p class="text-sm text-fg-muted">{$t('flow.nav.move.empty')}</p>
+		{:else}
+			<ul class="max-h-64 space-y-1 overflow-y-auto">
+				{#each insideChoices as choice (choice.id)}
+					<li>
+						<button
+							type="button"
+							class="w-full rounded-row px-2 py-1.5 text-left text-sm text-fg hover:bg-surface"
+							onclick={() => {
+								const sourceId = moveInsideFor;
+								moveInsideFor = null;
+								if (sourceId) void moveToParent(sourceId, choice.id);
+							}}
+						>
+							{$t('flow.nav.move.choose', { values: { title: choice.title } })}
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		<button type="button" class="mt-3 text-sm text-fg-muted" onclick={() => (moveInsideFor = null)}>
+			{$t('common.cancel')}
+		</button>
+	</Modal>
 {/if}
