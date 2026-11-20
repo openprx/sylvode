@@ -437,9 +437,9 @@
 	}
 
 	function getIconColorClass(group: GovernanceModuleGroup): string {
-		if (group === 'core') return 'text-blue-500';
-		if (group === 'review') return 'text-violet-500';
-		return 'text-slate-500';
+		if (group === 'core') return 'text-fg';
+		if (group === 'review') return 'text-fg-muted';
+		return 'text-fg-muted';
 	}
 
 	function formatPercent(value: number): string {
@@ -465,26 +465,24 @@
 </svelte:head>
 
 <div class="mx-auto max-w-7xl space-y-6">
-	<section
-		class="rounded-xl border border-line bg-white p-5 dark:bg-slate-800"
-	>
+	<section class="rounded-card border border-line bg-raised p-5">
 		<div class="flex items-start justify-between gap-4">
 			<div>
 				<h1 class="text-2xl font-semibold text-fg">
 					{$t('governanceCenter.title')}
 				</h1>
-				<p class="mt-1 text-sm text-slate-500">{$t('governanceCenter.subtitle')}</p>
+				<p class="mt-1 text-sm text-fg-muted">{$t('governanceCenter.subtitle')}</p>
 			</div>
 			{#if projectOptions.length > 0}
 				<div class="w-full max-w-xs">
-					<label for="governance-center-project" class="mb-1 block text-xs text-slate-500"
+					<label for="governance-center-project" class="mb-1 block text-xs text-fg-muted"
 						>{$t('governanceCenter.currentProject')}</label
 					>
 					<select
 						id="governance-center-project"
 						bind:value={selectedProjectId}
 						onchange={handleProjectChange}
-						class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-fg dark:border-slate-600 dark:bg-slate-900"
+						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					>
 						{#each groupedProjectOptions as group}
 							<optgroup label={group.workspaceName}>
@@ -500,15 +498,13 @@
 
 		<div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
 			{#each overviewMetrics as metric}
-				<div
-					class="rounded-xl border border-line bg-slate-50 p-4 dark:bg-slate-900"
-				>
-					<p class="text-xs uppercase tracking-wide text-slate-500">{$t(metric.labelKey)}</p>
+				<div class="rounded-card border border-line bg-surface p-4">
+					<p class="text-xs uppercase tracking-wide text-fg-muted">{$t(metric.labelKey)}</p>
 					<p class="mt-2 text-2xl font-semibold text-fg">
 						{loading ? '...' : formatMetricValue(metric)}
 					</p>
 					{#if metric.hintKey}
-						<p class="mt-1 text-xs text-slate-500">{$t(metric.hintKey)}</p>
+						<p class="mt-1 text-xs text-fg-muted">{$t(metric.hintKey)}</p>
 					{/if}
 				</div>
 			{/each}
@@ -516,14 +512,14 @@
 	</section>
 
 	<section class="space-y-3">
-		<h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">
+		<h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
 			{$t('governanceCenter.groups.core')}
 		</h2>
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
 			{#each coreModules as module}
 				<a
 					href={module.href}
-					class="group rounded-xl border border-line bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-800"
+					class="group rounded-card border border-line bg-raised p-5 transition hover:-translate-y-0.5"
 				>
 					<div class="flex items-start justify-between gap-3">
 						<div>
@@ -695,19 +691,14 @@
 							<h3 class="mt-3 text-base font-semibold text-fg">
 								{$t(module.titleKey)}
 							</h3>
-							<p class="mt-1 text-sm text-slate-500">{$t(module.descriptionKey)}</p>
+							<p class="mt-1 text-sm text-fg-muted">{$t(module.descriptionKey)}</p>
 							{#if moduleStatsLoading}
-								<div
-									class="mt-2 h-4 w-44 animate-pulse rounded bg-slate-200 dark:bg-slate-700"
-								></div>
+								<div class="mt-2 h-4 w-44 animate-pulse rounded bg-surface"></div>
 							{:else}
-								<p class="mt-2 text-xs text-slate-500">{moduleStats[module.id]}</p>
+								<p class="mt-2 text-xs text-fg-muted">{moduleStats[module.id]}</p>
 							{/if}
 						</div>
-						<span
-							class="text-lg text-slate-400 transition group-hover:text-fg"
-							>→</span
-						>
+						<span class="text-lg text-fg-muted transition group-hover:text-fg">→</span>
 					</div>
 				</a>
 			{/each}
@@ -715,14 +706,14 @@
 	</section>
 
 	<section class="space-y-3">
-		<h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">
+		<h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
 			{$t('governanceCenter.groups.reviewAndTemplate')}
 		</h2>
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
 			{#each reviewModules as module}
 				<a
 					href={module.href}
-					class={`group rounded-xl border border-line bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-800 ${
+					class={`group rounded-card border border-line bg-raised p-5 transition hover:-translate-y-0.5 ${
 						module.disabled ? 'pointer-events-none opacity-60' : ''
 					}`}
 				>
@@ -896,24 +887,19 @@
 							<h3 class="mt-3 text-base font-semibold text-fg">
 								{$t(module.titleKey)}
 							</h3>
-							<p class="mt-1 text-sm text-slate-500">{$t(module.descriptionKey)}</p>
+							<p class="mt-1 text-sm text-fg-muted">{$t(module.descriptionKey)}</p>
 							{#if moduleStatsLoading}
-								<div
-									class="mt-2 h-4 w-44 animate-pulse rounded bg-slate-200 dark:bg-slate-700"
-								></div>
+								<div class="mt-2 h-4 w-44 animate-pulse rounded bg-surface"></div>
 							{:else}
-								<p class="mt-2 text-xs text-slate-500">{moduleStats[module.id]}</p>
+								<p class="mt-2 text-xs text-fg-muted">{moduleStats[module.id]}</p>
 							{/if}
 							{#if module.disabled}
-								<p class="mt-2 text-xs text-slate-500">
+								<p class="mt-2 text-xs text-fg-muted">
 									{$t('governanceCenter.auditReportsProjectHint')}
 								</p>
 							{/if}
 						</div>
-						<span
-							class="text-lg text-slate-400 transition group-hover:text-fg"
-							>→</span
-						>
+						<span class="text-lg text-fg-muted transition group-hover:text-fg">→</span>
 					</div>
 				</a>
 			{/each}
@@ -921,14 +907,14 @@
 	</section>
 
 	<section class="space-y-3">
-		<h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">
+		<h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
 			{$t('governanceCenter.groups.system')}
 		</h2>
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
 			{#each systemModules as module}
 				<a
 					href={module.href}
-					class="group rounded-xl border border-line bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-800"
+					class="group rounded-card border border-line bg-raised p-5 transition hover:-translate-y-0.5"
 				>
 					<div class="flex items-start justify-between gap-3">
 						<div>
@@ -1100,19 +1086,14 @@
 							<h3 class="mt-3 text-base font-semibold text-fg">
 								{$t(module.titleKey)}
 							</h3>
-							<p class="mt-1 text-sm text-slate-500">{$t(module.descriptionKey)}</p>
+							<p class="mt-1 text-sm text-fg-muted">{$t(module.descriptionKey)}</p>
 							{#if moduleStatsLoading}
-								<div
-									class="mt-2 h-4 w-44 animate-pulse rounded bg-slate-200 dark:bg-slate-700"
-								></div>
+								<div class="mt-2 h-4 w-44 animate-pulse rounded bg-surface"></div>
 							{:else}
-								<p class="mt-2 text-xs text-slate-500">{moduleStats[module.id]}</p>
+								<p class="mt-2 text-xs text-fg-muted">{moduleStats[module.id]}</p>
 							{/if}
 						</div>
-						<span
-							class="text-lg text-slate-400 transition group-hover:text-fg"
-							>→</span
-						>
+						<span class="text-lg text-fg-muted transition group-hover:text-fg">→</span>
 					</div>
 				</a>
 			{/each}

@@ -87,9 +87,9 @@
 	}
 
 	function tone(value: string): string {
-		if (value === 'aligned') return 'bg-emerald-100 text-emerald-700';
-		if (value === 'misaligned') return 'bg-red-100 text-red-700';
-		return 'bg-slate-100 text-slate-700';
+		if (value === 'aligned') return 'bg-surface text-fg';
+		if (value === 'misaligned') return 'bg-danger-soft text-danger';
+		return 'bg-surface text-fg';
 	}
 </script>
 
@@ -98,45 +98,35 @@
 </svelte:head>
 
 <div class="mx-auto max-w-7xl space-y-4">
-	<div
-		class="rounded-lg border border-line bg-white p-5 dark:bg-slate-800"
-	>
+	<div class="rounded-card border border-line bg-raised p-5">
 		<h1 class="text-xl font-semibold text-fg">
 			{$t('governanceExt.learningTitle')}
 		</h1>
-		<p class="mt-1 text-sm text-slate-500">
+		<p class="mt-1 text-sm text-fg-muted">
 			{$t('governanceExt.learningSubtitle', { values: { id: participantId } })}
 		</p>
 	</div>
 
 	{#if stats}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-4">
-			<div
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-			>
-				<p class="text-xs text-slate-500">{$t('common.total')}</p>
+			<div class="rounded-card border border-line bg-raised p-4">
+				<p class="text-xs text-fg-muted">{$t('common.total')}</p>
 				<p class="mt-1 text-2xl font-semibold text-fg">{stats.total}</p>
 			</div>
-			<div
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-			>
-				<p class="text-xs text-slate-500">{$t('governanceExt.overallAlignmentRate')}</p>
-				<p class="mt-1 text-2xl font-semibold text-emerald-700">
+			<div class="rounded-card border border-line bg-raised p-4">
+				<p class="text-xs text-fg-muted">{$t('governanceExt.overallAlignmentRate')}</p>
+				<p class="mt-1 text-2xl font-semibold text-success">
 					{pct(stats.overall_alignment_rate)}
 				</p>
 			</div>
-			<div
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-			>
-				<p class="text-xs text-slate-500">{$t('governanceExt.recentAlignmentRate')}</p>
-				<p class="mt-1 text-2xl font-semibold text-blue-700">{pct(stats.recent_alignment_rate)}</p>
+			<div class="rounded-card border border-line bg-raised p-4">
+				<p class="text-xs text-fg-muted">{$t('governanceExt.recentAlignmentRate')}</p>
+				<p class="mt-1 text-2xl font-semibold text-fg">{pct(stats.recent_alignment_rate)}</p>
 			</div>
-			<div
-				class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-			>
-				<p class="text-xs text-slate-500">{$t('governanceExt.improvementTrend')}</p>
+			<div class="rounded-card border border-line bg-raised p-4">
+				<p class="text-xs text-fg-muted">{$t('governanceExt.improvementTrend')}</p>
 				<p
-					class={`mt-1 text-2xl font-semibold ${stats.improvement_trend >= 0 ? 'text-emerald-700' : 'text-red-700'}`}
+					class={`mt-1 text-2xl font-semibold ${stats.improvement_trend >= 0 ? 'text-success' : 'text-danger'}`}
 				>
 					{stats.improvement_trend >= 0 ? '+' : ''}{pct(stats.improvement_trend)}
 				</p>
@@ -144,43 +134,39 @@
 		</div>
 	{/if}
 
-	<div
-		class="grid grid-cols-1 gap-3 rounded-lg border border-line bg-white p-4 dark:bg-slate-800 md:grid-cols-4"
-	>
+	<div class="grid grid-cols-1 gap-3 rounded-card border border-line bg-raised p-4 md:grid-cols-4">
 		<div>
-			<label for="learning-domain" class="mb-1 block text-sm text-slate-600"
+			<label for="learning-domain" class="mb-1 block text-sm text-fg-muted"
 				>{$t('governance.domainLabel')}</label
 			>
 			<input
 				id="learning-domain"
 				bind:value={domain}
 				type="text"
-				class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-900"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 			/>
 		</div>
 		<div class="md:col-span-3 flex items-end">
 			<button
 				type="button"
 				onclick={search}
-				class="w-full rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+				class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary"
 			>
 				{$t('common.search')}
 			</button>
 		</div>
 	</div>
 
-	<div
-		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-	>
+	<div class="rounded-card border border-line bg-raised p-4">
 		{#if loading}
-			<p class="text-sm text-slate-500">{$t('common.loading')}</p>
+			<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 		{:else if records.length === 0}
-			<p class="text-sm text-slate-500">{$t('common.noData')}</p>
+			<p class="text-sm text-fg-muted">{$t('common.noData')}</p>
 		{:else}
 			<div class="overflow-x-auto">
 				<table class="min-w-full text-left text-sm">
 					<thead>
-						<tr class="border-b border-line text-xs text-slate-500">
+						<tr class="border-b border-line text-xs text-fg-muted">
 							<th class="px-2 py-2">{$t('aiAgents.review')}</th>
 							<th class="px-2 py-2">{$t('governance.domainLabel')}</th>
 							<th class="px-2 py-2">{$t('governanceExt.alignment')}</th>
@@ -193,7 +179,7 @@
 						{#each records as record}
 							<tr class="border-b border-line">
 								<td class="px-2 py-2 text-xs">
-									<a href={`/proposals/${record.proposal_id}`} class="text-blue-600 hover:underline"
+									<a href={`/proposals/${record.proposal_id}`} class="text-fg underline"
 										>{record.review_id}</a
 									>
 								</td>
@@ -204,13 +190,13 @@
 									>
 								</td>
 								<td class="px-2 py-2 text-xs">{record.review_rating}</td>
-								<td class="px-2 py-2 text-xs text-slate-500"
+								<td class="px-2 py-2 text-xs text-fg-muted"
 									>{new Date(record.created_at).toLocaleString()}</td
 								>
 								<td class="px-2 py-2 text-xs">
 									<button
 										type="button"
-										class="text-blue-600 hover:underline"
+										class="text-fg underline"
 										onclick={() => loadFeedback(record.review_id)}
 									>
 										{$t('governanceExt.viewFeedback')}
@@ -223,10 +209,8 @@
 			</div>
 		{/if}
 
-		<div
-			class="mt-4 flex items-center justify-between border-t border-line pt-3 text-sm"
-		>
-			<p class="text-slate-500">
+		<div class="mt-4 flex items-center justify-between border-t border-line pt-3 text-sm">
+			<p class="text-fg-muted">
 				{$t('governance.pagination', { values: { total, page: pageNum, pages: totalPages || 1 } })}
 			</p>
 			<div class="flex gap-2">
@@ -234,7 +218,7 @@
 					type="button"
 					onclick={() => goPage(pageNum - 1)}
 					disabled={pageNum <= 1}
-					class="rounded border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:hover:bg-slate-900"
+					class="rounded border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-control"
 				>
 					{$t('governance.prevPage')}
 				</button>
@@ -242,7 +226,7 @@
 					type="button"
 					onclick={() => goPage(pageNum + 1)}
 					disabled={totalPages > 0 && pageNum >= totalPages}
-					class="rounded border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:hover:bg-slate-900"
+					class="rounded border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-control"
 				>
 					{$t('governance.nextPage')}
 				</button>
@@ -250,25 +234,23 @@
 		</div>
 	</div>
 
-	<div
-		class="rounded-lg border border-line bg-white p-4 dark:bg-slate-800"
-	>
+	<div class="rounded-card border border-line bg-raised p-4">
 		<div class="mb-3 flex items-center justify-between">
 			<h2 class="text-sm font-semibold text-fg">
 				{$t('governanceExt.feedbackForReview', { values: { id: feedbackReviewId || '-' } })}
 			</h2>
 			{#if loadingFeedback}
-				<span class="text-xs text-slate-500">{$t('common.loading')}</span>
+				<span class="text-xs text-fg-muted">{$t('common.loading')}</span>
 			{/if}
 		</div>
 		{#if feedbackItems.length === 0}
-			<p class="text-sm text-slate-500">{$t('common.noData')}</p>
+			<p class="text-sm text-fg-muted">{$t('common.noData')}</p>
 		{:else}
 			<div class="space-y-2">
 				{#each feedbackItems as item}
 					<div class="rounded border border-line p-3 text-xs">
 						<p class="text-fg">{item.lesson_learned || '-'}</p>
-						<p class="mt-1 text-slate-500">{item.follow_up_improvement || '-'}</p>
+						<p class="mt-1 text-fg-muted">{item.follow_up_improvement || '-'}</p>
 					</div>
 				{/each}
 			</div>
