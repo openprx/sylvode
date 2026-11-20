@@ -45,6 +45,10 @@ const JWT_SECRET: &str = "delegated-router-test-secret";
 const FORWARD_SECRET: &str = "delegated-forward-secret-0123456789abcdef";
 const ISSUER: &str = "https://sv.test";
 const METADATA_URL: &str = "https://sv.test/.well-known/oauth-protected-resource/api";
+/// Event streams are registered process-wide, and shutting the process down ends every one of
+/// them: the tests that open a stream (the route enumeration and the shutdown test) take this
+/// lock so one cannot end the other's.
+static STREAM_PROCESS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const ROUTE_REFUSED: &str = "route not available to connected applications";
 
 /// Every scope a read-and-write connection can hold in the first release's vocabulary, for tests
@@ -729,6 +733,7 @@ impl World {
 
 #[tokio::test]
 async fn every_route_is_on_the_allow_list_with_a_scope_or_denied() {
+    let _streams = STREAM_PROCESS_LOCK.lock().await;
     let Some(w) = World::new("deleg_enumeration").await else {
         return;
     };
@@ -2397,6 +2402,119 @@ async fn every_delegated_request_is_logged_and_no_secret_reaches_a_log_or_an_aud
     assert!(
         !log_text.contains("sva_"),
         "a delegated token prefix reached a log line: {log_text}"
+    );
+    w.finish().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shutdown with open event streams
+// ---------------------------------------------------------------------------------------------
+
+/// Reads `response` to its end; the text and whether the end was a clean one.
+async fn read_until_end(mut response: reqwest::Response, within: std::time::Duration) -> (String, bool) {
+    let mut text = String::new();
+    let outcome = tokio::time::timeout(within, async {
+        loop {
+            match response.chunk().await {
+                Ok(Some(bytes)) => text.push_str(&String::from_utf8_lossy(&bytes)),
+                Ok(None) => return true,
+                Err(_) => return false,
+            }
+        }
+    })
+    .await;
+    (text, outcome == Ok(true))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_server_with_open_event_streams_shuts_down_within_a_bound_and_the_streams_end_cleanly() {
+    use std::time::{Duration, Instant};
+    let _streams = STREAM_PROCESS_LOCK.lock().await;
+    let Some(w) = World::new("deleg_shutdown").await else {
+        return;
+    };
+    let session = w
+        .session(w.alice, w.ws1, &[], &["notifications:read", "tasks:read"])
+        .await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("address"));
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let (reaper_tx, _reaper_rx) = tokio::sync::watch::channel(false);
+    let flow_drain_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flow_flag = Arc::clone(&flow_drain_called);
+    let app = w.router.clone();
+    // The real shutdown sequence of `main`, with the process-wide Flow drain stubbed out.
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(super::drain_after(
+            async {
+                let _ = stop_rx.await;
+            },
+            reaper_tx,
+            move || {
+                flow_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                0
+            },
+            Duration::from_millis(100),
+        ))
+        .await
+    });
+
+    // Three streams of one grant (the per-grant limit), each past its hello.
+    let http = reqwest::Client::new();
+    let mut streams = Vec::new();
+    for _ in 0..3 {
+        let mut response = http
+            .get(format!("{base}/api/v1/oauth/events/stream"))
+            .bearer_auth(&session.token)
+            .send()
+            .await
+            .expect("the stream opens");
+        assert_eq!(response.status(), StatusCode::OK);
+        let first = tokio::time::timeout(Duration::from_secs(5), response.chunk())
+            .await
+            .expect("a hello arrives")
+            .expect("readable")
+            .expect("a first chunk");
+        assert!(String::from_utf8_lossy(&first).contains("\"type\":\"hello\""));
+        streams.push(response);
+    }
+
+    // Until shutdown starts nothing ends the streams: the server is still serving.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!server.is_finished(), "the server stopped by itself");
+
+    let started = Instant::now();
+    stop_tx.send(()).expect("the shutdown signal is sent");
+    let bound = Duration::from_secs(5);
+    let mut ends = Vec::new();
+    for response in streams {
+        ends.push(read_until_end(response, bound).await);
+    }
+    for (text, clean) in &ends {
+        // The documented end of a stream on shutdown: it simply ends, without an event and without
+        // a control message (a client resumes with its last event id); it is a clean end of the
+        // response, not a reset.
+        assert!(*clean, "a stream was cut instead of ended");
+        assert!(!text.contains("event: sv.event"), "{text}");
+        assert!(!text.contains("event: sv.control"), "{text}");
+    }
+    let finished = tokio::time::timeout(bound, server)
+        .await
+        .expect("the server stopped within the bound")
+        .expect("the server task");
+    assert!(finished.is_ok());
+    assert!(
+        started.elapsed() < bound,
+        "shutdown took {:?} with open streams",
+        started.elapsed()
+    );
+    assert!(
+        flow_drain_called.load(std::sync::atomic::Ordering::SeqCst),
+        "the rest of the shutdown sequence still ran"
     );
     w.finish().await;
 }

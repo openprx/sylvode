@@ -3150,18 +3150,42 @@ mod build_info_tests {
 /// business envelope carrying the same `reason`/`retry_after_ms`. It then keeps serving for
 /// [`PROCESS_DRAIN_GRACE_MS`] so those rejections and closes actually reach their clients instead
 /// of racing the process exit.
+///
+/// Open event streams of connected applications end first. An event stream never ends on its own
+/// while its client is connected, so `with_graceful_shutdown` would wait for it forever: the
+/// first thing the shutdown path does is end every stream (the client sees the response end and
+/// reconnects with its last event id to wherever the service comes back).
 async fn drain_then_shutdown(reaper_stop: tokio::sync::watch::Sender<bool>) {
-    shutdown_signal().await;
+    drain_after(
+        shutdown_signal(),
+        reaper_stop,
+        || api::flow::collab::runtime::runtime().begin_process_drain(PROCESS_DRAIN_RETRY_AFTER_MS),
+        Duration::from_millis(PROCESS_DRAIN_GRACE_MS),
+    )
+    .await;
+}
+
+/// The shutdown sequence after `signal`, with the Flow drain and the grace period passed in so a
+/// test can run the real sequence without putting the whole test process into drain mode.
+async fn drain_after(
+    signal: impl std::future::Future<Output = ()>,
+    reaper_stop: tokio::sync::watch::Sender<bool>,
+    begin_flow_drain: impl FnOnce() -> usize,
+    grace: Duration,
+) {
+    signal.await;
+    // Streams first: nothing below can make one end.
+    api::oauth::stream::begin_shutdown();
     // The receiver is gone only if the reaper already stopped; nothing is left to stop then.
     let _ = reaper_stop.send(true);
-    let closed = api::flow::collab::runtime::runtime().begin_process_drain(PROCESS_DRAIN_RETRY_AFTER_MS);
+    let closed = begin_flow_drain();
     tracing::info!(
         closed_sessions = closed,
         retry_after_ms = PROCESS_DRAIN_RETRY_AFTER_MS,
-        grace_ms = PROCESS_DRAIN_GRACE_MS,
+        grace_ms = u64::try_from(grace.as_millis()).unwrap_or(u64::MAX),
         "api server draining: refusing new Flow work and closing collab sessions before shutdown"
     );
-    tokio::time::sleep(Duration::from_millis(PROCESS_DRAIN_GRACE_MS)).await;
+    tokio::time::sleep(grace).await;
 }
 
 async fn shutdown_signal() {
