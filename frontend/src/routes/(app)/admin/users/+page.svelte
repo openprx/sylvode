@@ -257,8 +257,8 @@
 					: get(t)('admin.toggleEnableTitle', { values }),
 				body: disabling ? get(t)('admin.toggleDisableBody') : get(t)('admin.toggleEnableBody'),
 				confirmLabel: disabling
-					? get(t)('admin.toggleDisableAction', { values })
-					: get(t)('admin.toggleEnableAction', { values })
+					? get(t)('admin.toggleDisableAction')
+					: get(t)('admin.toggleEnableAction')
 			}))
 		) {
 			return;
