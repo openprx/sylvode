@@ -281,6 +281,18 @@
   --rf-cat-7: #D6A21E;
   --rf-cat-8: #9A9A9A;
   --rf-cat-tint: 22%;
+
+  /* Derived tokens (F1): repeated so that a nested .dark or [data-theme="dark"] container re-resolves them
+     from its own theme values; the :root declarations would keep the light values there. */
+  --rf-hover: var(--rf-surface);
+  --rf-hover-nav: var(--rf-selected);
+  --rf-hover-rail: var(--rf-rail-active);
+  --rf-pressed: var(--rf-selected);
+  --rf-shadow-overlay: 0 8px 24px var(--rf-shadow);
+  --rf-shadow-modal: 0 16px 48px var(--rf-shadow);
+  --rf-shadow-sheet: 0 -4px 24px var(--rf-shadow);
+  --rf-cat-1: var(--rf-chart-1);
+  --rf-cat-2: var(--rf-chart-2);
 }
 
 /* PROPOSED: compact density for tables, boards, timelines and property lists. */
