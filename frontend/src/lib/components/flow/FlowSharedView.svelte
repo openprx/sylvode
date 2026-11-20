@@ -72,7 +72,7 @@
 			<p>{$t('flow.shared.scopeNotice')}</p>
 			<button
 				type="button"
-				class="rounded border px-3 py-1 disabled:text-control disabled:hover:bg-transparent"
+				class="rounded border px-3 py-1 disabled:text-fg-muted disabled:hover:bg-transparent"
 				disabled={viewState.loading || viewState.draft?.phase === 'saving'}
 				onclick={() => session?.refresh(context)}>{$t('flow.shared.refresh')}</button
 			>
@@ -80,10 +80,7 @@
 		{#if viewState.loading && !remote}<p role="status" class="text-sm text-fg-muted">
 				{$t('common.loading')}
 			</p>
-		{:else if !remote}<div
-				role="status"
-				class="rounded border border-line p-4 text-sm"
-			>
+		{:else if !remote}<div role="status" class="rounded border border-line p-4 text-sm">
 				<p>
 					{viewState.loadError === 'failed'
 						? $t('flow.shared.loadFailed')

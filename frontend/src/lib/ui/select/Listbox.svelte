@@ -229,7 +229,7 @@
 		outline-offset: -1px;
 	}
 	.option[aria-disabled='true'] {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	.option[aria-disabled='true']:hover {

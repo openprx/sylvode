@@ -1081,7 +1081,7 @@
 													type="button"
 													disabled={deletingResourceId === resource.id}
 													onclick={() => handleDeleteResource(resource)}
-													class="text-sm text-danger disabled:cursor-not-allowed disabled:text-control"
+													class="text-sm text-danger disabled:cursor-not-allowed disabled:text-fg-muted"
 												>
 													{$t('common.delete')}
 												</button>

@@ -159,11 +159,11 @@
 		color: var(--rf-danger);
 	}
 	.ui-menu-item[aria-disabled='true'] {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	.ui-menu-item[aria-disabled='true'] .shortcut {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 	}
 	@media (pointer: coarse) {
 		.ui-menu-item {

@@ -35,7 +35,7 @@
 	let openPageLink = $state<HTMLAnchorElement | null>(null);
 	const id = $props.id();
 	const action =
-		'min-h-11 rounded-control border border-fg bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line';
+		'min-h-11 rounded-control border border-fg bg-raised px-3 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted disabled:border-line';
 
 	async function prepareExport() {
 		if (pending || !exportReady) return;
@@ -235,11 +235,7 @@
 					class="space-y-2 rounded-card border border-line p-3"
 					data-testid="flow-portable-import-review"
 				>
-					<h3
-						bind:this={reviewHeading}
-						tabindex="-1"
-						class="break-words font-medium"
-					>
+					<h3 bind:this={reviewHeading} tabindex="-1" class="break-words font-medium">
 						{$t('flow.portablePackage.importReview', { values: { name: imported.file.name } })}
 					</h3>
 					{@render summary(imported.preview)}

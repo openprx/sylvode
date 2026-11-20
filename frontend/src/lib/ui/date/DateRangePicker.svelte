@@ -271,7 +271,7 @@
 		outline-offset: -1px;
 	}
 	.calendar-button:disabled {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	@media (pointer: coarse) {

@@ -114,7 +114,7 @@
 					</h3>
 					<button
 						type="button"
-						class="min-h-11 min-w-11 rounded text-lg text-fg hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
+						class="min-h-11 min-w-11 rounded text-lg text-fg hover:bg-surface disabled:text-fg-muted disabled:hover:bg-transparent"
 						aria-label={$t('flow.collection.board.newInColumn', {
 							values: { column: columnLabel(column) }
 						})}
@@ -170,7 +170,7 @@
 								>
 								<button
 									type="button"
-									class="min-h-11 min-w-11 rounded text-sm hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
+									class="min-h-11 min-w-11 rounded text-sm hover:bg-surface disabled:text-fg-muted disabled:hover:bg-transparent"
 									aria-label={$t('flow.collection.board.moveLeft')}
 									disabled={index === 0}
 									data-testid="collection-board-move-left"
@@ -178,7 +178,7 @@
 								>
 								<button
 									type="button"
-									class="min-h-11 min-w-11 rounded text-sm hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
+									class="min-h-11 min-w-11 rounded text-sm hover:bg-surface disabled:text-fg-muted disabled:hover:bg-transparent"
 									aria-label={$t('flow.collection.board.moveRight')}
 									disabled={index === columns.length - 1}
 									data-testid="collection-board-move-right"

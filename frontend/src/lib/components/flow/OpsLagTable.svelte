@@ -130,10 +130,7 @@
 				</thead>
 				<tbody>
 					{#each documentRows as row (row.documentId)}
-						<tr
-							class="border-t border-line"
-							data-document-id={row.documentId}
-						>
+						<tr class="border-t border-line" data-document-id={row.documentId}>
 							<td class="py-2 pr-4">
 								<p class="break-all font-mono text-xs">{row.documentId}</p>
 								<p class="mt-1 break-all font-mono text-xs text-fg-muted">
@@ -174,7 +171,7 @@
 			>
 				<button
 					type="button"
-					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
+					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 					disabled={documentsBusy || !documentsHasPrevious}
 					data-testid="flow-ops-lag-documents-pager-previous"
 					onclick={ondocumentsprevious}
@@ -186,7 +183,7 @@
 				</span>
 				<button
 					type="button"
-					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
+					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 					disabled={documentsBusy || !documentsHasNext}
 					data-testid="flow-ops-lag-documents-pager-next"
 					onclick={ondocumentsnext}
@@ -256,7 +253,7 @@
 		<nav class="mt-3 flex items-center gap-2" aria-label={$t('flow.operations.lag.itemsHeading')}>
 			<button
 				type="button"
-				class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
+				class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 				disabled={busy || !hasPrevious}
 				onclick={onprevious}
 			>
@@ -267,7 +264,7 @@
 			</span>
 			<button
 				type="button"
-				class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
+				class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 				disabled={busy || !hasNext}
 				onclick={onnext}
 			>

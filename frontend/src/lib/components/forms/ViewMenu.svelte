@@ -161,9 +161,7 @@
 				}}
 			>
 				<label class="block space-y-1">
-					<span class="text-xs font-medium text-fg-muted"
-						>{$t('forms.views.renameTitle')}</span
-					>
+					<span class="text-xs font-medium text-fg-muted">{$t('forms.views.renameTitle')}</span>
 					<input
 						class="h-8 w-full rounded-control border border-input bg-field px-2 text-sm"
 						maxlength="80"
@@ -179,7 +177,7 @@
 					>
 					<button
 						type="submit"
-						class="h-8 rounded-control bg-primary px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+						class="h-8 rounded-control bg-primary px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 						disabled={!renameValue.trim()}
 						data-view-rename-save>{$t('common.save')}</button
 					>

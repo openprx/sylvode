@@ -962,7 +962,7 @@
 			<button
 				type="button"
 				bind:this={newMenuButton}
-				class="flex min-h-11 min-w-11 items-center justify-center rounded text-fg-muted hover:bg-selected hover:text-fg disabled:text-control disabled:hover:bg-transparent"
+				class="flex min-h-11 min-w-11 items-center justify-center rounded text-fg-muted hover:bg-selected hover:text-fg disabled:text-fg-muted disabled:hover:bg-transparent"
 				onclick={toggleNewMenu}
 				disabled={creatingParentId !== undefined}
 				aria-haspopup="menu"

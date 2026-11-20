@@ -97,7 +97,7 @@
 
 	const inputClass = 'min-h-11 rounded border border-input bg-field px-2 text-sm text-fg';
 	const iconButton =
-		'min-h-11 min-w-11 rounded text-sm hover:bg-surface disabled:text-control disabled:hover:bg-transparent';
+		'min-h-11 min-w-11 rounded text-sm hover:bg-surface disabled:text-fg-muted disabled:hover:bg-transparent';
 </script>
 
 <section
@@ -219,7 +219,7 @@
 			{/if}
 			<button
 				type="submit"
-				class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+				class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				disabled={snapshot.schemaBusy}
 				data-testid="collection-add-field">{$t('flow.collection.schema.addField')}</button
 			>

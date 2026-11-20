@@ -184,11 +184,7 @@
 
 		<div aria-live="polite">
 			{#if errorKey}
-				<p
-					class="text-danger"
-					role="alert"
-					data-testid="flow-create-collection-error"
-				>
+				<p class="text-danger" role="alert" data-testid="flow-create-collection-error">
 					{$t(errorKey)}
 					{#if !errorRetryable}
 						{$t('flow.nav.createCollection.notRetryable')}
@@ -208,7 +204,7 @@
 		<button
 			type="submit"
 			form="flow-create-collection-form"
-			class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+			class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 			disabled={submitting || (errorKey !== null && !errorRetryable)}
 			data-testid="flow-create-collection-submit"
 		>

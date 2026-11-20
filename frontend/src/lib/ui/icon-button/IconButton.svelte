@@ -75,7 +75,7 @@
 		outline-offset: -1px;
 	}
 	.ui-icon-button:disabled {
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		cursor: not-allowed;
 	}
 	@media (pointer: coarse) {

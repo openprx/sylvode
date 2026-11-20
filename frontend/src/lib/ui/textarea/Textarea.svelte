@@ -93,7 +93,7 @@
 	textarea:disabled {
 		background: var(--rf-surface);
 		border-color: var(--rf-line-strong);
-		color: var(--rf-control);
+		color: var(--rf-secondary);
 		resize: none;
 	}
 	textarea:read-only:not(:disabled) {

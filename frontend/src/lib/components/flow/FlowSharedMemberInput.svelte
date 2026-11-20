@@ -174,7 +174,7 @@
 	<div class="mt-4 flex flex-wrap items-center gap-3 text-sm">
 		<button
 			type="button"
-			class="rounded bg-primary rf-filled px-3 py-2 text-on-primary disabled:bg-surface disabled:text-control"
+			class="rounded bg-primary rf-filled px-3 py-2 text-on-primary disabled:bg-surface disabled:text-fg-muted"
 			data-testid="flow-shared-save"
 			disabled={!ready ||
 				!editable ||

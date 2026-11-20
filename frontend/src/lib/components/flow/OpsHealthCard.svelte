@@ -59,7 +59,7 @@
 		<div class="flex flex-wrap gap-2">
 			<button
 				type="button"
-				class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-control disabled:border-line"
+				class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm font-medium text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 				disabled={snapshot.loading}
 				onclick={onrefresh}
 			>

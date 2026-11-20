@@ -134,15 +134,13 @@
 </script>
 
 {#if $viewState.collection || $viewState.status === 'error'}
-	<div
-		class="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-2"
-	>
+	<div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-2">
 		<p class="flex-1 text-xs text-fg-muted">
 			{$t('flow.personal.refreshHint')}
 		</p>
 		<button
 			type="button"
-			class="min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
+			class="min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 			data-testid="collection-refresh"
 			disabled={refreshing || $viewState.status === 'loading' || hasPendingWritesIn($viewState)}
 			aria-busy={refreshing}
@@ -174,9 +172,7 @@
 		data-mode={$viewState.mode}
 	>
 		<div class="flex min-w-0 flex-1 flex-col">
-			<div
-				class="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2"
-			>
+			<div class="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
 				<div
 					role="tablist"
 					aria-label={$t('flow.collection.view.tabs')}
@@ -225,10 +221,7 @@
 			</div>
 
 			{#if $viewState.collection?.fieldSecrecyEnabled}
-				<p
-					class="border-b border-line px-4 py-2 text-xs text-fg-muted"
-					role="note"
-				>
+				<p class="border-b border-line px-4 py-2 text-xs text-fg-muted" role="note">
 					{$t('flow.collection.secrecyNotice')}
 				</p>
 			{/if}

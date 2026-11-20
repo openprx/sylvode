@@ -574,7 +574,7 @@
 								<button
 									onclick={loadMoreActivities}
 									disabled={loadingMoreActivities}
-									class="rounded-control px-4 py-2 text-sm text-fg hover:bg-surface disabled:text-control disabled:cursor-not-allowed"
+									class="rounded-control px-4 py-2 text-sm text-fg hover:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 								>
 									{loadingMoreActivities ? $t('common.loading') : $t('workspace.loadMore')}
 								</button>

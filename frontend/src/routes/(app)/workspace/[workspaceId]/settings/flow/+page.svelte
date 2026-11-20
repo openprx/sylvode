@@ -215,10 +215,7 @@
 					<dt class="text-fg-muted">
 						{$t('flow.settings.status.flowEnabled')}
 					</dt>
-					<dd
-						class="mt-1 font-medium text-fg"
-						data-testid="flow-settings-enabled"
-					>
+					<dd class="mt-1 font-medium text-fg" data-testid="flow-settings-enabled">
 						{feature.flow_enabled ? $t('flow.settings.status.on') : $t('flow.settings.status.off')}
 					</dd>
 				</div>
@@ -226,10 +223,7 @@
 					<dt class="text-fg-muted">
 						{$t('flow.settings.status.defaultMemberLevel')}
 					</dt>
-					<dd
-						class="mt-1 font-medium text-fg"
-						data-testid="flow-settings-level"
-					>
+					<dd class="mt-1 font-medium text-fg" data-testid="flow-settings-level">
 						{levelLabel(feature.default_member_level)}
 					</dd>
 				</div>
@@ -237,10 +231,7 @@
 					<dt class="text-fg-muted">
 						{$t('flow.settings.status.authzEpoch')}
 					</dt>
-					<dd
-						class="mt-1 font-mono text-fg"
-						data-testid="flow-settings-epoch"
-					>
+					<dd class="mt-1 font-mono text-fg" data-testid="flow-settings-epoch">
 						{feature.authz_epoch}
 					</dd>
 					<dd class="mt-1 text-xs text-fg-muted">
@@ -296,7 +287,7 @@
 				{#if feature.flow_enabled}
 					<button
 						type="button"
-						class="min-h-11 shrink-0 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-control motion-safe:transition-colors"
+						class="min-h-11 shrink-0 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-fg-muted motion-safe:transition-colors"
 						disabled={saving}
 						onclick={requestDisable}
 					>
@@ -305,7 +296,7 @@
 				{:else}
 					<button
 						type="button"
-						class="min-h-11 shrink-0 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors"
+						class="min-h-11 shrink-0 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted motion-safe:transition-colors"
 						disabled={saving}
 						onclick={requestEnable}
 					>
@@ -324,10 +315,7 @@
 			</p>
 			<div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
 				<div class="flex-1">
-					<label
-						for="flow-default-member-level"
-						class="block text-sm font-medium text-fg"
-					>
+					<label for="flow-default-member-level" class="block text-sm font-medium text-fg">
 						{$t('flow.settings.level.label')}
 					</label>
 					<select
@@ -343,7 +331,7 @@
 				</div>
 				<button
 					type="button"
-					class="min-h-11 shrink-0 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control motion-safe:transition-colors"
+					class="min-h-11 shrink-0 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted motion-safe:transition-colors"
 					disabled={saving || selectedLevel === feature.default_member_level}
 					onclick={requestLevelChange}
 				>
@@ -405,14 +393,8 @@
 		<li>{$t('flow.settings.disableConfirm.consequenceSessions')}</li>
 		<li>{$t('flow.settings.disableConfirm.consequenceDirectUrl')}</li>
 	</ul>
-	<label
-		class="mt-4 flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg"
-	>
-		<input
-			type="checkbox"
-			class="h-5 w-5"
-			bind:checked={acknowledged}
-		/>
+	<label class="mt-4 flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg">
+		<input type="checkbox" class="h-5 w-5" bind:checked={acknowledged} />
 		<span>{$t('flow.settings.disableConfirm.acknowledge')}</span>
 	</label>
 	{#snippet footer()}
@@ -425,7 +407,7 @@
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded-control bg-danger px-4 text-sm font-medium text-on-danger rf-filled disabled:bg-surface disabled:text-control"
+			class="min-h-11 rounded-control bg-danger px-4 text-sm font-medium text-on-danger rf-filled disabled:bg-surface disabled:text-fg-muted"
 			disabled={!acknowledged}
 			onclick={confirmPending}
 		>
@@ -450,14 +432,8 @@
 	<p class="mt-3 text-sm text-fg">
 		{$t('flow.settings.levelConfirm.epoch')}
 	</p>
-	<label
-		class="mt-4 flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg"
-	>
-		<input
-			type="checkbox"
-			class="h-5 w-5"
-			bind:checked={acknowledged}
-		/>
+	<label class="mt-4 flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg">
+		<input type="checkbox" class="h-5 w-5" bind:checked={acknowledged} />
 		<span>{$t('flow.settings.levelConfirm.acknowledge')}</span>
 	</label>
 	{#snippet footer()}
@@ -470,7 +446,7 @@
 		</button>
 		<button
 			type="button"
-			class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+			class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 			disabled={!acknowledged}
 			onclick={confirmPending}
 		>

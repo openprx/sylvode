@@ -95,7 +95,7 @@
 	}
 
 	const fieldClass =
-		'mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm disabled:bg-surface disabled:text-control';
+		'mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm disabled:bg-surface disabled:text-fg-muted';
 	const locked = $derived(snap.busy);
 </script>
 
@@ -238,7 +238,7 @@
 	{#if snap.executed === null}
 		<button
 			type="button"
-			class="mt-4 min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+			class="mt-4 min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 			disabled={snap.busy || snap.closed}
 			onclick={dryRun}
 			data-testid="flow-ops-replay-dry-run"
@@ -292,7 +292,7 @@
 			</label>
 			<button
 				type="button"
-				class="mt-2 min-h-11 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-control"
+				class="mt-2 min-h-11 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-fg-muted"
 				disabled={!snap.canExecute}
 				onclick={execute}
 				data-testid="flow-ops-replay-execute"

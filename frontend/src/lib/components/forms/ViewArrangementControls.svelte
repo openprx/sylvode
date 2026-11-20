@@ -132,8 +132,7 @@
 
 	const toolButton =
 		'inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] px-2 text-sm text-fg hover:bg-surface';
-	const control =
-		'h-8 rounded-control border border-input bg-field px-2 text-sm';
+	const control = 'h-8 rounded-control border border-input bg-field px-2 text-sm';
 </script>
 
 <button
@@ -257,7 +256,7 @@
 			{/each}
 			<button
 				type="button"
-				class="inline-flex h-8 items-center gap-1 rounded-control px-2 text-sm text-fg hover:bg-surface disabled:text-control"
+				class="inline-flex h-8 items-center gap-1 rounded-control px-2 text-sm text-fg hover:bg-surface disabled:text-fg-muted"
 				disabled={fields.length === 0}
 				data-view-filter-add
 				onclick={addFilter}
@@ -288,9 +287,7 @@
 >
 	<div class="space-y-2 p-1">
 		<label class="block space-y-1">
-			<span class="text-xs font-medium text-fg-muted"
-				>{$t('forms.views.sortField')}</span
-			>
+			<span class="text-xs font-medium text-fg-muted">{$t('forms.views.sortField')}</span>
 			<select
 				class="{control} w-full"
 				value={sort?.field ?? ''}
@@ -313,7 +310,7 @@
 					role="radio"
 					aria-checked={sort?.direction === value}
 					disabled={!sort}
-					class="h-8 flex-1 rounded-control px-2 text-sm font-medium disabled:text-control {sort?.direction ===
+					class="h-8 flex-1 rounded-control px-2 text-sm font-medium disabled:text-fg-muted {sort?.direction ===
 					value
 						? 'bg-primary text-on-primary'
 						: 'bg-surface text-fg'}"
@@ -378,7 +375,7 @@
 						</label>
 						<button
 							type="button"
-							class="inline-flex h-6 w-6 items-center justify-center rounded-control text-fg-muted hover:bg-surface disabled:text-control"
+							class="inline-flex h-6 w-6 items-center justify-center rounded-control text-fg-muted hover:bg-surface disabled:text-fg-muted"
 							aria-label={$t('forms.views.moveUp', { values: { field: fieldLabel(field) } })}
 							disabled={index === 0 || !columns.includes(key)}
 							onclick={() => moveColumn(key, -1)}
@@ -386,7 +383,7 @@
 						>
 						<button
 							type="button"
-							class="inline-flex h-6 w-6 items-center justify-center rounded-control text-fg-muted hover:bg-surface disabled:text-control"
+							class="inline-flex h-6 w-6 items-center justify-center rounded-control text-fg-muted hover:bg-surface disabled:text-fg-muted"
 							aria-label={$t('forms.views.moveDown', { values: { field: fieldLabel(field) } })}
 							disabled={index === orderedColumns.length - 1 || !columns.includes(key)}
 							onclick={() => moveColumn(key, 1)}

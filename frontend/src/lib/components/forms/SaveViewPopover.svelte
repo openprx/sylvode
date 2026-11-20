@@ -80,9 +80,7 @@
 			{$t('forms.views.saveTitle')}
 		</h3>
 		<label class="block space-y-1">
-			<span class="text-xs font-medium text-fg-muted"
-				>{$t('forms.views.nameLabel')}</span
-			>
+			<span class="text-xs font-medium text-fg-muted">{$t('forms.views.nameLabel')}</span>
 			<input
 				bind:this={input}
 				bind:value={name}
@@ -131,7 +129,7 @@
 			>
 			<button
 				type="submit"
-				class="h-8 rounded-control bg-primary px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+				class="h-8 rounded-control bg-primary px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				disabled={saving}
 				data-save-view-submit>{$t('common.save')}</button
 			>

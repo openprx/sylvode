@@ -222,9 +222,7 @@
 	{/if}
 	{#if status}
 		<span
-			class="ml-1 shrink-0 text-xs {status.state === 'saving'
-				? 'text-fg-muted'
-				: 'text-danger'}"
+			class="ml-1 shrink-0 text-xs {status.state === 'saving' ? 'text-fg-muted' : 'text-danger'}"
 			data-cell-status={status.state}
 		>
 			{status.state === 'saving'
@@ -379,12 +377,10 @@
 	</div>
 {/if}
 
-<div
-	class="flex flex-wrap items-center gap-3 border-t border-line px-4 py-2"
->
+<div class="flex flex-wrap items-center gap-3 border-t border-line px-4 py-2">
 	<button
 		type="button"
-		class="min-h-11 rounded px-3 text-sm font-medium text-fg hover:bg-surface disabled:text-control disabled:hover:bg-transparent"
+		class="min-h-11 rounded px-3 text-sm font-medium text-fg hover:bg-surface disabled:text-fg-muted disabled:hover:bg-transparent"
 		disabled={creating}
 		data-testid="collection-new-record"
 		onclick={() => void createRecord()}

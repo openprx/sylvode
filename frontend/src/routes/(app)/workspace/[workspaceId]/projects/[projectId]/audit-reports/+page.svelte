@@ -116,7 +116,7 @@
 				type="button"
 				onclick={generateReport}
 				disabled={generating}
-				class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
+				class="w-full rounded-control bg-primary px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 			>
 				{generating ? $t('common.processing') : $t('governanceExt.generateReport')}
 			</button>
@@ -181,7 +181,7 @@
 					type="button"
 					onclick={() => goPage(pageNum - 1)}
 					disabled={pageNum <= 1}
-					class="rounded border border-fg px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
+					class="rounded border border-fg px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 				>
 					{$t('governance.prevPage')}
 				</button>
@@ -189,7 +189,7 @@
 					type="button"
 					onclick={() => goPage(pageNum + 1)}
 					disabled={totalPages > 0 && pageNum >= totalPages}
-					class="rounded border border-fg px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-control disabled:cursor-not-allowed"
+					class="rounded border border-fg px-3 py-1.5 text-xs hover:bg-surface disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 				>
 					{$t('governance.nextPage')}
 				</button>

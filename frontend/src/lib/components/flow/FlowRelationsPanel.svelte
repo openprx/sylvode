@@ -47,16 +47,14 @@
 	const selectClass =
 		'min-h-11 w-full rounded-control border border-input bg-field px-2 text-sm text-fg';
 	const linkButtonClass =
-		'min-h-11 rounded-control px-2 text-xs font-medium text-fg underline disabled:text-control disabled:hover:bg-transparent';
+		'min-h-11 rounded-control px-2 text-xs font-medium text-fg underline disabled:text-fg-muted disabled:hover:bg-transparent';
 </script>
 
 <div class="space-y-3 text-sm" data-testid="flow-relations-panel">
 	{#if snapshot}
 		<div class="grid grid-cols-2 gap-2">
 			<label class="block">
-				<span class="mb-1 block text-xs text-fg-muted"
-					>{$t('flow.relations.direction.label')}</span
-				>
+				<span class="mb-1 block text-xs text-fg-muted">{$t('flow.relations.direction.label')}</span>
 				<select
 					aria-label={$t('flow.relations.direction.label')}
 					class={selectClass}
@@ -69,9 +67,7 @@
 				</select>
 			</label>
 			<label class="block">
-				<span class="mb-1 block text-xs text-fg-muted"
-					>{$t('flow.relations.type.label')}</span
-				>
+				<span class="mb-1 block text-xs text-fg-muted">{$t('flow.relations.type.label')}</span>
 				<select
 					aria-label={$t('flow.relations.type.label')}
 					class={selectClass}
@@ -106,10 +102,7 @@
 				{#each snapshot.rows as row, index (index)}
 					{@const target = relationTarget(row)}
 					{#if row.kind === 'visible' && target}
-						<li
-							class="border-l-2 border-line pl-3"
-							data-testid="flow-relation-row"
-						>
+						<li class="border-l-2 border-line pl-3" data-testid="flow-relation-row">
 							<p class="text-xs text-fg-muted">
 								{row.direction === 'outgoing'
 									? $t('flow.relations.row.outgoing')

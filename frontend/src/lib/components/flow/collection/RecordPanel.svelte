@@ -124,7 +124,7 @@
 					<p>{$t('flow.personal.recordReviewRequired')}</p>
 					<button
 						type="button"
-						class="min-h-11 rounded-control border border-warning px-3 disabled:text-control disabled:hover:bg-transparent"
+						class="min-h-11 rounded-control border border-warning px-3 disabled:text-fg-muted disabled:hover:bg-transparent"
 						disabled={!canEdit}
 						onclick={() => controller.reviewRecordContext(panel.recordId)}
 						>{$t('flow.personal.recordReviewAction')}</button
@@ -170,7 +170,7 @@
 									<div class="flex items-center gap-2">
 										<button
 											type="button"
-											class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+											class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 											disabled={!canEdit ||
 												panel.contextReviewRequired ||
 												status?.state === 'saving'}
@@ -243,7 +243,7 @@
 					<div class="flex flex-wrap items-center gap-2">
 						<button
 							type="button"
-							class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+							class="min-h-11 rounded bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 							disabled={!canEdit ||
 								panel.contextReviewRequired ||
 								bodyDraft === undefined ||
@@ -291,7 +291,7 @@
 						<div class="flex flex-wrap items-center gap-2">
 							<button
 								type="button"
-								class="min-h-11 rounded bg-danger-soft px-3 text-sm font-medium text-danger disabled:bg-surface disabled:text-control"
+								class="min-h-11 rounded bg-danger-soft px-3 text-sm font-medium text-danger disabled:bg-surface disabled:text-fg-muted"
 								disabled={archiveBusy || !canArchive}
 								data-testid="record-panel-archive-confirm"
 								onclick={() => void archive()}>{$t('flow.record.archiveConfirm')}</button

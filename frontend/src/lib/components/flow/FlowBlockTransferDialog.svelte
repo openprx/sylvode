@@ -309,7 +309,7 @@
 				</section>{/if}
 			<button
 				type="button"
-				class="rounded border px-3 py-2 text-sm disabled:text-control disabled:hover:bg-transparent"
+				class="rounded border px-3 py-2 text-sm disabled:text-fg-muted disabled:hover:bg-transparent"
 				data-testid="flow-transfer-review"
 				disabled={!targetId || blocked || loadingTarget || snapshot.phase === 'preparing'}
 				onclick={prepare}
@@ -338,10 +338,7 @@
 						})}
 					</p>
 					{#if kind === 'copy' || snapshot.review.affectedShareCount > 0}
-						<p
-							class="text-sm text-fg"
-							data-testid="flow-transfer-share-impact"
-						>
+						<p class="text-sm text-fg" data-testid="flow-transfer-share-impact">
 							{$t(
 								kind === 'copy' ? 'flow.transfer.copyShareImpact' : 'flow.transfer.moveShareImpact'
 							)}
@@ -359,7 +356,7 @@
 					>
 					<button
 						type="button"
-						class="rounded bg-primary rf-filled px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-control"
+						class="rounded bg-primary rf-filled px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted"
 						data-testid="flow-transfer-commit"
 						disabled={blocked || !consent || snapshot.phase !== 'prepared'}
 						onclick={() => runtime.operation.commit(consent)}

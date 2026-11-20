@@ -56,7 +56,7 @@
 	}
 
 	const actionClass =
-		'min-h-11 rounded-control border px-3 text-sm font-medium disabled:text-control disabled:hover:bg-transparent';
+		'min-h-11 rounded-control border px-3 text-sm font-medium disabled:text-fg-muted disabled:hover:bg-transparent';
 </script>
 
 <section
@@ -66,10 +66,7 @@
 >
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="flex flex-wrap items-center gap-3">
-			<h2
-				id="flow-ops-integrity-heading"
-				class="text-lg font-semibold text-fg"
-			>
+			<h2 id="flow-ops-integrity-heading" class="text-lg font-semibold text-fg">
 				{$t('flow.operations.integrity.heading')}
 			</h2>
 			{#if integrity}
@@ -182,9 +179,7 @@
 							</td>
 							<td class="py-2 pr-3" data-testid="flow-ops-integrity-row-status">
 								{#if row.status === 'ok'}
-									<span class="text-success"
-										>{$t('flow.operations.integrity.rowOk')}</span
-									>
+									<span class="text-success">{$t('flow.operations.integrity.rowOk')}</span>
 								{:else}
 									<p class="text-danger">{$t(row.failureKey)}</p>
 									<p class="mt-1 text-xs text-fg-muted">{$t(row.errorKey)}</p>
@@ -237,10 +232,7 @@
 			<ul class="mt-4 space-y-3 md:hidden">
 				{#each rows as row (row.documentId)}
 					{@const head = row.status === 'ok' ? row.headSeq : null}
-					<li
-						class="rounded-card border border-line p-3 text-sm"
-						data-status={row.status}
-					>
+					<li class="rounded-card border border-line p-3 text-sm" data-status={row.status}>
 						<p class="break-all font-mono text-xs">{row.documentId}</p>
 						<p class="mt-1 break-all font-mono text-xs text-fg-muted">
 							{$t('flow.operations.integrity.objectId')}: {row.objectId}
@@ -295,7 +287,7 @@
 			>
 				<button
 					type="button"
-					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
+					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 					disabled={busy || !hasPrevious}
 					data-testid="flow-ops-integrity-pager-previous"
 					onclick={onprevious}
@@ -307,7 +299,7 @@
 				</span>
 				<button
 					type="button"
-					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-control disabled:border-line"
+					class="min-h-11 rounded-control border border-fg bg-raised px-4 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 					disabled={busy || !hasNext}
 					data-testid="flow-ops-integrity-pager-next"
 					onclick={onnext}
@@ -327,10 +319,7 @@
 		</p>
 		<div class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
 			<div>
-				<label
-					for="flow-ops-manual-document"
-					class="block text-sm font-medium text-fg"
-				>
+				<label for="flow-ops-manual-document" class="block text-sm font-medium text-fg">
 					{$t('flow.operations.integrity.manual.documentId')}
 				</label>
 				<input
@@ -366,10 +355,7 @@
 				</div>
 			</div>
 			<div>
-				<label
-					for="flow-ops-manual-object"
-					class="block text-sm font-medium text-fg"
-				>
+				<label for="flow-ops-manual-object" class="block text-sm font-medium text-fg">
 					{$t('flow.operations.integrity.manual.objectId')}
 				</label>
 				<input

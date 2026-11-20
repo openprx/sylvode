@@ -115,11 +115,15 @@
 	{/if}
 	<label class="block text-xs text-fg-muted">
 		{$t('flow.share.public.expiry')}
-		<input type="datetime-local" class="mt-1 min-h-11 w-full rounded-control border border-input px-2 bg-field" bind:value={expiry} />
+		<input
+			type="datetime-local"
+			class="mt-1 min-h-11 w-full rounded-control border border-input px-2 bg-field"
+			bind:value={expiry}
+		/>
 	</label>
 	<button
 		type="button"
-		class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-control"
+		class="min-h-11 w-full rounded-control bg-primary rf-filled px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 		disabled={busy}
 		onclick={create}
 	>
@@ -127,7 +131,11 @@
 	</button>
 	{#if freshToken}
 		<p class="text-xs text-fg-muted">{$t('flow.share.public.tokenOnce')}</p>
-		<input readonly class="w-full font-mono text-xs" value={`${typeof location === 'undefined' ? '' : location.origin}/s/${freshToken}`} />
+		<input
+			readonly
+			class="w-full font-mono text-xs"
+			value={`${typeof location === 'undefined' ? '' : location.origin}/s/${freshToken}`}
+		/>
 		<button type="button" class="text-xs text-fg underline" onclick={copyToken}>
 			{copied ? $t('flow.share.public.copied') : $t('flow.share.public.copy')}
 		</button>
