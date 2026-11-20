@@ -23,6 +23,11 @@
 		/** Selector for the element that first receives focus; default is the first field. */
 		initialFocus?: string;
 		testId?: string;
+		/**
+		 * `alertdialog` for an interruption that needs an answer (a confirmation): the surface is
+		 * then also described by the body text. Default `dialog`.
+		 */
+		role?: 'dialog' | 'alertdialog';
 		children: Snippet;
 		/** Right-aligned action row: Cancel first, the confirming action last. */
 		actions?: Snippet;
@@ -36,11 +41,13 @@
 		keepMounted = false,
 		initialFocus,
 		testId,
+		role = 'dialog',
 		children,
 		actions
 	}: Props = $props();
 
 	const titleId = uid('dialog-title');
+	const bodyId = uid('dialog-body');
 	let restoreFocus: (() => void) | null = null;
 	let wasOpen = false;
 
@@ -72,9 +79,10 @@
 	<div class="ui-scrim" hidden={!open} data-ui-layer="dialog" use:portal>
 		<div
 			class="ui-dialog size-{size}"
-			role="dialog"
+			{role}
 			aria-modal="true"
 			aria-labelledby={titleId}
+			aria-describedby={role === 'alertdialog' ? bodyId : undefined}
 			tabindex="-1"
 			data-testid={testId}
 			use:focusTrap={{ active: open, initialFocus }}
@@ -83,7 +91,7 @@
 				<h2 id={titleId}>{title}</h2>
 				<IconButton icon={X} label={$t('ui.dialog.close')} onclick={() => onclose()} />
 			</header>
-			<div class="body">{@render children()}</div>
+			<div class="body" id={bodyId}>{@render children()}</div>
 			{#if actions}<footer>{@render actions()}</footer>{/if}
 		</div>
 	</div>

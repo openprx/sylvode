@@ -14,6 +14,8 @@
 		onclose: () => void;
 		/** Progress verb while the confirmed action runs. */
 		busyLabel?: string;
+		/** Defaults to the shared "Cancel". */
+		cancelLabel?: string;
 		busy?: boolean;
 		testId?: string;
 		/** What happens, what is kept, and that it cannot be undone. */
@@ -27,17 +29,18 @@
 		onconfirm,
 		onclose,
 		busyLabel,
+		cancelLabel,
 		busy = false,
 		testId,
 		children
 	}: Props = $props();
 </script>
 
-<Dialog {open} {title} {onclose} {testId} {children}>
+<Dialog {open} {title} {onclose} {testId} role="alertdialog" {children}>
 	{#snippet actions()}
 		<!-- Focus starts on Cancel, so Enter never confirms a loss by accident. -->
 		<Button variant="secondary" data-autofocus onclick={() => onclose()}>
-			{$t('ui.dialog.cancel')}
+			{cancelLabel ?? $t('ui.dialog.cancel')}
 		</Button>
 		<Button variant="danger" loading={busy} loadingLabel={busyLabel} onclick={() => onconfirm()}>
 			{confirmLabel}
