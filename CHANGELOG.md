@@ -10,6 +10,20 @@ name.
 
 ## [Unreleased]
 
+### Changed
+
+- **Flow writes no longer walk the whole page to guard the editor-model floor.** The isolated
+  apply step used to read every editor block once before each import (twice on model 5 pages)
+  only to refuse an update that lowers a page from editor model 5. It now reads the model 5
+  marker before and after the import and scans the imported operations, which costs the same for
+  a 200-block page and a 5,000-block page. The few updates that remove or re-type a block
+  container, or touch the document root, fall back to an exact check. The same updates are
+  refused as before (`editor_model_floor_downgrade`). The semantic snapshot now also yields the
+  floor of the state it read, so the host no longer walks a second time. Two differences affect
+  invalid input only: a base document that fails the current rules is no longer re-checked
+  before the import (the check after the import still rejects an invalid result), and an update
+  that is invalid in several ways at once may report a different first reason.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added
