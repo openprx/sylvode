@@ -696,7 +696,8 @@ pub(crate) async fn hydrate_and_apply(
     })?;
     let after_frontier = candidate.frontier().as_bytes().to_vec();
 
-    let semantic = candidate.semantic_snapshot().map_err(|err| {
+    // The floor comes from the same block pass as the projection, so it costs no second walk.
+    let (semantic, minimum_editor_model) = candidate.semantic_snapshot_with_floor().map_err(|err| {
         tracing::error!(error = %err, "collab write: semantic_snapshot failed after a successful isolated apply");
         ApiError::internal()
     })?;
@@ -712,9 +713,6 @@ pub(crate) async fn hydrate_and_apply(
     let plain_text = projection::plain_text(&semantic);
     let content_hash_hex = content_hash(bytes);
 
-    let minimum_editor_model = candidate
-        .minimum_editor_model()
-        .map_err(|e| crate::flow::command::map_collab_error(&e))?;
     Ok(HydrateOutcome::Prepared(Box::new(Prepared {
         observed,
         candidate,
