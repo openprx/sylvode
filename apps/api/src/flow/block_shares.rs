@@ -233,7 +233,10 @@ async fn publish(
         .try_get::<Uuid>("", "id")?;
     let boot = super::collab::bootstrap::load(db, document).await?;
     let engine = super::document::engine_from_boot(&boot)?;
-    if !engine.has_editor_doc() {
+    if !engine
+        .has_editor_doc()
+        .map_err(|error| super::command::map_collab_error(&error))?
+    {
         return Err(ApiError::policy_rejected_with_details(
             "enable Page editor before sharing body blocks",
             serde_json::json!({"reason":"explicit_editor_initialization_required"}),

@@ -446,7 +446,7 @@ pub async fn prepare(
     }
     let mut source_engine = super::document::load_head_engine(db, a.document_id).await?;
     let mut target_engine = super::document::load_head_engine(db, b.document_id).await?;
-    if !source_engine.has_editor_doc() || !target_engine.has_editor_doc() {
+    if !source_engine.has_editor_doc().map_err(map)? || !target_engine.has_editor_doc().map_err(map)? {
         return Err(error("explicit_editor_initialization_required"));
     }
     source_engine.initialize_page_structure_model(5).map_err(map)?;
@@ -699,7 +699,10 @@ pub(super) fn insert_selected(
                         kind: NodeKind::Block,
                     })
                     .map_err(map)?;
-                let cid = engine.resolve_content_node_id(&alias.as_str().into()).to_string();
+                let cid = engine
+                    .resolve_content_node_id(&alias.as_str().into())
+                    .map_err(map)?
+                    .to_string();
                 engine
                     .apply_content_operation(&Operation::SetProperty {
                         id: cid.as_str().into(),
@@ -998,6 +1001,7 @@ async fn commit_once(
             placeholder = Some(
                 source_engine
                     .resolve_content_node_id(&alias.as_str().into())
+                    .map_err(map)?
                     .to_string(),
             );
         }

@@ -1,9 +1,11 @@
 //! Native tree placement index over immutable physical editor block containers.
 use crate::CollabError;
-use loro::{Container, ContainerTrait, LoroDoc, LoroMap, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer};
+pub use crate::reserved_roots::{META, TREE};
+use loro::{
+    Container, ContainerID, ContainerTrait, ContainerType, LoroDoc, LoroMap, LoroTree, LoroValue, TreeID, TreeParentId,
+    ValueOrContainer,
+};
 use std::collections::BTreeSet;
-pub const TREE: &str = "flow_editor_structure";
-pub const META: &str = "flow_editor_structure_meta";
 fn invalid(reason: &str) -> CollabError {
     CollabError::OperationFailed { reason: reason.into() }
 }
@@ -13,8 +15,90 @@ fn value(map: &LoroMap, key: &str) -> Option<String> {
         _ => None,
     }
 }
+/// The root container `name` of exactly type `kind`, or `None` when no such root exists. The read
+/// changes nothing: no root is registered, so `get_deep_value`, snapshots and exports are the
+/// same afterwards.
+///
+/// Loro treats every root id as existing (`has_container` is true for it), and a typed getter
+/// (`get_container`, `get_map`, ...) registers an empty root of that type when the document has
+/// none, which shows up in `get_deep_value`, in snapshot bytes and in the list of roots (the
+/// frontier and the semantic hash do not change). So the typed getter is only called once the
+/// root is known to exist:
+///
+/// 1. `LoroDoc::get_by_path` with the single key `name` finds the registered root of that name
+///    (the root the library prefers when several share it) without touching any other root. A
+///    name that is absent has no root of any type: `None`. `LoroDoc::get_value` must not be used
+///    for this: it values every root, so its cost grows with the whole document (the editor tree
+///    of a 5,000-block page costs milliseconds per call), and this read runs several times per
+///    write inside the isolated worker's CPU window.
+/// 2. The found root is of type `kind`: it exists, and the typed getter finds it registered.
+/// 3. The found root is of another type. The path lookup shows one root per name, so a root of
+///    `kind` may still exist beside it; the document is a fork-and-compare away from knowing
+///    (O(document), only for a document that has a same-named root of another type): the typed
+///    getter runs on a fork, and the root exists exactly when that did not change the fork's
+///    snapshot.
+///
+/// The typed id is what makes the read exact. The path lookup alone must not be used to read a
+/// root: it picks among all roots with that name, of any type, so a second root of another type
+/// could make two readers of one document disagree. It is only the existence probe of step 1.
+///
+/// The first lookup on a document loaded from a snapshot lists the keys of the store once
+/// (O(containers), the library's lazy root scan); the lookups after it cost the named root only.
+///
+/// # Errors
+/// `editor_root_probe_failed` when the fork-and-compare of step 3 cannot export the document. The
+/// root is then neither present nor absent as far as this read knows; the caller must not assume
+/// absence.
+pub(crate) fn root_container(doc: &LoroDoc, name: &str, kind: ContainerType) -> Result<Option<Container>, CollabError> {
+    #[cfg(test)]
+    let allocated_before = crate::test_alloc::allocated_bytes();
+    let found = probe_root(doc, name, kind);
+    #[cfg(test)]
+    crate::walk_counter::record_root_probe(
+        name,
+        crate::test_alloc::allocated_bytes().saturating_sub(allocated_before),
+    );
+    found
+}
+fn probe_root(doc: &LoroDoc, name: &str, kind: ContainerType) -> Result<Option<Container>, CollabError> {
+    let id = ContainerID::new_root(name, kind);
+    match doc.get_by_path(&[loro::Index::Key(name.into())]) {
+        None => return Ok(None),
+        Some(ValueOrContainer::Container(found)) if found.get_type() == kind => {}
+        Some(_) => {
+            #[cfg(test)]
+            crate::walk_counter::record_root_fork();
+            let probe = |error: loro::LoroEncodeError| invalid(&format!("editor_root_probe_failed: {error}"));
+            let fork = doc.fork();
+            let before = fork.export(loro::ExportMode::Snapshot).map_err(probe)?;
+            if fork.get_container(id.clone()).is_none() {
+                return Ok(None);
+            }
+            if fork.export(loro::ExportMode::Snapshot).map_err(probe)? != before {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(doc.get_container(id))
+}
+/// The reserved root `name` (see [`crate::reserved_roots`]) with its one allowed container type,
+/// read exactly as [`root_container`] reads it.
+///
+/// # Errors
+/// As [`root_container`]; `editor_root_not_reserved` for a name that is not in the table.
+pub(crate) fn reserved_root(doc: &LoroDoc, name: &str) -> Result<Option<Container>, CollabError> {
+    let kind = crate::reserved_roots::expected_type(name).ok_or_else(|| invalid("editor_root_not_reserved"))?;
+    root_container(doc, name, kind)
+}
+/// [`reserved_root`] when the root is a map (`None` also when it is absent).
+pub(crate) fn root_map(doc: &LoroDoc, name: &str) -> Result<Option<LoroMap>, CollabError> {
+    Ok(match reserved_root(doc, name)? {
+        Some(Container::Map(map)) => Some(map),
+        _ => None,
+    })
+}
 pub fn physical(doc: &LoroDoc) -> Result<Vec<LoroMap>, CollabError> {
-    let Some(ValueOrContainer::Container(Container::Map(root))) = doc.get_by_str_path("doc") else {
+    let Some(Container::Map(root)) = reserved_root(doc, crate::reserved_roots::DOC)? else {
         return Err(invalid("editor_doc_required"));
     };
     let Some(ValueOrContainer::Container(Container::List(list))) = root.get("children") else {
@@ -27,17 +111,21 @@ pub fn physical(doc: &LoroDoc) -> Result<Vec<LoroMap>, CollabError> {
         })
         .collect()
 }
-pub fn ready(doc: &LoroDoc) -> bool {
-    let Some(ValueOrContainer::Container(Container::Map(meta))) = doc.get_by_str_path(META) else {
-        return false;
+/// Whether the structure metadata root says the placement index is initialised.
+///
+/// # Errors
+/// As [`root_container`].
+pub fn ready(doc: &LoroDoc) -> Result<bool, CollabError> {
+    let Some(Container::Map(meta)) = reserved_root(doc, META)? else {
+        return Ok(false);
     };
-    matches!(
+    Ok(matches!(
         meta.get("initialized"),
         Some(ValueOrContainer::Value(LoroValue::Bool(true)))
-    )
+    ))
 }
 fn tree(doc: &LoroDoc) -> Result<LoroTree, CollabError> {
-    let Some(ValueOrContainer::Container(Container::Tree(tree))) = doc.get_by_str_path(TREE) else {
+    let Some(Container::Tree(tree)) = reserved_root(doc, TREE)? else {
         return Err(invalid("editor_structure_missing_tree"));
     };
     tree.enable_fractional_index(0);
@@ -52,7 +140,7 @@ pub struct Placement {
     pub position: usize,
 }
 pub fn placements(doc: &LoroDoc) -> Result<Option<Vec<Placement>>, CollabError> {
-    if !ready(doc) {
+    if !ready(doc)? {
         return Ok(None);
     }
     let meta = doc.get_map(META);
@@ -145,12 +233,12 @@ fn active_placements_with(
     Ok(output)
 }
 pub fn initialize(doc: &LoroDoc) -> Result<bool, CollabError> {
-    if ready(doc) {
+    if ready(doc)? {
         placements(doc)?;
         return Ok(false);
     }
-    if doc.get_by_str_path(TREE).is_some_and(|value| match value {
-        ValueOrContainer::Container(Container::Tree(tree)) => !tree.roots().is_empty(),
+    if reserved_root(doc, TREE)?.is_some_and(|value| match value {
+        Container::Tree(tree) => !tree.roots().is_empty(),
         _ => true,
     }) {
         return Err(invalid("editor_structure_partial_initialization"));
@@ -392,7 +480,7 @@ mod tests {
                 text: "New".into(),
             })
             .unwrap();
-        let created = engine.resolve_content_node_id(&"new-indexed".into());
+        let created = engine.resolve_content_node_id(&"new-indexed".into()).unwrap();
         assert_eq!(
             engine
                 .semantic_snapshot()

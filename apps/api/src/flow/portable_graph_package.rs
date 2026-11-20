@@ -513,7 +513,7 @@ fn capture_retained(
     seq: i64,
     capture: &mut impl FnMut(&mut LoroCollabEngine, i64) -> Result<(), ApiError>,
 ) -> Result<(), ApiError> {
-    if engine.has_editor_doc() {
+    if engine.has_editor_doc().map_err(map)? {
         capture(engine, seq)
     } else {
         let mut clone = LoroCollabEngine::load(&engine.export_snapshot().map_err(map)?).map_err(map)?;
@@ -527,7 +527,7 @@ fn capture_version(
     source_recorded_at: Option<Timestamp>,
 ) -> Result<Version, ApiError> {
     let build = || {
-        if !selected.has_editor_doc() {
+        if !selected.has_editor_doc().map_err(map)? {
             selected.initialize_page_editor().map_err(map)?;
         }
         let mut blocks = read_blocks(&selected.semantic_snapshot().map_err(map)?)?;

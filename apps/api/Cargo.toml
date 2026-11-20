@@ -52,6 +52,9 @@ zip.workspace = true
 # constructing the request struct in Rust. Already in `Cargo.lock` as a transitive dependency.
 wat = "1"
 tokio-tungstenite = "0.26"
+# Builds hostile document bytes (a root container with a reserved name and the wrong type) for the
+# package-ingestion tests; the same exact pin as `collab-core`.
+loro = "=1.18.0"
 
 [lints]
 workspace = true

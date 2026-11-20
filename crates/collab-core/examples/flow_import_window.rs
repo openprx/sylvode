@@ -1,5 +1,5 @@
 //! Local, in-process measurement of the isolated-apply worker's metered window for the Flow
-//! write path: `import_update_causally_complete` -> `semantic_snapshot` -> `check_snapshot`,
+//! write path: `import_client_update` -> `semantic_snapshot` -> `check_snapshot`,
 //! on a base document loaded outside the window (exactly the worker's `decode_apply_and_check`
 //! sequence, minus the `SIGPROF` timer and counting allocator).
 //!
@@ -19,11 +19,24 @@
 //! `FLOW_WINDOW_SAMPLES` (default 7) and `FLOW_WINDOW_MODELS` (comma-separated, default `1,4,5`)
 //! narrow a run.
 //!
+//! `FLOW_WINDOW_UPDATE=delete` replaces the timed update by one raw deletion of a top-level
+//! block (`doc.children`), authored by a plain Loro peer on the base. The guard hands every such
+//! deletion to its exact path: a narrow scan of the block list and, on a page without the model 5
+//! marker or a remaining atom, a read of the pre-import state. Use it with `FLOW_WINDOW_MODELS=1`: on
+//! a structured page a raw list deletion leaves a dangling placement and the projection refuses the
+//! page, so there is nothing to time. This is the cost of the worst accepted shape, not of an
+//! ordinary edit.
+//!
 //! Besides the window, the binary reports standalone costs of the parts inside it:
-//! `minimum_editor_model` on the freshly loaded base (the pre-import floor), the same call on the
-//! imported state (the post-import floor check model-5 documents perform), and a host-side
-//! rebuild that replays the last `REBUILD_TAIL` batches onto an older snapshot with
-//! `import_update`.
+//! - `raw`: `LoroDoc::import` of the same update on a freshly loaded base, with nothing around it;
+//! - `guard`: `import - raw`, the cost the update-scoped downgrade guard (plus the id-cache
+//!   rebuild) adds inside `import_client_update`;
+//! - `floor_pre`: a full `minimum_editor_model` walk on a freshly loaded base, the work the old
+//!   importer did before every import (kept as the reference cost);
+//! - `floor_post`: `minimum_editor_model` on the imported state after the window, which the fused
+//!   projection has already memoized, so it costs no walk;
+//! - a host-side rebuild that replays the last `REBUILD_TAIL` batches onto an older snapshot with
+//!   `import_update`.
 
 #![allow(unsafe_code)]
 
@@ -34,7 +47,7 @@ use collab_core::limits::{DocumentLimits, check_snapshot};
 use collab_core::{CollabEngine, LoroCollabEngine, NodeId, NodeKind, Operation};
 
 const BLOCKS_PER_BATCH: usize = 50;
-const SIZES: [usize; 2] = [1_400, 5_000];
+const SIZES: [usize; 3] = [1_000, 5_000, 9_950];
 const REBUILD_TAIL: usize = 20;
 
 fn cpu_time_now() -> Result<Duration, String> {
@@ -79,6 +92,22 @@ fn batch_ops(start: usize) -> Vec<Operation> {
         });
     }
     ops
+}
+
+/// An update from a plain Loro peer that deletes one top-level block of the base document.
+fn raw_block_deletion(base: &[u8]) -> Result<Vec<u8>, String> {
+    let doc = loro::LoroDoc::new();
+    collab_core::page_inline::configure(&doc);
+    doc.import(base).map_err(|e| e.to_string())?;
+    doc.set_peer_id(9_999).map_err(|e| e.to_string())?;
+    let from = doc.oplog_vv();
+    let Some(loro::ValueOrContainer::Container(loro::Container::List(list))) = doc.get_map("doc").get("children")
+    else {
+        return Err("the base has no editor block list".to_string());
+    };
+    list.delete(3, 1).map_err(|e| e.to_string())?;
+    doc.commit();
+    doc.export(loro::ExportMode::updates(&from)).map_err(|e| e.to_string())
 }
 
 struct Fixture {
@@ -136,6 +165,9 @@ fn build(blocks: usize, model: u32) -> Result<Fixture, String> {
             rebuild_tail.push(delta);
         }
     }
+    if std::env::var("FLOW_WINDOW_UPDATE").is_ok_and(|value| value == "delete") {
+        update = raw_block_deletion(&base)?;
+    }
     Ok(Fixture {
         base,
         update,
@@ -147,6 +179,8 @@ fn build(blocks: usize, model: u32) -> Result<Fixture, String> {
 #[derive(Default)]
 struct Samples {
     import: Vec<f64>,
+    raw: Vec<f64>,
+    guard: Vec<f64>,
     semantic: Vec<f64>,
     check: Vec<f64>,
     window: Vec<f64>,
@@ -159,14 +193,16 @@ fn sample(fixture: &Fixture, samples: &mut Samples) -> Result<(), String> {
     let err = |e: collab_core::CollabError| e.to_string();
     // The window, exactly as the worker runs it.
     let mut engine = LoroCollabEngine::load(&fixture.base).map_err(err)?;
-    let ((), import) = timed(|| {
-        engine
-            .import_update_causally_complete(&fixture.update)
-            .map(|_| ())
-            .map_err(err)
-    })?;
+    let ((), import) = timed(|| engine.import_client_update(&fixture.update).map(|_| ()).map_err(err))?;
     let (semantic, semantic_ms) = timed(|| engine.semantic_snapshot().map_err(err))?;
     let ((), check) = timed(|| check_snapshot(&semantic, &DocumentLimits::default()).map_err(|v| format!("{v:?}")))?;
+    // The same update applied by Loro alone, on its own freshly loaded copy of the base.
+    let raw_doc = loro::LoroDoc::new();
+    collab_core::page_inline::configure(&raw_doc);
+    raw_doc.import(&fixture.base).map_err(|e| e.to_string())?;
+    let ((), raw) = timed(|| raw_doc.import(&fixture.update).map(|_| ()).map_err(|e| e.to_string()))?;
+    samples.raw.push(raw);
+    samples.guard.push((import - raw).max(0.0));
     samples.import.push(import);
     samples.semantic.push(semantic_ms);
     samples.check.push(check);
@@ -210,7 +246,7 @@ fn main() {
     );
     let _ = writeln!(
         out,
-        "model blocks | window import semantic check | floor_pre(cold) floor_post | rebuild({REBUILD_TAIL} tail)"
+        "model blocks | window import raw guard semantic check | floor_pre(cold) floor_post | rebuild({REBUILD_TAIL} tail)"
     );
     for model in models.iter().copied() {
         for blocks in SIZES {
@@ -230,9 +266,11 @@ fn main() {
             }
             let _ = writeln!(
                 out,
-                "{model:>5} {blocks:>6} | {:>6.2} {:>6.2} {:>8.2} {:>5.2} | {:>15.2} {:>10.2} | {:>8.2}",
+                "{model:>5} {blocks:>6} | {:>6.2} {:>6.2} {:>5.2} {:>5.2} {:>8.2} {:>5.2} | {:>15.2} {:>10.2} | {:>8.2}",
                 median(&mut samples.window),
                 median(&mut samples.import),
+                median(&mut samples.raw),
+                median(&mut samples.guard),
                 median(&mut samples.semantic),
                 median(&mut samples.check),
                 median(&mut samples.floor_pre),
