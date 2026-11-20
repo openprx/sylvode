@@ -22329,7 +22329,7 @@
 
 				<div
 					class={current
-						? 'rounded-card border border-line bg-surface p-3 text-fg-muted'
+						? 'rounded-card border border-line bg-surface p-3 text-fg'
 						: complete
 							? 'rounded-card border border-line bg-success-soft p-3 text-success'
 							: 'rounded-card border border-line bg-raised p-3 text-fg-muted'}
@@ -22341,7 +22341,7 @@
 					</p>
 
 					<p class="mt-1 text-sm font-medium">{$t(`forms.importSteps.${step}.title`)}</p>
-					<p class="mt-1 text-xs opacity-80">{$t(`forms.importSteps.${step}.description`)}</p>
+					<p class="mt-1 text-xs">{$t(`forms.importSteps.${step}.description`)}</p>
 				</div>
 			{/each}
 		</div>
