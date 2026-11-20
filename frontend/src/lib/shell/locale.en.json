@@ -1,0 +1,53 @@
+{
+	"shell": {
+		"destinations": {
+			"home": "Home",
+			"projects": "Projects",
+			"flow": "Flow",
+			"agents": "Agents",
+			"governance": "Governance",
+			"settings": "Settings",
+			"flowUnavailablePersonal": "Flow is not available for your account.",
+			"flowUnavailableWorkspace": "Flow is off in this workspace."
+		},
+		"sections": {
+			"groups": {
+				"account": "Account",
+				"workspace": "Workspace",
+				"instance": "Instance",
+				"project": "Project settings"
+			},
+			"chooseWorkspace": "Choose a workspace…",
+			"profile": "Profile and appearance",
+			"plugins": "My plugins",
+			"flowPackages": "Flow packages",
+			"general": "General",
+			"members": "Members and bots",
+			"webhooks": "Webhooks",
+			"workflows": "Workflows",
+			"flow": "Flow",
+			"dashboard": "Dashboard",
+			"users": "Users",
+			"system": "System",
+			"projectPlugins": "Plugins"
+		},
+		"pageTitle": {
+			"agents": "Sylvode - Agents",
+			"projectApps": "Sylvode - Apps"
+		},
+		"shortcuts": {
+			"full": "The rail holds 8 shortcuts. Remove one first.",
+			"unavailable": "No longer available to you"
+		},
+		"projectNav": {
+			"overview": "Overview",
+			"issues": "Issues",
+			"board": "Board",
+			"cycles": "Cycles",
+			"forms": "Forms",
+			"allForms": "All forms",
+			"apps": "Apps",
+			"settings": "Settings"
+		}
+	}
+}
