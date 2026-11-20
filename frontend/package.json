@@ -75,6 +75,8 @@
 		"test:component-adapters": "bun tests/component-adapters.test.ts",
 		"test:toast-routing": "bun tests/toast-routing.test.ts",
 		"test:workbench-tabs": "bun tests/workbench-tabs.test.ts",
+		"test:oauth": "bun tests/oauth-return-to.test.ts && bun tests/oauth-consent-state.test.ts && bun tests/oauth-manage.test.ts",
+		"smoke:oauth-consent": "node scripts/smoke-oauth-consent.mjs",
 		"smoke:restaurant-ordering": "node scripts/smoke-restaurant-ordering.mjs",
 		"lint": "prettier --check . && eslint .",
 		"design-lint": "node scripts/design-lint.mjs",
