@@ -25,6 +25,12 @@
 //! revocations then lock the late tokens in opposite orders; the first draft of this module had
 //! that deadlock.)
 //!
+//!
+//! Tokens that expired more than a day ago are neither locked nor marked: they cannot be used, and
+//! the worker's daily prune deletes them (and, through `parent_id ... ON DELETE SET NULL`, touches
+//! their children) without taking a grant row, so a revocation that also locked them could meet it
+//! in opposite orders.
+//!
 //! The complete order of every transaction that touches these tables is in
 //! `docs/runbooks/oauth-authorization-server.md`.
 
@@ -140,7 +146,8 @@ macro_rules! lock_statements {
                 ") ORDER BY c.code_hash FOR UPDATE"
             ),
             concat!(
-                "SELECT t.id FROM oauth_tokens t WHERE t.revoked_at IS NULL AND t.grant_id IN \
+                "SELECT t.id FROM oauth_tokens t WHERE t.revoked_at IS NULL \
+                 AND t.expires_at > now() - interval '1 day' AND t.grant_id IN \
                  (SELECT g.id FROM oauth_grants g WHERE g.status = 'active' AND ",
                 $filter,
                 ") ORDER BY t.id FOR UPDATE"
@@ -229,7 +236,8 @@ async fn revoke_locked(
     // row is held, so every token of the grant is visible here and none can be added.
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "UPDATE oauth_tokens SET revoked_at = now() WHERE grant_id = $1 AND revoked_at IS NULL",
+        "UPDATE oauth_tokens SET revoked_at = now() \
+         WHERE grant_id = $1 AND revoked_at IS NULL AND expires_at > now() - interval '1 day'",
         vec![grant_id.into()],
     ))
     .await?;
