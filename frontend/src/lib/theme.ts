@@ -4,7 +4,7 @@ import { writable, type Readable } from 'svelte/store';
 export type Theme = 'light' | 'dark' | 'system';
 
 const THEME_KEY = 'theme';
-const DEFAULT_THEME: Theme = 'light';
+export const DEFAULT_THEME: Theme = 'system';
 
 function getStoredTheme(): Theme {
 	if (!browser) return DEFAULT_THEME;
