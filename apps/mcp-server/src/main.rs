@@ -3,8 +3,8 @@
 
 use axum::{
     Extension, Json, Router,
-    extract::{Query, State},
-    http::StatusCode,
+    extract::{Query, RawQuery, State},
+    http::{HeaderMap, StatusCode},
     middleware,
     response::{
         IntoResponse, Response,
@@ -17,8 +17,8 @@ use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
 use mcp_server::oauth::{self, Caller, InboundAuth};
 use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
-use mcp_server::server::McpServer;
-use platform::config::{McpRuntime, McpTransport};
+use mcp_server::server::{McpServer, ToolSurface, requested_tool_mode};
+use platform::config::{McpRuntime, McpToolMode, McpTransport};
 use serde::Deserialize;
 use serde_json::json;
 use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
@@ -59,6 +59,9 @@ async fn run() -> anyhow::Result<()> {
         // The executable name is the stable service label of a deployment, so `serve` on any
         // transport stays silent (ADR-0020 D2).
         Commands::Serve(args) if args.flow_only => {
+            if args.tools.is_some() {
+                anyhow::bail!("--tools is not valid with serve --flow-only: Flow-only lists its own bounded tools");
+            }
             let mode = args.transport.map(McpTransport::from);
             let settings = mcp_server::flow_runtime::FlowRuntime::load(
                 cli.global.config.as_deref(),
@@ -71,14 +74,17 @@ async fn run() -> anyhow::Result<()> {
             .map_err(anyhow::Error::msg)?;
             let client = settings.client().map_err(anyhow::Error::msg)?;
             let shutdown = Shutdown::install()?;
+            // Flow-only lists its own definitions; the surface below is never consulted.
+            let surface = ToolSurface::new(McpToolMode::default(), true);
             match settings.transport {
-                McpTransport::Stdio => run_stdio(client, shutdown).await,
+                McpTransport::Stdio => run_stdio(client, surface, shutdown).await,
                 // Flow is not delegated in this release: `sva_` tokens are refused with 401.
                 McpTransport::Http => {
                     run_http(
                         &settings.bind_addr,
                         client,
                         Arc::new(InboundAuth::legacy_only()),
+                        surface,
                         shutdown,
                     )
                     .await
@@ -88,6 +94,7 @@ async fn run() -> anyhow::Result<()> {
                         &settings.bind_addr,
                         client,
                         Arc::new(InboundAuth::legacy_only()),
+                        surface,
                         shutdown,
                     )
                     .await
@@ -127,9 +134,15 @@ async fn run() -> anyhow::Result<()> {
 /// answered, or after [`SHUTDOWN_DRAIN_BOUND`] at the latest (see [`Shutdown`]).
 async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
     let shutdown = Shutdown::install()?;
+    let surface = ToolSurface::new(mcp.tool_mode, mcp.allow_write_call);
     match mcp.transport {
         McpTransport::Stdio => {
-            run_stdio(cli::build_client(mcp, Some(cli::configured_bot_token(mcp)?))?, shutdown).await
+            run_stdio(
+                cli::build_client(mcp, Some(cli::configured_bot_token(mcp)?))?,
+                surface,
+                shutdown,
+            )
+            .await
         }
         McpTransport::Http => {
             // Delegated (OAuth) callers are served on `POST /mcp/rpc` of this transport only.
@@ -141,6 +154,7 @@ async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
                 &mcp.bind_addr,
                 cli::build_client(mcp, None)?,
                 Arc::new(inbound),
+                surface,
                 shutdown,
             )
             .await
@@ -156,6 +170,7 @@ async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
                 &mcp.bind_addr,
                 cli::build_client(mcp, None)?,
                 Arc::new(InboundAuth::legacy_only()),
+                surface,
                 shutdown,
             )
             .await
@@ -288,6 +303,7 @@ async fn run_http(
     bind_addr: &str,
     client: OpenPrClient,
     inbound: Arc<InboundAuth>,
+    surface: ToolSurface,
     shutdown: Shutdown,
 ) -> anyhow::Result<()> {
     let sessions: SseSessions = Arc::new(Mutex::new(HashMap::new()));
@@ -295,6 +311,7 @@ async fn run_http(
         client,
         sessions: Arc::clone(&sessions),
         inbound,
+        surface,
     };
 
     let protected = Router::new()
@@ -318,22 +335,49 @@ async fn run_http(
 /// that could say something else would imply a setting that no longer exists.
 const INBOUND_AUTH_DESCRIPTION: &str = "per-request caller bearer credential (Authorization: Bearer), required";
 
+fn bad_tool_mode(message: &str) -> Response {
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))).into_response()
+}
+
 async fn handle_jsonrpc(
     State(state): State<SseState>,
     Extension(caller): Extension<Caller>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
     Json(req): Json<JsonRpcRequest>,
 ) -> Response {
-    oauth::handle_rpc(&state.client, &state.inbound, caller, req).await
+    // The mode only shapes what a plain caller sees; a delegated caller ignores it, but a value
+    // that is not a mode is still a malformed request.
+    let mode = match requested_tool_mode(query.as_deref(), &headers, state.surface.mode) {
+        Ok(mode) => mode,
+        Err(message) => return bad_tool_mode(&message),
+    };
+    oauth::handle_rpc(
+        &state.client,
+        &state.inbound,
+        caller,
+        state.surface.with_mode(mode),
+        req,
+    )
+    .await
 }
 
-/// Open SSE streams by session id; each entry is the sender that feeds one `GET /sse` stream.
-type SseSessions = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<SseServerEvent>>>>;
+/// One open SSE stream: the sender that feeds it, and the tool mode its connection asked for.
+struct SseSession {
+    sender: mpsc::UnboundedSender<SseServerEvent>,
+    mode: McpToolMode,
+}
+
+/// Open SSE streams by session id.
+type SseSessions = Arc<Mutex<HashMap<String, SseSession>>>;
 
 #[derive(Clone)]
 struct SseState {
     client: OpenPrClient,
     sessions: SseSessions,
     inbound: Arc<InboundAuth>,
+    /// The server's own tool mode and write switch; a connection may choose another mode.
+    surface: ToolSurface,
 }
 
 #[derive(Debug)]
@@ -366,6 +410,7 @@ async fn run_sse(
     bind_addr: &str,
     client: OpenPrClient,
     inbound: Arc<InboundAuth>,
+    surface: ToolSurface,
     shutdown: Shutdown,
 ) -> anyhow::Result<()> {
     let sessions: SseSessions = Arc::new(Mutex::new(HashMap::new()));
@@ -373,6 +418,7 @@ async fn run_sse(
         client,
         sessions: Arc::clone(&sessions),
         inbound,
+        surface,
     };
 
     let protected = Router::new()
@@ -389,14 +435,23 @@ async fn run_sse(
     serve_until_shutdown(listener, app, sessions, shutdown).await
 }
 
-async fn handle_sse_connect(
-    State(state): State<SseState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+async fn handle_sse_connect(State(state): State<SseState>, RawQuery(query): RawQuery, headers: HeaderMap) -> Response {
+    // The mode is chosen once, when the stream opens, and belongs to the session.
+    let mode = match requested_tool_mode(query.as_deref(), &headers, state.surface.mode) {
+        Ok(mode) => mode,
+        Err(message) => return bad_tool_mode(&message),
+    };
     let session_id = Uuid::new_v4().to_string();
     let endpoint = format!("/messages?session_id={session_id}");
     let (tx, rx) = mpsc::unbounded_channel::<SseServerEvent>();
 
-    state.sessions.lock().await.insert(session_id.clone(), tx.clone());
+    state.sessions.lock().await.insert(
+        session_id.clone(),
+        SseSession {
+            sender: tx.clone(),
+            mode,
+        },
+    );
 
     let _ = tx.send(SseServerEvent::Endpoint(endpoint));
 
@@ -414,7 +469,7 @@ async fn handle_sse_connect(
         Ok::<Event, Infallible>(event)
     });
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
 }
 
 /// The SSE session is only a delivery channel: the identity a request is served as comes
@@ -435,8 +490,13 @@ async fn handle_sse_message(
             Json(json!({"error": "delegated access is available on POST /mcp/rpc only"})),
         );
     };
-    let sender = state.sessions.lock().await.get(&query.session_id).cloned();
-    let Some(sender) = sender else {
+    let session = state
+        .sessions
+        .lock()
+        .await
+        .get(&query.session_id)
+        .map(|session| (session.sender.clone(), session.mode));
+    let Some((sender, mode)) = session else {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "Unknown SSE session_id"})));
     };
 
@@ -452,7 +512,7 @@ async fn handle_sse_message(
     // Kept for the log below, because `handle_request` consumes the request. A method name
     // is a protocol constant, never a credential or an argument.
     let method = req.method.clone();
-    let server = McpServer::new(state.client.acting_as(token));
+    let server = McpServer::for_surface(state.client.acting_as(token), state.surface.with_mode(mode));
     let response = server.handle_request(req).await;
     let Some(response) = response else {
         return (StatusCode::ACCEPTED, Json(json!({"status": "accepted"})));
@@ -493,10 +553,13 @@ async fn health_check() -> impl IntoResponse {
 
 #[cfg(test)]
 mod sse_delivery_tests {
-    use super::{Caller, InboundAuth, MessagesQuery, SseServerEvent, SseState, handle_sse_message};
+    use super::{
+        Caller, InboundAuth, McpToolMode, MessagesQuery, SseServerEvent, SseSession, SseState, ToolSurface,
+        handle_sse_message,
+    };
     use axum::{
         Extension, Json,
-        extract::{Query, State},
+        extract::{Query, RawQuery, State},
         http::StatusCode,
         response::IntoResponse,
     };
@@ -546,6 +609,208 @@ mod sse_delivery_tests {
         Ok((format!("http://{addr}"), calls))
     }
 
+    fn state_with_client(client: OpenPrClient, surface: ToolSurface, sessions: super::SseSessions) -> SseState {
+        SseState {
+            client,
+            sessions,
+            inbound: Arc::new(InboundAuth::legacy_only()),
+            surface,
+        }
+    }
+
+    fn state_with(surface: ToolSurface, sessions: super::SseSessions) -> Result<SseState, String> {
+        let client = OpenPrClient::new(ClientConfig {
+            base_url: "http://127.0.0.1:1".to_string(),
+            credential: None,
+            workspace_id: WORKSPACE.to_string(),
+            transport_label: "sse",
+        })?;
+        Ok(state_with_client(client, surface, sessions))
+    }
+
+    /// The tool mode is chosen when the stream opens and belongs to that session: the query, the
+    /// header or, absent both, the server's own; an invalid or conflicting choice opens no stream.
+    #[tokio::test]
+    async fn a_session_takes_the_tool_mode_its_connection_asked_for() -> TestResult {
+        use axum::http::{HeaderMap, HeaderValue};
+        let sessions: super::SseSessions = Arc::new(Mutex::new(HashMap::new()));
+        let state = state_with(ToolSurface::new(McpToolMode::Search, true), Arc::clone(&sessions))?;
+        let header = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                mcp_server::server::TOOL_MODE_HEADER,
+                HeaderValue::from_str(value).expect("header value"),
+            );
+            headers
+        };
+        let open = |query: Option<&str>, headers: HeaderMap| {
+            let state = state.clone();
+            let query = query.map(|value| format!("tools={value}"));
+            async move { super::handle_sse_connect(State(state), RawQuery(query), headers).await }
+        };
+        let modes = |sessions: &super::SseSessions| {
+            let sessions = Arc::clone(sessions);
+            async move {
+                let mut modes = sessions
+                    .lock()
+                    .await
+                    .values()
+                    .map(|session| session.mode)
+                    .collect::<Vec<_>>();
+                modes.sort_by_key(|mode| mode.as_str());
+                modes
+            }
+        };
+
+        let mut streams = Vec::new();
+        for (query, headers, expected) in [
+            (None, HeaderMap::new(), McpToolMode::Search),
+            (Some("full"), HeaderMap::new(), McpToolMode::Full),
+            (None, header("full"), McpToolMode::Full),
+            (Some("search"), header("search"), McpToolMode::Search),
+        ] {
+            let before = sessions.lock().await.len();
+            let response = open(query, headers).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            streams.push(response);
+            let all = sessions.lock().await;
+            assert_eq!(all.len(), before + 1);
+            drop(all);
+            assert!(modes(&sessions).await.contains(&expected));
+        }
+        assert_eq!(
+            modes(&sessions).await,
+            [
+                McpToolMode::Full,
+                McpToolMode::Full,
+                McpToolMode::Search,
+                McpToolMode::Search
+            ]
+        );
+
+        let before = sessions.lock().await.len();
+        for (query, headers) in [
+            (Some("everything"), HeaderMap::new()),
+            (None, header("everything")),
+            (Some("full"), header("search")),
+            (Some("full&tools=search"), HeaderMap::new()),
+        ] {
+            let response = open(query, headers).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        assert_eq!(
+            sessions.lock().await.len(),
+            before,
+            "a refused connection left a session behind"
+        );
+        // The streams own their sessions: dropping one removes its entry, so they live until here.
+        drop(streams);
+        Ok(())
+    }
+
+    /// `allow_write_call = false` holds for a session in full mode: the direct write call is
+    /// answered with the refusal and never reaches the API.
+    #[tokio::test]
+    async fn a_full_mode_session_cannot_write_when_writes_are_disabled() -> TestResult {
+        let (api_url, calls) = counting_api().await?;
+        let client = OpenPrClient::new(ClientConfig {
+            base_url: api_url,
+            credential: None,
+            workspace_id: WORKSPACE.to_string(),
+            transport_label: "sse",
+        })
+        .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        let sessions: super::SseSessions = Arc::new(Mutex::new(HashMap::new()));
+        let state = state_with_client(
+            client,
+            ToolSurface::new(McpToolMode::Search, false),
+            Arc::clone(&sessions),
+        );
+        let (tx, mut rx) = mpsc::unbounded_channel::<SseServerEvent>();
+        sessions.lock().await.insert(
+            "full".to_string(),
+            SseSession {
+                sender: tx,
+                mode: McpToolMode::Full,
+            },
+        );
+        let accepted = handle_sse_message(
+            State(state),
+            Extension(Caller::Legacy(Secret::new(CALLER_TOKEN))),
+            Query(MessagesQuery {
+                session_id: "full".to_string(),
+            }),
+            Json(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(json!(1)),
+                method: "tools/call".to_string(),
+                params: Some(json!({ "name": "labels.create", "arguments": {"name": "b", "color": "#ff0000"} })),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        let Some(SseServerEvent::Message(payload)) = rx.recv().await else {
+            return Err("no answer on the stream".into());
+        };
+        assert!(
+            payload.contains("writes are disabled for this bot by the runner configuration"),
+            "{payload}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "a refused write reached the API");
+        Ok(())
+    }
+
+    /// A message is served in the mode of the session it belongs to, whatever the server's default.
+    #[tokio::test]
+    async fn a_message_is_served_in_the_mode_of_its_session() -> TestResult {
+        let sessions: super::SseSessions = Arc::new(Mutex::new(HashMap::new()));
+        let state = state_with(ToolSurface::new(McpToolMode::Search, true), Arc::clone(&sessions))?;
+        let mut streams = HashMap::new();
+        for (id, mode) in [
+            ("search-session", McpToolMode::Search),
+            ("full-session", McpToolMode::Full),
+        ] {
+            let (tx, rx) = mpsc::unbounded_channel::<SseServerEvent>();
+            sessions
+                .lock()
+                .await
+                .insert(id.to_string(), SseSession { sender: tx, mode });
+            streams.insert(id, rx);
+        }
+        for (id, expected) in [("search-session", 9_usize), ("full-session", 153)] {
+            let accepted = handle_sse_message(
+                State(state.clone()),
+                Extension(Caller::Legacy(Secret::new(CALLER_TOKEN))),
+                Query(MessagesQuery {
+                    session_id: id.to_string(),
+                }),
+                Json(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(json!(1)),
+                    method: "tools/list".to_string(),
+                    params: None,
+                }),
+            )
+            .await
+            .into_response();
+            assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+            let Some(rx) = streams.get_mut(id) else {
+                return Err("no stream".into());
+            };
+            let Some(SseServerEvent::Message(payload)) = rx.recv().await else {
+                return Err("the answer was not pushed onto the stream".into());
+            };
+            let answer: serde_json::Value = serde_json::from_str(&payload)?;
+            let count = answer
+                .pointer("/result/tools")
+                .and_then(|tools| tools.as_array())
+                .map(Vec::len);
+            assert_eq!(count, Some(expected), "{id}");
+        }
+        Ok(())
+    }
+
     /// A message posted onto a session whose stream is gone is refused *before* its tool runs.
     ///
     /// The state is built here rather than reached through a real client, because a client
@@ -571,13 +836,20 @@ mod sse_delivery_tests {
         drop(rx);
         let session_id = "5f6a1a3c-0f4d-4a2e-9a1b-6d2f5c8e7b40".to_string();
         let mut registry = HashMap::new();
-        registry.insert(session_id.clone(), tx);
+        registry.insert(
+            session_id.clone(),
+            SseSession {
+                sender: tx,
+                mode: McpToolMode::Full,
+            },
+        );
         let sessions = Arc::new(Mutex::new(registry));
 
         let state = SseState {
             client,
             sessions: Arc::clone(&sessions),
             inbound: Arc::new(InboundAuth::legacy_only()),
+            surface: ToolSurface::new(McpToolMode::Full, true),
         };
         let refusal = handle_sse_message(
             State(state),
@@ -681,10 +953,10 @@ async fn read_headers_get_content_length(reader: &mut BufReader<tokio::io::Stdin
 /// On SIGTERM/SIGINT it stops reading. A message already being handled is finished and its
 /// answer written (bounded by [`SHUTDOWN_DRAIN_BOUND`]), stdout is flushed and the transport
 /// returns, so the process exits 0 even though the parent still holds stdin open.
-async fn run_stdio(client: OpenPrClient, shutdown: Shutdown) -> anyhow::Result<()> {
+async fn run_stdio(client: OpenPrClient, surface: ToolSurface, shutdown: Shutdown) -> anyhow::Result<()> {
     tracing::info!("MCP stdio transport started");
 
-    let server = McpServer::new(client);
+    let server = McpServer::for_surface(client, surface);
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let mut reader = BufReader::new(stdin);

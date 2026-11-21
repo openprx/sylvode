@@ -161,8 +161,17 @@ async fn rpc(
     token: Option<&str>,
     body: Value,
 ) -> Result<(StatusCode, Option<String>, Value), Box<dyn Error>> {
+    rpc_at(server, "/mcp/rpc", token, body).await
+}
+
+async fn rpc_at(
+    server: &Server,
+    path: &str,
+    token: Option<&str>,
+    body: Value,
+) -> Result<(StatusCode, Option<String>, Value), Box<dyn Error>> {
     let mut request = reqwest::Client::new()
-        .post(format!("{}/mcp/rpc", server.base))
+        .post(format!("{}{path}", server.base))
         .json(&body);
     if let Some(token) = token {
         request = request.header("Authorization", format!("Bearer {token}"));
@@ -240,6 +249,50 @@ async fn the_http_transport_serves_metadata_challenges_and_delegated_calls() -> 
     let (status, _, body) = rpc(&server, Some(&token('a')), list.clone()).await?;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(tool_names(&body).len(), 3, "{body}");
+    // The connection's tool mode never reaches a delegated caller: the same three tools whatever
+    // `?tools=` says, no search entry tools, no task tools.
+    for path in ["/mcp/rpc?tools=search", "/mcp/rpc?tools=full"] {
+        let (status, _, body) = rpc_at(&server, path, Some(&token('a')), list.clone()).await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(tool_names(&body).len(), 3, "{path}: {body}");
+        assert!(
+            tool_names(&body).iter().all(|name| !name.starts_with("sylvode_")),
+            "{path}: {body}"
+        );
+    }
+    // `initialize` of a delegated caller carries neither instructions nor the task capability.
+    let initialize = json!({"jsonrpc": "2.0", "id": 9, "method": "initialize", "params": {}});
+    let (status, _, body) = rpc(&server, Some(&token('a')), initialize.clone()).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.pointer("/result/instructions").is_none(), "{body}");
+    assert!(body.pointer("/result/capabilities/experimental").is_none(), "{body}");
+    // The task tools and the entry tools are refused to it like any other withheld tool.
+    for name in [
+        "sylvode_task_get",
+        "sylvode_task_ack",
+        "sylvode_task_progress",
+        "sylvode_task_complete",
+        "sylvode_task_fail",
+        "sylvode_overview",
+        "sylvode_search",
+        "sylvode_read",
+        "sylvode_write",
+    ] {
+        let (status, challenge, body) = rpc_at(
+            &server,
+            "/mcp/rpc?tools=search",
+            Some(&token('a')),
+            json!({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": name, "arguments": {}}}),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{name}");
+        assert!(challenge.is_none(), "{name}");
+        assert_eq!(
+            body.pointer("/error/message").and_then(Value::as_str),
+            Some("tool not available to connected applications"),
+            "{name}"
+        );
+    }
     let (status, _, _) = rpc(
         &server,
         Some(&token('a')),
@@ -286,16 +339,25 @@ async fn the_http_transport_serves_metadata_challenges_and_delegated_calls() -> 
         StatusCode::SERVICE_UNAVAILABLE
     );
 
-    // A bot token is forwarded as before: the whole registry, no forwarding credential.
-    let (status, _, body) = rpc(&server, Some(BOT_TOKEN), list).await?;
+    // A bot token is forwarded as before, no forwarding credential. The default listing is search
+    // mode (nine tools); the whole registry is the connection's explicit choice.
+    let (status, _, body) = rpc(&server, Some(BOT_TOKEN), list.clone()).await?;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(tool_names(&body).len(), 154);
-    let (status, _, _) = rpc(
-        &server,
-        Some(BOT_TOKEN),
-        json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "projects.list", "arguments": {}}}),
-    )
-    .await?;
+    assert_eq!(tool_names(&body).len(), 9, "{body}");
+    let (status, _, body) = rpc_at(&server, "/mcp/rpc?tools=full", Some(BOT_TOKEN), list).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(tool_names(&body).len(), 153);
+    let call_projects = json!({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "projects.list", "arguments": {}}
+    });
+    // Search mode refuses the direct call of a registry name and never reaches the API for it.
+    let before = seen.lock().await.len();
+    let (status, _, body) = rpc(&server, Some(BOT_TOKEN), call_projects.clone()).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.pointer("/result/isError"), Some(&json!(true)), "{body}");
+    assert!(body.to_string().contains("is not listed in search mode"), "{body}");
+    assert_eq!(seen.lock().await.len(), before, "a refused direct call reached the API");
+    let (status, _, _) = rpc_at(&server, "/mcp/rpc?tools=full", Some(BOT_TOKEN), call_projects).await?;
     assert_eq!(status, StatusCode::OK);
     {
         let seen = seen.lock().await.clone();

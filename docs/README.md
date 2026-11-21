@@ -22,14 +22,19 @@
 
 ## 2. MCP Skill Package
 
-- `../skills/openpr-mcp/SKILL.md` — Full MCP skill: workflow lines, field reference, templates.
-- `../skills/openpr-mcp/scripts/mcp-regression.py` — 154-tool registry and core-surface regression test across HTTP, stdio, and SSE.
-- `../skills/openpr-mcp/scripts/validate-mcp.sh` — Quick smoke test.
+<!-- BEGIN GENERATED: tool-count (sylvode-skillgen; do not edit) -->
+The MCP server registers 153 tools in 19 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../skills/sylvode-mcp/reference/tools.md).
+<!-- END GENERATED: tool-count -->
+
+- `../skills/sylvode-mcp/SKILL.md` — The MCP skill: task procedure, finding and calling tools, conventions, recipes.
+- `../skills/sylvode-mcp/reference/tools.md` — Every tool, one line each (generated).
+- `../skills/sylvode-mcp/scripts/mcp-regression.py` — Tool registry and core-surface regression test across HTTP, stdio, and SSE.
+- `../skills/sylvode-mcp/scripts/validate-mcp.sh` — Quick smoke test.
 
 ## 3. Source Code
 
 - `../apps/api/` — REST API server (Axum + SeaORM).
-- `../apps/mcp-server/` — MCP server (154 tools, HTTP/stdio/SSE).
+- `../apps/mcp-server/` — MCP server (HTTP/stdio/SSE).
 - `../apps/worker/` — Background task worker.
 - `../frontend/` — SvelteKit frontend.
 - `../migrations/` — PostgreSQL schema migrations.

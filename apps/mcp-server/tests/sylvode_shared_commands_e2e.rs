@@ -587,8 +587,12 @@ async fn tools_call_declares_the_cli_tools_call_surface_and_native_commands_decl
             let surfaces = std::mem::take(&mut *fixture.surfaces.lock().await);
             assert!(!surfaces.is_empty(), "{binary} {args:?}: no request reached the API");
             for (canonical, legacy) in &surfaces {
+                // (X-Sylvode-MCP-Surface, retired X-OpenPR-MCP-Surface)
                 assert_eq!(canonical, expected, "{binary} {args:?}: X-Sylvode-MCP-Surface");
-                assert_eq!(legacy, expected, "{binary} {args:?}: X-OpenPR-MCP-Surface");
+                assert_eq!(
+                    legacy, "",
+                    "{binary} {args:?}: the retired X-OpenPR-MCP-Surface header is not sent"
+                );
             }
         }
     }

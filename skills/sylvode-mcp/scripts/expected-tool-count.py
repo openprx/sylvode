@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Print the MCP registry baseline after proving it matches the live binary."""
+"""Print the MCP registry baseline after proving it matches the live binary.
+
+With `--names` print the live tool names instead, one per line; `--category NAME` restricts them to
+one catalogue category. Both come from `list-tools --json`.
+"""
 
 import hashlib
 import json
@@ -7,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 
 repo = Path(__file__).resolve().parents[3]
@@ -67,23 +72,24 @@ target_dir = Path(environment.get("CARGO_TARGET_DIR", repo / "target"))
 if not target_dir.is_absolute():
     target_dir = repo / target_dir
 binary = target_dir / "debug/list-tools"
-live = subprocess.run([binary], cwd=repo, text=True, capture_output=True, check=False)
+live = subprocess.run([binary, "--json"], cwd=repo, text=True, capture_output=True, check=False)
 if live.returncode != 0:
     raise SystemExit(f"cannot execute live MCP registry:\n{live.stdout}{live.stderr}")
 
-names = sorted(set(re.findall(r"(?m)^  ([A-Za-z][A-Za-z0-9_.]*)$", live.stdout)))
-declared = re.search(r"Available MCP Tools \((\d+) total\)", live.stdout)
+rows = json.loads(live.stdout)
+names = sorted({row["name"] for row in rows})
 live_hash = hashlib.sha256("\n".join(names).encode()).hexdigest()
-if (
-    declared is None
-    or int(declared.group(1)) != len(names)
-    or len(names) != expected_count
-    or live_hash != expected_hash
-):
+if len(names) != len(rows) or len(names) != expected_count or live_hash != expected_hash:
     raise SystemExit(
         "MCP tool registry drift: "
         f"baseline count/hash={expected_count}/{expected_hash}, "
         f"live count/hash={len(names)}/{live_hash}"
     )
 
-print(expected_count)
+if "--names" in sys.argv[1:]:
+    category = sys.argv[sys.argv.index("--category") + 1] if "--category" in sys.argv[1:] else None
+    for row in rows:
+        if category is None or row["category"] == category:
+            print(row["name"])
+else:
+    print(expected_count)

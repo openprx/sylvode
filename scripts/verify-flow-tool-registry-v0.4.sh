@@ -291,7 +291,7 @@ if [[ "$LIVE_COUNT" != "$CONTRACT_EXPECTED" && "$REBASE_VALID" != true ]]; then
 fi
 
 set +e
-DERIVED_COUNT="$(CARGO_BUILD_JOBS=4 python3 "$REPO_ROOT/skills/openpr-mcp/scripts/expected-tool-count.py" 2>"$EVIDENCE_ROOT/expected-tool-count.err.log")"
+DERIVED_COUNT="$(CARGO_BUILD_JOBS=4 python3 "$REPO_ROOT/skills/sylvode-mcp/scripts/expected-tool-count.py" 2>"$EVIDENCE_ROOT/expected-tool-count.err.log")"
 DERIVED_COUNT_EXIT=$?
 set -e
 if [[ $DERIVED_COUNT_EXIT -ne 0 ]]; then
@@ -334,29 +334,29 @@ EXTRA_SCOPES="$(jq -c -n --argjson live "$LIVE_JSON" --argjson pol "$POLICY_JSON
 # shellcheck disable=SC2016
 TOUCHPOINTS=(
   'registry_assertion|apps/mcp-server/src/tools/mod.rs|derived|TOOL_REGISTRY_BASELINE|count and names hash derive from the machine baseline'
-  'skill_guide_heading|apps/mcp-server/src/server.rs|pinned|## Tools \((\d+)\)\n|embedded markdown cannot load a file at runtime and is pinned by this gate'
+  'skill_guide_heading|apps/mcp-server/src/guides.rs|retired|-|the embedded guides are generated files (sylvode-skillgen --check), not a constant with a count'
   'client_comment|apps/mcp-server/src/client/mod.rs|retired|-|numeric client comment was replaced by every live registry tool because the client is count agnostic'
-  'root_readme_overview|README.md|pinned|\*\*MCP server\*\* — (\d+) tools|current user documentation'
-  'root_readme_tools_heading|README.md|pinned|### Tools \((\d+)\)|current user documentation'
+  'root_readme_overview|README.md|retired|-|the feature bullet no longer carries a number'
+  'root_readme_tools_heading|README.md|pinned|registers (\d+) tools in|generated tool-count block (sylvode-skillgen)'
   'root_readme_assert|README.md|retired|-|obsolete Rust snippet was removed when README switched to executable list-tools guidance'
-  'root_readme_tools_call|README.md|pinned|`tools call` reaches any of the (\d+) tools|current user documentation'
+  'root_readme_tools_call|README.md|retired|-|the sentence no longer carries a number'
   'root_readme_verification|README.md|retired|-|obsolete verification-table prose was removed with the old table'
-  'mcp_readme|apps/mcp-server/README.md|pinned|\*\*(\d+) MCP Tools\*\*|current user documentation'
-  'mcp_agents_overview|apps/mcp-server/AGENTS.md|pinned|MCP server exposes (\d+) tools|current agent documentation'
-  'mcp_agents_regression|apps/mcp-server/AGENTS.md|pinned|test all (\d+) tools across 3 transports|current agent documentation'
-  'docs_index_server|docs/README.md|pinned|MCP server \((\d+) tools|current docs index'
-  'docs_index_regression|docs/README.md|pinned|(\d+)-tool registry|current docs index'
-  'forms_implementation_map|docs/universal-forms-implementation-map.md|pinned|(\d+)-tool MCP registry|current implementation map'
+  'mcp_readme|apps/mcp-server/README.md|pinned|registers (\d+) tools in|generated tool-table block (sylvode-skillgen)'
+  'mcp_agents_overview|apps/mcp-server/AGENTS.md|pinned|tool catalogue has (\d+) tools in|generated tool-overview block (sylvode-skillgen)'
+  'mcp_agents_regression|apps/mcp-server/AGENTS.md|retired|-|the sentence no longer carries a number'
+  'docs_index_server|docs/README.md|pinned|registers (\d+) tools in|generated tool-count block (sylvode-skillgen)'
+  'docs_index_regression|docs/README.md|retired|-|the line no longer carries a number'
+  'forms_implementation_map|docs/universal-forms-implementation-map.md|retired|-|the cell no longer carries a number'
   'test_mcp_sh|scripts/test-mcp.sh|derived|expected-tool-count\.py|runtime exact count derives from the machine baseline reader'
-  'skill_md_enumerate|skills/openpr-mcp/SKILL.md|pinned|enumerate all (\d+) tools|installed skill prose'
-  'skill_md_regression|skills/openpr-mcp/SKILL.md|pinned|checks the (\d+)-tool registry|installed skill prose'
-  'validate_mcp_sh_guard|skills/openpr-mcp/scripts/validate-mcp.sh|derived|-eq "\$EXPECTED_TOOL_COUNT"|runtime guard derives from the machine baseline reader'
-  'validate_mcp_sh_message|skills/openpr-mcp/scripts/validate-mcp.sh|derived|expected exactly \$EXPECTED_TOOL_COUNT tools|runtime failure reports the derived count'
-  'mcp_regression_docstring|skills/openpr-mcp/scripts/mcp-regression.py|derived|snapshot-derived registry checks|description no longer duplicates a number'
-  'mcp_regression_predicate|skills/openpr-mcp/scripts/mcp-regression.py|derived|def registry_matches_expected_tools_with_forms_and_plugins|predicate no longer bakes a number into its name'
-  'mcp_regression_len|skills/openpr-mcp/scripts/mcp-regression.py|derived|len\(tools\) == EXPECTED_TOOL_COUNT|all three transports use the derived count'
-  'mcp_regression_label|skills/openpr-mcp/scripts/mcp-regression.py|derived|tools/list\.registry_\{EXPECTED_TOOL_COUNT\}|label renders the derived count'
-  'mcp_regression_banner|skills/openpr-mcp/scripts/mcp-regression.py|derived|print\(f"[^"\n]*\{EXPECTED_TOOL_COUNT\} registered tools|banner renders the derived count'
+  'skill_md_enumerate|skills/sylvode-mcp/SKILL.md|pinned|Sylvode has (\d+) tools in|generated tool-overview block (sylvode-skillgen)'
+  'skill_md_regression|skills/sylvode-mcp/SKILL.md|retired|-|the skill no longer describes the regression script'
+  'validate_mcp_sh_guard|skills/sylvode-mcp/scripts/validate-mcp.sh|derived|-eq "\$EXPECTED_TOOL_COUNT"|runtime guard derives from the machine baseline reader'
+  'validate_mcp_sh_message|skills/sylvode-mcp/scripts/validate-mcp.sh|derived|expected exactly \$EXPECTED_TOOL_COUNT tools|runtime failure reports the derived count'
+  'mcp_regression_docstring|skills/sylvode-mcp/scripts/mcp-regression.py|derived|snapshot-derived registry checks|description no longer duplicates a number'
+  'mcp_regression_predicate|skills/sylvode-mcp/scripts/mcp-regression.py|derived|def registry_matches_expected_tools_with_forms_and_plugins|predicate no longer bakes a number into its name'
+  'mcp_regression_len|skills/sylvode-mcp/scripts/mcp-regression.py|derived|len\(tools\) == EXPECTED_TOOL_COUNT|all three transports use the derived count'
+  'mcp_regression_label|skills/sylvode-mcp/scripts/mcp-regression.py|derived|tools/list\.registry_\{EXPECTED_TOOL_COUNT\}|label renders the derived count'
+  'mcp_regression_banner|skills/sylvode-mcp/scripts/mcp-regression.py|derived|print\(f"[^"\n]*\{EXPECTED_TOOL_COUNT\} registered tools|banner renders the derived count'
   'audit_production_readiness|scripts/audit-universal-forms-production-readiness.sh|derived|EXPECTED_TOOL_COUNT=.*expected-tool-count\.py|audit derives the live-validated baseline'
   'audit_source_coverage|scripts/audit-universal-forms-source-coverage.sh|derived|EXPECTED_TOOL_COUNT=.*expected-tool-count\.py|audit derives the live-validated baseline'
   'audit_docs|scripts/audit-universal-forms-docs.sh|derived|EXPECTED_TOOL_COUNT=.*expected-tool-count\.py|audit derives the live-validated baseline'

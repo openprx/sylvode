@@ -23,7 +23,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use support::{ConfigFile, McpSettings, write_config};
+use support::{ConfigFile, FULL_TOOLS, McpSettings, write_config_with_extra_mcp_keys};
 use tokio::process::{Child, Command};
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -188,13 +188,16 @@ impl HttpServer {
     /// `bot_token` is `None` for the deployments this file is about: a networked MCP server
     /// holds no identity, which is half of why a request cannot be served without one.
     fn spawn(api_url: &str, bind_addr: &str, bot_token: Option<&str>) -> Result<Self, Box<dyn Error>> {
-        let config = write_config(&McpSettings {
-            api_url,
-            bot_token,
-            workspace_id: WORKSPACE,
-            transport: Some("http"),
-            bind_addr: Some(bind_addr),
-        })?;
+        let config = write_config_with_extra_mcp_keys(
+            &McpSettings {
+                api_url,
+                bot_token,
+                workspace_id: WORKSPACE,
+                transport: Some("http"),
+                bind_addr: Some(bind_addr),
+            },
+            FULL_TOOLS,
+        )?;
 
         let child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])
@@ -484,13 +487,16 @@ async fn stdio_calls_the_backend_as_its_configured_bot_token() -> TestResult {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let (api_url, probe) = spawn_api().await?;
-    let config = write_config(&McpSettings {
-        api_url: &api_url,
-        bot_token: Some(CONFIGURED_TOKEN),
-        workspace_id: WORKSPACE,
-        transport: Some("stdio"),
-        bind_addr: None,
-    })?;
+    let config = write_config_with_extra_mcp_keys(
+        &McpSettings {
+            api_url: &api_url,
+            bot_token: Some(CONFIGURED_TOKEN),
+            workspace_id: WORKSPACE,
+            transport: Some("stdio"),
+            bind_addr: None,
+        },
+        FULL_TOOLS,
+    )?;
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
         .args(["serve", "--config"])

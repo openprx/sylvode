@@ -274,8 +274,6 @@ async function tokenCanAccessWorkspace(botToken, workspaceId) {
     {
       'X-Sylvode-MCP-Surface': 'mcp_http',
       'X-Sylvode-MCP-Tool': 'projects.list',
-      'X-OpenPR-MCP-Surface': 'mcp_http',
-      'X-OpenPR-MCP-Tool': 'projects.list',
     },
   );
   return result.response.ok && result.payload?.code === 0;
@@ -655,7 +653,10 @@ async function verify() {
     return;
   }
 
-  const response = await fetchWithTimeout(mcpUrl, {
+  // projects.list is called by its registry name, which needs the whole registry listed.
+  const callUrl = new URL(mcpUrl);
+  callUrl.searchParams.set('tools', 'full');
+  const response = await fetchWithTimeout(callUrl.toString(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

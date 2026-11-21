@@ -12,6 +12,7 @@ use mcp_server::{
     protocol::{JsonRpcRequest, ToolContent},
     server::McpServer,
 };
+use platform::config::McpToolMode;
 use platform::config::{McpTransport, Secret};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -169,7 +170,7 @@ fn text(result: &mcp_server::protocol::CallToolResult) -> String {
 #[tokio::test]
 async fn static_registry_and_unrelated_dispatch_have_no_home_side_effect() {
     let (client, state, task) = setup().await.expect("mock fixture");
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let response = server
         .handle_request(JsonRpcRequest {
             jsonrpc: "2.0".into(),
@@ -201,7 +202,7 @@ async fn static_registry_and_unrelated_dispatch_have_no_home_side_effect() {
 async fn acting_as_users_resolve_personal_scope_per_call_and_never_use_workspace_defaults() {
     let (client, state, task) = setup().await.expect("mock fixture");
     for token in ["fixture-user-a", "fixture-user-b"] {
-        let server = McpServer::new(client.acting_as(Secret::new(token)));
+        let server = McpServer::new(client.acting_as(Secret::new(token)), McpToolMode::Full);
         let result = server.call_tool("objects.query", json!({"personal":true})).await;
         assert_ne!(result.is_error, Some(true), "{}", text(&result));
     }
@@ -222,7 +223,7 @@ async fn acting_as_users_resolve_personal_scope_per_call_and_never_use_workspace
 #[tokio::test]
 async fn create_sends_real_scope_and_typed_command_keeps_backend_business_denial() {
     let (client, state, task) = setup().await.expect("mock fixture");
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let result = server
         .call_tool(
             "objects.create",
@@ -258,12 +259,12 @@ async fn ambiguous_selectors_and_opr_personal_calls_fail_before_home_lookup() {
         json!({}),
         json!({"object_id":OBJECT}),
     ] {
-        let result = McpServer::new(client.acting_as(Secret::new("fixture-user-a")))
+        let result = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full)
             .call_tool("objects.query", args)
             .await;
         assert_eq!(result.is_error, Some(true));
     }
-    let result = McpServer::new(client.acting_as(Secret::new("opr_fixture_only")))
+    let result = McpServer::new(client.acting_as(Secret::new("opr_fixture_only")), McpToolMode::Full)
         .call_tool("objects.query", json!({"personal":true}))
         .await;
     assert_eq!(result.is_error, Some(true));
@@ -274,7 +275,7 @@ async fn ambiguous_selectors_and_opr_personal_calls_fail_before_home_lookup() {
 async fn legacy_project_policy_still_denies_actual_owner_even_without_a_claim() {
     let (client, state, task) = setup().await.expect("mock fixture");
     state.lock().await.project = true;
-    let result = McpServer::new(client.acting_as(Secret::new("fixture-user-a")))
+    let result = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full)
         .call_tool("objects.get", json!({"object_id":OBJECT}))
         .await;
     assert_eq!(result.is_error, Some(true));
@@ -304,7 +305,7 @@ fn explicit_flow_runtime_needs_no_workspace_and_never_reinterprets_bot_secret() 
 async fn parented_creation_uses_actual_parent_project_policy_not_an_omitted_claim() {
     let (client, state, task) = setup().await.expect("mock fixture");
     state.lock().await.project = true;
-    let result=McpServer::new(client.acting_as(Secret::new("fixture-user-a"))).call_tool("objects.create",json!({"workspace_id":WORKSPACE,"parent_id":OBJECT,"type":"page","title":"Child","idempotency_key":"child-1"})).await;
+    let result=McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full).call_tool("objects.create",json!({"workspace_id":WORKSPACE,"parent_id":OBJECT,"type":"page","title":"Child","idempotency_key":"child-1"})).await;
     assert_eq!(result.is_error, Some(true));
     assert!(text(&result).contains("disabled by project agent policy"));
     let calls = &state.lock().await.calls;
@@ -316,7 +317,7 @@ async fn parented_creation_uses_actual_parent_project_policy_not_an_omitted_clai
 #[tokio::test]
 async fn parent_scope_resolution_never_probes_a_shared_sources_private_navigator() {
     let (client, state, task) = setup().await.expect("mock fixture");
-    let result = McpServer::new(client.acting_as(Secret::new("fixture-user-a")))
+    let result = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full)
         .call_tool(
             "objects.create",
             json!({"scope_id":SA,"parent_id":OBJECT,"type":"page","title":"Child","idempotency_key":"child-1"}),
@@ -337,7 +338,7 @@ async fn parent_scope_resolution_never_probes_a_shared_sources_private_navigator
 async fn typed_resource_commands_never_offer_a_raw_or_generic_block_bypass() {
     let (client, state, task) = setup().await.expect("mock fixture");
     state.lock().await.resource_type = Some("collection".into());
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let result=server.call_tool("objects.command",json!({"object_id":OBJECT,"command":{"type":"semantic_patch","payload":{"operations":[]}},"idempotency_key":"typed-1"})).await;
     assert_eq!(result.is_error, Some(true));
     assert!(text(&result).contains("typed server commands"));
@@ -389,7 +390,7 @@ fn cli_flow_entry_keeps_credentials_redacted_and_schema_listing_explicit() {
 async fn opr_explicit_workspace_keeps_legacy_adapter_and_backend_write_denial() {
     let (mut client, state, task) = setup().await.expect("mock fixture");
     client.workspace_id = "99999999-9999-4999-8999-999999999999".into();
-    let server = McpServer::new(client.acting_as(Secret::new("opr_fixture_only")));
+    let server = McpServer::new(client.acting_as(Secret::new("opr_fixture_only")), McpToolMode::Full);
     let result = server
         .call_tool("objects.query", json!({"workspace_id":WORKSPACE,"unprojected":true}))
         .await;
@@ -416,7 +417,7 @@ async fn opr_explicit_workspace_keeps_legacy_adapter_and_backend_write_denial() 
 #[tokio::test]
 async fn canonical_object_claims_cannot_choose_an_unrelated_workspace_or_scope() {
     let (client, state, task) = setup().await.expect("mock fixture");
-    let result = McpServer::new(client.acting_as(Secret::new("fixture-user-a")))
+    let result = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full)
         .call_tool("objects.get", json!({"object_id":OBJECT,"scope_id":SB}))
         .await;
     assert_eq!(result.is_error, Some(true));
@@ -541,7 +542,7 @@ fn private_token_file_and_flow_config_do_not_weaken_legacy_workspace_validation(
 #[tokio::test]
 async fn human_legacy_search_uses_canonical_scope_after_explicit_partition_validation() {
     let (client, state, task) = setup().await.expect("mock fixture");
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let denied = server
         .call_tool("objects.search", json!({"workspace_id":WORKSPACE,"q":"needle"}))
         .await;
@@ -562,7 +563,7 @@ async fn human_legacy_search_uses_canonical_scope_after_explicit_partition_valid
 #[tokio::test]
 async fn explicit_editor_initializer_requires_captured_frontier_and_no_client_content() {
     let (client, state, task) = setup().await.expect("mock fixture");
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     for args in [
         json!({"object_id":OBJECT,"command":{"type":"initialize_editor_doc","payload":{}},"idempotency_key":"init"}),
         json!({"object_id":OBJECT,"command":{"type":"initialize_editor_doc","payload":{"blocks":[]}},"expected_frontier":"fenced","idempotency_key":"init"}),
@@ -597,7 +598,7 @@ async fn explicit_editor_initializer_requires_captured_frontier_and_no_client_co
 #[tokio::test]
 async fn metadata_relation_commands_preserve_payload_without_fabricating_document_frontier() {
     let (client, state, task) = setup().await.expect("mock fixture");
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let payload = json!({"target_object_id":SB,"relation_type":"reference","properties":{"label":"related"}});
     let refused=server.call_tool("objects.command",json!({"object_id":OBJECT,"command":{"type":"link","payload":payload},"expected_frontier":"incorrect-head","idempotency_key":"link"})).await;
     assert_eq!(refused.is_error, Some(true));
@@ -660,7 +661,7 @@ async fn every_link_move_and_record_target_project_is_checked_before_mutation() 
             } else {
                 json!({"target_object_id":SB,"relation_type":"reference"})
             };
-            let server = McpServer::new(client.acting_as(Secret::new(credential)));
+            let server = McpServer::new(client.acting_as(Secret::new(credential)), McpToolMode::Full);
             let result=server.call_tool("objects.command",json!({"object_id":OBJECT,"command":{"type":kind,"payload":payload},"idempotency_key":"target-gate"})).await;
             assert_eq!(result.is_error, Some(true), "{kind}: {}", text(&result));
             assert!(
@@ -700,7 +701,7 @@ async fn unlink_uses_actual_visible_relation_target_and_missing_target_fails_clo
             }
             drop(mock);
         }
-        let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+        let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
         let result=server.call_tool("objects.command",json!({"object_id":OBJECT,"command":{"type":"unlink","payload":{"relation_id":SB}},"idempotency_key":"unlink-gate"})).await;
         assert_eq!(result.is_error, Some(true));
         assert!(
@@ -728,7 +729,7 @@ async fn typed_relation_values_resolve_only_declared_relation_fields_and_actual_
         mock.fields.push(json!({"field_id":SA,"type":"relation"}));
         mock.deny_only_project = Some(OTHER_PROJECT.into());
     }
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let result = server
         .call_tool(
             "records.create",
@@ -756,7 +757,7 @@ async fn permitted_multi_project_targets_dispatch_and_plain_text_ids_are_not_own
             .insert(SB.into(), legacy_resource(SB, OTHER_PROJECT, "page"));
         mock.deny_only_project = Some(SA.into()); // neither real project is denied
     }
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let result=server.call_tool("objects.command",json!({"object_id":OBJECT,"command":{"type":"link","payload":{"target_object_id":SB,"relation_type":"reference"}},"idempotency_key":"both-allowed"})).await;
     assert_ne!(result.is_error, Some(true), "{}", text(&result));
     {
@@ -792,7 +793,7 @@ async fn missing_target_project_metadata_is_not_inferred_as_unprojected() {
         );
         mock.deny_only_project = Some(OTHER_PROJECT.into());
     }
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let result=server.call_tool("objects.command",json!({"object_id":OBJECT,"command":{"type":"link","payload":{"target_object_id":SB,"relation_type":"reference"}},"idempotency_key":"missing-owner"})).await;
     assert_eq!(result.is_error, Some(true));
     assert!(
@@ -826,7 +827,7 @@ async fn generic_command_alias_cannot_bypass_denied_existing_patch_or_link_tool_
             mock.resources.insert(SB.into(), legacy_resource(SB, PROJECT, "page"));
             mock.enabled_tools = Some(vec!["objects.command".into()]);
         }
-        let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+        let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
         let result=server.call_tool("objects.command",json!({"object_id":OBJECT,"command":{"type":kind,"payload":payload},"idempotency_key":"baseline-policy"})).await;
         assert_eq!(result.is_error, Some(true));
         assert!(text(&result).contains(baseline), "{}", text(&result));
@@ -838,7 +839,7 @@ async fn generic_command_alias_cannot_bypass_denied_existing_patch_or_link_tool_
 #[tokio::test]
 async fn existing_social_and_access_names_use_scope_native_verbs_without_default_workspace() {
     let (client, state, task) = setup().await.expect("mock fixture");
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     for (name, args, verb, suffix) in [
         ("objects.grants_get", json!({"object_id":OBJECT}), "GET", "grants"),
         (
@@ -963,7 +964,7 @@ async fn named_patch_and_link_keep_existing_policy_names_without_requiring_gener
             mock.resources.insert(SB.into(), legacy_resource(SB, PROJECT, "page"));
             mock.enabled_tools = Some(vec![name.to_owned()]);
         }
-        let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+        let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
         let result = server.call_tool(name, args).await;
         assert_ne!(result.is_error, Some(true), "{}", text(&result));
         assert!(state.lock().await.calls.iter().any(|call| call.0 == "POST"));
@@ -978,7 +979,7 @@ async fn forms_reference_checks_actual_destination_project_fresh_and_cleanup_doe
         mock.forms.insert(SB.into(), json!({"id":SB,"project_id":PROJECT}));
         mock.deny_only_project = Some(OTHER_PROJECT.into());
     }
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let args = json!({"object_id":OBJECT,"target_type":"form","target_id":SB,"idempotency_key":"reference"});
     let first = server.call_tool("objects.reference", args.clone()).await;
     assert_ne!(first.is_error, Some(true), "{}", text(&first));
@@ -1036,7 +1037,7 @@ async fn form_record_reference_uses_real_parent_form_project_and_scope_lists_are
             .insert(SA.into(), json!({"id":SA,"project_id":OTHER_PROJECT}));
         mock.deny_only_project = Some(OTHER_PROJECT.into());
     }
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let result = server
         .call_tool(
             "objects.reference",
@@ -1135,7 +1136,7 @@ async fn existing_read_options_are_forwarded_or_explicitly_rejected_without_sile
         format!("/api/v2/flow/collections/{OBJECT}?at_seq=3"),
         json!({"code":400,"error_code":"invalid_update","message":"not current","data":null}),
     );
-    let server = McpServer::new(caller);
+    let server = McpServer::new(caller, McpToolMode::Full);
     let rejected = server
         .call_tool("collections.describe", json!({"collection_id":OBJECT,"at_seq":3}))
         .await;
@@ -1165,7 +1166,7 @@ async fn atomic_embed_derives_actual_page_context_without_home_and_never_treats_
         OBJECT.into(),
         json!({"id":OBJECT,"scope_id":SB,"workspace_id":null,"project_id":null,"object_type":"page"}),
     );
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let result = server
         .call_tool(
             "objects.create",
@@ -1209,7 +1210,7 @@ async fn embedded_creation_checks_actual_page_project_and_both_existing_mutation
             .insert(OBJECT.into(), legacy_resource(OBJECT, OTHER_PROJECT, "page"));
         mock.enabled_tools = Some(vec!["objects.create".into()]);
     }
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let args = json!({"type":"collection","title":"embedded","embed_page_id":OBJECT,"idempotency_key":"embed-policy"});
     let result = server.call_tool("objects.create", args).await;
     assert_eq!(result.is_error, Some(true));
@@ -1227,7 +1228,7 @@ async fn embedded_creation_checks_actual_page_project_and_both_existing_mutation
 #[tokio::test]
 async fn personal_move_and_navigation_queries_use_canonical_handlers_without_legacy_fallback() {
     let (client, state, task) = setup().await.expect("mock fixture");
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let moved = server
         .call_tool(
             "objects.move",
@@ -1288,7 +1289,7 @@ async fn record_only_schema_and_patch_use_bounded_record_contract_without_parent
         mock.fields.push(json!({"field_id":SB,"type":"text","label":"visible"}));
         mock.deny_only_project = Some(OTHER_PROJECT.into());
     }
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     let schema = server
         .call_tool("collections.describe", json!({"record_id":OBJECT}))
         .await;
@@ -1313,7 +1314,7 @@ async fn record_only_context_readiness_and_opaque_revision_are_not_silently_bypa
         OBJECT.into(),
         json!({"id":OBJECT,"scope_id":SA,"project_id":null,"object_type":"record","record_context_supported":false}),
     );
-    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")));
+    let server = McpServer::new(client.acting_as(Secret::new("fixture-user-a")), McpToolMode::Full);
     assert_eq!(
         server
             .call_tool("collections.describe", json!({"record_id":OBJECT}))

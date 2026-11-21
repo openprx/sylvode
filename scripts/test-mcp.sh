@@ -47,7 +47,7 @@ done
 # Keep the default coupled to the repository-owned registry snapshot. An explicit override is
 # still useful when testing a deliberately rebased external deployment, but stale source defaults
 # must fail the same exact-count comparison below instead of silently weakening it.
-EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/openpr-mcp/scripts/expected-tool-count.py")}"
+EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/sylvode-mcp/scripts/expected-tool-count.py")}"
 
 # Probe the external runtime before reading credentials. A closed compose port
 # is an environment precondition failure, not evidence that MCP product code
@@ -144,7 +144,7 @@ echo ""
 
 # Test 2: List Tools
 echo "📋 Test 2: List Available Tools"
-tools_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc" \
+tools_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
@@ -236,7 +236,7 @@ echo ""
 
 # Test 3: Call a stable read-only tool.
 echo "📋 Test 3: Invoke Tool (projects.list)"
-call_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc" \
+call_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}')

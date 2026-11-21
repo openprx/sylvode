@@ -176,7 +176,7 @@ def run_stdio(binary: str, config: str, requests: list[dict], timeout: float) ->
     responses, errors = [], []
     try:
         proc = subprocess.Popen(  # noqa: S603 -- the binary path comes from the caller, not input
-            [binary, "--config", config, "serve", "--transport", "stdio"],
+            [binary, "--config", config, "serve", "--transport", "stdio", "--tools", "full"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -47,6 +47,7 @@ mod tests {
 
     fn tool(name: &str) -> ToolDefinition {
         ToolDefinition {
+            annotations: None,
             name: name.to_string(),
             description: String::new(),
             input_schema: json!({ "type": "object" }),

@@ -1,0 +1,767 @@
+[
+  {
+    "access": "read",
+    "category": "projects",
+    "name": "projects.list"
+  },
+  {
+    "access": "read",
+    "category": "projects",
+    "name": "projects.get"
+  },
+  {
+    "access": "write",
+    "category": "projects",
+    "name": "projects.create"
+  },
+  {
+    "access": "write",
+    "category": "projects",
+    "name": "projects.update"
+  },
+  {
+    "access": "write",
+    "category": "projects",
+    "name": "projects.delete"
+  },
+  {
+    "access": "read",
+    "category": "project_types",
+    "name": "project_types.list"
+  },
+  {
+    "access": "read",
+    "category": "project_types",
+    "name": "project_types.get"
+  },
+  {
+    "access": "read",
+    "category": "scenario_templates",
+    "name": "scenario_templates.list"
+  },
+  {
+    "access": "read",
+    "category": "scenario_templates",
+    "name": "scenario_templates.get"
+  },
+  {
+    "access": "write",
+    "category": "scenario_templates",
+    "name": "scenario_templates.install"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "forms.list"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "forms.get"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "forms.create"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "forms.create_from_template"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "forms.update_schema"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "forms.duplicate"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "forms.schema_summary"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "forms.field_usage"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "forms.field_dependencies"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_schema_versions.list"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_schema_versions.get"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_permissions.get"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_permissions.update"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_views.list"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_attachments.list"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_attachments.create"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_attachments.archive"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_attachments.restore"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_records.list"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.export"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.import_preview"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.import_commit"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_records.get"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.create"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.update"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.link"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_records.relation_targets"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_records.children"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.child_create"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.child_update"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.child_archive"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "form_records.child_restore"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "form_records.aggregate"
+  },
+  {
+    "access": "read",
+    "category": "forms",
+    "name": "events.tail"
+  },
+  {
+    "access": "read",
+    "category": "plugins",
+    "name": "plugins.list"
+  },
+  {
+    "access": "read",
+    "category": "plugins",
+    "name": "plugins.get"
+  },
+  {
+    "access": "write",
+    "category": "plugins",
+    "name": "plugins.install"
+  },
+  {
+    "access": "write",
+    "category": "plugins",
+    "name": "plugins.invoke"
+  },
+  {
+    "access": "read",
+    "category": "plugins",
+    "name": "plugin_invocations.list"
+  },
+  {
+    "access": "read",
+    "category": "context",
+    "name": "context.get_project"
+  },
+  {
+    "access": "read",
+    "category": "context",
+    "name": "context.get_governance"
+  },
+  {
+    "access": "read",
+    "category": "context",
+    "name": "context.get_agent_policy"
+  },
+  {
+    "access": "read",
+    "category": "work_items",
+    "name": "work_items.list"
+  },
+  {
+    "access": "read",
+    "category": "work_items",
+    "name": "work_items.get"
+  },
+  {
+    "access": "read",
+    "category": "work_items",
+    "name": "work_items.get_by_identifier"
+  },
+  {
+    "access": "write",
+    "category": "work_items",
+    "name": "work_items.create"
+  },
+  {
+    "access": "write",
+    "category": "work_items",
+    "name": "work_items.update"
+  },
+  {
+    "access": "write",
+    "category": "work_items",
+    "name": "work_items.add_label"
+  },
+  {
+    "access": "write",
+    "category": "work_items",
+    "name": "work_items.remove_label"
+  },
+  {
+    "access": "read",
+    "category": "work_items",
+    "name": "work_items.list_labels"
+  },
+  {
+    "access": "write",
+    "category": "work_items",
+    "name": "work_items.delete"
+  },
+  {
+    "access": "read",
+    "category": "work_items",
+    "name": "work_items.search"
+  },
+  {
+    "access": "read",
+    "category": "comments",
+    "name": "comments.list"
+  },
+  {
+    "access": "write",
+    "category": "comments",
+    "name": "comments.create"
+  },
+  {
+    "access": "write",
+    "category": "comments",
+    "name": "comments.delete"
+  },
+  {
+    "access": "write",
+    "category": "files",
+    "name": "files.upload"
+  },
+  {
+    "access": "read",
+    "category": "proposals",
+    "name": "proposals.list"
+  },
+  {
+    "access": "read",
+    "category": "proposals",
+    "name": "proposals.get"
+  },
+  {
+    "access": "write",
+    "category": "proposals",
+    "name": "proposals.create"
+  },
+  {
+    "access": "write",
+    "category": "proposals",
+    "name": "proposals.create_from_result"
+  },
+  {
+    "access": "write",
+    "category": "proposals",
+    "name": "check_results.create"
+  },
+  {
+    "access": "read",
+    "category": "release",
+    "name": "release.readiness.get"
+  },
+  {
+    "access": "read",
+    "category": "workspace",
+    "name": "members.list"
+  },
+  {
+    "access": "read",
+    "category": "workspace",
+    "name": "bot_operation_logs.list"
+  },
+  {
+    "access": "write",
+    "category": "sprints",
+    "name": "sprints.create"
+  },
+  {
+    "access": "read",
+    "category": "sprints",
+    "name": "sprints.list"
+  },
+  {
+    "access": "write",
+    "category": "sprints",
+    "name": "sprints.update"
+  },
+  {
+    "access": "write",
+    "category": "sprints",
+    "name": "sprints.delete"
+  },
+  {
+    "access": "write",
+    "category": "labels",
+    "name": "labels.create"
+  },
+  {
+    "access": "read",
+    "category": "labels",
+    "name": "labels.list"
+  },
+  {
+    "access": "read",
+    "category": "labels",
+    "name": "labels.list_by_project"
+  },
+  {
+    "access": "write",
+    "category": "labels",
+    "name": "labels.update"
+  },
+  {
+    "access": "write",
+    "category": "labels",
+    "name": "labels.delete"
+  },
+  {
+    "access": "write",
+    "category": "work_items",
+    "name": "work_items.add_labels"
+  },
+  {
+    "access": "read",
+    "category": "workspace",
+    "name": "search.all"
+  },
+  {
+    "access": "read",
+    "category": "code",
+    "name": "code.task_context.get"
+  },
+  {
+    "access": "write",
+    "category": "code",
+    "name": "code.change_proposal.create"
+  },
+  {
+    "access": "write",
+    "category": "documents",
+    "name": "documents.extract_summary"
+  },
+  {
+    "access": "write",
+    "category": "documents",
+    "name": "documents.review_risk"
+  },
+  {
+    "access": "write",
+    "category": "documents",
+    "name": "approval.request"
+  },
+  {
+    "access": "write",
+    "category": "operations",
+    "name": "inspection.report"
+  },
+  {
+    "access": "write",
+    "category": "operations",
+    "name": "corrective_action.propose"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "flow.feature_get"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "flow.feature_set"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.get"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.query"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.history"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.create"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.patch"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.move"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.link"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.unlink"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.diff"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.grants_get"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.grants_set"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.inheritance_set"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.relations"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.search"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "collab.projection_lag"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "collections.describe"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "collections.query"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "records.create"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.reference"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.unreference"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.convert_preview"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.convert_commit"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.convert_status"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.convert_retry"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.export"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.export_workspace"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.import_artifact"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.import_preview"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.import_commit"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.import_status"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "collab.status"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.integrity"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "collab.compact"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "deliveries.replay"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "collab.rebuild_projection"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "collab.repair_quarantine"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "flow.comments.list"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "flow.comments.create"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "flow.comments.update"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "flow.comments.delete"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "flow.comments.resolve"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "flow.shares.list"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "flow.shares.create"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "flow.shares.revoke"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "flow.appearance.set"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "flow.appearance.upload"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.restore"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "flow.trash.list"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "objects.purge"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "flow.mentions.list"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "legacy_pages.inventory"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "legacy_pages.import_preview"
+  },
+  {
+    "access": "write",
+    "category": "flow",
+    "name": "legacy_pages.import_commit"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "legacy_pages.import_status"
+  },
+  {
+    "access": "read",
+    "category": "tasks",
+    "name": "sylvode_task_get"
+  },
+  {
+    "access": "write",
+    "category": "tasks",
+    "name": "sylvode_task_ack"
+  },
+  {
+    "access": "write",
+    "category": "tasks",
+    "name": "sylvode_task_progress"
+  },
+  {
+    "access": "write",
+    "category": "tasks",
+    "name": "sylvode_task_complete"
+  },
+  {
+    "access": "write",
+    "category": "tasks",
+    "name": "sylvode_task_fail"
+  }
+]

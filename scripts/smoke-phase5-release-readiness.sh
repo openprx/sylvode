@@ -200,7 +200,7 @@ function mcpRequest(method, params) {
   const requestPayload = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) + '\n';
   const result = spawnSync(
     mcpBin,
-    ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', botToken, '--workspace-id', workspaceId, 'serve', '--transport', 'stdio'],
+    ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', botToken, '--workspace-id', workspaceId, 'serve', '--transport', 'stdio', '--tools', 'full'],
     { input: requestPayload, encoding: 'utf8', env: process.env, timeout: 20000 },
   );
   if (result.status !== 0) {
@@ -273,7 +273,7 @@ async function main() {
     'MCP release.readiness.get should expose release next actions',
   );
 
-  const resource = mcpRequest('resources/read', { uri: `openpr://projects/${project.id}/release-readiness` });
+  const resource = mcpRequest('resources/read', { uri: `sylvode://projects/${project.id}/release-readiness` });
   assert(JSON.stringify(resource).includes('openpr.project.release_readiness.v1'), 'release readiness resource should expose schema version');
   assert(JSON.stringify(resource).includes('governance_audit_events'), 'release readiness resource should expose audit evidence counts');
 

@@ -50,6 +50,7 @@ fn zero_inventory_refusal(action: &str, details: &Value) -> CallToolResult {
 
 pub fn legacy_pages_inventory_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "legacy_pages.inventory".to_string(),
         description: "Row count/max body bytes/schema hash of the legacy Markdown Page table \
 this deployment would migrate from, never page content. Conditional per ADR-0003."
@@ -100,6 +101,7 @@ pub async fn legacy_pages_inventory(_client: &OpenPrClient, args: Value) -> Call
 
 pub fn legacy_pages_import_preview_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "legacy_pages.import_preview".to_string(),
         description: "Dry-run preview of a legacy Markdown Page -> Flow Page import. On this \
 deployment inventory is zero (ADR-0003), so this always answers not_required_zero_inventory and \
@@ -152,6 +154,7 @@ pub async fn legacy_pages_import_preview(_client: &OpenPrClient, args: Value) ->
 
 pub fn legacy_pages_import_commit_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "legacy_pages.import_commit".to_string(),
         description: "Commits a previously previewed legacy Markdown Page import. On this \
 deployment inventory is zero (ADR-0003), so this always answers not_required_zero_inventory and \
@@ -212,6 +215,7 @@ pub async fn legacy_pages_import_commit(_client: &OpenPrClient, args: Value) -> 
 
 pub fn legacy_pages_import_status_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "legacy_pages.import_status".to_string(),
         description: "Status/lineage of a previously committed legacy Markdown Page import; \
 never returns page body content. On this deployment inventory is zero (ADR-0003), so no import \
