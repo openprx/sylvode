@@ -18,8 +18,9 @@ Operating notes for migration `0110_runner_task_protocol.sql` and the settings t
 - Two partial indexes over the active statuses: `idx_ai_tasks_active_lease` and
   `idx_ai_tasks_participant_active`.
 
-Existing `processing` rows are not touched. A task with no lease behaves exactly as before: the
-worker sweep falls back to `started_at` plus `[ai_tasks] processing_timeout_secs`.
+Existing `processing` rows are not touched. They carry no lease, and the worker sweep only ends
+tasks whose lease has passed, so a `processing` row that predates the migration is never swept:
+fail or re-queue such rows by hand before upgrading.
 
 ## Locks
 

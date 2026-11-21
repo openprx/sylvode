@@ -412,43 +412,35 @@ struct EndedAttemptRow {
 
 /// Ends up to `limit` active attempts whose lease has run out.
 ///
-/// An attempt is stalled when its `lease_expires_at` has passed. A task without a lease (one that
-/// was picked up before the lease existed) is stalled `timeout_secs` after `started_at`, exactly
-/// as before. Each goes back to `pending` while attempts remain and is `failed` after the last
-/// one, with an error message naming the timeout (no lease) or the lease and the last progress.
+/// An attempt is stalled when its `lease_expires_at` has passed; pick-up always sets one. Each
+/// goes back to `pending` while attempts remain and is `failed` after the last one, with an error
+/// message naming the lease and the last progress.
 ///
 /// Rows are claimed with `FOR UPDATE SKIP LOCKED` and the update re-checks `status`, so several
 /// workers may sweep at once without ending an attempt twice, and a completion that commits first
 /// wins. The returned rows are the tasks that were ended; their events are already written, and
 /// the caller sends `ai.task_failed` for the failed ones.
-pub async fn end_stalled_attempts<C: ConnectionTrait>(
-    db: &C,
-    timeout_secs: u64,
-    limit: i64,
-) -> Result<Vec<AiTaskRow>, ApiError> {
-    let timeout_secs = i64::try_from(timeout_secs).unwrap_or(i64::MAX);
+pub async fn end_stalled_attempts<C: ConnectionTrait>(db: &C, limit: i64) -> Result<Vec<AiTaskRow>, ApiError> {
     let sql = format!(
         r#"
             WITH stalled AS (
                 SELECT id, status AS previous_status
                 FROM ai_tasks
                 WHERE status IN {ACTIVE_TASK_STATUSES_SQL}
-                  AND COALESCE(
-                        lease_expires_at,
-                        COALESCE(started_at, updated_at) + make_interval(secs => $1::bigint)
-                      ) <= now()
-                ORDER BY COALESCE(lease_expires_at, COALESCE(started_at, updated_at))
-                LIMIT $2
+                  AND lease_expires_at <= now()
+                ORDER BY lease_expires_at
+                LIMIT $1
                 FOR UPDATE SKIP LOCKED
             )
             UPDATE ai_tasks t
             SET status = CASE WHEN t.attempts >= t.max_attempts THEN 'failed' ELSE 'pending' END,
                 error_message = CASE
                     WHEN t.last_progress_at IS NULL THEN format(
-                        'no completion was reported within %s seconds of the delivery (attempt %s of %s); '
-                        'the receiver may have stopped, the agent may still be running, or its callback was '
+                        'the task lease expired at %s and no progress was ever reported (attempt %s of %s); '
+                        'the runner may have stopped, the agent may still be running, or its callback was '
                         'refused or lost',
-                        $1::bigint, t.attempts, t.max_attempts
+                        to_char(t.lease_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                        t.attempts, t.max_attempts
                     )
                     ELSE format(
                         'the task lease expired at %s with no progress since %s (attempt %s of %s)',
@@ -491,7 +483,7 @@ pub async fn end_stalled_attempts<C: ConnectionTrait>(
     let ended = EndedAttemptRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         &sql,
-        vec![timeout_secs.into(), limit.into()],
+        vec![limit.into()],
     ))
     .all(db)
     .await?;
@@ -703,8 +695,10 @@ mod worker_attempt_database_tests {
         let task_id = Uuid::new_v4();
         exec(
             db,
-            "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status, attempts, max_attempts, started_at) \
-             VALUES ($1, $2, $3, 'issue_assigned', 'processing', $4, 3, now() - make_interval(secs => $5::bigint))",
+            "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status, attempts, max_attempts, started_at, \
+                                   lease_expires_at) \
+             VALUES ($1, $2, $3, 'issue_assigned', 'processing', $4, 3, now() - make_interval(secs => $5::bigint), \
+                     now() - make_interval(secs => $5::bigint) + interval '1 hour')",
             vec![
                 task_id.into(),
                 tenant.project_id.into(),
@@ -825,7 +819,7 @@ mod worker_attempt_database_tests {
         let exhausted = seed_task(db, &tenant, bot, 3, 7_200).await;
         let fresh = seed_task(db, &tenant, bot, 1, 10).await;
 
-        let ended = end_stalled_attempts(db, 3_600, 10).await.expect("the sweep runs");
+        let ended = end_stalled_attempts(db, 10).await.expect("the sweep runs");
         assert_eq!(ended.len(), 2);
         let status = |id: Uuid| ended.iter().find(|task| task.id == id).map(|task| task.status.clone());
         assert_eq!(status(requeued).as_deref(), Some("pending"));
@@ -833,7 +827,7 @@ mod worker_attempt_database_tests {
         assert_eq!(status(fresh), None, "a recent delivery is left alone");
         for task in &ended {
             let message = task.error_message.as_deref().unwrap_or_default();
-            assert!(message.contains("3600 seconds"), "{message}");
+            assert!(message.contains("no progress was ever reported"), "{message}");
             assert!(
                 message.contains(&format!("attempt {} of 3", task.attempts)),
                 "{message}"
@@ -843,7 +837,7 @@ mod worker_attempt_database_tests {
         assert_eq!(events(db, exhausted, "failed").await, 1);
         assert_eq!(business_events(db, exhausted, "ai_task.failed").await, 1);
 
-        let second = end_stalled_attempts(db, 3_600, 10).await.expect("the sweep runs");
+        let second = end_stalled_attempts(db, 10).await.expect("the sweep runs");
         assert!(second.is_empty(), "an ended attempt is not swept twice");
         scratch.drop_self().await;
     }
@@ -911,10 +905,9 @@ mod worker_attempt_database_tests {
         let db = &scratch.db;
         let tenant = seed_tenant(db, "wl").await;
         let bot = seed_bot_user(db, &tenant).await;
-        // All three started two hours ago, so the timeout alone would sweep every one of them.
+        // Both started two hours ago, so the start time alone would sweep each of them.
         let leased = seed_task(db, &tenant, bot, 1, 7_200).await;
         let expired = seed_task(db, &tenant, bot, 1, 7_200).await;
-        let no_lease = seed_task(db, &tenant, bot, 1, 7_200).await;
         exec(
             db,
             "UPDATE ai_tasks SET lease_expires_at = now() + interval '10 minutes', status = 'acknowledged' WHERE id = $1",
@@ -929,7 +922,7 @@ mod worker_attempt_database_tests {
         )
         .await;
 
-        let ended = end_stalled_attempts(db, 3_600, 10).await.expect("the sweep runs");
+        let ended = end_stalled_attempts(db, 10).await.expect("the sweep runs");
         let find = |id: Uuid| ended.iter().find(|task| task.id == id);
         assert!(find(leased).is_none(), "a future lease protects an old attempt");
 
@@ -944,10 +937,6 @@ mod worker_attempt_database_tests {
             "acknowledged"
         );
 
-        let no_lease_row = find(no_lease).expect("a task without a lease is swept by the timeout");
-        let message = no_lease_row.error_message.as_deref().unwrap_or_default();
-        assert!(message.contains("within 3600 seconds of the delivery"), "{message}");
-        assert_eq!(previous_status_of_last_business_event(db, no_lease).await, "processing");
         scratch.drop_self().await;
     }
 }

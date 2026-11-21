@@ -232,11 +232,10 @@ async fn end_attempt(
     Ok(())
 }
 
-/// Ends every active attempt whose lease has run out; `timeout_secs` is the lease of a task that
-/// has none.
-pub async fn end_stalled_tasks(state: &AppState, timeout_secs: u64, concurrency: usize) -> anyhow::Result<usize> {
+/// Ends every active attempt whose lease has run out.
+pub async fn end_stalled_tasks(state: &AppState, concurrency: usize) -> anyhow::Result<usize> {
     let limit = i64::try_from(concurrency.max(1)).unwrap_or(i64::MAX) * 10;
-    let ended = end_stalled_attempts(&state.db, timeout_secs, limit)
+    let ended = end_stalled_attempts(&state.db, limit)
         .await
         .map_err(|err| anyhow::anyhow!("ending stalled AI tasks failed: {err}"))?;
     for task in &ended {
@@ -245,7 +244,6 @@ pub async fn end_stalled_tasks(state: &AppState, timeout_secs: u64, concurrency:
             attempt = task.attempts,
             max_attempts = task.max_attempts,
             status = %task.status,
-            timeout_secs,
             "AI task lease ran out with no completion"
         );
         if task.status == "failed" {
