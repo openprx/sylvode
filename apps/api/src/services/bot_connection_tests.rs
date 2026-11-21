@@ -2,6 +2,7 @@
 //! versions, the secrets that must never be stored or logged, and the removal that releases a bot.
 //!
 //! Needs `OPENPR_TEST_DATABASE_URL`; without it every test reports that it was skipped.
+#![cfg(test)]
 #![allow(
     clippy::expect_used,
     clippy::panic,
