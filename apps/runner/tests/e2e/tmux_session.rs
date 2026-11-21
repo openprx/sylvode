@@ -153,7 +153,7 @@ impl Fixture {
              [ai_task_callback]\nenabled = true\napi_url = \"{}\"\n\
              [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n\
              [runner]\nstate_dir = \"{}\"\nallowed_roots = [\"{}\"]\nreport_interval_secs = 600\ndelivery_check_timeout_secs = 3\n\
-             [runner.tmux]\nbinary = \"{}\"\nsocket_name = \"{}\"\npush_settle_ms = 100\nuser_idle_secs = 0\nready_timeout_secs = 20\n\
+             [runner.tmux]\nenabled = true\nbinary = \"{}\"\nsocket_name = \"{}\"\npush_settle_ms = 100\nuser_idle_secs = 0\nready_timeout_secs = 20\n\
              [runner.cli.claude]\nbinary = \"{}\"\nprocess_names = [\"sh\", \"bash\", \"dash\"]\n\
              [runner.mcp]\nserver_binary = \"{}\"\n\
              [[agents]]\nid = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{BOT}\"]\n",

@@ -509,6 +509,7 @@ async fn channel_and_cli_prerequisites() {
         path
     };
     let mut config = fx.config(addr);
+    config.runner.tmux.enabled = true;
     config.runner.tmux.binary = fx.base.path().join("no-such-tmux").to_string_lossy().into_owned();
     assert_eq!(
         refused(&fx.run(&config, m.clone(), addr, &delivery()).await).0,
@@ -632,4 +633,38 @@ async fn a_refused_delivery_never_binds_a_key() {
         Verdict::Run(_)
     ));
     assert_eq!(fx.registry.owner("SVWL").as_deref(), Some(PROJECT));
+}
+
+/// The tmux channel is an operator opt-in: off, a project that asks for it is refused with a stable
+/// code while headless keeps working; codex and opencode are refused on tmux whatever the switch.
+#[tokio::test]
+async fn the_tmux_channel_needs_the_operator_switch_and_only_claude_is_verified() {
+    let fx = Fixture::new();
+    let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    let config = fx.config(addr);
+    assert!(!config.runner.tmux.enabled, "off by default");
+    let (code, reason) = refused(&fx.run(&config, m, addr, &delivery()).await);
+    assert_eq!(code, "tmux_channel_disabled");
+    assert!(reason.contains("[runner.tmux] enabled = true"), "{reason}");
+    // The headless channel is unaffected by the switch.
+    let m = ok_mock(task_view(&fx.project_dir, "headless", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    assert!(matches!(
+        fx.run(&fx.config(addr), m, addr, &delivery()).await,
+        Verdict::Run(_)
+    ));
+    // codex and opencode on tmux: refused entirely, enabled or not.
+    for cli in ["codex", "opencode"] {
+        for switch in [false, true] {
+            let m = ok_mock(task_view(&fx.project_dir, "tmux", cli));
+            let (addr, _server) = serve(m.clone()).await;
+            let mut config = fx.config(addr);
+            config.runner.tmux.enabled = switch;
+            config.runner.cli.codex.enabled = true;
+            config.runner.cli.opencode.enabled = true;
+            let (code, _) = refused(&fx.run(&config, m, addr, &delivery()).await);
+            assert_eq!(code, "cli_unverified", "{cli} switch={switch}");
+        }
+    }
 }

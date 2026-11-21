@@ -61,6 +61,10 @@ impl Default for RunnerConfig {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct RunnerTmuxConfig {
+    /// The tmux channel is off until the operator turns it on: it types into a live CLI, and the
+    /// hand checks of the security review (README, "The tmux channel") must have been done on the
+    /// pinned CLI version first.
+    pub enabled: bool,
     pub binary: String,
     /// Passed as `-L`; empty means the user's default tmux server.
     pub socket_name: String,
@@ -79,6 +83,7 @@ pub struct RunnerTmuxConfig {
 impl Default for RunnerTmuxConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             binary: "tmux".to_string(),
             socket_name: "sylvode".to_string(),
             min_version: "3.2".to_string(),
@@ -192,8 +197,6 @@ pub struct RunnerMcpConfig {
     pub server_binary: String,
     /// `search` or `full`; written into the per-bot MCP config.
     pub tool_mode: String,
-    /// The MCP config a headless run is given until the per-bot files exist.
-    pub mcp_config_path: Option<String>,
 }
 
 impl Default for RunnerMcpConfig {
@@ -201,7 +204,6 @@ impl Default for RunnerMcpConfig {
         Self {
             server_binary: "mcp-server".to_string(),
             tool_mode: "search".to_string(),
-            mcp_config_path: None,
         }
     }
 }
@@ -236,6 +238,14 @@ impl RunnerConfig {
             .map_err(|_| "runner.tmux.socket_name must match ^[A-Za-z0-9_-]{1,32}$ or be empty".to_string())?;
         if !(20..=1000).contains(&tmux.window_width) || !(5..=500).contains(&tmux.window_height) {
             return Err("runner.tmux.window_width and window_height are out of range".to_string());
+        }
+        if self.cli.claude.permission_mode != "dontAsk" {
+            return Err(format!(
+                "runner.cli.claude.permission_mode = {:?} is not allowed for runner agents: only \"dontAsk\" \
+                 (anything that would ask is denied) keeps the task tools and the project's files as the \
+                 whole of what a task can do",
+                self.cli.claude.permission_mode
+            ));
         }
         if !TOOL_MODES.contains(&self.mcp.tool_mode.as_str()) {
             return Err(format!(
@@ -298,53 +308,4 @@ impl RunnerConfig {
 fn parse_major_minor(text: &str) -> Option<(u64, u64)> {
     let (major, minor) = text.trim().split_once('.')?;
     Some((major.parse().ok()?, minor.parse().ok()?))
-}
-
-impl RunnerConfig {
-    /// Checks `[runner.mcp] mcp_config_path`: an MCP configuration decides which programs a CLI
-    /// starts, so it must not come from a place a project can write. It must be absolute (a
-    /// relative path would resolve inside the project directory the server chooses), without
-    /// control characters, not start with `-`, be a regular file owned by the runner's user with
-    /// no group or other access, and lie outside every allowed root (compared canonically).
-    ///
-    /// # Errors
-    ///
-    /// A message naming the key.
-    pub fn validate_mcp_config_path(&self) -> Result<(), String> {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let Some(text) = self.mcp.mcp_config_path.as_deref() else {
-            return Ok(());
-        };
-        let key = "runner.mcp.mcp_config_path";
-        let path = std::path::Path::new(text);
-        if !path.is_absolute() || text.starts_with('-') || text.chars().any(char::is_control) {
-            return Err(format!("{key} must be an absolute path"));
-        }
-        let canonical = path
-            .canonicalize()
-            .map_err(|e| format!("{key} cannot be used ({})", e.kind()))?;
-        let meta = std::fs::metadata(&canonical).map_err(|e| format!("{key} cannot be used ({})", e.kind()))?;
-        if !meta.is_file() {
-            return Err(format!("{key} must be a regular file"));
-        }
-        if meta.permissions().mode() & 0o077 != 0 {
-            return Err(format!(
-                "{key} must not be accessible to group or others (use mode 0600)"
-            ));
-        }
-        if meta.uid() != nix::unistd::Uid::effective().as_raw() {
-            return Err(format!("{key} must be owned by the user the runner runs as"));
-        }
-        for root in &self.allowed_roots {
-            let root = std::path::Path::new(root);
-            if let Ok(root) = root.canonicalize()
-                && canonical.starts_with(&root)
-            {
-                return Err(format!(
-                    "{key} must be outside every allowed root: a project could change it"
-                ));
-            }
-        }
-        Ok(())
-    }
 }

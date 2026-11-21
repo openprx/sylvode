@@ -555,7 +555,6 @@ impl Config {
     /// type table: its permissions come from `[runner.cli.*]` and its directory from Sylvode.
     fn validate_runner_agents(&self) -> Result<(), String> {
         self.runner.validate()?;
-        self.runner.validate_mcp_config_path()?;
         let runners: Vec<&AgentConfig> = self.agents.iter().filter(|a| a.agent_type == "runner").collect();
         if runners.is_empty() {
             return Ok(());
@@ -1791,54 +1790,6 @@ url = "http://127.0.0.1:9000/hook"
         assert!(!shown.contains("opr_zzz"), "{shown}");
     }
 
-    /// `[runner.mcp] mcp_config_path` decides which programs a CLI starts, so a project must not be
-    /// able to write it.
-    #[test]
-    fn the_mcp_config_path_must_be_a_private_absolute_file_outside_the_roots() {
-        use std::os::unix::fs::PermissionsExt;
-        let base = std::env::temp_dir().join(format!("sylvode-mcp-path-{}", uuid::Uuid::new_v4()));
-        let root = base.join("work");
-        std::fs::create_dir_all(&root).expect("mkdir");
-        let outside = base.join("mcp.json");
-        std::fs::write(&outside, "{}").expect("write");
-        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o600)).expect("chmod");
-        let inside = root.join("mcp.json");
-        std::fs::write(&inside, "{}").expect("write");
-        std::fs::set_permissions(&inside, std::fs::Permissions::from_mode(0o600)).expect("chmod");
-        let loose = base.join("loose.json");
-        std::fs::write(&loose, "{}").expect("write");
-        std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).expect("chmod");
-        let link = base.join("link.json");
-        std::os::unix::fs::symlink(&inside, &link).expect("symlink");
-        let load = |path: &str| {
-            Config::from_toml(&format!(
-                "{GOLDEN_BLOCK}\n[runner.mcp]\nmcp_config_path = {path:?}\n",
-                GOLDEN_BLOCK = GOLDEN_BLOCK.replace(
-                    "allowed_roots = [\"/home/dev/work/svwl\"]",
-                    &format!("allowed_roots = [{:?}]", root.to_string_lossy())
-                )
-            ))
-        };
-        assert!(load(&outside.to_string_lossy()).is_ok());
-        for (path, why) in [
-            ("mcp.json", "absolute"),
-            ("./mcp.json", "absolute"),
-            ("-evil", "absolute"),
-            ("/nonexistent/mcp.json", "cannot be used"),
-            (&*base.to_string_lossy(), "regular file"),
-            (&*inside.to_string_lossy(), "outside every allowed root"),
-            (&*link.to_string_lossy(), "outside every allowed root"),
-            (&*loose.to_string_lossy(), "0600"),
-        ] {
-            let error = load(path).expect_err(path);
-            assert!(
-                error.contains("mcp_config_path") && error.contains(why),
-                "{path}: {error}"
-            );
-        }
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
     #[test]
     fn a_runner_agent_takes_no_agent_level_token_and_a_delivery_needs_its_own_bot() {
         let error = Config::from_toml(&format!(
@@ -2008,5 +1959,37 @@ url = "http://127.0.0.1:9000/hook"
             let err = load_str(&base(extra)).expect_err(extra);
             assert!(err.contains("unknown field") && err.contains(key), "{extra}: {err}");
         }
+    }
+
+    /// A runner agent may use only the permission mode design 6.6 specifies; any other value is a
+    /// configuration error naming the key, and the interim `mcp_config_path` key is gone.
+    #[test]
+    fn runner_agents_take_only_the_dont_ask_mode_and_no_mcp_config_path() {
+        for mode in ["auto", "acceptEdits", "plan", "manual", "bypassPermissions", "yolo"] {
+            let error = Config::from_toml(&format!(
+                "{GOLDEN_BLOCK}\n[runner.cli.claude]\npermission_mode = \"{mode}\"\n"
+            ))
+            .expect_err(mode);
+            assert!(
+                error.contains("runner.cli.claude.permission_mode") && error.contains("dontAsk"),
+                "{mode}: {error}"
+            );
+        }
+        Config::from_toml(&format!(
+            "{GOLDEN_BLOCK}\n[runner.cli.claude]\npermission_mode = \"dontAsk\"\n"
+        ))
+        .expect("dontAsk is the one allowed mode");
+        let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.mcp]\nmcp_config_path = \"/x\"\n"))
+            .expect_err("the key is gone");
+        assert!(
+            error.contains("unknown field") && error.contains("mcp_config_path"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_tmux_channel_is_off_by_default() {
+        let config = Config::from_toml(GOLDEN_BLOCK).expect("block");
+        assert!(!config.runner.tmux.enabled);
     }
 }

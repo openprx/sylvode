@@ -224,6 +224,22 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         }
     };
     let cli = str_at(execution, &["cli"]).unwrap_or_default().to_string();
+    if channel == Channel::Tmux {
+        // codex and opencode have no verified tmux behaviour (readiness, dialogs, permissions):
+        // refused whatever the switch says.
+        if cli != "claude" {
+            return refuse(
+                "cli_unverified",
+                format!("the {cli} CLI is not verified for the tmux channel; use the headless channel"),
+            );
+        }
+        if !runner.tmux.enabled {
+            return refuse(
+                "tmux_channel_disabled",
+                "the tmux channel is not enabled on this runner (operator opt-in: [runner.tmux] enabled = true)",
+            );
+        }
+    }
     if channel == Channel::Tmux
         && let Some(refusal) = tmux_prerequisites(runner).await
     {

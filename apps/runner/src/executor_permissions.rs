@@ -40,7 +40,6 @@ const CODEX_FULL_ACCESS: &str = "danger-full-access";
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ExecutorSettings {
     pub executor: String,
-    pub mcp_config_path: Option<String>,
     pub permission_mode: Option<String>,
     pub allowed_tools: Option<Vec<String>>,
     pub disallowed_tools: Option<Vec<String>>,

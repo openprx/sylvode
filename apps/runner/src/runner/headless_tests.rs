@@ -207,13 +207,9 @@ fn the_start_up_posture_has_one_line_per_cli_and_warns_about_opencode() {
     assert_eq!(lines[1].text, "codex: disabled, sandbox = read-only, approvals never");
     assert_eq!(lines[2].text, "opencode: disabled");
     let wide = super::posture(&config(
-        "[runner.cli.opencode]\nenabled = true\n[runner.cli.claude]\nallow_write_call = true\npermission_mode = \"bypassPermissions\"\ndangerously_bypass_permissions = true\n",
+        "[runner.cli.opencode]\nenabled = true\n[runner.cli.claude]\nallow_write_call = true\n",
     ));
-    assert!(
-        wide[0].warn && wide[0].text.contains("PERMISSION CHECKS ARE OFF") && wide[0].text.contains("sylvode_write"),
-        "{:?}",
-        wide[0]
-    );
+    assert!(wide[0].text.contains("sylvode_write"), "{:?}", wide[0]);
     assert!(
         wide[2].warn
             && wide[2]

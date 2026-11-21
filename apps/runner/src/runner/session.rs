@@ -683,11 +683,7 @@ impl Worker {
                 "the runner could not prepare the MCP configuration".to_string()
             })?;
         let toml = state.mcp_toml(&task.bot.bot_id);
-        let claude_json = runner
-            .mcp
-            .mcp_config_path
-            .as_deref()
-            .map_or_else(|| state.claude_mcp_json(&task.bot.bot_id), PathBuf::from);
+        let claude_json = state.claude_mcp_json(&task.bot.bot_id);
         let settings = state.claude_settings(&self.key);
         let socket = state.hook_socket();
         let files = LaunchFiles {

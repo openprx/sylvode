@@ -45,7 +45,7 @@ pub const CUT_SHORT_REASON: &str = "the runner stopped the run before the agent 
 /// The settings of `cli` as the permission validation takes them. The launch code validates its
 /// permissions through the same settings, so every channel refuses the same combinations.
 pub fn settings_for(runner: &RunnerConfig, cli: &str) -> ExecutorSettings {
-    let mut cfg = match cli {
+    match cli {
         "claude" => {
             let claude = &runner.cli.claude;
             let mut cfg = ExecutorSettings::new("claude-code");
@@ -61,9 +61,7 @@ pub fn settings_for(runner: &RunnerConfig, cli: &str) -> ExecutorSettings {
             cfg
         }
         _ => ExecutorSettings::new("opencode"),
-    };
-    cfg.mcp_config_path.clone_from(&runner.mcp.mcp_config_path);
-    cfg
+    }
 }
 
 /// What a run needs, decided before the delivery is answered.
@@ -138,11 +136,7 @@ pub fn prepare(config: &Config, state: &StateDir, accepted: &Accepted, mcp_serve
             )
         })?;
     let toml = state.mcp_toml(&bot.bot_id);
-    let claude_json = runner
-        .mcp
-        .mcp_config_path
-        .as_deref()
-        .map_or_else(|| state.claude_mcp_json(&bot.bot_id), PathBuf::from);
+    let claude_json = state.claude_mcp_json(&bot.bot_id);
     let prompt = &accepted.message;
     let (args, passthrough) = match accepted.cli.as_str() {
         "claude" => (
