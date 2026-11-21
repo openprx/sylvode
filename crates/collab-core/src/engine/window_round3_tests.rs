@@ -20,7 +20,7 @@ use loro::{
 
 use super::hand_encoded::{accepted, frontier_strings, raw_edit, rewrite_deps, set_node};
 use super::window_fixtures::{Case, FactsFrom};
-use super::window_round2_tests::judge;
+use super::window_round2_tests::{flat_page_of, grow_by, judge};
 use super::{CollabEngine, LoroCollabEngine};
 use crate::facts::BaseFacts;
 
@@ -405,4 +405,154 @@ fn r3_3_naming_a_node_the_update_creates_is_not_a_rewrite() {
     let judged = judge(&base, &update);
     judged.assert_sound("a create with a name");
     assert!(judged.incremental, "{judged:?}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// R3-2: the work budget charges the payload of a value
+// ---------------------------------------------------------------------------------------------
+
+fn block_attributes(raw: &LoroDoc, index: usize) -> loro::LoroMap {
+    let list = super::floor_equivalence_tests::children(raw);
+    let Some(ValueOrContainer::Container(Container::Map(block))) = list.get(index) else {
+        panic!()
+    };
+    match block.get("attributes") {
+        Some(ValueOrContainer::Container(Container::Map(attributes))) => attributes,
+        _ => block.insert_container("attributes", loro::LoroMap::new()).unwrap(),
+    }
+}
+
+/// Each write puts one value of about 64 KB into the `attributes` of some block: a list of 20,000
+/// small integers. Without a charge for the payload each write adds two items and the page grows
+/// without a work bound (each write is decided incrementally and the payload is re-read by every
+/// full projection and by the host).
+#[test]
+fn r3_2_a_list_value_in_block_attributes_cannot_grow_a_flat_page_without_a_bound() {
+    let (incremental, first_fallback, base) = grow_by(flat_page_of(400), 40, &|raw, write| {
+        let values: Vec<i64> = (0..20_000).map(|i| i % 7).collect();
+        block_attributes(raw, usize::try_from(write).unwrap() % 400)
+            .insert(&format!("p{write}"), values)
+            .unwrap();
+    });
+    println!("list values: {incremental} incremental writes, then {first_fallback:?}");
+    assert!(incremental >= 1);
+    assert_eq!(first_fallback.as_deref(), Some("WorkBudget"));
+    assert!(incremental <= 12, "{incremental} writes of 160 KB of payload each");
+    assert!(BaseFacts::compute(&LoroCollabEngine::load(&base).unwrap()).is_none());
+}
+
+/// The same with a 60,000-character string per write.
+#[test]
+fn r3_2_a_string_value_in_block_attributes_cannot_grow_a_flat_page_without_a_bound() {
+    let (incremental, first_fallback, base) = grow_by(flat_page_of(400), 60, &|raw, write| {
+        block_attributes(raw, usize::try_from(write).unwrap() % 400)
+            .insert(&format!("p{write}"), "s".repeat(60_000))
+            .unwrap();
+    });
+    println!("string values: {incremental} incremental writes, then {first_fallback:?}");
+    assert!(incremental >= 1);
+    assert_eq!(first_fallback.as_deref(), Some("WorkBudget"));
+    assert!(incremental <= 30, "{incremental} writes of 60 KB each");
+    assert!(BaseFacts::compute(&LoroCollabEngine::load(&base).unwrap()).is_none());
+}
+
+/// A nested value counts all of its payload: maps of lists of strings.
+#[test]
+fn r3_2_a_nested_value_in_block_attributes_is_charged_by_its_payload() {
+    let (incremental, first_fallback, _) = grow_by(flat_page_of(400), 60, &|raw, write| {
+        let mut entries = std::collections::HashMap::new();
+        for key in 0..40 {
+            let strings: Vec<String> = (0..10).map(|_| "n".repeat(150)).collect();
+            entries.insert(format!("k{key}"), loro::LoroValue::from(strings));
+        }
+        block_attributes(raw, usize::try_from(write).unwrap() % 400)
+            .insert(&format!("p{write}"), loro::LoroValue::from(entries))
+            .unwrap();
+    });
+    println!("nested values: {incremental} incremental writes, then {first_fallback:?}");
+    assert_eq!(first_fallback.as_deref(), Some("WorkBudget"));
+    assert!(incremental <= 30, "{incremental} writes of 60 KB each");
+}
+
+/// `prop:*` strings on a legacy node, which the projection clones for every node.
+#[test]
+fn r3_2_property_strings_on_a_legacy_node_cannot_grow_a_page_without_a_bound() {
+    let mut engine = LoroCollabEngine::new_empty(63);
+    create_node(&mut engine, "anchor", None);
+    let anchor = *engine.id_to_tree.get("anchor").unwrap();
+    let (incremental, first_fallback, _) = grow_by(engine.export_snapshot().unwrap(), 60, &|raw, write| {
+        let meta = raw.get_tree("tree").get_meta(anchor).unwrap();
+        meta.insert(&format!("prop:big{write}"), "s".repeat(60_000)).unwrap();
+    });
+    println!("property strings: {incremental} incremental writes, then {first_fallback:?}");
+    assert!(incremental >= 1);
+    assert_eq!(first_fallback.as_deref(), Some("WorkBudget"));
+    assert!(incremental <= 30, "{incremental} writes of 60 KB each");
+}
+
+/// The items an update adds to a page never exceed the bound the window keeps (the sum of
+/// `work::op_work` over its ops): on every shape of this round and the earlier growth shapes.
+#[test]
+fn r3_2_the_bound_on_the_items_an_update_adds_holds() {
+    let page = flat_page_of(400);
+    let shapes: Vec<(&str, Box<dyn Fn(&LoroDoc)>)> = vec![
+        (
+            "list",
+            Box::new(|raw: &LoroDoc| {
+                let values: Vec<i64> = (0..5_000).collect();
+                block_attributes(raw, 3).insert("p", values).unwrap();
+            }),
+        ),
+        (
+            "string",
+            Box::new(|raw: &LoroDoc| {
+                block_attributes(raw, 4).insert("p", "s".repeat(10_000)).unwrap();
+            }),
+        ),
+        (
+            "many small keys",
+            Box::new(|raw: &LoroDoc| {
+                let attributes = block_attributes(raw, 5);
+                for i in 0..3_000 {
+                    attributes.insert(&format!("k{i}"), i64::from(i)).unwrap();
+                }
+            }),
+        ),
+        (
+            "overwrite",
+            Box::new(|raw: &LoroDoc| {
+                let attributes = block_attributes(raw, 6);
+                for i in 0..200 {
+                    attributes.insert("same", "x".repeat(100 + i)).unwrap();
+                }
+            }),
+        ),
+        (
+            "text and blocks",
+            Box::new(|raw: &LoroDoc| {
+                let list = super::floor_equivalence_tests::children(raw);
+                for i in 0..30 {
+                    let block = list.insert_container(list.len(), loro::LoroMap::new()).unwrap();
+                    block.insert("nodeName", "paragraph").unwrap();
+                    block
+                        .insert_container("children", loro::LoroList::new())
+                        .unwrap()
+                        .insert_container(0, LoroText::new())
+                        .unwrap()
+                        .insert(0, &format!("block {i} {}", "w".repeat(600)))
+                        .unwrap();
+                }
+            }),
+        ),
+    ];
+    for (label, edit) in shapes {
+        let update = raw_edit(&page, 61_000, |raw| edit(raw));
+        let mut engine = LoroCollabEngine::load(&page).unwrap();
+        let before = engine.projection_items(u64::MAX).unwrap().unwrap();
+        let trace = engine.import_client_update_traced(&update, None).unwrap();
+        let after = engine.projection_items(u64::MAX).unwrap().unwrap();
+        let bound = trace.summary.work_added();
+        println!("{label}: items {before} -> {after}, bound {bound}");
+        assert!(after <= before + bound, "{label}: {after} > {before} + {bound}");
+    }
 }

@@ -487,7 +487,7 @@ pub(crate) struct OpSummary {
     /// A change of the import whose length could not be read: nothing about the import is known.
     unreadable_change: bool,
     /// An upper bound on the items (see `crate::work`) the ops of the import added to the page.
-    work_added: u64,
+    work_added: crate::work::OpWork,
 }
 
 /// One change of an import, reduced to what the sequential gate reads.
@@ -578,7 +578,7 @@ impl OpSummary {
 
     /// An upper bound on the items the import's ops added to the page (see `crate::work`).
     pub(crate) const fn work_added(&self) -> u64 {
-        self.work_added
+        self.work_added.total_items()
     }
 
     /// Whether the import is a **strict causal extension** of the base: the one condition under
@@ -640,7 +640,7 @@ impl OpSummary {
     /// Reads one imported op. `peer` is the peer of the change that carries it and `root_list` the
     /// id of `doc.children` after the import.
     pub(crate) fn visit(&mut self, peer: u64, op: &JsonOp, root_list: Option<&ContainerID>) {
-        self.work_added = self.work_added.saturating_add(crate::work::op_items(&op.content));
+        self.work_added = self.work_added.plus(crate::work::op_work(&op.content));
         match &op.container {
             // A mergeable child of a map (the text of a legacy tree node, for one) is named like a
             // root container but belongs to the map that created it: it is mapped to its unit by

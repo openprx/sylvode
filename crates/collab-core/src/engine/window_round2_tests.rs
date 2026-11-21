@@ -1022,7 +1022,7 @@ fn nodes_under_a_deleted_parent_are_never_decided_incrementally_and_are_counted(
 }
 
 /// Items (`crate::work`) of a page and the budget of its live totals, from a fresh load.
-fn items_and_budget(base: &[u8]) -> (u64, u64) {
+pub(super) fn items_and_budget(base: &[u8]) -> (u64, u64) {
     let engine = LoroCollabEngine::load(base).unwrap();
     let items = engine.projection_items(u64::MAX).unwrap().unwrap();
     let semantic = engine.semantic_snapshot().unwrap();
@@ -1042,7 +1042,11 @@ fn items_and_budget(base: &[u8]) -> (u64, u64) {
 /// Applies `edit` as a client write, repeatedly, to `base`. Every write is judged against the
 /// references; an incremental accept must leave the page within its budget. Returns how many
 /// writes were decided incrementally, the reason of the first that was not, and the final base.
-fn grow_by(mut base: Vec<u8>, writes: u64, edit: &dyn Fn(&LoroDoc, u64)) -> (usize, Option<String>, Vec<u8>) {
+pub(super) fn grow_by(
+    mut base: Vec<u8>,
+    writes: u64,
+    edit: &dyn Fn(&LoroDoc, u64),
+) -> (usize, Option<String>, Vec<u8>) {
     let mut incremental = 0;
     let mut first_fallback = None;
     for write in 0..writes {
@@ -1065,7 +1069,7 @@ fn grow_by(mut base: Vec<u8>, writes: u64, edit: &dyn Fn(&LoroDoc, u64)) -> (usi
     (incremental, first_fallback, base)
 }
 
-fn flat_page_of(blocks: usize) -> Vec<u8> {
+pub(super) fn flat_page_of(blocks: usize) -> Vec<u8> {
     let engine = LoroCollabEngine::new_empty(61);
     let list: Vec<EditorInitialBlock> = (0..blocks)
         .map(|index| EditorInitialBlock {
