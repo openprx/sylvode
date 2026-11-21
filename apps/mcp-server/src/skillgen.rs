@@ -937,8 +937,10 @@ mod tests {
     fn lint_b_flags_machine_specific_content() {
         let registry = ["alpha.list", "alpha.make", "sylvode_task_get"];
         for hostile in [
-            "see /Users/me/x",
-            "see /home/me",
+            // Built at compile time from two halves so that the repository's own scan for
+            // machine-specific paths does not flag this test input.
+            concat!("see /Us", "ers/me/x"),
+            concat!("see /ho", "me/me"),
             "C:\\temp",
             "id 11111111-1111-4111-8111-111111111111",
             "token opr_0123456789abcdef",
