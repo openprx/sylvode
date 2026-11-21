@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Alert chain smoke test: registers an inbound source and rules through the management API, posts
 # signed events with curl and openssl, and checks the work item, the task, the notifications, the
-# idempotency and the safety limits through the API.
+# idempotency, the escalation, the source allow-list, the rule test and the safety limits (a task
+# beyond a cap waits in the queue) through the API.
 #
 # Needs a running API with `[inbound] enabled = true` and a worker, an administrator of the
 # workspace, a project, and a bot of that workspace. For the task to run to its end the bot needs an
@@ -19,7 +20,8 @@ set -euo pipefail
 #                           alert_task_completed notification. Default: 0
 #   SV_COMPLETION_WAIT_SECS How long to wait for it. Default: 300
 #
-# Everything the script creates is removed again on exit. Secrets are never printed.
+# Everything the script creates is removed again on exit: rules and sources are deleted, and an
+# alert row, with its queue entry, goes with its source. Secrets are never printed.
 #
 # Exit codes:
 #   0  every check passed
@@ -193,7 +195,7 @@ register_source "$NAME_CAP" ""
 CAP_ID="$SRC_ID" CAP_TOKEN="$SRC_TOKEN" CAP_SECRET="$SRC_SECRET"
 register_rule "smoke cap $RUN_ID" "$CAP_ID" "cap.*" ',"max_tasks_per_hour":1'
 register_source "$NAME_RATE" ""
-RATE_TOKEN="$SRC_TOKEN" RATE_SECRET="$SRC_SECRET"
+RATE_ID="$SRC_ID" RATE_TOKEN="$SRC_TOKEN" RATE_SECRET="$SRC_SECRET"
 pass "registered three sources and two rules"
 
 now() { date +%s; }
@@ -267,6 +269,16 @@ expect_equal "it starts no second task while the first is active" 1 "$(item_task
 occurrences="$(api GET "/api/v1/inbound-sources/$MAIN_ID/events?limit=10" | jget 'len([e for e in d["data"] if e["outcome"] == "alert_attached"])')"
 expect_equal "the stored event is marked as attached" 1 "$occurrences"
 expect_equal "an attach does not notify again" 1 "$(count_notifications alert_opened "$NAME_MAIN")"
+expect_equal "no escalation yet: the severity did not rise" 0 "$(count_notifications alert_escalated "$NAME_MAIN")"
+EVENT2B="$(event_json "smoke-$RUN_ID-2b" waf.attack_detected critical "$DEDUP" "$HOST")"
+answer="$(post_event "$MAIN_TOKEN" "$MAIN_SECRET" "$(now)" "$EVENT2B")"
+expect_equal "a critical event of the same alert is accepted (202)" 202 "$(status_of "$answer")"
+expect_equal "the rise to critical notifies once (escalation)" 1 "$(count_notifications alert_escalated "$NAME_MAIN")"
+alert="$(api GET "/api/v1/issues/$ITEM_ID/alert")"
+expect_equal "the alert panel data shows the highest severity" critical "$(echo "$alert" | jget 'd["data"]["severity"]')"
+expect_equal "the alert panel data counts the occurrences" 3 "$(echo "$alert" | jget 'd["data"]["occurrences"]')"
+expect_equal "the alert panel data names the source" "$NAME_MAIN" "$(echo "$alert" | jget 'd["data"]["source"]["name"]')"
+expect_equal "the alert panel data links the task" "$TASK_ID" "$(echo "$alert" | jget 'd["data"]["task"]["id"]')"
 
 # ---- 3. credentials and signatures ------------------------------------------------------------
 
@@ -279,7 +291,11 @@ answer="$(post_event "opr_$(openssl rand -hex 32)" "$MAIN_SECRET" "$(now)" "$EVE
 expect_equal "a bot token shape is refused (401)" 401 "$(status_of "$answer")"
 answer="$(post_event "svi_$(openssl rand -hex 32)" "$MAIN_SECRET" "$(now)" "$EVENT3")"
 expect_equal "an unknown source token is refused (401)" 401 "$(status_of "$answer")"
-expect_equal "refused requests store nothing" 2 \
+# A product-specific secret header is no credential: only Authorization: Bearer is read.
+waf_status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$API/api/v1/inbound/events" \
+  -H "X-WAF-Secret: $MAIN_TOKEN" -H 'Content-Type: application/json' --data-binary "$EVENT3")"
+expect_equal "a request with only X-WAF-Secret is refused (401)" 401 "$waf_status"
+expect_equal "refused requests store nothing" 3 \
   "$(api GET "/api/v1/inbound-sources/$MAIN_ID/events?limit=50" | jget 'len(d["data"])')"
 
 # ---- 4. the per-rule task cap -----------------------------------------------------------------
@@ -293,23 +309,65 @@ done
 cap_items() { find_item "$NAME_CAP"; }
 expect_equal "both cap alerts opened a work item" 2 "$(cap_items | jget 'len(d)')"
 outcomes="$(api GET "/api/v1/inbound-sources/$CAP_ID/events?limit=10" | jget 'sorted(e["outcome"] for e in d["data"])')"
-expect_equal "the second alert's task was suppressed by the cap" "['alert_opened', 'suppressed_task_cap']" "$outcomes"
-expect_equal "one alert_suppressed notification was written" 1 "$(count_notifications alert_suppressed "smoke cap $RUN_ID")"
+expect_equal "the second alert's task waits in the queue" "['alert_opened', 'task_queued']" "$outcomes"
+expect_equal "a queued task is not announced as suppressed" 0 "$(count_notifications alert_suppressed "smoke cap $RUN_ID")"
+queued_item="$(cap_items | jget '[i["id"] for i in d if i.get("assignee_id") in (None, "")][0]')"
+queued_alert="$(api GET "/api/v1/issues/$queued_item/alert")"
+expect_equal "the alert panel data shows the task as waiting" waiting "$(echo "$queued_alert" | jget 'd["data"]["task_state"]')"
+expect_equal "it shows when the wait ends" 1 "$(echo "$queued_alert" | jget '1 if d["data"]["queue_expires_at"] else 0')"
+expect_equal "only one task exists for the cap alerts" 1 \
+  "$(api GET "/api/v1/projects/$PROJECT/ai/tasks?per_page=100" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+items = d.get("items", d) if isinstance(d, dict) else d
+ids = set(sys.argv[1:])
+print(len([t for t in items if t.get("reference_id") in ids]))
+' $(cap_items | jget '" ".join(i["id"] for i in d)'))"
+
+# ---- 4b. the rule test creates nothing ------------------------------------------------------
+
+items_before="$(cap_items | jget 'len(d)')"
+sample="$(python3 -c '
+import json, sys, datetime
+print(json.dumps({"source_id": sys.argv[1], "envelope": json.loads(sys.argv[2])}))
+' "$CAP_ID" "$(event_json "smoke-$RUN_ID-sample" cap.attack_detected high "cap.attack_detected:sample:$CAP_HOST" "$CAP_HOST")")"
+tested="$(api POST "/api/v1/projects/$PROJECT/alert-rules/test" "$sample")"
+expect_equal "the rule test names the matching rule" "smoke cap $RUN_ID" "$(echo "$tested" | jget 'd["data"]["rule"]["name"]')"
+expect_equal "the rule test forecasts a new alert" would_open "$(echo "$tested" | jget 'd["data"]["alert"]')"
+expect_equal "the rule test forecasts a queued task" would_queue "$(echo "$tested" | jget 'd["data"]["task"]')"
+expect_equal "the rule test created no work item" "$items_before" "$(cap_items | jget 'len(d)')"
+expect_equal "the rule test stored no event" 2 \
+  "$(api GET "/api/v1/inbound-sources/$CAP_ID/events?limit=50" | jget 'len(d["data"])')"
+
+# ---- 4c. the source allow-list ----------------------------------------------------------------
+
+# 192.0.2.0/24 is a documentation range: this machine is never inside it.
+patched="$(api PATCH "/api/v1/inbound-sources/$RATE_ID" '{"ip_allowlist":["192.0.2.0/24"]}')"
+expect_equal "an allow-list is stored as given" '192.0.2.0/24' "$(echo "$patched" | jget 'd["data"]["ip_allowlist"][0]')"
+body="$(event_json "smoke-$RUN_ID-ip-1" misc.note info "misc.note:ip" "ip-$RUN_ID.example.com")"
+answer="$(post_event "$RATE_TOKEN" "$RATE_SECRET" "$(now)" "$body")"
+expect_equal "an address outside the allow-list is refused (403)" 403 "$(status_of "$answer")"
+expect_equal "an entry with host bits set is refused (400)" 400 \
+  "$(api PATCH "/api/v1/inbound-sources/$RATE_ID" '{"ip_allowlist":["192.0.2.9/24"]}' | jget 'd["code"]')"
+api PATCH "/api/v1/inbound-sources/$RATE_ID" '{"ip_allowlist":[]}' >/dev/null
+answer="$(post_event "$RATE_TOKEN" "$RATE_SECRET" "$(now)" "$body")"
+expect_equal "with the list cleared the same request is accepted (202)" 202 "$(status_of "$answer")"
 
 # ---- 5. the per-source allowance --------------------------------------------------------------
 
 # Events of a kind no rule matches are only stored, so 120 of them cost nothing but the requests.
 last_status=""
-for ((n = 1; n <= 121; n++)); do
+# One event of this source was accepted in the allow-list step, so 119 more fit in the minute.
+for ((n = 1; n <= 120; n++)); do
   body="$(event_json "smoke-$RUN_ID-rate-$n" misc.note info "misc.note:$n" "rate-$RUN_ID.example.com")"
   answer="$(post_event "$RATE_TOKEN" "$RATE_SECRET" "$(now)" "$body")"
   last_status="$(status_of "$answer")"
-  if ((n <= 120)) && [[ "$last_status" != "202" ]]; then
+  if ((n <= 119)) && [[ "$last_status" != "202" ]]; then
     fail "event $n of the allowance was refused ($last_status)"
     break
   fi
 done
-expect_equal "the 121st event within a minute is refused (429)" 429 "$last_status"
+expect_equal "the 121st event of the minute is refused (429)" 429 "$last_status"
 
 # ---- 6. the end of the task -------------------------------------------------------------------
 
