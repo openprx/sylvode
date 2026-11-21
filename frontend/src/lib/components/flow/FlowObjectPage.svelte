@@ -357,6 +357,10 @@
 			unsubscribeState = opened.session.state.subscribe((value) => (syncState = value));
 			unsubscribeFlowError = opened.flowError.subscribe((value) => {
 				if (value) runtimeError = value;
+				else if (
+					(runtimeError?.details as { reason?: string } | undefined)?.reason === 'sending_paused'
+				)
+					runtimeError = null;
 			});
 			unsubscribeOthers = [
 				opened.pending.subscribe((value) => (pending = value)),

@@ -84,7 +84,19 @@ export const INVALID_UPDATE_REASONS = [
 	'causal_dependency_missing',
 	'cross_workspace_relation'
 ] as const;
-export type InvalidUpdateReason = (typeof INVALID_UPDATE_REASONS)[number];
+/** Reasons only this client mints (never on the wire, so not part of the approved server table):
+ * `rebase_state_mismatch` -- the re-encoded unsent edits did not reproduce the document the editor
+ * shows, so they stay in the recovery draft instead of being sent. `sending_paused` -- the server
+ * kept answering `contention`, so sending is parked and the changes are kept on this device. */
+export const CLIENT_INVALID_UPDATE_REASONS = ['rebase_state_mismatch', 'sending_paused'] as const;
+export type InvalidUpdateReason =
+	| (typeof INVALID_UPDATE_REASONS)[number]
+	| (typeof CLIENT_INVALID_UPDATE_REASONS)[number];
+
+const KNOWN_INVALID_UPDATE_REASONS: readonly string[] = [
+	...INVALID_UPDATE_REASONS,
+	...CLIENT_INVALID_UPDATE_REASONS
+];
 
 /** What the caller must do for one named `invalid_update` reason (the table's "调用方该做什么"
  * column). `integrity_repair` is the defensive reason: stop ordinary writes and hand over to the
@@ -117,7 +129,9 @@ const INVALID_UPDATE_ACTIONS: Readonly<Record<InvalidUpdateReason, InvalidUpdate
 	// "按 integrity 失败显示，指向运维页；不重试". Only a READ path (`GET relations`) reports it
 	// now: a create/move target outside the workspace answers `not_found`, like a missing one
 	// (`error-mapping-v1.md` `cross_workspace_relation` row, narrowed 2026-10-10).
-	cross_workspace_relation: 'integrity_repair'
+	cross_workspace_relation: 'integrity_repair',
+	rebase_state_mismatch: 'keep_in_recovery_draft',
+	sending_paused: 'surface_error'
 };
 
 /**
@@ -135,7 +149,7 @@ export function invalidUpdateDisposition(
 	if (typeof error.details !== 'object' || error.details === null) return null;
 	const reason = (error.details as { reason?: unknown }).reason;
 	if (typeof reason !== 'string') return null;
-	if (!(INVALID_UPDATE_REASONS as readonly string[]).includes(reason)) return null;
+	if (!KNOWN_INVALID_UPDATE_REASONS.includes(reason)) return null;
 	const known = reason as InvalidUpdateReason;
 	return {
 		reason: known,

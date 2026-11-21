@@ -23,6 +23,7 @@ import { Suite, assert, assertNotEqual, finish } from './support/harness';
 import {
 	FLOW_ERROR_CODES,
 	FLOW_LOCAL_ERROR_CODES,
+	CLIENT_INVALID_UPDATE_REASONS,
 	INVALID_UPDATE_REASONS,
 	PACKAGE_ROUND_TRIP_ERROR_CODES,
 	SERVER_DRAINING_REASONS
@@ -310,7 +311,7 @@ suite.check('the two server_draining reasons read differently in each locale', (
 suite.check('every named invalid_update reason the client consumes has a zh and en key', () => {
 	// `error-mapping-v1.md`'s approved `invalid_update.details.reason` table; `errors.ts`
 	// `invalidUpdateDisposition` selects `flow.error.invalid_update_reason.<reason>`.
-	for (const reason of INVALID_UPDATE_REASONS) {
+	for (const reason of [...INVALID_UPDATE_REASONS, ...CLIENT_INVALID_UPDATE_REASONS]) {
 		for (const locale of LOCALES) {
 			assert(
 				value(locale, `flow.error.invalid_update_reason.${reason}`) !== undefined,

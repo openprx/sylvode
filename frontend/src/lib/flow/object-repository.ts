@@ -634,33 +634,62 @@ export class FlowObjectRepository {
 					throw docRebuildStarted();
 				}
 			},
-			rebaseUnsent: (queued) => {
+			commitPending: () => {
+				try {
+					liveDoc().commit();
+				} catch {
+					// A dead doc is handled by the rebuild paths; nothing to commit.
+				}
+			},
+			hasUncommittedEdits: () => {
+				try {
+					return (liveDoc() as unknown as RawLoroDoc).getPendingTxnLength() > 0;
+				} catch {
+					return false;
+				}
+			},
+			sessionHeadFrontier: () => (lastKnownFrontierBase64 === '' ? null : lastKnownFrontierBase64),
+			prepareRebase: (queued) => {
 				if (!entry) return { ok: false };
-				const rebased = rebaseUnsentChanges(
-					loro,
-					liveDoc() as unknown as import('loro-crdt').LoroDoc,
-					queued
-				);
-				if (!rebased.ok) return { ok: false };
+				const target = entry;
+				const rebased = rebaseUnsentChanges(loro, liveDoc() as unknown as RawLoroDoc, queued);
+				if (!rebased.ok) return { ok: false, error: rebased.error };
 				if (!rebased.bytes) {
 					rebased.doc.free();
-					return { ok: true, bytes: null };
+					return {
+						ok: true,
+						bytes: null,
+						unreplayable: rebased.unreplayable,
+						adopt: () => undefined
+					};
 				}
 				const violation = limitViolation(rebased.bytes);
 				if (violation) {
 					rebased.doc.free();
 					return { ok: false, error: violation };
 				}
-				// The editor rebinds to the new doc (the cursor may move); the old doc is retired
-				// like after any rebuild.
-				this.swapDoc(
-					entry,
-					rebased.doc as unknown as LoroDocType,
-					get(entry.projection.object).documentSeq,
-					() => lastKnownFrontierBase64
-				);
-				return { ok: true, bytes: rebased.bytes };
+				return {
+					ok: true,
+					bytes: rebased.bytes,
+					unreplayable: rebased.unreplayable,
+					adopt: () => {
+						// The editor rebinds to the new doc (the cursor may move); the old doc is
+						// retired like after any rebuild. It is never swapped back.
+						this.swapDoc(
+							target,
+							rebased.doc as unknown as LoroDocType,
+							get(target.projection.object).documentSeq,
+							() => lastKnownFrontierBase64
+						);
+					}
+				};
 			},
+			clearPausedNotice: () =>
+				flowErrorStore.update((shown) =>
+					(shown?.details as { reason?: string } | undefined)?.reason === 'sending_paused'
+						? null
+						: shown
+				),
 			scratchFrom: (bootstrap) => scratchReplicaFrom(bootstrap),
 			enterReadOnly: () => {
 				session.setPermissionReadOnly(true);
@@ -1699,16 +1728,26 @@ async function scratchReplicaFrom(bootstrap: FlowBootstrap): Promise<ScratchRepl
 type LoroModule = typeof import('loro-crdt');
 type RawLoroDoc = import('loro-crdt').LoroDoc;
 
-/** JSON of a doc with the empty root containers dropped: reading a root container (`getMap`) makes
- * it appear in `toJSON()` without it holding any operation, and such a container never syncs. */
-function stateJson(doc: RawLoroDoc): unknown {
+/** The complete state of a doc as a comparable value: every container resolved, text containers
+ * as their delta (so the marks, `toJSON` renders a rich text as its plain string), and the empty
+ * root containers dropped: reading a root container (`getMap`) makes it appear without it
+ * holding any operation, and such a container never syncs. */
+function stateJson(loro: LoroModule, doc: RawLoroDoc): unknown {
 	const sorted = (value: unknown): unknown => {
 		if (Array.isArray(value)) return value.map(sorted);
 		if (typeof value !== 'object' || value === null) return value;
 		const record = value as Record<string, unknown>;
-		return Object.fromEntries(Object.keys(record).sort().map((k) => [k, sorted(record[k])]));
+		return Object.fromEntries(
+			Object.keys(record)
+				.sort()
+				.map((k) => [k, sorted(record[k])])
+		);
 	};
-	const json = sorted(doc.toJSON()) as Record<string, unknown>;
+	const json = sorted(
+		doc.toJsonWithReplacer((_key, value) =>
+			value instanceof loro.LoroText ? (value.toDelta() as never) : value
+		)
+	) as Record<string, unknown>;
 	const out: Record<string, unknown> = {};
 	for (const key of Object.keys(json)) {
 		const value = json[key];
@@ -1737,41 +1776,105 @@ function randomPeerId(): `${number}` {
  * dependencies they were made with, so "on top of the head" means new operations under a fresh
  * peer id: `base` is `live` minus the changes the queued updates carry (including remote updates
  * that arrived meanwhile, which are not ours to re-send); the fork at `base` gets the diff from
- * `base` to `live` applied. The state is compared with `live` before anything is returned; on any
- * difference the fork is freed and nothing changes.
+ * `base` to `live` applied. The complete state (text marks included) is compared with `live`
+ * before anything is returned; on any difference the fork is freed and nothing changes.
+ *
+ * Nothing here may commit: the caller has committed the editor's open transaction and settled
+ * every update it emitted before this synchronous section. `unreplayable` names the queued
+ * entries whose operations the live doc does not hold (they depend on an intent that left the
+ * doc for the recovery draft): the re-encoding cannot carry them, so the caller drafts them.
  */
 function rebaseUnsentChanges(
 	loro: LoroModule,
 	live: RawLoroDoc,
 	queued: readonly OutboxEntry[]
-): { ok: true; doc: RawLoroDoc; bytes: Uint8Array | null } | { ok: false } {
+):
+	| { ok: true; doc: RawLoroDoc; bytes: Uint8Array | null; unreplayable: ReadonlySet<string> }
+	| { ok: false; error: FlowError } {
 	let fork: RawLoroDoc | null = null;
+	let target: RawLoroDoc | null = null;
+	const mismatch = () => ({
+		ok: false as const,
+		error: clientError('invalid_update', { reason: 'rebase_state_mismatch' })
+	});
 	try {
-		const base = live.oplogVersion().toJSON();
+		const liveVersion = live.oplogVersion().toJSON();
+		const base = new Map(liveVersion);
+		const unreplayable = new Set<string>();
+		let partial = false;
 		for (const entry of queued) {
 			const meta = loro.decodeImportBlobMeta(entry.bytes, false);
+			let missing = false;
+			let applied = false;
+			for (const [peer, end] of meta.partialEndVersionVector.toJSON()) {
+				if ((liveVersion.get(peer) ?? 0) < end) missing = true;
+			}
 			for (const [peer, start] of meta.partialStartVersionVector.toJSON()) {
 				const current = base.get(peer);
 				if (current !== undefined && start < current) {
+					applied = true;
 					if (start === 0) base.delete(peer);
 					else base.set(peer, start);
 				}
+			}
+			if (missing) {
+				unreplayable.add(entry.updateId);
+				// Some of its changes are in the live doc: they must not be re-encoded, because
+				// the entry as a whole goes to the draft and restoring it would apply them twice.
+				if (applied) partial = true;
 			}
 		}
 		const baseFrontiers = live.vvToFrontiers(new loro.VersionVector(base));
 		fork = live.forkAt(baseFrontiers);
 		fork.setPeerId(randomPeerId());
 		const before = fork.oplogVersion();
-		fork.applyDiff(live.diff(baseFrontiers, live.frontiers(), false), { fullState: true });
-		fork.commit();
-		if (JSON.stringify(stateJson(fork)) !== JSON.stringify(stateJson(live))) {
-			fork.free();
-			return { ok: false };
+		let source = live;
+		if (partial) {
+			// The state to carry is the base plus the entries that go with it. An entry that
+			// cannot be applied on top of that (it builds on an excluded one) is excluded too.
+			for (let round = 0; round <= queued.length && target === null; round += 1) {
+				const candidate = live.forkAt(baseFrontiers);
+				let blocked: string | null = null;
+				for (const entry of queued) {
+					if (unreplayable.has(entry.updateId)) continue;
+					const status = candidate.import(entry.bytes);
+					if (status.pending && status.pending.size > 0) {
+						blocked = entry.updateId;
+						break;
+					}
+				}
+				if (blocked === null) target = candidate;
+				else {
+					candidate.free();
+					unreplayable.add(blocked);
+				}
+			}
+			if (target === null) {
+				fork.free();
+				return mismatch();
+			}
+			source = target;
 		}
-		if (fork.oplogVersion().compare(before) === 0) return { ok: true, doc: fork, bytes: null };
-		return { ok: true, doc: fork, bytes: fork.export({ mode: 'update', from: before }) };
+		fork.applyDiff(source.diff(baseFrontiers, source.frontiers(), false), { fullState: true });
+		fork.commit();
+		const same = JSON.stringify(stateJson(loro, fork)) === JSON.stringify(stateJson(loro, source));
+		target?.free();
+		if (!same) {
+			fork.free();
+			return mismatch();
+		}
+		if (fork.oplogVersion().compare(before) === 0) {
+			return { ok: true, doc: fork, bytes: null, unreplayable };
+		}
+		return {
+			ok: true,
+			doc: fork,
+			bytes: fork.export({ mode: 'update', from: before }),
+			unreplayable
+		};
 	} catch {
+		target?.free();
 		fork?.free();
-		return { ok: false };
+		return mismatch();
 	}
 }

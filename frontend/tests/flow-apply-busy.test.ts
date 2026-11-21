@@ -16,7 +16,7 @@
  * Run standalone: `bun tests/flow-apply-busy.test.ts`
  */
 
-import { LoroDoc } from 'loro-crdt';
+import { LoroDoc, VersionVector } from 'loro-crdt';
 import { get } from 'svelte/store';
 import { Suite, assert, assertDeepEqual, assertEqual, finish, waitFor } from './support/harness';
 import {
@@ -29,15 +29,27 @@ import {
 	edit,
 	freshIndexedDb,
 	installFakes,
+	limitsPayload,
 	objectView,
 	textOf,
+	tick,
 	type PolicyVerdict
 } from './support/collab-fakes';
-import { IndexedDbOutboxStore, type OutboxEntry } from '../src/lib/flow/outbox';
+import {
+	IndexedDbOutboxStore,
+	type OutboxEntry,
+	type OutboxStore,
+	type RecoveryDraftEntry
+} from '../src/lib/flow/outbox';
+import { negotiateFlowLimitsVersion } from '../src/lib/flow/limits';
 import type { FlowObjectView } from '../src/lib/api/flow';
 import type { FlowError } from '../src/lib/flow/types';
-import { classifySubmitError } from '../src/lib/flow/offline-sync';
-import { flowErrorI18nKey } from '../src/lib/flow/errors';
+import {
+	CONTENTION_SENDS_MAX,
+	REBASE_MAX,
+	classifySubmitError
+} from '../src/lib/flow/offline-sync';
+import { flowErrorDetailKey, flowErrorI18nKey } from '../src/lib/flow/errors';
 import en from '../src/lib/i18n/en.json';
 import zh from '../src/lib/i18n/zh.json';
 
@@ -46,11 +58,16 @@ const suite = new Suite('flow_apply_busy');
 const ACCEPT: PolicyVerdict = { kind: 'accept' };
 const BUSY_KEY = 'flow.error.server_draining.apply_busy';
 
-async function open(server: FakeCollabServer, factory?: IDBFactory) {
+async function open(
+	server: FakeCollabServer,
+	factory?: IDBFactory,
+	wrap?: (store: OutboxStore) => OutboxStore
+) {
 	const idb = factory ?? (await freshIndexedDb());
 	const restore = await installFakes(server);
-	const store = await IndexedDbOutboxStore.open(idb, OUTBOX_DB);
-	assert(store, 'fake IndexedDB opens');
+	const opened = await IndexedDbOutboxStore.open(idb, OUTBOX_DB);
+	assert(opened, 'fake IndexedDB opens');
+	const store = wrap ? wrap(opened) : opened;
 	const connectivity = new FakeConnectivity();
 	const { FlowObjectRepository } = await import('../src/lib/flow/object-repository');
 	const repository = new FlowObjectRepository({
@@ -646,8 +663,11 @@ await suite.checkAsync(
 		const server = new FakeCollabServer();
 		const ctx = await open(server);
 		try {
+			// The first rebase uses the session head; the second one fetches the head over REST,
+			// which is the window this test types into.
 			server.policy = (seen, i) => {
 				if (i === 0) peerCommit(server, 'PEER|');
+				if (i === 1) peerCommit(server, 'PEER2|');
 				return server.isSequential(seen.bytes) ? ACCEPT : applyBusy('rebase');
 			};
 			const realFetch = globalThis.fetch;
@@ -664,7 +684,12 @@ await suite.checkAsync(
 			}) as typeof globalThis.fetch;
 			try {
 				edit(ctx.entry.doc, 'early|');
-				await waitFor(() => server.accepted.length === 2, 'rebased update accepted');
+				await waitFor(
+					() =>
+						occurrences(serverText(server), 'early|') === 1 &&
+						occurrences(serverText(server), 'late|') === 1,
+					'rebased update accepted'
+				);
 				await ctx.entry.offline.idle();
 			} finally {
 				globalThis.fetch = realFetch;
@@ -676,6 +701,623 @@ await suite.checkAsync(
 			assertEqual(ctx.entry.offline.draftEntries.length, 0, 'nothing drafted');
 		} finally {
 			await ctx.close();
+		}
+	}
+);
+
+// ---- round 8 client findings -------------------------------------------------------------------
+
+const SMALL_UPDATE_LIMIT = 300;
+const OVER_LIMIT_MARK = `XMARK${'-'.repeat(700)}`;
+
+function limitUpdates(ctx: Ctx, server: FakeCollabServer): void {
+	server.bootstrapLimits = limitsPayload({ update_bytes_max: SMALL_UPDATE_LIMIT });
+	ctx.entry.session.adoptLimits(
+		negotiateFlowLimitsVersion(limitsPayload({ update_bytes_max: SMALL_UPDATE_LIMIT }))
+	);
+}
+
+/**
+ * How often `marker` is held only by the recovery draft. A draft's bytes can depend on updates the
+ * server refused (a rebase re-encodes those under a new peer), so the draft is merged on top of
+ * the server state plus every refused update the server saw; what the drafts add beyond that base
+ * is what only the draft holds.
+ */
+function draftOnlyCount(
+	server: FakeCollabServer,
+	drafts: readonly RecoveryDraftEntry[],
+	marker: string
+): number {
+	const skip = new Set([...server.accepted, ...drafts].map((e) => e.updateId));
+	const base = new LoroDoc();
+	base.import(server.doc.export({ mode: 'snapshot' }));
+	for (const seen of server.updatesSeen) {
+		if (!skip.has(seen.updateId)) base.import(seen.bytes);
+	}
+	const without = occurrences(base.getText('body').toString(), marker);
+	for (const draft of [...drafts].sort((a, b) => a.order - b.order)) base.import(draft.bytes);
+	const withDrafts = occurrences(base.getText('body').toString(), marker);
+	base.free();
+	return withDrafts - without;
+}
+
+/** Every edit typed ends in exactly one place: the server state or the recovery draft, once. */
+async function assertConserved(
+	ctx: Ctx,
+	server: FakeCollabServer,
+	markers: string[],
+	label: string
+) {
+	await ctx.entry.offline.idle();
+	const drafts = ctx.entry.offline.draftEntries;
+	for (const marker of markers) {
+		assertEqual(
+			occurrences(serverText(server), marker) + draftOnlyCount(server, drafts, marker),
+			1,
+			`${label}: ${marker.slice(0, 8)} is on the server or only in the draft, exactly once`
+		);
+	}
+	assertEqual(ctx.entry.offline.pendingEntries.length, 0, `${label}: nothing left queued`);
+	assertEqual((await rawOutbox(ctx.idb)).length, 0, `${label}: nothing left in the outbox store`);
+	assertEqual(server.pendingAccepted, 0, `${label}: no pending operations on the server`);
+}
+
+const SEQUENTIAL_OR_REBASE = (server: FakeCollabServer, peer?: string) =>
+	((seen, i) => {
+		if (i === 0 && peer) peerCommit(server, peer);
+		return server.isSequential(seen.bytes) ? ACCEPT : applyBusy('rebase');
+	}) as FakeCollabServer['policy'];
+
+// B-2
+await suite.checkAsync(
+	'B-2: a queued edit that depends on a drafted edit is drafted by the rebase, not deleted',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			limitUpdates(ctx, server);
+			server.policy = SEQUENTIAL_OR_REBASE(server, 'PEER|');
+			edit(ctx.entry.doc, 'A|');
+			edit(ctx.entry.doc, OVER_LIMIT_MARK);
+			edit(ctx.entry.doc, 'B|');
+			await waitFor(
+				() => server.accepted.some((a) => a.updateId !== 'x') && ctx.pending() === 0,
+				'settled'
+			);
+			await ctx.entry.offline.idle();
+			assertEqual(occurrences(serverText(server), 'A|'), 1, 'A reached the server once');
+			assertEqual(occurrences(serverText(server), 'B|'), 0, 'B cannot be on the server');
+			const drafted = ctx.entry.offline.draftEntries;
+			assertEqual(drafted.length, 2, 'the over-limit edit and its dependent are both drafted');
+			assert(
+				drafted.some((d) => d.reason.source === 'dependency'),
+				'the dependent carries the dependency reason'
+			);
+			await assertConserved(ctx, server, ['A|', 'B|', OVER_LIMIT_MARK], 'B-2');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
+// B-2 invariant: conservation over queue shapes
+const SHAPES: Array<{
+	name: string;
+	run: (ctx: Ctx, server: FakeCollabServer) => Promise<string[]>;
+}> = [
+	{
+		name: 'several dependent entries, a peer commit, a folded rebase',
+		run: async (ctx, server) => {
+			ctx.connectivity.goOffline();
+			await waitFor(() => ctx.states.at(-1) === 'offline', 'offline');
+			for (const part of ['s1|', 's2|', 's3|']) edit(ctx.entry.doc, part);
+			await ctx.entry.offline.idle();
+			peerCommit(server, 'PEER|');
+			server.policy = SEQUENTIAL_OR_REBASE(server);
+			ctx.connectivity.goOnline();
+			await waitFor(() => server.accepted.length >= 2, 'folded update accepted');
+			return ['s1|', 's2|', 's3|'];
+		}
+	},
+	{
+		name: 'an over-limit edit while an update is in flight, nothing after it',
+		run: async (ctx, server) => {
+			limitUpdates(ctx, server);
+			server.policy = SEQUENTIAL_OR_REBASE(server, 'PEER|');
+			edit(ctx.entry.doc, 'f1|');
+			edit(ctx.entry.doc, OVER_LIMIT_MARK);
+			await waitFor(() => ctx.entry.offline.draftEntries.length >= 1, 'drafted');
+			return ['f1|', OVER_LIMIT_MARK];
+		}
+	},
+	{
+		name: 'one refused permanently while another is in flight, with a chain behind it',
+		run: async (ctx, server) => {
+			limitUpdates(ctx, server);
+			server.policy = SEQUENTIAL_OR_REBASE(server, 'PEER|');
+			edit(ctx.entry.doc, 'g1|');
+			edit(ctx.entry.doc, OVER_LIMIT_MARK);
+			edit(ctx.entry.doc, 'g2|');
+			edit(ctx.entry.doc, 'g3|');
+			await waitFor(() => ctx.entry.offline.draftEntries.length >= 3, 'chain drafted');
+			return ['g1|', 'g2|', 'g3|', OVER_LIMIT_MARK];
+		}
+	},
+	{
+		name: 'the rebased update is then refused permanently',
+		run: async (ctx, server) => {
+			ctx.connectivity.goOffline();
+			await waitFor(() => ctx.states.at(-1) === 'offline', 'offline');
+			for (const part of ['r1|', 'r2|']) edit(ctx.entry.doc, part);
+			await ctx.entry.offline.idle();
+			peerCommit(server, 'PEER|');
+			server.policy = (seen, i) =>
+				i === 0
+					? applyBusy('rebase')
+					: {
+							kind: 'reject',
+							reject: { code: 'invalid_update', details: { reason: 'invalid_field_value' } }
+						};
+			ctx.connectivity.goOnline();
+			await waitFor(() => ctx.entry.offline.draftEntries.length >= 1, 'drafted');
+			return ['r1|', 'r2|'];
+		}
+	}
+];
+for (const shape of SHAPES) {
+	await suite.checkAsync(`conservation of edits: ${shape.name}`, async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			const markers = await shape.run(ctx, server);
+			await assertConserved(ctx, server, markers, shape.name);
+		} finally {
+			await ctx.close();
+		}
+	});
+}
+
+// R9-8: one outbox entry with several changes, only some of them applicable
+await suite.checkAsync(
+	'R9-8: an entry whose later change is pending is drafted whole; its applied prefix is not also sent',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			limitUpdates(ctx, server);
+			const snapshot = server.doc.export({ mode: 'snapshot' });
+			// X: an over-limit edit by an earlier peer of this user (it will be drafted).
+			const earlier = new LoroDoc();
+			earlier.import(snapshot);
+			earlier.setPeerId('11');
+			const beforeX = earlier.oplogVersion();
+			earlier.getText('body').insert(0, OVER_LIMIT_MARK);
+			earlier.commit();
+			const xBytes = earlier.export({ mode: 'update', from: beforeX });
+			const xEnd = earlier.oplogVersion().toJSON().get('11') ?? 0;
+			// E1: two changes of one peer in one entry. A builds on the head; B builds on A and X.
+			const writer = new LoroDoc();
+			writer.import(snapshot);
+			writer.setPeerId('22');
+			writer.getText('body').insert(0, 'A|');
+			writer.commit();
+			writer.import(xBytes);
+			writer.getText('body').insert(0, 'B|');
+			writer.commit();
+			const entryBytes = writer.export({
+				mode: 'update',
+				from: new VersionVector(new Map([['11', xEnd]]))
+			});
+			server.policy = (seen, i) =>
+				i === 0 ? applyBusy('rebase') : SEQUENTIAL_OR_REBASE(server)(seen, i);
+			const intent = { kind: 'content_edit' } as const;
+			// Queued while still in flight, so the over-limit draft lands before the rebase runs.
+			const first = ctx.entry.offline.enqueue(entryBytes, 'f0', intent);
+			const second = ctx.entry.offline.enqueue(xBytes, 'f0', intent);
+			await Promise.all([first, second]);
+			await waitFor(() => ctx.entry.offline.draftEntries.length >= 2, 'both drafted');
+			await assertConserved(ctx, server, ['A|', 'B|', OVER_LIMIT_MARK], 'R9-8');
+			assertEqual(occurrences(serverText(server), 'A|'), 0, 'the prefix was not sent');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
+// B-3
+await suite.checkAsync(
+	'B-3: an uncommitted editor transaction at rebase time is saved once, no banner, no draft',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			server.policy = (seen, i) => {
+				if (i === 0) {
+					peerCommit(server, 'PEER|');
+					const body = (ctx.entry.doc as unknown as LoroDoc).getText('body');
+					body.insert(body.length, 'late|'); // no commit: the transaction stays open
+				}
+				return server.isSequential(seen.bytes) ? ACCEPT : applyBusy('rebase');
+			};
+			edit(ctx.entry.doc, 'early|');
+			await waitFor(() => server.accepted.length >= 2, 'rebased update accepted');
+			await ctx.entry.offline.idle();
+			await tick(50);
+			await ctx.entry.offline.idle();
+			assertEqual(occurrences(serverText(server), 'early|'), 1, 'early once');
+			assertEqual(occurrences(serverText(server), 'late|'), 1, 'late once');
+			assertEqual(ctx.entry.offline.draftEntries.length, 0, 'no recovery draft');
+			assert(
+				ctx.errors.every((e) => e === null),
+				'no banner'
+			);
+			assertEqual(server.causalRefusals, 0, 'the server refused nothing');
+			assertEqual((await rawOutbox(ctx.idb)).length, 0, 'outbox store empty');
+			assertEqual(stateOf(ctx.entry.doc), stateOf(server.doc), 'client doc == server doc');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
+// B-4
+class FailingReplaceStore implements OutboxStore {
+	failures: number;
+	onFail: () => void = () => undefined;
+	constructor(
+		private readonly inner: OutboxStore,
+		failures: number
+	) {
+		this.failures = failures;
+	}
+	list = (objectId: string) => this.inner.list(objectId);
+	put = (entry: OutboxEntry) => this.inner.put(entry);
+	delete = (updateId: string) => this.inner.delete(updateId);
+	replace: OutboxStore['replace'] = async (oldIds, entry, drafts) => {
+		if (this.failures > 0) {
+			this.failures -= 1;
+			this.onFail();
+			throw new Error('simulated IndexedDB failure');
+		}
+		return this.inner.replace(oldIds, entry, drafts);
+	};
+	listDrafts = (objectId: string) => this.inner.listDrafts(objectId);
+	moveToDraft = (draft: RecoveryDraftEntry) => this.inner.moveToDraft(draft);
+	deleteDrafts = (ids: readonly string[]) => this.inner.deleteDrafts(ids);
+	nextOrder = () => this.inner.nextOrder();
+}
+
+await suite.checkAsync(
+	'B-4: a failed IndexedDB replacement keeps the old entries; the rebase is retried, no duplicate after a reload',
+	async () => {
+		const idb = await freshIndexedDb();
+		const server = new FakeCollabServer();
+		let failing: FailingReplaceStore | null = null;
+		const first = await open(server, idb, (inner) => (failing = new FailingReplaceStore(inner, 1)));
+		let oldId = '';
+		let atFailure: { memory: string[]; rows: string[] } | null = null;
+		try {
+			assert(failing, 'wrapped');
+			(failing as FailingReplaceStore).onFail = () => {
+				atFailure = {
+					memory: first.entry.offline.pendingEntries.map((e) => e.updateId),
+					rows: []
+				};
+				void rawOutbox(idb).then((rows) => {
+					if (atFailure) atFailure.rows = rows.map((r) => r.updateId);
+				});
+			};
+			server.policy = (seen, i) => {
+				if (i === 0) {
+					oldId = seen.updateId;
+					peerCommit(server, 'PEER|');
+				}
+				return server.isSequential(seen.bytes) ? ACCEPT : applyBusy('rebase');
+			};
+			edit(first.entry.doc, 'mine');
+			await waitFor(() => server.accepted.length >= 2, 'accepted after the retried rebase');
+			await first.entry.offline.idle();
+			assert(atFailure !== null, 'the replacement failed once');
+			assertDeepEqual(
+				(atFailure as { memory: string[] }).memory,
+				[oldId],
+				'memory kept the old entry when the replacement failed'
+			);
+			assertDeepEqual(
+				(atFailure as { rows: string[] }).rows,
+				[oldId],
+				'storage kept the old entry when the replacement failed'
+			);
+			assertEqual(occurrences(serverText(server), 'mine'), 1, 'saved once');
+			assertEqual((await rawOutbox(idb)).length, 0, 'store empty after the accept');
+			assertEqual(first.entry.offline.draftEntries.length, 0, 'nothing drafted');
+			assertEqual(stateOf(first.entry.doc), stateOf(server.doc), 'client doc == server doc');
+		} finally {
+			await first.close();
+		}
+		const second = await open(server, idb);
+		try {
+			server.policy = () => ACCEPT;
+			await tick(100);
+			await second.entry.offline.idle();
+			assertEqual(occurrences(serverText(server), 'mine'), 1, 'still once after a reload');
+		} finally {
+			await second.close();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'B-4: a store that keeps failing holds the rebased entry unsent; the old entry is the only stored copy',
+	async () => {
+		const idb = await freshIndexedDb();
+		const server = new FakeCollabServer();
+		let failing: FailingReplaceStore | null = null;
+		const first = await open(
+			server,
+			idb,
+			(inner) => (failing = new FailingReplaceStore(inner, 100))
+		);
+		assert(failing, 'wrapped');
+		let oldId = '';
+		try {
+			server.policy = (seen, i) => {
+				if (i === 0) oldId = seen.updateId;
+				return SEQUENTIAL_OR_REBASE(server, 'PEER|')(seen, i);
+			};
+			edit(first.entry.doc, 'mine');
+			await waitFor(() => {
+				const shown = first.lastError();
+				return (
+					(shown?.details as { reason?: string } | undefined)?.reason === 'local_outbox_persistence'
+				);
+			}, 'storage failure reported');
+			await first.entry.offline.idle();
+			await tick(100);
+			assertEqual(occurrences(serverText(server), 'mine'), 0, 'the rebased copy is not sent');
+			assert(
+				server.updatesSeen.length <= 2,
+				'nothing else is sent while the store holds the old entry'
+			);
+			assertEqual(first.entry.offline.pendingEntries.length, 1, 'the rebased entry is queued');
+			assertDeepEqual(
+				(await rawOutbox(idb)).map((r) => r.updateId),
+				[oldId],
+				'the old entry is the only stored copy'
+			);
+			assertEqual(occurrences(textOf(first.entry.doc), 'mine'), 1, 'the canvas keeps the text');
+		} finally {
+			await first.close();
+		}
+		const second = await open(server, idb);
+		try {
+			server.policy = () => ACCEPT;
+			await waitFor(() => server.accepted.length >= 2, 'the old entry replays');
+			await second.entry.offline.idle();
+			assertEqual(occurrences(serverText(server), 'mine'), 1, 'saved exactly once after a reload');
+		} finally {
+			await second.close();
+		}
+	}
+);
+
+// R9-6: a keystroke between the doc swap and the failed store write is never lost
+await suite.checkAsync(
+	'R9-6: text typed between the rebase swap and a failed store write stays and is saved once',
+	async () => {
+		const idb = await freshIndexedDb();
+		const server = new FakeCollabServer();
+		let failing: FailingReplaceStore | null = null;
+		const ctx = await open(server, idb, (inner) => (failing = new FailingReplaceStore(inner, 100)));
+		assert(failing, 'wrapped');
+		const store = failing as FailingReplaceStore;
+		try {
+			let typed = false;
+			store.onFail = () => {
+				if (typed) return;
+				typed = true;
+				edit(ctx.entry.doc, 'late|'); // lands on the adopted doc, before the write failed
+			};
+			server.policy = SEQUENTIAL_OR_REBASE(server, 'PEER|');
+			edit(ctx.entry.doc, 'mine|');
+			await waitFor(() => typed, 'the keystroke landed in the window');
+			await waitFor(
+				() =>
+					(ctx.lastError()?.details as { reason?: string } | undefined)?.reason ===
+					'local_outbox_persistence',
+				'storage failure reported'
+			);
+			await ctx.entry.offline.idle();
+			assertEqual(occurrences(textOf(ctx.entry.doc), 'late|'), 1, 'the canvas still shows it');
+			assertEqual(occurrences(textOf(ctx.entry.doc), 'mine|'), 1, 'and the rebased edit');
+			assertEqual(occurrences(serverText(server), 'mine|'), 0, 'nothing sent while unstored');
+			// Storage recovers; the next edit resumes the held queue.
+			store.failures = 0;
+			edit(ctx.entry.doc, 'more|');
+			await waitFor(
+				() => ['mine|', 'late|', 'more|'].every((m) => occurrences(serverText(server), m) === 1),
+				'everything saved once'
+			);
+			await ctx.entry.offline.idle();
+			assertEqual(ctx.entry.offline.draftEntries.length, 0, 'nothing drafted');
+			assertEqual(stateOf(ctx.entry.doc), stateOf(server.doc), 'client doc == server doc');
+			assertEqual((await rawOutbox(idb)).length, 0, 'store empty');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
+// B-5
+await suite.checkAsync(
+	'B-5: a rebase that loses text marks is caught, reported as its own error, edits drafted',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		const proto = LoroDoc.prototype as unknown as {
+			applyDiff: (...args: unknown[]) => unknown;
+		};
+		const realApply = proto.applyDiff;
+		try {
+			proto.applyDiff = function (this: LoroDoc, ...args: unknown[]) {
+				const result = realApply.apply(this, args);
+				const body = this.getText('body');
+				if (body.length > 0) body.unmark({ start: 0, end: body.length }, 'bold');
+				return result;
+			};
+			server.policy = SEQUENTIAL_OR_REBASE(server, 'PEER|');
+			const doc = ctx.entry.doc as unknown as LoroDoc;
+			doc.configTextStyle({ bold: { expand: 'after' } });
+			const body = doc.getText('body');
+			body.insert(0, 'bold-me');
+			body.mark({ start: 0, end: 4 }, 'bold', true);
+			doc.commit();
+			await waitFor(() => ctx.entry.offline.draftEntries.length === 1, 'drafted');
+			await ctx.entry.offline.idle();
+			const error = ctx.lastError();
+			assert(error !== null, 'reported');
+			assertEqual(
+				flowErrorDetailKey(error),
+				'flow.error.invalid_update_reason.rebase_state_mismatch',
+				'its own text, not the server busy text'
+			);
+			assert(flowErrorI18nKey(error) !== BUSY_KEY, 'not the busy key');
+			assertEqual(ctx.entry.offline.draftEntries[0].reason.code, 'invalid_update', 'draft reason');
+			assertEqual(occurrences(serverText(server), 'bold-me'), 0, 'stripped marks were never sent');
+		} finally {
+			proto.applyDiff = realApply;
+			await ctx.close();
+		}
+	}
+);
+
+// B-6
+const CONTENTION: PolicyVerdict = {
+	kind: 'reject',
+	reject: {
+		code: 'server_draining',
+		recoverable: true,
+		details: { reason: 'contention', retry_after_ms: 10 }
+	}
+};
+
+await suite.checkAsync(
+	'B-6: contention is retried at most CONTENTION_SENDS_MAX times, then sending pauses (nothing drafted)',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			server.policy = () => CONTENTION;
+			edit(ctx.entry.doc, 'parked');
+			await waitFor(() => server.updatesSeen.length === CONTENTION_SENDS_MAX, 'the cap is reached');
+			await ctx.entry.offline.idle();
+			await tick(150);
+			assertEqual(server.updatesSeen.length, CONTENTION_SENDS_MAX, 'no send beyond the cap');
+			assert(
+				server.updatesSeen.every((s) => s.updateId === server.updatesSeen[0].updateId),
+				'same update id throughout'
+			);
+			assertEqual(ctx.entry.offline.draftEntries.length, 0, 'not drafted');
+			assertEqual(ctx.entry.offline.pendingEntries.length, 1, 'kept in the queue');
+			assertEqual((await rawOutbox(ctx.idb)).length, 1, 'and in the store');
+			assert(ctx.states.at(-1) !== 'saving', 'the indicator left saving');
+			const shown = ctx.lastError();
+			assert(shown !== null, 'a notice is shown');
+			assertEqual(
+				flowErrorDetailKey(shown),
+				'flow.error.invalid_update_reason.sending_paused',
+				'the paused text, not "Retrying, please wait."'
+			);
+			let recovering = true;
+			ctx.entry.offline.recovering.subscribe((v) => (recovering = v))();
+			assertEqual(recovering, false, 'the recovery indicator is off');
+			// A later successful sync resumes sending the same entry.
+			server.policy = () => ACCEPT;
+			ctx.connectivity.goOffline();
+			await waitFor(() => ctx.states.at(-1) === 'offline', 'offline');
+			ctx.connectivity.goOnline();
+			await waitFor(() => server.accepted.length === 1, 'resumed after the reconnect');
+			await ctx.entry.offline.idle();
+			assertEqual(ctx.lastError(), null, 'the paused notice is gone once saving works again');
+			assertEqual(occurrences(serverText(server), 'parked'), 1, 'saved once');
+			assertEqual(ctx.entry.offline.pendingEntries.length, 0, 'queue drained');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
+await suite.checkAsync(
+	'B-6: a new local edit also resumes a paused queue, with a fresh budget',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			server.policy = () => CONTENTION;
+			edit(ctx.entry.doc, 'one|');
+			await waitFor(() => server.updatesSeen.length === CONTENTION_SENDS_MAX, 'paused');
+			await ctx.entry.offline.idle();
+			server.policy = () => ACCEPT;
+			edit(ctx.entry.doc, 'two|');
+			await waitFor(() => server.accepted.length === 2, 'both accepted');
+			await ctx.entry.offline.idle();
+			assertEqual(serverText(server), 'one|two|', 'in order');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
+
+// B-8
+await suite.checkAsync(
+	'B-8: the first rebase uses the session head (no REST bootstrap); a second one fetches it',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		const realFetch = globalThis.fetch;
+		let bootstraps = 0;
+		try {
+			server.policy = SEQUENTIAL_OR_REBASE(server, 'PEER|');
+			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url =
+					typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+				if (url.includes('/bootstrap')) bootstraps += 1;
+				return realFetch(input, init);
+			}) as typeof globalThis.fetch;
+			edit(ctx.entry.doc, 'mine');
+			await waitFor(() => server.accepted.length === 2, 'rebased update accepted');
+			await ctx.entry.offline.idle();
+			assertEqual(bootstraps, 0, 'no REST bootstrap for the first rebase');
+			assertEqual(occurrences(serverText(server), 'mine'), 1, 'saved once');
+			assertEqual(stateOf(ctx.entry.doc), stateOf(server.doc), 'client doc == server doc');
+		} finally {
+			globalThis.fetch = realFetch;
+			await ctx.close();
+		}
+		const other = new FakeCollabServer();
+		const ctx2 = await open(other);
+		const realFetch2 = globalThis.fetch;
+		let bootstraps2 = 0;
+		try {
+			other.policy = (seen, i) => {
+				if (i === 0) peerCommit(other, 'ONE|');
+				if (i === 1) peerCommit(other, 'TWO|');
+				return other.isSequential(seen.bytes) ? ACCEPT : applyBusy('rebase');
+			};
+			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url =
+					typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+				if (url.includes('/bootstrap')) bootstraps2 += 1;
+				return realFetch2(input, init);
+			}) as typeof globalThis.fetch;
+			edit(ctx2.entry.doc, 'mine');
+			await waitFor(() => other.accepted.length === 3, 'accepted after the second rebase');
+			await ctx2.entry.offline.idle();
+			assertEqual(bootstraps2, 1, 'the second rebase fetches the head once');
+			assertEqual(stateOf(ctx2.entry.doc), stateOf(other.doc), 'client doc == server doc');
+		} finally {
+			globalThis.fetch = realFetch2;
+			await ctx2.close();
 		}
 	}
 );
