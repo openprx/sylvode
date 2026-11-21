@@ -225,10 +225,14 @@ pub enum Outcome {
     /// accepted document (`window_check::WindowReport`); `None` when the full computation decided.
     /// The host compares it with its own projection of the accepted document.
     ///
+    /// `touched_blocks` are the container ids of the editor blocks the update touched, sent only
+    /// with a report: the host measures the decode cost of their texts in the candidate document
+    /// (`LoroCollabEngine::first_text_over_budget`).
     Success {
         snapshot: Vec<u8>,
         window_cpu_us: Option<u64>,
         window_report: Option<WindowReport>,
+        touched_blocks: Vec<String>,
     },
     Rejected(CollabError),
 }
@@ -237,6 +241,9 @@ pub enum Outcome {
 const NOT_MEASURED: u64 = u64::MAX;
 /// Flags of a success outcome: a window report follows.
 const FLAG_REPORT: u8 = 1;
+/// The most touched blocks a success outcome carries, and the longest container id of one.
+const MAX_TOUCHED_BLOCKS: u32 = 1_000_000;
+const MAX_CONTAINER_ID_BYTES: usize = 256;
 const TAG_SUCCESS: u8 = 0;
 const TAG_EMPTY_INPUT: u8 = 1;
 const TAG_INPUT_TOO_LARGE: u8 = 2;
@@ -266,6 +273,7 @@ fn static_str_from(value: &str) -> &'static str {
         "document_block_count" => "document_block_count",
         "text_block_chars" => "text_block_chars",
         "document_text_chars" => "document_text_chars",
+        "text_decode_cost" => "text_decode_cost",
         _ => "unknown",
     }
 }
@@ -283,6 +291,7 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
             snapshot,
             window_cpu_us,
             window_report,
+            touched_blocks,
         } => {
             buf.push(TAG_SUCCESS);
             write_field(&mut buf, snapshot)?;
@@ -303,6 +312,12 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
                     report.longest_bound,
                 ] {
                     write_u64(&mut buf, value)?;
+                }
+                let count = u32::try_from(touched_blocks.len())
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many touched blocks"))?;
+                write_u32(&mut buf, count)?;
+                for block in touched_blocks {
+                    write_str(&mut buf, block)?;
                 }
             }
         }
@@ -380,21 +395,32 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
             if flags & !FLAG_REPORT != 0 {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown outcome flags"));
             }
-            let window_report = if flags & FLAG_REPORT == 0 {
-                None
+            let (window_report, touched_blocks) = if flags & FLAG_REPORT == 0 {
+                (None, Vec::new())
             } else {
-                Some(WindowReport {
+                let report = WindowReport {
                     blocks: read_u64(&mut cursor)?,
                     navigators: read_u64(&mut cursor)?,
                     chars: read_u64(&mut cursor)?,
                     depth_bound: read_u64(&mut cursor)?,
                     longest_bound: read_u64(&mut cursor)?,
-                })
+                };
+                let count = read_u32(&mut cursor)?;
+                if count > MAX_TOUCHED_BLOCKS {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "too many touched blocks"));
+                }
+                // Not `with_capacity(count)`: the count is the sender's claim.
+                let mut blocks = Vec::new();
+                for _ in 0..count {
+                    blocks.push(read_str(&mut cursor, MAX_CONTAINER_ID_BYTES)?);
+                }
+                (Some(report), blocks)
             };
             Ok(Outcome::Success {
                 snapshot,
                 window_cpu_us,
                 window_report,
+                touched_blocks,
             })
         }
         TAG_EMPTY_INPUT => {
@@ -634,6 +660,7 @@ mod tests {
                 snapshot: b"exported snapshot bytes".to_vec(),
                 window_cpu_us,
                 window_report: None,
+                touched_blocks: Vec::new(),
             };
             let payload = encode_outcome(&outcome).expect("encode succeeds");
             let decoded = decode_outcome(&payload).expect("decode succeeds");
@@ -655,6 +682,7 @@ mod tests {
                 snapshot: b"exported snapshot bytes".to_vec(),
                 window_cpu_us,
                 window_report: Some(report),
+                touched_blocks: vec!["cid:1@2:Map".to_owned(), "cid:3@4:Map".to_owned()],
             };
             let payload = encode_outcome(&outcome).expect("encode succeeds");
             assert_eq!(decode_outcome(&payload).expect("decode succeeds"), outcome);
@@ -664,6 +692,7 @@ mod tests {
             snapshot: b"snap".to_vec(),
             window_cpu_us: Some(1),
             window_report: Some(report),
+            touched_blocks: vec!["cid:1@2:Map".to_owned()],
         })
         .expect("encode succeeds");
         for cut in 1..=48 {
@@ -701,6 +730,7 @@ mod tests {
             snapshot: b"snap".to_vec(),
             window_cpu_us: None,
             window_report: None,
+            touched_blocks: Vec::new(),
         })
         .expect("encode succeeds");
         *payload.last_mut().expect("a payload") = 0x80;
@@ -742,6 +772,7 @@ mod tests {
             "document_block_count",
             "text_block_chars",
             "document_text_chars",
+            "text_decode_cost",
         ] {
             let outcome = Outcome::Rejected(CollabError::LimitExceeded {
                 limit_kind,

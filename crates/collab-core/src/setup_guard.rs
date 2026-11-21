@@ -176,20 +176,25 @@
 //! the text is at most about 90 ms, 1.8 times its budget (from a text of 500 marks, 800 more cost
 //! the window 82 ms and the text 91 ms; from 400, 400 more cost 27 ms and the text 33 ms). The
 //! update size (64 KiB) is no bound here: 800 marks are 5.9 KB, the window's ceiling binds first.
-//! The setup runs before every write, so the text is measured before the next update is imported:
-//! it has no facts from then on, the full window meters its decode, and a decode over the ceiling is
-//! killed there (no write can grow the text further, the full window being CPU-killed before it
-//! accepts). The text is therefore never more than about twice the budget in any base this product
-//! produces, and that is the most one uninterruptible call can cost the setup: about 1.8 times the
-//! budget, which is 90 ms for a budget of 50 ms, not seconds. The ratio is what carries to another
-//! host: the figures above were measured on the development machine against its own 50 ms (the
-//! budget and the window's ceiling are the same host's clock), and the ratio has not been measured
-//! on the reference runner. `window_text_guard_worst_setup` measures the page of
-//! many texts each just under the budget (250 texts of 500 nested marks, 43 ms each on the
-//! reference runner): the CPU budget cuts the setup at 2.51 s, the budget plus one text, where the
-//! setup without a guard would take 10.7 s; that is half of the 5 s timeout. The worst total, a page that spent
-//! the budget on other texts and then meets the one text that a window pushed to twice its budget,
-//! is 2.5 s plus 0.1 s plus the load, about 2.7 s on the reference runner.
+//! The setup runs before every write, so the text is measured before the next update is imported.
+//! One accepted window must not be allowed to leave such a text in the document, because then every
+//! later write would be refused by the full window (which decodes it inside its ceiling) and the
+//! page would be unwritable. So the host measures the texts of the blocks the update touched in the
+//! candidate document the worker returned, with this same clock and budget
+//! (`LoroCollabEngine::first_text_over_budget`), and refuses the update that would take one over it
+//! (`limit_exceeded{text_decode_cost}`, nothing applied) before it is committed. The decode that
+//! measure performs is the one the host's projection of the candidate performs anyway. No committed
+//! text is over the budget, then, except in a base that predates the measure. The most one
+//! uninterruptible call can cost the setup of any base this product now produces is a text within
+//! the budget, 50 ms (before the measure it was a text that one window had pushed past it, about
+//! 1.8 times that, as the table above shows).
+//!
+//! `window_text_guard_worst_setup` measures the page of many texts each just under the budget (250
+//! texts of 500 nested marks, 43 ms each on the reference runner): the CPU budget cuts the setup at
+//! 2.51 s, the budget plus one text, where the setup without a guard would take 10.7 s; that is half
+//! of the 5 s timeout. The worst total, a page that spent the budget on other texts and then meets
+//! one more text within its budget, is 2.5 s plus 0.05 s plus the load, about 2.6 s on the
+//! reference runner.
 //!
 //! A base that predates this guard can hold a text far over it (the review's growth had no bound):
 //! its setup is one uninterruptible call of seconds. The host's backstop is the setup timeout: a

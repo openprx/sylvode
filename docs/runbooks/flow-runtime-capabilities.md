@@ -180,6 +180,14 @@ killed (`setup_guard` on the `flow::apply_refusal` line, and the `window_setup_g
   limits allow (100,000 characters, heavily formatted, with a long edit history) costs a quarter of
   it. It is not configurable.
 
+With the incremental window on, the API also measures the texts of the blocks an accepted update
+touched, in the candidate document the worker returned, against the same per-text budget before it
+commits anything. An update that would take a text over it (a few hundred alternating marks on one
+character, say) is refused with `limit_exceeded{text_decode_cost}` (the limit is the budget in
+milliseconds), nothing is applied, and the Page stays writable: no text over the budget is ever
+committed by an incremental window. The full window needs no such measure, because it decodes every
+text inside its own 50 ms ceiling.
+
 A fired guard also puts the document on the full window for the next ten minutes (logged once at
 warning level as `window_setup_cooldown`), so the writes that follow skip the facts computation and
 pay one metered window each, not a setup that can cost seconds. The cooldown is not a divergence and

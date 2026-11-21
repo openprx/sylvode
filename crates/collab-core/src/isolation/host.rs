@@ -424,10 +424,12 @@ fn run_worker_inner(
             snapshot,
             window_cpu_us,
             window_report,
+            touched_blocks,
         } => Ok(IsolatedApplySuccess {
             snapshot,
             window_cpu_us,
             window_report,
+            touched_blocks,
         }),
         Outcome::Rejected(err) => Err(IsolatedApplyError::Collab(err)),
     }
@@ -1163,6 +1165,7 @@ mod tests {
                     snapshot: Vec::new(),
                     window_cpu_us: None,
                     window_report: None,
+                    touched_blocks: Vec::new(),
                 }),
                 &observed(Some(150_000)),
                 ceiling
@@ -1176,6 +1179,7 @@ mod tests {
                     snapshot: Vec::new(),
                     window_cpu_us: None,
                     window_report: None,
+                    touched_blocks: Vec::new(),
                 }),
                 &observed(Some(33_000))
             ),

@@ -696,6 +696,18 @@ fn mutant_is(mutant: WindowMutant) -> bool {
     WINDOW_MUTANT.with(std::cell::Cell::get) == Some(mutant)
 }
 
+/// The documents for which the host does not measure the texts of the candidate document against the
+/// per-text budget (the mutant of R9-1). Keyed by document, not by thread: the window runs on a
+/// blocking thread of its own.
+#[cfg(test)]
+static TEXT_BUDGET_CHECK_SKIPPED: LazyLock<Mutex<std::collections::HashSet<Uuid>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+#[cfg(test)]
+fn text_budget_check_skipped_for(document_id: Uuid) -> bool {
+    TEXT_BUDGET_CHECK_SKIPPED.lock().contains(&document_id)
+}
+
 /// How a disagreement is answered, for the log line.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DivergenceAnswer {
@@ -925,6 +937,19 @@ fn candidate_derivation_defect() -> ApiError {
     ApiError::server_rejected(SERVER_REJECTED_REASON_CANDIDATE_DERIVATION_FAILED)
 }
 
+/// The refusal of an update that would leave a text whose decode costs more than the per-text budget
+/// (`collab_core::setup_guard::TEXT_CPU_BUDGET_NANOS`, the window's own CPU ceiling): a content limit,
+/// `limit_exceeded{text_decode_cost}`, with the budget in milliseconds as its limit. Nothing is
+/// applied, so the page stays writable.
+fn text_decode_cost_refusal() -> CollabError {
+    let limit = collab_core::setup_guard::TEXT_CPU_BUDGET_NANOS / 1_000_000;
+    CollabError::LimitExceeded {
+        limit_kind: "text_decode_cost",
+        limit,
+        observed: limit + 1,
+    }
+}
+
 /// One attempt: the isolated window in `mode`, then the host's load and projection of the document
 /// it returned, compared with the worker's report. Blocking and CPU heavy (process spawn, pipe I/O,
 /// load, a full projection): run it on a blocking thread, never on an async worker.
@@ -971,6 +996,31 @@ fn window_attempt(
     if let Err(err) = candidate.refuse_unresolved_tree_parents_over(base_snapshot) {
         return Ok(WindowAttempt::Rejected(RefusedAttempt {
             error: collab_core::isolation::IsolatedApplyError::Collab(err),
+            observation,
+            mode,
+            cooling: false,
+        }));
+    }
+    // R9-1: an update the incremental window accepted must not leave a text in the document whose
+    // decode costs more than the per-text budget, or the next setup would find it and every later
+    // write would be refused by the full window, which decodes it inside its ceiling. The texts of
+    // the blocks the update touched are decoded here from the fresh load of the candidate, with the
+    // same clock and budget as the setup. This is the decode the projection below performs anyway
+    // (the texts are memoised in the candidate afterwards), measured, not an additional one; the
+    // full window needs no such check because it decodes every text inside its own ceiling. The
+    // measure cannot sit in the worker: its response is held to the window's 100 ms wall deadline
+    // from the marker, and loading the candidate again there would spend that on large pages.
+    #[cfg(test)]
+    let text_budget_check = !text_budget_check_skipped_for(document_id);
+    #[cfg(not(test))]
+    let text_budget_check = true;
+    if text_budget_check
+        && success.window_report.is_some()
+        && !success.touched_blocks.is_empty()
+        && candidate.first_text_over_budget(&success.touched_blocks).is_some()
+    {
+        return Ok(WindowAttempt::Rejected(RefusedAttempt {
+            error: collab_core::isolation::IsolatedApplyError::Collab(text_decode_cost_refusal()),
             observation,
             mode,
             cooling: false,
@@ -2435,6 +2485,7 @@ pub(crate) mod in_process_apply {
             snapshot,
             window_cpu_us: None,
             window_report: None,
+            touched_blocks: Vec::new(),
         })
     }
 }

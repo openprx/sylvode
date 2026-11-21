@@ -195,6 +195,7 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
                 snapshot,
                 window_cpu_us: None,
                 window_report: None,
+                touched_blocks: Vec::new(),
             },
             Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
                 reason: format!("diff result encoding failed: {error}"),
@@ -398,7 +399,7 @@ fn run_metered(engine: LoroCollabEngine, facts: Option<&BaseFacts>, update: &[u8
 #[cfg(target_os = "linux")]
 struct Metered {
     /// The accepted engine and what the incremental check established, or the rejection.
-    verdict: Result<(LoroCollabEngine, Option<WindowReport>), wire::Outcome>,
+    verdict: Result<(LoroCollabEngine, Option<WindowReport>, Vec<String>), wire::Outcome>,
     window_cpu_us: Option<u64>,
 }
 
@@ -430,10 +431,10 @@ fn metered_workload(
     engine: LoroCollabEngine,
     facts: Option<&BaseFacts>,
     update: &[u8],
-) -> Result<(LoroCollabEngine, Option<WindowReport>), wire::Outcome> {
+) -> Result<(LoroCollabEngine, Option<WindowReport>, Vec<String>), wire::Outcome> {
     #[cfg(debug_assertions)]
     if let Some(workload) = test_injection::workload_from_env() {
-        return Ok((test_injection::run(&workload, engine), None));
+        return Ok((test_injection::run(&workload, engine), None, Vec::new()));
     }
     decode_apply_and_check(engine, facts, update)
 }
@@ -446,12 +447,12 @@ fn decode_apply_and_check(
     mut engine: LoroCollabEngine,
     facts: Option<&BaseFacts>,
     update: &[u8],
-) -> Result<(LoroCollabEngine, Option<WindowReport>), wire::Outcome> {
+) -> Result<(LoroCollabEngine, Option<WindowReport>, Vec<String>), wire::Outcome> {
     // Import, then the structural check of the result: incrementally against the base facts when
     // that is certain, with the full projection and `check_snapshot` otherwise. Every refusal is
     // the full computation's own.
     match window_check::run_window(&mut engine, facts, update, &mut write_decision_record) {
-        Ok(accepted) => Ok((engine, accepted.report)),
+        Ok(accepted) => Ok((engine, accepted.report, accepted.touched_blocks)),
         Err(err) => Err(wire::Outcome::Rejected(err)),
     }
 }
@@ -474,11 +475,12 @@ fn decode_apply_and_check(
 fn decode_apply_check_and_export(engine: LoroCollabEngine, setup: &SetupFacts, update: &[u8]) -> wire::Outcome {
     let Metered { verdict, window_cpu_us } = run_metered(engine, setup.facts.as_ref(), update);
     match verdict {
-        Ok((accepted, window_report)) => match accepted.export_snapshot() {
+        Ok((accepted, window_report, touched_blocks)) => match accepted.export_snapshot() {
             Ok(snapshot) => wire::Outcome::Success {
                 snapshot,
                 window_cpu_us,
                 window_report,
+                touched_blocks,
             },
             Err(err) => wire::Outcome::Rejected(err),
         },
@@ -756,12 +758,14 @@ mod tests {
             snapshot,
             window_cpu_us,
             window_report,
+            touched_blocks,
         } = outcome
         else {
             panic!("expected Success, a title-only update stays well within every ceiling");
         };
         assert!(window_cpu_us.is_some(), "the worker reports the window CPU time");
         assert!(setup.guard.is_none(), "a tiny base never trips a setup guard");
+        assert!(touched_blocks.is_empty(), "a title touches no block");
         assert!(
             window_report.is_some(),
             "a title-only update on a tree page is decided by the incremental check"

@@ -699,6 +699,44 @@ fn r9_3_a_setup_without_facts_that_read_the_texts_needs_a_fresh_engine() {
     assert!(!none.texts_read && !none.needs_fresh_engine());
 }
 
+/// R9-1: the incremental window reports the blocks the update touched, the host measures their texts
+/// in a fresh load of the candidate, and a text over the per-text budget is found there (the
+/// deterministic allocation companion: the unit tests' allocator counts it), while an honest text
+/// and a block the update did not touch are not.
+#[test]
+fn r9_1_the_candidates_touched_texts_are_measured_against_the_per_text_budget() {
+    // A text well under both budgets, then one update with enough marks to take it over the allocation
+    // budget (500 marks cost 5 MiB, 1,600 cost 56 MiB).
+    let base = anchor_page(10, 1, 500, Anchors::NestedSameKey);
+    let (mut engine, facts) = decoded_page(&base);
+    let update = more_nested_marks(&base, 49_300, 500, 1_100);
+    let accepted = crate::window_check::run_window(&mut engine, Some(&facts), &update, &mut |_| {}).expect("accepted");
+    assert!(accepted.report.is_some(), "decided incrementally");
+    assert_eq!(accepted.touched_blocks.len(), 1, "{:?}", accepted.touched_blocks);
+    let candidate = LoroCollabEngine::load(&engine.export_snapshot().unwrap()).unwrap();
+    assert_eq!(
+        candidate.first_text_over_budget(&accepted.touched_blocks),
+        Some(Fired::Text),
+        "the text the window let grow is over the budget in a fresh decode"
+    );
+    // The same block before the update is within the budget.
+    let before = LoroCollabEngine::load(&base).unwrap();
+    assert_eq!(before.first_text_over_budget(&accepted.touched_blocks), None);
+    // An update that touches no text reports no text block to measure, and a malformed id is skipped.
+    let title_only = super::hand_encoded::raw_edit(&base, 49_301, |raw| {
+        raw.get_text("title").insert(0, "t").unwrap();
+    });
+    let (mut other, other_facts) = decoded_page(&base);
+    let accepted =
+        crate::window_check::run_window(&mut other, Some(&other_facts), &title_only, &mut |_| {}).expect("accepted");
+    assert!(accepted.touched_blocks.is_empty(), "{:?}", accepted.touched_blocks);
+    assert_eq!(candidate.first_text_over_budget(&["not an id".to_owned()]), None);
+    // The full computation reports no touched block: it decoded every text inside its window.
+    let (mut full, _) = decoded_page(&base);
+    let accepted = crate::window_check::run_window(&mut full, None, &update, &mut |_| {}).expect("accepted");
+    assert!(accepted.report.is_none() && accepted.touched_blocks.is_empty());
+}
+
 /// Cases for the differential harness: a page with one hostile text, the per-text guard firing and
 /// holding, in allocation and in CPU time. Every mutant that changes what the guard does is caught
 /// by a path that differs from the worker's.

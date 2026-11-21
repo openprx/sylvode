@@ -29,6 +29,9 @@ pub struct IsolatedApplySuccess {
     /// it decided (`None` when the full computation did). The host compares it with its own
     /// projection of the document.
     pub window_report: Option<crate::window_check::WindowReport>,
+    /// The container ids of the editor blocks the update touched, sent with a report: the host
+    /// measures the decode cost of their texts in the candidate document before it accepts it.
+    pub touched_blocks: Vec<String>,
 }
 
 pub type IsolatedDiffSuccess = wire::ReplayDiffResult;

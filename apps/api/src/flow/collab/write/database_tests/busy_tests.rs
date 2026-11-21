@@ -977,3 +977,169 @@ async fn with_the_default_configuration_every_write_takes_the_full_window() {
     );
     scratch.drop_self().await;
 }
+
+// ---------------------------------------------------------------------------------------------
+// R9-1: an update must not leave a text over the per-text decode budget
+// ---------------------------------------------------------------------------------------------
+
+/// The document's accepted state at its head, as a Loro document.
+#[cfg(target_os = "linux")]
+async fn head_document(f: &Fixture) -> loro::LoroDoc {
+    use collab_core::CollabEngine;
+    let engine = crate::flow::collab::write::prepare_build_engine(
+        &f.state.db,
+        &WarmCache::new(),
+        f.document_id,
+        Uuid::new_v4(),
+        None,
+    )
+    .await
+    .expect("the head loads")
+    .unwrap_or_else(|_| panic!("the head is readable"));
+    let doc = loro::LoroDoc::new();
+    doc.import(&engine.export_snapshot().expect("the head exports"))
+        .expect("the head imports");
+    doc
+}
+
+/// An update by a new peer that adds `count` nested `bold` marks over the first character of the
+/// first block's text, alternating the value so that none is redundant.
+#[cfg(target_os = "linux")]
+async fn nested_marks_update(f: &Fixture, existing: usize, count: usize) -> Vec<u8> {
+    use loro::{Container, ExportMode, ValueOrContainer};
+    let doc = head_document(f).await;
+    doc.set_peer_id(u64::from(Uuid::new_v4().as_u128() as u64))
+        .expect("peer id");
+    let before = doc.oplog_vv();
+    let Some(ValueOrContainer::Container(Container::List(children))) = doc.get_map("doc").get("children") else {
+        panic!("the page has a block list");
+    };
+    let Some(ValueOrContainer::Container(Container::Map(block))) = children.get(0) else {
+        panic!("the page has a block");
+    };
+    let Some(ValueOrContainer::Container(Container::List(inline))) = block.get("children") else {
+        panic!("the block has inline children");
+    };
+    let text = (0..inline.len())
+        .find_map(|index| match inline.get(index) {
+            Some(ValueOrContainer::Container(Container::Text(text))) => Some(text),
+            _ => None,
+        })
+        .expect("the block has a text");
+    for step in existing..existing + count {
+        text.mark(0..1, "bold", step % 2 == 0).expect("the mark applies");
+    }
+    doc.commit();
+    doc.export(ExportMode::updates(&before)).expect("the update exports")
+}
+
+/// Grows the first text of a fresh page by 50 nested marks per write until a write is refused, and
+/// returns that refusal, the marks accepted before it, and the head before it.
+#[cfg(target_os = "linux")]
+async fn grow_until_refused(f: &Fixture) -> (crate::flow::collab::write::Rejected, usize, i64) {
+    let key = Uuid::new_v4().to_string();
+    execute_command(
+        &f.state,
+        command_input(f.object_id, f.owner_id, "insert_block", insert_block("grow"), &key),
+    )
+    .await
+    .expect("the block is created");
+    let mut marks = 0;
+    for _ in 0..120 {
+        let update = nested_marks_update(f, marks, 50).await;
+        let head_before = head_seq_of(&f.state, f.document_id).await;
+        match submit(f, Uuid::new_v4(), update, RebasePolicy::ClientRebases).await {
+            AcceptOutcome::Accepted(_) => marks += 50,
+            AcceptOutcome::Rejected(rejected) => return (rejected, marks, head_before),
+        }
+    }
+    panic!("6,000 nested marks were accepted: the growth is not bounded");
+}
+
+/// The review's R9-1 on the real worker: a text is grown, window by window, through updates the
+/// incremental window accepts. The write that would take its decode cost over the per-text budget is
+/// refused with `limit_exceeded{text_decode_cost}` before it is committed, `head_seq` does not move,
+/// and the page stays writable: an unrelated write is accepted afterwards.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_update_that_would_leave_a_text_over_its_decode_budget_is_refused_and_the_page_stays_writable() {
+    let scratch = scratch_or_skip!("text-budget-refused");
+    let f = fixture(&scratch).await;
+    let (rejected, marks, head_before) = grow_until_refused(&f).await;
+    assert!(
+        marks >= 100,
+        "the budget holds a real text: {marks} marks were accepted first"
+    );
+    assert_eq!(rejected.code, RejectedCode::LimitExceeded, "{rejected:?}");
+    assert!(!rejected.recoverable);
+    assert_eq!(rejected.write_state, crate::flow::collab::frame::WriteState::NotApplied);
+    let details = rejected.details.expect("limit details");
+    assert_eq!(details["limit_kind"], "text_decode_cost");
+    assert_eq!(details["limit"], 50);
+    assert_eq!(head_seq_of(&f.state, f.document_id).await, head_before);
+    // The page is writable: a title update, and a smaller growth, are accepted.
+    let bytes = a_title_update_at_head(&f, "still writable").await;
+    let outcome = submit(&f, Uuid::new_v4(), bytes, RebasePolicy::ClientRebases).await;
+    assert!(
+        matches!(outcome, AcceptOutcome::Accepted(_)),
+        "an unrelated write is accepted"
+    );
+    let outcome = submit(
+        &f,
+        Uuid::new_v4(),
+        nested_marks_update(&f, marks, 2).await,
+        RebasePolicy::ClientRebases,
+    )
+    .await;
+    assert!(
+        matches!(outcome, AcceptOutcome::Accepted(_)),
+        "two more marks fit the budget"
+    );
+    scratch.drop_self().await;
+}
+
+/// The mutant without the host's measure: the same growth is accepted until the setup finds the
+/// text over its budget, and from then on every write to the page is refused by the full window,
+/// which decodes the text inside its CPU ceiling: the page is bricked, which the measure prevents.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn without_the_host_measure_the_growth_bricks_the_page() {
+    let scratch = scratch_or_skip!("text-budget-mutant");
+    let f = fixture(&scratch).await;
+    crate::flow::collab::write::TEXT_BUDGET_CHECK_SKIPPED
+        .lock()
+        .insert(f.document_id);
+    let (rejected, _, _) = grow_until_refused(&f).await;
+    assert_eq!(rejected.code, RejectedCode::LimitExceeded);
+    assert_eq!(
+        rejected.details.expect("limit details")["limit_kind"],
+        "decode_apply_cpu_ms",
+        "the full window kills the decode of the text the incremental window let grow"
+    );
+    let bytes = a_title_update_at_head(&f, "bricked").await;
+    let outcome = submit(&f, Uuid::new_v4(), bytes, RebasePolicy::ClientRebases).await;
+    assert!(
+        matches!(outcome, AcceptOutcome::Rejected(_)),
+        "every later write to the page is refused"
+    );
+    scratch.drop_self().await;
+}
+
+/// A title update against the document's head (the snapshot row can lag the head).
+#[cfg(target_os = "linux")]
+async fn a_title_update_at_head(f: &Fixture, title: &str) -> Vec<u8> {
+    use collab_core::CollabEngine;
+    let mut engine = crate::flow::collab::write::prepare_build_engine(
+        &f.state.db,
+        &WarmCache::new(),
+        f.document_id,
+        Uuid::new_v4(),
+        None,
+    )
+    .await
+    .expect("the head loads")
+    .unwrap_or_else(|_| panic!("the head is readable"));
+    let frontier = engine.frontier();
+    engine.set_title(title).expect("title sets");
+    engine.export_from(&frontier).expect("update exports")
+}
