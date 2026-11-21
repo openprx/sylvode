@@ -9,12 +9,7 @@
 	import { t } from 'svelte-i18n';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import {
-		projectsApi,
-		type Project,
-		type ProjectResource,
-		type ProjectResourceKind
-	} from '#lib/api/projects.js';
+	import { projectsApi, type Project } from '#lib/api/projects.js';
 	import { issuesApi, type Issue } from '#lib/api/issues.js';
 	import { importExportApi } from '#lib/api/import-export.js';
 	import { toast } from '#lib/stores/toast.js';
@@ -23,7 +18,6 @@
 	import {
 		getProjectScenarioTemplate,
 		getScenarioFields,
-		scenarioItemLabel,
 		templateArray
 	} from '#lib/utils/scenario-template.js';
 	import {
@@ -34,112 +28,28 @@
 
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 	const projectId = requireRouteParam(page.params.projectId, 'projectId');
-	const locatorPlaceholder = 'Locator, e.g. {"url":"https://..."} or /path/to/directory';
 
 	let project = $state<Project | null>(null);
-	let resources = $state<ProjectResource[]>([]);
 	let recentIssues = $state<Issue[]>([]);
 	let loading = $state(true);
 	let exporting = $state(false);
 	let importing = $state(false);
-	let resourceSubmitting = $state(false);
-	let deletingResourceId = $state<string | null>(null);
-	let editingResourceId = $state<string | null>(null);
-	let resourceEditDrafts = $state<
-		Record<
-			string,
-			{ kind: ProjectResourceKind; name: string; locator: string; sync_status: string }
-		>
-	>({});
-	let resourceForm = $state({
-		kind: 'directory' as ProjectResourceKind,
-		name: '',
-		locator: ''
-	});
-
 	const scenarioTemplate = $derived(getProjectScenarioTemplate(project));
 	const scenarioFields = $derived(getScenarioFields(scenarioTemplate));
 	const scenarioWorkflowStates = $derived(
 		templateArray(scenarioTemplate, 'workflow_template', 'states')
 	);
-	const scenarioRequiredResources = $derived(
-		templateArray(scenarioTemplate, 'resource_schema', 'resources')
-	);
 
 	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
 	const taskKey = `project:${projectId}`;
 	let unregisterTask: () => void = () => {};
-	let remoteDetail = $state(false);
-	let resourceBases = $state<Record<string, ProjectResource>>({});
-	let resourceConflicts = $state<Record<string, ProjectResource>>({});
-	type DetailSnapshot = {
-		resourceBase: typeof resourceBases;
-		resourceEdit: typeof resourceEditDrafts;
-		resourceForm: typeof resourceForm;
-		editing: string | null;
-	};
-	function detailDirty() {
-		return !!editingResourceId || !!resourceForm.name || !!resourceForm.locator;
-	}
-	function captureDetail(): DetailSnapshot {
-		return {
-			resourceBase: $state.snapshot(resourceBases),
-			resourceEdit: $state.snapshot(resourceEditDrafts),
-			resourceForm: $state.snapshot(resourceForm),
-			editing: editingResourceId
-		};
-	}
-	async function refreshDetail(force = false) {
-		if (!force && (loading || resourceSubmitting)) return;
-		const [projectResponse, resourceResponse] = await Promise.all([
-			projectsApi.get(projectId),
-			projectsApi.listResources(projectId)
-		]);
+	async function refreshDetail() {
+		if (loading) return;
+		const projectResponse = await projectsApi.get(projectId);
 		if (projectResponse.code !== 0 || !projectResponse.data) return;
 		project = projectResponse.data;
-		if (resourceResponse.code === 0 && resourceResponse.data) {
-			const fresh = resourceResponse.data.items ?? [];
-			for (const [id, base] of Object.entries(resourceBases)) {
-				const remote = fresh.find((row) => row.id === id);
-				if (remote && resourceEditDrafts[id] && remote.updated_at !== base.updated_at)
-					resourceConflicts = { ...resourceConflicts, [id]: remote };
-			}
-			resources = fresh;
-		}
-		remoteDetail = Object.keys(resourceConflicts).length > 0;
-		if (remoteDetail) workbench?.markChanged(taskKey);
 		await loadRecentIssues();
 	}
-	function reviewResource(id: string) {
-		const base = resourceBases[id],
-			remote = resourceConflicts[id],
-			local = resourceEditDrafts[id];
-		if (!base || !remote || !local) return;
-		resourceEditDrafts = {
-			...resourceEditDrafts,
-			[id]: {
-				kind: local.kind !== base.kind ? local.kind : remote.kind,
-				name: local.name !== base.name ? local.name : remote.name,
-				locator:
-					local.locator !== formatLocator(base.locator)
-						? local.locator
-						: formatLocator(remote.locator),
-				sync_status: local.sync_status !== base.sync_status ? local.sync_status : remote.sync_status
-			}
-		};
-		resourceBases = { ...resourceBases, [id]: remote };
-		const next = { ...resourceConflicts };
-		delete next[id];
-		resourceConflicts = next;
-		remoteDetail = Object.keys(next).length > 0;
-		workbench?.markChanged(taskKey, remoteDetail);
-	}
-	$effect(() => {
-		void resourceForm.name;
-		void resourceForm.locator;
-		void editingResourceId;
-		workbench?.markDirty(taskKey, detailDirty());
-	});
 
 	onDestroy(() => unregisterTask());
 
@@ -156,19 +66,12 @@
 			return;
 		}
 
-		await Promise.all([loadRecentIssues(), loadResources()]);
-		const saved = workbench?.snapshot<DetailSnapshot>(taskKey);
-		if (saved) {
-			resourceBases = saved.resourceBase;
-			resourceEditDrafts = saved.resourceEdit;
-			resourceForm = saved.resourceForm;
-			editingResourceId = saved.editing;
-		}
+		await loadRecentIssues();
 		workbench?.setTitle(taskKey, loadedProject.name);
 		unregisterTask =
 			workbench?.register(taskKey, {
-				capture: captureDetail,
-				dirty: detailDirty,
+				capture: () => null,
+				dirty: () => false,
 				refresh: refreshDetail
 			}) ?? (() => {});
 		loading = false;
@@ -195,158 +98,6 @@
 		if (response.data) {
 			recentIssues = response.data.items ?? [];
 		}
-	}
-
-	async function loadResources() {
-		const response = await projectsApi.listResources(projectId);
-		if (response.code === 0 && response.data) {
-			resources = response.data.items ?? [];
-		}
-	}
-
-	function parseLocator(raw: string): Record<string, unknown> {
-		const trimmed = raw.trim();
-		if (!trimmed) {
-			return {};
-		}
-		try {
-			const parsed = JSON.parse(trimmed) as unknown;
-			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				return parsed as Record<string, unknown>;
-			}
-			throw new Error('locator must be an object');
-		} catch {
-			return { value: trimmed };
-		}
-	}
-
-	function formatLocator(locator: Record<string, unknown>): string {
-		const keys = Object.keys(locator ?? {});
-		if (keys.length === 0) {
-			return $t('resources.noLocator');
-		}
-		if (typeof locator.url === 'string') return locator.url;
-		if (typeof locator.path === 'string') return locator.path;
-		if (typeof locator.value === 'string') return locator.value;
-		return JSON.stringify(locator);
-	}
-
-	function resourceKindLabel(kind: ProjectResourceKind): string {
-		const labels: Record<ProjectResourceKind, string> = {
-			directory: $t('resources.kindDirectory'),
-			custom: $t('resources.kindCustom')
-		};
-		return labels[kind] ?? kind;
-	}
-
-	function resourceDraft(resource: ProjectResource) {
-		return (
-			resourceEditDrafts[resource.id] ?? {
-				kind: resource.kind,
-				name: resource.name,
-				locator: formatLocator(resource.locator),
-				sync_status: resource.sync_status
-			}
-		);
-	}
-
-	function setResourceDraft(
-		resource: ProjectResource,
-		field: 'kind' | 'name' | 'locator' | 'sync_status',
-		value: string
-	) {
-		resourceEditDrafts = {
-			...resourceEditDrafts,
-			[resource.id]: {
-				...resourceDraft(resource),
-				[field]: field === 'kind' ? (value as ProjectResourceKind) : value
-			}
-		};
-	}
-
-	function startEditResource(resource: ProjectResource) {
-		resourceBases = { ...resourceBases, [resource.id]: $state.snapshot(resource) };
-		editingResourceId = resource.id;
-		resourceEditDrafts = {
-			...resourceEditDrafts,
-			[resource.id]: {
-				kind: resource.kind,
-				name: resource.name,
-				locator: formatLocator(resource.locator),
-				sync_status: resource.sync_status
-			}
-		};
-	}
-
-	async function handleUpdateResource(resource: ProjectResource) {
-		const draft = resourceDraft(resource);
-		if (!draft.name.trim()) {
-			toast.error('Resource name is required');
-			return;
-		}
-		resourceSubmitting = true;
-		const response = await projectsApi.updateResource(projectId, resource.id, {
-			kind: draft.kind,
-			name: draft.name.trim(),
-			locator: parseLocator(draft.locator),
-			sync_status: draft.sync_status.trim() || 'manual',
-			expected_updated_at: resourceBases[resource.id]?.updated_at ?? resource.updated_at
-		});
-		resourceSubmitting = false;
-		if (response.code !== 0) {
-			if (response.code === 409) {
-				await refreshDetail(true);
-				toast.error(get(t)('workbench.conflictBody'));
-			} else toast.error(response.message);
-			return;
-		}
-
-		if (response.data) {
-			resources = resources.map((item) => (item.id === response.data?.id ? response.data : item));
-		}
-		editingResourceId = null;
-		const bases = { ...resourceBases };
-		delete bases[resource.id];
-		resourceBases = bases;
-		toast.success('Project resource updated');
-	}
-
-	async function handleCreateResource() {
-		if (!resourceForm.name.trim()) {
-			toast.error('Resource name is required');
-			return;
-		}
-
-		resourceSubmitting = true;
-		const response = await projectsApi.createResource(projectId, {
-			kind: resourceForm.kind,
-			name: resourceForm.name.trim(),
-			locator: parseLocator(resourceForm.locator)
-		});
-		resourceSubmitting = false;
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-			return;
-		}
-
-		resourceForm = { kind: 'directory', name: '', locator: '' };
-		toast.success('Project resource added');
-		await loadResources();
-	}
-
-	async function handleDeleteResource(resource: ProjectResource) {
-		deletingResourceId = resource.id;
-		const response = await projectsApi.deleteResource(projectId, resource.id);
-		deletingResourceId = null;
-
-		if (response.code !== 0) {
-			toast.error(response.message);
-			return;
-		}
-
-		resources = resources.filter((item) => item.id !== resource.id);
-		toast.success('Project resource deleted');
 	}
 
 	async function handleExportProject() {
@@ -399,26 +150,6 @@
 	}
 </script>
 
-{#each Object.values(resourceConflicts) as remote (remote.id)}<section
-		class="rounded border p-3"
-		role="alert"
-		data-testid="task-conflict"
-	>
-		<p>{$t('workbench.conflictBody')}</p>
-		<p>{$t('workbench.remoteValue')} {remote.name} · {formatLocator(remote.locator)}</p>
-		<button type="button" class="min-h-11 underline" onclick={() => reviewResource(remote.id)}
-			>{$t('workbench.reviewRetry')}</button
-		>
-	</section>{/each}
-
-{#if remoteDetail}<p
-		class="rounded border bg-warning-soft p-3 text-sm"
-		role="status"
-		data-testid="task-remote-change"
-	>
-		{$t('workbench.conflictBody')}
-	</p>{/if}
-
 <div class="max-w-7xl mx-auto">
 	{#if loading}
 		<div class="flex items-center justify-center py-12">
@@ -465,7 +196,7 @@
 						{$t('project.projectManagementDesc')}
 					</p>
 				</div>
-				<div class="grid gap-3 md:grid-cols-3">
+				<div class="grid gap-3 md:grid-cols-2">
 					<a
 						href={`/workspace/${workspaceId}/projects/${projectId}/issues`}
 						class="rounded-control border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
@@ -569,17 +300,9 @@
 							{scenarioFields.length}
 						</p>
 					</div>
-					<div class="rounded-card bg-surface p-4">
-						<p class="text-xs font-medium uppercase text-fg-muted">
-							{$t('project.resources')}
-						</p>
-						<p class="mt-2 text-2xl font-semibold text-fg">
-							{scenarioRequiredResources.length}
-						</p>
-					</div>
 				</div>
 
-				<div class="mt-5 grid gap-5 lg:grid-cols-3">
+				<div class="mt-5 grid gap-5">
 					<div>
 						<h3 class="mb-2 text-sm font-semibold text-fg">
 							{$t('project.scenarioFields')}
@@ -595,167 +318,9 @@
 							{/each}
 						</div>
 					</div>
-					<div>
-						<h3 class="mb-2 text-sm font-semibold text-fg">
-							{$t('project.requiredResources')}
-						</h3>
-						<div class="space-y-2">
-							{#each scenarioRequiredResources.slice(0, 5) as item, index}
-								<div class="rounded-control border border-line px-3 py-2 text-sm text-fg">
-									{scenarioItemLabel(item, `Resource ${index + 1}`)}
-								</div>
-							{/each}
-						</div>
-					</div>
 				</div>
 			</div>
 		{/if}
-
-		<div class="mb-8 rounded-card border border-line bg-raised p-6">
-			<div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-				<div>
-					<h2 class="text-lg font-semibold text-fg">
-						{$t('resources.title')}
-					</h2>
-					<p class="text-sm text-fg-muted">
-						{$t('resources.description')}
-					</p>
-				</div>
-			</div>
-
-			<div class="mb-5 grid grid-cols-1 gap-3 md:grid-cols-[160px_1fr_1.3fr_auto]">
-				<select
-					bind:value={resourceForm.kind}
-					class="rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-					aria-label={$t('resources.resourceKind')}
-				>
-					<option value="directory">{$t('resources.kindDirectory')}</option>
-					<option value="custom">{$t('resources.kindCustom')}</option>
-				</select>
-				<input
-					bind:value={resourceForm.name}
-					placeholder={$t('resources.name')}
-					class="rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
-				/>
-				<input
-					bind:value={resourceForm.locator}
-					placeholder={locatorPlaceholder}
-					class="rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
-				/>
-				<Button loading={resourceSubmitting} onclick={handleCreateResource}
-					>{$t('resources.add')}</Button
-				>
-			</div>
-
-			{#if resources.length === 0}
-				<p class="rounded-control border border-dashed border-input p-4 text-sm text-fg-muted">
-					{$t('resources.empty')}
-				</p>
-			{:else}
-				<div class="overflow-hidden rounded-control border border-line">
-					<table class="min-w-full divide-y divide-line">
-						<thead class="bg-nav">
-							<tr>
-								<th class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
-									>{$t('resources.kind')}</th
-								>
-								<th class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
-									>{$t('resources.name')}</th
-								>
-								<th class="px-4 py-2 text-left text-xs font-medium uppercase text-fg-muted"
-									>{$t('resources.locator')}</th
-								>
-								<th class="px-4 py-2 text-right text-xs font-medium uppercase text-fg-muted"
-									>{$t('common.actions')}</th
-								>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-line">
-							{#each resources as resource (resource.id)}
-								{@const editingResource = editingResourceId === resource.id}
-								{@const draft = resourceDraft(resource)}
-								<tr>
-									<td class="px-4 py-3 text-sm text-fg-muted">
-										{#if editingResource}
-											<select
-												value={draft.kind}
-												onchange={(event) =>
-													setResourceDraft(resource, 'kind', event.currentTarget.value)}
-												class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
-											>
-												<option value="directory">{$t('resources.kindDirectory')}</option>
-												<option value="custom">{$t('resources.kindCustom')}</option>
-											</select>
-										{:else}
-											{resourceKindLabel(resource.kind)}
-										{/if}
-									</td>
-									<td class="px-4 py-3 text-sm font-medium text-fg">
-										{#if editingResource}
-											<input
-												value={draft.name}
-												oninput={(event) =>
-													setResourceDraft(resource, 'name', event.currentTarget.value)}
-												class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
-											/>
-										{:else}
-											{resource.name}
-										{/if}
-									</td>
-									<td class="max-w-md px-4 py-3 text-sm text-fg-muted">
-										{#if editingResource}
-											<input
-												value={draft.locator}
-												oninput={(event) =>
-													setResourceDraft(resource, 'locator', event.currentTarget.value)}
-												class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
-											/>
-										{:else}
-											<span class="block truncate">{formatLocator(resource.locator)}</span>
-										{/if}
-									</td>
-									<td class="px-4 py-3 text-right">
-										{#if editingResource}
-											<div class="flex justify-end gap-2">
-												<Button
-													size="sm"
-													variant="secondary"
-													onclick={() => (editingResourceId = null)}>{$t('common.cancel')}</Button
-												>
-												<Button
-													size="sm"
-													loading={resourceSubmitting}
-													disabled={!!resourceConflicts[resource.id]}
-													onclick={() => handleUpdateResource(resource)}>{$t('common.save')}</Button
-												>
-											</div>
-										{:else}
-											<div class="flex justify-end gap-3">
-												<button
-													type="button"
-													onclick={() => startEditResource(resource)}
-													class="text-sm text-fg underline"
-												>
-													{$t('common.edit')}
-												</button>
-												<button
-													type="button"
-													disabled={deletingResourceId === resource.id}
-													onclick={() => handleDeleteResource(resource)}
-													class="text-sm text-danger disabled:cursor-not-allowed disabled:text-fg-muted"
-												>
-													{$t('common.delete')}
-												</button>
-											</div>
-										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			{/if}
-		</div>
 
 		<div class="rounded-card border border-line bg-raised p-6">
 			<h2 class="mb-4 text-lg font-semibold text-fg">

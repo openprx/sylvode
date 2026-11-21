@@ -152,13 +152,11 @@
 		"projectType": "项目类型",
 		"projectTypeBoundary": "项目类型只决定底层能力边界；餐厅、合同、设备等业务场景请在万能表单内通过自定义表单或表单模板实现。",
 		"workflow": "流程",
-		"resources": "资源",
 		"fields": "字段",
 		"forms": "万能表单",
 		"formsDesc": "自定义字段、记录、汇总和关联业务数据。",
 		"connections": "连接",
 		"scenarioFields": "场景字段",
-		"requiredResources": "所需资源",
 		"openScenarioWork": "进入工作项",
 		"connectionSetup": "连接设置",
 		"connection": "连接",
@@ -1411,19 +1409,6 @@
 			"quality_corrective_action_default": "质量团队",
 			"restaurant_ordering_default": "餐厅经营者"
 		}
-	},
-	"resources": {
-		"title": "项目资源",
-		"description": "AI Agent 和 MCP 客户端可用于该场景的上下文资源。",
-		"kind": "类型",
-		"name": "名称",
-		"locator": "定位",
-		"resourceKind": "资源类型",
-		"add": "添加",
-		"empty": "暂无项目资源。",
-		"noLocator": "无定位信息",
-		"kindDirectory": "目录",
-		"kindCustom": "自定义"
 	},
 	"connections": {
 		"title": "操作记录",

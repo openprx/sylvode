@@ -152,13 +152,11 @@
 		"projectType": "Project Type",
 		"projectTypeBoundary": "Project type only defines the capability boundary. Restaurant, contract, equipment, and other business scenarios should be built with universal forms or form templates.",
 		"workflow": "Workflow",
-		"resources": "Resources",
 		"fields": "Fields",
 		"forms": "Forms",
 		"formsDesc": "Custom fields, records, totals and linked business data.",
 		"connections": "Connections",
 		"scenarioFields": "Scenario Fields",
-		"requiredResources": "Required Resources",
 		"openScenarioWork": "Open Work",
 		"connectionSetup": "Connection Setup",
 		"connection": "Connection",
@@ -1411,19 +1409,6 @@
 			"quality_corrective_action_default": "Quality team",
 			"restaurant_ordering_default": "Restaurant operator"
 		}
-	},
-	"resources": {
-		"title": "Project resources",
-		"description": "Context that AI agents and MCP clients can use for this scenario.",
-		"kind": "Kind",
-		"name": "Name",
-		"locator": "Locator",
-		"resourceKind": "Resource kind",
-		"add": "Add",
-		"empty": "No project resources yet.",
-		"noLocator": "No locator",
-		"kindDirectory": "Directory",
-		"kindCustom": "Custom"
 	},
 	"connections": {
 		"title": "Operation Records",
