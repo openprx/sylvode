@@ -11,6 +11,8 @@
 	import { toast } from '#lib/stores/toast.js';
 
 	const participantId = $derived(page.params.id || '');
+	// The records are read per project, so the project comes with the link.
+	const projectId = $derived(page.url.searchParams.get('projectId') || '');
 
 	let loading = $state(true);
 	let loadingFeedback = $state(false);
@@ -30,13 +32,22 @@
 
 	async function loadAll() {
 		loading = true;
+		if (!projectId) {
+			toast.error(get(t)('governanceExt.learningLoadFailed'));
+			records = [];
+			total = 0;
+			totalPages = 0;
+			stats = null;
+			loading = false;
+			return;
+		}
 		const [learningRes, statsRes] = await Promise.all([
-			governanceExtApi.getAiParticipantLearning(participantId, {
+			governanceExtApi.getAiParticipantLearning(projectId, participantId, {
 				domain: domain.trim() || undefined,
 				page: pageNum,
 				per_page: perPage
 			}),
-			governanceExtApi.getAiParticipantAlignmentStats(participantId)
+			governanceExtApi.getAiParticipantAlignmentStats(projectId, participantId)
 		]);
 
 		if (learningRes.code !== 0 || !learningRes.data) {
@@ -167,10 +178,10 @@
 				<table class="min-w-full text-left text-sm">
 					<thead>
 						<tr class="border-b border-line text-xs text-fg-muted">
-							<th class="px-2 py-2">{$t('aiAgents.review')}</th>
+							<th class="px-2 py-2">{$t('governanceExt.review')}</th>
 							<th class="px-2 py-2">{$t('governance.domainLabel')}</th>
 							<th class="px-2 py-2">{$t('governanceExt.alignment')}</th>
-							<th class="px-2 py-2">{$t('aiAgents.rating')}</th>
+							<th class="px-2 py-2">{$t('governanceExt.rating')}</th>
 							<th class="px-2 py-2">{$t('common.createdAt')}</th>
 							<th class="px-2 py-2">{$t('common.actions')}</th>
 						</tr>

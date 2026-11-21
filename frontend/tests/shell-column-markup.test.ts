@@ -34,7 +34,6 @@ function makeApis(over: Partial<Apis> = {}): Apis {
 	return {
 		workspaces: async () => page([{ id: W, name: 'North' }]),
 		bots: async () => ok([{ id: 'b1', name: 'Deploy bot' }]),
-		aiAgents: async () => page([{ id: 'a1', name: 'Reviewer' }]),
 		forms: async () => page([{ id: 'f1', name: 'Orders' }]),
 		...over
 	} as Apis;
@@ -298,19 +297,12 @@ await suite.checkAsync(
 	}
 );
 
-async function agentsHtml(
-	scope: string,
-	admin: boolean,
-	data = new ColumnData(makeApis()),
-	options: Options = optionsOf({ items: projects })
-) {
-	const path = scope === 'personal' ? '/agents' : '/agents';
+async function agentsHtml(scope: string, admin: boolean, data = new ColumnData(makeApis())) {
 	return renderToHtml(AgentsColumn, {
 		scope,
-		url: urlOf(path),
+		url: urlOf('/agents'),
 		viewer: viewer({ workspaceAdmin: admin }),
-		data,
-		optionsStore: options
+		data
 	});
 }
 
@@ -322,19 +314,16 @@ await suite.checkAsync('agents column: personal scope is one empty state', async
 });
 
 await suite.checkAsync(
-	'agents column: bots only for admins; participants for everyone',
+	'agents column: bots only for admins; connected bots group for everyone',
 	async () => {
 		const admin = await agentsHtml(W, true);
 		assert(admin.includes('data-column-group="bots"'), 'admin sees bots group');
-		assert(admin.includes('data-column-group="participants"'), 'participants group');
-		assertEqual(
-			count(admin, /data-agent-kind="project"/g),
-			2,
-			'one row per project of the workspace'
-		);
+		assert(admin.includes('data-column-group="connected"'), 'connected group');
+		assert(admin.includes('shell.column.agents.noConnection'), 'empty line until connections list');
+		assert(!admin.includes('data-agent-kind="project"'), 'no participant rows');
 		const member = await agentsHtml(W, false);
 		assert(!member.includes('data-column-group="bots"'), 'member never requests or sees bots');
-		assert(member.includes('data-column-group="participants"'), 'member sees participants');
+		assert(member.includes('data-column-group="connected"'), 'member sees the connected group');
 		const data = new ColumnData(makeApis());
 		await data.loadBots(W);
 		const loaded = await agentsHtml(W, true, data);
@@ -342,25 +331,21 @@ await suite.checkAsync(
 			loaded.includes('Deploy bot') && loaded.includes('href="/workspace/w1/members"'),
 			'bot row links to members'
 		);
-		const noProjects = await agentsHtml(
-			W,
-			false,
-			new ColumnData(makeApis()),
-			optionsOf({ items: [] })
-		);
-		assert(noProjects.includes('shell.column.agents.noProjects'), 'no projects line');
 	}
 );
 
-await suite.checkAsync('agents column: a failed bots list does not hide participants', async () => {
-	const data = new ColumnData(
-		makeApis({ bots: async () => ({ code: 500, message: 'x', data: null }) })
-	);
-	await data.loadBots(W);
-	const html = await agentsHtml(W, true, data);
-	assert(html.includes('data-kind="loadFailed"'), 'bots failed');
-	assertEqual(count(html, /data-agent-kind="project"/g), 2, 'participants still listed');
-});
+await suite.checkAsync(
+	'agents column: a failed bots list does not hide the connected group',
+	async () => {
+		const data = new ColumnData(
+			makeApis({ bots: async () => ({ code: 500, message: 'x', data: null }) })
+		);
+		await data.loadBots(W);
+		const html = await agentsHtml(W, true, data);
+		assert(html.includes('data-kind="loadFailed"'), 'bots failed');
+		assert(html.includes('data-column-group="connected"'), 'connected group still shown');
+	}
+);
 
 await suite.checkAsync('flow column: rows, notice and admin link', async () => {
 	const render = (

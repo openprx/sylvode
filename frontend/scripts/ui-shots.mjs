@@ -15,8 +15,8 @@
 // read-only API calls. When the environment has none, the route is recorded as
 // `skipped: no issue in the environment` in scan.json and counted in the summary line.
 //
-// The proposal, user-trust, AI-participant and public-share routes resolve their ids the same way
-// (first proposal, the session's own user, first AI participant). A share token is shown only
+// The proposal, user-trust, agent-learning and public-share routes resolve their ids the same way
+// (first proposal, the session's own user, first bot of the workspace). A share token is shown only
 // once when a link is created, so UI_SHOTS_SHARE must supply it; otherwise that route is skipped.
 //
 // Browser: the locally installed open-source Chromium, headless (CHROMIUM_BIN overrides the path).
@@ -78,7 +78,7 @@ export const ROUTES = [
 	{ name: 'trust-board', path: '/trust-board' },
 	{ name: 'trust-appeals', path: '/trust-scores/appeals' },
 	{ name: 'user-trust', path: '/users/{me}/trust' },
-	{ name: 'agent-learning', path: '/ai-agents/{agent}/learning' },
+	{ name: 'agent-learning', path: '/ai-agents/{agent}/learning?projectId={project}' },
 	{ name: 'shared-block', path: '/shared-blocks/{share}' },
 	{ name: 'decisions-analytics', path: '/decisions/analytics' },
 	{ name: 'admin', path: '/admin' },
@@ -107,7 +107,6 @@ export const ROUTES = [
 	},
 	{ name: 'project-forms', path: '/workspace/{ws}/projects/{project}/forms' },
 	{ name: 'project-apps', path: '/workspace/{ws}/projects/{project}/apps' },
-	{ name: 'project-ai-agents', path: '/workspace/{ws}/projects/{project}/ai-agents' },
 	{ name: 'project-audit-reports', path: '/workspace/{ws}/projects/{project}/audit-reports' },
 	{
 		name: 'project-settings-plugins',
@@ -124,7 +123,7 @@ export const SKIP_REASONS = {
 	project: 'no project in the environment',
 	proposal: 'no proposal in the environment',
 	me: 'no signed-in user id in the session',
-	agent: 'no AI participant in the environment',
+	agent: 'no bot in the environment',
 	share:
 		'no public share link: a share token is shown once when the link is created and the API lists only its prefix (set UI_SHOTS_SHARE to a token)'
 };
@@ -316,14 +315,10 @@ async function resolvePlaceholders(api, token, user) {
 		const list = projects?.items ?? projects ?? [];
 		const project = list.find((p) => / A$/.test(p.name)) ?? list[0];
 		if (project) found.project = project.id;
-		for (const candidate of list.slice(0, 40)) {
-			const agents = await apiJson(api, token, `/api/v1/projects/${candidate.id}/ai-participants`);
-			const agent = (agents?.items ?? agents ?? [])[0];
-			if (agent?.id) {
-				found.agent = String(agent.id);
-				break;
-			}
-		}
+		// A bot's user id is the id its learning records are filed under.
+		const bots = await apiJson(api, token, `/api/v1/workspaces/${workspace.id}/bots`);
+		const bot = (bots?.items ?? bots ?? [])[0];
+		if (bot?.id) found.agent = String(bot.id);
 	}
 	Object.assign(
 		found,

@@ -2,7 +2,7 @@
 	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
 	import ProjectPluginNav from '#lib/components/plugins/ProjectPluginNav.svelte';
 	import FlowSharedBlockList from '#lib/components/flow/FlowSharedBlockList.svelte';
-	import { FileText, Power } from '@lucide/svelte';
+	import { FileText } from '@lucide/svelte';
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
 	import { get } from 'svelte/store';
@@ -16,7 +16,6 @@
 		type ProjectResourceKind
 	} from '#lib/api/projects.js';
 	import { issuesApi, type Issue } from '#lib/api/issues.js';
-	import { aiAgentsApi, type AiAgent } from '#lib/api/ai-agents.js';
 	import { importExportApi } from '#lib/api/import-export.js';
 	import { toast } from '#lib/stores/toast.js';
 	import Button from '#lib/components/Button.svelte';
@@ -44,11 +43,6 @@
 	let exporting = $state(false);
 	let importing = $state(false);
 	let resourceSubmitting = $state(false);
-	let aiAgents = $state<AiAgent[]>([]);
-	let assistantConfigDrafts = $state<
-		Record<string, { provider: string; model: string; api_endpoint: string }>
-	>({});
-	let updatingAssistantId = $state<string | null>(null);
 	let deletingResourceId = $state<string | null>(null);
 	let editingResourceId = $state<string | null>(null);
 	let resourceEditDrafts = $state<
@@ -77,36 +71,18 @@
 	let unregisterTask: () => void = () => {};
 	let remoteDetail = $state(false);
 	let resourceBases = $state<Record<string, ProjectResource>>({});
-	let assistantBases = $state<Record<string, AiAgent>>({});
-	let assistantBaseDrafts = $state<
-		Record<string, { provider: string; model: string; api_endpoint: string }>
-	>({});
 	let resourceConflicts = $state<Record<string, ProjectResource>>({});
-	let assistantConflicts = $state<Record<string, AiAgent>>({});
 	type DetailSnapshot = {
-		assistant: typeof assistantConfigDrafts;
-		assistantBase: typeof assistantBases;
-		assistantUiBase: typeof assistantBaseDrafts;
 		resourceBase: typeof resourceBases;
 		resourceEdit: typeof resourceEditDrafts;
 		resourceForm: typeof resourceForm;
 		editing: string | null;
 	};
 	function detailDirty() {
-		return (
-			!!editingResourceId ||
-			!!resourceForm.name ||
-			!!resourceForm.locator ||
-			Object.entries(assistantConfigDrafts).some(
-				([id, draft]) => JSON.stringify(draft) !== JSON.stringify(assistantBaseDrafts[id])
-			)
-		);
+		return !!editingResourceId || !!resourceForm.name || !!resourceForm.locator;
 	}
 	function captureDetail(): DetailSnapshot {
 		return {
-			assistant: $state.snapshot(assistantConfigDrafts),
-			assistantBase: $state.snapshot(assistantBases),
-			assistantUiBase: $state.snapshot(assistantBaseDrafts),
 			resourceBase: $state.snapshot(resourceBases),
 			resourceEdit: $state.snapshot(resourceEditDrafts),
 			resourceForm: $state.snapshot(resourceForm),
@@ -114,11 +90,10 @@
 		};
 	}
 	async function refreshDetail(force = false) {
-		if (!force && (loading || resourceSubmitting || updatingAssistantId)) return;
-		const [projectResponse, resourceResponse, agentResponse] = await Promise.all([
+		if (!force && (loading || resourceSubmitting)) return;
+		const [projectResponse, resourceResponse] = await Promise.all([
 			projectsApi.get(projectId),
-			projectsApi.listResources(projectId),
-			aiAgentsApi.list(projectId)
+			projectsApi.listResources(projectId)
 		]);
 		if (projectResponse.code !== 0 || !projectResponse.data) return;
 		project = projectResponse.data;
@@ -131,21 +106,7 @@
 			}
 			resources = fresh;
 		}
-		if (agentResponse.code === 0 && agentResponse.data) {
-			const fresh = agentResponse.data.items ?? [];
-			for (const [id, base] of Object.entries(assistantBases)) {
-				const remote = fresh.find((row) => row.id === id);
-				if (
-					remote &&
-					assistantConfigDrafts[id] &&
-					remote.config_updated_at !== base.config_updated_at
-				)
-					assistantConflicts = { ...assistantConflicts, [id]: remote };
-			}
-			aiAgents = fresh;
-		}
-		remoteDetail =
-			Object.keys(resourceConflicts).length > 0 || Object.keys(assistantConflicts).length > 0;
+		remoteDetail = Object.keys(resourceConflicts).length > 0;
 		if (remoteDetail) workbench?.markChanged(taskKey);
 		await loadRecentIssues();
 	}
@@ -170,36 +131,13 @@
 		const next = { ...resourceConflicts };
 		delete next[id];
 		resourceConflicts = next;
-		remoteDetail = Object.keys(next).length > 0 || Object.keys(assistantConflicts).length > 0;
-		workbench?.markChanged(taskKey, remoteDetail);
-	}
-	function reviewAssistant(id: string) {
-		const remote = assistantConflicts[id],
-			base = assistantBaseDrafts[id],
-			local = assistantConfigDrafts[id];
-		if (!remote || !base || !local) return;
-		const current = {
-			provider: remote.provider,
-			model: remote.model,
-			api_endpoint: remote.api_endpoint ?? ''
-		};
-		const next = { ...local };
-		for (const field of ['provider', 'model', 'api_endpoint'] as const)
-			if (local[field] === base[field]) next[field] = current[field];
-		assistantConfigDrafts = { ...assistantConfigDrafts, [id]: next };
-		assistantBases = { ...assistantBases, [id]: remote };
-		assistantBaseDrafts = { ...assistantBaseDrafts, [id]: current };
-		const conflicts = { ...assistantConflicts };
-		delete conflicts[id];
-		assistantConflicts = conflicts;
-		remoteDetail = Object.keys(conflicts).length > 0 || Object.keys(resourceConflicts).length > 0;
+		remoteDetail = Object.keys(next).length > 0;
 		workbench?.markChanged(taskKey, remoteDetail);
 	}
 	$effect(() => {
 		void resourceForm.name;
 		void resourceForm.locator;
 		void editingResourceId;
-		void assistantConfigDrafts;
 		workbench?.markDirty(taskKey, detailDirty());
 	});
 
@@ -218,12 +156,9 @@
 			return;
 		}
 
-		await Promise.all([loadRecentIssues(), loadResources(), loadAiAgents()]);
+		await Promise.all([loadRecentIssues(), loadResources()]);
 		const saved = workbench?.snapshot<DetailSnapshot>(taskKey);
 		if (saved) {
-			assistantConfigDrafts = saved.assistant;
-			assistantBases = saved.assistantBase;
-			assistantBaseDrafts = saved.assistantUiBase;
 			resourceBases = saved.resourceBase;
 			resourceEditDrafts = saved.resourceEdit;
 			resourceForm = saved.resourceForm;
@@ -267,132 +202,6 @@
 		if (response.code === 0 && response.data) {
 			resources = response.data.items ?? [];
 		}
-	}
-
-	async function loadAiAgents() {
-		const response = await aiAgentsApi.list(projectId);
-		if (response.code === 0 && response.data) {
-			aiAgents = response.data.items ?? [];
-		}
-	}
-
-	function isRecord(value: unknown): value is Record<string, unknown> {
-		return typeof value === 'object' && value !== null && !Array.isArray(value);
-	}
-
-	function scenarioValue(item: unknown, key: string, fallback = ''): string {
-		if (!isRecord(item)) return fallback;
-		const value = item[key];
-		return typeof value === 'string' && value.trim() ? value.trim() : fallback;
-	}
-
-	function scenarioArrayValue(item: unknown, key: string): string[] {
-		if (!isRecord(item) || !Array.isArray(item[key])) return [];
-		return item[key].filter(
-			(value): value is string => typeof value === 'string' && value.trim().length > 0
-		);
-	}
-
-	function scenarioBooleanValue(item: unknown, key: string): boolean {
-		return isRecord(item) ? Boolean(item[key]) : false;
-	}
-
-	function eventInputValue(event: Event): string {
-		return event.currentTarget instanceof HTMLInputElement ? event.currentTarget.value : '';
-	}
-
-	function assistantRoles(): unknown[] {
-		return scenarioTemplate?.ai_roles ?? [];
-	}
-
-	function assistantForRole(role: unknown): AiAgent | undefined {
-		const roleKey = scenarioValue(role, 'key');
-		const roleLabel = scenarioItemLabel(role, roleKey);
-		return aiAgents.find((agent) => {
-			const roleMeta = agent.domain_overrides?.role;
-			const metaKey = isRecord(roleMeta) && typeof roleMeta.key === 'string' ? roleMeta.key : '';
-			return metaKey === roleKey || agent.name === roleLabel || agent.id.endsWith(roleKey);
-		});
-	}
-
-	function assistantProviderForRole(role: unknown): string {
-		return scenarioValue(role, 'provider', scenarioValue(role, 'agent_type', 'assistant'));
-	}
-
-	function assistantModelForRole(role: unknown): string {
-		return scenarioValue(role, 'model', 'configured-by-operator');
-	}
-
-	function assistantDraft(assistant: AiAgent, role: unknown) {
-		return (
-			assistantConfigDrafts[assistant.id] ?? {
-				provider: assistant.provider || assistantProviderForRole(role),
-				model:
-					assistant.model === 'template-placeholder'
-						? assistantModelForRole(role)
-						: assistant.model || assistantModelForRole(role),
-				api_endpoint: assistant.api_endpoint ?? scenarioValue(role, 'api_endpoint')
-			}
-		);
-	}
-
-	function setAssistantDraft(
-		assistant: AiAgent,
-		field: 'provider' | 'model' | 'api_endpoint',
-		value: string,
-		role: unknown
-	) {
-		if (!assistantBases[assistant.id]) {
-			assistantBases = { ...assistantBases, [assistant.id]: $state.snapshot(assistant) };
-			assistantBaseDrafts = {
-				...assistantBaseDrafts,
-				[assistant.id]: assistantDraft(assistant, role)
-			};
-		}
-		assistantConfigDrafts = {
-			...assistantConfigDrafts,
-			[assistant.id]: {
-				...assistantDraft(assistant, role),
-				[field]: value
-			}
-		};
-	}
-
-	async function saveAssistantConfig(role: unknown) {
-		const assistant = assistantForRole(role);
-		if (!assistant) return;
-		const draft = assistantDraft(assistant, role);
-		const provider = draft.provider.trim();
-		const model = draft.model.trim();
-		if (!provider || !model) {
-			toast.error(get(t)('project.assistantConfigRequired'));
-			return;
-		}
-		updatingAssistantId = assistant.id;
-		const response = await aiAgentsApi.update(projectId, assistant.id, {
-			provider,
-			model,
-			api_endpoint: draft.api_endpoint.trim() || undefined,
-			expected_config_updated_at:
-				assistantBases[assistant.id]?.config_updated_at ?? assistant.config_updated_at
-		});
-		updatingAssistantId = null;
-		if (response.code !== 0) {
-			if (response.code === 409) {
-				await refreshDetail(true);
-				toast.error(get(t)('workbench.conflictBody'));
-			} else toast.error(response.message);
-			return;
-		}
-		const clean = { ...assistantConfigDrafts };
-		delete clean[assistant.id];
-		assistantConfigDrafts = clean;
-		const bases = { ...assistantBases };
-		delete bases[assistant.id];
-		assistantBases = bases;
-
-		toast.success(get(t)('project.assistantSaved'));
-		await loadAiAgents();
 	}
 
 	function parseLocator(raw: string): Record<string, unknown> {
@@ -601,17 +410,6 @@
 			>{$t('workbench.reviewRetry')}</button
 		>
 	</section>{/each}
-{#each Object.values(assistantConflicts) as remote (remote.id)}<section
-		class="rounded border p-3"
-		role="alert"
-		data-testid="task-conflict"
-	>
-		<p>{$t('workbench.conflictBody')}</p>
-		<p>{$t('workbench.remoteValue')} {remote.provider} · {remote.model}</p>
-		<button type="button" class="min-h-11 underline" onclick={() => reviewAssistant(remote.id)}
-			>{$t('workbench.reviewRetry')}</button
-		>
-	</section>{/each}
 
 {#if remoteDetail}<p
 		class="rounded border bg-warning-soft p-3 text-sm"
@@ -754,7 +552,7 @@
 					</a>
 				</div>
 
-				<div class="grid gap-3 md:grid-cols-4">
+				<div class="grid gap-3 md:grid-cols-3">
 					<div class="rounded-card bg-surface p-4">
 						<p class="text-xs font-medium uppercase text-fg-muted">
 							{$t('project.workflow')}
@@ -777,14 +575,6 @@
 						</p>
 						<p class="mt-2 text-2xl font-semibold text-fg">
 							{scenarioRequiredResources.length}
-						</p>
-					</div>
-					<div class="rounded-card bg-surface p-4">
-						<p class="text-xs font-medium uppercase text-fg-muted">
-							{$t('project.assistants')}
-						</p>
-						<p class="mt-2 text-2xl font-semibold text-fg">
-							{scenarioTemplate.ai_roles.length}
 						</p>
 					</div>
 				</div>
@@ -816,135 +606,6 @@
 								</div>
 							{/each}
 						</div>
-					</div>
-				</div>
-			</div>
-
-			<div class="mb-8 rounded-card border border-line bg-raised p-6">
-				<div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-					<div>
-						<h2 class="text-lg font-semibold text-fg">
-							{$t('project.scenarioSetup')}
-						</h2>
-						<p class="mt-1 text-sm text-fg-muted">
-							{scenarioTemplateAudience(scenarioTemplate.audience_label, scenarioTemplate.key, $t)}
-						</p>
-					</div>
-				</div>
-
-				<div class="grid gap-5">
-					<div>
-						<h3 class="mb-3 text-sm font-semibold text-fg">
-							{$t('project.assistantSetup')}
-						</h3>
-						{#if assistantRoles().length === 0}
-							<p
-								class="rounded-control border border-dashed border-input p-4 text-sm text-fg-muted"
-							>
-								{$t('project.noAssistantRoles')}
-							</p>
-						{:else}
-							<div class="space-y-3">
-								{#each assistantRoles() as role (scenarioValue(role, 'key', scenarioItemLabel(role, 'assistant')))}
-									{@const assistant = assistantForRole(role)}
-									<div class="rounded-control border border-line p-4">
-										<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-											<div class="min-w-0">
-												<div class="flex flex-wrap items-center gap-2">
-													<h4 class="text-sm font-semibold text-fg">
-														{scenarioItemLabel(role, $t('project.assistant'))}
-													</h4>
-													<span class="rounded bg-surface px-2 py-0.5 text-xs text-fg-muted"
-														>{scenarioValue(role, 'agent_type', 'assistant')}</span
-													>
-													<span
-														class="rounded px-2 py-0.5 text-xs font-medium {assistant?.is_active
-															? 'bg-success-soft text-success'
-															: 'bg-warning-soft text-warning'}"
-													>
-														{assistant?.is_active ? $t('project.active') : $t('project.needsSetup')}
-													</span>
-												</div>
-												<div class="mt-2 flex flex-wrap gap-1.5">
-													{#each scenarioArrayValue(role, 'capabilities') as capability}
-														<span
-															class="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-xs text-fg-muted"
-															>{capability}</span
-														>
-													{/each}
-												</div>
-												{#if scenarioBooleanValue(role, 'writes_require_approval')}
-													<p class="mt-2 text-xs text-fg-muted">
-														{$t('project.writesRequireApproval')}
-													</p>
-												{/if}
-												{#if assistant}
-													{@const draft = assistantDraft(assistant, role)}
-													<div class="mt-3 grid gap-2 sm:grid-cols-3">
-														<label class="block text-xs font-medium text-fg-muted">
-															{$t('project.provider')}
-															<input
-																class="mt-1 block w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
-																value={draft.provider}
-																placeholder={assistantProviderForRole(role)}
-																oninput={(event) =>
-																	setAssistantDraft(
-																		assistant,
-																		'provider',
-																		eventInputValue(event),
-																		role
-																	)}
-															/>
-														</label>
-														<label class="block text-xs font-medium text-fg-muted">
-															{$t('project.model')}
-															<input
-																class="mt-1 block w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
-																value={draft.model}
-																placeholder={assistantModelForRole(role)}
-																oninput={(event) =>
-																	setAssistantDraft(
-																		assistant,
-																		'model',
-																		eventInputValue(event),
-																		role
-																	)}
-															/>
-														</label>
-														<label class="block text-xs font-medium text-fg-muted">
-															{$t('project.apiEndpoint')}
-															<input
-																class="mt-1 block w-full rounded-control border border-input bg-field px-2 py-1.5 text-sm text-fg"
-																value={draft.api_endpoint}
-																placeholder="https://..."
-																oninput={(event) =>
-																	setAssistantDraft(
-																		assistant,
-																		'api_endpoint',
-																		eventInputValue(event),
-																		role
-																	)}
-															/>
-														</label>
-													</div>
-												{/if}
-											</div>
-											<Button
-												size="sm"
-												variant={assistant?.is_active ? 'secondary' : 'primary'}
-												disabled={!assistant || updatingAssistantId === assistant.id}
-												onclick={() => saveAssistantConfig(role)}
-											>
-												<Power class="mr-2 h-4 w-4" aria-hidden="true" />
-												{assistant?.is_active
-													? $t('project.saveAssistant')
-													: $t('project.enableAssistant')}
-											</Button>
-										</div>
-									</div>
-								{/each}
-							</div>
-						{/if}
 					</div>
 				</div>
 			</div>

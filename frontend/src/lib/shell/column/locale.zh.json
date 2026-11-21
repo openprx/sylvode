@@ -19,8 +19,7 @@
 				"forms": "表单",
 				"flow": "Flow",
 				"agents": "智能体",
-				"bots": "机器人",
-				"participants": "AI 参与者"
+				"bots": "机器人"
 			},
 			"home": {
 				"overview": "概览",
@@ -40,11 +39,10 @@
 			},
 			"agents": {
 				"bots": "机器人",
-				"participants": "AI 参与者",
+				"connected": "已连接的机器人",
 				"personalEmpty": "当前版本中，智能体属于某个工作区。",
 				"noBots": "此工作区没有机器人。",
-				"noProjects": "此工作区没有项目。",
-				"noParticipants": "此项目没有 AI 参与者。",
+				"noConnection": "未连接机器人",
 				"choose": "在列表中选择一个智能体。"
 			},
 			"governance": {

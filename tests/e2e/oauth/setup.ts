@@ -3,9 +3,10 @@
 //   node tests/e2e/oauth/setup.ts
 //
 // Creates or finds: users A and B, the bot user, the workspace (name starts with "qa-p4-"), the
-// members (A member, B admin, bot member), projects P1 and P2, the bot as an AI participant of
-// both projects, and one work item in each project. Refuses a non-loopback host unless
-// OAUTH_E2E_ALLOW_NON_LOOPBACK=1. Prints ids only; never a password or a token.
+// members (A member, B admin, bot member), projects P1 and P2, and one work item in each project.
+// The bot is no longer registered as an AI participant here: a bot becomes a project's participant
+// only through a project bot connection, which the end-to-end setup will create in a later change.
+// Refuses a non-loopback host unless OAUTH_E2E_ALLOW_NON_LOOPBACK=1. Prints ids only; never a password or a token.
 
 import { loadConfig, NAME_PREFIX, type Account, type Config, ConfigError } from './config.ts';
 import { call } from './lib/http.ts';
@@ -149,7 +150,7 @@ export async function runSetup(cfg: Config): Promise<void> {
 		}
 	}
 
-	// Projects, the bot's AI participant registration, and one work item each.
+	// Projects and one work item each.
 	const projects = itemsOf(
 		await admin.data(
 			rec,
@@ -181,28 +182,6 @@ export async function runSetup(cfg: Config): Promise<void> {
 		}
 		check(id !== undefined, `no id for ${label}`);
 		ids[label] = id;
-
-		const participant = await admin.request(
-			rec,
-			`register the bot in ${label}`,
-			'POST',
-			`/api/v1/projects/${id}/ai-participants`,
-			{
-				id: bot,
-				name: cfg.botName,
-				model: 'qa-p4',
-				provider: 'qa-p4',
-				capabilities: []
-			}
-		);
-		const body = asRecord(participant.json);
-		if (body?.code === 0) log(`bot in ${label}: registered`);
-		else if (participant.status === 200 && body?.code === 409)
-			log(`bot in ${label}: already registered`);
-		else
-			log(
-				`bot in ${label}: registration answered HTTP ${participant.status}, code ${String(body?.code)} (${str(body?.message) ?? ''})`
-			);
 
 		const listed = itemsOf(
 			await admin.data(

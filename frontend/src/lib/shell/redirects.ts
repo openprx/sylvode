@@ -13,7 +13,7 @@ import { settingsLanding } from '#lib/project/nav.js';
 export const REDIRECT_STATUS = 307;
 
 /** Pages that moved from `/projects/{pid}/…` to `/workspace/{w}/projects/{pid}/…`. */
-export const MOVED_PROJECT_PAGES = ['ai-agents', 'audit-reports'] as const;
+export const MOVED_PROJECT_PAGES = ['audit-reports'] as const;
 export type MovedProjectPage = (typeof MOVED_PROJECT_PAGES)[number];
 
 function withTail(path: string, search: string, hash: string): string {
@@ -45,12 +45,11 @@ export interface LegacyProjectUrl {
 }
 
 /**
- * Reads `/projects/{pid}/ai-agents`, `/projects/{pid}/audit-reports` and
- * `/projects/{pid}/audit-reports/{id}`. Anything else (including a trailing slash variant of an
+ * Reads `/projects/{pid}/audit-reports` and `/projects/{pid}/audit-reports/{id}`. Anything else (including a trailing slash variant of an
  * unknown page, or a path that is already under a workspace) is `null` and stays untouched.
  */
 export function parseLegacyProjectUrl(pathname: string): LegacyProjectUrl | null {
-	const match = /^\/projects\/([^/]+)\/(ai-agents|audit-reports(?:\/[^/]+)?)\/?$/.exec(pathname);
+	const match = /^\/projects\/([^/]+)\/(audit-reports(?:\/[^/]+)?)\/?$/.exec(pathname);
 	if (!match) return null;
 	let projectId: string;
 	try {

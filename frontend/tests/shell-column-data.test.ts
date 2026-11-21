@@ -24,7 +24,6 @@ function apis(over: Partial<Apis> = {}): { apis: Apis; calls: string[] } {
 		apis: {
 			workspaces: async () => (calls.push('workspaces'), page([{ id: 'w1', name: 'North' }])),
 			bots: async (w) => (calls.push(`bots:${w}`), ok([{ id: 'b1', name: 'Bot' }])),
-			aiAgents: async (p) => (calls.push(`agents:${p}`), page([{ id: 'a1', name: 'Agent' }])),
 			forms: async (p) => (calls.push(`forms:${p}`), page([{ id: 'f1', name: 'Orders' }])),
 			...over
 		} as Apis
@@ -48,14 +47,12 @@ await suite.checkAsync('lists load on their own and are cached', async () => {
 	assertEqual(data.workspaces.status, 'ready', 'ready');
 	assertEqual(data.workspaces.items[0].name, 'North', 'items');
 	await data.loadBots('w1');
-	await data.loadAgents('p1');
 	await data.loadForms('p1');
 	assertEqual(data.botsOf('w1').items[0].name, 'Bot', 'bots');
-	assertEqual(data.agentsOf('p1').items[0].name, 'Agent', 'agents');
 	assertEqual(data.formsOf('p1').items[0].id, 'f1', 'forms');
 	assertEqual(data.formsOf('p9').status, 'idle', 'other project untouched');
 	await data.loadForms('p1');
-	assertDeepEqual(calls, ['workspaces', 'bots:w1', 'agents:p1', 'forms:p1'], 'no repeat requests');
+	assertDeepEqual(calls, ['workspaces', 'bots:w1', 'forms:p1'], 'no repeat requests');
 	await data.loadForms('p1', true);
 	assertEqual(calls.filter((c) => c === 'forms:p1').length, 2, 'force reloads');
 });
@@ -66,13 +63,13 @@ await suite.checkAsync(
 		let botCalls = 0;
 		const { apis: a } = apis({
 			bots: async () => (++botCalls === 1 ? fail(500) : ok([{ id: 'b1', name: 'Bot' }])),
-			aiAgents: async () => fail(403)
+			forms: async () => fail(403)
 		});
 		const data = new ColumnData(a);
-		await Promise.all([data.loadWorkspaces(), data.loadBots('w1'), data.loadAgents('p1')]);
+		await Promise.all([data.loadWorkspaces(), data.loadBots('w1'), data.loadForms('p1')]);
 		assertEqual(data.workspaces.status, 'ready', 'workspaces fine');
 		assertEqual(data.botsOf('w1').status, 'error', 'bots failed');
-		assertEqual(data.agentsOf('p1').status, 'forbidden', 'agents forbidden');
+		assertEqual(data.formsOf('p1').status, 'forbidden', 'forms forbidden');
 		await data.loadBots('w1');
 		assertEqual(data.botsOf('w1').status, 'ready', 'retry after failure succeeds without force');
 	}

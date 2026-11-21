@@ -207,6 +207,11 @@ function mapAuditReport(raw: Record<string, unknown>): AuditReport {
 	};
 }
 
+/** Learning records are read per project: the same bot can be a participant of several. */
+function learningBase(projectId: string, aiParticipantId: string): string {
+	return `/api/v1/projects/${encodeURIComponent(projectId)}/ai-participants/${encodeURIComponent(aiParticipantId)}`;
+}
+
 function mapLearning(raw: Record<string, unknown>): AiLearningRecord {
 	return {
 		id: Number(raw.id ?? 0),
@@ -523,6 +528,7 @@ export const governanceExtApi = {
 	},
 
 	async getAiParticipantLearning(
+		projectId: string,
 		aiParticipantId: string,
 		params?: { domain?: string; page?: number; per_page?: number }
 	): Promise<ApiResult<PaginatedData<AiLearningRecord>>> {
@@ -531,8 +537,8 @@ export const governanceExtApi = {
 		if (params?.page) query.set('page', String(params.page));
 		if (params?.per_page) query.set('per_page', String(params.per_page));
 		const endpoint = query.size
-			? `/api/v1/ai-participants/${aiParticipantId}/learning?${query.toString()}`
-			: `/api/v1/ai-participants/${aiParticipantId}/learning`;
+			? `${learningBase(projectId, aiParticipantId)}/learning?${query.toString()}`
+			: `${learningBase(projectId, aiParticipantId)}/learning`;
 
 		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
 		if (res.code !== 0 || !res.data) {
@@ -554,10 +560,11 @@ export const governanceExtApi = {
 	},
 
 	async getAiParticipantAlignmentStats(
+		projectId: string,
 		aiParticipantId: string
 	): Promise<ApiResult<AiAlignmentStats>> {
 		const res = await apiClient.get<Record<string, unknown>>(
-			`/api/v1/ai-participants/${aiParticipantId}/alignment-stats`
+			`${learningBase(projectId, aiParticipantId)}/alignment-stats`
 		);
 		if (res.code !== 0 || !res.data) {
 			return {

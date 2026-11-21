@@ -662,31 +662,6 @@ async function sectionConfirmations(api) {
 		await closePage(page);
 	}
 
-	// --- AI participant --------------------------------------------------------------------
-	{
-		const name = `Acc Agent ${stamp}`;
-		const agentId = `acc-agent-${stamp}`;
-		await api.must('POST', `/api/v1/projects/${project}/ai-participants`, {
-			id: agentId,
-			name,
-			model: 'acceptance-model',
-			provider: 'acceptance',
-			capabilities: ['comment']
-		});
-		const page = await openPage(`/workspace/${ws}/projects/${project}/ai-agents`);
-		await driveConfirm('remove AI participant', page, {
-			open: () => clickRowButton(page, name, /^delete$/),
-			verb: 'remove',
-			object: /participant|agent|AI|Acc Agent/i,
-			exists: async () => {
-				const list = items((await api.call('GET', `/api/v1/projects/${project}/ai-participants`)).data);
-				// Removing a participant deactivates it: the API keeps the row with is_active=false.
-				return list.some((a) => a.id === agentId && a.is_active !== false);
-			}
-		});
-		await closePage(page);
-	}
-
 	// --- workflow and workflow state -------------------------------------------------------
 	{
 		const name = `acc-workflow-${stamp}`;
@@ -1361,7 +1336,7 @@ async function sectionErrors(api) {
 		{ name: 'non-existent project', path: `/workspace/${ws}/projects/${NIL_ID}` },
 		{ name: 'non-existent workspace members', path: `/workspace/${NIL_ID}/members` },
 		{ name: 'non-existent user trust profile', path: `/users/${NIL_ID}/trust` },
-		{ name: 'non-existent AI participant', path: `/ai-agents/${NIL_ID}/learning` },
+		{ name: 'non-existent AI participant', path: `/ai-agents/${NIL_ID}/learning?projectId=${NIL_ID}` },
 		{ name: 'non-existent audit report', path: `/workspace/${ws}/projects/${project}/audit-reports/${NIL_ID}`, extra: true },
 		{ name: 'non-existent form record', path: `/workspace/${ws}/projects/${project}/forms/records/${NIL_ID}`, extra: true },
 		{ name: 'non-existent proposal', path: `/proposals/${NIL_ID}`, extra: true },
