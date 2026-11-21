@@ -261,22 +261,22 @@
 
 	function getStatusClass(status: string): string {
 		const map: Record<string, string> = {
-			backlog: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
-			todo: 'bg-blue-500/20 dark:bg-blue-500/30 text-blue-700 dark:text-blue-300',
-			in_progress: 'bg-amber-500/20 dark:bg-amber-500/30 text-amber-700 dark:text-amber-300',
-			done: 'bg-emerald-500/20 dark:bg-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+			backlog: 'bg-surface text-fg',
+			todo: 'bg-surface text-fg',
+			in_progress: 'bg-warning-soft text-warning',
+			done: 'bg-success-soft text-success'
 		};
-		return map[status] || 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300';
+		return map[status] || 'bg-surface text-fg';
 	}
 
 	function getPriorityClass(priority: string): string {
 		const map: Record<string, string> = {
-			low: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
-			medium: 'bg-blue-500/20 dark:bg-blue-500/30 text-blue-700 dark:text-blue-300',
-			high: 'bg-orange-500/20 dark:bg-orange-500/30 text-orange-700 dark:text-orange-300',
-			urgent: 'bg-red-500/20 dark:bg-red-500/30 text-red-700 dark:text-red-300'
+			low: 'bg-surface text-fg',
+			medium: 'bg-surface text-fg',
+			high: 'bg-warning-soft text-warning',
+			urgent: 'bg-danger-soft text-danger'
 		};
-		return map[priority] || 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300';
+		return map[priority] || 'bg-surface text-fg';
 	}
 
 	function getMemberDisplay(userId: string | undefined): string {
@@ -350,11 +350,11 @@
 	<!-- Header -->
 	<div class="mb-8 flex items-center justify-between">
 		<div>
-			<h1 class="mb-2 text-3xl font-bold text-slate-900 dark:text-slate-100">
+			<h1 class="mb-2 text-3xl font-semibold text-fg">
 				{$t('workspace.welcome')}{#if $authStore.user}, {$authStore.user.name ||
 						$authStore.user.email}{/if}!
 			</h1>
-			<p class="text-slate-600 dark:text-slate-400">{$t('workspace.selectWorkspace')}</p>
+			<p class="text-fg-muted">{$t('workspace.selectWorkspace')}</p>
 		</div>
 		<Button onclick={openCreateModal}>
 			<svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -368,7 +368,7 @@
 	<!-- Loading State -->
 	{#if loading}
 		<div class="flex items-center justify-center py-12">
-			<div class="text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+			<div class="text-fg-muted">{$t('common.loading')}</div>
 		</div>
 
 		<!-- Empty State -->
@@ -386,14 +386,14 @@
 				<Card clickable hover onclick={() => goToWorkspace(workspace.id)}>
 					<div class="flex items-center justify-between mb-3">
 						<div
-							class="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white text-xl font-bold"
+							class="w-12 h-12 bg-avatar text-on-avatar rounded-card flex items-center justify-center text-xl font-semibold"
 						>
 							{workspace.name.charAt(0).toUpperCase()}
 						</div>
 						<div class="flex items-center gap-2">
 							<button
 								onclick={(e) => openEditModal(workspace, e)}
-								class="p-1 text-slate-400 transition-colors hover:text-blue-600 dark:text-slate-400"
+								class="p-1 text-fg-muted transition-colors hover:text-fg"
 								aria-label={$t('common.edit')}
 							>
 								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -407,7 +407,7 @@
 							</button>
 							<button
 								onclick={(e) => openDeleteModal(workspace, e)}
-								class="p-1 text-slate-400 transition-colors hover:text-red-600 dark:text-slate-400"
+								class="p-1 text-fg-muted transition-colors hover:text-danger"
 								aria-label={$t('workspace.deleteWorkspace')}
 							>
 								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -420,7 +420,7 @@
 								</svg>
 							</button>
 							<svg
-								class="h-5 w-5 text-slate-400 transition-colors group-hover:text-blue-600 dark:text-slate-400"
+								class="h-5 w-5 text-fg-muted transition-colors group-hover:text-fg"
 								fill="none"
 								stroke="currentColor"
 								viewBox="0 0 24 24"
@@ -434,16 +434,16 @@
 							</svg>
 						</div>
 					</div>
-					<h3 class="mb-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h3 class="mb-2 text-lg font-semibold text-fg">
 						{workspace.name}
 					</h3>
 					{#if workspace.description}
-						<p class="mb-3 line-clamp-2 text-sm text-slate-600 dark:text-slate-400">
+						<p class="mb-3 line-clamp-2 text-sm text-fg-muted">
 							{workspace.description}
 						</p>
 					{/if}
-					<div class="mt-4 border-t border-slate-100 pt-4 dark:border-slate-700">
-						<div class="text-xs text-slate-500 dark:text-slate-400">
+					<div class="mt-4 border-t border-line pt-4">
+						<div class="text-xs text-fg-muted">
 							{$t('common.createdAt')}
 							{formatDate(workspace.created_at)}
 						</div>
@@ -458,11 +458,9 @@
 			<div class="xl:col-span-3">
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3
-							class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100"
-						>
+						<h3 class="flex items-center gap-2 text-lg font-semibold text-fg">
 							<svg
-								class="h-5 w-5 text-slate-500 dark:text-slate-400"
+								class="h-5 w-5 text-fg-muted"
 								fill="none"
 								stroke="currentColor"
 								viewBox="0 0 24 24"
@@ -478,26 +476,25 @@
 						</h3>
 					</div>
 					{#if loadingDashboard}
-						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">
+						<div class="py-8 text-sm text-fg-muted">
 							{$t('common.loading')}
 						</div>
 					{:else if myIssues.length === 0}
-						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">
+						<div class="py-8 text-sm text-fg-muted">
 							{$t('workspace.noWork')}
 						</div>
 					{:else}
 						<div class="space-y-3">
 							{#each myIssues as issue (issue.id)}
 								<button
-									class="w-full rounded-md border border-slate-200 bg-white p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
+									class="w-full rounded-card border border-line bg-raised p-3 text-left transition-colors hover:border-line-strong hover:bg-surface"
 									onclick={() => goToIssue(issue.workspace_id, issue.project_id, issue.id)}
 								>
 									<div class="mb-2 flex items-center justify-between gap-2">
-										<p class="line-clamp-1 text-sm font-medium text-slate-900 dark:text-slate-100">
+										<p class="line-clamp-1 text-sm font-medium text-fg">
 											{issue.title}
 										</p>
-										<span class="text-xs text-slate-500 dark:text-slate-400"
-											>{formatRelativeTime(issue.updated_at)}</span
+										<span class="text-xs text-fg-muted">{formatRelativeTime(issue.updated_at)}</span
 										>
 									</div>
 									<div class="flex flex-wrap items-center gap-2 text-xs">
@@ -507,7 +504,7 @@
 										<span class={`rounded-full px-2 py-1 ${getPriorityClass(issue.priority)}`}>
 											{formatPriority(issue.priority)}
 										</span>
-										<span class="text-slate-500 dark:text-slate-400">{issue.project_name}</span>
+										<span class="text-fg-muted">{issue.project_name}</span>
 									</div>
 								</button>
 							{/each}
@@ -518,11 +515,9 @@
 			<div class="xl:col-span-2">
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3
-							class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100"
-						>
+						<h3 class="flex items-center gap-2 text-lg font-semibold text-fg">
 							<svg
-								class="h-5 w-5 text-slate-500 dark:text-slate-400"
+								class="h-5 w-5 text-fg-muted"
 								fill="none"
 								stroke="currentColor"
 								viewBox="0 0 24 24"
@@ -538,11 +533,11 @@
 						</h3>
 					</div>
 					{#if loadingDashboard}
-						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">
+						<div class="py-8 text-sm text-fg-muted">
 							{$t('common.loading')}
 						</div>
 					{:else if myActivities.length === 0}
-						<div class="py-8 text-sm text-slate-500 dark:text-slate-400">
+						<div class="py-8 text-sm text-fg-muted">
 							{$t('workspace.noActivity')}
 						</div>
 					{:else}
@@ -550,9 +545,9 @@
 							{#each myActivities as activity, index (activity.id)}
 								<div class="flex items-start gap-3 py-1">
 									<div class="flex min-h-10 flex-col items-center">
-										<div class="h-2 w-2 rounded-full bg-blue-500"></div>
+										<div class="h-2 w-2 rounded-full bg-fg-muted"></div>
 										<div
-											class="w-0.5 flex-1 bg-slate-200 dark:bg-slate-700"
+											class="w-0.5 flex-1 bg-line"
 											class:opacity-0={index === myActivities.length - 1}
 										></div>
 									</div>
@@ -561,11 +556,11 @@
 										onclick={() =>
 											goToIssue(activity.workspace_id, activity.project_id, activity.issue_id)}
 									>
-										<p class="text-sm text-slate-700 dark:text-slate-300">
+										<p class="text-sm text-fg">
 											<span class="font-medium">{getActivityAuthor(activity)}</span>
 											<span class="ml-1">{formatActivity(activity)}</span>
 										</p>
-										<p class="text-xs text-slate-500 dark:text-slate-400">
+										<p class="text-xs text-fg-muted">
 											#{activity.issue_id.slice(0, 8)} · {activity.issue_title} · {formatRelativeTime(
 												activity.created_at
 											)}
@@ -579,7 +574,7 @@
 								<button
 									onclick={loadMoreActivities}
 									disabled={loadingMoreActivities}
-									class="rounded-md px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-400 dark:hover:bg-slate-800"
+									class="rounded-control px-4 py-2 text-sm text-fg hover:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
 								>
 									{loadingMoreActivities ? $t('common.loading') : $t('workspace.loadMore')}
 								</button>
@@ -669,13 +664,11 @@
 <!-- Delete Modal -->
 <Modal bind:open={showDeleteModal} title={$t('workspace.deleteWorkspace')}>
 	<div class="space-y-4">
-		<p class="text-slate-700 dark:text-slate-300">
+		<p class="text-fg">
 			{$t('workspace.deleteConfirm', { values: { name: deletingWorkspace?.name } })}
 		</p>
-		<div
-			class="rounded-md border border-red-200 bg-red-50 p-4 dark:border-red-500/40 dark:bg-red-500/20"
-		>
-			<p class="inline-flex items-start gap-2 text-sm text-red-800 dark:text-red-300">
+		<div class="rounded-control border bg-danger-soft p-4">
+			<p class="inline-flex items-start gap-2 text-sm text-danger">
 				<svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path
 						stroke-linecap="round"

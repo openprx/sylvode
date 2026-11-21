@@ -2343,6 +2343,7 @@ dependencies = [
  "clap",
  "collab-core",
  "hex",
+ "parking_lot",
  "platform",
  "reqwest",
  "sea-orm",
@@ -2354,6 +2355,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -5538,6 +5540,7 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "api",
+ "axum",
  "clap",
  "platform",
  "reqwest",

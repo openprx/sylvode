@@ -1,0 +1,25 @@
+{
+	"ui": {
+		"select": {
+			"placeholder": "Choose an option",
+			"none": "None",
+			"search": "Search",
+			"noMatch": "No options match “{q}”.",
+			"loading": "Loading options",
+			"failed": "Could not load the options.",
+			"retry": "Retry",
+			"unavailable": "Unavailable: {reason}",
+			"sample": {
+				"label": "Status",
+				"choose": "Choose a status",
+				"backlog": "Backlog",
+				"progress": "In progress",
+				"review": "Review",
+				"done": "Done",
+				"blocked": "Blocked, waiting on another team",
+				"blockedReason": "Locked by the workflow",
+				"error": "Choose a status to continue."
+			}
+		}
+	}
+}

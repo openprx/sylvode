@@ -571,7 +571,7 @@ defaults `baseURL` to `http://localhost:3000`; point it at another frontend with
 **Frontend smoke scripts — 6 `.mjs` scripts** in `frontend/scripts/`, run via
 `bun run smoke:*` (`smoke:connections`,
 `smoke:phase1-project-types`, `smoke:project-template`,
-`smoke:template-work-items`, `smoke:forms-ui`, `smoke:restaurant-ordering`).
+`smoke:template-work-items`, `smoke:forms-record-list`, `smoke:restaurant-ordering`).
 
 **CI.** The `universal-forms` job is not a conventional test suite — it is in-repo
 shell audits that grep and pattern-match the source tree to assert that claimed

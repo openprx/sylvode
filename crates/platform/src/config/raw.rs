@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use super::oauth::{RawOAuth, UrlRole, validate_forward_secret, validate_url};
 use super::secret::Secret;
 use super::{
     AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS, AiTasksConfig, AuditConfig, AuthConfig, ConfigError,
@@ -25,7 +26,7 @@ use super::{
     DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS,
     DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
     LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
-    MIN_JWT_SECRET_LEN, McpConfig, McpTransport, MigrationsConfig, OpenPrConfig, OutboundConfig, S3Config,
+    MIN_JWT_SECRET_LEN, McpConfig, McpTransport, MigrationsConfig, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config,
     ServerConfig, StorageBackend, StorageConfig,
 };
 
@@ -74,6 +75,8 @@ pub(super) struct RawConfig {
     mcp: RawMcp,
     #[serde(default)]
     flow: RawFlow,
+    #[serde(default)]
+    oauth: RawOAuth,
 }
 
 #[derive(Deserialize, Default)]
@@ -181,22 +184,25 @@ struct RawMcp {
     auth_token: Option<String>,
     transport: Option<String>,
     bind_addr: Option<String>,
+    oauth_issuer: Option<String>,
+    oauth_resource: Option<String>,
+    oauth_forward_secret: Option<String>,
 }
 
 /// Collects validation problems so the operator sees all of them at once.
-struct Issues(Vec<String>);
+pub(super) struct Issues(Vec<String>);
 
 impl Issues {
     const fn new() -> Self {
         Self(Vec::new())
     }
 
-    fn push(&mut self, issue: impl Into<String>) {
+    pub(super) fn push(&mut self, issue: impl Into<String>) {
         self.0.push(issue.into());
     }
 
     /// Records `Err` and yields `None`, so validation can keep walking the file.
-    fn record<T>(&mut self, result: Result<T, String>) -> Option<T> {
+    pub(super) fn record<T>(&mut self, result: Result<T, String>) -> Option<T> {
         match result {
             Ok(value) => Some(value),
             Err(issue) => {
@@ -233,6 +239,8 @@ impl RawConfig {
         let outbound = self.outbound.validate(&mut issues);
         let mcp = self.mcp.validate(&mut issues);
         let flow = self.flow.validate(&mut issues);
+        let oauth = self.oauth.validate(&mut issues);
+        cross_check_oauth_and_mcp(oauth.as_ref(), &mcp, &mut issues);
 
         issues.into_result(origin)?;
 
@@ -258,6 +266,7 @@ impl RawConfig {
             outbound,
             mcp,
             flow,
+            oauth,
         })
     }
 }
@@ -792,13 +801,44 @@ impl RawMcp {
         let bind_addr = self.bind_addr.and_then(|addr| {
             issues.record(validate_bind_addr("mcp.bind_addr", &addr).map(|()| addr.trim().to_string()))
         });
+        // Plain http is accepted for a loopback literal only: the MCP server has no insecure flag
+        // of its own, and a loopback address never leaves the machine.
+        let oauth_issuer = self
+            .oauth_issuer
+            .and_then(|value| issues.record(validate_url("mcp.oauth_issuer", &value, UrlRole::Issuer, true)));
+        let oauth_resource = self
+            .oauth_resource
+            .and_then(|value| issues.record(validate_url("mcp.oauth_resource", &value, UrlRole::Resource, true)));
+        let oauth_forward_secret = self
+            .oauth_forward_secret
+            .and_then(|value| issues.record(validate_forward_secret("mcp.oauth_forward_secret", &value)));
         McpConfig {
             api_url,
             bot_token,
             workspace_id,
             transport: transport.unwrap_or_default(),
             bind_addr,
+            oauth_issuer,
+            oauth_resource,
+            oauth_forward_secret,
         }
+    }
+}
+
+/// When one file configures both sections, the MCP server and the API have to agree on who the
+/// issuer is and which URL the MCP resource has; a mismatch would otherwise surface only as
+/// tokens refused at runtime.
+fn cross_check_oauth_and_mcp(oauth: Option<&OAuthConfig>, mcp: &McpConfig, issues: &mut Issues) {
+    let Some(oauth) = oauth else {
+        return;
+    };
+    if mcp.oauth_issuer.as_deref().is_some_and(|issuer| issuer != oauth.issuer) {
+        issues.push("mcp.oauth_issuer must equal oauth.issuer");
+    }
+    if let (Some(mcp_resource), Some(oauth_resource)) = (mcp.oauth_resource.as_deref(), oauth.mcp_resource.as_deref())
+        && mcp_resource != oauth_resource
+    {
+        issues.push("mcp.oauth_resource must equal oauth.mcp_resource");
     }
 }
 
@@ -869,7 +909,7 @@ fn validate_bind_addr(field: &str, value: &str) -> Result<(), String> {
 /// Splits an authority into host and port, tolerating bracketed IPv6 literals.
 ///
 /// Returns `None` when there is no port at all.
-fn split_host_port(authority: &str) -> Option<(&str, &str)> {
+pub(super) fn split_host_port(authority: &str) -> Option<(&str, &str)> {
     if let Some(end) = authority.rfind(']') {
         let after = authority.get(end + 1..)?;
         let port = after.strip_prefix(':')?;
@@ -895,7 +935,7 @@ pub(super) fn is_loopback_bind_addr(bind_addr: &str) -> bool {
     host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
-fn validate_port(field: &str, port: &str) -> Result<(), String> {
+pub(super) fn validate_port(field: &str, port: &str) -> Result<(), String> {
     match port.parse::<u16>() {
         Ok(0) | Err(_) => Err(format!("{field} has an invalid port {port}, expected 1-65535")),
         Ok(_) => Ok(()),

@@ -201,6 +201,30 @@ comments.create {
 }
 ```
 
+## Connected applications (OAuth access)
+
+A client that connected through Sylvode's OAuth authorization (for example Ramflux) authenticates
+with an access token (`Authorization: Bearer sva_...`) on `POST /mcp/rpc` and sees a smaller
+surface than a bot token does:
+
+- It acts in the one workspace it was connected to; `workspace_id` arguments must match it or the
+  call is refused. Projects outside the connection are refused by the API.
+- `tools/list` returns only what the granted scopes allow, eight read tools: `projects:read`
+  (`projects.list`, `projects.get`, `context.get_project`) and `work_items:read`
+  (`work_items.list`, `.get`, `.get_by_identifier`, `.list_labels`, `comments.list`). Search, the
+  project label list and the forms tools are not offered to a connected application in this
+  release (their API routes are not open to it); bot and user tokens keep them. In this release no
+  tool that creates, changes or deletes data, administers the workspace or dispatches an agent is
+  available to a connected application, whatever its scopes.
+- A call outside the granted scopes answers HTTP 403 with `error="insufficient_scope"` and the scope
+  to request; a tool that is never available answers JSON-RPC error `-32002`. Do not retry either.
+- HTTP 401 means the token is no longer valid: refresh it once, and reconnect if that fails.
+  HTTP 503 means Sylvode could not verify the token right now: retry later.
+- The static guides under `sylvode://skills/...` and `sylvode://guides/...` stay readable; data
+  resources do not (use the tools).
+
+Bot tokens (`opr_...`) and user tokens are unaffected and keep the full tool surface.
+
 ## Scripts
 
 - Regression test: `scripts/mcp-regression.py` — tests the core tool surface across 3 transports and checks the 154-tool registry includes universal forms, plugins, and Sylvode Flow. It reads `SYLVODE_MCP_REGRESSION_TOKEN`, `SYLVODE_MCP_REGRESSION_WORKSPACE_ID` and `SYLVODE_MCP_REGRESSION_PROJECT_ID` (and optionally `SYLVODE_MCP_REGRESSION_MCP_URL` / `SYLVODE_MCP_REGRESSION_API_URL`) from the environment and exits when one is missing.

@@ -179,7 +179,7 @@
 		.resize-handle:hover,
 		.resize-handle:focus-visible,
 		.resize-handle.dragging {
-			background: #3b82f6;
+			background: var(--rf-focus);
 			outline: none;
 		}
 	}

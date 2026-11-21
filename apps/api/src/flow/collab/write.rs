@@ -17,6 +17,14 @@
 //!   -> publish best-effort fanout notice; update the warm cache to the committed head
 //! ```
 //!
+//! A REST content command builds its update *before* this sequence starts, outside the permit and
+//! in parallel with other writers of the document, on a private fork of the warm cache entry
+//! ([`prepare_build_engine`]); it then enters the sequence above through [`accept_update`] like
+//! any other writer. The update is applied to whatever the head is by then, and the cache is the
+//! same optimisation for the build and for the apply: an entry is used only when its head
+//! (sequence, frontier, format) equals the head just read from the database, and the bytes it
+//! carries are the bytes of the committed state.
+//!
 //! Lock-content discipline (`collab-protocol-v1.md`: "锁内严禁 snapshot/tail load、CRDT apply、
 //! semantic diff、projection compute、网络 I/O 或等待 async mutex"): every decode, isolated apply,
 //! `semantic_snapshot`, and projection JSON/plain-text render happens in [`hydrate_and_apply`],
@@ -51,10 +59,12 @@
 use crate::flow::block_registry::RegistrationAllowance;
 use std::time::{Duration, Instant};
 
+use std::sync::Arc;
+
 #[cfg(test)]
 use parking_lot::Mutex;
 #[cfg(test)]
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 use collab_core::{CollabEngine, CollabError, InputLimits, LoroCollabEngine};
 use sea_orm::{
@@ -69,7 +79,7 @@ use crate::flow::projection;
 
 use super::authz::fence_epoch_for_share;
 use super::bootstrap::{self, content_hash};
-use super::cache::WarmCache;
+use super::cache::{HeadKey, WarmCache};
 use super::coordinator::DocumentCoordinator;
 use super::frame::{
     Frame, PROTOCOL_VERSION, RejectedCode, SERVER_REJECTED_REASON_DATABASE,
@@ -95,14 +105,14 @@ pub(crate) const LOCKED_PHASE_STAGING_BUDGET: Duration =
 /// one `flow write step` event with the step name and `elapsed_us` is emitted inside the step's
 /// `flow_write_step` span. Observation only: it changes no control flow and costs one clock read
 /// per end when debug logging is off.
-struct WriteStep {
+pub(crate) struct WriteStep {
     name: &'static str,
     started: Instant,
     span: tracing::Span,
 }
 
 impl WriteStep {
-    fn start(name: &'static str) -> Self {
+    pub(crate) fn start(name: &'static str) -> Self {
         Self {
             name,
             started: Instant::now(),
@@ -110,7 +120,7 @@ impl WriteStep {
         }
     }
 
-    fn finish(self) {
+    pub(crate) fn finish(self) {
         drop(self);
     }
 }
@@ -537,6 +547,10 @@ pub fn replay_stable_update_id(document_id: Uuid, idempotency_key: &str) -> Uuid
 pub(crate) struct Prepared {
     pub(crate) observed: ObservedHead,
     pub(crate) candidate: LoroCollabEngine,
+    /// The exact snapshot bytes the isolated worker returned for the candidate (`candidate` was
+    /// loaded from them). Handed to the warm cache with the committed candidate, so the next write
+    /// to this document sends them as its base instead of exporting again.
+    pub(crate) candidate_snapshot: Arc<Vec<u8>>,
     pub(crate) after_frontier: Vec<u8>,
     pub(crate) content_hash_hex: String,
     pub(crate) title: String,
@@ -773,6 +787,7 @@ enum WindowAttempt {
 /// An accepted window with everything the host derived from it.
 struct WindowPrepared {
     candidate: LoroCollabEngine,
+    candidate_snapshot: Vec<u8>,
     semantic: collab_core::SemanticSnapshot,
     minimum_editor_model: u32,
     window_cpu_us: Option<u64>,
@@ -783,12 +798,13 @@ struct WindowPrepared {
 /// it returned, compared with the worker's report. Blocking and CPU heavy (process spawn, pipe I/O,
 /// load, a full projection): run it on a blocking thread, never on an async worker.
 fn window_attempt(
+    document_id: Uuid,
     base_snapshot: &[u8],
     update: &[u8],
     mode: collab_core::isolation::WindowMode,
 ) -> Result<WindowAttempt, ApiError> {
     let isolated_step = WriteStep::start("isolated_apply");
-    let isolated = collab_core::isolation::isolated_apply_with(base_snapshot, update, mode);
+    let isolated = apply_isolated(document_id, base_snapshot, update, mode);
     isolated_step.finish();
     let success = match isolated {
         Ok(success) => success,
@@ -820,6 +836,7 @@ fn window_attempt(
     }
     Ok(WindowAttempt::Prepared(Box::new(WindowPrepared {
         candidate,
+        candidate_snapshot: success.snapshot,
         semantic,
         minimum_editor_model,
         window_cpu_us: success.window_cpu_us,
@@ -891,6 +908,7 @@ fn decide_window_with(
             if mutant_is(WindowMutant::AcceptsSecondDivergence) {
                 return Ok(WindowAttempt::Prepared(Box::new(WindowPrepared {
                     candidate: LoroCollabEngine::new_empty(1),
+                    candidate_snapshot: Vec::new(),
                     semantic: collab_core::SemanticSnapshot::default(),
                     minimum_editor_model: 0,
                     window_cpu_us: None,
@@ -933,6 +951,7 @@ mod window_oracle_tests {
     fn prepared(incremental: bool) -> WindowAttempt {
         WindowAttempt::Prepared(Box::new(WindowPrepared {
             candidate: LoroCollabEngine::new_empty(1),
+            candidate_snapshot: Vec::new(),
             semantic: SemanticSnapshot::default(),
             minimum_editor_model: 0,
             window_cpu_us: None,
@@ -1333,17 +1352,96 @@ pub(crate) enum HydrateOutcome {
     Rejected(AcceptOutcome),
 }
 
-pub(crate) async fn hydrate_and_apply(
+/// A document base resolved at one observed database head: the head itself, the exact snapshot
+/// bytes of the state that head names and, when asked for, a private engine at that state.
+///
+/// It is valid for exactly the head it carries and is never kept across calls: every caller
+/// resolves it afresh from a head it has just read, so there is nothing to go stale.
+pub(crate) struct ResolvedBase {
+    observed: ObservedHead,
+    snapshot_bytes: Arc<Vec<u8>>,
+    /// An independent engine at the base's state, for a caller that builds an update on it.
+    engine: Option<LoroCollabEngine>,
+}
+
+/// What [`resolve_base`] produced. One short-lived value per call, so the size of the ready
+/// variant (it carries an engine) is not worth a heap allocation.
+#[allow(clippy::large_enum_variant)]
+enum BaseOutcome {
+    Ready(ResolvedBase),
+    Rejected(AcceptOutcome),
+}
+
+/// Test-only switch that makes one document behave as if the warm cache did not exist: never
+/// read, never seeded. The forced cold path of the differential tests and the negative control of
+/// the counting tests.
+#[cfg(test)]
+pub(crate) mod cold_cache {
+    use super::{LazyLock, Mutex, Uuid};
+    use std::collections::HashSet;
+
+    static DOCUMENTS: LazyLock<Mutex<HashSet<Uuid>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+    pub fn enable(document_id: Uuid) {
+        DOCUMENTS.lock().insert(document_id);
+    }
+
+    pub(super) fn is_enabled(document_id: Uuid) -> bool {
+        DOCUMENTS.lock().contains(&document_id)
+    }
+}
+
+#[cfg(test)]
+fn cache_disabled(document_id: Uuid) -> bool {
+    cold_cache::is_enabled(document_id)
+}
+
+#[cfg(not(test))]
+const fn cache_disabled(_document_id: Uuid) -> bool {
+    false
+}
+
+/// Test-only per-document counters of the expensive base steps, so a test can state how many full
+/// loads from the database and snapshot exports N writes cost. Keyed by document id: tests in one
+/// process use distinct documents.
+#[cfg(test)]
+pub(crate) mod base_counters {
+    use super::{LazyLock, Mutex};
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Counts {
+        pub database_loads: usize,
+        pub snapshot_exports: usize,
+    }
+
+    static COUNTS: LazyLock<Mutex<HashMap<Uuid, Counts>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    pub fn database_load(document_id: Uuid) {
+        COUNTS.lock().entry(document_id).or_default().database_loads += 1;
+    }
+
+    pub fn snapshot_export(document_id: Uuid) {
+        COUNTS.lock().entry(document_id).or_default().snapshot_exports += 1;
+    }
+
+    pub fn of(document_id: Uuid) -> Counts {
+        COUNTS.lock().get(&document_id).copied().unwrap_or_default()
+    }
+}
+
+/// Reads the observed database head and applies the two refusals that depend only on it: no such
+/// document, and the caller's optimistic-concurrency `expected_frontier`.
+async fn observe_head(
     db: &DatabaseConnection,
-    cache: &WarmCache,
     document_id: Uuid,
     update_id: Uuid,
-    bytes: &[u8],
     expected_frontier: Option<&[u8]>,
-) -> Result<HydrateOutcome, ApiError> {
+) -> Result<Result<ObservedHead, AcceptOutcome>, ApiError> {
     let observed_head_step = WriteStep::start("read_observed_head");
     let Some(observed) = read_observed_head(db, document_id).await? else {
-        return Ok(HydrateOutcome::Rejected(rejected(
+        return Ok(Err(rejected(
             RejectedCode::NotFound,
             false,
             Some(update_id),
@@ -1361,7 +1459,7 @@ pub(crate) async fn hydrate_and_apply(
     if let Some(expected) = expected_frontier
         && !crate::flow::frontier::client_matches(expected, &observed.head_frontier)?
     {
-        return Ok(HydrateOutcome::Rejected(AcceptOutcome::Rejected(Rejected {
+        return Ok(Err(AcceptOutcome::Rejected(Rejected {
             update_id: Some(update_id),
             code: RejectedCode::StaleFrontier,
             recoverable: true,
@@ -1371,70 +1469,270 @@ pub(crate) async fn hydrate_and_apply(
             write_state: WriteState::NotApplied,
             details: None,
             current_seq: Some(observed.head_seq),
-            current_frontier: Some(observed.head_frontier.clone()),
+            current_frontier: Some(observed.head_frontier),
         })));
     }
+    Ok(Ok(observed))
+}
 
+/// Resolves the base bytes (and, when `want_engine`, a private engine) for `observed`: from the
+/// warm cache when its entry has exactly this head, otherwise from the database (snapshot row plus
+/// the whole tail), seeding the cache with what it loaded.
+///
+/// The cache is only an optimisation of reading the same committed state. Its key is the observed
+/// head sequence, frontier and format version (see [`HeadKey`]); anything else is a miss and a
+/// load from the database. A bootstrap failure is returned as `Err` unchanged.
+async fn resolve_base(
+    db: &DatabaseConnection,
+    cache: &WarmCache,
+    document_id: Uuid,
+    update_id: Uuid,
+    observed: ObservedHead,
+    want_engine: bool,
+) -> Result<BaseOutcome, ApiError> {
     let base_load_step = WriteStep::start("base_load");
-    let base_engine = match cache.fork_matching(document_id, observed.head_seq, &observed.format_version) {
-        Ok(Some(engine)) => engine,
-        Ok(None) => {
-            let boot = match bootstrap::load(db, document_id).await {
-                Ok(boot) => boot,
-                Err(err) if err.kind() == ApiErrorKind::ResyncRequired => {
-                    return Ok(HydrateOutcome::Rejected(rejected(
-                        RejectedCode::ResyncRequired,
-                        true,
-                        Some(update_id),
-                        WriteState::NotApplied,
-                    )));
-                }
-                Err(other) => return Err(other),
-            };
-            let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|err| {
-                tracing::error!(error = %err, "collab write: bootstrap snapshot failed to decode");
-                ApiError::internal()
-            })?;
-            for tail in &boot.tail_updates {
-                engine.import_update(&tail.bytes).map_err(|err| {
-                    tracing::error!(error = %err, "collab write: bootstrap tail update failed to re-apply");
-                    ApiError::internal()
-                })?;
-            }
-            engine
-        }
+    let key = HeadKey {
+        head_seq: observed.head_seq,
+        frontier: &observed.head_frontier,
+        format_version: &observed.format_version,
+    };
+    let use_cache = !cache_disabled(document_id);
+    let checkout = match if use_cache {
+        cache.checkout(document_id, &key, want_engine)
+    } else {
+        Ok(None)
+    } {
+        Ok(checkout) => checkout,
         Err(err) => {
-            return Ok(HydrateOutcome::Rejected(reject_from_collab_error(
-                Some(update_id),
-                &err,
+            return Ok(BaseOutcome::Rejected(AcceptOutcome::Rejected(
+                match reject_from_collab_error(Some(update_id), &err) {
+                    AcceptOutcome::Rejected(rejected) => rejected,
+                    AcceptOutcome::Accepted(_) => return Err(ApiError::internal()),
+                },
             )));
         }
     };
 
-    base_load_step.finish();
+    if let Some(hit) = checkout {
+        base_load_step.finish();
+        let mut engine = hit.engine;
+        let snapshot_bytes = if let Some(bytes) = hit.base_bytes {
+            bytes
+        } else {
+            // A hit without cached bytes (an entry another path seeded): export once and keep the
+            // bytes on the entry, for as long as it still has this exact head.
+            let Some(source) = engine.as_ref() else {
+                return Err(ApiError::internal());
+            };
+            let bytes = Arc::new(export_base_snapshot(source, document_id)?);
+            cache.attach_base_bytes(document_id, &key, bytes.clone());
+            bytes
+        };
+        if !want_engine {
+            engine = None;
+        }
+        return Ok(BaseOutcome::Ready(ResolvedBase {
+            observed,
+            snapshot_bytes,
+            engine,
+        }));
+    }
 
-    // Seed the observed-head base back into the cache (the base, not the post-update candidate
-    // below) so a hot document's next write hits cache even after this one started from a miss.
-    let export_base_step = WriteStep::start("export_base_snapshot");
-    let base_snapshot_bytes = base_engine.export_snapshot().map_err(|err| {
-        tracing::error!(error = %err, "collab write: base engine export_snapshot failed before isolated apply");
+    #[cfg(test)]
+    base_counters::database_load(document_id);
+    let boot = bootstrap::load(db, document_id).await?;
+    // `observe_head` and `bootstrap::load` are two reads: another process can commit between
+    // them. The loaded state then belongs to a newer head than the one `observed` names, and
+    // caching it under `observed`'s key would serve a state the key does not describe. Such a
+    // load is used for this one write (the locked phase rebases it against the database) and
+    // never cached. Compared bytewise, like the cache key itself: a difference can only cost a
+    // cache seed, never produce a false match.
+    let loaded_head_is_observed = boot.head_seq == observed.head_seq
+        && boot.format_version == observed.format_version
+        && boot.head_frontier == observed.head_frontier;
+    let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|err| {
+        tracing::error!(error = %err, "collab write: bootstrap snapshot failed to decode");
         ApiError::internal()
     })?;
-    export_base_step.finish();
+    for tail in &boot.tail_updates {
+        engine.import_update(&tail.bytes).map_err(|err| {
+            tracing::error!(error = %err, "collab write: bootstrap tail update failed to re-apply");
+            ApiError::internal()
+        })?;
+    }
+    base_load_step.finish();
+
+    let snapshot_bytes = Arc::new(export_base_snapshot(&engine, document_id)?);
+    // Seed the observed-head base into the cache so a hot document's next write hits it even
+    // after this one started from a miss. A caller that wants no engine donates its own.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let decoded_bytes_hint = base_snapshot_bytes.len() as u64;
+    let decoded_bytes_hint = snapshot_bytes.len() as u64;
     let seed_cache_step = WriteStep::start("seed_cache_fork");
-    if let Ok(seed) = base_engine.fork() {
-        cache.put(
+    let seed = |engine: LoroCollabEngine| {
+        // Never replaces an entry that is already ahead of this head: a build that loaded outside
+        // the document permit must not undo a commit that landed while it loaded.
+        cache.seed_with_base(
             document_id,
-            seed,
+            engine,
             observed.format_version.clone(),
             observed.head_seq,
             observed.head_frontier.clone(),
             decoded_bytes_hint,
+            Some(snapshot_bytes.clone()),
         );
-    }
+    };
+    let working = if !use_cache || !loaded_head_is_observed {
+        Some(engine)
+    } else if want_engine {
+        if let Ok(forked) = engine.fork() {
+            seed(forked);
+        }
+        Some(engine)
+    } else {
+        seed(engine);
+        None
+    };
     seed_cache_step.finish();
+    Ok(BaseOutcome::Ready(ResolvedBase {
+        observed,
+        snapshot_bytes,
+        engine: working,
+    }))
+}
+
+fn export_base_snapshot(engine: &LoroCollabEngine, document_id: Uuid) -> Result<Vec<u8>, ApiError> {
+    #[cfg(test)]
+    base_counters::snapshot_export(document_id);
+    #[cfg(not(test))]
+    let _ = document_id;
+    let export_base_step = WriteStep::start("export_base_snapshot");
+    let bytes = engine.export_snapshot().map_err(|err| {
+        tracing::error!(error = %err, "collab write: base engine export_snapshot failed before isolated apply");
+        ApiError::internal()
+    })?;
+    export_base_step.finish();
+    Ok(bytes)
+}
+
+/// Reads the observed head and hands a caller that builds an update (the REST content command) a
+/// private engine at exactly that head: forked from the warm cache when its entry has the head,
+/// otherwise loaded from the database (seeding the cache). The caller holds no coordinator permit
+/// and builds in parallel with other writers of the document; the update it then submits through
+/// [`accept_update`] is applied to whatever the head is by then (the CRDT merges it), after the
+/// head re-read in [`hydrate_and_apply`] and under the locked phase's `FOR UPDATE` comparison.
+///
+/// A refusal that depends only on the head (no such document, a stale `expected_frontier`) comes
+/// back as `Ok(Err(..))` and nothing is built.
+///
+/// # Errors
+/// A database failure, or a bootstrap failure, unchanged.
+pub(crate) async fn prepare_build_engine(
+    db: &DatabaseConnection,
+    cache: &WarmCache,
+    document_id: Uuid,
+    update_id: Uuid,
+    expected_frontier: Option<&[u8]>,
+) -> Result<Result<LoroCollabEngine, AcceptOutcome>, ApiError> {
+    let observed = match observe_head(db, document_id, update_id, expected_frontier).await? {
+        Ok(observed) => observed,
+        Err(outcome) => return Ok(Err(outcome)),
+    };
+    match resolve_base(db, cache, document_id, update_id, observed, true).await? {
+        BaseOutcome::Ready(ResolvedBase {
+            engine: Some(engine), ..
+        }) => Ok(Ok(engine)),
+        BaseOutcome::Ready(ResolvedBase { engine: None, .. }) => Err(ApiError::internal()),
+        BaseOutcome::Rejected(outcome) => Ok(Err(outcome)),
+    }
+}
+
+/// The isolated apply of `update` onto `base`. Production always runs the real worker. Under
+/// `cfg(test)` a document a test registered with [`in_process_apply::enable`] is applied in this
+/// process instead (the worker's own sequence: `import_client_update`, `semantic_snapshot`,
+/// `check_snapshot`, `export_snapshot`, without the process boundary and its resource ceilings), so
+/// tests of the base and cache handling run on every platform; every other document, and every
+/// existing test, still goes through the worker.
+// Not `const` on every target: the worker host is Linux-only and a stub elsewhere.
+#[allow(clippy::missing_const_for_fn)]
+fn apply_isolated(
+    document_id: Uuid,
+    base: &[u8],
+    update: &[u8],
+    mode: collab_core::isolation::WindowMode,
+) -> Result<collab_core::isolation::IsolatedApplySuccess, collab_core::isolation::IsolatedApplyError> {
+    #[cfg(test)]
+    if in_process_apply::is_enabled(document_id) {
+        return in_process_apply::apply(base, update);
+    }
+    #[cfg(not(test))]
+    let _ = document_id;
+    collab_core::isolation::isolated_apply_with(base, update, mode)
+}
+
+#[cfg(test)]
+pub(crate) mod in_process_apply {
+    use super::{LazyLock, Mutex, Uuid};
+    use collab_core::isolation::{IsolatedApplyError, IsolatedApplySuccess};
+    use collab_core::{CollabEngine, CollabError, LoroCollabEngine};
+    use std::collections::HashSet;
+
+    static DOCUMENTS: LazyLock<Mutex<HashSet<Uuid>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+    pub fn enable(document_id: Uuid) {
+        DOCUMENTS.lock().insert(document_id);
+    }
+
+    pub(super) fn is_enabled(document_id: Uuid) -> bool {
+        DOCUMENTS.lock().contains(&document_id)
+    }
+
+    pub(super) fn apply(base: &[u8], update: &[u8]) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+        let mut engine = LoroCollabEngine::load(base).map_err(IsolatedApplyError::Collab)?;
+        // The entry point the worker calls (`isolated_apply_worker::decode_apply_and_check`), so
+        // a causally incomplete update or a shadow root is refused here exactly as there.
+        engine
+            .import_client_update(update)
+            .map_err(IsolatedApplyError::Collab)?;
+        let snapshot = engine.semantic_snapshot().map_err(IsolatedApplyError::Collab)?;
+        collab_core::limits::check_snapshot(&snapshot, &collab_core::DocumentLimits::default())
+            .map_err(|violation| IsolatedApplyError::Collab(CollabError::from(violation)))?;
+        let snapshot = engine.export_snapshot().map_err(IsolatedApplyError::Collab)?;
+        Ok(IsolatedApplySuccess {
+            snapshot,
+            window_cpu_us: None,
+            window_report: None,
+        })
+    }
+}
+
+pub(crate) async fn hydrate_and_apply(
+    db: &DatabaseConnection,
+    cache: &WarmCache,
+    document_id: Uuid,
+    update_id: Uuid,
+    bytes: &[u8],
+    expected_frontier: Option<&[u8]>,
+) -> Result<HydrateOutcome, ApiError> {
+    let observed = match observe_head(db, document_id, update_id, expected_frontier).await? {
+        Ok(observed) => observed,
+        Err(outcome) => return Ok(HydrateOutcome::Rejected(outcome)),
+    };
+
+    let (observed, base_snapshot_bytes) = match resolve_base(db, cache, document_id, update_id, observed, false).await {
+        Ok(BaseOutcome::Ready(base)) => (base.observed, base.snapshot_bytes),
+        Ok(BaseOutcome::Rejected(outcome)) => return Ok(HydrateOutcome::Rejected(outcome)),
+        Err(err) if err.kind() == ApiErrorKind::ResyncRequired => {
+            return Ok(HydrateOutcome::Rejected(rejected(
+                RejectedCode::ResyncRequired,
+                true,
+                Some(update_id),
+                WriteState::NotApplied,
+            )));
+        }
+        Err(other) => return Err(other),
+    };
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let decoded_bytes_hint = base_snapshot_bytes.len() as u64;
 
     // `ADR-0010`'s write algorithm: decode -> limit -> diff -> policy -> projection prepare, all
     // outside any lock and before the DB transaction begins. Unlike `hydrate_and_apply`'s
@@ -1468,7 +1766,7 @@ pub(crate) async fn hydrate_and_apply(
     // the second decision by the full window (see `decide_window`).
     let window = tokio::task::spawn_blocking(move || {
         decide_window(ids, mode, |mode| {
-            window_attempt(&base_snapshot_bytes, &update_bytes_owned, mode)
+            window_attempt(document_id, &base_snapshot_bytes, &update_bytes_owned, mode)
         })
     })
     .await
@@ -1479,6 +1777,7 @@ pub(crate) async fn hydrate_and_apply(
 
     let WindowPrepared {
         candidate,
+        candidate_snapshot,
         semantic,
         minimum_editor_model,
         window_cpu_us,
@@ -1520,6 +1819,7 @@ pub(crate) async fn hydrate_and_apply(
     Ok(HydrateOutcome::Prepared(Box::new(Prepared {
         observed,
         candidate,
+        candidate_snapshot: Arc::new(candidate_snapshot),
         after_frontier,
         content_hash_hex,
         title,
@@ -2527,14 +2827,31 @@ pub(crate) fn finish_committed(
     should_advance_snapshot: bool,
 ) -> Accepted {
     let prepared = *prepared;
-    cache.put(
-        request.document_id,
-        prepared.candidate,
-        prepared.observed.format_version,
-        accepted.head_seq,
-        accepted.head_frontier.clone(),
-        prepared.decoded_bytes_hint,
-    );
+    if !cache_disabled(request.document_id) {
+        // The candidate is cached under the head that was committed, so it may only be cached when
+        // that commit is the one it was built for: the very next sequence after the head it was
+        // built on, with exactly its frontier. A `CommitUnknown` recovery finds the row by
+        // `update_id`, and that row can be another process's commit of the same logical update
+        // (a client retry that reached it) over a base this candidate does not share; caching
+        // this candidate under that row's head would make the next write build on a state the
+        // database does not have. In that case cache nothing and drop the entry, which now
+        // describes an older head. (Compared bytewise: a difference only costs a miss.)
+        let committed_what_was_built = accepted.head_seq == prepared.observed.head_seq.saturating_add(1)
+            && accepted.head_frontier == prepared.after_frontier;
+        if committed_what_was_built {
+            cache.put_with_base(
+                request.document_id,
+                prepared.candidate,
+                prepared.observed.format_version,
+                accepted.head_seq,
+                accepted.head_frontier.clone(),
+                prepared.decoded_bytes_hint,
+                Some(prepared.candidate_snapshot),
+            );
+        } else {
+            cache.invalidate(request.document_id);
+        }
+    }
     accepted.should_advance_snapshot = should_advance_snapshot;
     // Still inside the coordinator permit `accept_update` acquired -- see this module's doc
     // comment on why that is what makes this broadcast's order match commit order.
@@ -5872,4 +6189,7 @@ mod database_tests {
         drop(listener);
         scratch.drop_self().await;
     }
+
+    mod base_cache_tests;
+    mod timing_tests;
 }

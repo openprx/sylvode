@@ -131,6 +131,12 @@ async fn main() -> anyhow::Result<()> {
 
 /// The application router: every REST route, with the global layers applied.
 fn build_router(state: AppState) -> Router {
+    build_router_with(state, api::config::runtime().oauth.as_ref())
+}
+
+/// [`build_router`] with an explicit `[oauth]` configuration (tests; the server passes the
+/// installed one).
+fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::config::OAuthConfig>>) -> Router {
     let auth_state = state.clone();
 
     // Uploaded object downloads are gated by `uploads_access_middleware`: it accepts either a
@@ -1604,6 +1610,8 @@ fn build_router(state: AppState) -> Router {
         // The Flow surface: every `routes::flow` / `routes::collab` route, behind the one boundary
         // that renders its database failures as typed envelopes.
         .merge(routes::flow_surface::seal(flow_surface_routes(&auth_state)))
+        // OAuth authorization server: metadata documents and, with later packages, the endpoints.
+        .merge(api::oauth::router::routes_with(&auth_state, oauth))
         // Label routes (protected)
         .route(
             "/api/v1/workspaces/{workspace_id}/labels",
@@ -3101,6 +3109,12 @@ fn embedded_git_dirty(value: &str) -> Option<bool> {
 }
 
 #[cfg(test)]
+mod delegated_router_tests;
+
+#[cfg(test)]
+mod legacy_auth_characterization_tests;
+
+#[cfg(test)]
 mod build_info_tests {
     use super::{embedded_build_info, embedded_git_dirty};
     use std::path::Path;
@@ -3136,18 +3150,42 @@ mod build_info_tests {
 /// business envelope carrying the same `reason`/`retry_after_ms`. It then keeps serving for
 /// [`PROCESS_DRAIN_GRACE_MS`] so those rejections and closes actually reach their clients instead
 /// of racing the process exit.
+///
+/// Open event streams of connected applications end first. An event stream never ends on its own
+/// while its client is connected, so `with_graceful_shutdown` would wait for it forever: the
+/// first thing the shutdown path does is end every stream (the client sees the response end and
+/// reconnects with its last event id to wherever the service comes back).
 async fn drain_then_shutdown(reaper_stop: tokio::sync::watch::Sender<bool>) {
-    shutdown_signal().await;
+    drain_after(
+        shutdown_signal(),
+        reaper_stop,
+        || api::flow::collab::runtime::runtime().begin_process_drain(PROCESS_DRAIN_RETRY_AFTER_MS),
+        Duration::from_millis(PROCESS_DRAIN_GRACE_MS),
+    )
+    .await;
+}
+
+/// The shutdown sequence after `signal`, with the Flow drain and the grace period passed in so a
+/// test can run the real sequence without putting the whole test process into drain mode.
+async fn drain_after(
+    signal: impl std::future::Future<Output = ()>,
+    reaper_stop: tokio::sync::watch::Sender<bool>,
+    begin_flow_drain: impl FnOnce() -> usize,
+    grace: Duration,
+) {
+    signal.await;
+    // Streams first: nothing below can make one end.
+    api::oauth::stream::begin_shutdown();
     // The receiver is gone only if the reaper already stopped; nothing is left to stop then.
     let _ = reaper_stop.send(true);
-    let closed = api::flow::collab::runtime::runtime().begin_process_drain(PROCESS_DRAIN_RETRY_AFTER_MS);
+    let closed = begin_flow_drain();
     tracing::info!(
         closed_sessions = closed,
         retry_after_ms = PROCESS_DRAIN_RETRY_AFTER_MS,
-        grace_ms = PROCESS_DRAIN_GRACE_MS,
+        grace_ms = u64::try_from(grace.as_millis()).unwrap_or(u64::MAX),
         "api server draining: refusing new Flow work and closing collab sessions before shutdown"
     );
-    tokio::time::sleep(Duration::from_millis(PROCESS_DRAIN_GRACE_MS)).await;
+    tokio::time::sleep(grace).await;
 }
 
 async fn shutdown_signal() {
@@ -3623,6 +3661,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0107_flow_block_registration_progress.sql",
         include_str!("../../../migrations/0107_flow_block_registration_progress.sql"),
+    ),
+    (
+        "0108_flow_block_checkpoint_digest.sql",
+        include_str!("../../../migrations/0108_flow_block_checkpoint_digest.sql"),
+    ),
+    (
+        "0109_oauth_authorization_server.sql",
+        include_str!("../../../migrations/0109_oauth_authorization_server.sql"),
     ),
 ];
 
@@ -4170,6 +4216,14 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0107_flow_block_registration_progress.sql",
         SchemaProbe::Column("flow_block_checkpoints", "pending_registrations"),
+    ),
+    (
+        "0108_flow_block_checkpoint_digest.sql",
+        SchemaProbe::Column("flow_block_checkpoints", "registry_digest"),
+    ),
+    (
+        "0109_oauth_authorization_server.sql",
+        SchemaProbe::Relation("oauth_grants"),
     ),
 ];
 
@@ -4732,6 +4786,8 @@ mod tests {
                 "0105_token_bot_entity_type.sql",
                 "0106_flow_capabilities_default_on.sql",
                 "0107_flow_block_registration_progress.sql",
+                "0108_flow_block_checkpoint_digest.sql",
+                "0109_oauth_authorization_server.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -4791,7 +4847,14 @@ mod tests {
                 continue;
             }
             for relation in dropped {
-                if !sql.contains(relation) {
+                // Whole identifiers only: `oauth_event_outbox` is not the retired `event_outbox`.
+                let mentioned = sql.match_indices(relation).any(|(at, _)| {
+                    !sql[..at]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|prev| prev.is_ascii_alphanumeric() || prev == '_')
+                });
+                if !mentioned {
                     continue;
                 }
                 assert!(

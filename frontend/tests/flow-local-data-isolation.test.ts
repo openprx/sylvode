@@ -283,17 +283,17 @@ for (const [label, answer] of [
 	);
 }
 
-suite.check('only the sign-out button path calls the deleting logout in the app shell', () => {
+suite.check('only the sign-out path calls the deleting logout in the shell session', () => {
 	const source = readFileSync(
-		join(new URL('..', import.meta.url).pathname, 'src/routes/(app)/+layout.svelte'),
+		join(new URL('..', import.meta.url).pathname, 'src/lib/shell/session.svelte.ts'),
 		'utf8'
 	);
 	const calls = [...source.matchAll(/authStore\.logout\(/g)].length;
 	assertEqual(calls, 1, 'one deleting logout call');
-	const handler = source.slice(source.indexOf('async function handleLogout'));
+	const handler = source.slice(source.indexOf('async logout('));
 	assert(
 		/authStore\.logout\(/.test(handler.slice(0, handler.indexOf('\n\t}\n'))),
-		'and it is inside handleLogout'
+		'and it is inside logout()'
 	);
 	assert(/verifySession\(/.test(source), 'the session check goes through verifySession');
 });

@@ -19,7 +19,7 @@ use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
     services::{
-        ai_task_service::{CreateAiTaskInput, create_ai_task},
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
         bot_identity::is_bot_user,
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
     },
@@ -174,6 +174,7 @@ async fn queue_assignment_ai_task(
     let queued = create_ai_task(
         db,
         CreateAiTaskInput {
+            origin: DispatchOrigin::Request,
             project_id: input.project_id,
             ai_participant_id: input.assignee_id,
             actor_id: Some(input.actor_id),
@@ -259,6 +260,11 @@ pub async fn create_issue(
     .ok_or_else(|| ApiError::NotFound("project not found".to_string()))?;
 
     require_workspace_access(&state, &extensions, project.workspace_id).await?;
+
+    // A connected application may not assign a work item to an agent (nothing is written yet).
+    if let Some(assignee_id) = req.assignee_id {
+        crate::oauth::delegated::refuse_agent_dispatch(&state.db, &[assignee_id]).await?;
+    }
 
     // Validate state by effective workflow (project > workspace > system)
     let issue_state = if let Some(requested) = req.state {
@@ -791,6 +797,11 @@ pub async fn update_issue(
 
     require_workspace_access(&state, &extensions, current_issue.workspace_id).await?;
 
+    // A connected application may not assign a work item to an agent (nothing is written yet).
+    if let Some(assignee_id) = req.assignee_id {
+        crate::oauth::delegated::refuse_agent_dispatch(&state.db, &[assignee_id]).await?;
+    }
+
     // Validate state and priority if provided
     if let Some(ref state_val) = req.state {
         validate_project_state(&state, current_issue.project_id, state_val).await?;
@@ -1302,11 +1313,11 @@ pub async fn delete_issue(
     Ok(ApiResponse::ok())
 }
 
-/// GET /api/v1/issues/by-identifier/:identifier (bot-auth)
+/// GET /api/v1/issues/by-identifier/:identifier (bot-auth, or a connected application)
 /// Get a work item by its short identifier, e.g. "PRX-42".
 pub async fn get_issue_by_identifier(
     State(state): State<AppState>,
-    Extension(bot): Extension<BotAuthContext>,
+    crate::oauth::delegated::CallerWorkspace(workspace_id): crate::oauth::delegated::CallerWorkspace,
     Path(identifier): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Parse "PREFIX-N"
@@ -1350,7 +1361,7 @@ pub async fn get_issue_by_identifier(
               AND UPPER(p.key) = UPPER($2)
               AND wi.sequence_number = $3
         ",
-        vec![bot.workspace_id.into(), prefix.into(), seq_num.into()],
+        vec![workspace_id.into(), prefix.into(), seq_num.into()],
     ))
     .one(&state.db)
     .await?

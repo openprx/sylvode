@@ -2,7 +2,7 @@
 /**
  * Browser check for the record list: default table, simplified views, and the read-only record
  * side panel. Drives the built app with real input events (keyboard, Back, focus) through
- * playwright-core, against the forms smoke mock (`smoke-forms-ui.mjs` in serve-only mode) plus a
+ * playwright-core, against the forms smoke mock (`forms-smoke-server.mjs`) plus a
  * "field gallery" form, served from routes in this script, that holds every field type.
  *
  * Run: `bun run build && node scripts/smoke-forms-record-list.mjs`
@@ -324,9 +324,9 @@ function assert(condition, message) {
 	if (!condition) throw new Error(message);
 }
 
-const server = spawn('node', ['scripts/smoke-forms-ui.mjs'], {
+const server = spawn('node', ['scripts/forms-smoke-server.mjs'], {
 	cwd: root,
-	env: { ...process.env, OPENPR_FORMS_UI_SERVE_ONLY: '1' },
+	env: process.env,
 	stdio: ['ignore', 'pipe', 'inherit']
 });
 const port = await new Promise((resolvePort, reject) => {

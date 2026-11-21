@@ -4,7 +4,8 @@ use super::collab::limits::DOCUMENT_LOCK_HOLD_MS_MAX;
 use crate::error::ApiError;
 use collab_core::block_identity::{Alias, AliasState, reconcile_alias};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -253,6 +254,9 @@ pub(crate) struct ReconcileOutcome {
     pub suspended: Vec<Uuid>,
     /// Snapshot blocks still without an active placement after this transaction.
     pub pending: usize,
+    /// Whether the incremental path ran; tests only.
+    #[cfg(test)]
+    pub incremental: bool,
 }
 
 /// Ranges of at most `REGISTRY_ROWS_PER_STATEMENT` consecutive rows covering `0..len`, in order.
@@ -475,6 +479,285 @@ async fn flush_plan(tx: &DatabaseTransaction, scope_id: Uuid, page_id: Uuid, pla
     Ok(())
 }
 
+/// Which reconcile a caller asks for. The caller never decides soundness: `Incremental` is only a
+/// permission, and the guard in [`reconcile_in_mode`] decides whether it is used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReconcileMode {
+    /// Every block of the Page is read, locked and compared, and every active placement is scanned.
+    Full,
+    /// Only blocks whose (CID, content hash) differ from the registry baseline are read and locked,
+    /// and only CIDs that left the document are retired, when the checkpoint guard allows it.
+    Incremental,
+}
+
+/// The (CID, content hash) set a reconcile left in the registry, remembered per Page by this process.
+struct BaselineEntry {
+    head: i64,
+    digest: [u8; 32],
+    blocks: Arc<HashMap<String, [u8; 32]>>,
+}
+
+/// Process-wide memory of the last registry states. It is only a hint: an entry is used when the
+/// committed checkpoint names the same head and the same digest, and never otherwise.
+#[derive(Default)]
+struct BaselineCache {
+    pages: HashMap<Uuid, (u64, Vec<BaselineEntry>)>,
+    clock: u64,
+    cids: usize,
+}
+
+/// Pages remembered at most, and CIDs remembered in total (about 30 MB at the largest CID size).
+const BASELINE_PAGES_MAX: usize = 64;
+const BASELINE_CIDS_MAX: usize = 200_000;
+/// Entries kept per Page: the newest and its predecessor, so a rolled-back write does not make the
+/// next write fall back to the full reconcile.
+const BASELINE_ENTRIES_PER_PAGE: usize = 2;
+
+#[cfg(not(test))]
+static BASELINES: std::sync::LazyLock<parking_lot::Mutex<BaselineCache>> = std::sync::LazyLock::new(Default::default);
+
+#[cfg(test)]
+thread_local! {
+    /// Tests run one per thread on a current-thread runtime, so a per-thread memory gives every
+    /// test the cache of its own Pages: a test running in parallel can neither evict its entries
+    /// (the page and CID bounds are process-wide) nor see them.
+    static TEST_BASELINES: std::cell::RefCell<BaselineCache> = std::cell::RefCell::new(BaselineCache::default());
+}
+
+/// Run `f` on the remembered registry states of this process (of this test thread under `cfg(test)`).
+fn with_baselines<R>(f: impl FnOnce(&mut BaselineCache) -> R) -> R {
+    #[cfg(not(test))]
+    {
+        f(&mut BASELINES.lock())
+    }
+    #[cfg(test)]
+    {
+        TEST_BASELINES.with(|cache| f(&mut cache.borrow_mut()))
+    }
+}
+
+impl BaselineCache {
+    fn find(&mut self, page: Uuid, head: i64, digest: &[u8]) -> Option<Arc<HashMap<String, [u8; 32]>>> {
+        self.clock = self.clock.wrapping_add(1);
+        let clock = self.clock;
+        let (stamp, entries) = self.pages.get_mut(&page)?;
+        let entry = entries
+            .iter()
+            .find(|entry| entry.head == head && entry.digest.as_slice() == digest)?;
+        *stamp = clock;
+        Some(Arc::clone(&entry.blocks))
+    }
+
+    fn store(&mut self, page: Uuid, entry: BaselineEntry) {
+        self.clock = self.clock.wrapping_add(1);
+        let clock = self.clock;
+        let slot = self.pages.entry(page).or_insert_with(|| (clock, Vec::new()));
+        slot.0 = clock;
+        slot.1.retain(|old| old.head != entry.head);
+        slot.1.insert(0, entry);
+        slot.1.truncate(BASELINE_ENTRIES_PER_PAGE);
+        self.recount();
+        while (self.pages.len() > BASELINE_PAGES_MAX || self.cids > BASELINE_CIDS_MAX) && self.pages.len() > 1 {
+            let oldest = self
+                .pages
+                .iter()
+                .filter(|(id, _)| **id != page)
+                .min_by_key(|(_, (stamp, _))| *stamp)
+                .map(|(id, _)| *id);
+            let Some(oldest) = oldest else { break };
+            self.pages.remove(&oldest);
+            self.recount();
+        }
+    }
+
+    fn forget(&mut self, page: Uuid) {
+        self.pages.remove(&page);
+        self.recount();
+    }
+
+    fn recount(&mut self) {
+        self.cids = self
+            .pages
+            .values()
+            .flat_map(|(_, entries)| entries.iter())
+            .map(|entry| entry.blocks.len())
+            .sum();
+    }
+}
+
+/// Digest of the registry-relevant content of a block set: the sorted (CID, content hash) pairs.
+/// Parent, order and the other `PreparedBlock` fields never reach a placement row.
+fn registry_digest(blocks: &[PreparedBlock]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut ordered = blocks.iter().collect::<Vec<_>>();
+    ordered.sort_unstable_by(|left, right| left.physical_cid.cmp(&right.physical_cid));
+    let mut hasher = Sha256::new();
+    for block in ordered {
+        hasher.update(block.physical_cid.len().to_be_bytes());
+        hasher.update(block.physical_cid.as_bytes());
+        hasher.update(block.content_hash);
+    }
+    hasher.finalize().into()
+}
+
+/// What changed between the baseline and the new block set, in document order.
+struct Delta<'a> {
+    /// Blocks whose CID is new or whose content hash differs: the only blocks that are locked and planned.
+    touched: Vec<&'a PreparedBlock>,
+    /// CIDs of the baseline that are no longer in the document.
+    removed: Vec<String>,
+}
+
+fn diff<'a>(baseline: &HashMap<String, [u8; 32]>, blocks: &'a [PreparedBlock]) -> Delta<'a> {
+    #[cfg(test)]
+    let mutation = mutation::current();
+    let present = blocks
+        .iter()
+        .map(|block| block.physical_cid.as_str())
+        .collect::<HashSet<_>>();
+    let mut removed = baseline
+        .keys()
+        .filter(|cid| !present.contains(cid.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    removed.sort_unstable();
+    let mut touched = Vec::new();
+    for block in blocks {
+        match baseline.get(&block.physical_cid) {
+            None => touched.push(block),
+            Some(hash) if *hash != block.content_hash => touched.push(block),
+            Some(_) => {}
+        }
+    }
+    #[cfg(test)]
+    mutation::apply(mutation, baseline, &mut touched, &mut removed);
+    Delta { touched, removed }
+}
+
+/// Deliberate bugs for the mutation checks of the differential test. Task-local, so a mutated test
+/// never disturbs a test running in parallel.
+#[cfg(test)]
+pub(crate) mod mutation {
+    use super::PreparedBlock;
+    use std::collections::HashMap;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Mutation {
+        /// CIDs that left the document are never retired.
+        SkipDeletes,
+        /// The guard accepts the newest remembered state without comparing it with the checkpoint.
+        TrustStaleCheckpoint,
+        /// A new CID whose content equals a removed CID is treated as the same (moved) block.
+        MissMovedBlock,
+        /// Content changes of a CID that stays are ignored.
+        IgnoreContentChanges,
+    }
+
+    tokio::task_local! {
+        static ACTIVE: Mutation;
+    }
+
+    pub fn current() -> Option<Mutation> {
+        ACTIVE.try_with(|mutation| *mutation).ok()
+    }
+
+    pub async fn with<F: std::future::Future>(mutation: Mutation, future: F) -> F::Output {
+        ACTIVE.scope(mutation, future).await
+    }
+
+    pub fn apply(
+        mutation: Option<Mutation>,
+        baseline: &HashMap<String, [u8; 32]>,
+        touched: &mut Vec<&PreparedBlock>,
+        removed: &mut Vec<String>,
+    ) {
+        match mutation {
+            Some(Mutation::SkipDeletes) => removed.clear(),
+            Some(Mutation::MissMovedBlock) => {
+                let removed_hashes = removed.iter().filter_map(|cid| baseline.get(cid)).collect::<Vec<_>>();
+                touched.retain(|block| {
+                    baseline.contains_key(&block.physical_cid) || !removed_hashes.contains(&&block.content_hash)
+                });
+            }
+            Some(Mutation::IgnoreContentChanges) => touched.retain(|block| !baseline.contains_key(&block.physical_cid)),
+            Some(Mutation::TrustStaleCheckpoint) | None => {}
+        }
+    }
+}
+
+/// Compare the registry of one Page with the full reconcile of `blocks`, writing and locking nothing.
+///
+/// Returns up to `limit` human-readable differences. An empty list means one active placement per
+/// block with the block's content hash and an active logical identity, no other active placement,
+/// and nothing pending.
+///
+/// Statements: one keyset scan round per `REGISTRY_ROWS_PER_STATEMENT` active placements and one
+/// checkpoint read. Meant for tests and for a later periodic or on-demand verification.
+pub async fn verify_registry(
+    tx: &DatabaseTransaction,
+    scope_id: Uuid,
+    page_id: Uuid,
+    blocks: &[PreparedBlock],
+    limit: usize,
+) -> Result<Vec<String>, ApiError> {
+    let expected = blocks
+        .iter()
+        .map(|block| (block.physical_cid.as_str(), block.content_hash))
+        .collect::<HashMap<_, _>>();
+    let mut differences = Vec::new();
+    let mut note = |text: String| {
+        if differences.len() < limit {
+            differences.push(text);
+        }
+    };
+    let pending = query_one(
+        tx,
+        "SELECT pending_registrations FROM flow_block_checkpoints WHERE scope_id=$1 AND page_id=$2",
+        vec![scope_id.into(), page_id.into()],
+    )
+    .await?
+    .map(|row| row.try_get::<i32>("", "pending_registrations"))
+    .transpose()?;
+    if pending != Some(0) {
+        note(format!("pending registrations: {pending:?}"));
+    }
+    let scan_limit = i64::try_from(REGISTRY_ROWS_PER_STATEMENT).map_err(|_| ApiError::internal())?;
+    let mut seen = HashSet::new();
+    let mut cursor = String::new();
+    loop {
+        let rows = query_all(
+            tx,
+            REGISTRY_ROWS_PER_STATEMENT,
+            "SELECT p.physical_cid,p.content_hash,l.state AS logical_state FROM flow_block_placements p JOIN flow_logical_blocks l ON l.id=p.logical_id WHERE p.scope_id=$1 AND p.page_id=$2 AND p.state='active' AND p.physical_cid>$3 ORDER BY p.physical_cid LIMIT $4",
+            vec![scope_id.into(), page_id.into(), cursor.clone().into(), scan_limit.into()],
+        )
+        .await?;
+        let round = rows.len();
+        for row in rows {
+            cursor = row.try_get::<String>("", "physical_cid")?;
+            let hash = row.try_get::<Vec<u8>>("", "content_hash")?;
+            match expected.get(cursor.as_str()) {
+                None => note(format!("active placement without a block: {cursor}")),
+                Some(want) if want.as_slice() != hash.as_slice() => note(format!("content hash differs: {cursor}")),
+                Some(_) => {}
+            }
+            if row.try_get::<String>("", "logical_state")? != "active" {
+                note(format!("active placement of an inactive identity: {cursor}"));
+            }
+            seen.insert(cursor.clone());
+        }
+        if round < REGISTRY_ROWS_PER_STATEMENT {
+            break;
+        }
+    }
+    for cid in expected.keys() {
+        if !seen.contains(*cid) {
+            note(format!("block without an active placement: {cid}"));
+        }
+    }
+    Ok(differences)
+}
+
 /// Reconcile one accepted head. No independent commit, connection or raw client identity input.
 ///
 /// Multi-Page operations must lock all Page heads in UUID order before calling this function.
@@ -495,7 +778,49 @@ pub(crate) async fn reconcile(
     blocks: &[PreparedBlock],
     allowance: RegistrationAllowance,
 ) -> Result<ReconcileOutcome, ApiError> {
-    let mut seen = BTreeSet::new();
+    reconcile_in_mode(
+        tx,
+        scope_id,
+        page_id,
+        accepted_head,
+        blocks,
+        allowance,
+        ReconcileMode::Full,
+    )
+    .await
+}
+
+/// [`reconcile`] with a choice of mode.
+///
+/// The incremental path is taken only when ALL of these hold, read under the checkpoint row lock
+/// (so they cannot change before this transaction ends):
+/// 1. `mode` is `Incremental` and `allowance` is `Bounded` (the accepted-write path; creation,
+///    import and package callers pass `Complete` and always reconcile in full);
+/// 2. the checkpoint has no pending registrations;
+/// 3. `accepted_head` is exactly one past the checkpoint's `accepted_head`;
+/// 4. the checkpoint's `registry_digest` is set and equals the digest of a block set this process
+///    remembers for exactly that checkpoint head (the set the last reconcile registered).
+///
+/// Every other case (first registration, resumable registration, a lagging, missing or foreign
+/// checkpoint, a digest cleared by a repair, another process or an older binary having written the
+/// Page, a cold process) runs the full reconcile, which also rewrites the digest. The incremental
+/// path locks, plans and writes the blocks that are new or changed against the remembered set and
+/// retires the CIDs that left the document; the result equals the full reconcile of the same input
+/// because the guard proves the registry holds exactly the remembered (CID, content hash) set.
+///
+/// Lock order is the same in both paths: the caller's Page head lock, the checkpoint row, the
+/// latest placement rows in document order (a subset of the full path's rows), the retired rows,
+/// then shares. Only the set of locked rows is smaller.
+pub(crate) async fn reconcile_in_mode(
+    tx: &DatabaseTransaction,
+    scope_id: Uuid,
+    page_id: Uuid,
+    accepted_head: i64,
+    blocks: &[PreparedBlock],
+    allowance: RegistrationAllowance,
+    mode: ReconcileMode,
+) -> Result<ReconcileOutcome, ApiError> {
+    let mut seen = HashSet::with_capacity(blocks.len());
     if accepted_head < 0
         || blocks
             .iter()
@@ -513,19 +838,49 @@ pub(crate) async fn reconcile(
     .await?;
     let checkpoint = query_one(
         tx,
-        "SELECT accepted_head FROM flow_block_checkpoints WHERE scope_id=$1 AND page_id=$2 FOR UPDATE",
+        "SELECT accepted_head,pending_registrations,registry_digest FROM flow_block_checkpoints WHERE scope_id=$1 AND page_id=$2 FOR UPDATE",
         vec![scope_id.into(), page_id.into()],
     )
     .await?
     .ok_or_else(|| ApiError::invalid_update("missing block checkpoint"))?;
-    if checkpoint.try_get::<i64>("", "accepted_head")? > accepted_head {
+    let checkpoint_head = checkpoint.try_get::<i64>("", "accepted_head")?;
+    if checkpoint_head > accepted_head {
         return Err(ApiError::invalid_update("stale block reconciliation head"));
     }
+    let digest = registry_digest(blocks);
+    let baseline = if mode == ReconcileMode::Incremental
+        && matches!(allowance, RegistrationAllowance::Bounded { .. })
+        && checkpoint.try_get::<i32>("", "pending_registrations")? == 0
+        && checkpoint_head.checked_add(1) == Some(accepted_head)
+    {
+        let witness = checkpoint.try_get::<Option<Vec<u8>>>("", "registry_digest")?;
+        #[cfg(test)]
+        let trust_stale = mutation::current() == Some(mutation::Mutation::TrustStaleCheckpoint);
+        #[cfg(not(test))]
+        let trust_stale = false;
+        with_baselines(|cache| {
+            if trust_stale {
+                cache
+                    .pages
+                    .get(&page_id)
+                    .and_then(|(_, entries)| entries.first())
+                    .map(|entry| Arc::clone(&entry.blocks))
+            } else {
+                witness.and_then(|witness| cache.find(page_id, checkpoint_head, &witness))
+            }
+        })
+    } else {
+        None
+    };
+    let delta = baseline.as_deref().map(|baseline| diff(baseline, blocks));
+    let work = delta
+        .as_ref()
+        .map_or_else(|| blocks.iter().collect::<Vec<_>>(), |delta| delta.touched.clone());
     // Locks exactly the rows the former per-block query locked: the latest placement of every CID.
     // Every writer of these rows holds the Page head lock first, so locking chunk by chunk cannot
     // deadlock and the set of locked rows is the same as one statement over all CIDs.
-    let mut latest_by_cid = HashMap::with_capacity(blocks.len());
-    for chunk in blocks.chunks(REGISTRY_ROWS_PER_STATEMENT) {
+    let mut latest_by_cid = HashMap::with_capacity(work.len());
+    for chunk in work.chunks(REGISTRY_ROWS_PER_STATEMENT) {
         let cids = chunk.iter().map(|b| b.physical_cid.clone()).collect::<Vec<_>>();
         let rows = query_all(
             tx,
@@ -544,7 +899,7 @@ pub(crate) async fn reconcile(
     let mut suspend = Vec::new();
     let mut active_plan = WritePlan::default();
     let mut pending = Vec::new();
-    for block in blocks {
+    for block in work.iter().copied() {
         let old = latest_by_cid.get(&block.physical_cid);
         if old.is_some_and(|old| old.state == "active") {
             plan_block(&mut active_plan, &mut suspend, block, old)?;
@@ -589,44 +944,60 @@ pub(crate) async fn reconcile(
     let pending_left = pending.len().saturating_sub(registered);
     // Placements of CIDs no longer present are found by a keyset scan over the Page's active
     // placements (unlocked: the head and checkpoint locks are held) and retired in chunks. The
-    // retirement takes the row locks of exactly the rows it changes.
-    let present = blocks
-        .iter()
-        .map(|block| block.physical_cid.as_str())
-        .collect::<HashSet<_>>();
-    let mut absent = Vec::new();
-    let mut cursor = String::new();
-    let scan_limit = i64::try_from(REGISTRY_ROWS_PER_STATEMENT).map_err(|_| ApiError::internal())?;
-    loop {
-        let rows = query_all(
-            tx,
-            REGISTRY_ROWS_PER_STATEMENT,
-            "SELECT id,physical_cid FROM flow_block_placements WHERE scope_id=$1 AND page_id=$2 AND state='active' AND physical_cid>$3 ORDER BY physical_cid LIMIT $4",
-            vec![scope_id.into(), page_id.into(), cursor.clone().into(), scan_limit.into()],
-        )
-        .await?;
-        let round = rows.len();
-        for row in rows {
-            cursor = row.try_get::<String>("", "physical_cid")?;
-            if !present.contains(cursor.as_str()) {
-                absent.push(row.try_get::<Uuid>("", "id")?);
+    // retirement takes the row locks of exactly the rows it changes. The incremental path retires
+    // the CIDs that left the baseline directly.
+    let mut removed_ids = Vec::new();
+    if let Some(delta) = &delta {
+        for chunk in delta.removed.chunks(REGISTRY_ROWS_PER_STATEMENT) {
+            let removed = query_all(
+                tx,
+                chunk.len(),
+                "UPDATE flow_block_placements SET state='deleted',retired_at=now() WHERE scope_id=$1 AND page_id=$2 AND physical_cid=ANY($3::text[]) AND state='active' RETURNING logical_id",
+                vec![scope_id.into(), page_id.into(), chunk.to_vec().into()],
+            )
+            .await?;
+            for row in removed {
+                removed_ids.push(row.try_get::<Uuid>("", "logical_id")?);
             }
         }
-        if round < REGISTRY_ROWS_PER_STATEMENT {
-            break;
+    } else {
+        let present = blocks
+            .iter()
+            .map(|block| block.physical_cid.as_str())
+            .collect::<HashSet<_>>();
+        let mut absent = Vec::new();
+        let mut cursor = String::new();
+        let scan_limit = i64::try_from(REGISTRY_ROWS_PER_STATEMENT).map_err(|_| ApiError::internal())?;
+        loop {
+            let rows = query_all(
+                tx,
+                REGISTRY_ROWS_PER_STATEMENT,
+                "SELECT id,physical_cid FROM flow_block_placements WHERE scope_id=$1 AND page_id=$2 AND state='active' AND physical_cid>$3 ORDER BY physical_cid LIMIT $4",
+                vec![scope_id.into(), page_id.into(), cursor.clone().into(), scan_limit.into()],
+            )
+            .await?;
+            let round = rows.len();
+            for row in rows {
+                cursor = row.try_get::<String>("", "physical_cid")?;
+                if !present.contains(cursor.as_str()) {
+                    absent.push(row.try_get::<Uuid>("", "id")?);
+                }
+            }
+            if round < REGISTRY_ROWS_PER_STATEMENT {
+                break;
+            }
         }
-    }
-    let mut removed_ids = Vec::new();
-    for range in chunk_ranges(absent.len()) {
-        let removed = query_all(
-            tx,
-            range.len(),
-            "UPDATE flow_block_placements SET state='deleted',retired_at=now() WHERE id=ANY($1::uuid[]) AND state='active' RETURNING logical_id",
-            vec![column(&absent, &range)?.into()],
-        )
-        .await?;
-        for row in removed {
-            removed_ids.push(row.try_get::<Uuid>("", "logical_id")?);
+        for range in chunk_ranges(absent.len()) {
+            let removed = query_all(
+                tx,
+                range.len(),
+                "UPDATE flow_block_placements SET state='deleted',retired_at=now() WHERE id=ANY($1::uuid[]) AND state='active' RETURNING logical_id",
+                vec![column(&absent, &range)?.into()],
+            )
+            .await?;
+            for row in removed {
+                removed_ids.push(row.try_get::<Uuid>("", "logical_id")?);
+            }
         }
     }
     for range in chunk_ranges(removed_ids.len()) {
@@ -642,12 +1013,13 @@ pub(crate) async fn reconcile(
     execute(
         tx,
         1,
-        "UPDATE flow_block_checkpoints SET accepted_head=$3,pending_registrations=$4 WHERE scope_id=$1 AND page_id=$2",
+        "UPDATE flow_block_checkpoints SET accepted_head=$3,pending_registrations=$4,registry_digest=$5 WHERE scope_id=$1 AND page_id=$2",
         vec![
             scope_id.into(),
             page_id.into(),
             accepted_head.into(),
             i32::try_from(pending_left).map_err(|_| ApiError::internal())?.into(),
+            (pending_left == 0).then(|| digest.to_vec()).into(),
         ],
     )
     .await?;
@@ -661,13 +1033,18 @@ pub(crate) async fn reconcile(
         }
     }
     // Project only fixed member relationships and relative ordering, never absolute source position.
-    let by_cid = blocks
-        .iter()
-        .map(|block| (block.physical_cid.as_str(), block))
-        .collect::<HashMap<_, _>>();
     let shares = query_all(tx, 1,
         "SELECT id,projection_hash FROM flow_block_shares WHERE source_scope_id=$1 AND source_page_id=$2 AND state<>'revoked' ORDER BY id FOR UPDATE",
         vec![scope_id.into(),page_id.into()]).await?;
+    // Built only when the Page has shares: it is the one remaining O(page) structure of this phase.
+    let by_cid = if shares.is_empty() {
+        HashMap::new()
+    } else {
+        blocks
+            .iter()
+            .map(|block| (block.physical_cid.as_str(), block))
+            .collect::<HashMap<_, _>>()
+    };
     for share in shares {
         let share_id = share.try_get::<Uuid>("", "id")?;
         let rows = query_all(tx, 1,
@@ -698,11 +1075,28 @@ pub(crate) async fn reconcile(
     }
     if pending_left == 0 {
         super::block_anchors::sync_legacy(tx, page_id, blocks).await?;
+        // Remembered before the caller commits. If the transaction rolls back the checkpoint keeps
+        // the older head and digest, and the guard refuses this entry.
+        let remembered = BaselineEntry {
+            head: accepted_head,
+            digest,
+            blocks: Arc::new(
+                blocks
+                    .iter()
+                    .map(|block| (block.physical_cid.clone(), block.content_hash))
+                    .collect(),
+            ),
+        };
+        with_baselines(|cache| cache.store(page_id, remembered));
+    } else {
+        with_baselines(|cache| cache.forget(page_id));
     }
     Ok(ReconcileOutcome {
         #[cfg(test)]
         suspended: suspend,
         pending: pending_left,
+        #[cfg(test)]
+        incremental: delta.is_some(),
     })
 }
 
@@ -722,7 +1116,16 @@ pub(crate) async fn reconcile_accepted(
     if identity.object_type != "page" {
         return Ok(());
     }
-    reconcile(tx, identity.scope_id, object, seq, blocks, allowance).await?;
+    reconcile_in_mode(
+        tx,
+        identity.scope_id,
+        object,
+        seq,
+        blocks,
+        allowance,
+        ReconcileMode::Incremental,
+    )
+    .await?;
     Ok(())
 }
 
@@ -737,6 +1140,7 @@ pub(crate) async fn preserve_editor_aliases(
         return Ok(());
     }
     let scope = super::scope::identity(tx, page).await?.scope_id;
+    let mut moved_any = false;
     for block in blocks {
         let Some(alias) = &block.legacy_alias else {
             continue;
@@ -782,6 +1186,16 @@ pub(crate) async fn preserve_editor_aliases(
         ))
         .await?;
         tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_block_placements(id,logical_id,scope_id,page_id,physical_cid,generation,state,content_hash) VALUES($1,$2,$3,$4,$5,$6,'active',$7)",vec![Uuid::new_v4().into(),logical.into(),scope.into(),page.into(),block.physical_cid.clone().into(),generation.into(),block.content_hash.to_vec().into()])).await?;
+        moved_any = true;
+    }
+    if moved_any {
+        // Placements changed outside `reconcile`: the next reconcile of the Page runs in full.
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE flow_block_checkpoints SET registry_digest=NULL WHERE scope_id=$1 AND page_id=$2",
+            vec![scope.into(), page.into()],
+        ))
+        .await?;
     }
     Ok(())
 }
@@ -862,6 +1276,9 @@ pub(crate) mod fixtures {
         (0..count).map(|index| block(index, version)).collect()
     }
 }
+
+#[cfg(test)]
+mod incremental_tests;
 
 #[cfg(test)]
 #[allow(clippy::indexing_slicing, clippy::print_stderr)]
@@ -1176,7 +1593,7 @@ mod tests {
     use super::fixtures::{block, blocks, page};
     use crate::flow::scope_runtime::fixture::register_running_readers;
     use sea_orm::DatabaseConnection;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::time::{Duration, Instant};
 
     /// Verbatim copy of the per-block implementation that `reconcile` replaced. Only the one-time
@@ -1459,7 +1876,7 @@ mod tests {
     }
 
     /// Suspended logical identities of one reconciliation, as sorted physical CIDs.
-    fn suspended_cids(suspend: &[Uuid], cid_of: &HashMap<Uuid, String>) -> Vec<String> {
+    pub(super) fn suspended_cids(suspend: &[Uuid], cid_of: &HashMap<Uuid, String>) -> Vec<String> {
         let mut cids = suspend
             .iter()
             .map(|id| cid_of.get(id).cloned().unwrap_or_else(|| "<unknown>".into()))
@@ -1530,7 +1947,7 @@ mod tests {
         );
     }
 
-    async fn add_share(
+    pub(super) async fn add_share(
         tx: &DatabaseTransaction,
         (actor, scope, page): (Uuid, Uuid, Uuid),
         blocks: &[PreparedBlock],
@@ -1561,7 +1978,7 @@ mod tests {
         .unwrap();
     }
 
-    async fn scratch_with_leases(label: &str) -> Option<crate::routes::context::tenant_fixture::Scratch> {
+    pub(super) async fn scratch_with_leases(label: &str) -> Option<crate::routes::context::tenant_fixture::Scratch> {
         let scratch = crate::routes::context::tenant_fixture::scratch(label).await?;
         register_running_readers(&scratch.db).await;
         Some(scratch)
@@ -1856,7 +2273,7 @@ mod tests {
         scratch.drop_self().await;
     }
 
-    async fn row_versions(tx: &DatabaseTransaction, page: Uuid) -> Vec<String> {
+    pub(super) async fn row_versions(tx: &DatabaseTransaction, page: Uuid) -> Vec<String> {
         tx.query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT 'p:'||id::text||':'||xmin::text AS v FROM flow_block_placements WHERE page_id=$1 UNION ALL SELECT 'f:'||physical_cid||':'||xmin::text FROM flow_block_alias_fences WHERE page_id=$1 ORDER BY 1",
@@ -1904,7 +2321,7 @@ mod tests {
     }
 
     /// Mirrors the production per-statement caps (100 ms statement, 80 ms lock) of the locked phase.
-    async fn begin_capped(db: &DatabaseConnection) -> DatabaseTransaction {
+    pub(super) async fn begin_capped(db: &DatabaseConnection) -> DatabaseTransaction {
         let tx = db.begin().await.unwrap();
         crate::flow::collab::write::set_locked_phase_statement_budgets(&tx, 1)
             .await

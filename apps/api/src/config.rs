@@ -15,10 +15,10 @@
 //! their object storage from [`runtime`]; it installs its own configuration file at startup for
 //! the same reason.
 //!
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use platform::config::{
-    DEFAULT_STORAGE_DIR, FlowConfig, IpCidr, OpenPrConfig, OutboundConfig, StorageBackend, StorageConfig,
+    DEFAULT_STORAGE_DIR, FlowConfig, IpCidr, OAuthConfig, OpenPrConfig, OutboundConfig, StorageBackend, StorageConfig,
 };
 
 use crate::security::default_trusted_proxies;
@@ -31,6 +31,8 @@ pub struct RuntimeConfig {
     pub flow: FlowConfig,
     /// Peers allowed to vouch for a client address through `X-Forwarded-For` / `X-Real-IP`.
     pub trusted_proxies: Vec<IpCidr>,
+    /// The authorization server settings, `None` when `[oauth] issuer` is not configured.
+    pub oauth: Option<Arc<OAuthConfig>>,
 }
 
 impl RuntimeConfig {
@@ -45,6 +47,7 @@ impl RuntimeConfig {
                 .trusted_proxies
                 .clone()
                 .unwrap_or_else(default_trusted_proxies),
+            oauth: config.oauth.clone().map(Arc::new),
         }
     }
 
@@ -69,6 +72,7 @@ impl RuntimeConfig {
             outbound: OutboundConfig::default(),
             flow: FlowConfig::default(),
             trusted_proxies: default_trusted_proxies(),
+            oauth: None,
         }
     }
 }

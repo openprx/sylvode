@@ -110,16 +110,26 @@ export function createAuthStore(client = apiClient) {
 export const authStore = createAuthStore();
 export const isAuthenticated = derived(authStore, ($auth) => $auth.user !== null);
 
+// True while this document is being unloaded (a reload or a hard navigation). The browser aborts
+// the requests in flight then, and the aborted answer must not read as a failed session check:
+// the stored tokens belong to the next document, which has not yet read them.
+let unloading = false;
+if (typeof window !== 'undefined') {
+	window.addEventListener('pagehide', () => (unloading = true));
+	window.addEventListener('pageshow', () => (unloading = false));
+}
+
 /** The app shell's session check: `me` answers who is signed in. Any failure (an invalid or
  * expired session, a network failure, a 5xx) only ends the local session -- it is not the user
- * signing out, so local Flow data is kept. */
+ * signing out, so local Flow data is kept. A check cut short by the page unloading decides
+ * nothing. */
 export async function verifySession(
 	me: () => Promise<ApiResult<{ user: User }>>,
 	decision?: (epoch: number) => void
 ): Promise<'signed_in' | 'ended' | 'superseded'> {
 	const epoch = apiClient.getAuthSessionEpoch();
 	const response = await me();
-	if (!apiClient.isAuthResultCurrent(response, epoch)) {
+	if (!apiClient.isAuthResultCurrent(response, epoch) || (unloading && response.code !== 0)) {
 		decision?.(epoch);
 		return 'superseded';
 	}

@@ -22,6 +22,7 @@ import { createPageSchema, safeEditorHref, type FlowMark, type FlowBlock } from 
 import { isRegisteredBlockType } from './renderer-registry';
 import {
 	presenceInitials,
+	presenceInk,
 	safePresenceColor,
 	type PresenceCursor,
 	type RemotePresence
@@ -285,6 +286,7 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 							caret.setAttribute('aria-hidden', 'true');
 							caret.style.borderColor = color;
 							caret.style.setProperty('--flow-presence-color', color);
+							caret.style.setProperty('--flow-presence-ink', presenceInk(color));
 							return caret;
 						},
 						{ key: `caret-${peer.sessionId}-${head}-${peer.user.name}`, side: 1 }
@@ -297,6 +299,7 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 							avatar.setAttribute('data-testid', 'flow-presence-avatar');
 							avatar.setAttribute('aria-hidden', 'true');
 							avatar.style.backgroundColor = color;
+							avatar.style.color = presenceInk(color);
 							avatar.title = peer.user.name;
 							avatar.setAttribute('data-initials', presenceInitials(peer.user.name));
 							return avatar;
