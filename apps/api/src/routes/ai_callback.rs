@@ -18,7 +18,7 @@ use crate::{
     response::{ApiResponse, PaginatedData},
     services::{
         ai_task_service::{
-            AiTaskRow, AttemptEnd, CreateAiTaskInput, create_ai_task, insert_ai_task_business_event,
+            AiTaskRow, AttemptEnd, CreateAiTaskInput, DispatchOrigin, create_ai_task, insert_ai_task_business_event,
             insert_ai_task_event, next_retry_time, notify_ai_task_failed, status_after_failed_attempt,
             valid_reference_type, valid_task_type,
         },
@@ -551,6 +551,7 @@ pub async fn create_project_ai_task(
     let task = create_ai_task(
         &state.db,
         CreateAiTaskInput {
+            origin: DispatchOrigin::Request,
             project_id,
             ai_participant_id: req.ai_participant_id,
             actor_id: Some(user_id),

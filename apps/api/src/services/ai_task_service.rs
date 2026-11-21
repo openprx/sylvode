@@ -33,7 +33,25 @@ pub struct AiTaskRow {
     pub updated_at: Timestamp,
 }
 
+/// Who a new AI task is created for. Every caller of [`create_ai_task`] states it, so a caller
+/// added later cannot forget the question "may a connected application cause this?".
+///
+/// A delegated request carries its identity in a task local that a spawned task does not inherit:
+/// code that creates a task from a spawned task on behalf of a request must say so with
+/// [`Self::Delegated`], not rely on [`Self::Request`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispatchOrigin {
+    /// Created by the code of the request running on this task. A delegated request (a connected
+    /// application's token) is refused.
+    Request,
+    /// Created on behalf of a delegated request from a task the request spawned: refused.
+    Delegated,
+    /// Created by the server itself (the governance watcher, the worker): no caller to refuse.
+    System,
+}
+
 pub struct CreateAiTaskInput {
+    pub origin: DispatchOrigin,
     pub project_id: Uuid,
     pub ai_participant_id: Uuid,
     pub actor_id: Option<Uuid>,
@@ -55,6 +73,11 @@ pub async fn create_ai_task<C: ConnectionTrait>(
     db: &C,
     input: CreateAiTaskInput,
 ) -> Result<Option<AiTaskRow>, ApiError> {
+    match input.origin {
+        DispatchOrigin::Request => crate::oauth::delegated::refuse_agent_task()?,
+        DispatchOrigin::Delegated => return Err(crate::oauth::delegated::agent_task_refused()),
+        DispatchOrigin::System => {}
+    }
     let now = Timestamp::now();
     let max_attempts = input.max_attempts.max(1);
 
@@ -521,6 +544,7 @@ pub fn valid_reference_type(value: &str) -> bool {
 
 pub async fn queue_vote_requested_tasks_for_project<C: ConnectionTrait>(
     db: &C,
+    origin: DispatchOrigin,
     project_id: Uuid,
     proposal_id: &str,
     payload: Value,
@@ -553,6 +577,7 @@ pub async fn queue_vote_requested_tasks_for_project<C: ConnectionTrait>(
         let task = create_ai_task(
             db,
             CreateAiTaskInput {
+                origin,
                 project_id,
                 ai_participant_id: bot.user_id,
                 actor_id: None,

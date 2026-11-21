@@ -5,6 +5,7 @@ pub mod events;
 pub mod flow;
 pub mod forms;
 pub mod middleware;
+pub mod oauth;
 pub mod outbound;
 pub mod plugins;
 pub mod response;

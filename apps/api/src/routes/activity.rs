@@ -309,17 +309,24 @@ pub async fn get_issue_activities(
             SELECT a.id,
                    COALESCE(a.issue_id, a.resource_id) AS issue_id,
                    COALESCE(a.user_id, a.actor_id) AS user_id,
-                   u.name AS author_name,
+                   CASE WHEN $2 AND m.user_id IS NULL THEN NULL ELSE u.name END AS author_name,
                    COALESCE(a.action, a.event_type) AS action,
                    COALESCE(a.detail, a.payload, '{}'::jsonb) AS detail,
                    a.created_at
             FROM activities a
             LEFT JOIN users u ON u.id = COALESCE(a.user_id, a.actor_id)
+            LEFT JOIN workspace_members m ON m.workspace_id = $3 AND m.user_id = u.id
             WHERE (a.issue_id = $1) OR (a.resource_type = 'issue' AND a.resource_id = $1)
             ORDER BY a.created_at DESC
             LIMIT 100
         ",
-        vec![issue_id.into()],
+        // A connected application sees an actor's name only while the actor is a member of the
+        // connected workspace.
+        vec![
+            issue_id.into(),
+            crate::oauth::delegated::current().is_some().into(),
+            issue.workspace_id.into(),
+        ],
     ))
     .all(&state.db)
     .await?;

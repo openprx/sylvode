@@ -1,0 +1,10 @@
+<p class="text-fg font-medium">Title</p>
+<p class="text-sm text-fg-muted">Muted</p>
+<p class="text-fg-muted hover:text-fg">Hover</p>
+<div class="border border-line divide-y divide-line"></div>
+<span class="{error ? 'text-danger' : 'text-success'}">x</span>
+<span class="text-warning">warn</span>
+<p class="text-slate-900">no dark twin stays</p>
+<p class="text-slate-900 dark:text-slate-100/80">opacity twin is not a pair</p>
+<p class="text-blue-600 dark:text-blue-400">blue is by hand</p>
+<p class="bg-white dark:bg-slate-900">backgrounds are by hand</p>

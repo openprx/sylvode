@@ -16,6 +16,7 @@
 		Workflow
 	} from '@lucide/svelte';
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import {
@@ -41,7 +42,9 @@
 	import type { FieldDisplayContext } from '#lib/forms/field-display.js';
 	import { flowLineageView } from '#lib/forms/flow-lineage.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { isMissingResult } from '#lib/utils/api-helpers.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import { safeImageUrl, safeLinkUrl } from '#lib/utils/safe-url.js';
 	import { locale, t } from 'svelte-i18n';
 
@@ -64,6 +67,8 @@
 	const recordId = requireRouteParam(page.params.recordId, 'recordId');
 	let loading = $state(true);
 	let errorMessage = $state('');
+	/** The record is gone or hidden (403/404), as opposed to a failed request. */
+	let recordMissing = $state(false);
 	let record = $state<FormRecordDetail | null>(null);
 	let form = $state<UniversalForm | null>(null);
 	const pluginRecordInRoute = $derived(
@@ -198,7 +203,7 @@
 
 	function detailLayoutSectionContainerClass(density: DetailLayoutSectionDensity): string {
 		const padding = density === 'compact' ? 'p-3' : 'p-4';
-		return `rounded-md border border-slate-200 bg-white ${padding} dark:border-slate-800 dark:bg-slate-900`;
+		return `rounded-card border border-line bg-raised ${padding} `;
 	}
 
 	function detailLayoutSectionGridClass(
@@ -281,7 +286,7 @@
 
 	function detailPageWidgetContainerClass(key: DetailPageWidgetKey): string {
 		const padding = detailPageWidgetDensity(key) === 'compact' ? 'p-3' : 'p-4';
-		return `rounded-md border border-slate-200 bg-white ${padding} dark:border-slate-800 dark:bg-slate-900`;
+		return `rounded-card border border-line bg-raised ${padding} `;
 	}
 
 	function detailPageWidgetSummaryClass(key: DetailPageWidgetKey): string {
@@ -496,9 +501,13 @@
 	async function loadDetail() {
 		loading = true;
 		errorMessage = '';
+		recordMissing = false;
 		const recordResponse = await formsApi.getRecord(recordId);
 		if (recordResponse.code !== 0 || !recordResponse.data) {
 			errorMessage = recordResponse.message;
+			recordMissing = isMissingResult(recordResponse);
+			// A missing record is announced in the tip slot; a failed request by the block's own alert.
+			if (recordMissing) toast.error(errorMessage);
 			loading = false;
 			return;
 		}
@@ -588,11 +597,11 @@
 	<title>{documentTitle}</title>
 </svelte:head>
 
-<div class="min-h-screen bg-slate-50 px-4 py-6 dark:bg-slate-950 sm:px-6 lg:px-8">
+<div class="min-h-screen bg-canvas px-4 py-6 sm:px-6 lg:px-8">
 	<div class="mx-auto max-w-7xl space-y-5">
 		<a
 			href={`/workspace/${workspaceId}/projects/${projectId}/forms${form && record ? `?form=${form.id}&record=${record.id}` : ''}`}
-			class="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white"
+			class="inline-flex items-center gap-2 text-sm font-medium text-fg-muted hover:text-fg"
 			data-durable-record-detail-back
 		>
 			<ArrowLeft class="h-4 w-4" aria-hidden="true" />
@@ -600,41 +609,56 @@
 		</a>
 
 		{#if loading}
-			<div
-				class="rounded-md border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400"
-			>
+			<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">
 				{$t('common.loading')}
 			</div>
 		{:else if errorMessage}
-			<div
-				class="rounded-md border border-red-200 bg-red-50 p-6 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200"
-				data-durable-record-detail-error
-			>
-				{errorMessage}
-			</div>
+			{#if recordMissing}
+				<StateBlock
+					kind="notFound"
+					place={$t('workbench.forms').toLowerCase()}
+					action={{
+						run: () =>
+							void goto(
+								resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/forms', {
+									workspaceId,
+									projectId
+								})
+							)
+					}}
+					data-durable-record-detail-error=""
+				/>
+			{:else}
+				<StateBlock
+					kind="loadFailed"
+					message={errorMessage}
+					action={{ run: () => void loadDetail() }}
+					data-durable-record-detail-error=""
+				/>
+			{/if}
 		{:else if record && form}
 			<header
-				class="border-b border-slate-200 pb-5 dark:border-slate-800"
+				class="border-b border-line pb-5"
 				data-durable-record-detail-route={record.id}
 				data-durable-record-detail-form={form.id}
 			>
 				<div class="flex flex-wrap items-start justify-between gap-4">
 					<div class="min-w-0">
 						<div
-							class="flex flex-wrap items-center gap-2 text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+							class="flex flex-wrap items-center gap-2 text-xs font-medium uppercase text-fg-muted"
 						>
 							<span>{form.name}</span>
 							<span class="font-mono">{form.key}</span>
 						</div>
-						<h1 class="mt-2 truncate text-2xl font-semibold text-slate-950 dark:text-slate-100">
+						<h1 class="mt-2 truncate text-2xl font-semibold text-fg">
 							{record.title}
 						</h1>
 						{#if detailHeaderSubtitleField}
 							<p
-								class="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300"
+								class="mt-1 flex flex-wrap items-center gap-2 text-sm text-fg-muted"
 								data-durable-record-detail-header-subtitle={`${detailHeaderSubtitleField.key}:${record.id}`}
 							>
-								<span class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
+								<span class="text-xs font-medium uppercase text-fg-muted">
 									{fieldLabel(detailHeaderSubtitleField)}
 								</span>
 								<FieldValue
@@ -645,9 +669,9 @@
 								/>
 							</p>
 						{/if}
-						<p class="mt-1 font-mono text-xs text-slate-500 dark:text-slate-400">{record.id}</p>
+						<p class="mt-1 font-mono text-xs text-fg-muted">{record.id}</p>
 					</div>
-					<div class="grid gap-2 text-right text-xs text-slate-500 dark:text-slate-400">
+					<div class="grid gap-2 text-right text-xs text-fg-muted">
 						{#if detailHeaderBadgeField}
 							<div
 								class="flex justify-end"
@@ -681,7 +705,7 @@
 
 			{#if permissions}
 				<section
-					class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm dark:border-slate-700 dark:bg-slate-950/60"
+					class="rounded-card border border-line bg-surface px-4 py-3 text-sm"
 					data-permission-state-summary
 					data-durable-record-detail-permission-state={record.id}
 					data-permission-state-mode="durable-detail"
@@ -691,47 +715,38 @@
 				>
 					<div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
 						<div class="flex min-w-0 items-center gap-2">
-							<Shield
-								class="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-300"
-								aria-hidden="true"
-							/>
+							<Shield class="h-4 w-4 shrink-0 text-fg" aria-hidden="true" />
 							<div class="min-w-0">
-								<p class="font-medium text-slate-900 dark:text-slate-100">
+								<p class="font-medium text-fg">
 									{$t('forms.permissionState')}
 								</p>
-								<p class="truncate text-xs text-slate-500 dark:text-slate-400">
+								<p class="truncate text-xs text-fg-muted">
 									{$t('forms.permissionStateDescription')}
 								</p>
 							</div>
 						</div>
 						<div class="grid gap-2 text-xs sm:grid-cols-3 lg:min-w-[520px]">
-							<div
-								class="rounded-md border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
-							>
-								<span class="block font-medium uppercase text-slate-500 dark:text-slate-400">
+							<div class="rounded-card border border-line bg-raised px-3 py-2">
+								<span class="block font-medium uppercase text-fg-muted">
 									{$t('forms.recordScope')}
 								</span>
-								<span class="mt-1 block text-slate-900 dark:text-slate-100">
+								<span class="mt-1 block text-fg">
 									{$t(`forms.recordScopes.${memberRecordScope}`)}
 								</span>
 							</div>
-							<div
-								class="rounded-md border border-amber-200 bg-white px-3 py-2 dark:border-amber-900/60 dark:bg-slate-900"
-							>
-								<span class="block font-medium uppercase text-amber-700 dark:text-amber-200">
+							<div class="rounded-card border border-line bg-raised px-3 py-2">
+								<span class="block font-medium uppercase text-warning">
 									{$t('forms.hiddenFieldEffect')}
 								</span>
-								<span class="mt-1 block truncate text-slate-900 dark:text-slate-100">
+								<span class="mt-1 block truncate text-fg">
 									{permissionFieldList(memberHiddenFieldLabels)}
 								</span>
 							</div>
-							<div
-								class="rounded-md border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
-							>
-								<span class="block font-medium uppercase text-slate-500 dark:text-slate-400">
+							<div class="rounded-card border border-line bg-raised px-3 py-2">
+								<span class="block font-medium uppercase text-fg-muted">
 									{$t('forms.lockedFieldEffect')}
 								</span>
-								<span class="mt-1 block truncate text-slate-900 dark:text-slate-100">
+								<span class="mt-1 block truncate text-fg">
 									{permissionFieldList(memberLockedFieldLabels)}
 								</span>
 							</div>
@@ -750,18 +765,14 @@
 				>
 					{#each detailHighlightFields as field}
 						<div
-							class="min-w-0 rounded-md border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+							class="min-w-0 rounded-card border border-line bg-raised p-4"
 							data-durable-record-detail-highlight={`${record.id}:${field.key}`}
 						>
-							<div
-								class="truncate text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
-							>
+							<div class="truncate text-xs font-medium uppercase text-fg-muted">
 								{fieldLabel(field)}
 							</div>
 
-							<div
-								class="mt-2 break-words text-sm font-semibold text-slate-950 dark:text-slate-100"
-							>
+							<div class="mt-2 break-words text-sm font-semibold text-fg">
 								<FieldValue
 									{field}
 									value={record.values[field.key]}
@@ -813,15 +824,13 @@
 									? 'cursor-pointer list-none'
 									: 'cursor-default list-none'}
 							>
-								<h2
-									class="inline text-xs font-semibold uppercase text-slate-500 dark:text-slate-400"
-								>
+								<h2 class="inline text-xs font-semibold uppercase text-fg-muted">
 									{section.title}
 								</h2>
 							</summary>
 							{#if section.description}
 								<p
-									class="mt-2 text-sm text-slate-500 dark:text-slate-400"
+									class="mt-2 text-sm text-fg-muted"
 									data-durable-record-detail-section-description={`${record.id}:${section.key}`}
 								>
 									{section.description}
@@ -838,12 +847,12 @@
 										data-durable-record-detail-field={`${record.id}:${field.key}`}
 									>
 										<dt
-											class="flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-slate-500 dark:text-slate-400"
+											class="flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase text-fg-muted"
 										>
 											<span>{fieldLabel(field)}</span>
 											{#if memberFieldHidden(field)}
 												<span
-													class="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+													class="rounded-[var(--radius-sm)] bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning"
 													data-durable-record-detail-permission-hidden={field.key}
 												>
 													{$t('forms.fieldHiddenBadge')}
@@ -851,18 +860,16 @@
 											{/if}
 											{#if memberFieldLocked(field)}
 												<span
-													class="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+													class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 text-[10px] font-medium text-fg-muted"
 													data-durable-record-detail-permission-locked={field.key}
 												>
 													{$t('forms.fieldLockedBadge')}
 												</span>
 											{/if}
 										</dt>
-										<dd class="mt-1 break-words text-sm text-slate-900 dark:text-slate-100">
+										<dd class="mt-1 break-words text-sm text-fg">
 											{#if fieldType(field) === 'child_table'}
-												<span class="text-slate-500 dark:text-slate-400"
-													>{$t('forms.childRecords')}</span
-												>
+												<span class="text-fg-muted">{$t('forms.childRecords')}</span>
 											{:else}
 												<FieldValue
 													{field}
@@ -901,21 +908,18 @@
 									data-durable-record-detail-widget-open={`children:${record.id}:${detailPageWidgetOpen('children')}`}
 								>
 									<summary class={detailPageWidgetSummaryClass('children')}>
-										<TableProperties
-											class="h-4 w-4 text-blue-600 dark:text-blue-300"
-											aria-hidden="true"
-										/>
+										<TableProperties class="h-4 w-4 text-fg" aria-hidden="true" />
 										<div class="min-w-0">
 											<div class="flex min-w-0 flex-wrap items-center gap-2">
 												<h2
-													class="text-sm font-semibold text-slate-950 dark:text-slate-100"
+													class="text-sm font-semibold text-fg"
 													data-durable-record-detail-widget-title={`children:${record.id}`}
 												>
 													{detailPageWidgetTitle('children', $t('forms.childRecords'))}
 												</h2>
 												{#if detailPageWidgetShowCount('children')}
 													<span
-														class="rounded-sm bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+														class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 font-mono text-[11px] text-fg-muted"
 														data-durable-record-detail-widget-count-badge={`children:${record.id}`}
 													>
 														{children.length}
@@ -924,7 +928,7 @@
 											</div>
 											{#if childrenWidgetDescription}
 												<p
-													class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400"
+													class="mt-1 text-xs leading-5 text-fg-muted"
 													data-durable-record-detail-widget-description={`children:${record.id}`}
 												>
 													{childrenWidgetDescription}
@@ -934,30 +938,24 @@
 									</summary>
 									{#if children.length > 0}
 										<div class="overflow-x-auto">
-											<table
-												class="min-w-full divide-y divide-slate-200 text-xs dark:divide-slate-800"
-											>
+											<table class="min-w-full divide-y divide-line text-xs">
 												<thead>
 													<tr>
-														<th
-															class="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
-														>
+														<th class="px-3 py-2 text-left font-medium text-fg-muted">
 															{$t('forms.recordTitle')}
 														</th>
-														<th
-															class="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300"
-														>
+														<th class="px-3 py-2 text-left font-medium text-fg-muted">
 															{$t('forms.recordLinks')}
 														</th>
 													</tr>
 												</thead>
-												<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+												<tbody class="divide-y divide-line">
 													{#each children.slice(0, detailPageWidgetLimit('children', 50)) as child}
 														<tr data-durable-record-detail-child={child.record.id}>
-															<td class="px-3 py-2 font-medium text-slate-900 dark:text-slate-100">
+															<td class="px-3 py-2 font-medium text-fg">
 																{child.record.title}
 															</td>
-															<td class="px-3 py-2 text-slate-500 dark:text-slate-400">
+															<td class="px-3 py-2 text-fg-muted">
 																{childFormName(child)} · {child.relation_key}
 															</td>
 														</tr>
@@ -967,7 +965,7 @@
 										</div>
 									{:else}
 										<p
-											class="text-sm text-slate-500 dark:text-slate-400"
+											class="text-sm text-fg-muted"
 											data-durable-record-detail-widget-empty={`children:${record.id}`}
 										>
 											{detailPageWidgetEmptyText('children', $t('forms.noChildRecords'))}
@@ -991,18 +989,18 @@
 									data-durable-record-detail-widget-open={`links:${record.id}:${detailPageWidgetOpen('links')}`}
 								>
 									<summary class={detailPageWidgetSummaryClass('links')}>
-										<Link class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+										<Link class="h-4 w-4 text-fg" aria-hidden="true" />
 										<div class="min-w-0">
 											<div class="flex min-w-0 flex-wrap items-center gap-2">
 												<h2
-													class="text-sm font-semibold text-slate-950 dark:text-slate-100"
+													class="text-sm font-semibold text-fg"
 													data-durable-record-detail-widget-title={`links:${record.id}`}
 												>
 													{detailPageWidgetTitle('links', $t('forms.recordLinks'))}
 												</h2>
 												{#if detailPageWidgetShowCount('links')}
 													<span
-														class="rounded-sm bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+														class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 font-mono text-[11px] text-fg-muted"
 														data-durable-record-detail-widget-count-badge={`links:${record.id}`}
 													>
 														{links.length}
@@ -1011,7 +1009,7 @@
 											</div>
 											{#if linksWidgetDescription}
 												<p
-													class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400"
+													class="mt-1 text-xs leading-5 text-fg-muted"
 													data-durable-record-detail-widget-description={`links:${record.id}`}
 												>
 													{linksWidgetDescription}
@@ -1021,21 +1019,19 @@
 									</summary>
 									<div class={detailPageWidgetBodyClass('links')}>
 										{#each links.slice(0, detailPageWidgetLimit('links', 50)) as item}
-											<div
-												class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
-											>
-												<div class="font-medium text-slate-800 dark:text-slate-200">
+											<div class="rounded-card border border-line px-3 py-2 text-xs">
+												<div class="font-medium text-fg">
 													{item.relation_key} / {item.relation_type}
 												</div>
 
-												<div class="mt-1 truncate font-mono text-slate-500 dark:text-slate-400">
+												<div class="mt-1 truncate font-mono text-fg-muted">
 													{item.target_type}:{item.target_id}
 												</div>
 											</div>
 										{/each}
 										{#if links.length === 0}
 											<p
-												class="text-sm text-slate-500 dark:text-slate-400"
+												class="text-sm text-fg-muted"
 												data-durable-record-detail-widget-empty={`links:${record.id}`}
 											>
 												{detailPageWidgetEmptyText('links', $t('forms.noLinkedData'))}
@@ -1060,21 +1056,18 @@
 									data-durable-record-detail-widget-open={`comments:${record.id}:${detailPageWidgetOpen('comments')}`}
 								>
 									<summary class={detailPageWidgetSummaryClass('comments')}>
-										<MessageSquare
-											class="h-4 w-4 text-blue-600 dark:text-blue-300"
-											aria-hidden="true"
-										/>
+										<MessageSquare class="h-4 w-4 text-fg" aria-hidden="true" />
 										<div class="min-w-0">
 											<div class="flex min-w-0 flex-wrap items-center gap-2">
 												<h2
-													class="text-sm font-semibold text-slate-950 dark:text-slate-100"
+													class="text-sm font-semibold text-fg"
 													data-durable-record-detail-widget-title={`comments:${record.id}`}
 												>
 													{detailPageWidgetTitle('comments', $t('forms.recordComments'))}
 												</h2>
 												{#if detailPageWidgetShowCount('comments')}
 													<span
-														class="rounded-sm bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+														class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 font-mono text-[11px] text-fg-muted"
 														data-durable-record-detail-widget-count-badge={`comments:${record.id}`}
 													>
 														{comments.length}
@@ -1083,7 +1076,7 @@
 											</div>
 											{#if commentsWidgetDescription}
 												<p
-													class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400"
+													class="mt-1 text-xs leading-5 text-fg-muted"
 													data-durable-record-detail-widget-description={`comments:${record.id}`}
 												>
 													{commentsWidgetDescription}
@@ -1094,37 +1087,35 @@
 									<div class={detailPageWidgetBodyClass('comments')}>
 										{#each comments.slice(0, detailPageWidgetLimit('comments', 5)) as comment}
 											<div
-												class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+												class="rounded-card border border-line px-3 py-2 text-xs"
 												data-durable-record-detail-comment={comment.id}
 											>
 												<div class="flex flex-wrap items-center justify-between gap-2">
-													<span class="font-medium text-slate-800 dark:text-slate-200">
+													<span class="font-medium text-fg">
 														{comment.author_name ||
 															comment.author_email ||
 															comment.author_id?.slice(0, 8) ||
 															'system'}
 													</span>
-													<span class="font-mono text-[11px] text-slate-500 dark:text-slate-400">
+													<span class="font-mono text-[11px] text-fg-muted">
 														{formatDate(comment.created_at)}
 													</span>
 												</div>
-												<p
-													class="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-300"
-												>
+												<p class="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-fg">
 													{comment.body}
 												</p>
 											</div>
 										{/each}
 										{#if comments.length === 0}
 											<p
-												class="text-sm text-slate-500 dark:text-slate-400"
+												class="text-sm text-fg-muted"
 												data-durable-record-detail-widget-empty={`comments:${record.id}`}
 											>
 												{detailPageWidgetEmptyText('comments', $t('forms.noRecordComments'))}
 											</p>
 										{/if}
 										<textarea
-											class="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+											class="min-h-20 w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 											bind:value={commentDraft}
 											placeholder={$t('forms.recordCommentPlaceholder')}
 											data-durable-record-detail-comment-input={record.id}></textarea>
@@ -1157,18 +1148,18 @@
 									data-durable-record-detail-widget-open={`attachments:${record.id}:${detailPageWidgetOpen('attachments')}`}
 								>
 									<summary class={detailPageWidgetSummaryClass('attachments')}>
-										<FileDown class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+										<FileDown class="h-4 w-4 text-fg" aria-hidden="true" />
 										<div class="min-w-0">
 											<div class="flex min-w-0 flex-wrap items-center gap-2">
 												<h2
-													class="text-sm font-semibold text-slate-950 dark:text-slate-100"
+													class="text-sm font-semibold text-fg"
 													data-durable-record-detail-widget-title={`attachments:${record.id}`}
 												>
 													{detailPageWidgetTitle('attachments', $t('forms.attachmentConfig'))}
 												</h2>
 												{#if detailPageWidgetShowCount('attachments')}
 													<span
-														class="rounded-sm bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+														class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 font-mono text-[11px] text-fg-muted"
 														data-durable-record-detail-widget-count-badge={`attachments:${record.id}`}
 													>
 														{attachmentWidgetItemCount()}
@@ -1177,7 +1168,7 @@
 											</div>
 											{#if attachmentsWidgetDescription}
 												<p
-													class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400"
+													class="mt-1 text-xs leading-5 text-fg-muted"
 													data-durable-record-detail-widget-description={`attachments:${record.id}`}
 												>
 													{attachmentsWidgetDescription}
@@ -1194,36 +1185,32 @@
 											{@const metadataAttachments = fieldAttachments(field.key)}
 											{@const valueUrls = recordAttachmentValueUrls(field)}
 											<div
-												class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+												class="rounded-card border border-line px-3 py-2 text-xs"
 												data-durable-record-detail-attachment-field={field.key}
 												data-durable-record-detail-attachment-field-count={`${field.key}:${metadataAttachments.length + valueUrls.length}`}
 											>
-												<div class="mb-2 font-medium text-slate-800 dark:text-slate-200">
+												<div class="mb-2 font-medium text-fg">
 													{fieldLabel(field)}
 												</div>
 												<div class={detailPageWidgetBodyClass('attachments')}>
 													{#each metadataAttachments as attachment}
 														<div
-															class="flex flex-wrap items-center gap-2 rounded bg-slate-50 px-2 py-1.5 dark:bg-slate-950"
+															class="flex flex-wrap items-center gap-2 rounded-control bg-surface px-2 py-1.5"
 															data-durable-record-detail-attachment={attachment.id}
 														>
 															{#if attachmentIsPreviewableImage(attachment)}
 																<img
 																	src={attachmentThumbnailUrl(attachment)}
 																	alt={attachment.file_name}
-																	class="h-10 w-10 rounded object-cover ring-1 ring-slate-200 dark:ring-slate-700"
+																	class="h-10 w-10 rounded-control object-cover ring-1 ring-line"
 																/>
 															{/if}
 															<div class="min-w-0 flex-1">
-																<div
-																	class="truncate font-medium text-slate-700 dark:text-slate-200"
-																>
+																<div class="truncate font-medium text-fg">
 																	{attachment.file_name}
 																</div>
 
-																<div
-																	class="truncate font-mono text-[11px] text-slate-500 dark:text-slate-400"
-																>
+																<div class="truncate font-mono text-[11px] text-fg-muted">
 																	{attachment.url}
 																</div>
 															</div>
@@ -1232,7 +1219,7 @@
 																href={attachmentSignedUrl(attachment) || undefined}
 																target="_blank"
 																rel="noreferrer"
-																class="rounded px-2 py-1 font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+																class="rounded-control px-2 py-1 font-medium text-fg hover:bg-surface"
 																data-durable-record-detail-attachment-signed-url={attachment.id}
 															>
 																{$t('forms.attachmentOpen')}
@@ -1245,14 +1232,14 @@
 																href={safeLinkUrl(url)}
 																target="_blank"
 																rel="noreferrer"
-																class="block truncate rounded bg-slate-50 px-2 py-1.5 font-mono text-[11px] text-blue-700 dark:bg-slate-950 dark:text-blue-300"
+																class="block truncate rounded-control bg-surface px-2 py-1.5 font-mono text-[11px] text-fg"
 																data-durable-record-detail-attachment-value={`${field.key}:${url}`}
 															>
 																{url}
 															</a>
 														{:else}
 															<span
-																class="block truncate rounded bg-slate-50 px-2 py-1.5 font-mono text-[11px] text-amber-700 dark:bg-slate-950 dark:text-amber-300"
+																class="block truncate rounded-control bg-surface px-2 py-1.5 font-mono text-[11px] text-warning"
 																data-durable-record-detail-attachment-value={`${field.key}:${url}`}
 																data-durable-record-detail-attachment-value-blocked={field.key}
 															>
@@ -1261,7 +1248,7 @@
 														{/if}
 													{/each}
 													{#if metadataAttachments.length === 0 && valueUrls.length === 0}
-														<p class="text-sm text-slate-500 dark:text-slate-400">
+														<p class="text-sm text-fg-muted">
 															{detailPageWidgetEmptyText(
 																'attachments',
 																$t('forms.noRecordAttachments')
@@ -1274,24 +1261,22 @@
 										{#if attachmentFields.length === 0 && activeAttachments.length > 0}
 											{#each activeAttachments as attachment}
 												<div
-													class="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+													class="flex flex-wrap items-center gap-2 rounded-card border border-line px-3 py-2 text-xs"
 													data-durable-record-detail-attachment={attachment.id}
 												>
 													{#if attachmentIsPreviewableImage(attachment)}
 														<img
 															src={attachmentThumbnailUrl(attachment)}
 															alt={attachment.file_name}
-															class="h-10 w-10 rounded object-cover ring-1 ring-slate-200 dark:ring-slate-700"
+															class="h-10 w-10 rounded-control object-cover ring-1 ring-line"
 														/>
 													{/if}
 													<div class="min-w-0 flex-1">
-														<div class="truncate font-medium text-slate-700 dark:text-slate-200">
+														<div class="truncate font-medium text-fg">
 															{attachment.file_name}
 														</div>
 
-														<div
-															class="truncate font-mono text-[11px] text-slate-500 dark:text-slate-400"
-														>
+														<div class="truncate font-mono text-[11px] text-fg-muted">
 															{attachment.field_key} · {attachment.url}
 														</div>
 													</div>
@@ -1300,7 +1285,7 @@
 														href={attachmentSignedUrl(attachment) || undefined}
 														target="_blank"
 														rel="noreferrer"
-														class="rounded px-2 py-1 font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+														class="rounded-control px-2 py-1 font-medium text-fg hover:bg-surface"
 														data-durable-record-detail-attachment-signed-url={attachment.id}
 													>
 														{$t('forms.attachmentOpen')}
@@ -1311,7 +1296,7 @@
 										{#if attachmentFields.length === 0}
 											{#if activeAttachments.length === 0}
 												<p
-													class="text-sm text-slate-500 dark:text-slate-400"
+													class="text-sm text-fg-muted"
 													data-durable-record-detail-widget-empty={`attachments:${record.id}`}
 												>
 													{detailPageWidgetEmptyText(
@@ -1340,18 +1325,18 @@
 									data-durable-record-detail-widget-open={`events:${record.id}:${detailPageWidgetOpen('events')}`}
 								>
 									<summary class={detailPageWidgetSummaryClass('events')}>
-										<Activity class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+										<Activity class="h-4 w-4 text-fg" aria-hidden="true" />
 										<div class="min-w-0">
 											<div class="flex min-w-0 flex-wrap items-center gap-2">
 												<h2
-													class="text-sm font-semibold text-slate-950 dark:text-slate-100"
+													class="text-sm font-semibold text-fg"
 													data-durable-record-detail-widget-title={`events:${record.id}`}
 												>
 													{detailPageWidgetTitle('events', $t('forms.timelineSourceEvents'))}
 												</h2>
 												{#if detailPageWidgetShowCount('events')}
 													<span
-														class="rounded-sm bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+														class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 font-mono text-[11px] text-fg-muted"
 														data-durable-record-detail-widget-count-badge={`events:${record.id}`}
 													>
 														{recordEvents.length}
@@ -1360,7 +1345,7 @@
 											</div>
 											{#if eventsWidgetDescription}
 												<p
-													class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400"
+													class="mt-1 text-xs leading-5 text-fg-muted"
 													data-durable-record-detail-widget-description={`events:${record.id}`}
 												>
 													{eventsWidgetDescription}
@@ -1371,37 +1356,35 @@
 									<div class={detailPageWidgetBodyClass('events')}>
 										{#each recordEvents.slice(0, detailPageWidgetLimit('events', 5)) as event}
 											<details
-												class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+												class="rounded-card border border-line px-3 py-2 text-xs"
 												data-durable-record-detail-event={event.id}
 											>
 												<summary class="cursor-pointer list-none">
 													<div class="flex flex-wrap items-start justify-between gap-2">
 														<div class="min-w-0">
-															<div class="truncate font-medium text-slate-800 dark:text-slate-200">
+															<div class="truncate font-medium text-fg">
 																{eventTitle(event)}
 															</div>
 
-															<div
-																class="mt-1 font-mono text-[11px] text-slate-500 dark:text-slate-400"
-															>
+															<div class="mt-1 font-mono text-[11px] text-fg-muted">
 																{event.event_type}
 															</div>
 														</div>
 
-														<span class="font-mono text-[11px] text-slate-500 dark:text-slate-400"
+														<span class="font-mono text-[11px] text-fg-muted"
 															>{formatDate(event.created_at)}</span
 														>
 													</div>
 												</summary>
 												<pre
-													class="mt-3 max-h-40 overflow-auto rounded bg-slate-50 p-2 font-mono text-[11px] text-slate-600 dark:bg-slate-950 dark:text-slate-300">{eventJson(
+													class="mt-3 max-h-40 overflow-auto rounded-card bg-surface p-2 font-mono text-[11px] text-fg-muted">{eventJson(
 														event.payload
 													)}</pre>
 											</details>
 										{/each}
 										{#if recordEvents.length === 0}
 											<p
-												class="text-sm text-slate-500 dark:text-slate-400"
+												class="text-sm text-fg-muted"
 												data-durable-record-detail-widget-empty={`events:${record.id}`}
 											>
 												{detailPageWidgetEmptyText('events', $t('forms.noRecordEvents'))}
@@ -1414,21 +1397,21 @@
 					{/each}
 					{#if record && flowLineage}
 						<details
-							class="rounded-md border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+							class="rounded-card border border-line bg-raised p-4"
 							open
 							data-testid="record-flow-lineage"
 							data-reference-count={flowLineage.references.length}
 							data-conversion-count={flowLineage.conversions.length}
 						>
 							<summary
-								class="mb-3 flex min-h-11 cursor-pointer list-none items-start gap-2 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+								class="mb-3 flex min-h-11 cursor-pointer list-none items-start gap-2 rounded-row"
 							>
-								<Workflow class="h-4 w-4 text-blue-600 dark:text-blue-300" aria-hidden="true" />
+								<Workflow class="h-4 w-4 text-fg" aria-hidden="true" />
 								<div class="min-w-0">
-									<h2 class="text-sm font-semibold text-slate-950 dark:text-slate-100">
+									<h2 class="text-sm font-semibold text-fg">
 										{$t('forms.flowLineage.title')}
 									</h2>
-									<p class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+									<p class="mt-1 text-xs leading-5 text-fg-muted">
 										{$t('forms.flowLineage.description')}
 									</p>
 								</div>
@@ -1437,14 +1420,14 @@
 								<section aria-labelledby="record-flow-lineage-references">
 									<h3
 										id="record-flow-lineage-references"
-										class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+										class="text-xs font-semibold uppercase tracking-wide text-fg-muted"
 									>
 										{$t('forms.flowLineage.references')}
 									</h3>
 									<ul class="mt-2 space-y-2">
 										{#each flowLineage.references as row (row.key)}
 											<li
-												class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+												class="rounded-[var(--radius-sm)] border border-line px-3 py-2 text-xs"
 												data-testid="record-flow-lineage-reference"
 												data-available={row.available}
 											>
@@ -1453,12 +1436,12 @@
 														href={resolve('/(app)/flow/[objectId]', {
 															objectId: row.sourceObjectId
 														})}
-														class="inline-flex min-h-11 items-center font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"
+														class="inline-flex min-h-11 items-center font-medium text-fg hover:underline"
 														data-testid="record-flow-lineage-source"
 														>{row.sourceTitle ?? $t('forms.flowLineage.untitled')}</a
 													>
 
-													<div class="flex flex-wrap gap-x-3 text-slate-500 dark:text-slate-400">
+													<div class="flex flex-wrap gap-x-3 text-fg-muted">
 														<span data-testid="record-flow-lineage-mode"
 															>{$t(`forms.flowLineage.mode.${row.mode}`)}</span
 														>
@@ -1469,16 +1452,13 @@
 														>
 													</div>
 												{:else}
-													<span
-														class="text-slate-500 dark:text-slate-400"
-														data-testid="record-flow-lineage-unavailable"
-													>
+													<span class="text-fg-muted" data-testid="record-flow-lineage-unavailable">
 														{$t('forms.flowLineage.sourceUnavailable')}
 													</span>
 												{/if}
 											</li>
 										{:else}
-											<li class="text-sm text-slate-500 dark:text-slate-400">
+											<li class="text-sm text-fg-muted">
 												{$t('forms.flowLineage.noReferences')}
 											</li>
 										{/each}
@@ -1487,14 +1467,14 @@
 								<section aria-labelledby="record-flow-lineage-conversions">
 									<h3
 										id="record-flow-lineage-conversions"
-										class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+										class="text-xs font-semibold uppercase tracking-wide text-fg-muted"
 									>
 										{$t('forms.flowLineage.conversions')}
 									</h3>
 									<ul class="mt-2 space-y-2">
 										{#each flowLineage.conversions as row (row.key)}
 											<li
-												class="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-slate-700"
+												class="rounded-[var(--radius-sm)] border border-line px-3 py-2 text-xs"
 												data-testid="record-flow-lineage-conversion"
 												data-available={row.available}
 											>
@@ -1503,14 +1483,12 @@
 														href={resolve('/(app)/flow/[objectId]', {
 															objectId: row.sourceObjectId
 														})}
-														class="inline-flex min-h-11 items-center font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"
+														class="inline-flex min-h-11 items-center font-medium text-fg hover:underline"
 														data-testid="record-flow-lineage-source"
 														>{row.sourceTitle ?? $t('forms.flowLineage.untitled')}</a
 													>
 
-													<div
-														class="flex flex-wrap items-center gap-x-3 text-slate-500 dark:text-slate-400"
-													>
+													<div class="flex flex-wrap items-center gap-x-3 text-fg-muted">
 														<span data-testid="record-flow-lineage-status"
 															>{$t(`forms.flowLineage.status.${row.status}`)}</span
 														>
@@ -1528,7 +1506,7 @@
 																		jobId: row.linkedJobId
 																	}
 																)}
-																class="inline-flex min-h-11 items-center text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"
+																class="inline-flex min-h-11 items-center text-fg hover:underline"
 																data-testid="record-flow-lineage-job"
 															>
 																{$t('forms.flowLineage.openJob')}
@@ -1536,22 +1514,19 @@
 														{/if}
 													</div>
 												{:else}
-													<span
-														class="text-slate-500 dark:text-slate-400"
-														data-testid="record-flow-lineage-unavailable"
-													>
+													<span class="text-fg-muted" data-testid="record-flow-lineage-unavailable">
 														{$t('forms.flowLineage.sourceUnavailable')}
 													</span>
 												{/if}
 											</li>
 										{:else}
-											<li class="text-sm text-slate-500 dark:text-slate-400">
+											<li class="text-sm text-fg-muted">
 												{$t('forms.flowLineage.noConversions')}
 											</li>
 										{/each}
 									</ul>
 								</section>
-								<p class="text-xs leading-5 text-slate-500 dark:text-slate-400">
+								<p class="text-xs leading-5 text-fg-muted">
 									{$t('forms.flowLineage.readOnlyNote')}
 								</p>
 							</div>

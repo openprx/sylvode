@@ -1131,3 +1131,356 @@ fn trusted_proxies_are_validated_and_optional() {
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(found.iter().all(|issue| issue.contains("server.trusted_proxies")));
 }
+
+// ---- [oauth] and the delegated-access keys of [mcp] ----
+
+const FORWARD_SECRET: &str = "forward-secret-for-tests-0123456789abcdef";
+
+fn oauth_file(oauth_body: &str) -> String {
+    format!("[oauth]\n{oauth_body}\n")
+}
+
+fn oauth_issues(oauth_body: &str) -> Vec<String> {
+    issues(&oauth_file(oauth_body))
+}
+
+fn assert_refused(body: &str, expected: &str) {
+    let reported = oauth_issues(body);
+    assert!(
+        reported.iter().any(|issue| issue.contains(expected)),
+        "expected {expected:?} for {body:?}, got {reported:?}"
+    );
+}
+
+#[test]
+fn the_authorization_server_is_off_unless_an_issuer_is_configured() {
+    assert!(parse("").expect("an empty file validates").oauth.is_none());
+    assert!(parse("[oauth]\n").expect("an empty section validates").oauth.is_none());
+    // Tuning values alone do not turn it on.
+    assert!(
+        parse(&oauth_file("access_token_ttl_seconds = 300"))
+            .expect("validates")
+            .oauth
+            .is_none()
+    );
+}
+
+#[test]
+fn an_issuer_alone_enables_it_with_every_default() {
+    let config = parse(&oauth_file("issuer = \"https://sylvode.example.com\"")).expect("validates");
+    let oauth = config.oauth.expect("enabled");
+    assert_eq!(oauth.issuer, "https://sylvode.example.com");
+    assert_eq!(oauth.api_resource, "https://sylvode.example.com/api");
+    assert_eq!(oauth.mcp_resource, None);
+    assert!(oauth.internal_forward_secret.is_none());
+    assert!(!oauth.allow_insecure_loopback_issuer);
+    assert_eq!(oauth.access_token_ttl_seconds, 600);
+    assert_eq!(oauth.refresh_token_idle_days, 30);
+    assert_eq!(oauth.grant_max_lifetime_days, 365);
+    assert_eq!(oauth.authorization_code_ttl_seconds, 60);
+    assert_eq!(oauth.max_active_grants_per_user_client, 10);
+    assert_eq!(oauth.event_feed_retention_days, 7);
+    assert_eq!(oauth.event_backfill_max_events, 1_000);
+    assert_eq!(oauth.event_backfill_max_age_hours, 72);
+    assert_eq!(oauth.max_streams_per_process, 2_000);
+    assert!(oauth.embed_frame_ancestors.is_empty());
+    // The in-memory constructor and the loader agree on every default.
+    assert_eq!(
+        format!("{oauth:?}"),
+        format!("{:?}", super::OAuthConfig::with_defaults("https://sylvode.example.com"))
+    );
+}
+
+#[test]
+fn issuer_rules() {
+    let refused = [
+        ("issuer = \"http://sylvode.example.com\"", "must use https"),
+        (
+            "issuer = \"http://localhost:8080\"\nallow_insecure_loopback_issuer = true",
+            "must use https",
+        ),
+        (
+            "issuer = \"http://192.0.2.5:8080\"\nallow_insecure_loopback_issuer = true",
+            "must use https",
+        ),
+        ("issuer = \"http://127.0.0.1:18097\"", "allow_insecure_loopback_issuer"),
+        (
+            "issuer = \"http://127.0.0.1\"\nallow_insecure_loopback_issuer = true",
+            "must name a port",
+        ),
+        ("issuer = \"https://sylvode.example.com/\"", "without a path"),
+        ("issuer = \"https://sylvode.example.com/ui\"", "without a path"),
+        ("issuer = \"https://sylvode.example.com?x=1\"", "without a path"),
+        ("issuer = \"https://sylvode.example.com#frag\"", "fragment"),
+        ("issuer = \"https://user:pw@sylvode.example.com\"", "credentials"),
+        ("issuer = \"ftp://sylvode.example.com\"", "absolute http or https"),
+        ("issuer = \"sylvode.example.com\"", "absolute http or https"),
+        ("issuer = \"https://\"", "names no host"),
+        ("issuer = \"https://sylvode.example.com:0\"", "invalid port"),
+        ("issuer = \"https://syl vode.example.com\"", "whitespace"),
+        ("issuer = \"replace_with_issuer\"", "placeholder"),
+        ("issuer = \"\"", "placeholder"),
+    ];
+    for (body, expected) in refused {
+        assert_refused(body, expected);
+    }
+    for body in [
+        "issuer = \"https://sylvode.example.com\"",
+        "issuer = \"https://sylvode.example.com:8443\"",
+        "issuer = \"http://127.0.0.1:18097\"\nallow_insecure_loopback_issuer = true",
+        "issuer = \"http://[::1]:18097\"\nallow_insecure_loopback_issuer = true",
+        "issuer = \"https://127.0.0.1:8443\"\nallow_insecure_loopback_issuer = true",
+    ] {
+        parse(&oauth_file(body)).unwrap_or_else(|err| panic!("{body:?} should validate: {err}"));
+    }
+}
+
+#[test]
+fn the_insecure_loopback_exception_is_refused_on_a_non_loopback_issuer() {
+    assert_refused(
+        "issuer = \"https://sylvode.example.com\"\nallow_insecure_loopback_issuer = true",
+        "requires oauth.issuer to name 127.0.0.1 or [::1]",
+    );
+    assert_refused("allow_insecure_loopback_issuer = true", "oauth.issuer is required");
+    // Not setting the flag keeps the issuer https even on loopback.
+    parse(&oauth_file("issuer = \"https://127.0.0.1:8443\"")).expect("https on loopback is fine");
+}
+
+#[test]
+fn resource_and_secret_keys_need_an_issuer_and_each_other() {
+    assert_refused(
+        "api_resource = \"https://sylvode.example.com/api\"",
+        "oauth.issuer is required",
+    );
+    assert_refused(
+        "mcp_resource = \"https://sylvode.example.com/mcp\"",
+        "oauth.issuer is required",
+    );
+    assert_refused(
+        &format!("internal_forward_secret = \"{FORWARD_SECRET}\""),
+        "oauth.issuer is required",
+    );
+    let issuer = "issuer = \"https://sylvode.example.com\"";
+    assert_refused(
+        &format!("{issuer}\nmcp_resource = \"https://sylvode.example.com/mcp\""),
+        "oauth.internal_forward_secret is required when oauth.mcp_resource is set",
+    );
+    assert_refused(
+        &format!("{issuer}\ninternal_forward_secret = \"{FORWARD_SECRET}\""),
+        "oauth.mcp_resource is required when oauth.internal_forward_secret is set",
+    );
+    assert_refused(
+        &format!("{issuer}\nmcp_resource = \"https://sylvode.example.com/mcp\"\ninternal_forward_secret = \"short\""),
+        "at least 32 bytes",
+    );
+    assert_refused(
+        &format!(
+            "{issuer}\nmcp_resource = \"https://sylvode.example.com/mcp\"\ninternal_forward_secret = \"replace_with_at_least_32_random_bytes\""
+        ),
+        "not a placeholder",
+    );
+    let config = parse(&oauth_file(&format!(
+        "{issuer}\nmcp_resource = \"https://sylvode.example.com/mcp\"\ninternal_forward_secret = \"{FORWARD_SECRET}\""
+    )))
+    .expect("validates")
+    .oauth
+    .expect("enabled");
+    assert_eq!(config.mcp_resource.as_deref(), Some("https://sylvode.example.com/mcp"));
+    assert_eq!(
+        config.internal_forward_secret.as_ref().map(super::Secret::expose),
+        Some(FORWARD_SECRET)
+    );
+    let rendered = format!("{config:?} {config:#?}");
+    assert!(!rendered.contains(FORWARD_SECRET), "{rendered}");
+}
+
+#[test]
+fn resource_url_rules() {
+    let issuer = "issuer = \"https://sylvode.example.com\"";
+    assert_refused(
+        &format!("{issuer}\napi_resource = \"https://sylvode.example.com/api#x\""),
+        "fragment",
+    );
+    assert_refused(
+        &format!("{issuer}\napi_resource = \"http://192.0.2.5/api\""),
+        "must use https",
+    );
+    assert_refused(&format!("{issuer}\napi_resource = \"/api\""), "absolute http or https");
+    let loopback = "issuer = \"http://127.0.0.1:18097\"\nallow_insecure_loopback_issuer = true";
+    let config = parse(&oauth_file(&format!(
+        "{loopback}\napi_resource = \"http://127.0.0.1:18097/api\"\nmcp_resource = \"http://127.0.0.1:8090/mcp/rpc\"\n\
+         internal_forward_secret = \"{FORWARD_SECRET}\""
+    )))
+    .expect("validates")
+    .oauth
+    .expect("enabled");
+    assert_eq!(config.api_resource, "http://127.0.0.1:18097/api");
+    assert_eq!(config.mcp_resource.as_deref(), Some("http://127.0.0.1:8090/mcp/rpc"));
+}
+
+#[test]
+fn every_numeric_setting_is_bounded() {
+    let issuer = "issuer = \"https://sylvode.example.com\"";
+    let bounds: [(&str, i64, i64); 9] = [
+        ("access_token_ttl_seconds", 60, 3_600),
+        ("refresh_token_idle_days", 1, 90),
+        ("grant_max_lifetime_days", 1, 730),
+        ("authorization_code_ttl_seconds", 10, 600),
+        ("max_active_grants_per_user_client", 1, 50),
+        ("event_feed_retention_days", 1, 30),
+        ("event_backfill_max_events", 100, 10_000),
+        ("event_backfill_max_age_hours", 1, 168),
+        ("max_streams_per_process", 10, 20_000),
+    ];
+    for (key, min, max) in bounds {
+        for ok in [min, max] {
+            parse(&oauth_file(&format!("{issuer}\n{key} = {ok}"))).unwrap_or_else(|err| panic!("{key} = {ok}: {err}"));
+        }
+        for bad in [min - 1, max + 1] {
+            assert_refused(
+                &format!("{issuer}\n{key} = {bad}"),
+                &format!("oauth.{key} must be between {min} and {max}"),
+            );
+        }
+    }
+    let config = parse(&oauth_file(&format!(
+        "{issuer}\nrefresh_token_idle_days = 7\ngrant_max_lifetime_days = 90"
+    )))
+    .expect("validates")
+    .oauth
+    .expect("enabled");
+    assert_eq!(
+        (config.refresh_token_idle_days, config.grant_max_lifetime_days),
+        (7, 90)
+    );
+}
+
+#[test]
+fn embed_origins_are_origins() {
+    let issuer = "issuer = \"https://sylvode.example.com\"";
+    assert_refused(
+        &format!("{issuer}\nembed_frame_ancestors = [\"https://app.example.com/path\"]"),
+        "without a path",
+    );
+    assert_refused(
+        &format!("{issuer}\nembed_frame_ancestors = [\"http://app.example.com\"]"),
+        "must use https",
+    );
+    let config = parse(&oauth_file(&format!(
+        "{issuer}\nembed_frame_ancestors = [\"https://App.Example.com\", \"https://other.example.com:8443\"]"
+    )))
+    .expect("validates")
+    .oauth
+    .expect("enabled");
+    assert_eq!(
+        config.embed_frame_ancestors,
+        ["https://app.example.com", "https://other.example.com:8443"]
+    );
+}
+
+#[test]
+fn an_unknown_oauth_key_is_refused() {
+    let error = parse(&oauth_file(
+        "issuer = \"https://sylvode.example.com\"\nregistration_endpoint = true",
+    ))
+    .expect_err("unknown keys are refused");
+    assert!(error.to_string().contains("registration_endpoint"), "{error}");
+}
+
+fn mcp_file(mcp_body: &str) -> String {
+    format!("[mcp]\nworkspace_id = \"{WORKSPACE}\"\ntransport = \"http\"\n{mcp_body}\n")
+}
+
+#[test]
+fn the_mcp_delegated_keys_are_all_or_nothing() {
+    let none = parse(&mcp_file("")).expect("validates").mcp_runtime().expect("runtime");
+    assert!(none.oauth.is_none());
+
+    let all = parse(&mcp_file(&format!(
+        "oauth_issuer = \"https://sylvode.example.com\"\noauth_resource = \"https://sylvode.example.com/mcp\"\n\
+         oauth_forward_secret = \"{FORWARD_SECRET}\""
+    )))
+    .expect("validates")
+    .mcp_runtime()
+    .expect("runtime");
+    let oauth = all.oauth.expect("delegated access is configured");
+    assert_eq!(oauth.issuer, "https://sylvode.example.com");
+    assert_eq!(oauth.resource, "https://sylvode.example.com/mcp");
+    assert_eq!(oauth.forward_secret.expose(), FORWARD_SECRET);
+    assert!(!format!("{oauth:?}").contains(FORWARD_SECRET));
+
+    let partial = [
+        (
+            "oauth_issuer = \"https://sylvode.example.com\"",
+            "mcp.oauth_resource, mcp.oauth_forward_secret",
+        ),
+        (
+            "oauth_resource = \"https://sylvode.example.com/mcp\"",
+            "mcp.oauth_issuer, mcp.oauth_forward_secret",
+        ),
+        (
+            &format!("oauth_forward_secret = \"{FORWARD_SECRET}\""),
+            "mcp.oauth_issuer, mcp.oauth_resource",
+        ),
+        (
+            "oauth_issuer = \"https://sylvode.example.com\"\noauth_resource = \"https://sylvode.example.com/mcp\"",
+            "missing: mcp.oauth_forward_secret",
+        ),
+    ];
+    for (body, missing) in partial {
+        let config = parse(&mcp_file(body)).expect("shape is fine, presence is the runtime's question");
+        let error = config
+            .mcp_runtime()
+            .expect_err("a partial set refuses to start")
+            .to_string();
+        assert!(error.contains("set together or not at all"), "{error}");
+        assert!(error.contains(missing), "{missing} not in {error}");
+    }
+}
+
+#[test]
+fn the_mcp_delegated_keys_are_checked_for_shape() {
+    let reported = issues(&mcp_file(
+        "oauth_issuer = \"http://sylvode.example.com\"\noauth_resource = \"https://sylvode.example.com/mcp#x\"\n\
+         oauth_forward_secret = \"short\"",
+    ));
+    for expected in ["mcp.oauth_issuer", "mcp.oauth_resource", "mcp.oauth_forward_secret"] {
+        assert!(
+            reported.iter().any(|issue| issue.contains(expected)),
+            "{expected} in {reported:?}"
+        );
+    }
+    // Plain http is for a loopback literal only.
+    parse(&mcp_file(&format!(
+        "oauth_issuer = \"http://127.0.0.1:18097\"\noauth_resource = \"http://127.0.0.1:8090/mcp/rpc\"\n\
+         oauth_forward_secret = \"{FORWARD_SECRET}\""
+    )))
+    .expect("loopback http validates");
+}
+
+#[test]
+fn mcp_and_oauth_sections_must_agree_when_both_are_present() {
+    let base = |issuer: &str, resource: &str| {
+        format!(
+            "[oauth]\nissuer = \"https://sylvode.example.com\"\nmcp_resource = \"https://sylvode.example.com/mcp\"\n\
+             internal_forward_secret = \"{FORWARD_SECRET}\"\n{}",
+            mcp_file(&format!(
+                "oauth_issuer = \"{issuer}\"\noauth_resource = \"{resource}\"\noauth_forward_secret = \"{FORWARD_SECRET}\""
+            ))
+        )
+    };
+    parse(&base("https://sylvode.example.com", "https://sylvode.example.com/mcp")).expect("they agree");
+    let reported = issues(&base("https://other.example.com", "https://other.example.com/mcp"));
+    assert!(
+        reported
+            .iter()
+            .any(|i| i.contains("mcp.oauth_issuer must equal oauth.issuer")),
+        "{reported:?}"
+    );
+    assert!(
+        reported
+            .iter()
+            .any(|i| i.contains("mcp.oauth_resource must equal oauth.mcp_resource")),
+        "{reported:?}"
+    );
+}

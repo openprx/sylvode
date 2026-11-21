@@ -50,7 +50,9 @@ mod unsupported;
 pub mod wire;
 
 #[cfg(target_os = "linux")]
-pub use host::{WORKER_BINARY_PATH_ENV, isolated_apply, isolated_apply_with, isolated_diff};
+pub use host::{
+    WORKER_BINARY_PATH_ENV, WorkerObservation, isolated_apply, isolated_apply_observed, isolated_apply_with, isolated_diff,
+};
 pub use outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode};
 #[cfg(not(target_os = "linux"))]
 pub use unsupported::{isolated_apply, isolated_apply_with, isolated_diff};

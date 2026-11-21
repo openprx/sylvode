@@ -1,5 +1,12 @@
 {
   "devDependencies": {
     "@playwright/test": "^1.60.0"
+  },
+  "scripts": {
+    "oauth:typecheck": "frontend/node_modules/.bin/tsc -p tests/e2e/oauth/tsconfig.json",
+    "oauth:selftest": "node --test tests/e2e/oauth/selftest/*.selftest.ts",
+    "oauth:dry-run": "node tests/e2e/oauth/dry-run.ts",
+    "oauth:setup": "node tests/e2e/oauth/setup.ts",
+    "oauth:e2e": "playwright test -c tests/e2e/oauth/playwright.config.ts"
   }
 }

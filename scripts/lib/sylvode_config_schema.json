@@ -24,8 +24,34 @@
     "ai_tasks": ["processing_timeout_secs"],
     "migrations": ["replay", "continue_on_error"],
     "outbound": ["allowed_hosts", "allow_private"],
-    "mcp": ["api_url", "bot_token", "workspace_id", "transport", "bind_addr"],
-    "flow": ["dispatch_max_attempts", "collab_allowed_origins", "conversion_reap_interval_secs", "body_asset_max_bytes", "incremental_window"]
+    "mcp": [
+      "api_url",
+      "bot_token",
+      "workspace_id",
+      "transport",
+      "bind_addr",
+      "oauth_issuer",
+      "oauth_resource",
+      "oauth_forward_secret"
+    ],
+    "flow": ["dispatch_max_attempts", "collab_allowed_origins", "conversion_reap_interval_secs", "body_asset_max_bytes", "incremental_window"],
+    "oauth": [
+      "issuer",
+      "api_resource",
+      "mcp_resource",
+      "internal_forward_secret",
+      "allow_insecure_loopback_issuer",
+      "access_token_ttl_seconds",
+      "refresh_token_idle_days",
+      "grant_max_lifetime_days",
+      "authorization_code_ttl_seconds",
+      "max_active_grants_per_user_client",
+      "event_feed_retention_days",
+      "event_backfill_max_events",
+      "event_backfill_max_age_hours",
+      "max_streams_per_process",
+      "embed_frame_ancestors"
+    ]
   },
   "retired": {
     "mcp.auth_token": "the shared inbound secret has been removed and the MCP server refuses to start while the key is present. An http/sse caller now presents its own workspace bot token in the Authorization: Bearer opr_... header, which the server forwards to the API unchanged. Fix: delete the auth_token line from the [mcp] section"

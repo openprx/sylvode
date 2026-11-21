@@ -439,15 +439,25 @@ pub async fn update_password(
     }
 
     let new_hash = hash_password(req.new_password).await?;
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE users SET password_hash = $1, session_version = session_version + 1, updated_at = now() WHERE id = $2::uuid"
-                .to_string(),
-            vec![new_hash.into(), claims.sub.into()],
-        ))
-        .await?;
+    let user_uuid =
+        uuid::Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
+    let tx = state.db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE users SET password_hash = $1, session_version = session_version + 1, updated_at = now() WHERE id = $2::uuid"
+            .to_string(),
+        vec![new_hash.into(), claims.sub.into()],
+    ))
+    .await?;
+    // Connected applications end with the password, in the same transaction.
+    crate::oauth::manage::revoke_user_grants(
+        &tx,
+        user_uuid,
+        crate::oauth::grants::RevokeReason::PasswordChanged,
+        crate::oauth::grants::Actor::User(user_uuid),
+    )
+    .await?;
+    tx.commit().await?;
 
     Ok(ApiResponse::ok())
 }

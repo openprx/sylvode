@@ -392,3 +392,37 @@ test('late XHR upload callbacks cannot refresh or report progress into a new act
 		else Reflect.deleteProperty(globalThis, 'XMLHttpRequest');
 	}
 });
+test('a session check cut short by the page unloading does not end the stored session', async () => {
+	const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+	const target = new EventTarget();
+	const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+	const entries = new Map<string, string>();
+	Object.defineProperty(globalThis, 'window', { value: target, configurable: true });
+	Object.defineProperty(globalThis, 'localStorage', {
+		value: {
+			getItem: (key: string) => entries.get(key) ?? null,
+			setItem: (key: string, value: string) => void entries.set(key, value),
+			removeItem: (key: string) => void entries.delete(key)
+		},
+		configurable: true
+	});
+	try {
+		// A second instance of the module, loaded while `window` exists, registers the listeners.
+		const fresh = '../src/lib/stores/auth?unload-fixture';
+		const { verifySession } = (await import(/* @vite-ignore */ fresh)) as typeof import('../src/lib/stores/auth');
+		const failed = { code: 500, message: 'synthetic aborted check', data: null };
+		apiClient.installAuthSession(jwt('actor-u'), 'synthetic-u', 'actor-u');
+		target.dispatchEvent(new Event('pagehide'));
+		assert.equal(await verifySession(async () => failed), 'superseded');
+		assert.equal(apiClient.getToken(), jwt('actor-u'));
+		target.dispatchEvent(new Event('pageshow'));
+		assert.equal(await verifySession(async () => failed), 'ended');
+		assert.equal(apiClient.getToken(), null);
+	} finally {
+		if (windowDescriptor) Object.defineProperty(globalThis, 'window', windowDescriptor);
+		else Reflect.deleteProperty(globalThis, 'window');
+		if (storageDescriptor) Object.defineProperty(globalThis, 'localStorage', storageDescriptor);
+		else Reflect.deleteProperty(globalThis, 'localStorage');
+		apiClient.clearAuth();
+	}
+});

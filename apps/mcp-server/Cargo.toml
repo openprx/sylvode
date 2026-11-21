@@ -42,6 +42,8 @@ hex = "0.4"
 sea-orm.workspace = true
 serde_jcs.workspace = true
 sha2 = "0.10"
+parking_lot = "0.12"
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

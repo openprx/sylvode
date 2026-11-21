@@ -45,6 +45,7 @@
 
 mod cidr;
 mod error;
+mod oauth;
 mod raw;
 mod secret;
 
@@ -56,6 +57,12 @@ use uuid::Uuid;
 
 pub use cidr::IpCidr;
 pub use error::{ConfigError, EXAMPLE_CONFIG_PATH};
+pub use oauth::{
+    DEFAULT_ACCESS_TOKEN_TTL_SECONDS, DEFAULT_AUTHORIZATION_CODE_TTL_SECONDS, DEFAULT_EVENT_BACKFILL_MAX_AGE_HOURS,
+    DEFAULT_EVENT_BACKFILL_MAX_EVENTS, DEFAULT_EVENT_FEED_RETENTION_DAYS, DEFAULT_GRANT_MAX_LIFETIME_DAYS,
+    DEFAULT_MAX_ACTIVE_GRANTS_PER_USER_CLIENT, DEFAULT_MAX_STREAMS_PER_PROCESS, DEFAULT_REFRESH_TOKEN_IDLE_DAYS,
+    MIN_FORWARD_SECRET_LEN, OAuthConfig,
+};
 pub use secret::{REDACTED, Secret};
 
 /// Where a binary looks for its configuration when no `--config` path is given.
@@ -135,6 +142,8 @@ pub struct OpenPrConfig {
     pub outbound: OutboundConfig,
     pub mcp: McpConfig,
     pub flow: FlowConfig,
+    /// `None` unless `[oauth] issuer` is set: the authorization server is off by default.
+    pub oauth: Option<OAuthConfig>,
 }
 
 impl OpenPrConfig {
@@ -636,6 +645,13 @@ pub struct McpConfig {
     pub workspace_id: Option<Uuid>,
     pub transport: McpTransport,
     pub bind_addr: Option<String>,
+    /// Issuer that vouches for delegated tokens. All three `oauth_*` keys are set together or not
+    /// at all; see [`McpConfig::runtime`].
+    pub oauth_issuer: Option<String>,
+    /// Identifier of this server as a protected resource (the URL that receives JSON-RPC posts).
+    pub oauth_resource: Option<String>,
+    /// Credential presented to the API when forwarding a delegated token. Never logged.
+    pub oauth_forward_secret: Option<Secret>,
 }
 
 /// What a deployment whose transport has no per-request credential is told.
@@ -658,6 +674,7 @@ impl McpConfig {
         if self.workspace_id.is_none() {
             issues.push("mcp.workspace_id is required to run the MCP server".to_string());
         }
+        let oauth = self.oauth_runtime(&mut issues);
         let Some(workspace_id) = self.workspace_id.filter(|_| issues.is_empty()) else {
             return Err(ConfigError::Invalid {
                 path: origin.to_path_buf(),
@@ -673,8 +690,51 @@ impl McpConfig {
                 .bind_addr
                 .clone()
                 .unwrap_or_else(|| DEFAULT_MCP_BIND_ADDR.to_string()),
+            oauth,
         })
     }
+
+    /// The three `oauth_*` keys are one unit: with none the server refuses delegated tokens, with
+    /// all of them it validates them, and a partial set is refused by name instead of silently
+    /// running without delegated access.
+    fn oauth_runtime(&self, problems: &mut Vec<String>) -> Option<McpOAuthRuntime> {
+        match (
+            self.oauth_issuer.as_ref(),
+            self.oauth_resource.as_ref(),
+            self.oauth_forward_secret.as_ref(),
+        ) {
+            (Some(issuer_url), Some(resource_url), Some(forward_secret)) => Some(McpOAuthRuntime {
+                issuer: issuer_url.clone(),
+                resource: resource_url.clone(),
+                forward_secret: forward_secret.clone(),
+            }),
+            (None, None, None) => None,
+            (issuer_url, resource_url, secret) => {
+                let missing: Vec<&str> = [
+                    ("mcp.oauth_issuer", issuer_url.is_none()),
+                    ("mcp.oauth_resource", resource_url.is_none()),
+                    ("mcp.oauth_forward_secret", secret.is_none()),
+                ]
+                .into_iter()
+                .filter_map(|(key, absent)| absent.then_some(key))
+                .collect();
+                problems.push(format!(
+                    "mcp.oauth_issuer, mcp.oauth_resource and mcp.oauth_forward_secret are set together or not at \
+                     all; missing: {}",
+                    missing.join(", ")
+                ));
+                None
+            }
+        }
+    }
+}
+
+/// The delegated-token settings of the MCP server, present only when all three keys are.
+#[derive(Clone, Debug)]
+pub struct McpOAuthRuntime {
+    pub issuer: String,
+    pub resource: String,
+    pub forward_secret: Secret,
 }
 
 /// `[mcp]` with the mandatory fields resolved, as the MCP server needs them.
@@ -687,6 +747,8 @@ pub struct McpRuntime {
     pub workspace_id: Uuid,
     pub transport: McpTransport,
     pub bind_addr: String,
+    /// `None` when `[mcp]` carries no `oauth_*` keys: delegated tokens are then refused.
+    pub oauth: Option<McpOAuthRuntime>,
 }
 
 /// The subset of the configuration carried in `AppState` and reached from request handlers.

@@ -17,7 +17,7 @@
 
 <div class="mx-auto max-w-6xl p-4 md:p-6">
 	{#if parsed.tooLong}
-		<p class="mb-3 text-sm text-slate-600 dark:text-slate-300" role="status">
+		<p class="mb-3 text-sm text-fg-muted" role="status">
 			{$t('plugins.apps.stateTooLong')}
 		</p>
 	{/if}

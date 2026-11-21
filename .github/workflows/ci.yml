@@ -66,6 +66,12 @@ jobs:
       - name: Web E2E stack script preflight
         run: bash scripts/test-e2e-web-stack.sh
 
+      - name: nginx event stream location
+        run: bash scripts/test-nginx-event-stream-location.sh
+
+      - name: nginx OAuth locations and headers
+        run: bash scripts/test-nginx-oauth-locations.sh
+
       # Single-repository form only: the sibling repositories are not checked out here. The
       # five-repository release form runs locally (see CONTRIBUTING, "Brand residue gate").
       - name: Brand residue gate (this repository)
@@ -188,7 +194,9 @@ jobs:
           set -e
           for suite in record-values markdown-sanitize flow-limits flow-scope-api flow-route-scope flow-navigator-placements flow-i18n-parity i18n-parity bot-transport-surfaces \
                        webhook-events flow-navigator-equivalence flow-cross-parent-move flow-ui-state flow-bridge \
-                       flow-package-import flow-v0.4 flow-static-build; do
+                       flow-package-import flow-v0.4 flow-static-build \
+                       shell-routing shell-state shell-keyboard surface-host project-nav shell-redirects surface-embed \
+                       component-adapters toast-routing workbench-tabs forms-page forms-csv-export plugin-creator-review-focus oauth; do
             echo "::group::test:$suite"
             bun run "test:$suite"
             echo "::endgroup::"

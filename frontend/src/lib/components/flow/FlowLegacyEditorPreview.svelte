@@ -26,20 +26,17 @@
 </script>
 
 <section
-	class="min-h-0 min-w-0 flex-1 overflow-y-auto bg-white px-5 py-6 sm:px-8 dark:bg-slate-950"
+	class="min-h-0 min-w-0 flex-1 overflow-y-auto bg-canvas px-5 py-6 sm:px-8"
 	data-testid="flow-legacy-editor-preview"
 	data-flow-scroll-owner
 	aria-busy={busy}
 >
-	<h1 class="break-words text-2xl font-semibold text-slate-900 dark:text-slate-100">
+	<h1 class="break-words text-2xl font-semibold text-fg">
 		{object.title || $t('flow.nav.untitled')}
 	</h1>
-	<div
-		class="my-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-900"
-		role="status"
-	>
+	<div class="my-5 rounded-card border border-line bg-surface p-4 text-sm" role="status">
 		<p class="font-medium">{$t('flow.legacyEditor.title')}</p>
-		<p class="mt-1 text-slate-600 dark:text-slate-300">
+		<p class="mt-1 text-fg-muted">
 			{$t(
 				object.editor_state === 'unsupported'
 					? 'flow.legacyEditor.unsupported'
@@ -51,7 +48,7 @@
 		{#if canEnableLegacyEditor(object)}
 			<button
 				type="button"
-				class="mt-3 rounded-md bg-slate-900 px-3 py-2 font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+				class="mt-3 rounded-control bg-primary rf-filled px-3 py-2 font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				onclick={onEnable}
 				disabled={busy}
 				>{$t(busy ? 'flow.legacyEditor.enabling' : 'flow.legacyEditor.enable')}</button
@@ -59,15 +56,15 @@
 		{/if}
 		<button
 			type="button"
-			class="ml-3 mt-3 rounded-md border border-slate-300 px-3 py-2 disabled:opacity-50 dark:border-slate-700"
+			class="ml-3 mt-3 rounded-control border border-fg bg-raised px-3 py-2 disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 			onclick={onRefresh}
 			disabled={busy}>{$t('flow.legacyEditor.refresh')}</button
 		>
 	</div>
-	{#if error}<p class="mb-4 text-sm text-red-700 dark:text-red-300" role="alert">
+	{#if error}<p class="mb-4 text-sm text-danger" role="alert">
 			{$t(flowErrorI18nKey(error))}
 		</p>{/if}
-	<div class="space-y-4 text-slate-900 dark:text-slate-100">
+	<div class="space-y-4 text-fg">
 		{#each blocks as block (block.id)}
 			<div style={`margin-left:${block.indent * 1.5}rem`}>
 				{#if block.kind === 'image' || block.kind === 'attachment'}<FlowBodyAsset
@@ -87,6 +84,6 @@
 						<FlowInlineText text={block.text} spans={block.inline_spans} />
 					</p>{/if}
 			</div>
-		{:else}<p class="text-sm text-slate-500">{$t('flow.legacyEditor.empty')}</p>{/each}
+		{:else}<p class="text-sm text-fg-muted">{$t('flow.legacyEditor.empty')}</p>{/each}
 	</div>
 </section>
