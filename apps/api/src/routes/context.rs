@@ -120,11 +120,17 @@ pub async fn get_project_context(
     // application, whose grant may cover only some projects, gets none: no scope of the first
     // release covers decisions, and the field is left out rather than sent empty, which would
     // read as "no decisions".
+    //
+    // The execution settings are left out for the same callers: they name a directory on the
+    // runner's machine, which no connected application has a use for, and an absent key (unlike
+    // `null`) does not read as "this project has no settings".
     if crate::oauth::delegated::current().is_none()
         && let Some(object) = context.as_object_mut()
     {
         let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
         object.insert("recent_decisions".to_owned(), json!(decisions));
+        let execution = crate::services::execution_settings::load(&state.db, project_id).await?;
+        object.insert("execution".to_owned(), json!(execution));
     }
     Ok(ApiResponse::success(context))
 }
@@ -590,6 +596,7 @@ fn tool_set(tools: &[&'static str]) -> BTreeSet<&'static str> {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::tenant_fixture::{count, seed_decision, seed_proposal, seed_tenant};
     use super::{build_mcp_tool_registry, load_recent_decisions};
@@ -696,6 +703,90 @@ mod tests {
             3
         );
 
+        scratch.drop_self().await;
+    }
+
+    async fn context_body(
+        db: &sea_orm::DatabaseConnection,
+        user: uuid::Uuid,
+        bot: Option<crate::middleware::bot_auth::BotAuthContext>,
+        project: uuid::Uuid,
+    ) -> serde_json::Value {
+        use axum::response::IntoResponse;
+        let response = super::get_project_context(
+            axum::extract::State(super::tenant_fixture::state_for(db.clone())),
+            axum::Extension(super::tenant_fixture::claims_for(user)),
+            bot.map(axum::Extension),
+            axum::extract::Path(project),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("the context loads: {err:?}"))
+        .into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("the body reads");
+        serde_json::from_slice(&bytes).expect("the body is JSON")
+    }
+
+    /// The execution settings name a directory on the runner's machine: people and bots get them
+    /// (`null` without a row), a connected application gets no `execution` key at all.
+    #[tokio::test]
+    async fn the_context_carries_execution_settings_except_for_connected_applications() {
+        use super::tenant_fixture::{bot_context_for, exec, seed_bot_user};
+        use crate::middleware::bot_auth::EventSurface;
+        use crate::oauth::delegated::{DelegatedAuthContext, with_context};
+        use crate::oauth::scopes::{ProjectScope, ScopeSet, TokenResource};
+
+        let scratch = scratch_or_skip!("context_execution");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "cx").await;
+        let bot = seed_bot_user(db, &tenant).await;
+
+        let without = context_body(db, tenant.member_id, None, tenant.project_id).await;
+        assert!(
+            without["data"].get("execution").is_some_and(serde_json::Value::is_null),
+            "a project without settings reports null: {without}"
+        );
+
+        exec(
+            db,
+            "INSERT INTO project_execution_settings (project_id, working_directory, enabled) VALUES ($1, '/work/a', true)",
+            vec![tenant.project_id.into()],
+        )
+        .await;
+        let person = context_body(db, tenant.member_id, None, tenant.project_id).await;
+        assert_eq!(person["data"]["execution"]["working_directory"], "/work/a");
+        let bot_view = context_body(
+            db,
+            bot,
+            Some(bot_context_for(bot, tenant.workspace_id, &["read"])),
+            tenant.project_id,
+        )
+        .await;
+        assert_eq!(bot_view["data"]["execution"]["working_directory"], "/work/a");
+
+        let delegated = DelegatedAuthContext {
+            grant_id: uuid::Uuid::new_v4(),
+            token_id: uuid::Uuid::new_v4(),
+            client_id: std::sync::Arc::from("ramflux"),
+            user_id: tenant.member_id,
+            workspace_id: tenant.workspace_id,
+            scopes: ScopeSet::all(),
+            projects: ProjectScope::All,
+            resource: TokenResource::Api,
+            surface: EventSurface::Rest,
+            tool_name: None,
+            request_id: uuid::Uuid::new_v4(),
+        };
+        let connected = with_context(delegated, context_body(db, tenant.member_id, None, tenant.project_id)).await;
+        assert!(
+            connected["data"].get("execution").is_none(),
+            "a connected application gets no execution key: {connected}"
+        );
+        assert!(
+            !connected.to_string().contains("/work/a"),
+            "the working directory does not leak: {connected}"
+        );
         scratch.drop_self().await;
     }
 }
@@ -935,6 +1026,73 @@ pub mod tenant_fixture {
         )
         .await;
         bot_id
+    }
+
+    /// A person who belongs to `tenant`'s workspace with `role` (`owner`, `admin` or `member`).
+    pub async fn seed_member(db: &impl ConnectionTrait, tenant: &Tenant, role: &str) -> Uuid {
+        let user_id = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) \
+             VALUES ($1, $2, '!', 'tenant person', 'user', true)",
+            vec![user_id.into(), format!("{user_id}@tenant.test").into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)",
+            vec![tenant.workspace_id.into(), user_id.into(), role.to_string().into()],
+        )
+        .await;
+        user_id
+    }
+
+    /// The claims a request of `user` carries.
+    pub fn claims_for(user: Uuid) -> platform::auth::JwtClaims {
+        platform::auth::JwtClaims {
+            sub: user.to_string(),
+            email: format!("{user}@tenant.test"),
+            token_type: platform::auth::TokenType::Access,
+            iat: 0,
+            exp: 0,
+            sv: 0,
+        }
+    }
+
+    /// The context the bot middleware attaches for `bot`, with the given permissions.
+    pub fn bot_context_for(
+        bot: Uuid,
+        workspace_id: Uuid,
+        permissions: &[&str],
+    ) -> crate::middleware::bot_auth::BotAuthContext {
+        crate::middleware::bot_auth::BotAuthContext {
+            bot_id: bot,
+            workspace_id,
+            permissions: permissions.iter().map(|p| (*p).to_string()).collect(),
+            surface: crate::middleware::bot_auth::EventSurface::Rest,
+            tool_name: None,
+            request_id: Uuid::new_v4(),
+        }
+    }
+
+    /// An application state over `db` for calling handlers directly.
+    pub fn state_for(db: DatabaseConnection) -> platform::app::AppState {
+        use platform::config::{AppConfig, Secret};
+        platform::app::AppState {
+            cfg: AppConfig {
+                app_name: "tenant-fixture-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("tenant-fixture-test-secret"),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db,
+            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
+        }
     }
 
     #[derive(Debug, FromQueryResult)]

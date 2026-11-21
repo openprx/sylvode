@@ -29,6 +29,7 @@ pub mod notification;
 pub mod plugin;
 pub mod plugin_package;
 pub mod project;
+pub mod project_execution;
 pub mod project_type;
 pub mod proposal;
 pub mod proposal_template;

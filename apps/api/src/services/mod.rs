@@ -1,5 +1,6 @@
 pub mod ai_task_service;
 pub mod bot_identity;
+pub mod execution_settings;
 pub mod governance_audit_service;
 pub mod impact_review_service;
 pub mod object_storage;
