@@ -237,7 +237,13 @@ pub async fn handle_webhook(
             }
         };
         let sig = inbound.value.unwrap_or_default();
-        if !signature::verify_signature(body.as_bytes(), &sig, &state.config.security.webhook_secrets) {
+        // The claimed bot only selects which secrets may verify the delivery; nothing in the body
+        // is trusted until the signature has verified against the secrets of that bot alone.
+        let claimed = serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|p| ai_task_bot(&p).map(str::to_string));
+        let secrets = state.config.webhook_secrets_for(claimed.as_deref());
+        if !signature::verify_signature(body.as_bytes(), &sig, &secrets) {
             tracing::warn!("Invalid webhook signature");
             return Err(StatusCode::UNAUTHORIZED);
         }

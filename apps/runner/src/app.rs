@@ -183,6 +183,10 @@ async fn serve(config: config::Config) -> ExitCode {
     let replay = tokio::sync::Mutex::new(crate::replay::ReplayGuard::new(config.security.max_delivery_age_secs));
     let has_runner_agents = config.agents.iter().any(|agent| agent.agent_type == "runner");
     let runner = crate::runner::RunnerRuntime::new(&config);
+    if has_runner_agents && let Err(e) = &runner.http {
+        tracing::error!("{e}");
+        return ExitCode::FAILURE;
+    }
     let handshake = crate::handshake::Handshake::new(has_runner_agents);
     let state = Arc::new(AppState {
         config,
@@ -194,7 +198,9 @@ async fn serve(config: config::Config) -> ExitCode {
 
     if has_runner_agents {
         let loop_config = Arc::new(state.config.clone());
-        let http = state.runner.http.clone();
+        let Ok(http) = state.runner.http.clone() else {
+            return ExitCode::FAILURE;
+        };
         let loop_handshake = state.handshake.clone();
         let loop_background = background.clone();
         background.spawn(async move {

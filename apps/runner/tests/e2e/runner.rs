@@ -523,3 +523,71 @@ async fn a_hostile_directory_name_is_escaped_in_the_log() {
         "{lines:?}"
     );
 }
+
+const OTHER_BOT: &str = "00000000-0000-4000-8000-000000000002";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_bots_deliveries_verify_only_with_its_own_secret() {
+    use crate::support::{post_with, sign};
+    let fx = Fixture::new().await;
+    // A second bot on the same runner; each has its own signing secret.
+    let config = fx
+        .config()
+        .replace(
+            "\n[[agents]]",
+            &format!(
+                "\n[[ai_task_callback.bots]]\nbot_id = \"{OTHER_BOT}\"\ntoken = \"{}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-of-bot-two-xx\"\n\n[[agents]]\nid = \"{OTHER_BOT}\"\nname = \"Two\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{OTHER_BOT}\"]\n\n[[agents]]",
+                concat!("opr", "_", "ef01ef01ef01ef01ef01ef01ef01ef01ef01")
+            ),
+        )
+        .replace(
+            &format!("bot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n"),
+            &format!("bot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-of-bot-one-xx\"\n"),
+        );
+    let server = Server::start(RUNNER, &config, &[]).expect("starts");
+    let delivery_for = |bot: &str, attempt: u32| {
+        let mut value: Value = serde_json::from_str(&delivery_n(attempt)).expect("json");
+        value["ai_participant_id"] = json!(bot);
+        value.to_string()
+    };
+    let post = |body: String, secret: &'static str| {
+        let url = server.url("/webhook");
+        async move {
+            post_with(&url, &body, &[("x-webhook-signature", &sign(&body, secret))])
+                .await
+                .0
+        }
+    };
+    // Each bot's delivery verifies with its own secret.
+    assert_eq!(post(delivery_for(BOT, 1), "secret-of-bot-one-xx").await, 200);
+    assert_eq!(post(delivery_for(OTHER_BOT, 2), "secret-of-bot-two-xx").await, 200);
+    // Another bot's secret, the shared list and a made-up secret do not.
+    assert_eq!(post(delivery_for(BOT, 3), "secret-of-bot-two-xx").await, 401);
+    assert_eq!(post(delivery_for(OTHER_BOT, 4), "secret-of-bot-one-xx").await, 401);
+    assert_eq!(post(delivery_for(BOT, 5), crate::support::SECRET).await, 401);
+    assert_eq!(post(delivery_for(OTHER_BOT, 6), crate::support::SECRET).await, 401);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delivery_for_a_bot_the_agent_does_not_serve_is_refused() {
+    let fx = Fixture::new().await;
+    // An agent without a route: a delivery that names the runner agent type reaches it for any bot.
+    let config = fx
+        .config()
+        .replace(&format!("[agents.route]\nbot_ids = [\"{BOT}\"]\n"), "");
+    let server = Server::start(RUNNER, &config, &[]).expect("starts");
+    let mut body: Value = serde_json::from_str(&delivery()).expect("json");
+    body["ai_participant_id"] = json!("00000000-0000-4000-8000-0000000000ee");
+    body["ai_participant_agent_type"] = json!("runner");
+    let (_, answer) = post_signed(&server.url("/webhook"), &body.to_string()).await;
+    assert_eq!(answer["status"], "refused", "{answer}");
+    assert_eq!(answer["reason_code"], "runner_agent_disabled");
+    assert!(
+        answer["reason"].as_str().expect("reason").contains("does not serve"),
+        "{answer}"
+    );
+    assert!(
+        fx.api.requests_to("GET", "/api/v1/ai/tasks/").is_empty(),
+        "Sylvode was asked about another bot's task"
+    );
+}

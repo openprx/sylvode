@@ -22,6 +22,11 @@ use sylvode_prereq::{Component, ComponentKind, Finding, InstallKind, Status, sev
 use crate::config::{AiTaskCallback, Config};
 use crate::runner::sv_client::{SvClient, SvError, TASK_PROTOCOL, token_refused};
 
+/// The shortest and the longest report interval taken from the API, whatever it advertises: a
+/// misconfigured or hostile server cannot make every runner report every second.
+pub const MIN_ADVERTISED_INTERVAL_SECS: u64 = 60;
+pub const MAX_ADVERTISED_INTERVAL_SECS: u64 = 3600;
+
 /// The interval used when the API does not advertise one.
 pub const DEFAULT_INTERVAL_SECS: u64 = 600;
 
@@ -214,7 +219,7 @@ pub async fn run_once(config: &Config, http: &reqwest::Client, handshake: &Hands
         if config.runner.report_interval_secs.is_none()
             && let Some(secs) = data.get("runner_report_interval_secs").and_then(Value::as_u64)
         {
-            interval = secs.clamp(1, 86_400);
+            interval = secs.clamp(MIN_ADVERTISED_INTERVAL_SECS, MAX_ADVERTISED_INTERVAL_SECS);
         }
         if api != u64::from(TASK_PROTOCOL) {
             mismatch = Some(api);
@@ -389,5 +394,36 @@ mod tests {
             Some("task protocol mismatch (runner 1, api 2); upgrade the older component")
         );
         assert_eq!(Handshake::new(false).health()["state"], "unchecked");
+    }
+
+    /// Whatever the server advertises, the report interval stays between a minute and an hour; an
+    /// operator's own setting is taken as written.
+    #[tokio::test]
+    async fn the_advertised_report_interval_is_clamped() {
+        use axum::{Router, routing::get};
+        for (advertised, want) in [(1_u64, 60_u64), (59, 60), (600, 600), (99_999, 3600), (0, 60)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let app = Router::new().route(
+                "/api/v1/ai/protocol",
+                get(move || async move {
+                    json!({"code": 0, "data": {"task_protocol": 1, "api_version": "0.5.0", "runner_report_interval_secs": advertised}})
+                        .to_string()
+                }),
+            );
+            tokio::spawn(async move {
+                let _ = axum::serve(listener, app).await;
+            });
+            let cfg = config(&format!(
+                "[[agents]]\nid = \"{BOT}\"\nname = \"r\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{BOT}\"]\n"
+            ));
+            let mut cfg = cfg;
+            cfg.ai_task_callback.api_url = Some(format!("http://{addr}"));
+            let wait = run_once(&cfg, &reqwest::Client::new(), &Handshake::new(true)).await;
+            assert_eq!(wait, Duration::from_secs(want), "advertised {advertised}");
+            cfg.runner.report_interval_secs = Some(2);
+            let wait = run_once(&cfg, &reqwest::Client::new(), &Handshake::new(true)).await;
+            assert_eq!(wait, Duration::from_secs(2), "an operator's setting is kept");
+        }
     }
 }

@@ -76,8 +76,9 @@ pub struct RunnerRuntime {
     pub roots: Result<AllowedRoots, String>,
     /// The session-name registry, or why it cannot be used (which refuses `runner` agents).
     pub registry: Result<SessionRegistry, String>,
-    /// Shared by every client: no redirects, so a bearer token never follows one.
-    pub http: reqwest::Client,
+    /// Shared by every client: no redirects, so a bearer token never follows one. There is no
+    /// fallback client: when this one cannot be built, `runner` agents do not start.
+    pub http: Result<reqwest::Client, String>,
 }
 
 /// The state directory: `[runner] state_dir`, else the platform default below the home directory.
@@ -116,10 +117,7 @@ impl RunnerRuntime {
                 Err(e)
             }
         };
-        let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap_or_default();
+        let http = build_http_client();
         let state_path = state_dir(config, home.as_deref());
         let state = state_path.as_deref().map_or_else(
             || Err("no state directory: set [runner] state_dir (no home directory is known)".to_string()),
@@ -145,6 +143,14 @@ impl RunnerRuntime {
     }
 }
 
+/// The one HTTP client of the runner agents: no redirect is ever followed.
+pub fn build_http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("the HTTP client for Sylvode could not be built: {e}"))
+}
+
 fn refused(agent: &AgentConfig, code: &str, reason: &str) -> Value {
     json!({"status": "refused", "reason_code": code, "reason": reason, "agent": agent.id})
 }
@@ -160,6 +166,22 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
         .get("ai_participant_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    // The delivery's bot must be one of the agent's bots (a route by agent type alone could send
+    // it another's).
+    if !agent.runner_bot_ids().iter().any(|id| crate::config::same_bot(id, bot)) {
+        return Ok(refused(
+            agent,
+            "runner_agent_disabled",
+            "this runner agent does not serve the task's bot",
+        ));
+    }
+    let Ok(http) = &state.runner.http else {
+        return Ok(refused(
+            agent,
+            "runner_agent_disabled",
+            "the runner's HTTP client is not available",
+        ));
+    };
     let AiTaskCallback::Report(target) = config.ai_task_callback_for(Some(agent), bot) else {
         return Ok(refused(
             agent,
@@ -167,7 +189,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             "this runner has no usable token for the task's bot, or safe mode is on",
         ));
     };
-    let client = SvClient::new(state.runner.http.clone(), target.api_url, target.token, target.surface);
+    let client = SvClient::new(http.clone(), target.api_url, target.token, target.surface);
     let bot_creds = BotCreds {
         bot_id: bot.to_string(),
         api_url: target.api_url.to_string(),

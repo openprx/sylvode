@@ -1,4 +1,9 @@
-#![allow(clippy::indexing_slicing, clippy::type_complexity, clippy::needless_pass_by_value)]
+#![allow(
+    clippy::indexing_slicing,
+    clippy::type_complexity,
+    clippy::needless_pass_by_value,
+    clippy::excessive_nesting
+)]
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -157,7 +162,12 @@ async fn a_redirect_is_not_followed_so_the_token_never_leaves_the_configured_hos
         crate::config::Config::from_toml("[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n")
             .expect("config");
     let runtime = super::RunnerRuntime::new(&config);
-    let shared = SvClient::new(runtime.http, &format!("http://{addr}"), TOKEN, "rest");
+    let shared = SvClient::new(
+        runtime.http.expect("the shared client builds"),
+        &format!("http://{addr}"),
+        TOKEN,
+        "rest",
+    );
     assert_eq!(shared.protocol(WAIT).await.expect_err("redirect"), SvError::Status(307));
     assert!(reached.lock().is_empty());
 }
@@ -201,4 +211,52 @@ async fn statuses_timeouts_and_unreadable_answers_are_told_apart() {
         client(addr, "rest")
     };
     assert_eq!(dead.protocol(WAIT).await, Err(SvError::Transport));
+}
+
+/// The body cap holds while the body is read: nothing is buffered beyond it.
+#[tokio::test]
+async fn a_body_over_the_cap_is_refused_while_it_is_read() {
+    use axum::body::Body;
+    use futures_util::stream;
+    let (listener, addr) = bind().await;
+    let streamed = Arc::new(Mutex::new(0_usize));
+    let counter = Arc::clone(&streamed);
+    let app = Router::new()
+        // 50 MiB in 64 KiB pieces, with no Content-Length: chunked.
+        .route(
+            "/api/v1/ai/tasks/endless",
+            get(move || {
+                let counter = Arc::clone(&counter);
+                async move {
+                    let chunks = stream::unfold(0_usize, move |sent| {
+                        let counter = Arc::clone(&counter);
+                        async move {
+                            if sent >= 50 * 1024 * 1024 {
+                                return None;
+                            }
+                            *counter.lock() = sent;
+                            Some((Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![b' '; 64 * 1024])), sent + 64 * 1024))
+                        }
+                    });
+                    Body::from_stream(chunks)
+                }
+            }),
+        )
+        // A declared length over the cap.
+        .route(
+            "/api/v1/ai/tasks/declared",
+            get(|| async { ([("content-length", "5000000")], "x".repeat(10)) }),
+        );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let c = client(addr, "mcp_stdio");
+    assert_eq!(
+        c.task_view("endless", 1, Duration::from_secs(20)).await,
+        Err(SvError::Transport)
+    );
+    // The reader stopped at the cap (1 MiB) plus what was already in flight, far below 50 MiB.
+    let seen = *streamed.lock();
+    assert!(seen < 8 * 1024 * 1024, "{seen} bytes were pulled");
+    assert_eq!(c.task_view("declared", 1, WAIT).await, Err(SvError::Transport));
 }

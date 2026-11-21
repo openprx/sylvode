@@ -216,3 +216,43 @@ async fn without_a_runner_agent_nothing_is_asked_and_health_says_unchecked() {
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(api.requests().is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn health_answers_exactly_the_documented_keys() {
+    let api = MockSv::start().await;
+    let (state, root) = (TempDir::new("hs-state"), root());
+    let server =
+        Server::start(RUNNER, &config(&api.url(), &state, &root.path().to_string_lossy()), &[]).expect("starts");
+    let answer = wait_health(&server.url("/health"), "ok").await;
+    let mut top: Vec<&String> = answer.as_object().expect("object").keys().collect();
+    top.sort();
+    assert_eq!(top, ["protocol", "status"]);
+    let mut inner: Vec<&String> = answer["protocol"].as_object().expect("object").keys().collect();
+    inner.sort();
+    assert_eq!(inner, ["api", "runner", "state"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_over_the_limit_is_refused_before_the_signature_is_checked() {
+    use crate::support::{post_with, sign};
+    let api = MockSv::start().await;
+    let (state, root) = (TempDir::new("hs-state"), root());
+    let server =
+        Server::start(RUNNER, &config(&api.url(), &state, &root.path().to_string_lossy()), &[]).expect("starts");
+    let big = "x".repeat(3 * 1024 * 1024);
+    let (status, _) = post_with(
+        &server.url("/webhook"),
+        &big,
+        &[("x-webhook-signature", &sign(&big, SECRET))],
+    )
+    .await;
+    assert_eq!(status, 413);
+    // An ordinary body is still answered.
+    let (status, _) = post_with(
+        &server.url("/webhook"),
+        "{}",
+        &[("x-webhook-signature", &sign("{}", SECRET))],
+    )
+    .await;
+    assert_eq!(status, 200);
+}

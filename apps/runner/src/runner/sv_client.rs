@@ -92,7 +92,7 @@ impl SvClient {
     }
 
     async fn send(request: reqwest::RequestBuilder) -> Result<Value, SvError> {
-        let response = request.send().await.map_err(|e| {
+        let mut response = request.send().await.map_err(|e| {
             if e.is_timeout() {
                 SvError::Timeout
             } else {
@@ -103,15 +103,26 @@ impl SvClient {
         if !status.is_success() {
             return Err(SvError::Status(status.as_u16()));
         }
-        let bytes = response.bytes().await.map_err(|e| {
+        // The cap is enforced while reading: a declared length over it is refused before any
+        // byte is read, and a body without one (or lying about it) stops at the cap.
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_ANSWER_BYTES as u64)
+        {
+            return Err(SvError::Transport);
+        }
+        let mut bytes: Vec<u8> = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| {
             if e.is_timeout() {
                 SvError::Timeout
             } else {
                 SvError::Transport
             }
-        })?;
-        if bytes.len() > MAX_ANSWER_BYTES {
-            return Err(SvError::Transport);
+        })? {
+            if bytes.len() + chunk.len() > MAX_ANSWER_BYTES {
+                return Err(SvError::Transport);
+            }
+            bytes.extend_from_slice(&chunk);
         }
         serde_json::from_slice::<Value>(&bytes).map_err(|_| SvError::Transport)
     }
