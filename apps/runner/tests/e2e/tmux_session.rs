@@ -84,10 +84,21 @@ fn standin_binary() -> PathBuf {
     static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     BINARY
         .get_or_init(|| {
-            let dir = PathBuf::from("/tmp").join(format!("svs-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]));
+            // One directory per version of the source, reused by every run.
+            let text = include_str!("standin_cli.rs");
+            let hash = {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                text.hash(&mut hasher);
+                hasher.finish()
+            };
+            let dir = PathBuf::from("/tmp").join(format!("svs-{hash:016x}"));
+            if dir.join("claude").is_file() {
+                return dir.join("claude");
+            }
             std::fs::create_dir_all(&dir).expect("scratch");
             let source = dir.join("standin_cli.rs");
-            std::fs::write(&source, include_str!("standin_cli.rs")).expect("source");
+            std::fs::write(&source, text).expect("source");
             let out = dir.join("claude");
             let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
             let status = Command::new(rustc)
@@ -208,6 +219,25 @@ impl Fixture {
 
     async fn deliver(url: String, task: &str) -> Value {
         post_signed(&url, &Self::delivery(task)).await.1
+    }
+
+    /// Sets what the stand-in shows (`idle` removes the override).
+    fn set_mode(&self, mode: &str) {
+        let file = self.tmux.state().join("standin.mode");
+        if mode == "idle" {
+            let _ = std::fs::remove_file(file);
+        } else {
+            std::fs::write(file, mode).expect("mode");
+        }
+    }
+
+    /// How many Enter presses without a paste the stand-in saw.
+    fn enters(&self) -> usize {
+        std::fs::read_to_string(&self.log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| *l == "ENTER")
+            .count()
     }
 
     fn typed(&self) -> Vec<String> {
@@ -605,6 +635,16 @@ async fn the_operator_commands_list_refuse_and_release() {
         "dispatched"
     );
     assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    // While the runner runs, release and prune are refused (it owns the registry and the sessions).
+    for args in [&["release", "SVWL"][..], &["sessions", "--prune"]] {
+        let refused = fx.operator(args);
+        assert!(
+            !refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("runner stopped")
+                || String::from_utf8_lossy(&refused.stderr).contains("needs the runner stopped"),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+    }
     server.terminate();
     assert!(server.wait_exit(Duration::from_secs(20)).is_some());
     let listing = fx.operator(&["sessions"]);
@@ -716,5 +756,311 @@ async fn env_passthrough_and_other_variables_do_not_reach_a_pane() {
     }
     assert!(!env.contains("leak"), "{env}");
     assert!(env.contains("CLAUDE_CONFIG_DIR="), "the runner's own variable is set");
+    drop(server);
+}
+
+/// A person attached to the session and typing: a real terminal client (through `script`), so
+/// tmux's `client_activity` moves. The input is a terminal focus event, which tmux consumes and counts as
+/// activity: the pane's input line stays empty, so only the client's activity can hold a push back. Stopped on drop.
+struct TypingClient {
+    child: std::process::Child,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl TypingClient {
+    fn start(tmux: &Tmux, key: &str) -> Self {
+        use std::io::Write;
+        let attach = [
+            "-L",
+            tmux.socket.as_str(),
+            "-f",
+            "/dev/null",
+            "attach",
+            "-t",
+            &format!("={key}"),
+        ];
+        let mut command = if cfg!(target_os = "macos") {
+            let mut c = Command::new("script");
+            c.args(["-q", "/dev/null"]).arg(&tmux.program).args(attach);
+            c
+        } else {
+            let mut c = Command::new("script");
+            let line = format!("{} {}", tmux.program.display(), attach.join(" "));
+            c.args(["-qefc", &line, "/dev/null"]);
+            c
+        };
+        let mut child = command
+            .env("TMUX_TMPDIR", &tmux.dir)
+            .env("TERM", "xterm")
+            .env_remove("TMUX")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("script runs");
+        let mut stdin = child.stdin.take().expect("stdin");
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || {
+            while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                if stdin.write_all(b"\x1b[I").and_then(|()| stdin.flush()).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(300));
+            }
+        });
+        Self { child, stop }
+    }
+
+    /// The person stops typing but stays attached.
+    fn stop_typing(&self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl Drop for TypingClient {
+    fn drop(&mut self) {
+        self.stop_typing();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Waits until session `key` exists on the test's server.
+async fn wait_session(fx: &Fixture, key: &str, secs: u64) {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        if fx.tmux.raw(&["has-session", "-t", &format!("={key}")]).status.success() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("session {key} never appeared");
+}
+
+/// While a task's turn runs the CLI shows an empty input box; with the hooks saying idle (a stray
+/// Stop), nothing may be typed into a screen that shows work. Typed as soon as it stops.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn nothing_is_typed_into_a_busy_screen_that_shows_an_empty_prompt() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.set_view(T1, true, true);
+    fx.set_view(T2, true, false);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    // T1 ends in Sylvode; the CLI keeps showing work (and an empty prompt) after its Stop hook.
+    fx.set_mode("busy");
+    fx.set_view(T1, false, true);
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T2).await["status"],
+        "dispatched"
+    );
+    tokio::time::sleep(Duration::from_secs(7)).await;
+    assert_eq!(fx.typed().len(), 1, "typed into a busy screen: {:?}", fx.typed());
+    fx.set_mode("idle");
+    let typed = fx.wait_typed(2, 30).await;
+    assert_eq!(typed.len(), 2, "{typed:?}");
+    drop(server);
+}
+
+/// A shell (or any program that is not the CLI) in the foreground: the foreground check refuses,
+/// although the screen shows an empty prompt.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn nothing_is_typed_when_the_foreground_is_not_the_cli() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.set_view(T1, true, true);
+    fx.set_view(T2, true, false);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    // The CLI is replaced by another program that leaves the prompt on the screen.
+    fx.set_mode("shell");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    fx.set_view(T1, false, true);
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T2).await["status"],
+        "dispatched"
+    );
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    let pane = String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL:"]).stdout).to_string();
+    assert!(!pane.contains(T2), "text reached the foreground program: {pane}");
+    assert_eq!(fx.typed().len(), 1);
+    drop(server);
+}
+
+/// A permission dialog, an elicitation dialog, a placeholder in the box and a person's draft: none
+/// is typed into; the task goes in once the screen is a plain empty prompt again.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn nothing_is_typed_over_dialogs_placeholders_or_drafts() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    for mode in ["permission", "elicitation", "placeholder", "draft"] {
+        let fx = Fixture::new(program.clone(), Standin::Normal).await;
+        fx.set_mode(mode);
+        fx.set_view(T1, true, false);
+        let server = fx.serve();
+        assert_eq!(
+            Fixture::deliver(server.url("/webhook"), T1).await["status"],
+            "dispatched"
+        );
+        tokio::time::sleep(Duration::from_secs(7)).await;
+        assert!(fx.typed().is_empty(), "{mode}: typed over the screen");
+        fx.set_mode("idle");
+        assert_eq!(
+            fx.wait_typed(1, 30).await.len(),
+            1,
+            "{mode}: not typed once the screen was plain"
+        );
+        drop(server);
+    }
+}
+
+/// A person attached to the session and typing: nothing is typed for `user_idle_secs` (the real
+/// default, 10 s) after the last key.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn nothing_is_typed_while_a_person_types() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.set_view(T1, true, false);
+    // The screen shows work until the person is attached, so the first push waits for them.
+    fx.set_mode("busy");
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    wait_session(&fx, "SVWL", 30).await;
+    let client = TypingClient::start(&fx.tmux, "SVWL");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    fx.set_mode("idle");
+    tokio::time::sleep(Duration::from_secs(7)).await;
+    assert!(fx.typed().is_empty(), "typed while a person was typing");
+    client.stop_typing();
+    // Ten quiet seconds later it goes in.
+    let typed = fx.wait_typed(1, 40).await;
+    assert_eq!(
+        typed.len(),
+        1,
+        "PANE:\n{}\nCLIENTS:{}\nNOW:{:?}",
+        String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL:"]).stdout),
+        String::from_utf8_lossy(
+            &fx.tmux
+                .raw(&["list-clients", "-F", "#{client_activity}", "-t", "=SVWL"])
+                .stdout
+        ),
+        std::time::SystemTime::now()
+    );
+    drop(client);
+    drop(server);
+}
+
+/// The Enter retry presses Enter only when the pasted text is still on the input line; a person's
+/// draft in its place means nothing is pressed and the session is reported blocked.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn the_enter_retry_needs_the_pasted_text_on_the_input_line() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    // Deaf CLI whose input line still shows the paste: one Enter is pressed again.
+    let fx = Fixture::new(program.clone(), Standin::Normal).await;
+    fx.set_mode("deaf");
+    fx.set_view(T1, true, false);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    tokio::time::sleep(Duration::from_secs(14)).await;
+    assert_eq!(fx.enters(), 1, "one retry, with the text on the line");
+    drop(server);
+    // The same, but a person replaced the line with a draft: nothing is pressed.
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.set_mode("deaf");
+    fx.set_view(T1, true, false);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    fx.set_mode("draft");
+    let blocked = fx
+        .api
+        .wait_for("POST", "/progress", 3, Duration::from_secs(25))
+        .await
+        .iter()
+        .any(|r| r.body["kind"] == "runner.blocked");
+    assert!(blocked, "the session was not reported blocked");
+    assert_eq!(fx.enters(), 0, "an Enter was pressed over a draft");
+    drop(server);
+}
+
+/// The trust flow end to end: the dialog fails the task (not retryable) naming `trust`; the
+/// operator answers it in the session; the CLI starts; the next task is typed.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn the_trust_dialog_flow_ends_with_the_next_task_typed() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Untrusted).await;
+    fx.set_view(T1, true, false);
+    fx.set_view(T2, true, false);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
+    assert_eq!(fails.len(), 1, "{fails:?}");
+    assert!(
+        fails[0].body["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("sylvode-runner trust SVWL")
+    );
+    // The operator attaches and answers (what `trust` leads to).
+    assert!(
+        fx.tmux
+            .raw(&["send-keys", "-t", "=SVWL:", "1", "Enter"])
+            .status
+            .success()
+    );
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T2).await["status"],
+        "dispatched"
+    );
+    let typed = fx.wait_typed(1, 40).await;
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(typed[0].contains(T2));
     drop(server);
 }
