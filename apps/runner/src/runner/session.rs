@@ -1271,7 +1271,8 @@ fn ensure_blocking(
     } else {
         std::fs::canonicalize(&info.current_path).map_or(true, |p| p != task.dir)
     };
-    let has_children = std::process::Command::new("pgrep")
+    let has_children = std::process::Command::new("/usr/bin/pgrep")
+        .env_clear()
         .args(["-P", &info.pid.to_string()])
         .output()
         .map_or(true, |out| !out.stdout.is_empty());

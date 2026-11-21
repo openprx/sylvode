@@ -61,7 +61,7 @@ impl Fixture {
             bin.path(),
             "claude",
             &format!(
-                "[ \"$1\" = --version ] && {{ echo '2.1.330 (Claude Code)'; exit 0; }}\npwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env > '{r}.env'",
+                "[ \"$1\" = --version ] && {{ echo '2.1.330 (Claude Code)'; exit 0; }}\npwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env | cut -d= -f1 | sort > '{r}.names'\n/usr/bin/env | grep -E '^(SVT_|CLAUDE_CONFIG_DIR=)' > '{r}.values'",
                 r = record.display()
             ),
         );
@@ -82,7 +82,7 @@ impl Fixture {
             self.bin.path(),
             "claude",
             &format!(
-                "[ \"$1\" = --version ] && {{ echo '2.1.330 (Claude Code)'; exit 0; }}\npwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env > '{r}.env'\n{tail}",
+                "[ \"$1\" = --version ] && {{ echo '2.1.330 (Claude Code)'; exit 0; }}\npwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env | cut -d= -f1 | sort > '{r}.names'\n/usr/bin/env | grep -E '^(SVT_|CLAUDE_CONFIG_DIR=)' > '{r}.values'\n{tail}",
                 r = self.record.display()
             ),
         );
@@ -401,7 +401,7 @@ async fn the_headless_cli_gets_an_allow_listed_environment() {
     let fx = Fixture::new().await;
     fx.set_view(vec![(200, view(&fx.project, "headless", true))]);
     let server = {
-        let config = fx.config_with("env_passthrough = [\"SV_PASS_ME\"]");
+        let config = fx.config_with("env_passthrough = [\"SVT_PASS_ME\"]");
         Server::start(
             RUNNER,
             &config,
@@ -410,7 +410,8 @@ async fn the_headless_cli_gets_an_allow_listed_environment() {
                 ("AWS_SECRET_ACCESS_KEY", "leak"),
                 ("GITHUB_TOKEN", "leak"),
                 ("SSH_AUTH_SOCK", "/tmp/leak"),
-                ("SV_PASS_ME", "kept"),
+                ("SVT_CANARY", "leak"),
+                ("SVT_PASS_ME", "kept"),
                 ("CLAUDECODE", "1"),
                 ("LC_ALL", "C"),
             ],
@@ -420,27 +421,33 @@ async fn the_headless_cli_gets_an_allow_listed_environment() {
     let (_, answer) = post_signed(&server.url("/webhook"), &delivery()).await;
     assert_eq!(answer["status"], "dispatched", "{answer}");
     wait_lines(&fx.record, 5, Duration::from_secs(10));
-    let env_file = format!("{}.env", fx.record.display());
+    // The fake records the NAMES of its variables and the values of `SVT_*` and
+    // `CLAUDE_CONFIG_DIR` only, beside the test's own record file.
+    let names_file = format!("{}.names", fx.record.display());
+    let values_file = format!("{}.values", fx.record.display());
     for _ in 0..100 {
-        if std::fs::metadata(&env_file).is_ok_and(|m| m.len() > 0) {
+        if std::fs::metadata(&values_file).is_ok() && std::fs::metadata(&names_file).is_ok_and(|m| m.len() > 0) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let env = std::fs::read_to_string(&env_file).expect("env");
-    let names: Vec<&str> = env.lines().filter_map(|l| l.split_once('=').map(|(n, _)| n)).collect();
+    let names_text = std::fs::read_to_string(&names_file).expect("names");
+    let env = std::fs::read_to_string(&values_file).expect("values");
+    let names: Vec<&str> = names_text.lines().collect();
     for leaked in [
         "SV_SENTINEL_SECRET",
         "AWS_SECRET_ACCESS_KEY",
         "GITHUB_TOKEN",
         "SSH_AUTH_SOCK",
+        "SVT_CANARY",
         "CLAUDECODE",
     ] {
         assert!(!names.contains(&leaked), "{leaked} reached the CLI");
     }
-    assert!(!env.contains("leak"), "{env}");
+    assert!(!env.contains("leak"), "a test-owned value reached the CLI");
+    assert!(env.contains("SVT_PASS_ME=kept"), "{env}");
     assert!(
-        names.contains(&"SV_PASS_ME") && names.contains(&"PATH") && names.contains(&"LC_ALL"),
+        names.contains(&"SVT_PASS_ME") && names.contains(&"PATH") && names.contains(&"LC_ALL"),
         "{names:?}"
     );
     // claude gets a configuration directory of the runner's own (the operator's `~/.claude` is

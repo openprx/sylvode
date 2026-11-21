@@ -248,3 +248,45 @@ fn config_check_names_the_key_and_never_echoes_a_value() {
     assert_eq!(json(&output)["ok"], true);
     assert_eq!(output.status.code(), Some(0));
 }
+
+/// `doctor` and `--check` start tmux, the CLIs and the MCP server with the allow-list environment:
+/// a canary of the caller is not seen by any of them.
+#[test]
+fn doctor_runs_its_probes_without_the_callers_environment() {
+    let bin = TempDir::new("doctor-canary-bin");
+    let seen = bin.file("seen");
+    let record = format!(
+        "/usr/bin/env | /usr/bin/cut -d= -f1 | /usr/bin/sort >> '{}'\n",
+        seen.display()
+    );
+    write_script(
+        bin.path(),
+        "tmux",
+        &format!("{record}case \"$1\" in -V) echo 'tmux 3.4';; *) exit 1;; esac"),
+    );
+    write_script(bin.path(), "claude", &format!("{record}echo '2.1.330 (Claude Code)'"));
+    write_script(
+        bin.path(),
+        "mcp-server",
+        &format!(
+            "{record}echo '{{\"schema\":\"sylvode.doctor.v1\",\"generated_by\":{{\"binary\":\"mcp-server\",\"version\":\"0.5.0\",\"task_protocol\":1}},\"components\":[]}}'"
+        ),
+    );
+    for args in [&["doctor", "--json"][..], &["--check"]] {
+        let output = Command::new(RUNNER)
+            .args(args)
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
+            .env("HOME", bin.path())
+            .env("SVT_DOCTOR_CANARY", "must-not-leak")
+            .output()
+            .expect("run");
+        assert!(output.status.success(), "{args:?}");
+    }
+    let names = std::fs::read_to_string(&seen).expect("the fakes ran");
+    assert!(
+        !names.lines().any(|n| n == "SVT_DOCTOR_CANARY"),
+        "a probe saw the caller's canary"
+    );
+    assert!(names.lines().any(|n| n == "PATH"));
+}

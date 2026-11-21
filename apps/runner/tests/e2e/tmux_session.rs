@@ -390,7 +390,7 @@ async fn a_task_is_typed_into_a_session_the_runner_created_and_the_next_waits_it
         "{argv}"
     );
     assert!(!argv.contains("opr_"), "{argv}");
-    let env = std::fs::read_to_string(format!("{}.env", fx.log.display())).unwrap_or_default();
+    let env = std::fs::read_to_string(fx.tmux.state().join("standin.env.values")).unwrap_or_default();
     assert!(!env.contains("opr_") && !env.contains(TOKEN), "{env}");
     // `ps` for the pane's process: no token on any command line of the session.
     let ps = Command::new("/bin/ps").args(["-axo", "args="]).output().expect("ps");
@@ -739,9 +739,9 @@ async fn env_passthrough_and_other_variables_do_not_reach_a_pane() {
         &config,
         &[
             ("TMUX_TMPDIR", &fx.tmux.dir.to_string_lossy()),
-            ("SV_PASS_ME", "kept-for-headless"),
-            ("SV_OTHER_SECRET", "leak"),
-            ("GITHUB_TOKEN", "leak"),
+            ("SVT_PASS_ME", "kept-for-headless"),
+            ("SVT_OTHER_SECRET", "leak"),
+            ("SVT_TOKEN", "leak"),
         ],
     )
     .expect("starts");
@@ -750,12 +750,18 @@ async fn env_passthrough_and_other_variables_do_not_reach_a_pane() {
         "dispatched"
     );
     assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
-    let env = std::fs::read_to_string(format!("{}.env", fx.log.display())).expect("env dump");
-    for name in ["SV_PASS_ME", "SV_OTHER_SECRET", "GITHUB_TOKEN"] {
-        assert!(!env.contains(name), "{name} reached the pane");
+    // Names of every variable, and the values of the test-owned `SVT_*` ones and of the runner's
+    // own `CLAUDE_CONFIG_DIR`: the stand-in records nothing else.
+    let names = std::fs::read_to_string(fx.tmux.state().join("standin.env.names")).expect("names");
+    let values = std::fs::read_to_string(fx.tmux.state().join("standin.env.values")).expect("values");
+    for name in ["SVT_PASS_ME", "SVT_OTHER_SECRET", "SVT_TOKEN"] {
+        assert!(!names.lines().any(|n| n == name), "{name} reached the pane");
     }
-    assert!(!env.contains("leak"), "{env}");
-    assert!(env.contains("CLAUDE_CONFIG_DIR="), "the runner's own variable is set");
+    assert!(!values.contains("leak"), "a test-owned value reached the pane");
+    assert!(
+        values.contains("CLAUDE_CONFIG_DIR="),
+        "the runner's own variable is set"
+    );
     drop(server);
 }
 

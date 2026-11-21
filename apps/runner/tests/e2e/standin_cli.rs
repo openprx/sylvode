@@ -6,7 +6,11 @@
 // Control files live in the runner's state directory (three levels above the settings file):
 //   standin.cfg   `turn=forever` (a turn never ends), `trust=dialog` (a trust dialog first)
 //   standin.mode  idle (default) | busy | placeholder | permission | elicitation | draft | deaf | shell
-// Everything it sees is appended to `standin.log` (and the environment to `standin.log.env`).
+// What it sees is appended to `standin.log`; the NAMES of its environment variables go to
+// `standin.env.names` and the values of the test-owned variables (`SVT_*`) and of
+// `CLAUDE_CONFIG_DIR` to `standin.env.values`. No other value is ever written anywhere. It writes
+// nothing at all without a `--settings` argument (the runner's probes call it without one), so a
+// run can never leave files in the working directory.
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, Write};
@@ -18,6 +22,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 fn append(path: &Path, line: &str) {
+    if path.as_os_str().is_empty() {
+        return;
+    }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{line}");
     }
@@ -65,12 +72,28 @@ fn main() {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let log = state.join("standin.log");
+    if args.iter().any(|a| a == "--version") {
+        println!("2.1.330 (Claude Code)");
+        return;
+    }
+    // Without a settings file there is no state directory to write to: write nothing.
+    let log = if state.as_os_str().is_empty() {
+        PathBuf::new()
+    } else {
+        state.join("standin.log")
+    };
     append(&log, &format!("argv: {}", args[1..].join(" ")));
-    let mut env: Vec<String> = std::env::vars().map(|(k, v)| format!("{k}={v}")).collect();
-    env.sort();
-    for line in env {
-        append(&state.join("standin.log.env"), &line);
+    if !state.as_os_str().is_empty() {
+        let mut names: Vec<String> = std::env::vars().map(|(k, _)| k).collect();
+        names.sort();
+        for name in names {
+            append(&state.join("standin.env.names"), &name);
+        }
+        for (k, v) in std::env::vars() {
+            if k.starts_with("SVT_") || k == "CLAUDE_CONFIG_DIR" {
+                append(&state.join("standin.env.values"), &format!("{k}={v}"));
+            }
+        }
     }
     let cfg = std::fs::read_to_string(state.join("standin.cfg")).unwrap_or_default();
     let turn_forever = cfg.contains("turn=forever");
