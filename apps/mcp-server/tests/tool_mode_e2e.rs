@@ -394,3 +394,106 @@ async fn the_write_switch_applies_to_http_connections() -> TestResult {
     );
     Ok(())
 }
+
+// ---- allow_write_call is a control in every mode and entry point ----
+
+const WRITE_REFUSAL: &str = "Error: writes are disabled for this bot by the runner configuration";
+
+fn direct_write() -> Value {
+    call_request("labels.create", &json!({"name": "bug", "color": "#ff0000"}))
+}
+
+#[tokio::test]
+async fn a_disabled_write_switch_holds_in_full_mode_on_stdio() -> TestResult {
+    // The configured full mode and the flag both list the tool by name; the switch still refuses.
+    for (extra, args) in [
+        ("tool_mode = \"full\"\nallow_write_call = false\n", Vec::<&str>::new()),
+        ("allow_write_call = false\n", vec!["--tools", "full"]),
+    ] {
+        let answers = stdio(extra, &args, &[direct_write(), list_request()]).await?;
+        let answer = answers.first().ok_or("no answer")?;
+        assert_eq!(
+            answer.pointer("/result/isError"),
+            Some(&json!(true)),
+            "{extra} {args:?}"
+        );
+        assert_eq!(result_text(answer), WRITE_REFUSAL, "{extra} {args:?}");
+        // The write tool is listed (full mode), and a read tool is not refused by the switch.
+        assert!(names(answers.get(1).ok_or("no listing")?).contains(&"labels.create".to_string()));
+        let read = stdio(extra, &args, &[call_request("projects.list", &json!({}))]).await?;
+        assert!(!result_text(read.first().ok_or("no answer")?).contains("writes are disabled"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_disabled_write_switch_holds_in_full_mode_on_http() -> TestResult {
+    let server = Http::spawn("allow_write_call = false\n").await?;
+    let direct = direct_write();
+    for (query, header) in [("?tools=full", None), ("", Some("full"))] {
+        let (status, body) = server.post(query, header, &direct).await?;
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert_eq!(result_text(&body), WRITE_REFUSAL, "{query} {header:?}");
+    }
+    let configured = Http::spawn("tool_mode = \"full\"\nallow_write_call = false\n").await?;
+    let (_, body) = configured.post("", None, &direct).await?;
+    assert_eq!(result_text(&body), WRITE_REFUSAL);
+    Ok(())
+}
+
+async fn cli(extra_keys: &str, arguments: &[&str]) -> Result<(bool, String, String), Box<dyn Error>> {
+    let config = write_config_with_extra_mcp_keys(
+        &McpSettings {
+            api_url: API_URL,
+            bot_token: Some(BOT_TOKEN),
+            workspace_id: WORKSPACE,
+            transport: Some("stdio"),
+            bind_addr: None,
+        },
+        extra_keys,
+    )?;
+    let output = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
+        .arg("--config")
+        .arg(config.path())
+        .args(arguments)
+        .stdin(Stdio::null())
+        .output()
+        .await?;
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    ))
+}
+
+#[tokio::test]
+async fn a_disabled_write_switch_holds_for_the_command_line() -> TestResult {
+    let write_args = r##"{"name":"bug","color":"#ff0000"}"##;
+    for arguments in [
+        vec!["tools", "call", "--name", "labels.create", "--args-json", write_args],
+        vec!["projects", "create", "--key", "ABC", "--name", "Example"],
+    ] {
+        let (ok, _, stderr) = cli("allow_write_call = false\n", &arguments).await?;
+        assert!(!ok, "{arguments:?}");
+        assert!(
+            stderr.contains("writes are disabled for this bot by the runner configuration"),
+            "{arguments:?}: {stderr}"
+        );
+    }
+    // Writes allowed (the default): the call is attempted; the stand-in address refuses the
+    // connection, which is a different failure.
+    let (ok, _, stderr) = cli(
+        "",
+        &["tools", "call", "--name", "labels.create", "--args-json", write_args],
+    )
+    .await?;
+    assert!(!ok && !stderr.contains("writes are disabled"), "{stderr}");
+    // A read command and the task tools are not touched by the switch.
+    let (_, _, stderr) = cli(
+        "allow_write_call = false\n",
+        &["tools", "call", "--name", "projects.list"],
+    )
+    .await?;
+    assert!(!stderr.contains("writes are disabled"), "{stderr}");
+    Ok(())
+}

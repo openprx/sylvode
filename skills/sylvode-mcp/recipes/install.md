@@ -21,7 +21,7 @@ Installers never install another component for you. They print the command.
 `tmux -L sylvode attach -t =<PROJECTKEY>`. Detach with `Ctrl-b d`. Typing there is fine. The runner waits until you are idle before it sends the next task.
 
 ## Tool mode
-The MCP server lists nine tools by default (search mode). Set `[mcp] tool_mode = "full"` or start it with `serve --tools full` to list every tool by name instead. `[mcp] allow_write_call = false` makes `sylvode_write` answer that writes are disabled.
+The MCP server lists nine tools by default (search mode). Set `[mcp] tool_mode = "full"` or start it with `serve --tools full` to list every tool by name instead. `[mcp] allow_write_call = false` disables every write tool except the task lifecycle tools: the server answers that writes are disabled.
 
 ## Common failures
 | Task error contains | Fix |

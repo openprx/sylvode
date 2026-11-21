@@ -17,7 +17,7 @@ name.
   Registry tools are found with `sylvode_search` and called through `sylvode_read` or
   `sylvode_write`; calling a registry name directly is refused unless the connection chose full
   mode (`[mcp] tool_mode = "full"`, `serve --tools full`, `?tools=full` or the
-  `X-Sylvode-Tool-Mode: full` header). `[mcp] allow_write_call = false` disables `sylvode_write`.
+  `X-Sylvode-Tool-Mode: full` header). `[mcp] allow_write_call = false` disables every write tool except the five task lifecycle tools, in every mode and in the command line.
   Connected (OAuth) applications are not affected: they keep the scoped read tools.
 - **The MCP skill is `sylvode-mcp`.** `skills/openpr-mcp` is renamed to `skills/sylvode-mcp` and
   rewritten for an agent that receives a task message: the task procedure (get, acknowledge with a

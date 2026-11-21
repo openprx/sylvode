@@ -867,6 +867,20 @@ impl McpServer {
         Ok(tools::capabilities::extract_enabled_tool_names(&policy))
     }
 
+    /// Whether `[mcp] allow_write_call = false` refuses `name`: a tool the catalogue marks as
+    /// writing. The five task tools are the one exception, since a runner bot needs the task
+    /// lifecycle to work. A Flow-only server also lists tools the catalogue does not know
+    /// (`objects.command`, ...); those cannot be classified, so they count as writes.
+    fn is_write_class(&self, name: &str) -> bool {
+        if tools::tasks::is_task_tool(name) {
+            return false;
+        }
+        match tools::catalog::meta(name) {
+            Some(entry) => entry.access == tools::catalog::Access::Write,
+            None => self.client.is_flow_only(),
+        }
+    }
+
     /// A registry tool through the delegated gate, the scoped client and the policy chain: the
     /// one door every direct call and every wrapper call goes through.
     async fn call_registry_tool(&self, name: &str, args: Value) -> CallToolResult {
@@ -874,6 +888,9 @@ impl McpServer {
             && let Err(refusal) = gate_tool_call(grant, name, Some(&args))
         {
             return CallToolResult::error(refusal.message());
+        }
+        if !self.write_call_allowed && self.is_write_class(name) {
+            return CallToolResult::error(tools::entry::writes_disabled_message());
         }
         let scoped = Self {
             client: self.client.recording_operation(name),

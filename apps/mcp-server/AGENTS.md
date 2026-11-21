@@ -5,7 +5,7 @@
 - Sylvode (formerly OpenPR) is an open-source project management platform with governance and AI integration.
 - The MCP server exposes tools for managing projects, context, project types/templates, operation records, universal forms, WASM plugins, issues, sprints, labels, comments, proposals, check results, release next actions, files, scenario-specific governed work, and Sylvode Flow (v0.9).
 - Transports: HTTP (`POST /mcp/rpc`), stdio (stdin/stdout), SSE (`GET /sse` + `POST /messages`).
-- Tool mode: `search` by default (nine tools: `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the five task tools; registry names are refused when called directly), `full` is the opt-in (`[mcp] tool_mode`, `serve --tools`, `?tools=` / `X-Sylvode-Tool-Mode`). Tests and scripts that call registry tools by name must opt into `full`. `[mcp] allow_write_call = false` disables `sylvode_write`.
+- Tool mode: `search` by default (nine tools: `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the five task tools; registry names are refused when called directly), `full` is the opt-in (`[mcp] tool_mode`, `serve --tools`, `?tools=` / `X-Sylvode-Tool-Mode`). Tests and scripts that call registry tools by name must opt into `full`. `[mcp] allow_write_call = false` disables every write tool except the five task lifecycle tools, in every mode and in the CLI.
 
 ## MCP Surface (Quick Reference)
 

@@ -613,6 +613,15 @@ mod sse_delivery_tests {
         Ok((format!("http://{addr}"), calls))
     }
 
+    fn state_with_client(client: OpenPrClient, surface: ToolSurface, sessions: super::SseSessions) -> SseState {
+        SseState {
+            client,
+            sessions,
+            inbound: Arc::new(InboundAuth::legacy_only()),
+            surface,
+        }
+    }
+
     fn state_with(surface: ToolSurface, sessions: super::SseSessions) -> Result<SseState, String> {
         let client = OpenPrClient::new(ClientConfig {
             base_url: "http://127.0.0.1:1".to_string(),
@@ -620,12 +629,7 @@ mod sse_delivery_tests {
             workspace_id: WORKSPACE.to_string(),
             transport_label: "sse",
         })?;
-        Ok(SseState {
-            client,
-            sessions,
-            inbound: Arc::new(InboundAuth::legacy_only()),
-            surface,
-        })
+        Ok(state_with_client(client, surface, sessions))
     }
 
     /// The tool mode is chosen when the stream opens and belongs to that session: the query, the
@@ -706,6 +710,59 @@ mod sse_delivery_tests {
         );
         // The streams own their sessions: dropping one removes its entry, so they live until here.
         drop(streams);
+        Ok(())
+    }
+
+    /// `allow_write_call = false` holds for a session in full mode: the direct write call is
+    /// answered with the refusal and never reaches the API.
+    #[tokio::test]
+    async fn a_full_mode_session_cannot_write_when_writes_are_disabled() -> TestResult {
+        let (api_url, calls) = counting_api().await?;
+        let client = OpenPrClient::new(ClientConfig {
+            base_url: api_url,
+            credential: None,
+            workspace_id: WORKSPACE.to_string(),
+            transport_label: "sse",
+        })
+        .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        let sessions: super::SseSessions = Arc::new(Mutex::new(HashMap::new()));
+        let state = state_with_client(
+            client,
+            ToolSurface::new(McpToolMode::Search, false),
+            Arc::clone(&sessions),
+        );
+        let (tx, mut rx) = mpsc::unbounded_channel::<SseServerEvent>();
+        sessions.lock().await.insert(
+            "full".to_string(),
+            SseSession {
+                sender: tx,
+                mode: McpToolMode::Full,
+            },
+        );
+        let accepted = handle_sse_message(
+            State(state),
+            Extension(Caller::Legacy(Secret::new(CALLER_TOKEN))),
+            Query(MessagesQuery {
+                session_id: "full".to_string(),
+            }),
+            Json(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(json!(1)),
+                method: "tools/call".to_string(),
+                params: Some(json!({ "name": "labels.create", "arguments": {"name": "b", "color": "#ff0000"} })),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        let Some(SseServerEvent::Message(payload)) = rx.recv().await else {
+            return Err("no answer on the stream".into());
+        };
+        assert!(
+            payload.contains("writes are disabled for this bot by the runner configuration"),
+            "{payload}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "a refused write reached the API");
         Ok(())
     }
 

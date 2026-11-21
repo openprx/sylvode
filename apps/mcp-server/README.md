@@ -133,7 +133,7 @@ not renamed; see the
 | `mcp.oauth_resource` | with the other two | Identifier of this server as a protected resource: the exact URL that receives JSON-RPC posts, for example `http://127.0.0.1:8090/mcp/rpc`, or `https://sv.example.com/mcp` behind a proxy that maps that path to `/mcp/rpc`. Must equal `[oauth] mcp_resource` of the API. |
 | `mcp.oauth_forward_secret` | with the other two | Internal forwarding credential, at least 32 bytes, never logged. Must equal `[oauth] internal_forward_secret` of the API. |
 | `mcp.tool_mode` | no, default `search` | Which tools `tools/list` offers; see [Tool modes](#tool-modes). |
-| `mcp.allow_write_call` | no, default `true` | Whether `sylvode_write` may be used; `false` makes it answer that writes are disabled. |
+| `mcp.allow_write_call` | no, default `true` | `false` disables every write tool except the five task lifecycle tools, in every tool mode and in the command line; see [Tool modes](#tool-modes). |
 
 There is no `mcp.auth_token` key any more. If your configuration file still has one, delete
 it — the server refuses to start rather than run with a key that no longer does anything.
@@ -161,9 +161,13 @@ four entry tools are not offered.
 | `serve --flow-only` | not applicable; `--tools` is refused |
 | connected (OAuth) applications | ignored: they always get the scoped read tools and no entry or task tools |
 
-`[mcp] allow_write_call = false` keeps `sylvode_write` listed but makes it answer `writes are
-disabled for this bot by the runner configuration`; `sylvode_read` and the task tools are not
-affected. A plain caller's `initialize` also carries `instructions` and
+`[mcp] allow_write_call = false` is a control, not a hint: every tool the catalogue marks as
+writing is refused with `writes are disabled for this bot by the runner configuration` before any
+API request, whichever way it is called: through `sylvode_write`, by its own name in full mode
+(configured, `?tools=full`, the header, an SSE session), and from the command line (`tools call`
+and the workspace commands). `sylvode_write` stays listed and answers with the refusal. The five
+task lifecycle tools (`sylvode_task_get`, `_ack`, `_progress`, `_complete`, `_fail`) are the one
+exception: a runner bot needs them, and the API only lets a bot act on its own tasks. A plain caller's `initialize` also carries `instructions` and
 `capabilities.experimental["sylvode/task-protocol"] = {"version": 1}`.
 
 ### Inbound authentication (HTTP/SSE)

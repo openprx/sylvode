@@ -2,7 +2,7 @@
 name: sylvode-mcp
 description: Work on Sylvode tasks and data through the Sylvode MCP server. Use when a message starts with "[Sylvode task]" or "[Sylvode reminder]", or when you need to read or change Sylvode projects, issues, comments, forms, proposals or Flow objects.
 ---
-<!-- sylvode-skill v=0.5.0 h=557f099b7571 -->
+<!-- sylvode-skill v=0.5.0 h=deb1ae9cb0ee -->
 
 # Sylvode MCP
 
@@ -56,7 +56,7 @@ Search mode is the default. The tool list holds only `sylvode_overview`, `sylvod
 - Call a tool marked `write` with `sylvode_write {"tool": "<name>", "arguments": {...}}`. It refuses tools that only read.
 - The task tools are the exception: call them directly by name, never through `sylvode_read` or `sylvode_write`.
 - The arguments are checked against the tool's schema before anything runs. Send exactly what the schema allows.
-- If `sylvode_write` answers that writes are disabled, do not retry. Finish with what you can do, and say so in the summary.
+- If a write answers that writes are disabled (from `sylvode_write`, or from the write tool itself in full mode), do not retry. Finish with what you can do, and say so in the summary. The task tools are not affected.
 - A refusal that names the project agent policy is final for this project. Do not try another tool to get around it.
 
 Full mode is an explicit choice of whoever configured the server. Then the tool list holds every tool by its own name, and `sylvode_overview`, `sylvode_search`, `sylvode_read` and `sylvode_write` are not offered: call each tool directly by name with its own arguments. The task tools and the procedure above are the same in both modes. Use whichever mode the tool list in front of you shows.

@@ -458,6 +458,78 @@ async fn with_writes_disabled_sylvode_write_answers_for_the_whole_catalogue_and_
     Ok(())
 }
 
+/// `allow_write_call = false` disables every write tool except the task lifecycle tools, in every
+/// mode and by every door: the wrapper, a direct call in full mode, and a direct call of a task
+/// tool (which a runner bot needs). Enumerated over the whole catalogue.
+#[tokio::test]
+async fn with_writes_disabled_no_write_tool_runs_in_any_mode_and_the_task_tools_still_do() -> TestResult {
+    const REFUSAL: &str = "Error: writes are disabled for this bot by the runner configuration";
+    for mode in [McpToolMode::Search, McpToolMode::Full] {
+        let api = Api::spawn(Policy::Permissive).await?;
+        let server = server(&api, mode)?.with_write_call_allowed(false);
+        for tool in non_task_tools() {
+            let writes = catalog::meta(&tool.name).map(|entry| entry.access) == Some(Access::Write);
+            let arguments = minimal_arguments(&tool);
+            // The way in this mode: the wrapper in search mode, the tool's own name in full mode.
+            let (name, call_arguments) = match mode {
+                McpToolMode::Search => (
+                    wrapper_for(&tool.name),
+                    json!({ "tool": tool.name, "arguments": arguments }),
+                ),
+                McpToolMode::Full => (tool.name.as_str(), arguments),
+            };
+            let before = api.seen().len();
+            let result = server.call_tool(name, call_arguments).await;
+            if writes {
+                assert_eq!(text(&result), REFUSAL, "{mode:?} {}", tool.name);
+                assert_eq!(api.seen().len(), before, "{mode:?} {} reached the API", tool.name);
+            } else {
+                assert!(!text(&result).contains("writes are disabled"), "{mode:?} {}", tool.name);
+            }
+        }
+        // A read keeps working, and so do the five task tools: they are the documented exception.
+        for task in tasks::tool_definitions() {
+            let before = api.seen().len();
+            let result = server.call_tool(&task.name, minimal_arguments(&task)).await;
+            assert!(
+                !text(&result).contains("writes are disabled"),
+                "{mode:?} {}: {}",
+                task.name,
+                text(&result)
+            );
+            assert!(
+                api.seen().len() > before,
+                "{mode:?} {} never reached the API",
+                task.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The Flow-only surface (used by `sylvode tools call` with a user token) honours the switch too;
+/// its tools the catalogue does not know count as writes.
+#[tokio::test]
+async fn a_flow_only_server_honours_the_write_switch() -> TestResult {
+    let api = Api::spawn(Policy::Permissive).await?;
+    let server = McpServer::new(api.client()?.flow_only(), McpToolMode::Full).with_write_call_allowed(false);
+    for definition in crate::tools::flow_scope::definitions() {
+        let writes = catalog::meta(&definition.name).map_or(true, |entry| entry.access == Access::Write);
+        if !writes {
+            continue;
+        }
+        let result = server.call_tool(&definition.name, minimal_arguments(&definition)).await;
+        assert_eq!(
+            text(&result),
+            "Error: writes are disabled for this bot by the runner configuration",
+            "{}",
+            definition.name
+        );
+    }
+    assert!(api.seen().is_empty(), "{:?}", api.seen());
+    Ok(())
+}
+
 #[tokio::test]
 async fn with_writes_allowed_sylvode_write_runs_a_write_tool() -> TestResult {
     let api = Api::spawn(Policy::Permissive).await?;
