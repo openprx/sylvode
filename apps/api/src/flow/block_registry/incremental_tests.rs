@@ -7,7 +7,7 @@
 
 use super::fixtures::page;
 use super::mutation::{self, Mutation};
-use super::tests::{add_share, begin_capped, row_versions, scratch_with_leases, suspended_cids};
+use super::tests::{add_share, row_versions, scratch_with_leases, suspended_cids};
 use super::*;
 use sea_orm::{DatabaseConnection, TransactionTrait};
 use std::collections::BTreeMap;
@@ -465,7 +465,7 @@ async fn run_case(
                 head += 1;
             }
             "cold" => {
-                BASELINES.lock().forget(a.page);
+                with_baselines(|cache| cache.forget(a.page));
                 head += 1;
             }
             _ => head += 1,
@@ -516,20 +516,18 @@ async fn run_case(
         if trigger == "stale_same_head" {
             // Another process committed this head with other content: the remembered state is foreign.
             let stale = history.last().cloned().unwrap_or_default();
-            BASELINES.lock().store(
-                a.page,
-                BaselineEntry {
-                    head,
-                    digest: [0xEE; 32],
-                    blocks: Arc::new(
-                        stale
-                            .prepared()
-                            .into_iter()
-                            .map(|block| (block.physical_cid, block.content_hash))
-                            .collect(),
-                    ),
-                },
-            );
+            let foreign = BaselineEntry {
+                head,
+                digest: [0xEE; 32],
+                blocks: Arc::new(
+                    stale
+                        .prepared()
+                        .into_iter()
+                        .map(|block| (block.physical_cid, block.content_hash))
+                        .collect(),
+                ),
+            };
+            with_baselines(|cache| cache.store(a.page, foreign));
         }
         history.push(before);
         if history.len() > 6 {
@@ -753,7 +751,7 @@ async fn every_fallback_trigger_takes_the_full_reconcile() {
     let fresh = new_pg(db).await;
     let mut fresh_doc = Doc::seeded(30);
     exec_ignore(db, "DELETE FROM flow_block_checkpoints WHERE page_id=$1", fresh.page).await;
-    BASELINES.lock().forget(fresh.page);
+    with_baselines(|cache| cache.forget(fresh.page));
     let tx = db.begin().await.unwrap();
     let out = incremental(&tx, fresh, 0, &fresh_doc.prepared(), production_allowance(), None).await;
     assert!(!out.incremental, "T1 first registration");
@@ -863,21 +861,23 @@ async fn every_fallback_trigger_takes_the_full_reconcile() {
     head += 1;
 
     // T6 a cold process or another instance: no remembered state, or a foreign one for the same head.
-    BASELINES.lock().forget(big.page);
+    with_baselines(|cache| cache.forget(big.page));
     assert!(
         !step(db, big, &mut big_doc, head, production_allowance())
             .await
             .incremental
     );
     head += 1;
-    BASELINES.lock().store(
-        big.page,
-        BaselineEntry {
-            head: head - 1,
-            digest: [0x11; 32],
-            blocks: Arc::new(HashMap::new()),
-        },
-    );
+    with_baselines(|cache| {
+        cache.store(
+            big.page,
+            BaselineEntry {
+                head: head - 1,
+                digest: [0x11; 32],
+                blocks: Arc::new(HashMap::new()),
+            },
+        );
+    });
     assert!(
         !step(db, big, &mut big_doc, head, production_allowance())
             .await
@@ -992,7 +992,9 @@ async fn measured_write(
     for _ in 0..INSERTED {
         doc.insert_new(None);
     }
-    let tx = begin_capped(db).await;
+    // No statement or lock timeout here: this test counts statements and rows, it does not
+    // measure time, and a timeout would turn a slow database into a failure of the count.
+    let tx = db.begin().await.unwrap();
     let before = row_versions(&tx, pg.page).await;
     let started = Instant::now();
     let (outcome, records) = statement_probe::count(reconcile_in_mode(
@@ -1006,7 +1008,13 @@ async fn measured_write(
     ))
     .await;
     let elapsed = started.elapsed();
-    let outcome = outcome.unwrap();
+    let outcome = outcome.unwrap_or_else(|error| {
+        panic!(
+            "size {size}, mode {mode:?}: the measured write failed: {error:?}; statements so far {}: {:?}",
+            records.len(),
+            statement_probe::slowest(&records, 3)
+        )
+    });
     let after = row_versions(&tx, pg.page).await;
     let known = before.iter().collect::<HashSet<_>>();
     let rewritten = after.iter().filter(|line| !known.contains(line)).count();
@@ -1035,8 +1043,18 @@ async fn incremental_work_is_bounded_by_the_change() {
     for size in sizes {
         let (records, rewritten, elapsed, took_incremental) =
             measured_write(db, size, ReconcileMode::Incremental).await;
-        assert!(took_incremental, "size {size}");
-        assert_eq!(rewritten, expected_rows, "size {size}: rows written");
+        assert!(
+            took_incremental,
+            "size {size}: the write took the full reconcile although the incremental one was requested \
+             ({} statements, widest {} rows); the baseline memory did not hold the registered state or \
+             the checkpoint guard refused it",
+            records.len(),
+            records.iter().map(|record| record.rows).max().unwrap_or(0)
+        );
+        assert_eq!(
+            rewritten, expected_rows,
+            "size {size}: registry rows rewritten by the incremental write (expected {EDITED} edits + 2 x {INSERTED} inserts + 2 x {DELETED} deletes)"
+        );
         assert!(
             records.iter().all(|record| record.rows <= bound),
             "size {size}: a statement carries more than the change ({bound} rows): {:?}",
@@ -1049,8 +1067,14 @@ async fn incremental_work_is_bounded_by_the_change() {
         );
         incremental_runs.push(records.len());
         let (records, rewritten, elapsed, took_incremental) = measured_write(db, size, ReconcileMode::Full).await;
-        assert!(!took_incremental);
-        assert_eq!(rewritten, expected_rows);
+        assert!(
+            !took_incremental,
+            "size {size}: the full mode must not take the incremental path"
+        );
+        assert_eq!(
+            rewritten, expected_rows,
+            "size {size}: registry rows rewritten by the full write"
+        );
         eprintln!(
             "full        size {size}: {} statements, {rewritten} rows written, {elapsed:?}, widest statement {} rows",
             records.len(),
@@ -1064,11 +1088,14 @@ async fn incremental_work_is_bounded_by_the_change() {
     // The statement count of the incremental write is the same at every page size ...
     assert!(
         incremental_runs.windows(2).all(|pair| pair[0] == pair[1]),
-        "statements per write depend on the page size: {incremental_runs:?}"
+        "incremental statements per write for sizes {sizes:?} depend on the page size: {incremental_runs:?}"
     );
     // ... and the bound itself: checkpoint (2), locking read, writes (at most 5 chunk statements
     // for the touched blocks), retirement (2), suspension, checkpoint update, shares, anchors.
-    assert!(incremental_runs[0] <= 16, "{incremental_runs:?}");
+    assert!(
+        incremental_runs[0] <= 16,
+        "incremental statements per write exceed the bound of 16: {incremental_runs:?} for sizes {sizes:?}"
+    );
     // Negative control, which is what the code did before: the full reconcile's statement count and
     // widest statements grow with the page. The assertion below is the one the old code fails.
     assert!(
@@ -1086,7 +1113,9 @@ async fn incremental_work_is_bounded_by_the_change() {
 // 5. Timing report (printed, never asserted)
 // ---------------------------------------------------------------------------------------------
 
+/// A report, not a check: run it with `cargo test -- --ignored timing_report --nocapture`.
 #[tokio::test]
+#[ignore = "timing report; prints wall times and asserts nothing about them"]
 async fn timing_report_of_one_fifty_block_write() {
     let scratch = scratch!("incr_timing");
     let db = &scratch.db;
