@@ -1,18 +1,19 @@
-//! Ending a task whose forwarding failed.
+//! Ending a task a forwarding agent was given.
 //!
 //! A task of the Sylvode worker is `processing` from the moment it is delivered, and only the task
-//! protocol ends it (`POST /api/v1/ai/tasks/{task_id}/fail`, or `complete` by the agent through
-//! the task tools). The forwarding agent types (`webhook`, `openclaw`, `openprx`, `custom`) hand
-//! the delivery to another program, which owns the task from then on: a successful hand-over
-//! reports nothing. This module covers the one case the receiving side cannot: the hand-over
-//! itself failed, so nobody will ever end the task. The runner then fails it with
-//! `source: "runner"`, using the token of the task's bot (a token works only for the tasks of the
-//! bot that owns it). `retryable` is `true` for a failure a repeat may fix, `false` for a task no
-//! agent will take.
+//! protocol ends it (`POST /api/v1/ai/tasks/{task_id}/complete` or `.../fail`). The forwarding
+//! agent types (`webhook`, `openclaw`, `openprx`, `custom`) hand the delivery to another program.
+//! The runner ends the task itself, with the token of the task's bot (a token works only for the
+//! tasks of the bot that owns it):
 //!
-//! The call names the attempt (`?attempt=N`, the delivery's `attempts`), so a late report cannot
-//! end a later attempt. A refusal is never retried; a timeout, a transport error or an HTTP 5xx is,
-//! up to `[ai_task_callback] max_attempts` times in all.
+//! - the hand-over worked: `complete` (outcome `done`), so the task runs once and its lease never
+//!   expires into a redelivery that would run it again;
+//! - the hand-over failed, or no agent matches: `fail` with `source: "runner"`, `retryable` for a
+//!   failure a repeat may fix and not for a task no agent will take.
+//!
+//! The call names the attempt (`?attempt=N`, the delivery's `attempts`), so a late call cannot end
+//! a later attempt. A refusal is never retried; a timeout, a transport error or an HTTP 5xx is, up
+//! to `[ai_task_callback] max_attempts` times in all.
 
 use crate::background::Background;
 use crate::config::{AiTaskCallback, Config};
@@ -24,7 +25,14 @@ use uuid::Uuid;
 /// The longest wait between two attempts, however often the delay has doubled.
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
-/// The pending failure report of one task.
+/// How the runner ends the task.
+#[derive(Debug, Clone)]
+enum End {
+    Complete { summary: String },
+    Fail { reason: String, retryable: bool },
+}
+
+/// The pending end of one task.
 #[derive(Debug)]
 pub struct ForwardFailure {
     client: SvClient,
@@ -73,21 +81,38 @@ impl ForwardFailure {
         }
     }
 
-    /// Reports the failure in the background; shutdown waits for it.
+    /// Fails the task in the background; shutdown waits for it.
     pub fn report_in_background(self, reason: String, retryable: bool, background: &Background) {
-        let task_background = background.clone();
-        background.spawn(async move { self.report(&reason, retryable, &task_background).await });
+        self.spawn(End::Fail { reason, retryable }, background);
     }
 
-    /// Fails the task, retrying a transient failure. Once shutdown has begun no further retry is
+    /// Completes the task in the background (the hand-over worked); shutdown waits for it.
+    pub fn complete_in_background(self, summary: String, background: &Background) {
+        self.spawn(End::Complete { summary }, background);
+    }
+
+    fn spawn(self, end: End, background: &Background) {
+        let task_background = background.clone();
+        background.spawn(async move { self.send(&end, &task_background).await });
+    }
+
+    /// Ends the task, retrying a transient failure. Once shutdown has begun no further retry is
     /// scheduled.
-    pub async fn report(self, reason: &str, retryable: bool, background: &Background) {
+    async fn send(self, end: &End, background: &Background) {
         let mut delay = self.retry_delay;
         for attempt in 1..=self.max_attempts {
-            let result = self
-                .client
-                .fail(&self.task_id, self.attempt, reason, retryable, self.timeout)
-                .await;
+            let result = match end {
+                End::Complete { summary } => {
+                    self.client
+                        .complete(&self.task_id, self.attempt, summary, self.timeout)
+                        .await
+                }
+                End::Fail { reason, retryable } => {
+                    self.client
+                        .fail(&self.task_id, self.attempt, reason, *retryable, self.timeout)
+                        .await
+                }
+            };
             match result {
                 Ok(()) => {
                     tracing::info!(task_id = %self.task_id, attempt, "AI task failure reported");

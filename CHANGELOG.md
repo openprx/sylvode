@@ -32,7 +32,7 @@ name.
   refuses `agent_type = "cli"` (use `agent_type = "runner"` with the headless channel), and the
   keys that only it used: `[agents.cli]`, `[agents.ai_task_callback]`, `[features] cli_enabled`
   and `callback_enabled`, and `[ai_task_callback] max_output_chars`. A forwarding agent
-  (`webhook`, `openclaw`, `openprx`, `custom`) reports nothing when the hand-over works and fails
+  (`webhook`, `openclaw`, `openprx`, `custom`) completes the task through the protocol when the hand-over works (so it runs once) and fails
   the task with `source: "runner"` when it does not. Tasks sent over the tunnel are answered
   `failed`.
 

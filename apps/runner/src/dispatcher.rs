@@ -66,9 +66,8 @@ impl Dispatched {
     }
 }
 
-/// Hands the delivery to a forwarding agent. A failed hand-over ends a worker AI task through the
-/// task protocol (see [`crate::ai_task`]); a successful one reports nothing, because the receiving
-/// side owns the task from then on.
+/// Hands the delivery to a forwarding agent and ends a worker AI task through the task protocol
+/// (see [`crate::ai_task`]): completed when the hand-over worked, failed when it did not.
 pub async fn dispatch(
     config: &Config,
     background: &Background,
@@ -86,16 +85,22 @@ pub async fn dispatch(
         ),
         other => Dispatched::refused(format!("unknown agent type: {other}")),
     };
-    if matches!(dispatched.outcome, Outcome::Failed | Outcome::Refused)
-        && let Some(http) = http
+    if let Some(http) = http
         && let Some(report) = ForwardFailure::for_delivery(config, http, payload)
     {
-        // An agent that was never started would not be on a retry either.
-        report.report_in_background(
-            dispatched.summary.clone(),
-            dispatched.outcome != Outcome::Refused,
-            background,
-        );
+        match dispatched.outcome {
+            // The hand-over worked: the task ends here, once, so no lease runs out and no
+            // redelivery runs it again.
+            Outcome::Succeeded => {
+                report.complete_in_background(format!("handed over to the {} agent", agent.id), background);
+            }
+            // An agent that was never started would not be on a retry either.
+            Outcome::Failed | Outcome::Refused => report.report_in_background(
+                dispatched.summary.clone(),
+                dispatched.outcome != Outcome::Refused,
+                background,
+            ),
+        }
     }
     dispatched
 }

@@ -454,8 +454,9 @@ one way to end a task:
   (`sylvode_task_complete` or `sylvode_task_fail`); the runner fails a task only when it cannot
   go on (the session was killed, a dialog is blocking, the agent did not acknowledge it; see the
   [`runner` agents](#runner-agents-project-execution) section).
-- **Forwarding agents** (`webhook`, `openclaw`, `openprx`, `custom`). The receiving side owns the
-  task once the hand-over worked, so a successful hand-over reports nothing. When the hand-over
+- **Forwarding agents** (`webhook`, `openclaw`, `openprx`, `custom`). When the hand-over worked the
+  runner completes the task (`outcome: done`, a summary naming the agent), so it runs once: its
+  lease never expires into a redelivery that would run the forwarded work again. When the hand-over
   itself fails, or no agent matches the task, the runner fails the task with `source: "runner"`
   and the token of the task's bot (`retryable: true` for a failure a repeat may fix, `false` for
   a task no agent takes). The reason is a fixed summary (`error: the command exited with status

@@ -62,22 +62,29 @@ fn bearer(recorded: &crate::support::Recorded) -> Option<&str> {
     recorded.headers.get("authorization").and_then(|v| v.to_str().ok())
 }
 
-/// A hand-over that works reports nothing: the receiving side owns the task.
+/// A hand-over that works completes the task through the protocol, once: the task ends, so its
+/// lease never expires into a redelivery that would run the forwarded work again.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_successful_forward_reports_nothing() {
+async fn a_successful_forward_completes_the_task_once() {
     let bin = TempDir::new("bin");
     let command = write_script(bin.path(), "forward", "exit 0");
     let mut api = StubApi::start().await;
     let server = Server::start(RUNNER, &config(&api, &command), &[]).expect("server starts");
 
     let task_id = uuid::Uuid::new_v4().to_string();
-    let (status, answer) = post_signed(&server.url("/webhook"), &worker_task(&task_id, "bot-1").to_string()).await;
+    let mut task = worker_task(&task_id, "bot-1");
+    task["attempts"] = serde_json::json!(2);
+    let (status, answer) = post_signed(&server.url("/webhook"), &task.to_string()).await;
     assert_eq!(status, 200, "{answer}");
     assert_eq!(answer["status"], "dispatched", "{answer}");
-    assert!(
-        api.next(Duration::from_millis(800)).await.is_none(),
-        "nothing is reported for a forward that worked"
-    );
+    let call = api.next(Duration::from_secs(20)).await.expect("complete call");
+    assert_eq!(call.path, format!("/api/v1/ai/tasks/{task_id}/complete"));
+    assert_eq!(call.query.as_deref(), Some("attempt=2"));
+    assert_eq!(bearer(&call), Some(format!("Bearer {BOT_TOKEN}").as_str()));
+    assert_eq!(call.body["outcome"], "done", "{:?}", call.body);
+    assert!(call.body["summary"].as_str().unwrap_or_default().contains("bot-1"));
+    // One end only: nothing is sent again, and nothing is left open for the lease to redeliver.
+    assert!(api.next(Duration::from_millis(1500)).await.is_none(), "one call only");
 }
 
 /// A hand-over that fails ends the task through the protocol: attempt named, bot token, `source`
@@ -235,10 +242,9 @@ async fn a_bot_ids_only_route_does_not_catch_another_bot() {
     let (status, answer) = post_signed(&server.url("/webhook"), &listed.to_string()).await;
     assert_eq!(status, 200, "{answer}");
     assert_eq!(answer["status"], "dispatched", "{answer}");
-    assert!(
-        api.next(Duration::from_millis(500)).await.is_none(),
-        "a good forward reports nothing"
-    );
+    let call = api.next(Duration::from_secs(10)).await.expect("complete call");
+    assert_eq!(call.path, format!("/api/v1/ai/tasks/{listed_id}/complete"));
+    assert!(api.next(Duration::from_millis(500)).await.is_none(), "one call only");
 }
 
 /// `agent_type = "cli"` is refused at start-up, naming what replaces it.

@@ -175,6 +175,20 @@ impl SvClient {
             .map(|_| ())
     }
 
+    /// `POST .../complete` with outcome `done`: the runner ends a task whose hand-over to a
+    /// forwarding agent worked.
+    ///
+    /// # Errors
+    ///
+    /// [`SvError`].
+    pub async fn complete(&self, task_id: &str, attempt: i64, summary: &str, timeout: Duration) -> Result<(), SvError> {
+        let path = format!("/api/v1/ai/tasks/{}/complete?attempt={attempt}", encode(task_id));
+        let body = json!({"outcome": "done", "summary": summary});
+        Self::send(self.request(reqwest::Method::POST, &path, timeout).json(&body))
+            .await
+            .map(|_| ())
+    }
+
     /// `POST .../fail` with `source: "runner"`.
     ///
     /// # Errors
