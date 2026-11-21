@@ -376,11 +376,14 @@ fn reject_from_collab_error(update_id: Option<Uuid>, err: &CollabError) -> Accep
             current_frontier: None,
         });
     }
-    // A new shadow root (a reserved root container with the wrong type) or an update whose ops
-    // could not all be inspected: `invalid_update`, with the reason a caller can branch on.
+    // A new shadow root (a reserved root container with the wrong type), an update whose ops
+    // could not all be inspected, or a write of an existing node's logical id: `invalid_update`,
+    // with the reason a caller can branch on. All three are properties of the update's content, so
+    // a retry cannot succeed.
     if let CollabError::OperationFailed { reason } = err
         && (reason == collab_core::reserved_roots::SHADOW_ROOT_REASON
-            || reason == collab_core::reserved_roots::SCAN_INCOMPLETE_REASON)
+            || reason == collab_core::reserved_roots::SCAN_INCOMPLETE_REASON
+            || reason == collab_core::window_check::ID_REWRITE_REASON)
     {
         return AcceptOutcome::Rejected(Rejected {
             update_id,
@@ -896,7 +899,9 @@ fn decide_window_with(
             "window_cooldown: the document's windows keep disagreeing with the host's projection; deciding its writes by the full window directly"
         );
     }
-    if first_mode == WindowMode::Full {
+    // A full first attempt, or one that carried no report (facts absent, or a fallback), ran the
+    // full computation already: a second one repeats it and diverges again, so it is refused here.
+    if first_mode == WindowMode::Full || !from_report {
         log_window_divergence(&divergence, ids, DivergenceAnswer::Refuse);
         return Err(ApiError::internal());
     }
@@ -1175,6 +1180,19 @@ mod window_oracle_tests {
         assert!(decide_window(ids(), WindowMode::Incremental, |_| Ok(diverged())).is_err());
     }
 
+    /// R4-3: an attempt that carried no report ran the full computation already, so a second
+    /// full computation would repeat it; it is refused after one attempt, in either mode.
+    #[test]
+    fn a_diverged_attempt_without_a_report_is_refused_without_a_second_attempt() {
+        let mut modes = Vec::new();
+        let refused = decide_window(ids(), WindowMode::Incremental, |mode| {
+            modes.push(mode);
+            Ok(diverged_with(false))
+        });
+        assert!(refused.is_err());
+        assert_eq!(modes, [WindowMode::Incremental]);
+    }
+
     /// R3-3: a full computation that the host's projection contradicts does not count toward the
     /// cooldown, however often it happens; a contradicted incremental check does.
     #[test]
@@ -1318,7 +1336,18 @@ fn isolated_apply_rejection(
         )
     };
     match err {
-        IsolatedApplyError::Collab(err) => Ok(reject_from_collab_error(Some(update_id), &err)),
+        IsolatedApplyError::Collab(err) => {
+            if matches!(&err, CollabError::OperationFailed { reason } if reason == collab_core::window_check::ID_REWRITE_REASON)
+            {
+                tracing::warn!(
+                    document_id = %document_id,
+                    update_id = %update_id,
+                    reason = collab_core::window_check::ID_REWRITE_REASON,
+                    "collab write: refused, the update writes the logical id of a node that already exists"
+                );
+            }
+            Ok(reject_from_collab_error(Some(update_id), &err))
+        }
         IsolatedApplyError::CpuCeiling => Ok(ceiling("decode_apply_cpu_ms", DECODE_APPLY_CPU_MS_MAX)),
         IsolatedApplyError::WallCeiling => Ok(ceiling("decode_apply_wall_ms", DECODE_APPLY_WALL_MS_MAX)),
         IsolatedApplyError::MemoryCeiling => {
@@ -2961,6 +2990,7 @@ mod isolation_rejection_tests {
         for reason in [
             collab_core::reserved_roots::SHADOW_ROOT_REASON,
             collab_core::reserved_roots::SCAN_INCOMPLETE_REASON,
+            collab_core::window_check::ID_REWRITE_REASON,
         ] {
             let update_id = Uuid::new_v4();
             let outcome =
