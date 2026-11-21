@@ -86,7 +86,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use api::flow::collab::bootstrap;
-use api::flow::collab::cache::{PutOutcome, WarmCache};
+use api::flow::collab::cache::{HeadKey, PutOutcome, WarmCache};
 use api::flow::collab::coordinator::DocumentCoordinator;
 use api::flow::collab::limits::{
     MAX_REBASE_ATTEMPTS, WARM_CACHE_DECODED_BYTES_MAX, WARM_CACHE_DOCUMENTS_MAX, WARM_CACHE_ENTRY_DECODED_BYTES_MAX,
@@ -561,9 +561,22 @@ async fn head_state_bytes(db: &DatabaseConnection, document_id: Uuid) -> Vec<u8>
     engine.export_snapshot().expect("head state exports a snapshot")
 }
 
-fn engine_of(cache: &WarmCache, document_id: Uuid, head_seq: i64, format_version: &str) -> Option<LoroCollabEngine> {
+fn engine_of(
+    cache: &WarmCache,
+    document_id: Uuid,
+    head_seq: i64,
+    frontier: &[u8],
+    format_version: &str,
+) -> Option<LoroCollabEngine> {
     cache
-        .fork_matching(document_id, head_seq, format_version)
+        .fork_matching(
+            document_id,
+            &HeadKey {
+                head_seq,
+                frontier,
+                format_version,
+            },
+        )
         .expect("fork_matching does not error")
 }
 
@@ -734,7 +747,7 @@ fn section_cache_boundaries(mutant: Mutant, violations: &mut Vec<String>) -> Val
     let alive_elapsed = idle_started.elapsed().as_secs_f64();
     // `fork_matching` is one of the two entry points that runs the idle sweep, so this probe both
     // asks "is it still here" and proves the sweep ran and declined to reclaim it.
-    let alive = engine_of(&idle, idle_id, 7, "loro-1").is_some();
+    let alive = engine_of(&idle, idle_id, 7, &[1, 2], "loro-1").is_some();
     let alive_len = idle.len();
     if !alive || alive_len != 1 {
         violations.push(format!(
@@ -943,7 +956,13 @@ async fn section_rebuild_after_eviction(
 
     let doc = read_document(db, document_id).await;
     let warm_before_eviction = instance.cache.contains(document_id);
-    let warm_engine = engine_of(&instance.cache, document_id, doc.head_seq, &doc.format_version);
+    let warm_engine = engine_of(
+        &instance.cache,
+        document_id,
+        doc.head_seq,
+        &doc.head_frontier,
+        &doc.format_version,
+    );
     let warm_hash = warm_engine.as_ref().map(semantic_hash);
     if warm_engine.is_none() {
         violations.push(
@@ -959,7 +978,14 @@ async fn section_rebuild_after_eviction(
         violations.push("rebuild: the document survived LRU pressure past the entry ceiling".to_string());
     }
     // A cache that no longer holds the document must also refuse to serve it.
-    let serves_after_eviction = engine_of(&instance.cache, document_id, doc.head_seq, &doc.format_version).is_some();
+    let serves_after_eviction = engine_of(
+        &instance.cache,
+        document_id,
+        doc.head_seq,
+        &doc.head_frontier,
+        &doc.format_version,
+    )
+    .is_some();
     if serves_after_eviction {
         violations.push("rebuild: an evicted document was still served by fork_matching".to_string());
     }
@@ -1093,7 +1119,14 @@ async fn section_no_accepted_update_lost(
                     )
                 }
                 "hit" => {
-                    let served = engine_of(&shared.cache, document_id, doc.head_seq, &doc.format_version).is_some();
+                    let served = engine_of(
+                        &shared.cache,
+                        document_id,
+                        doc.head_seq,
+                        &doc.head_frontier,
+                        &doc.format_version,
+                    )
+                    .is_some();
                     if !served {
                         violations.push(format!(
                             "no_lost_updates: the '{condition}' write could not be established -- the \
@@ -1231,9 +1264,15 @@ async fn section_no_accepted_update_lost(
     // Every accepted update is still reachable through the consistency loader after the restart.
     let (rebuilt, rebuilt_head, _) = rebuild_from_bootstrap(verify_db, document_id, false).await;
     let rebuilt_hash = semantic_hash(&rebuilt);
-    let live_cache_hash = engine_of(&shared.cache, document_id, doc.head_seq, &doc.format_version)
-        .as_ref()
-        .map(semantic_hash);
+    let live_cache_hash = engine_of(
+        &shared.cache,
+        document_id,
+        doc.head_seq,
+        &doc.head_frontier,
+        &doc.format_version,
+    )
+    .as_ref()
+    .map(semantic_hash);
     if rebuilt_head != doc.head_seq {
         violations.push("no_lost_updates: post-restart rebuild head does not match canonical head".to_string());
     }

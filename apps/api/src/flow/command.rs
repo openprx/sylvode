@@ -28,7 +28,7 @@ use uuid::Uuid;
 use crate::error::{ApiError, ApiErrorKind, ServerDrainingReason};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 
-use super::collab::{authz, bootstrap, frame, limits as collab_limits, runtime, write};
+use super::collab::{authz, frame, limits as collab_limits, runtime, write};
 use super::event_origin::CommandOrigin;
 use super::model::{AcceptedChange, FlowFeatureUpdateView, FlowObjectView};
 use super::move_object::GovernanceCommandType;
@@ -2197,9 +2197,10 @@ async fn replay_content_command(
     Ok(Some(accepted_change_from_row(view, existing.id)))
 }
 
-/// Builds the CRDT update bytes for one content command (isolated fork, outside any lock — matches
-/// `write::hydrate_and_apply`'s own discipline for exactly this reason: neither path may hold a
-/// lock across a CRDT apply), then submits them through [`write::accept_update`] — the identical
+/// Builds the CRDT update bytes for one content command on a private fork of the document's warm
+/// cache entry (or of a database load on a miss), outside any lock and without the coordinator
+/// permit — matches `write::hydrate_and_apply`'s own discipline for exactly this reason: neither
+/// path may hold a lock across a CRDT apply — then submits them through [`write::accept_update`] — the identical
 /// function `flow::collab::session::handle_client_frame` calls for a WebSocket `update` frame.
 /// `accept_update` itself broadcasts the resulting `update`+`accepted` frame pair to this
 /// document's WebSocket sessions (`collab-protocol-v1.md`: "复用 ADR-0010 的 ordered egress /
@@ -2227,20 +2228,9 @@ async fn execute_content_command(
         .transpose()
         .map_err(|_| ApiError::invalid_update("expected_frontier is not valid base64".to_string()))?;
 
-    let boot = bootstrap::load(&state.db, document_id).await?;
-    let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|err| map_collab_error(&err))?;
-    for tail in &boot.tail_updates {
-        engine
-            .import_update(&tail.bytes)
-            .map_err(|err| map_collab_error(&err))?;
-    }
-    let base_frontier = engine.frontier();
     let is_page = repository::fetch_object_view(&state.db, input.object_id)
         .await?
         .is_some_and(|row| row.object_type == "page");
-    if is_page && kind != ContentCommandType::SetTitle {
-        engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
-    }
     let normalized_payload = super::body_assets::normalize_command_payload(
         &state.db,
         input.object_id,
@@ -2249,10 +2239,44 @@ async fn execute_content_command(
         &input.payload,
     )
     .await?;
+
+    let collab = runtime::runtime();
+    // Never `Uuid::new_v4()`: this function is re-entered from scratch on every REST retry of one
+    // logical command, so a freshly minted id here is a *different* id on every attempt, and the
+    // whole of `write::accept_update`'s replay dedup keys off it. See
+    // `write::replay_stable_update_id`.
+    let update_id = write::replay_stable_update_id(document_id, &input.idempotency_key);
+
+    // The build runs outside any lock and without the document's coordinator permit, exactly as
+    // before the warm cache existed: concurrent REST writers of one page build in parallel and the
+    // CRDT merges their updates; only the accept below is serialised per document. The base is a
+    // private fork of the warm cache entry when its entry has exactly the head the database
+    // reports (sequence, frontier, format), else it is loaded from the database and seeds the
+    // cache.
+    let build_base_step = write::WriteStep::start("rest_build_base");
+    let mut engine = match write::prepare_build_engine(
+        &state.db,
+        &collab.cache,
+        document_id,
+        update_id,
+        expected_frontier.as_deref(),
+    )
+    .await?
+    {
+        Ok(engine) => engine,
+        Err(write::AcceptOutcome::Rejected(rejected)) => return Err(map_write_rejection(&rejected)),
+        Err(write::AcceptOutcome::Accepted(_)) => return Err(ApiError::internal()),
+    };
+    build_base_step.finish();
+    let build_apply_step = write::WriteStep::start("rest_apply_command");
+    let base_frontier = engine.frontier();
+    if is_page && kind != ContentCommandType::SetTitle {
+        engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
+    }
     if let Err(err) = apply_content_command(&mut engine, kind, &normalized_payload) {
         // The concurrent same-key double submit `rest-api-v1.md` registers as a known residual
         // window: this request's `find_idempotent_event` guard (in `execute_command_authorized`)
-        // ran *before* the other request committed and so missed, while the `bootstrap::load`
+        // ran *before* the other request committed and so missed, while the base read
         // above ran *after* it and already sees that request's effect — so `insert_block` fails
         // `DuplicateNode` here, before `update_id` deduplication in `write::accept_update` is ever
         // reached, and the caller is told `invalid_update` for a command that in fact succeeded.
@@ -2278,16 +2302,12 @@ async fn execute_content_command(
         }
         return Err(err);
     }
+    build_apply_step.finish();
+    let export_update_step = write::WriteStep::start("rest_export_update");
     let update_bytes = engine
         .export_from(&base_frontier)
         .map_err(|err| map_collab_error(&err))?;
-
-    let collab = runtime::runtime();
-    // Never `Uuid::new_v4()`: this function is re-entered from scratch on every REST retry of one
-    // logical command, so a freshly minted id here is a *different* id on every attempt, and the
-    // whole of `write::accept_update`'s replay dedup keys off it. See
-    // `write::replay_stable_update_id`.
-    let update_id = write::replay_stable_update_id(document_id, &input.idempotency_key);
+    export_update_step.finish();
 
     let outcome = write::accept_update(
         &state.db,
@@ -5486,7 +5506,7 @@ mod idempotency_race_database_tests {
 
     /// `rest-api-v1.md`'s registered residual window, reproduced deterministically: a content
     /// command whose replay guard missed (here: bypassed, which is exactly what a guard read
-    /// before the winner's COMMIT observes) but whose `bootstrap::load` already sees the winner's
+    /// before the winner's COMMIT observes) but whose base read already sees the winner's
     /// committed block. `apply_content_command` then fails `DuplicateNode` before `update_id`
     /// deduplication is ever reached.
     ///
