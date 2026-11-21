@@ -14,6 +14,26 @@ The MCP Server provides AI models with tools to interact with Sylvode's project 
 - Global search across all entities
 - Metadata-only bot operation records
 
+## Install and check
+
+`scripts/install.sh` checks the binary and its configuration, prints the exact commands that register the server in your agent CLI, and ends by running `mcp-server doctor`. It never registers anything and never installs tmux, a CLI or the runner; it only creates the configuration directory when it is missing and never rewrites an existing configuration.
+
+```sh
+apps/mcp-server/scripts/install.sh --binary-path ./mcp-server --config-dir ~/.config/sylvode-mcp
+apps/mcp-server/scripts/install.sh --dry-run     # writes nothing
+```
+
+The configuration file (`<config-dir>/config.toml`) holds the bot token: keep it readable by you only (`chmod 600`). Registration commands, with paths filled in:
+
+```sh
+claude mcp add --scope user sylvode -- <abs mcp-server> serve --transport stdio --config <abs config.toml>
+codex mcp add sylvode -- <abs mcp-server> serve --transport stdio --config <abs config.toml>
+```
+
+`mcp-server doctor [--json] [--config PATH] [--cli claude|codex|opencode ...] [--as-service]` prints the `sylvode.doctor.v1` report: configuration state and file mode, tmux, the agent CLIs, whether the server is registered in each CLI named by `--cli` (`connected`, `registered_failing`, `not_registered`, `binary_missing`; opencode is `unverified`), the runner and the API task protocol. Exit codes: 0 no `fail`, 2 at least one `fail`, 1 the checker could not run. It prints no token, no URL and no output of the programs it probes. Paste its output into bug reports.
+
+`mcp-server --check` prints a one-row `sylvode.doctor.v1` report (version, `task_protocol`, `tool_mode`), reads no secrets and probes nothing. `sylvode-runner doctor` runs it to compare task protocols.
+
 ## Scope-native Flow profile
 
 The existing binaries also provide a bounded Flow-only profile for a current global
