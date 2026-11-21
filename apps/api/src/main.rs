@@ -3663,8 +3663,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../../../migrations/0107_flow_block_registration_progress.sql"),
     ),
     (
-        "0108_oauth_authorization_server.sql",
-        include_str!("../../../migrations/0108_oauth_authorization_server.sql"),
+        "0109_oauth_authorization_server.sql",
+        include_str!("../../../migrations/0109_oauth_authorization_server.sql"),
     ),
 ];
 
@@ -4214,7 +4214,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         SchemaProbe::Column("flow_block_checkpoints", "pending_registrations"),
     ),
     (
-        "0108_oauth_authorization_server.sql",
+        "0109_oauth_authorization_server.sql",
         SchemaProbe::Relation("oauth_grants"),
     ),
 ];
@@ -4778,7 +4778,7 @@ mod tests {
                 "0105_token_bot_entity_type.sql",
                 "0106_flow_capabilities_default_on.sql",
                 "0107_flow_block_registration_progress.sql",
-                "0108_oauth_authorization_server.sql",
+                "0109_oauth_authorization_server.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );

@@ -71,7 +71,7 @@ Other facts from the code:
 
 ## 3. Migration
 
-`migrations/0108_oauth_authorization_server.sql` is embedded in the API binary and applied by the
+`migrations/0109_oauth_authorization_server.sql` is embedded in the API binary and applied by the
 API itself at start, inside `run_migrations` (ledger table `schema_migrations`; a database that
 already holds the objects is adopted, and re-running the file is harmless). Nothing is run by hand.
 It creates twelve tables (`oauth_*` and `workspace_delegation_settings`), seeds the `ramflux` client
@@ -80,7 +80,7 @@ those two tables for a few milliseconds under `lock_timeout = 10s`; on a disposa
 else is needed. To confirm after the first start:
 
 ```
-SELECT name, status FROM schema_migrations WHERE name = '0108_oauth_authorization_server.sql';
+SELECT name, status FROM schema_migrations WHERE name = '0109_oauth_authorization_server.sql';
 SELECT client_id, status FROM oauth_clients;
 ```
 
