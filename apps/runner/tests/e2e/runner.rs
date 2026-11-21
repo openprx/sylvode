@@ -339,7 +339,7 @@ async fn the_headless_cli_gets_only_the_runners_configuration() {
     let mut server = fx.serve();
     let (_, answer) = post_signed(&server.url("/webhook"), &delivery()).await;
     assert_eq!(answer["status"], "dispatched", "{answer}");
-    let lines = wait_lines(&fx.record, 10, Duration::from_secs(10));
+    let lines = wait_lines(&fx.record, 14, Duration::from_secs(10));
     let argv = lines[1..].to_vec();
     let state = state_path(&fx);
     let json = state.join("mcp").join(format!("{BOT}.claude.json"));
@@ -544,14 +544,32 @@ const OTHER_BOT: &str = "00000000-0000-4000-8000-000000000002";
 async fn each_bots_deliveries_verify_only_with_its_own_secret() {
     use crate::support::{post_with, sign};
     let fx = Fixture::new().await;
-    // A second bot on the same runner; each has its own signing secret.
+    // A second bot on the same runner; each has its own signing secret and its own roots.
+    let other_root = TempDir::new("rn-other");
+    let other_root_path = other_root
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| other_root.path().to_path_buf());
+    let own_root = fx
+        .root
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| fx.root.path().to_path_buf());
     let config = fx
         .config()
         .replace(
+            &format!("id = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\n"),
+            &format!(
+                "id = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\nallowed_roots = [\"{}\"]\n",
+                own_root.display()
+            ),
+        )
+        .replace(
             "\n[[agents]]",
             &format!(
-                "\n[[ai_task_callback.bots]]\nbot_id = \"{OTHER_BOT}\"\ntoken = \"{}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-of-bot-two-xx\"\n\n[[agents]]\nid = \"{OTHER_BOT}\"\nname = \"Two\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{OTHER_BOT}\"]\n\n[[agents]]",
-                concat!("opr", "_", "ef01ef01ef01ef01ef01ef01ef01ef01ef01")
+                "\n[[ai_task_callback.bots]]\nbot_id = \"{OTHER_BOT}\"\ntoken = \"{}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-of-bot-two-xx\"\n\n[[agents]]\nid = \"{OTHER_BOT}\"\nname = \"Two\"\nagent_type = \"runner\"\nallowed_roots = [\"{}\"]\n[agents.route]\nbot_ids = [\"{OTHER_BOT}\"]\n\n[[agents]]",
+                concat!("opr", "_", "ef01ef01ef01ef01ef01ef01ef01ef01ef01"),
+                other_root_path.display()
             ),
         )
         .replace(

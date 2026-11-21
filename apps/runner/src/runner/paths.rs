@@ -121,6 +121,23 @@ impl AllowedRoots {
         })
     }
 
+    /// Whether `path` is equal to, inside, or an ancestor of any root (compared as written and
+    /// canonical).
+    pub fn overlaps(&self, path: &Path) -> bool {
+        self.roots.iter().any(|root| {
+            [&root.original, &root.canonical]
+                .into_iter()
+                .any(|root| path.starts_with(root) || root.starts_with(path))
+        })
+    }
+
+    /// Whether any root of `self` overlaps any root of `other`.
+    pub fn overlaps_roots(&self, other: &Self) -> bool {
+        self.roots
+            .iter()
+            .any(|mine| other.overlaps(&mine.canonical) || other.overlaps(&mine.original))
+    }
+
     /// Checks the working directory Sylvode sent and returns the canonical path to use.
     ///
     /// The order matters, because the answer reaches workspace members: first the syntax, then

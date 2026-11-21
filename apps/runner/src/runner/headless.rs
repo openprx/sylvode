@@ -147,6 +147,7 @@ pub fn prepare(config: &Config, state: &StateDir, accepted: &Accepted, mcp_serve
                 &runner.cli.claude,
                 &accepted.dir,
                 &claude_json,
+                state.root(),
                 prompt,
             ),
             runner.cli.claude.env_passthrough.clone(),

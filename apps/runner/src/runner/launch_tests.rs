@@ -21,6 +21,7 @@ fn files() -> LaunchFiles<'static> {
         runner_exe: Path::new("/opt/sylvode/bin/sylvode-runner"),
         hook_socket: Path::new("/state/hook.sock"),
         nonce: NONCE,
+        state_dir: Path::new("/state"),
     }
 }
 
@@ -66,6 +67,10 @@ fn claude_defaults_are_exactly_the_documented_posture() {
             "Read(//work/svwl/**)",
             "Glob(//work/svwl/**)",
             "Grep(//work/svwl/**)",
+            "--disallowedTools",
+            "Read(//state/**)",
+            "Glob(//state/**)",
+            "Grep(//state/**)",
         ])
     );
     // Neither the write tool nor any shell or edit tool, and no skip-permissions flag.
@@ -105,8 +110,17 @@ fn each_widening_adds_only_what_it_names() {
     .expect("argv");
     assert!(extras.contains(&"Edit(//work/svwl/src/**)".to_string()));
     assert!(extras.contains(&"Bash(git status)".to_string()));
-    let tail = &extras[extras.len() - 2..];
-    assert_eq!(tail, ["--disallowedTools", "Bash(rm *)"]);
+    let tail = &extras[extras.len() - 5..];
+    assert_eq!(
+        tail,
+        [
+            "--disallowedTools",
+            "Read(//state/**)",
+            "Glob(//state/**)",
+            "Grep(//state/**)",
+            "Bash(rm *)"
+        ]
+    );
     // The mode is the configured one, validated.
     let accept = claude(&RunnerClaudeConfig {
         permission_mode: "acceptEdits".to_string(),
@@ -389,6 +403,7 @@ fn the_headless_claude_argv_has_the_same_posture_as_the_interactive_one() {
         &RunnerClaudeConfig::default(),
         Path::new(DIR),
         Path::new("/state/mcp/BOT.claude.json"),
+        Path::new("/state"),
         "[Sylvode task] id=x",
     )
     .expect("argv");
@@ -419,6 +434,7 @@ fn the_headless_claude_argv_has_the_same_posture_as_the_interactive_one() {
                 &RunnerClaudeConfig::default(),
                 Path::new(DIR),
                 Path::new("/m"),
+                Path::new("/state"),
                 bad
             )
             .is_err()
@@ -433,6 +449,7 @@ fn the_headless_claude_argv_has_the_same_posture_as_the_interactive_one() {
         },
         Path::new(DIR),
         Path::new("/m"),
+        Path::new("/state"),
         "p",
     )
     .expect("argv");
@@ -471,4 +488,34 @@ fn the_headless_codex_and_opencode_argv() {
         strings(&["/usr/bin/opencode", "run", "p"])
     );
     assert!(opencode_headless_argv(Path::new("/o"), "-x").is_err());
+}
+
+/// The state directory holds every bot's token: a deny rule keeps a task from reading it, however
+/// wide the allow rules are, on both channels.
+#[test]
+fn the_state_directory_is_denied_to_reads_on_both_channels() {
+    let want = ["Read(//state/**)", "Glob(//state/**)", "Grep(//state/**)"];
+    let interactive = claude_argv(
+        Path::new("/c"),
+        &RunnerClaudeConfig::default(),
+        Path::new(DIR),
+        &files(),
+    )
+    .expect("argv");
+    let headless = claude_headless_argv(
+        Path::new("/c"),
+        &RunnerClaudeConfig::default(),
+        Path::new(DIR),
+        Path::new("/m"),
+        Path::new("/state"),
+        "p",
+    )
+    .expect("argv");
+    for argv in [interactive, headless] {
+        let at = argv.iter().position(|a| a == "--disallowedTools").expect("deny list");
+        let denied: Vec<&String> = argv[at + 1..].iter().take_while(|a| !a.starts_with("--")).collect();
+        for rule in want {
+            assert!(denied.iter().any(|d| d.as_str() == rule), "{rule} in {denied:?}");
+        }
+    }
 }

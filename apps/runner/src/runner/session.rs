@@ -787,6 +787,7 @@ impl Worker {
             runner_exe: &self.shared.runner_exe,
             hook_socket: &socket,
             nonce: &self.nonce,
+            state_dir: state.root(),
         };
         if task.cli == "claude" {
             state.write_session_settings(&self.key, &files).map_err(|e| {

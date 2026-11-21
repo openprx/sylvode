@@ -208,7 +208,10 @@ async fn rebuild_task(state: &Arc<AppState>, client: &SvClient, bot: &BotCreds, 
     let verdict = checks::check_delivery(
         Context {
             config: &state.config,
-            roots: &state.runner.roots,
+            roots: state
+                .config
+                .runner_agent_for_bot(&bot.bot_id)
+                .map_or(&state.runner.roots, |agent| state.runner.roots_for(agent)),
             registry,
             protocol_mismatch: None,
             client: client.clone(),

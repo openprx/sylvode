@@ -8,6 +8,7 @@ fn row(state: RowState, in_registry: bool, headless: bool) -> Row {
         state,
         in_registry,
         headless,
+        owned: true,
     }
 }
 
@@ -25,6 +26,17 @@ fn only_idle_sessions_that_are_unregistered_or_headless_are_pruned() {
             }
         }
     }
+}
+
+/// A session whose pane id or PID is not the recorded one is not the runner's: never pruned.
+#[test]
+fn a_session_that_is_not_the_recorded_pane_is_never_pruned() {
+    let foreign = Row {
+        owned: false,
+        ..row(RowState::Idle, false, true)
+    };
+    assert!(!prunable(&foreign));
+    assert!(prunable(&row(RowState::Idle, false, true)));
 }
 
 #[test]

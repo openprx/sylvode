@@ -87,6 +87,11 @@ pub struct AgentConfig {
     pub openprx: Option<OpenPRXConfig>,
     pub webhook: Option<WebhookAgentConfig>,
     pub custom: Option<CustomConfig>,
+    /// The roots this `runner` agent's projects may lie under. Without it the agent uses
+    /// `[runner] allowed_roots`; with more than one `runner` agent every agent needs its own, and
+    /// they must not overlap: one agent's task can then never read another agent's tree.
+    #[serde(default)]
+    pub allowed_roots: Vec<String>,
     pub message_template: Option<String>,
 }
 
@@ -534,6 +539,14 @@ fn check_single_program(agent_id: &str, key: &str, command: &str) -> Result<(), 
 }
 
 impl Config {
+    /// The `runner` agent that serves `bot_id`, if any.
+    pub fn runner_agent_for_bot(&self, bot_id: &str) -> Option<&AgentConfig> {
+        self.agents
+            .iter()
+            .filter(|agent| agent.agent_type == "runner")
+            .find(|agent| agent.runner_bot_ids().iter().any(|id| same_bot(id, bot_id)))
+    }
+
     pub fn load(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|e| format!("failed to read config {path}: {e}"))?;
         Self::from_toml(&content)
@@ -593,10 +606,16 @@ impl Config {
                      reports tasks with the bot's token"
                 ));
             }
-            if self.runner.allowed_roots.is_empty() {
+            if self.runner.allowed_roots.is_empty() && agent.allowed_roots.is_empty() {
                 return Err(format!(
-                    "agent `{id}`: a runner agent needs runner.allowed_roots: without a root every project \
-                     is declined"
+                    "agent `{id}`: a runner agent needs allowed_roots (its own, or [runner] allowed_roots): \
+                     without a root every project is declined"
+                ));
+            }
+            if runners.len() > 1 && agent.allowed_roots.is_empty() {
+                return Err(format!(
+                    "agent `{id}`: with more than one runner agent each needs its own allowed_roots (disjoint \
+                     from the others'): one agent's tasks must not be able to read another's tree"
                 ));
             }
             for bot in agent.runner_bot_ids() {
@@ -1867,8 +1886,8 @@ url = "http://127.0.0.1:9000/hook"
             )
         };
         let agents = format!(
-            "[[agents]]\nid = \"{a}\"\nname = \"a\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{a}\"]\n\
-             [[agents]]\nid = \"{b}\"\nname = \"b\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{b}\"]\n"
+            "[[agents]]\nid = \"{a}\"\nname = \"a\"\nagent_type = \"runner\"\nallowed_roots = [\"/x/a\"]\n[agents.route]\nbot_ids = [\"{a}\"]\n\
+             [[agents]]\nid = \"{b}\"\nname = \"b\"\nagent_type = \"runner\"\nallowed_roots = [\"/x/b\"]\n[agents.route]\nbot_ids = [\"{b}\"]\n"
         );
         let head = "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nwebhook_secrets = [\"shared-sig-1\"]\n\
                     [ai_task_callback]\nenabled = true\napi_url = \"https://api.test.net\"\n\
@@ -2002,5 +2021,20 @@ url = "http://127.0.0.1:9000/hook"
         ))
         .expect_err("refused");
         assert!(error.contains("env_passthrough"), "{error}");
+    }
+
+    #[test]
+    fn a_second_runner_agent_without_its_own_roots_is_refused() {
+        let other = "00000000-0000-0000-0000-000000000002";
+        let error = Config::from_toml(&format!(
+            "{GOLDEN_BLOCK}\n[[ai_task_callback.bots]]\nbot_id = \"{other}\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\n\
+             [[agents]]\nid = \"{other}\"\nname = \"B\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{other}\"]\n",
+            t = "z8".repeat(14)
+        ))
+        .expect_err("refused");
+        assert!(
+            error.contains("allowed_roots") || error.contains("webhook_secret"),
+            "{error}"
+        );
     }
 }

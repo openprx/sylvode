@@ -78,6 +78,8 @@ mod recovery_tests;
 #[cfg(test)]
 mod registry_tests;
 #[cfg(test)]
+mod runtime_tests;
+#[cfg(test)]
 mod sanitize_tests;
 #[cfg(test)]
 mod session_tests;
@@ -90,6 +92,8 @@ pub struct RunnerRuntime {
     pub state: Result<Arc<files::StateDir>, String>,
     /// The validated roots, or why they are not valid (which refuses the `runner` agents only).
     pub roots: Result<AllowedRoots, String>,
+    /// Roots of the `runner` agents that have their own `allowed_roots`, by agent id.
+    pub agent_roots: std::collections::HashMap<String, Result<AllowedRoots, String>>,
     /// The session-name registry, or why it cannot be used (which refuses `runner` agents).
     pub registry: Result<SessionRegistry, String>,
     /// Shared by every client: no redirects, so a bearer token never follows one. There is no
@@ -116,6 +120,11 @@ pub fn state_dir(config: &Config, home: Option<&std::path::Path>) -> Option<Path
 }
 
 impl RunnerRuntime {
+    /// The roots that apply to `agent`: its own `allowed_roots`, else `[runner] allowed_roots`.
+    pub fn roots_for(&self, agent: &crate::config::AgentConfig) -> &Result<AllowedRoots, String> {
+        self.agent_roots.get(&agent.id).unwrap_or(&self.roots)
+    }
+
     /// Validates the roots and opens the registry. Warnings are logged here.
     pub fn new(config: &Config) -> Self {
         let home = paths::service_user_home();
@@ -144,6 +153,54 @@ impl RunnerRuntime {
         {
             tracing::error!("the runner state directory cannot be used: {e}; `runner` agents will refuse every task");
         }
+        // The state directory holds every bot's token: it must not be reachable as a project
+        // directory, so it is never inside, equal to, or above a root.
+        let mut roots = roots;
+        let mut agent_roots: std::collections::HashMap<String, Result<AllowedRoots, String>> =
+            std::collections::HashMap::new();
+        for agent in config
+            .agents
+            .iter()
+            .filter(|a| a.agent_type == "runner" && !a.allowed_roots.is_empty())
+        {
+            let own = AllowedRoots::from_entries(&agent.allowed_roots, home.as_deref()).map(|report| {
+                for warning in &report.warnings {
+                    tracing::warn!("{warning}");
+                }
+                report.roots
+            });
+            agent_roots.insert(agent.id.clone(), own);
+        }
+        if let Some(state_path) = &state_path {
+            let canonical = state_path.canonicalize().unwrap_or_else(|_| state_path.clone());
+            let clash = |roots: &AllowedRoots| roots.overlaps(&canonical) || roots.overlaps(state_path);
+            let message = "runner.state_dir must be outside every allowed root (it holds the bots' tokens)".to_string();
+            if roots.as_ref().is_ok_and(&clash) {
+                tracing::error!("{message}; `runner` agents will refuse every task");
+                roots = Err(message.clone());
+            }
+            for own in agent_roots.values_mut() {
+                if own.as_ref().is_ok_and(&clash) {
+                    *own = Err(message.clone());
+                }
+            }
+        }
+        // Two agents' roots must not overlap: one agent's tasks must not reach another's tree.
+        let ids: Vec<String> = agent_roots.keys().cloned().collect();
+        for (n, a) in ids.iter().enumerate() {
+            for b in ids.iter().skip(n + 1) {
+                let overlap = matches!(
+                    (agent_roots.get(a), agent_roots.get(b)),
+                    (Some(Ok(x)), Some(Ok(y))) if x.overlaps_roots(y)
+                );
+                if overlap {
+                    let message = "the allowed_roots of two runner agents overlap".to_string();
+                    tracing::error!("{message}; both agents will refuse every task");
+                    agent_roots.insert(a.clone(), Err(message.clone()));
+                    agent_roots.insert(b.clone(), Err(message));
+                }
+            }
+        }
         let registry = SessionRegistry::open(state_path.as_deref());
         if let Err(e) = &registry
             && config.agents.iter().any(|a| a.agent_type == "runner")
@@ -153,6 +210,7 @@ impl RunnerRuntime {
         Self {
             state,
             roots,
+            agent_roots,
             registry,
             http,
         }
@@ -323,7 +381,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
     let verdict = checks::check_delivery(
         Context {
             config,
-            roots: &state.runner.roots,
+            roots: state.runner.roots_for(agent),
             registry,
             protocol_mismatch: state.handshake.mismatch_text(),
             client,
@@ -374,7 +432,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             ))
         }
         Verdict::Run(accepted) => {
-            let (Ok(files), Ok(roots)) = (&state.runner.state, &state.runner.roots) else {
+            let (Ok(files), Ok(roots)) = (&state.runner.state, state.runner.roots_for(agent)) else {
                 return Ok(refused(
                     agent,
                     "runner_agent_disabled",

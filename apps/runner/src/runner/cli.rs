@@ -45,6 +45,8 @@ pub struct Row {
     pub state: RowState,
     pub in_registry: bool,
     pub headless: bool,
+    /// The live pane is the one `session.json` names (same pane id and PID).
+    pub owned: bool,
 }
 
 /// The table `sessions` prints.
@@ -75,7 +77,7 @@ pub fn render_rows(rows: &[Row]) -> String {
 /// A session may be pruned when the runner made it, it is idle, and either its key is no longer in
 /// the registry or its project now uses headless. A busy session is never removed.
 pub fn prunable(row: &Row) -> bool {
-    row.state == RowState::Idle && (!row.in_registry || row.headless)
+    row.owned && row.state == RowState::Idle && (!row.in_registry || row.headless)
 }
 
 /// `release KEY` frees a registry key (A9) only when it is bound and no session exists.
@@ -149,13 +151,15 @@ fn load(config_path: &str) -> Result<Env, String> {
 
 fn row_for(env: &Env, record: &SessionRecord) -> Option<Row> {
     let key = SessionKey::new(&record.key).ok()?;
+    let mut owned = false;
     let state = if env.tmux.has_session(&key).unwrap_or(false) {
         env.tmux
             .adopt_pane(&key)
             .ok()
             .map_or(RowState::Gone, |pane| match env.tmux.pane_state(&pane) {
                 Ok(state) if state.dead => RowState::Dead,
-                Ok(_) => {
+                Ok(state) => {
+                    owned = pane.id.as_str() == record.pane_id && state.pid == record.pane_pid;
                     let empty = env
                         .tmux
                         .capture_pane(&pane, None)
@@ -174,6 +178,7 @@ fn row_for(env: &Env, record: &SessionRecord) -> Option<Row> {
         state,
         in_registry: env.registry.owner(&record.key).is_some(),
         headless: record.headless,
+        owned,
     })
 }
 
@@ -212,6 +217,11 @@ pub fn run_sessions(config_path: &str, prune: bool) -> ExitCode {
     if !prune {
         return ExitCode::SUCCESS;
     }
+    // A running runner keeps its own picture of its sessions: nothing is ended behind its back.
+    let _lock = match env.state.lock() {
+        Ok(lock) => lock,
+        Err(e) => return fail(&format!("--prune needs the runner stopped: {e}")),
+    };
     let mut failed = false;
     for row in listed.iter().filter(|row| prunable(row)) {
         let Ok(key) = SessionKey::new(&row.key) else { continue };
@@ -256,6 +266,11 @@ pub fn run_release(config_path: &str, key_text: &str) -> ExitCode {
     };
     let Ok(key) = SessionKey::new(key_text) else {
         return fail("not a valid session name");
+    };
+    // The registry is also written by a running runner: release only while none runs.
+    let _lock = match env.state.lock() {
+        Ok(lock) => lock,
+        Err(e) => return fail(&format!("release needs the runner stopped: {e}")),
     };
     let exists = env.tmux.has_session(&key).unwrap_or(true);
     let bound = env.registry.owner(key_text).is_some();

@@ -116,6 +116,8 @@ pub struct LaunchFiles<'a> {
     pub runner_exe: &'a Path,
     /// `state_dir/hook.sock`.
     pub hook_socket: &'a Path,
+    /// The state directory: held back from the CLI's reads (it holds every bot's token).
+    pub state_dir: &'a Path,
     /// The per-launch secret the hooks present (32 hex characters, random, never from task
     /// content): it binds a hook message to the launch that wrote it.
     pub nonce: &'a str,
@@ -140,7 +142,7 @@ pub fn claude_argv(
         mode,
         allowed,
         disallowed,
-    } = claude_parts(cfg, dir)?;
+    } = claude_parts(cfg, dir, files.state_dir)?;
     let path = utf8(files.claude_mcp_json)?;
     let mut argv = vec![
         utf8(program)?,
@@ -175,13 +177,14 @@ pub fn claude_headless_argv(
     cfg: &RunnerClaudeConfig,
     dir: &Path,
     mcp_config: &Path,
+    state_dir: &Path,
     prompt: &str,
 ) -> Result<Vec<String>, LaunchError> {
     let ClaudeParts {
         mode,
         allowed,
         disallowed,
-    } = claude_parts(cfg, dir)?;
+    } = claude_parts(cfg, dir, state_dir)?;
     check_prompt(prompt)?;
     // `-p` and the prompt come first, so no variadic list below can swallow the prompt.
     let mut argv = vec![
@@ -229,8 +232,9 @@ struct ClaudeParts {
 
 /// The permission mode and the tool lists of claude: the design's default list, plus
 /// `sylvode_write` with `allow_write_call`, plus the configured extras (`{dir}` expanded).
-fn claude_parts(cfg: &RunnerClaudeConfig, dir: &Path) -> Result<ClaudeParts, LaunchError> {
+fn claude_parts(cfg: &RunnerClaudeConfig, dir: &Path, state_dir: &Path) -> Result<ClaudeParts, LaunchError> {
     let dir_text = rule_safe_dir(dir)?;
+    let state_text = rule_safe_dir(state_dir)?;
     // The same validation the headless channel applies.
     let mut settings = crate::executor_permissions::ExecutorSettings::new("claude-code");
     settings.permission_mode = Some(cfg.permission_mode.clone());
@@ -247,7 +251,13 @@ fn claude_parts(cfg: &RunnerClaudeConfig, dir: &Path) -> Result<ClaudeParts, Lau
         allowed.push(format!("{tool}(/{dir_text}/**)"));
     }
     allowed.extend(cfg.allowed_tools.iter().map(expand));
-    let disallowed: Vec<String> = cfg.disallowed_tools.iter().map(expand).collect();
+    // The state directory is never readable by a task, whatever the allow rules say (a deny rule
+    // wins): it holds the token of every bot.
+    let mut disallowed: Vec<String> = ["Read", "Glob", "Grep"]
+        .iter()
+        .map(|tool| format!("{tool}(/{state_text}/**)"))
+        .collect();
+    disallowed.extend(cfg.disallowed_tools.iter().map(expand));
     for entry in allowed.iter().chain(&disallowed) {
         if entry.is_empty() || entry.starts_with('-') || entry.chars().any(char::is_control) {
             return Err(LaunchError::Permissions(
