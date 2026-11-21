@@ -167,8 +167,8 @@ a day ago, which the prune is allowed to delete, so the two never meet in opposi
 
 ### Renumbering the migration
 
-The migration is `migrations/0108_oauth_authorization_server.sql`. If another migration takes
-`0108` first, rename the file to the next free number and change the three places that name it in
+The migration is `migrations/0109_oauth_authorization_server.sql`. If another migration takes
+`0109` first, rename the file to the next free number and change the three places that name it in
 `apps/api/src/main.rs`: the embedded list (`include_str!` path and name), the schema probe table
 (`SchemaProbe::Relation("oauth_grants")`), and the list in the replay-safety test
 (`everything past the cutoff re-runs on an adopted database and must be idempotent`). Keep the

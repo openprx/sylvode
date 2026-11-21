@@ -55,7 +55,7 @@ name.
     (`oauth.internal_forward_secret`, the same value as `mcp.oauth_forward_secret`), and the API
     accepts an MCP-audience token only with it. The MCP server is a stateless facade over its own
     API, and the API is the issuer and the policy point for both audiences.
-  - *Operations.* Migration `0108` (twelve tables, one seeded client, four triggers on
+  - *Operations.* Migration `0109` (twelve tables, one seeded client, four triggers on
     `notifications` and `ai_tasks`); the worker prunes the event feed after
     `oauth.event_feed_retention_days`, audit rows after 180 days, operation logs after 90 days and
     expired requests, codes and tokens daily. Revocations, consent and token issue take row locks in
