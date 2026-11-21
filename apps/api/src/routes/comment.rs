@@ -21,7 +21,7 @@ use crate::{
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
     response::{ApiResponse, PaginatedData},
     services::{
-        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task, runner_bot_block},
         comments::insert_comment,
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
@@ -260,7 +260,14 @@ pub async fn create_comment(
     // comment: the `comment.created` delivery below reaches that bot's webhook without
     // `bot_context`. The author is never among the mentions (`normalize_mentions`).
     let mentioned_bots = mentioned_bot_ids(&state.db, &mention_user_ids, issue_context.workspace_id).await?;
+    let mut task_bots = Vec::with_capacity(mentioned_bots.len());
     for &bot_id in &mentioned_bots {
+        // A runner bot this project has not enabled is mentioned like any member, but starts nothing.
+        if let Some(block) = runner_bot_block(&state.db, issue_context.project_id, bot_id).await? {
+            tracing::info!(%comment_id, %bot_id, reason = block.code(), "mention queued no task");
+            continue;
+        }
+        task_bots.push(bot_id);
         let _ = create_ai_task(
             &state.db,
             CreateAiTaskInput {
@@ -306,7 +313,7 @@ pub async fn create_comment(
             mentions: mention_user_ids.clone(),
             extra_data: None,
         },
-        mentioned_bots,
+        task_bots,
     );
 
     Ok(ApiResponse::success(CommentResponse {

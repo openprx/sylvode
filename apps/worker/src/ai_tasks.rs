@@ -23,8 +23,8 @@
 use api::outbound::validate_outbound_url;
 use api::services::ai_task_reply::announce_start_refusal;
 use api::services::ai_task_service::{
-    AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts, is_reason_code,
-    notify_ai_task_failed, trigger_kind_for_task,
+    AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts,
+    fail_tasks_without_connection, is_reason_code, notify_ai_task_failed, runner_bot_block, trigger_kind_for_task,
 };
 use api::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_USER_AGENT, sign_payload};
 use platform::{app::AppState, timestamp::Timestamp};
@@ -171,28 +171,61 @@ pub async fn process_pending_tasks(
 ) -> anyhow::Result<()> {
     let db = &state.db;
     let limit = i64::try_from(concurrency.max(1)).unwrap_or(i64::MAX) * 10;
+    fail_unconnected_tasks(state, limit).await?;
     let tasks = pickup_pending_tasks(db, limit, processing_timeout_secs).await?;
 
     for task in tasks {
-        let verdict = match dispatch_task(db, client, &task).await {
-            Ok(answer) => {
-                tracing::debug!(
-                    task_id = %task.id,
-                    webhook_id = %answer.webhook_id,
-                    status = answer.status,
-                    "the runner answered the delivery"
-                );
-                classify_delivery_answer(
-                    answer.status,
-                    &answer.body,
-                    task.ai_participant_name.as_deref().unwrap_or("this task's bot"),
-                )
-            }
-            Err(err) => DeliveryVerdict::Transient(format!("the runner could not be reached: {err}")),
-        };
-        settle_delivery(state, &task, verdict).await?;
+        deliver_task(state, client, &task).await?;
     }
 
+    Ok(())
+}
+
+/// Delivers one picked-up task and settles the attempt by the runner's answer.
+///
+/// The connection is checked once more here: one disabled or removed since the pick-up still
+/// stops the task, and the attempt ends like a refusal.
+async fn deliver_task(state: &AppState, client: &reqwest::Client, task: &AiTaskDispatchRow) -> anyhow::Result<()> {
+    let db = &state.db;
+    if let Some(block) = runner_bot_block(db, task.project_id, task.ai_participant_id).await? {
+        let verdict = DeliveryVerdict::Declined {
+            reason: block.message().to_string(),
+            code: Some(block.code().to_string()),
+        };
+        return settle_delivery(state, task, verdict).await;
+    }
+    let verdict = match dispatch_task(db, client, task).await {
+        Ok(answer) => {
+            tracing::debug!(
+                task_id = %task.id,
+                webhook_id = %answer.webhook_id,
+                status = answer.status,
+                "the runner answered the delivery"
+            );
+            classify_delivery_answer(
+                answer.status,
+                &answer.body,
+                task.ai_participant_name.as_deref().unwrap_or("this task's bot"),
+            )
+        }
+        Err(err) => DeliveryVerdict::Transient(format!("the runner could not be reached: {err}")),
+    };
+    settle_delivery(state, task, verdict).await
+}
+
+/// Fails the pending tasks of runner bots whose project has no enabled connection for them, and
+/// tells the issue why (`Could not start: ...`), like a runner's refusal at delivery.
+async fn fail_unconnected_tasks(state: &AppState, limit: i64) -> anyhow::Result<()> {
+    let failed = fail_tasks_without_connection(&state.db, limit)
+        .await
+        .map_err(|err| anyhow::anyhow!("failing the tasks of unconnected projects failed: {err}"))?;
+    for (task, block) in failed {
+        tracing::warn!(task_id = %task.id, reason = block.code(), "AI task failed: no enabled connection for its project");
+        notify_failed(state, &task).await;
+        if let Err(err) = announce_start_refusal(state, &task, block.message()).await {
+            tracing::warn!(task_id = %task.id, error = %err, "the refusal could not be reported on the issue");
+        }
+    }
     Ok(())
 }
 
@@ -328,6 +361,21 @@ async fn pickup_pending_tasks(
                       WHERE r.bot_id = ai_tasks.ai_participant_id
                         AND r.credentials_issued_at > COALESCE(b.last_used_at, '-infinity'::timestamptz)
                         AND r.credentials_issued_at > now() - interval '1 hour'
+                  )
+                  -- A runner bot takes a project's tasks only while that project has an enabled
+                  -- connection for it. The token and the runner are shared by every project of the
+                  -- bot, so the connection of the task's own project decides; a task this refuses is
+                  -- failed by `fail_tasks_without_connection`.
+                  AND (
+                      NOT EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = ai_tasks.ai_participant_id)
+                      OR EXISTS (
+                          SELECT 1
+                          FROM project_bot_connections c
+                          INNER JOIN project_execution_settings s ON s.project_id = c.project_id
+                          WHERE c.project_id = ai_tasks.project_id
+                            AND c.bot_id = ai_tasks.ai_participant_id
+                            AND s.enabled
+                      )
                   )
                 ORDER BY priority DESC, created_at
                 LIMIT $1
@@ -800,7 +848,7 @@ mod tests {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic, clippy::print_stderr)]
 mod database_tests {
-    use super::{DeliveryVerdict, pickup_pending_tasks, settle_delivery};
+    use super::{DeliveryVerdict, fail_tasks_without_connection, pickup_pending_tasks, settle_delivery};
     use platform::app::{AppState, FlowPermissionCacheSlot};
     use platform::config::{AppConfig, Secret};
     use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement};
@@ -1167,6 +1215,18 @@ mod database_tests {
             vec![task.into(), hours_ago.into()],
         )
         .await;
+        // An enabled connection of the task's project: without one the bot takes no task of it.
+        for sql in [
+            "INSERT INTO project_execution_settings (project_id, enabled, working_directory) \
+             SELECT project_id, true, '/work/a' FROM ai_tasks WHERE id = $1",
+            "INSERT INTO ai_participants (id, project_id, name, is_active, registered_by) \
+             SELECT t.ai_participant_id::text, t.project_id, 'runner bot', true, p.created_by \
+             FROM ai_tasks t INNER JOIN projects p ON p.id = t.project_id WHERE t.id = $1",
+            "INSERT INTO project_bot_connections (project_id, bot_id) \
+             SELECT project_id, ai_participant_id FROM ai_tasks WHERE id = $1",
+        ] {
+            exec(db, sql, vec![task.into()]).await;
+        }
     }
 
     async fn status_of(db: &DatabaseConnection, task: Uuid) -> String {
@@ -1238,6 +1298,256 @@ mod database_tests {
         .expect("count runs")
         .map_or(0, |row| row.n);
         assert_eq!(lease, 1, "a picked-up task always has its lease");
+        scratch.drop_self().await;
+    }
+
+    /// One workspace, one runner bot (credentials issued two hours ago and used since, so the
+    /// delivery hold is over) and three projects: `disabled` has a disabled connection, `enabled`
+    /// an enabled one, `never` none. Each project has one pending task of the bot.
+    struct GateWorld {
+        bot: Uuid,
+        disabled: (Uuid, Uuid),
+        enabled: (Uuid, Uuid),
+        never: (Uuid, Uuid),
+    }
+
+    async fn gate_world(db: &DatabaseConnection) -> GateWorld {
+        let owner = Uuid::new_v4();
+        let bot = Uuid::new_v4();
+        let workspace = Uuid::new_v4();
+        let hook = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) VALUES ($1, $2, '!', 'owner', 'user', true)",
+            vec![owner.into(), format!("{owner}@gate.test").into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type) \
+             VALUES ($1, $2, '!', 'gate bot', 'user', true, 'bot')",
+            vec![bot.into(), format!("{bot}@gate.test").into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, 'gate', $3)",
+            vec![workspace.into(), format!("ws-{workspace}").into(), owner.into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, permissions, transport_surface, \
+                                         is_active, last_used_at) \
+             VALUES ($1, $2, 'gate bot', md5($1::text), 'opr_gate', '[\"read\"]'::jsonb, 'mcp_stdio', true, now())",
+            vec![bot.into(), workspace.into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, active, bot_user_id, created_by) \
+             VALUES ($1, $2, 'hook', 'https://runner.example.net/webhook', 's', '[]'::jsonb, true, $3, $4)",
+            vec![hook.into(), workspace.into(), bot.into(), owner.into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO bot_runners (bot_id, workspace_id, webhook_id, runner_url, credentials_issued_at) \
+             VALUES ($1, $2, $3, 'https://runner.example.net', now() - interval '2 hours')",
+            vec![bot.into(), workspace.into(), hook.into()],
+        )
+        .await;
+        let project = |key: &'static str, connection: Option<bool>| {
+            let id = Uuid::new_v4();
+            let task = Uuid::new_v4();
+            (id, task, key, connection)
+        };
+        let rows = [
+            project("GA", Some(false)),
+            project("GB", Some(true)),
+            project("GC", None),
+        ];
+        for (id, task, key, connection) in rows {
+            exec(
+                db,
+                "INSERT INTO projects (id, workspace_id, key, name, created_by) VALUES ($1, $2, $3, $3, $4)",
+                vec![id.into(), workspace.into(), key.into(), owner.into()],
+            )
+            .await;
+            if let Some(enabled) = connection {
+                exec(
+                    db,
+                    "INSERT INTO project_execution_settings (project_id, enabled, working_directory) VALUES ($1, $2, '/work/a')",
+                    vec![id.into(), enabled.into()],
+                )
+                .await;
+                exec(
+                    db,
+                    "INSERT INTO ai_participants (id, project_id, name, is_active, registered_by) VALUES ($1::text, $2, 'gate bot', $3, $4)",
+                    vec![bot.into(), id.into(), enabled.into(), owner.into()],
+                )
+                .await;
+                exec(
+                    db,
+                    "INSERT INTO project_bot_connections (project_id, bot_id) VALUES ($1, $2)",
+                    vec![id.into(), bot.into()],
+                )
+                .await;
+            }
+            exec(
+                db,
+                "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status, max_attempts) \
+                 VALUES ($1, $2, $3, 'issue_assigned', 'pending', 3)",
+                vec![task.into(), id.into(), bot.into()],
+            )
+            .await;
+        }
+        let [a, b, c] = rows.map(|(id, task, _, _)| (id, task));
+        GateWorld {
+            bot,
+            disabled: a,
+            enabled: b,
+            never: c,
+        }
+    }
+
+    async fn status_by(db: &DatabaseConnection, task: Uuid) -> String {
+        #[derive(Debug, FromQueryResult)]
+        struct S {
+            status: String,
+        }
+        S::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM ai_tasks WHERE id = $1",
+            vec![task.into()],
+        ))
+        .one(db)
+        .await
+        .expect("query")
+        .expect("task")
+        .status
+    }
+
+    /// Only a project with an enabled connection has its tasks taken: a disabled connection and a
+    /// project that was never connected keep theirs out of the pick-up, though the bot is connected
+    /// elsewhere and its runner is online.
+    #[tokio::test]
+    async fn pick_up_takes_only_the_tasks_of_projects_with_an_enabled_connection() {
+        let scratch = scratch_or_skip!("gate_pickup");
+        let db = &scratch.db;
+        let w = gate_world(db).await;
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        assert_eq!(
+            picked.iter().map(|task| task.id).collect::<Vec<_>>(),
+            vec![w.enabled.1],
+            "only the task of the enabled connection is picked up"
+        );
+        assert_eq!(status_by(db, w.disabled.1).await, "pending");
+        assert_eq!(status_by(db, w.never.1).await, "pending");
+        scratch.drop_self().await;
+    }
+
+    /// A task still waiting for a project whose connection is disabled or gone is failed with the
+    /// reason stored, a running task is left alone, and the sweep does not repeat itself.
+    #[tokio::test]
+    async fn waiting_tasks_of_a_project_without_an_enabled_connection_are_failed_with_a_reason() {
+        let scratch = scratch_or_skip!("gate_sweep");
+        let db = &scratch.db;
+        let state = state_for(db.clone());
+        let w = gate_world(db).await;
+        // A task of the disabled project that is already running.
+        let running = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status, attempts, max_attempts, lease_expires_at) \
+             VALUES ($1, $2, $3, 'issue_assigned', 'processing', 1, 3, now() + interval '1 hour')",
+            vec![running.into(), w.disabled.0.into(), w.bot.into()],
+        )
+        .await;
+
+        super::fail_unconnected_tasks(&state, 10).await.expect("the sweep runs");
+        assert_eq!(status_by(db, w.disabled.1).await, "failed");
+        assert_eq!(status_by(db, w.never.1).await, "failed");
+        assert_eq!(
+            status_by(db, w.enabled.1).await,
+            "pending",
+            "an enabled connection keeps its task"
+        );
+        assert_eq!(
+            status_by(db, running).await,
+            "processing",
+            "a running task continues until it ends"
+        );
+        for (task, code, message) in [
+            (
+                w.disabled.1,
+                "connection_disabled",
+                "the bot's connection to this project is disabled",
+            ),
+            (
+                w.never.1,
+                "bot_not_connected_to_project",
+                "the bot is not connected to this project",
+            ),
+        ] {
+            let found = Count::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT COUNT(*)::bigint AS n FROM ai_task_events e JOIN ai_tasks t ON t.id = e.task_id \
+                 WHERE e.task_id = $1 AND e.event_type = 'failed' AND e.payload->>'reason' = 'connection_unavailable' \
+                   AND e.payload->>'reason_code' = $2 AND t.error_message = $3",
+                vec![task.into(), code.into(), message.into()],
+            ))
+            .one(db)
+            .await
+            .expect("count runs")
+            .map_or(0, |row| row.n);
+            assert_eq!(found, 1, "{code}");
+        }
+        assert_eq!(events(db, w.enabled.1, "failed").await, 0);
+        // A second sweep finds nothing more to fail.
+        let again = fail_tasks_without_connection(db, 10)
+            .await
+            .expect("the second sweep runs");
+        assert!(again.is_empty());
+        scratch.drop_self().await;
+    }
+
+    /// A connection disabled after a task was picked up still stops its delivery: the attempt
+    /// ends like a refusal and nothing is sent.
+    #[tokio::test]
+    async fn a_connection_disabled_after_pick_up_stops_the_delivery() {
+        let scratch = scratch_or_skip!("gate_dispatch");
+        let db = &scratch.db;
+        let state = state_for(db.clone());
+        let w = gate_world(db).await;
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let task = picked
+            .iter()
+            .find(|task| task.id == w.enabled.1)
+            .expect("the enabled task is picked up");
+        exec(
+            db,
+            "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+            vec![w.enabled.0.into()],
+        )
+        .await;
+        // The runner address is unreachable by design: a delivery attempt would fail differently.
+        let client = reqwest::Client::new();
+        super::deliver_task(&state, &client, task)
+            .await
+            .expect("the attempt settles");
+        assert_eq!(status_by(db, w.enabled.1).await, "failed");
+        let reason = Count::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT COUNT(*)::bigint AS n FROM ai_task_events WHERE task_id = $1 AND event_type = 'failed' \
+             AND payload->>'reason' = 'runner_declined' AND payload->>'reason_code' = 'connection_disabled'",
+            vec![w.enabled.1.into()],
+        ))
+        .one(db)
+        .await
+        .expect("count runs")
+        .map_or(0, |row| row.n);
+        assert_eq!(reason, 1);
         scratch.drop_self().await;
     }
 }

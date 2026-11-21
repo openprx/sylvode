@@ -43,13 +43,13 @@ use crate::services::execution_settings::project_ref;
 /// A public literal address: it needs no DNS and is not on the blocked list.
 const RUNNER: &str = "https://93.184.216.34:9090";
 
-struct W {
-    tenant: Tenant,
-    owner: Uuid,
-    state: AppState,
+pub(super) struct W {
+    pub(super) tenant: Tenant,
+    pub(super) owner: Uuid,
+    pub(super) state: AppState,
 }
 
-async fn world(db: &DatabaseConnection, tag: &str) -> W {
+pub(super) async fn world(db: &DatabaseConnection, tag: &str) -> W {
     let tenant = seed_tenant(db, tag).await;
     exec(
         db,
@@ -64,7 +64,7 @@ async fn world(db: &DatabaseConnection, tag: &str) -> W {
     }
 }
 
-async fn second_project(db: &DatabaseConnection, w: &W, key: &str) -> Uuid {
+pub(super) async fn second_project(db: &DatabaseConnection, w: &W, key: &str) -> Uuid {
     let id = Uuid::new_v4();
     exec(
         db,
@@ -81,11 +81,11 @@ async fn second_project(db: &DatabaseConnection, w: &W, key: &str) -> Uuid {
     id
 }
 
-fn request(value: Value) -> ConnectRequest {
+pub(super) fn request(value: Value) -> ConnectRequest {
     serde_json::from_value(value).expect("a connect request")
 }
 
-fn new_bot(name: &str) -> Value {
+pub(super) fn new_bot(name: &str) -> Value {
     json!({
         "bot": {"name": name},
         "runner_url": RUNNER,
@@ -94,7 +94,7 @@ fn new_bot(name: &str) -> Value {
     })
 }
 
-fn existing_bot(id: Uuid) -> Value {
+pub(super) fn existing_bot(id: Uuid) -> Value {
     json!({
         "bot": {"id": id},
         "runner_url": RUNNER,
@@ -103,22 +103,22 @@ fn existing_bot(id: Uuid) -> Value {
     })
 }
 
-async fn connect(w: &W, project: Uuid, body: Value) -> Result<Connected, ApiError> {
+pub(super) async fn connect(w: &W, project: Uuid, body: Value) -> Result<Connected, ApiError> {
     let project = project_ref(&w.state.db, project).await?;
     bot_connections::connect(&w.state, &project, w.owner, request(body), None).await
 }
 
-async fn expect_connect(w: &W, project: Uuid, body: Value) -> Connected {
+pub(super) async fn expect_connect(w: &W, project: Uuid, body: Value) -> Connected {
     connect(w, project, body)
         .await
         .unwrap_or_else(|err| panic!("connect failed: {err:?}"))
 }
 
-fn update_request(value: Value) -> UpdateRequest {
+pub(super) fn update_request(value: Value) -> UpdateRequest {
     serde_json::from_value(value).expect("an update request")
 }
 
-async fn update(w: &W, project: Uuid, body: Value) -> Result<Outcome<ConnectionView>, ApiError> {
+pub(super) async fn update(w: &W, project: Uuid, body: Value) -> Result<Outcome<ConnectionView>, ApiError> {
     let project = project_ref(&w.state.db, project).await?;
     bot_connections::update(&w.state, &project, w.owner, update_request(body)).await
 }
@@ -127,36 +127,41 @@ async fn update(w: &W, project: Uuid, body: Value) -> Result<Outcome<ConnectionV
     clippy::unused_async,
     reason = "callers await it next to the write that produced the outcome"
 )]
-async fn done(outcome: Result<Outcome<ConnectionView>, ApiError>) -> ConnectionView {
+pub(super) async fn done(outcome: Result<Outcome<ConnectionView>, ApiError>) -> ConnectionView {
     match outcome {
         Ok(Outcome::Done(view)) => view,
         other => panic!("expected the write to happen, got {:?}", other.map(|_| ())),
     }
 }
 
-async fn set_enabled(w: &W, project: Uuid, version: i32, enabled: bool) -> Result<Outcome<ConnectionView>, ApiError> {
+pub(super) async fn set_enabled(
+    w: &W,
+    project: Uuid,
+    version: i32,
+    enabled: bool,
+) -> Result<Outcome<ConnectionView>, ApiError> {
     let project = project_ref(&w.state.db, project).await?;
     bot_connections::set_enabled(&w.state, &project, w.owner, version, enabled).await
 }
 
-async fn rotate(w: &W, project: Uuid, version: i32) -> Result<Outcome<Rotated>, ApiError> {
+pub(super) async fn rotate(w: &W, project: Uuid, version: i32) -> Result<Outcome<Rotated>, ApiError> {
     let project = project_ref(&w.state.db, project).await?;
     bot_connections::rotate(&w.state, &project, w.owner, version, None).await
 }
 
-async fn remove(w: &W, project: Uuid, version: i32) -> Result<Outcome<Removed>, ApiError> {
+pub(super) async fn remove(w: &W, project: Uuid, version: i32) -> Result<Outcome<Removed>, ApiError> {
     let project = project_ref(&w.state.db, project).await?;
     bot_connections::remove(&w.state, &project, w.owner, version).await
 }
 
-fn bad_request(result: Result<impl std::fmt::Debug, ApiError>) -> String {
+pub(super) fn bad_request(result: Result<impl std::fmt::Debug, ApiError>) -> String {
     match result {
         Err(ApiError::BadRequest(message)) => message,
         other => panic!("expected a 400, got {other:?}"),
     }
 }
 
-async fn n(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) -> i64 {
+pub(super) async fn n(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) -> i64 {
     count(
         db,
         &format!("SELECT COUNT(*)::bigint AS count FROM ({sql}) AS t"),
@@ -165,7 +170,7 @@ async fn n(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) -> i
     .await
 }
 
-async fn text_of(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) -> String {
+pub(super) async fn text_of(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) -> String {
     db.query_one(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
         .await
         .expect("query")
@@ -175,7 +180,7 @@ async fn text_of(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>
 }
 
 /// The token of a connect or rotate answer, from its block.
-fn block_token(block: &crate::services::runner_config_block::ConfigBlock) -> String {
+pub(super) fn block_token(block: &crate::services::runner_config_block::ConfigBlock) -> String {
     let table: toml::Table = block.text.parse().expect("valid TOML");
     table["ai_task_callback"]["bots"][0]["token"]
         .as_str()
@@ -183,7 +188,7 @@ fn block_token(block: &crate::services::runner_config_block::ConfigBlock) -> Str
         .to_string()
 }
 
-fn block_secret(block: &crate::services::runner_config_block::ConfigBlock) -> String {
+pub(super) fn block_secret(block: &crate::services::runner_config_block::ConfigBlock) -> String {
     let table: toml::Table = block.text.parse().expect("valid TOML");
     table["security"]["webhook_secrets"][0]
         .as_str()
@@ -192,7 +197,7 @@ fn block_secret(block: &crate::services::runner_config_block::ConfigBlock) -> St
 }
 
 /// Calls `GET /api/v1/ai/protocol` through the real bot authentication.
-async fn protocol_with(db: &DatabaseConnection, token: &str, surface: Option<&str>) -> (u16, Value) {
+pub(super) async fn protocol_with(db: &DatabaseConnection, token: &str, surface: Option<&str>) -> (u16, Value) {
     let state = state_for(db.clone());
     let app = Router::new()
         .route(
@@ -221,11 +226,11 @@ async fn protocol_with(db: &DatabaseConnection, token: &str, surface: Option<&st
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 
-fn authenticated(answer: &(u16, Value)) -> bool {
+pub(super) fn authenticated(answer: &(u16, Value)) -> bool {
     answer.0 == 200 && answer.1["code"] == 0
 }
 
-async fn body_of(response: Response) -> (axum::http::HeaderMap, Value) {
+pub(super) async fn body_of(response: Response) -> (axum::http::HeaderMap, Value) {
     let headers = response.headers().clone();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await

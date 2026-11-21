@@ -279,6 +279,38 @@ macro_rules! world {
     }};
 }
 
+/// An alert rule names a runner bot the project has not enabled (a disabled connection): the alert
+/// and its work item are still opened, but the bot is given no task.
+#[tokio::test]
+async fn an_alert_for_a_runner_bot_the_project_has_not_enabled_opens_no_task() {
+    let w = world!("inbound_gate");
+    super::admin_tests::connect_the_bot(&w).await;
+    crate::routes::context::tenant_fixture::exec(
+        w.db(),
+        "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+        vec![w.tenant.project_id.into()],
+    )
+    .await;
+    let (status, body) = w.post(&w.event("e-gate", "waf:shop", "high")).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(w.n("SELECT count(*) AS count FROM inbound_alerts WHERE open").await, 1);
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM work_items").await,
+        1,
+        "the work item is opened"
+    );
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM ai_tasks").await,
+        0,
+        "the bot is given no task"
+    );
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM inbound_events WHERE task_id IS NULL AND outcome = 'bot_unavailable'")
+            .await,
+        1
+    );
+}
+
 #[tokio::test]
 async fn a_signed_high_event_opens_one_alert_one_task_and_one_notification() {
     let w = world!("inbound_open");

@@ -535,7 +535,7 @@ async fn source_creation_validates_its_input() {
 }
 
 /// Connects the world's bot to the world's project, enabled, with the rows a connection makes.
-async fn connect_the_bot(w: &World) {
+pub(super) async fn connect_the_bot(w: &World) {
     let hook = Uuid::new_v4();
     for (sql, values) in [
         (
