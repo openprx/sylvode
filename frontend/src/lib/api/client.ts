@@ -1,3 +1,5 @@
+import { loginUrlForLocation } from '#lib/oauth/return-to.js';
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 export interface ApiResult<T> {
@@ -223,7 +225,8 @@ export class ApiClient {
 
 	private redirectToLogin() {
 		if (typeof window !== 'undefined') {
-			window.location.href = '/auth/login';
+			// An expired session on the consent page comes back to the stored request after sign-in.
+			window.location.href = loginUrlForLocation(window.location.pathname, window.location.search);
 		}
 	}
 
