@@ -89,32 +89,16 @@ fn first_text(raw: &LoroDoc, index: usize) -> LoroText {
 /// value again for every segment (`page_inline::spans`), so what the page costs grows with segments
 /// times payload while the facts counted a mark's payload once or not at all.
 ///
-/// Reproduces today (80 of 80 writes are decided incrementally, the facts' items stay flat) and is
-/// ignored because no work-budget term can close it: the payload of a mark is read once per delta
-/// segment, and the number of segments an update adds depends on the text it lands in (an `italic`
-/// mark of one character splits a text that has a large `bold` value into two more segments, each
-/// converting the large value again), which an op alone does not state. Charging the payload per
-/// delta segment on the base side is possible, but the update side would need the touched texts'
-/// post-import segments, so the facts would have to carry a per-unit mark payload.
+/// Before the per-segment count, 80 of 80 writes were decided incrementally and the facts' items
+/// stayed flat; now the facts count the payload once per segment and the window re-counts the
+/// touched text, so the page leaves the incremental path at the budget.
 #[test]
-#[ignore = "R4-2 is open: byte-charging cannot bound segments times payload, see the test's documentation"]
 fn r4_2_a_large_mark_value_over_many_segments_cannot_grow_a_page_without_a_bound() {
     let (incremental, first_fallback, base) = grow_by(flat_page_of(100), 80, &|raw, write| {
         let text = first_text(raw, 0);
         if write == 0 {
             text.insert(1, &"y".repeat(1_999)).unwrap();
-            let entries: std::collections::HashMap<String, loro::LoroValue> = (0..1_500)
-                .map(|i| {
-                    (
-                        format!("k{i}"),
-                        loro::LoroValue::from(std::collections::HashMap::from([(
-                            "v".to_owned(),
-                            loro::LoroValue::from(i64::from(i)),
-                        )])),
-                    )
-                })
-                .collect();
-            text.mark(0..2_000, "bold", loro::LoroValue::from(entries)).unwrap();
+            text.mark(0..2_000, "bold", large_mark_value()).unwrap();
         } else {
             let at = usize::try_from(write).unwrap() * 2;
             text.mark(at..at + 1, "italic", true).unwrap();
@@ -176,5 +160,275 @@ fn undo_and_redo_of_a_node_creation_are_not_refused_as_an_id_rewrite() {
             "{label} was refused as an id rewrite: {judged:?}"
         );
         base = super::hand_encoded::accepted(&base, &update).as_ref().clone();
+    }
+}
+
+/// An object of 1,500 one-key objects: about 40 KB of payload, accepted by the reader as a value of
+/// `bold` and `italic`.
+fn large_mark_value() -> loro::LoroValue {
+    let entries: std::collections::HashMap<String, loro::LoroValue> = (0..1_500)
+        .map(|i| {
+            (
+                format!("k{i}"),
+                loro::LoroValue::from(std::collections::HashMap::from([(
+                    "v".to_owned(),
+                    loro::LoroValue::from(i64::from(i)),
+                )])),
+            )
+        })
+        .collect();
+    loro::LoroValue::from(entries)
+}
+
+/// A flat page whose first paragraph is 2,000 characters under one `bold` mark with a large value,
+/// then given one-character `italic` marks until one more would take the page over its work budget:
+/// the base is within the budget, so it has facts, and the next mark that splits the text is not.
+fn near_budget_page() -> Vec<u8> {
+    let first = super::hand_encoded::raw_edit(&flat_page_of(100), 40_000, |raw| {
+        let text = first_text(raw, 0);
+        text.insert(1, &"y".repeat(1_999)).unwrap();
+        text.mark(0..2_000, "bold", large_mark_value()).unwrap();
+    });
+    let mut base = super::hand_encoded::accepted(&flat_page_of(100), &first)
+        .as_ref()
+        .clone();
+    for step in 0..400_u64 {
+        let at = usize::try_from(step).unwrap() * 2;
+        let update = super::hand_encoded::raw_edit(&base, 40_001 + step, |raw| {
+            first_text(raw, 0).mark(at..at + 1, "italic", true).unwrap();
+        });
+        let candidate = super::hand_encoded::accepted(&base, &update).as_ref().clone();
+        let (items, budget) = super::window_round2_tests::items_and_budget(&candidate);
+        if items > budget {
+            return base;
+        }
+        base = candidate;
+    }
+    panic!("the page never reached its budget");
+}
+
+/// The work budget decides before any unit is evaluated: one update puts 400 marks on a text with a
+/// large value, so the segments it adds carry about 240,000 items of payload against a headroom of a
+/// few thousand. The walk of the touched text stops at the headroom, and the evaluation of its
+/// segments (the work the bound protects) never starts.
+#[test]
+fn r4_2_an_update_far_over_the_budget_is_refused_before_a_unit_is_evaluated() {
+    let base = super::window_round2_tests::flat_page_of(100);
+    let first = super::hand_encoded::raw_edit(&base, 42_100, |raw| {
+        let text = first_text(raw, 0);
+        text.insert(1, &"y".repeat(1_999)).unwrap();
+        text.mark(0..2_000, "bold", large_mark_value()).unwrap();
+    });
+    let base = super::hand_encoded::accepted(&base, &first).as_ref().clone();
+    let update = super::hand_encoded::raw_edit(&base, 42_101, |raw| {
+        let text = first_text(raw, 0);
+        for at in (0..800).map(|i| i * 2) {
+            text.mark(at..at + 1, "italic", true).unwrap();
+        }
+    });
+    let mut engine = LoroCollabEngine::load(&base).unwrap();
+    engine.prewarm_for_writes();
+    let facts = BaseFacts::compute(&engine);
+    assert!(facts.is_some(), "the base must be within its budget");
+    crate::walk_counter::reset();
+    crate::window_check::run_window(&mut engine, facts.as_ref(), &update).unwrap();
+    assert_eq!(
+        crate::walk_counter::fallback_reasons().last().map(String::as_str),
+        Some("WorkBudget")
+    );
+    assert_eq!(
+        crate::walk_counter::window_counts().unit_evaluations,
+        0,
+        "a unit was evaluated before the budget decided"
+    );
+}
+
+/// The same single mark, one character, on text far from the large value: the page is within its
+/// budget after it only if the update's own bound says so, so the decision is the budget's either way
+/// and the full computation accepts what `next` accepts.
+#[test]
+fn r4_2_the_decision_on_the_near_budget_page_is_next_s() {
+    let base = near_budget_page();
+    for (peer, at) in [(41_100, 1_001), (41_101, 1_501), (41_102, 3)] {
+        let update = super::hand_encoded::raw_edit(&base, peer, |raw| {
+            first_text(raw, 0).mark(at..at + 1, "italic", true).unwrap();
+        });
+        let judged = super::window_round2_tests::judge(&base, &update);
+        judged.assert_sound(&format!("one more mark at {at}"));
+    }
+}
+
+/// One update with many one-character marks: the segments all arrive at once.
+#[test]
+fn r4_2_many_marks_in_one_update_are_counted() {
+    let base = super::window_round2_tests::flat_page_of(100);
+    let first = super::hand_encoded::raw_edit(&base, 42_000, |raw| {
+        let text = first_text(raw, 0);
+        text.insert(1, &"y".repeat(1_999)).unwrap();
+        text.mark(0..2_000, "bold", large_mark_value()).unwrap();
+    });
+    let base = super::hand_encoded::accepted(&base, &first).as_ref().clone();
+    let update = super::hand_encoded::raw_edit(&base, 42_001, |raw| {
+        let text = first_text(raw, 0);
+        for at in (0..400).map(|i| i * 2) {
+            text.mark(at..at + 1, "italic", true).unwrap();
+        }
+    });
+    let judged = super::window_round2_tests::judge(&base, &update);
+    judged.assert_sound("400 marks in one update");
+    assert!(!judged.incremental, "{judged:?}");
+    assert_eq!(judged.fallback(), Some("WorkBudget"));
+}
+
+/// A legacy node's text is read by the projection as a plain string (`to_string`), so its marks cost
+/// the projection nothing and are not counted: the same growth that leaves the block page the
+/// incremental path leaves this one on it, and every decision is `next`'s.
+#[test]
+fn r4_2_marks_on_a_legacy_node_text_are_not_charged_because_the_projection_does_not_read_them() {
+    let mut engine = LoroCollabEngine::new_empty(72);
+    engine
+        .apply_content_operation(&crate::operation::Operation::CreateNode {
+            id: "node".into(),
+            parent: None,
+            index: 0,
+            kind: crate::operation::NodeKind::NavigatorNode,
+        })
+        .unwrap();
+    let node = *engine.id_to_tree.get("node").unwrap();
+    let (incremental, first_fallback, base) = grow_by(engine.export_snapshot().unwrap(), 40, &|raw, write| {
+        let text = raw
+            .get_tree("tree")
+            .get_meta(node)
+            .unwrap()
+            .ensure_mergeable_text("text")
+            .unwrap();
+        if write == 0 {
+            text.insert(0, &"y".repeat(2_000)).unwrap();
+            text.mark(0..2_000, "bold", large_mark_value()).unwrap();
+        } else {
+            let at = usize::try_from(write).unwrap() * 2;
+            text.mark(at..at + 1, "italic", true).unwrap();
+        }
+    });
+    assert_eq!((incremental, first_fallback), (40, None));
+    let (items, budget) = super::window_round2_tests::items_and_budget(&base);
+    assert!(items <= budget, "{items} > {budget}");
+}
+
+/// Ordinary marks (`bold`, `italic` and a `link` with a string value) on every block of a page at the
+/// block limit stay within the budget, and a one-character edit is still decided incrementally.
+#[test]
+fn ordinary_marks_on_a_page_at_the_block_limit_stay_incremental() {
+    let blocks = crate::limits::DOCUMENT_BLOCK_COUNT_MAX - 50;
+    let base = flat_page_of(blocks);
+    // Built on a raw copy and taken as a snapshot: the update would be far over the update limit.
+    let raw = LoroDoc::new();
+    raw.import(&base).unwrap();
+    raw.set_peer_id(43_000).unwrap();
+    {
+        let raw = &raw;
+        for index in 0..blocks {
+            let text = first_text(raw, index);
+            text.insert(1, "abcdefghijklmn").unwrap();
+            text.mark(0..6, "bold", true).unwrap();
+            text.mark(4..9, "italic", true).unwrap();
+            text.mark(8..12, "link", "https://example.test/a/page").unwrap();
+        }
+    }
+    raw.commit();
+    let base = raw.export(loro::ExportMode::snapshot()).unwrap();
+    let (items, budget) = super::window_round2_tests::items_and_budget(&base);
+    println!("ordinary marks at {blocks} blocks: items {items}, budget {budget}");
+    assert!(items <= budget);
+    let update = super::hand_encoded::raw_edit(&base, 43_001, |raw| {
+        first_text(raw, 5_000).insert(2, "z").unwrap();
+    });
+    let judged = super::window_round2_tests::judge(&base, &update);
+    judged.assert_sound("an edit on a page with ordinary marks");
+    assert!(judged.incremental, "{judged:?}");
+    let marked_again = super::hand_encoded::raw_edit(&base, 43_002, |raw| {
+        first_text(raw, 7_000).mark(10..11, "bold", true).unwrap();
+    });
+    let judged = super::window_round2_tests::judge(&base, &marked_again);
+    judged.assert_sound("a mark on a page with ordinary marks");
+    assert!(judged.incremental, "{judged:?}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The corpus extension
+// ---------------------------------------------------------------------------------------------
+
+/// One more mark, and one more character, on the near-budget page: the decision is the work
+/// budget's, which the mutant that skips the re-count gets wrong.
+pub(super) fn round4_cases(scale: u64) -> Vec<super::window_fixtures::Case> {
+    use super::window_fixtures::{Case, FactsFrom};
+    let base = std::sync::Arc::new(near_budget_page());
+    let mut cases = Vec::new();
+    for k in 0..scale {
+        let at = usize::try_from(1_001 + 2 * k).unwrap();
+        let mark = super::hand_encoded::raw_edit(&base, 44_000 + k, |raw| {
+            first_text(raw, 0).mark(at..at + 1, "italic", true).unwrap();
+        });
+        let typed = super::hand_encoded::raw_edit(&base, 44_500 + k, |raw| {
+            first_text(raw, 0).insert(at, "q").unwrap();
+        });
+        for (kind, update) in [("mark_over_budget", mark), ("insert_in_marked_text", typed)] {
+            cases.push(Case {
+                label: format!("round4/{kind}/{k}"),
+                family: "round4",
+                kind,
+                base: base.clone(),
+                update,
+                expect: None,
+                facts: FactsFrom::Base,
+            });
+        }
+    }
+    cases
+}
+
+/// Full and incremental window of a one-character edit on flat pages, with and without ordinary
+/// marks on every block. Run: `cargo test --release -p collab-core --lib mark_window_timing --
+/// --ignored --nocapture`.
+#[test]
+#[ignore = "timing measurement, run in release"]
+fn mark_window_timing() {
+    for (blocks, marks) in [(5_000, false), (5_000, true), (9_950, false), (9_950, true)] {
+        let base = flat_page_of(blocks);
+        let raw = LoroDoc::new();
+        raw.import(&base).unwrap();
+        raw.set_peer_id(45_000).unwrap();
+        if marks {
+            for index in 0..blocks {
+                let text = first_text(&raw, index);
+                text.insert(1, "abcdefghijklmn").unwrap();
+                text.mark(0..6, "bold", true).unwrap();
+                text.mark(4..9, "italic", true).unwrap();
+                text.mark(8..12, "link", "https://example.test/a/page").unwrap();
+            }
+            raw.commit();
+        }
+        let base = raw.export(loro::ExportMode::snapshot()).unwrap();
+        let update = super::hand_encoded::raw_edit(&base, 45_001, |raw| {
+            first_text(raw, blocks / 2).insert(1, "z").unwrap();
+        });
+        let time = |with_facts: bool| {
+            let mut best = std::time::Duration::MAX;
+            for _ in 0..5 {
+                let mut engine = LoroCollabEngine::load(&base).unwrap();
+                engine.prewarm_for_writes();
+                let facts = if with_facts { BaseFacts::compute(&engine) } else { None };
+                assert_eq!(facts.is_some(), with_facts);
+                let started = std::time::Instant::now();
+                crate::window_check::run_window(&mut engine, facts.as_ref(), &update).unwrap();
+                best = best.min(started.elapsed());
+            }
+            best
+        };
+        println!(
+            "TIMING {blocks} blocks, marks {marks}: full {:.2} ms, incremental {:.3} ms",
+            time(false).as_secs_f64() * 1e3,
+            time(true).as_secs_f64() * 1e3
+        );
     }
 }

@@ -20,7 +20,7 @@
 //!   value charged like those of any other map (the server bounds the keys it writes itself, a client
 //!   update does not);
 //! * [`CHARS_PER_ITEM`] characters of a text container (rounded up per container);
-//!   The values of its style marks are not counted (open, see below);
+//!   The payload of its style marks is counted per delta segment (see "Text mark values");
 //! * [`BYTES_PER_ITEM`] bytes of the payload of the plain values of a map or list (rounded down per
 //!   container): [`value_bytes`] counts eight bytes for every scalar, collection or container
 //!   reference in a value, nested to any depth, plus the length of every string, binary and map key.
@@ -82,25 +82,31 @@
 //! bounds. A page above the budget gets no base facts, so its windows are the full computation
 //! (`next`'s behaviour: accepted while the window fits its CPU limit, refused by it beyond).
 //!
-//! # Known gap: text mark values
+//! # Text mark values
 //!
 //! The reader converts every attribute of every delta segment of a text (`page_inline::spans`), so
 //! a large mark value costs once per segment, and an update that splits a text adds segments that
-//! carry the values of marks it does not mention. The base's count cannot see a mark value (a text
-//! counts its characters only) and the update's bound cannot know the segments it adds, so neither
-//! side bounds this carrier by payload. Closing it takes either a bound on the mark values the
-//! reader accepts (a refusal of content accepted today) or a per-segment count on the base side with
-//! a per-unit mark payload in the facts for the touched texts of an update.
-//! `window_round4_tests::r4_2_a_large_mark_value_over_many_segments_cannot_grow_a_page_without_a_bound`
-//! reproduces it and is ignored until then.
+//! carry the values of marks it does not mention. A text therefore counts, on top of its
+//! characters, the payload of the attributes of each of its delta segments ([`text_mark_items`],
+//! [`BYTES_PER_ITEM`] bytes per item, rounded down per text, early exit at the ceiling). No value
+//! shape is refused.
+//!
+//! An op cannot state the segments it adds, so the window does not bound this part by the ops. The
+//! facts keep the mark items of every block that has any, and the window re-counts the blocks the
+//! update touched, on the document after the import and before any unit is evaluated; the growth
+//! of the touched blocks is added to the update's bound. The walk of a block stops once its items
+//! pass its base figure plus the headroom the budget has left, so the payload it reads is bounded by
+//! what the touched blocks already cost plus the headroom, whatever the update holds. Legacy tree
+//! nodes are not counted: the projection reads their text as a plain string (`to_string`), so their
+//! marks cost it nothing.
 //!
 //! The window keeps the measure without reading the page again: the items of the base plus an
 //! upper bound on the items the update added (the sum of [`op_work`] over its ops), compared with
 //! the budget of the exact post-import totals.
 
 use loro::{
-    Container, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOpContent, JsonTextOp, JsonTreeOp, LoroValue,
-    ValueOrContainer,
+    Container, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOpContent, JsonTextOp, JsonTreeOp, LoroText, LoroValue,
+    TextDelta, ValueOrContainer,
 };
 
 /// Characters of one text container that count as one item.
@@ -272,16 +278,109 @@ pub fn op_work(content: &JsonOpContent) -> OpWork {
     }
 }
 
+/// The items of the style marks of one text: the payload of every attribute of every delta segment
+/// (a key and [`value_bytes`] of its value), divided by [`BYTES_PER_ITEM`] and rounded down.
+///
+/// This is what the reader pays: `page_inline::spans` and `richtext::read_rich_text` convert every
+/// attribute of every segment, so a large mark value costs once per segment, and every mark that
+/// splits a text adds segments that carry the values of the marks around it. `None` as soon as the
+/// items counted so far pass `stop_over`, so the work is at most `stop_over` items of payload and
+/// one value, whatever the text holds (the segments themselves are bounded by the text's length).
+pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64) -> Option<u64> {
+    let mut bytes: u64 = 0;
+    for delta in text.to_delta() {
+        let TextDelta::Insert {
+            attributes: Some(attributes),
+            ..
+        } = delta
+        else {
+            continue;
+        };
+        for (key, value) in &attributes {
+            bytes = bytes
+                .saturating_add(u64::try_from(key.len()).unwrap_or(u64::MAX))
+                .saturating_add(value_bytes(value));
+        }
+        if bytes / BYTES_PER_ITEM > stop_over {
+            return None;
+        }
+    }
+    Some(bytes / BYTES_PER_ITEM)
+}
+
+/// The mark items (see [`text_mark_items`]) of every text in a unit's container, nested to any
+/// depth up to [`MAX_DEPTH`]. `visits` is the number of containers the caller still allows itself
+/// to enter, shared across units; `None` when it runs out, when the total passes `stop_over` or when
+/// the nesting is too deep.
+pub(crate) fn container_mark_items(container: &Container, stop_over: u64, visits: &mut u64) -> Option<u64> {
+    let mut items: u64 = 0;
+    let mut pending = vec![(container.clone(), 0_usize)];
+    while let Some((next, depth)) = pending.pop() {
+        if depth > MAX_DEPTH || *visits == 0 {
+            return None;
+        }
+        *visits -= 1;
+        let mut push = |child: ValueOrContainer| {
+            if let ValueOrContainer::Container(child) = child {
+                pending.push((child, depth + 1));
+            }
+        };
+        match &next {
+            Container::Text(text) => {
+                items = items.saturating_add(text_mark_items(text, stop_over.saturating_sub(items))?);
+                if items > stop_over {
+                    return None;
+                }
+            }
+            Container::Map(map) => {
+                for key in map.keys() {
+                    if let Some(child) = map.get(&key) {
+                        push(child);
+                    }
+                }
+            }
+            Container::List(list) => {
+                for index in 0..list.len() {
+                    if let Some(child) = list.get(index) {
+                        push(child);
+                    }
+                }
+            }
+            Container::MovableList(list) => {
+                for index in 0..list.len() {
+                    if let Some(child) = list.get(index) {
+                        push(child);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(items)
+}
+
 /// Counts items against a ceiling and stops counting once it is passed.
 #[derive(Debug)]
 pub(crate) struct ItemCount {
     total: u64,
     ceiling: u64,
+    /// Whether the style marks of a text are counted (see [`text_mark_items`]).
+    marks: bool,
 }
 
 impl ItemCount {
     pub(crate) const fn new(ceiling: u64) -> Self {
-        Self { total: 0, ceiling }
+        Self {
+            total: 0,
+            ceiling,
+            marks: true,
+        }
+    }
+
+    /// Counts no text marks from here on. For the part of the page whose texts the projection reads
+    /// as plain strings (the legacy tree nodes), so marks there cost the projection nothing.
+    pub(crate) const fn without_marks(&mut self) {
+        self.marks = false;
     }
 
     /// Adds `n` items. False once the ceiling is passed.
@@ -356,11 +455,13 @@ impl ItemCount {
                 list.for_each(|value| self.add_element(value, depth, &mut within, &mut bytes));
                 within && self.add(bytes / BYTES_PER_ITEM)
             }
-            Container::Text(text) => self.add(
-                u64::try_from(text.len_unicode())
-                    .unwrap_or(u64::MAX)
-                    .div_ceil(CHARS_PER_ITEM),
-            ),
+            Container::Text(text) => {
+                self.add(
+                    u64::try_from(text.len_unicode())
+                        .unwrap_or(u64::MAX)
+                        .div_ceil(CHARS_PER_ITEM),
+                ) && (!self.marks || text_mark_items(text, self.ceiling).is_some_and(|marks| self.add(marks)))
+            }
             // A tree nested in a document is not read by the projection; its nodes are counted so
             // that it cannot hide growth.
             Container::Tree(tree) => self.add(u64::try_from(tree.nodes().len()).unwrap_or(u64::MAX)),

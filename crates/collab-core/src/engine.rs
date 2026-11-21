@@ -1318,6 +1318,8 @@ impl LoroCollabEngine {
                 return Ok(None);
             }
         }
+        // The projection reads a legacy node's text as a plain string, so its marks cost nothing.
+        items.without_marks();
         for tree_id in self.tree.nodes() {
             let meta = self.tree.get_meta(tree_id).map_err(|e| map_loro_error(&e, "<work>"))?;
             if !items.add(1) || !items.add_container(&Container::Map(meta), 0) {
@@ -1325,6 +1327,58 @@ impl LoroCollabEngine {
             }
         }
         Ok(Some(items.total()))
+    }
+
+    /// The mark items (see [`crate::work::text_mark_items`]) of every editor block that has any, by
+    /// the block's key. Only blocks: the projection reads a legacy node's text as a plain string
+    /// (`semantic_snapshot`), so marks there cost it nothing and are not counted. `None` only when a
+    /// nesting is too deep to follow, which the item count refuses first. Unbounded in itself: call
+    /// it after `projection_items` accepted the page.
+    pub(crate) fn unit_mark_items(&self) -> Option<HashMap<NodeId, u64>> {
+        let mut found = HashMap::new();
+        let mut visits = u64::MAX;
+        for id in self.root_block_ids().ok()?.unwrap_or_default() {
+            if let Some(container) = self.doc.get_container(id.clone()) {
+                let items = crate::work::container_mark_items(&container, u64::MAX, &mut visits)?;
+                if items > 0 {
+                    found.insert(NodeId::from(id.to_string()), items);
+                }
+            }
+        }
+        Some(found)
+    }
+
+    /// What the touched blocks' mark items grew by since `facts`, summed over the blocks that grew
+    /// (a block that shrank counts nothing, so the sum stays an upper bound).
+    ///
+    /// Bounded before any projection work: the walk of a block stops as soon as the block's items
+    /// pass its base figure plus the `headroom` that is left, and the walks together enter at most
+    /// `visits` containers. `marked` says that the update carries a mark op. `None` means the budget cannot hold the result (or a walk could not be
+    /// completed within the allowance), and the caller falls back.
+    pub(crate) fn mark_items_added(
+        &self,
+        facts: &crate::facts::BaseFacts,
+        blocks: &HashSet<loro::ContainerID>,
+        marked: bool,
+        headroom: u64,
+        mut visits: u64,
+    ) -> Option<u64> {
+        let mut added: u64 = 0;
+        for id in blocks {
+            let Some(container) = self.doc.get_container(id.clone()) else {
+                continue;
+            };
+            let before = facts.marks.get(id.to_string().as_str()).copied().unwrap_or(0);
+            // A text gains marks only from a mark op: a block with none before and none in the
+            // update has none now, and is not read.
+            if before == 0 && !marked {
+                continue;
+            }
+            let left = headroom.saturating_sub(added);
+            let after = crate::work::container_mark_items(&container, before.saturating_add(left), &mut visits)?;
+            added = added.saturating_add(after.saturating_sub(before));
+        }
+        Some(added)
     }
 
     /// The number of elements of the root block list, of any kind: `None` without an editor

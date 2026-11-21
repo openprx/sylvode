@@ -116,6 +116,10 @@ pub struct BaseFacts {
     /// Every node of the base's projection by its snapshot key: editor blocks by container id,
     /// tree nodes by logical id.
     pub(crate) units: HashMap<NodeId, UnitFact>,
+    /// The mark items (see [`crate::work::text_mark_items`]) of the editor blocks that have any, by
+    /// key: the part of `items` that a text's segments multiply, which the window re-counts for the
+    /// blocks an update touched.
+    pub(crate) marks: HashMap<NodeId, u64>,
 }
 
 impl BaseFacts {
@@ -139,12 +143,14 @@ impl BaseFacts {
         let snapshot = engine.semantic_snapshot().ok()?;
         check_snapshot(&snapshot, &DocumentLimits::default()).ok()?;
         let block_order = engine.root_block_ids().ok()?.unwrap_or_default();
+        let marks = engine.unit_mark_items()?;
         let facts = Self::from_snapshot(
             engine.doc().state_vv(),
             BaseVersion::of(engine.doc())?,
             items,
             editor_doc,
             block_order,
+            marks,
             &snapshot,
         );
         // With the exact totals the budget is known: a page above it takes the full computation.
@@ -162,6 +168,7 @@ impl BaseFacts {
         items: u64,
         editor_doc: bool,
         block_order: Vec<ContainerID>,
+        marks: HashMap<NodeId, u64>,
         snapshot: &SemanticSnapshot,
     ) -> Self {
         let mut facts = Self {
@@ -176,6 +183,7 @@ impl BaseFacts {
             longest: 0,
             block_order,
             units: HashMap::with_capacity(snapshot.nodes.len()),
+            marks,
         };
         for (key, node) in &snapshot.nodes {
             let unit = UnitFact {
