@@ -1333,7 +1333,7 @@ async fn a_completed_task_is_announced_once_and_a_retry_is_not_an_outcome() {
 
     // Pending and processing tasks announce nothing.
     assert_eq!(run_once(w.db()).await.unwrap(), FollowupReport::default());
-    exec(w.db(), "UPDATE ai_tasks SET status = 'processing'", vec![]).await;
+    exec(w.db(), "UPDATE ai_tasks SET status = $1", vec!["processing".into()]).await;
     assert_eq!(run_once(w.db()).await.unwrap().announced, 0);
     // A failed attempt that goes back to pending is not an outcome.
     exec(
