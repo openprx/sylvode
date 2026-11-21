@@ -7,6 +7,7 @@ import {
 	attachmentContentType,
 	attachmentFileName,
 	attachmentStorageName,
+	isSvgDataUrl,
 	recordValueUrl,
 	signaturePoint
 } from '#lib/forms/attachment-files.js';
@@ -311,12 +312,17 @@ export class AttachmentsController extends FormsController {
 		return context;
 	};
 
-	setSignatureValue = (fieldKey: string, scope: SignatureDraftScope, value: string) => {
+	/** Stores a signature value; an SVG data URL is refused and `false` is returned. */
+	setSignatureValue = (fieldKey: string, scope: SignatureDraftScope, value: string): boolean => {
+		if (isSvgDataUrl(value)) return false;
+
 		if (scope === 'child') {
 			this.fp.recordDetail.updateChildDraftValue(fieldKey, value);
 		} else {
 			this.fp.records.setDraftValue(fieldKey, value);
 		}
+
+		return true;
 	};
 
 	captureSignatureCanvas = (

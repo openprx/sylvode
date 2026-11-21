@@ -1,4 +1,5 @@
 import type { FormField, FormView, UniversalForm } from '#lib/api/forms.js';
+import { isIsoDate as calendarIsIsoDate } from '#lib/ui/date/calendar.js';
 import * as precedence from '#lib/forms/view-precedence.js';
 import type {
 	CalendarExceptionDateMap,
@@ -81,7 +82,7 @@ export function viewConfigRecord(
 }
 
 export function isIsoDate(value: string): boolean {
-	return /^\d{4}-\d{2}-\d{2}$/.test(value);
+	return calendarIsIsoDate(value);
 }
 
 export function calendarExceptionDateMap(value: unknown): CalendarExceptionDateMap {
