@@ -77,7 +77,7 @@ pub(super) fn judge(base: &[u8], update: &[u8]) -> Judged {
     engine.prewarm_for_writes();
     let facts = BaseFacts::compute(&engine);
     crate::walk_counter::reset();
-    let outcome = run_window(&mut engine, facts.as_ref(), update);
+    let outcome = run_window(&mut engine, facts.as_ref(), update, &mut |_| {});
     let reason = crate::walk_counter::fallback_reasons().last().cloned();
     let (window, incremental, oracle, fresh) = match outcome {
         Ok(accepted) => {
@@ -95,7 +95,7 @@ pub(super) fn judge(base: &[u8], update: &[u8]) -> Judged {
     };
     let mut plain = LoroCollabEngine::load(base).unwrap();
     plain.prewarm_for_writes();
-    let full_window = run_window(&mut plain, None, update)
+    let full_window = run_window(&mut plain, None, update, &mut |_| {})
         .map(|_| ())
         .map_err(|e| e.to_string());
     Judged {
@@ -543,7 +543,7 @@ fn r2_4_a_dropped_node_materialised_by_a_concurrent_import_is_decided_as_next_do
         assert_eq!(judged.fallback(), Some("NotSequential"), "{judged:?}");
         // With the switch off the worker is `next` on this input, caches included.
         let mut worker = LoroCollabEngine::load(&base1).unwrap();
-        let outcome = run_window(&mut worker, None, &update)
+        let outcome = run_window(&mut worker, None, &update, &mut |_| {})
             .map(|_| ())
             .map_err(|e| e.to_string());
         assert_eq!(outcome, judged.next);

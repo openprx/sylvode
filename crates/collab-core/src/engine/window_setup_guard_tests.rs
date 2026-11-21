@@ -396,7 +396,8 @@ fn r7_1_a_page_without_facts_because_of_the_guard_is_written_by_the_full_window(
     let setup = BaseFacts::compute_guarded(&engine, &SetupGuard::with_limit(1024));
     assert!(setup.facts.is_none() && setup.guard == Some(Fired::Allocation));
     crate::walk_counter::reset();
-    let accepted = crate::window_check::run_window(&mut engine, None, &update).expect("accepted, not an error");
+    let accepted =
+        crate::window_check::run_window(&mut engine, None, &update, &mut |_| {}).expect("accepted, not an error");
     assert!(accepted.report.is_none());
     assert_eq!(
         accepted.fallback,
@@ -657,7 +658,8 @@ fn r7_1_a_page_without_facts_because_of_the_cpu_guard_is_written_by_the_full_win
     let (setup, _) = cpu_guarded(&engine, 5);
     assert!(setup.facts.is_none() && setup.guard == Some(Fired::Cpu));
     crate::walk_counter::reset();
-    let accepted = crate::window_check::run_window(&mut engine, None, &update).expect("accepted, not an error");
+    let accepted =
+        crate::window_check::run_window(&mut engine, None, &update, &mut |_| {}).expect("accepted, not an error");
     assert!(accepted.report.is_none());
     assert_eq!(
         accepted.fallback,

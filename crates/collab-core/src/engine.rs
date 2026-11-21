@@ -2132,6 +2132,8 @@ mod window_check_pins_tests;
 #[cfg(test)]
 mod window_class_fixtures;
 #[cfg(test)]
+mod window_decision_tests;
+#[cfg(test)]
 mod window_differential_tests;
 #[cfg(test)]
 mod window_fixtures;

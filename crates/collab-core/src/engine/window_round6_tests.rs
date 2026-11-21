@@ -277,7 +277,7 @@ fn assert_a_block_becoming_readable_is_counted(base: &[u8], text_id: &str, updat
         "the unread block has no mark items in the facts"
     );
     crate::walk_counter::reset();
-    crate::window_check::run_window(&mut engine, facts.as_ref(), update).unwrap();
+    crate::window_check::run_window(&mut engine, facts.as_ref(), update, &mut |_| {}).unwrap();
     assert!(
         crate::walk_counter::delta_reads().iter().any(|id| id == text_id),
         "the block that became readable was not re-counted"

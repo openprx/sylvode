@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CollabError;
 use crate::setup_guard::Fired;
-use crate::window_check::WindowReport;
+use crate::window_check::{FallbackReason, WindowReport};
 use crate::{SemanticDiff, SemanticSnapshot};
 
 /// Child-only operation selector set explicitly by the trusted host for every spawn.
@@ -435,6 +435,133 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
     }
 }
 
+/// The first byte of the decision record the worker writes right after its marker byte, before it
+/// does the full computation (`WindowDecision`). Every response the worker completes is
+/// `marker, record, frame`; a worker killed by a ceiling after the record has still told the host
+/// what its window check decided.
+pub const DECISION_RECORD_TAG: u8 = 0xD5;
+
+/// What the worker's window check decided for one attempt, as the host learns it.
+///
+/// It is written to the wire as one stable byte ([`Self::to_wire`], an explicit table that does not
+/// depend on the order of the variants), so that a new `FallbackReason` cannot silently change the
+/// meaning of an existing code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowDecision {
+    /// The worker did not reach a decision: the import itself was refused or failed, the base did
+    /// not load, or this was not an apply. The host treats it as "not a sequential-gate fallback".
+    Undecided,
+    /// The incremental check accepted the update.
+    Incremental,
+    /// The incremental check refused the update with the full computation's own refusal (a total
+    /// over its limit, or the write of an existing node's id).
+    Refused,
+    /// The incremental check did not decide, for this reason, and the full computation did.
+    Fallback(FallbackReason),
+}
+
+const DECISION_UNDECIDED: u8 = 0;
+const DECISION_INCREMENTAL: u8 = 1;
+const DECISION_REFUSED: u8 = 2;
+const DECISION_FALLBACK_BASE: u8 = 16;
+
+const fn fallback_code(reason: FallbackReason) -> u8 {
+    DECISION_FALLBACK_BASE
+        + match reason {
+            FallbackReason::FactsAbsent => 0,
+            FallbackReason::StaleFacts => 1,
+            FallbackReason::GlobalStructure => 2,
+            FallbackReason::UnreadableInsert => 3,
+            FallbackReason::TreeStructure => 4,
+            FallbackReason::DuplicateLogicalId => 5,
+            FallbackReason::ResolvedNodeId => 6,
+            FallbackReason::IdRewritten => 7,
+            FallbackReason::NotSequential => 8,
+            FallbackReason::WorkBudget => 9,
+            FallbackReason::Unclassified => 10,
+            FallbackReason::KeyCollision => 11,
+            FallbackReason::InvalidUnit => 12,
+            FallbackReason::AliasLimit => 13,
+            FallbackReason::PresenceChange => 14,
+            FallbackReason::Inconsistent => 15,
+            FallbackReason::LimitReached => 16,
+        }
+}
+
+impl WindowDecision {
+    /// The stable wire code of this decision.
+    #[must_use]
+    pub const fn to_wire(self) -> u8 {
+        match self {
+            Self::Undecided => DECISION_UNDECIDED,
+            Self::Incremental => DECISION_INCREMENTAL,
+            Self::Refused => DECISION_REFUSED,
+            Self::Fallback(reason) => fallback_code(reason),
+        }
+    }
+
+    /// The decision a wire code names, or `None` for a code no worker writes.
+    #[must_use]
+    pub fn from_wire(code: u8) -> Option<Self> {
+        match code {
+            DECISION_UNDECIDED => Some(Self::Undecided),
+            DECISION_INCREMENTAL => Some(Self::Incremental),
+            DECISION_REFUSED => Some(Self::Refused),
+            _ => FallbackReason::ALL
+                .iter()
+                .copied()
+                .find(|reason| fallback_code(*reason) == code)
+                .map(Self::Fallback),
+        }
+    }
+
+    /// A short label for the host's log (`fallback:not_sequential`).
+    #[must_use]
+    pub fn label(self) -> String {
+        match self {
+            Self::Undecided => "undecided".to_owned(),
+            Self::Incremental => "incremental".to_owned(),
+            Self::Refused => "refused".to_owned(),
+            Self::Fallback(reason) => format!("fallback:{}", fallback_label(reason)),
+        }
+    }
+}
+
+fn fallback_label(reason: FallbackReason) -> String {
+    // The variant names are the stable vocabulary; `Debug` prints exactly them.
+    let name = format!("{reason:?}");
+    let mut label = String::with_capacity(name.len() + 4);
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                label.push('_');
+            }
+            label.push(ch.to_ascii_lowercase());
+        } else {
+            label.push(ch);
+        }
+    }
+    label
+}
+
+/// Splits the bytes a worker wrote after its marker byte into its decision record and the rest
+/// (the response frame, or nothing for a killed worker).
+///
+/// The record is present when the first byte is [`DECISION_RECORD_TAG`] and a second byte follows;
+/// the second byte must then be a code [`WindowDecision::from_wire`] knows, else the record is
+/// invalid (`Err`). Without a record the whole input is returned as the rest.
+///
+/// # Errors
+/// A tag byte followed by a code that names no decision.
+pub fn split_decision_record(bytes: &[u8]) -> Result<(Option<WindowDecision>, &[u8]), &'static str> {
+    match bytes {
+        [DECISION_RECORD_TAG, code, rest @ ..] => WindowDecision::from_wire(*code)
+            .map(|decision| (Some(decision), rest))
+            .ok_or("decision record carries an unknown code"),
+        _ => Ok((None, bytes)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -619,5 +746,57 @@ mod tests {
         let mut cursor = buf.as_slice();
         let result = read_field(&mut cursor, 10);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn decision_record_round_trips_for_every_fallback_reason() {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut all = vec![
+            WindowDecision::Undecided,
+            WindowDecision::Incremental,
+            WindowDecision::Refused,
+        ];
+        all.extend(FallbackReason::ALL.iter().copied().map(WindowDecision::Fallback));
+        for decision in all {
+            let code = decision.to_wire();
+            assert!(seen.insert(code), "{decision:?} shares its wire code {code}");
+            assert_eq!(WindowDecision::from_wire(code), Some(decision));
+        }
+        assert_eq!(WindowDecision::from_wire(3), None);
+        assert_eq!(WindowDecision::from_wire(255), None);
+        // Pinned values: a code, once released, never changes meaning.
+        assert_eq!(WindowDecision::Fallback(FallbackReason::FactsAbsent).to_wire(), 16);
+        assert_eq!(WindowDecision::Fallback(FallbackReason::NotSequential).to_wire(), 24);
+        assert_eq!(WindowDecision::Fallback(FallbackReason::LimitReached).to_wire(), 32);
+        assert_eq!(
+            WindowDecision::Fallback(FallbackReason::NotSequential).label(),
+            "fallback:not_sequential"
+        );
+    }
+
+    #[test]
+    fn a_decision_record_splits_off_the_front_of_the_response() {
+        let not_sequential = WindowDecision::Fallback(FallbackReason::NotSequential);
+        let bytes = [DECISION_RECORD_TAG, not_sequential.to_wire(), 9, 9];
+        assert_eq!(
+            split_decision_record(&bytes).expect("a valid record"),
+            (Some(not_sequential), &[9u8, 9][..])
+        );
+        // A killed worker's bytes may hold the record and nothing else, or nothing at all.
+        assert_eq!(
+            split_decision_record(&bytes[..2]).expect("a valid record"),
+            (Some(not_sequential), &[][..])
+        );
+        assert_eq!(split_decision_record(&[]).expect("no record"), (None, &[][..]));
+        assert_eq!(
+            split_decision_record(&[DECISION_RECORD_TAG]).expect("a lone tag is no record"),
+            (None, &[DECISION_RECORD_TAG][..])
+        );
+        // A frame that does not start with the tag has no record.
+        assert_eq!(
+            split_decision_record(&[1, 2, 3]).expect("no record"),
+            (None, &[1u8, 2, 3][..])
+        );
+        assert!(split_decision_record(&[DECISION_RECORD_TAG, 200]).is_err());
     }
 }

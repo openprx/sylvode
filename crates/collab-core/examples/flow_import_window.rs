@@ -284,7 +284,8 @@ fn sample(fixture: &Fixture, samples: &mut Samples) -> Result<(), String> {
         incremental.prewarm_for_writes();
     }
     let (facts, facts_ms) = timed(|| Ok(BaseFacts::compute(&incremental)))?;
-    let (accepted, incr_ms) = timed(|| run_window(&mut incremental, facts.as_ref(), &fixture.update).map_err(err))?;
+    let (accepted, incr_ms) =
+        timed(|| run_window(&mut incremental, facts.as_ref(), &fixture.update, &mut |_| {}).map_err(err))?;
     samples.incr.push(incr_ms);
     samples.facts.push(facts_ms);
     samples.fallbacks += usize::from(accepted.fallback.is_some());

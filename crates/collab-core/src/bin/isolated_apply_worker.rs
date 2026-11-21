@@ -67,6 +67,8 @@ use collab_core::setup_guard::SetupGuard;
 use collab_core::window_check::{self, WindowReport};
 #[cfg(target_os = "linux")]
 use collab_core::{CollabEngine, LoroCollabEngine};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "linux")]
 #[global_allocator]
@@ -135,6 +137,11 @@ fn main() {
     } else {
         BaseFacts::compute_guarded(&base_engine, &setup_guard)
     };
+
+    // Test builds only: a synthetic setup that sleeps or burns CPU, to exercise the host's setup
+    // timeout. Nothing in a release build.
+    #[cfg(debug_assertions)]
+    test_injection::run_setup_workload();
 
     write_marker_or_exit();
     respond_and_exit(&decode_apply_check_and_export(base_engine, &setup, &update));
@@ -286,6 +293,38 @@ fn write_marker_or_exit() {
     }
 }
 
+/// Set once the decision record has been written, so that [`respond_and_exit`] writes the
+/// `Undecided` record only when the window check never decided.
+#[cfg(target_os = "linux")]
+static DECISION_WRITTEN: AtomicBool = AtomicBool::new(false);
+
+/// Tells the host what the window check decided, as soon as it has decided: two bytes,
+/// [`wire::DECISION_RECORD_TAG`] and the decision's wire code, in one `write(2)` from a stack
+/// array. It runs inside the armed metered window, so it must not allocate (the counting allocator
+/// is armed) and takes no lock. A worker killed by a ceiling after this point has still told the
+/// host the decision.
+///
+/// A failed or short write is ignored: the host then sees no record, which for a worker that
+/// completes is a protocol failure and for a killed worker is "no decision known".
+#[cfg(target_os = "linux")]
+fn write_decision_record(decision: wire::WindowDecision) {
+    let record = [wire::DECISION_RECORD_TAG, decision.to_wire()];
+    DECISION_WRITTEN.store(true, Ordering::Relaxed);
+    // The unit tests of this binary run the window in the test process, whose stdout is not a host's
+    // pipe: nothing is written there.
+    #[cfg(not(test))]
+    // SAFETY: `record` is a live, initialised two-byte array on this stack frame, so the pointer is
+    // valid for reads of `record.len()` bytes for the whole call. File descriptor 1 is this
+    // process's stdout, which stays open until `_exit`; `std`'s stdout buffer is empty here (the
+    // marker byte was flushed) and is only used again after this record, so the bytes stay in
+    // order.
+    unsafe {
+        libc::write(1, record.as_ptr().cast::<libc::c_void>(), record.len());
+    }
+    #[cfg(test)]
+    let _ = record;
+}
+
 /// Everything between arming the metered window and closing it: `import_update`, deriving the
 /// semantic snapshot, and `check_snapshot`. Timer and allocator disarm happen as the very first
 /// step after this has a verdict, on every path -- see [`decode_apply_check_and_export`]'s doc
@@ -377,7 +416,7 @@ fn decode_apply_and_check(
     // Import, then the structural check of the result: incrementally against the base facts when
     // that is certain, with the full projection and `check_snapshot` otherwise. Every refusal is
     // the full computation's own.
-    match window_check::run_window(&mut engine, facts, update) {
+    match window_check::run_window(&mut engine, facts, update, &mut write_decision_record) {
         Ok(accepted) => Ok((engine, accepted.report)),
         Err(err) => Err(wire::Outcome::Rejected(err)),
     }
@@ -423,6 +462,11 @@ fn decode_apply_check_and_export(engine: LoroCollabEngine, setup: &SetupFacts, u
 /// there and not here.
 #[cfg(target_os = "linux")]
 fn respond_and_exit(outcome: &wire::Outcome) -> ! {
+    // Every completed response is `marker, decision record, frame`. A response that did not pass
+    // through the window check (a refused import, a failed base load, a diff) says `Undecided`.
+    if !DECISION_WRITTEN.load(Ordering::Relaxed) {
+        write_decision_record(wire::WindowDecision::Undecided);
+    }
     let payload = wire::encode_outcome(outcome).unwrap_or_default();
     let Ok(framed) = host::encode_response_frame(&payload) else {
         exit_without_response(1);
@@ -501,6 +545,12 @@ mod test_injection {
         /// exact byte, which real document content cannot reach (see this module's own doc
         /// comment).
         AllocBytes(usize),
+        /// Writes the decision record for this wire code, then burns this many microseconds of CPU
+        /// time: a ceiling kill that comes after the record.
+        DecisionThenBurn(u8, u64),
+        /// Writes the decision record for this wire code, then sleeps this many milliseconds: a
+        /// wall kill that comes after the record.
+        DecisionThenSleep(u8, u64),
     }
 
     /// Parses [`ENV_VAR`] into a [`Workload`], if set and well-formed. Any absence or parse
@@ -514,7 +564,38 @@ mod test_injection {
             "cpu_burn_micros" => value.parse().ok().map(Workload::CpuBurnMicros),
             "wall_sleep_millis" => value.parse().ok().map(Workload::WallSleepMillis),
             "alloc_bytes" => value.parse().ok().map(Workload::AllocBytes),
+            "decision_then_burn" => {
+                let (code, micros) = value.split_once(':')?;
+                Some(Workload::DecisionThenBurn(code.parse().ok()?, micros.parse().ok()?))
+            }
+            "decision_then_sleep" => {
+                let (code, millis) = value.split_once(':')?;
+                Some(Workload::DecisionThenSleep(code.parse().ok()?, millis.parse().ok()?))
+            }
             _ => None,
+        }
+    }
+
+    /// The synthetic setup of the debug build, run before the marker byte (so before the metered
+    /// window): `setup_sleep_millis=<n>` sleeps, `setup_burn_micros=<n>` burns that much CPU time.
+    /// Nothing happens without [`ENV_VAR`] naming one of them.
+    pub fn run_setup_workload() {
+        let Some(raw) = std::env::var(ENV_VAR).ok() else { return };
+        let Some((kind, value)) = raw.split_once('=') else {
+            return;
+        };
+        match kind {
+            "setup_sleep_millis" => {
+                if let Ok(millis) = value.parse() {
+                    std::thread::sleep(Duration::from_millis(millis));
+                }
+            }
+            "setup_burn_micros" => {
+                if let Ok(micros) = value.parse() {
+                    burn_cpu_micros(micros);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -555,6 +636,13 @@ mod test_injection {
         }
     }
 
+    /// Writes the decision record for `code`, as the window check does when it has decided. An
+    /// unknown code is written as `Undecided`.
+    fn tell_host(code: u8) {
+        let decision = super::wire::WindowDecision::from_wire(code).unwrap_or(super::wire::WindowDecision::Undecided);
+        super::write_decision_record(decision);
+    }
+
     /// Runs `workload` inside the caller's already-armed metered window ([`super::run_metered`]
     /// calls this, via [`super::metered_workload`], between `arm_sigprof`/`alloc::arm` and
     /// `disarm_sigprof`/`alloc::disarm` -- exactly where it would otherwise call
@@ -578,6 +666,16 @@ mod test_injection {
                 engine
             }
             Workload::WallSleepMillis(millis) => {
+                std::thread::sleep(Duration::from_millis(millis));
+                engine
+            }
+            Workload::DecisionThenBurn(code, micros) => {
+                tell_host(code);
+                burn_cpu_micros(micros);
+                engine
+            }
+            Workload::DecisionThenSleep(code, millis) => {
+                tell_host(code);
                 std::thread::sleep(Duration::from_millis(millis));
                 engine
             }

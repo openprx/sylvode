@@ -299,6 +299,7 @@ use loro::{
 use crate::engine::{ImportTrace, LoroCollabEngine, TreeUnit};
 use crate::error::CollabError;
 use crate::facts::{BaseFacts, Contribution, UnitFact};
+use crate::isolation::wire::WindowDecision;
 use crate::limits::{DocumentLimits, LimitViolation, check_snapshot, check_snapshot_with_depth, max_depth_capped};
 use crate::operation::NodeKind;
 use crate::reserved_roots::{ALIASES, DOC, ENGINE_TREE, META, TREE};
@@ -344,6 +345,9 @@ pub mod fault {
         SetupGuardSkipped,
         /// The setup's CPU guard never fires (`crate::setup_guard`).
         SetupCpuGuardSkipped,
+        /// The window never tells its caller what the check decided: the worker writes no decision
+        /// record, so the host cannot know the update was not sequential once a ceiling kills it.
+        DecisionNotReported,
     }
 
     thread_local! {
@@ -475,6 +479,11 @@ pub struct WindowAccepted {
 /// The decision is incremental when the check can be certain and the full computation otherwise.
 /// This is the whole metered window.
 ///
+/// `on_decision` is called exactly once, as soon as the incremental check has decided and before
+/// anything else runs: before the full computation of a fallback, and before returning on an
+/// accepted or refused check. It is not called when the import itself is refused (no check ran).
+/// The worker uses it to tell the host the decision before a ceiling can kill it.
+///
 /// # Errors
 /// Everything `import_client_update` refuses, and the refusal of the full computation (a projection
 /// error or a `LimitExceeded`), identical to what the full computation alone reports.
@@ -482,9 +491,18 @@ pub fn run_window(
     engine: &mut LoroCollabEngine,
     facts: Option<&BaseFacts>,
     update: &[u8],
+    on_decision: &mut dyn FnMut(WindowDecision),
 ) -> Result<WindowAccepted, CollabError> {
     let trace = engine.import_client_update_traced(update, facts.map(|facts| &facts.version))?;
-    match check(engine, facts, &trace) {
+    let checked = check(engine, facts, &trace);
+    if !injected!(DecisionNotReported) {
+        on_decision(match &checked {
+            Ok(_) => WindowDecision::Incremental,
+            Err(Undecided::IdRewrite | Undecided::Refused(_)) => WindowDecision::Refused,
+            Err(Undecided::Fallback(reason)) => WindowDecision::Fallback(*reason),
+        });
+    }
+    match checked {
         Ok(report) => Ok(WindowAccepted {
             report: Some(report),
             fallback: None,

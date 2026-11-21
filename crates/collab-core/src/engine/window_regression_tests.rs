@@ -97,7 +97,7 @@ fn judge(base: &[u8], update: &[u8]) -> Judged {
     engine.prewarm_for_writes();
     let facts = BaseFacts::compute(&engine);
     walk_counter::reset();
-    let outcome = run_window(&mut engine, facts.as_ref(), update);
+    let outcome = run_window(&mut engine, facts.as_ref(), update, &mut |_| {});
     let fallbacks = walk_counter::window_counts().fallbacks;
     match outcome {
         Ok(accepted) => {
@@ -706,7 +706,7 @@ fn fallback_cost_against_the_full_computation_alone() {
             let facts = BaseFacts::compute(&engine);
             walk_counter::reset();
             let started = std::time::Instant::now();
-            let outcome = run_window(&mut engine, facts.as_ref(), update);
+            let outcome = run_window(&mut engine, facts.as_ref(), update, &mut |_| {});
             window.push(started.elapsed());
             let counts = walk_counter::window_counts();
             path = format!(

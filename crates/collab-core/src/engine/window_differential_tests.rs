@@ -374,7 +374,7 @@ impl Incremental {
             Defect::Fault(fault) => Some(crate::window_check::fault::inject(fault)),
             _ => None,
         };
-        let outcome = run_window(&mut engine, facts.as_ref(), update);
+        let outcome = run_window(&mut engine, facts.as_ref(), update, &mut |_| {});
         (outcome, engine)
     }
 }
@@ -1487,7 +1487,7 @@ fn with_the_switch_off_the_window_is_next_on_every_case() {
         let next_decision = next.next_window(&case.update);
         let mut worker = LoroCollabEngine::load(&case.base).unwrap();
         worker.prewarm_for_writes();
-        let worker_decision = run_window(&mut worker, None, &case.update).map(|_| ());
+        let worker_decision = run_window(&mut worker, None, &case.update, &mut |_| {}).map(|_| ());
         // The one input `next` accepts and the worker refuses with the switch off: a tree op that
         // names a parent that does not exist when it runs (`tree_refs`), found by an independent
         // read of the update.
@@ -2020,7 +2020,7 @@ fn measure_window(model: Model, blocks: usize, shape: Shape) -> WindowWork {
     let facts = BaseFacts::compute(&engine);
     walk_counter::reset();
     let allocated_before = test_alloc::allocated_bytes();
-    let accepted = run_window(&mut engine, facts.as_ref(), &update).expect("the update is accepted");
+    let accepted = run_window(&mut engine, facts.as_ref(), &update, &mut |_| {}).expect("the update is accepted");
     let allocated = test_alloc::allocated_bytes().saturating_sub(allocated_before);
     WindowWork {
         counts: walk_counter::window_counts(),

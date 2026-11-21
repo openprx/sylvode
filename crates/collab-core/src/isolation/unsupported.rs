@@ -5,7 +5,7 @@
 //! fallback exists on purpose: decoding an untrusted update here would bypass the CPU/wall/memory
 //! ceilings the boundary exists to enforce.
 
-use super::outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode};
+use super::outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode, WorkerObservation};
 use super::wire;
 
 /// Always [`IsolatedApplyError::UnsupportedPlatform`] on this target.
@@ -26,6 +26,40 @@ pub const fn isolated_apply_with(
     _mode: WindowMode,
 ) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
     Err(unsupported())
+}
+
+/// Always [`IsolatedApplyError::UnsupportedPlatform`] on this target, with no observation.
+pub const fn isolated_apply_observed(
+    _base_snapshot: &[u8],
+    _update: &[u8],
+) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    (Err(unsupported()), observation())
+}
+
+/// Always [`IsolatedApplyError::UnsupportedPlatform`] on this target, with no observation.
+pub const fn isolated_apply_with_observed(
+    _base_snapshot: &[u8],
+    _update: &[u8],
+    _mode: WindowMode,
+) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    (Err(unsupported()), observation())
+}
+
+/// Always [`IsolatedApplyError::UnsupportedPlatform`] on this target, with no observation.
+pub const fn isolated_diff_observed(
+    _base_snapshot: &[u8],
+    _request: &wire::ReplayDiffRequest,
+) -> (Result<IsolatedDiffSuccess, IsolatedApplyError>, WorkerObservation) {
+    (Err(unsupported()), observation())
+}
+
+const fn observation() -> WorkerObservation {
+    WorkerObservation {
+        metered_wall_us: None,
+        metered_cpu_us: None,
+        setup_cpu_us: None,
+        decision: None,
+    }
 }
 
 /// Always [`IsolatedApplyError::UnsupportedPlatform`] on this target.
