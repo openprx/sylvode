@@ -941,7 +941,7 @@ fn candidate_derivation_defect() -> ApiError {
 /// (`collab_core::setup_guard::TEXT_CPU_BUDGET_NANOS`, the window's own CPU ceiling): a content limit,
 /// `limit_exceeded{text_decode_cost}`, with the budget in milliseconds as its limit. Nothing is
 /// applied, so the page stays writable.
-fn text_decode_cost_refusal() -> CollabError {
+const fn text_decode_cost_refusal() -> CollabError {
     let limit = collab_core::setup_guard::TEXT_CPU_BUDGET_NANOS / 1_000_000;
     CollabError::LimitExceeded {
         limit_kind: "text_decode_cost",
@@ -1644,7 +1644,7 @@ mod window_oracle_tests {
     fn after_guard(fired: collab_core::setup_guard::Fired, accepted: bool) -> WindowAttempt {
         if accepted {
             let WindowAttempt::Prepared(mut prepared) = prepared(false) else {
-                unreachable!("prepared() is Prepared");
+                panic!("prepared() is Prepared");
             };
             prepared.setup_guard = Some(fired);
             return WindowAttempt::Prepared(prepared);

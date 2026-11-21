@@ -104,8 +104,9 @@ pub fn runtime() -> &'static RuntimeConfig {
     RUNTIME.get_or_init(RuntimeConfig::fallback)
 }
 
-/// Whether the collab write window may decide incrementally (`[flow] incremental_window`, off
-/// unless the file turns it on). Unit tests turn it on for their own thread with
+/// Whether the collab write window may decide incrementally (`[flow] incremental_window`).
+///
+/// Off unless the file turns it on. Unit tests turn it on for their own thread with
 /// [`test_support::enable_incremental_window`], so a test that exercises the incremental path says so.
 pub fn incremental_window() -> bool {
     #[cfg(test)]
