@@ -1792,35 +1792,76 @@ function rebaseUnsentChanges(
 	| { ok: true; doc: RawLoroDoc; bytes: Uint8Array | null; unreplayable: ReadonlySet<string> }
 	| { ok: false; error: FlowError } {
 	let fork: RawLoroDoc | null = null;
+	let target: RawLoroDoc | null = null;
+	const mismatch = () => ({
+		ok: false as const,
+		error: clientError('invalid_update', { reason: 'rebase_state_mismatch' })
+	});
 	try {
 		const liveVersion = live.oplogVersion().toJSON();
 		const base = new Map(liveVersion);
 		const unreplayable = new Set<string>();
+		let partial = false;
 		for (const entry of queued) {
 			const meta = loro.decodeImportBlobMeta(entry.bytes, false);
+			let missing = false;
+			let applied = false;
 			for (const [peer, end] of meta.partialEndVersionVector.toJSON()) {
-				if ((liveVersion.get(peer) ?? 0) < end) unreplayable.add(entry.updateId);
+				if ((liveVersion.get(peer) ?? 0) < end) missing = true;
 			}
 			for (const [peer, start] of meta.partialStartVersionVector.toJSON()) {
 				const current = base.get(peer);
 				if (current !== undefined && start < current) {
+					applied = true;
 					if (start === 0) base.delete(peer);
 					else base.set(peer, start);
 				}
+			}
+			if (missing) {
+				unreplayable.add(entry.updateId);
+				// Some of its changes are in the live doc: they must not be re-encoded, because
+				// the entry as a whole goes to the draft and restoring it would apply them twice.
+				if (applied) partial = true;
 			}
 		}
 		const baseFrontiers = live.vvToFrontiers(new loro.VersionVector(base));
 		fork = live.forkAt(baseFrontiers);
 		fork.setPeerId(randomPeerId());
 		const before = fork.oplogVersion();
-		fork.applyDiff(live.diff(baseFrontiers, live.frontiers(), false), { fullState: true });
+		let source = live;
+		if (partial) {
+			// The state to carry is the base plus the entries that go with it. An entry that
+			// cannot be applied on top of that (it builds on an excluded one) is excluded too.
+			for (let round = 0; round <= queued.length && target === null; round += 1) {
+				const candidate = live.forkAt(baseFrontiers);
+				let blocked: string | null = null;
+				for (const entry of queued) {
+					if (unreplayable.has(entry.updateId)) continue;
+					const status = candidate.import(entry.bytes);
+					if (status.pending && status.pending.size > 0) {
+						blocked = entry.updateId;
+						break;
+					}
+				}
+				if (blocked === null) target = candidate;
+				else {
+					candidate.free();
+					unreplayable.add(blocked);
+				}
+			}
+			if (target === null) {
+				fork.free();
+				return mismatch();
+			}
+			source = target;
+		}
+		fork.applyDiff(source.diff(baseFrontiers, source.frontiers(), false), { fullState: true });
 		fork.commit();
-		if (JSON.stringify(stateJson(loro, fork)) !== JSON.stringify(stateJson(loro, live))) {
+		const same = JSON.stringify(stateJson(loro, fork)) === JSON.stringify(stateJson(loro, source));
+		target?.free();
+		if (!same) {
 			fork.free();
-			return {
-				ok: false,
-				error: clientError('invalid_update', { reason: 'rebase_state_mismatch' })
-			};
+			return mismatch();
 		}
 		if (fork.oplogVersion().compare(before) === 0) {
 			return { ok: true, doc: fork, bytes: null, unreplayable };
@@ -1832,7 +1873,8 @@ function rebaseUnsentChanges(
 			unreplayable
 		};
 	} catch {
+		target?.free();
 		fork?.free();
-		return { ok: false, error: clientError('invalid_update', { reason: 'rebase_state_mismatch' }) };
+		return mismatch();
 	}
 }

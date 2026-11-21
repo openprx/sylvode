@@ -16,7 +16,7 @@
  * Run standalone: `bun tests/flow-apply-busy.test.ts`
  */
 
-import { LoroDoc } from 'loro-crdt';
+import { LoroDoc, VersionVector } from 'loro-crdt';
 import { get } from 'svelte/store';
 import { Suite, assert, assertDeepEqual, assertEqual, finish, waitFor } from './support/harness';
 import {
@@ -876,6 +876,53 @@ for (const shape of SHAPES) {
 		}
 	});
 }
+
+// R9-8: one outbox entry with several changes, only some of them applicable
+await suite.checkAsync(
+	'R9-8: an entry whose later change is pending is drafted whole; its applied prefix is not also sent',
+	async () => {
+		const server = new FakeCollabServer();
+		const ctx = await open(server);
+		try {
+			limitUpdates(ctx, server);
+			const snapshot = server.doc.export({ mode: 'snapshot' });
+			// X: an over-limit edit by an earlier peer of this user (it will be drafted).
+			const earlier = new LoroDoc();
+			earlier.import(snapshot);
+			earlier.setPeerId('11');
+			const beforeX = earlier.oplogVersion();
+			earlier.getText('body').insert(0, OVER_LIMIT_MARK);
+			earlier.commit();
+			const xBytes = earlier.export({ mode: 'update', from: beforeX });
+			const xEnd = earlier.oplogVersion().toJSON().get('11') ?? 0;
+			// E1: two changes of one peer in one entry. A builds on the head; B builds on A and X.
+			const writer = new LoroDoc();
+			writer.import(snapshot);
+			writer.setPeerId('22');
+			writer.getText('body').insert(0, 'A|');
+			writer.commit();
+			writer.import(xBytes);
+			writer.getText('body').insert(0, 'B|');
+			writer.commit();
+			const entryBytes = writer.export({
+				mode: 'update',
+				from: new VersionVector(new Map([['11', xEnd]]))
+			});
+			server.policy = (seen, i) =>
+				i === 0 ? applyBusy('rebase') : SEQUENTIAL_OR_REBASE(server)(seen, i);
+			const intent = { kind: 'content_edit' } as const;
+			// Queued while still in flight, so the over-limit draft lands before the rebase runs.
+			const first = ctx.entry.offline.enqueue(entryBytes, 'f0', intent);
+			const second = ctx.entry.offline.enqueue(xBytes, 'f0', intent);
+			await Promise.all([first, second]);
+			await waitFor(() => ctx.entry.offline.draftEntries.length >= 2, 'both drafted');
+			await assertConserved(ctx, server, ['A|', 'B|', OVER_LIMIT_MARK], 'R9-8');
+			assertEqual(occurrences(serverText(server), 'A|'), 0, 'the prefix was not sent');
+		} finally {
+			await ctx.close();
+		}
+	}
+);
 
 // B-3
 await suite.checkAsync(
