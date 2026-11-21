@@ -20,6 +20,7 @@ thread_local! {
     static DIRECT_REFUSALS: Cell<usize> = const { Cell::new(0) };
     static FALLBACK_REASONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static PLACEMENT_WALKS: Cell<usize> = const { Cell::new(0) };
+    static ID_READS: Cell<usize> = const { Cell::new(0) };
 }
 
 /// One evaluation of the editor-model floor (`minimum_editor_model` without a cache hit).
@@ -98,6 +99,16 @@ pub fn record_placement_walk() {
     PLACEMENT_WALKS.with(|count| count.set(count.get() + 1));
 }
 
+/// One read of a tree node's `logical_id` by the id-cache rebuilds.
+pub fn record_id_read() {
+    ID_READS.with(|count| count.set(count.get() + 1));
+}
+
+/// The `logical_id` reads recorded since the last [`reset`].
+pub fn id_reads() -> usize {
+    ID_READS.with(Cell::get)
+}
+
 /// Root probes recorded since the last [`reset`], in order: `(root name, bytes allocated)`.
 pub fn root_probes() -> Vec<(String, usize)> {
     ROOT_PROBE_LOG.with(|log| log.borrow().clone())
@@ -162,6 +173,7 @@ pub fn reset() {
     DIRECT_REFUSALS.with(|count| count.set(0));
     FALLBACK_REASONS.with(|log| log.borrow_mut().clear());
     PLACEMENT_WALKS.with(|count| count.set(0));
+    ID_READS.with(|count| count.set(0));
 }
 
 #[cfg(test)]
