@@ -22,6 +22,8 @@ COPY apps apps
 COPY crates crates
 COPY benches benches
 COPY migrations migrations
+# The runner embeds the agent guide (skills/sylvode-mcp) with include_str!.
+COPY skills skills
 COPY spikes/collab-shared spikes/collab-shared
 COPY spikes/collab-loro spikes/collab-loro
 COPY spikes/collab-yrs-yjs spikes/collab-yrs-yjs

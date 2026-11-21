@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::guide::{
-    AGENTS_MAX_BYTES, EXCLUDE_LINE, EXCLUDE_MAX_BYTES, ExcludeOutcome, GuideContent, MAX_BACKUPS, Outcome,
-    ensure_git_exclude, install_agents_section, install_claude_skill, stamp,
+    AGENTS_MAX_BYTES, EMBEDDED, EXCLUDE_LINE, EXCLUDE_MAX_BYTES, ExcludeOutcome, GuideContent, MAX_BACKUPS, Outcome,
+    ensure_git_exclude, guide_state, install_agents_section, install_claude_skill, install_for_cli, stamp,
 };
 
 struct Dir(PathBuf);
@@ -605,4 +605,45 @@ fn a_non_utf8_exclude_file_is_extended_without_error() {
     assert_eq!(ensure_git_exclude(dir.path()), Ok(ExcludeOutcome::Added));
     let bytes = fs::read(info.join("exclude")).expect("read");
     assert!(bytes.starts_with(b"caf\xe9\n") && bytes.ends_with(format!("{EXCLUDE_LINE}\n").as_bytes()));
+}
+
+#[test]
+fn the_embedded_guide_is_the_skill_text_and_has_no_secrets_or_paths() {
+    assert!(EMBEDDED.skill_md.starts_with("---\n") && EMBEDDED.skill_md.contains("name: sylvode-mcp"));
+    assert!(EMBEDDED.tools_md.contains("sylvode_task_ack"));
+    assert!(EMBEDDED.agents_section.starts_with("## Sylvode MCP"));
+    for text in [EMBEDDED.skill_md, EMBEDDED.tools_md, EMBEDDED.agents_section] {
+        assert!(!text.contains("opr_") && !text.contains("/Users/") && !text.contains("/home/"));
+    }
+}
+
+#[test]
+fn the_guide_state_follows_the_install_for_both_kinds_of_cli() {
+    let dir = Dir::new();
+    let version = env!("CARGO_PKG_VERSION");
+    for cli in ["claude", "codex"] {
+        assert_eq!(guide_state(dir.path(), cli, &EMBEDDED, version), "absent", "{cli}");
+        let report = install_for_cli(dir.path(), cli, false, &dir.backups(), "t1");
+        assert_eq!(report.outcome, Ok(Outcome::Created), "{cli}");
+        assert_eq!(guide_state(dir.path(), cli, &EMBEDDED, version), "current", "{cli}");
+        assert_eq!(guide_state(dir.path(), cli, &EMBEDDED, "0.0.1"), "stale", "{cli}");
+    }
+    // A skill directory without our marker, and a broken managed section, are conflicts.
+    let other = Dir::new();
+    fs::create_dir_all(other.path().join(".claude/skills/sylvode-mcp")).expect("mkdir");
+    assert_eq!(guide_state(other.path(), "claude", &EMBEDDED, version), "conflict");
+    fs::write(other.agents(), "<!-- BEGIN SYLVODE MANAGED SECTION x -->\n").expect("write");
+    assert_eq!(guide_state(other.path(), "codex", &EMBEDDED, version), "conflict");
+}
+
+#[test]
+fn the_git_exclude_line_is_added_for_claude_only_when_asked() {
+    let dir = Dir::new();
+    fs::create_dir_all(dir.path().join(".git")).expect("git");
+    let report = install_for_cli(dir.path(), "codex", true, &dir.backups(), "t1");
+    assert!(report.exclude.is_none());
+    let report = install_for_cli(dir.path(), "claude", true, &dir.backups(), "t1");
+    assert_eq!(report.exclude, Some(ExcludeOutcome::Added));
+    let report = install_for_cli(dir.path(), "claude", false, &dir.backups(), "t2");
+    assert_eq!(report.exclude, None);
 }

@@ -112,7 +112,9 @@ fn private_dir(parent: &impl AsFd, name: &str) -> Result<OwnedFd, String> {
 
 fn check_private(fd: &OwnedFd, what: &str) -> Result<(), String> {
     let stat = fstat(fd).map_err(|e| format!("could not inspect `{what}`: {e}"))?;
-    let mode = u32::from(stat.st_mode as u16) & 0o777;
+    // `st_mode` is `u16` on macOS and `u32` on Linux; `u32::from` is lossless on both.
+    #[allow(clippy::useless_conversion)]
+    let mode = u32::from(stat.st_mode) & 0o777;
     if mode & 0o077 != 0 {
         return Err(format!(
             "`{what}` is accessible to group or others (mode {mode:o}); it holds secrets, so run chmod 700 on it"

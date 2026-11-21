@@ -232,6 +232,43 @@ pub fn build_http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("the HTTP client for Sylvode could not be built: {e}"))
 }
 
+/// Installs the agent guide into the project directory (design 8.5) when the operator allows it.
+/// A failure or conflict is logged; the task runs either way, because the server instructions carry
+/// the procedure too.
+async fn install_guide(config: &Config, files: &Arc<files::StateDir>, accepted: &checks::Accepted) {
+    if !config.runner.install_agent_guide {
+        return;
+    }
+    let dir = accepted.dir.clone();
+    let cli = accepted.cli.clone();
+    let key = accepted.project_key.clone();
+    let exclude = config.runner.git_exclude_managed;
+    let backups = files.root().join("sessions").join(&key).join("backups");
+    let label = format!(
+        "t{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    );
+    let report =
+        tokio::task::spawn_blocking(move || guide::install_for_cli(&dir, &cli, exclude, &backups, &label)).await;
+    match report {
+        Ok(report) => {
+            match &report.outcome {
+                Ok(guide::Outcome::Conflict | guide::Outcome::NotManaged) => {
+                    tracing::warn!(project = %key, "agent_guide: conflict; the guide was not installed");
+                }
+                Ok(outcome) => tracing::debug!(project = %key, ?outcome, "agent guide"),
+                Err(e) => tracing::warn!(project = %key, "the agent guide could not be installed: {e}"),
+            }
+            if let Some(warning) = report.exclude.as_ref().and_then(guide::ExcludeOutcome::doctor_warning) {
+                tracing::warn!(project = %key, "{warning}");
+            }
+        }
+        Err(e) => tracing::warn!("the guide installer stopped: {e}"),
+    }
+}
+
 fn refused(agent: &AgentConfig, code: &str, reason: &str) -> Value {
     json!({"status": "refused", "reason_code": code, "reason": reason, "agent": agent.id})
 }
@@ -307,6 +344,9 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
                     "the tmux channel is not available on this runner",
                 ));
             };
+            if let Ok(files) = &state.runner.state {
+                install_guide(config, files, &accepted).await;
+            }
             let key = accepted.project_key.clone();
             if let (Ok(files), Ok(session_key)) = (&state.runner.state, tmux::SessionKey::new(&key))
                 && let Err(e) = files.set_headless(&session_key, false)
@@ -345,6 +385,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
                 Ok(prepared) => prepared,
                 Err(refusal) => return Ok(refused(agent, refusal.code, &refusal.reason)),
             };
+            install_guide(config, files, &accepted).await;
             let key = accepted.project_key.clone();
             // A session this runner made for the project stays idle from now on: mark it so that
             // `sessions --prune` may remove it.
