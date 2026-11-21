@@ -45,7 +45,7 @@
 use std::io::Read;
 use std::os::fd::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
-use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdout, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use super::limits::DECODE_APPLY_WALL_MS_MAX;
@@ -1004,7 +1004,8 @@ mod tests {
             judge_burn_over_cpu_ceiling(
                 &Ok(IsolatedApplySuccess {
                     snapshot: Vec::new(),
-                    window_cpu_us: None
+                    window_cpu_us: None,
+                    window_report: None,
                 }),
                 &observed(Some(150_000)),
                 ceiling
@@ -1016,7 +1017,8 @@ mod tests {
             judge_burn_under_cpu_ceiling(
                 &Ok(IsolatedApplySuccess {
                     snapshot: Vec::new(),
-                    window_cpu_us: None
+                    window_cpu_us: None,
+                    window_report: None,
                 }),
                 &observed(Some(33_000))
             ),
