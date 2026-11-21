@@ -48,7 +48,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Child, ChildStdout, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use super::limits::DECODE_APPLY_WALL_MS_MAX;
+use super::limits::{DECODE_APPLY_WALL_MS_MAX, IMPORT_DECODE_WALL_MS_MAX};
 use super::outcome::{
     HostFailure, HostFailureKind, IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode,
     WorkerObservation,
@@ -205,6 +205,26 @@ pub fn isolated_diff_observed(
     base_snapshot: &[u8],
     request: &wire::ReplayDiffRequest,
 ) -> (Result<IsolatedDiffSuccess, IsolatedApplyError>, WorkerObservation) {
+    replay_observed(wire::OPERATION_DIFF, base_snapshot, request)
+}
+
+/// Imports one uploaded document: loads `base_snapshot`, replays the update tail of `request`
+/// (`package_updates_base64`), scans the whole history, projects and checks the result against the
+/// content limits, all inside the killable CPU/wall/memory boundary under the import-specific
+/// budget (`IMPORT_DECODE_CPU_MS_MAX` and its siblings). The answer carries the validated head
+/// snapshot the host stores from, never the uploaded bytes.
+pub fn isolated_import_observed(
+    base_snapshot: &[u8],
+    request: &wire::ReplayDiffRequest,
+) -> (Result<IsolatedDiffSuccess, IsolatedApplyError>, WorkerObservation) {
+    replay_observed(wire::OPERATION_IMPORT, base_snapshot, request)
+}
+
+fn replay_observed(
+    operation: &'static str,
+    base_snapshot: &[u8],
+    request: &wire::ReplayDiffRequest,
+) -> (Result<IsolatedDiffSuccess, IsolatedApplyError>, WorkerObservation) {
     let encoded = match wire::encode_replay_diff_request(request) {
         Ok(encoded) => encoded,
         Err(error) => {
@@ -217,7 +237,7 @@ pub fn isolated_diff_observed(
             );
         }
     };
-    let (result, observation) = run_isolated_apply_observed(base_snapshot, &encoded, wire::OPERATION_DIFF, &[]);
+    let (result, observation) = run_isolated_apply_observed(base_snapshot, &encoded, operation, &[]);
     let decoded = result.and_then(|success| {
         wire::decode_replay_diff_result(&success.snapshot).map_err(|error| {
             host_failure(
@@ -281,7 +301,7 @@ fn run_worker(
         .take()
         .ok_or_else(|| host_failure(HostFailureKind::Spawn, "child stdout unavailable"))?;
 
-    let (read_outcome, marker) = read_response_two_phase(&mut stdout, &child);
+    let (read_outcome, marker) = read_response_two_phase(&mut stdout, &child, metered_wall_ms(operation));
     let metered_wall_us = marker.map(|marker| duration_micros(marker.at.elapsed()));
     drop(stdout);
 
@@ -462,7 +482,11 @@ enum ReadOutcome {
 /// comments for why this is split rather than one flat deadline from process spawn. `ADR-0014`
 /// section 1.1: "wall watchdog 命中...是独立的 wall 上限, 不是 CPU 上限的替代品" -- this watchdog
 /// remains independent of (does not rely on) the CPU ceiling's own `SIGPROF` enforcement.
-fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> (ReadOutcome, Option<MarkerSample>) {
+fn read_response_two_phase(
+    stdout: &mut ChildStdout,
+    child: &Child,
+    wall_ms: u64,
+) -> (ReadOutcome, Option<MarkerSample>) {
     let fd = stdout.as_raw_fd();
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 65536];
@@ -503,13 +527,23 @@ fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> (ReadOutc
     };
     buffer = response_prefix;
 
-    let metered_deadline = marker_at + Duration::from_millis(DECODE_APPLY_WALL_MS_MAX);
+    let metered_deadline = marker_at + Duration::from_millis(wall_ms);
     let (metered_timed_out, _) = read_until(stdout, fd, child, &mut buffer, &mut chunk, metered_deadline, usize::MAX);
     if metered_timed_out {
         return (ReadOutcome::MeteredPhaseTimedOut(buffer), Some(marker));
     }
 
     (ReadOutcome::Completed(buffer), Some(marker))
+}
+
+/// The wall-clock watchdog of the metered window of `operation`: [`DECODE_APPLY_WALL_MS_MAX`], or
+/// the import-specific one for the `import` operation only.
+fn metered_wall_ms(operation: &str) -> u64 {
+    if operation == wire::OPERATION_IMPORT {
+        IMPORT_DECODE_WALL_MS_MAX
+    } else {
+        DECODE_APPLY_WALL_MS_MAX
+    }
 }
 
 /// The host's view of the instant the worker opened its metered window.
@@ -1215,6 +1249,119 @@ mod tests {
                  CpuCeiling or HostFailure; got {other:?}"
             ),
         }
+    }
+
+    // ---- The import operation's own budget (`IMPORT_*`): the same primitives, armed with larger
+    // ceilings, for the `import` operation only. The synthetic workloads run inside the import
+    // window, and a workload that stays under the import ceiling ends in the refusal the worker
+    // injects, so a ceiling that did not fire is told apart from one that did.
+
+    /// [`isolated_apply_injected_observed`] for the `import` operation.
+    fn isolated_import_injected_observed(
+        env_value: &str,
+    ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+        let worker_path = required_debug_worker_binary_for_tests();
+        let guard = env_lock().lock();
+        // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
+        // `WORKER_BINARY_PATH_ENV` while this is set.
+        unsafe {
+            std::env::set_var(WORKER_BINARY_PATH_ENV, &worker_path);
+        }
+        let result = run_isolated_apply_observed(&[], &[], wire::OPERATION_IMPORT, &[(TEST_INJECT_ENV_VAR, env_value)]);
+        // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
+        unsafe {
+            std::env::remove_var(WORKER_BINARY_PATH_ENV);
+        }
+        drop(guard);
+        result
+    }
+
+    fn is_the_injected_refusal(result: &Result<IsolatedApplySuccess, IsolatedApplyError>) -> bool {
+        matches!(
+            result,
+            Err(IsolatedApplyError::Collab(CollabError::OperationFailed { reason })) if reason == "injected_workload_finished"
+        )
+    }
+
+    /// A burn that the write ceiling would kill (150 ms against 50 ms) runs to its end inside the
+    /// import window (1,000 ms), and a burn over the import ceiling is killed by `SIGPROF` at it.
+    #[test]
+    fn the_import_window_has_its_own_cpu_budget() {
+        let import_ceiling_us = super::super::IMPORT_DECODE_CPU_MS_MAX * 1_000;
+        assert!(import_ceiling_us > super::super::DECODE_APPLY_CPU_MS_MAX * 1_000 * 3);
+        conclusive_within(4, BOUNDARY_PAUSE, "a 150 ms burn in the import window", || {
+            let (result, observation) = isolated_import_injected_observed("cpu_burn_micros=150000");
+            if is_the_injected_refusal(&result) {
+                CeilingVerdict::Conclusive
+            } else if matches!(result, Err(IsolatedApplyError::WallCeiling)) {
+                CeilingVerdict::Starved
+            } else {
+                CeilingVerdict::Violation(format!("{result:?} after {:?}us of CPU", observation.metered_cpu_us))
+            }
+        });
+        conclusive_within(4, BOUNDARY_PAUSE, "a burn over the import CPU ceiling", || {
+            let (result, observation) =
+                isolated_import_injected_observed(&format!("cpu_burn_micros={}", import_ceiling_us.saturating_mul(2)));
+            judge_burn_over_cpu_ceiling(&result, &observation, import_ceiling_us)
+        });
+    }
+
+    /// The wall watchdog of the import window is the import one: a sleep that the write watchdog
+    /// (100 ms) would kill is accepted, and a sleep past the import watchdog is killed at it.
+    #[test]
+    fn the_import_window_has_its_own_wall_budget() {
+        let ceiling_ms = super::super::IMPORT_DECODE_WALL_MS_MAX;
+        let (result, _) = isolated_import_injected_observed("wall_sleep_millis=400");
+        assert!(
+            is_the_injected_refusal(&result),
+            "a 400 ms sleep must end inside the import window: {result:?}"
+        );
+        let (result, observation) =
+            isolated_import_injected_observed(&format!("wall_sleep_millis={}", ceiling_ms + 500));
+        assert!(matches!(result, Err(IsolatedApplyError::WallCeiling)), "{result:?}");
+        assert!(
+            observation
+                .metered_wall_us
+                .is_some_and(|wall_us| wall_us >= ceiling_ms * 1_000),
+            "the wall kill came before the {ceiling_ms} ms deadline: {observation:?}"
+        );
+    }
+
+    /// An allocation the write ceiling refuses (200 MiB against 128 MiB) is accepted in the import
+    /// window, and one byte over the import ceiling is refused by a resource ceiling.
+    #[test]
+    fn the_import_window_has_its_own_memory_budget() {
+        let ceiling = super::super::IMPORT_ISOLATED_MEMORY_BYTES_MAX;
+        let Ok(ceiling_usize) = usize::try_from(ceiling) else {
+            panic!("IMPORT_ISOLATED_MEMORY_BYTES_MAX ({ceiling}) does not fit usize on this target");
+        };
+        let (accepted, _) = isolated_import_injected_observed(&format!("alloc_bytes={}", 200 * 1024 * 1024));
+        assert!(
+            is_the_injected_refusal(&accepted),
+            "a 200 MiB allocation must be accepted by the import ceiling: {accepted:?}"
+        );
+        // The synthetic workload creates its empty engine inside the armed window, so the exact
+        // byte is not reachable here; a few MiB under the ceiling is.
+        let (near, _) = isolated_import_injected_observed(&format!("alloc_bytes={}", ceiling_usize - 4 * 1024 * 1024));
+        assert!(
+            is_the_injected_refusal(&near),
+            "an allocation just under the import ceiling must be accepted: {near:?}"
+        );
+        let (rejected, _) = isolated_import_injected_observed(&format!("alloc_bytes={}", ceiling_usize + 1));
+        assert!(
+            matches!(
+                rejected,
+                Err(IsolatedApplyError::MemoryCeiling | IsolatedApplyError::WallCeiling)
+            ),
+            "one byte over the import ceiling must be refused by a resource ceiling: {rejected:?}"
+        );
+    }
+
+    #[test]
+    fn the_wall_deadline_follows_the_operation() {
+        assert_eq!(metered_wall_ms(wire::OPERATION_APPLY), DECODE_APPLY_WALL_MS_MAX);
+        assert_eq!(metered_wall_ms(wire::OPERATION_DIFF), DECODE_APPLY_WALL_MS_MAX);
+        assert_eq!(metered_wall_ms(wire::OPERATION_IMPORT), IMPORT_DECODE_WALL_MS_MAX);
     }
 
     #[test]

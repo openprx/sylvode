@@ -13,10 +13,14 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use super::limits::ISOLATED_APPLY_MEMORY_BYTES_MAX;
+use super::limits::{IMPORT_ISOLATED_MEMORY_BYTES_MAX, ISOLATED_APPLY_MEMORY_BYTES_MAX};
 
 /// Process-local running total of active (not-yet-freed) bytes allocated since [`arm`] was called.
 static ACTIVE_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// The ceiling in force for the current window: [`ISOLATED_APPLY_MEMORY_BYTES_MAX`] unless the
+/// import worker armed the window with its own ([`arm_for_import`]).
+static CEILING: AtomicU64 = AtomicU64::new(ISOLATED_APPLY_MEMORY_BYTES_MAX);
 
 /// `false` until [`arm`] is called. Allocations before arming (process startup, argv parsing,
 /// reading the request off stdin, loading the base document) pass straight through uncounted --
@@ -28,7 +32,18 @@ static ARMED: AtomicBool = AtomicBool::new(false);
 /// Must be called exactly once, immediately before the untrusted update is decoded/applied, by
 /// the same single-threaded process this allocator is installed in (`src/bin/isolated_apply_worker.rs`).
 pub fn arm() {
+    arm_with_ceiling(ISOLATED_APPLY_MEMORY_BYTES_MAX);
+}
+
+/// [`arm`] with the import-specific ceiling ([`IMPORT_ISOLATED_MEMORY_BYTES_MAX`]), for the worker
+/// of the `import` operation only.
+pub fn arm_for_import() {
+    arm_with_ceiling(IMPORT_ISOLATED_MEMORY_BYTES_MAX);
+}
+
+fn arm_with_ceiling(ceiling: u64) {
     ACTIVE_BYTES.store(0, Ordering::SeqCst);
+    CEILING.store(ceiling, Ordering::SeqCst);
     ARMED.store(true, Ordering::SeqCst);
 }
 
@@ -78,7 +93,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         }
         let requested = layout.size() as u64;
         let prospective = ACTIVE_BYTES.load(Ordering::SeqCst).saturating_add(requested);
-        if prospective > ISOLATED_APPLY_MEMORY_BYTES_MAX {
+        if prospective > CEILING.load(Ordering::SeqCst) {
             return std::ptr::null_mut();
         }
         // SAFETY: see the `unsafe impl` block comment above -- `layout` is forwarded unchanged.
@@ -113,7 +128,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         let requested_new = new_size as u64;
         let current = ACTIVE_BYTES.load(Ordering::SeqCst);
         let prospective = current.saturating_sub(old_size).saturating_add(requested_new);
-        if requested_new > old_size && prospective > ISOLATED_APPLY_MEMORY_BYTES_MAX {
+        if requested_new > old_size && prospective > CEILING.load(Ordering::SeqCst) {
             return std::ptr::null_mut();
         }
         // SAFETY: `ptr`/`layout`/`new_size` are exactly the arguments the caller must supply per
@@ -191,6 +206,39 @@ mod tests {
         let one_over_ptr = unsafe { allocator.alloc(one_over_layout) };
         assert!(one_over_ptr.is_null(), "one byte over the ceiling must be refused");
         assert_eq!(ACTIVE_BYTES.load(Ordering::SeqCst), 0);
+
+        // The import window has its own, larger ceiling: a request the write ceiling refuses is
+        // accepted, the import ceiling's own boundary is exact, and arming a write window again
+        // restores the write ceiling.
+        arm_for_import();
+        // SAFETY: valid non-zero-sized layout (one byte over the write ceiling, which the import
+        // ceiling accepts); the pointer is freed below with the same layout.
+        let import_ptr = unsafe { allocator.alloc(one_over_layout) };
+        assert!(
+            !import_ptr.is_null(),
+            "the import ceiling must accept what the write ceiling refuses"
+        );
+        // SAFETY: `import_ptr` came from `alloc` above with `one_over_layout`, freed exactly once.
+        unsafe { allocator.dealloc(import_ptr, one_over_layout) };
+        let Ok(import_over) = usize::try_from(IMPORT_ISOLATED_MEMORY_BYTES_MAX + 1) else {
+            return;
+        };
+        let Ok(import_over_layout) = Layout::from_size_align(import_over, 1) else {
+            return;
+        };
+        // SAFETY: expected to return null (one byte over the import ceiling); nothing to free.
+        let import_over_ptr = unsafe { allocator.alloc(import_over_layout) };
+        assert!(
+            import_over_ptr.is_null(),
+            "one byte over the import ceiling must be refused"
+        );
+        arm();
+        // SAFETY: expected to return null (the write ceiling is back in force); nothing to free.
+        let rearmed_ptr = unsafe { allocator.alloc(one_over_layout) };
+        assert!(
+            rearmed_ptr.is_null(),
+            "arming a write window restores the write ceiling"
+        );
         disarm();
     }
 }

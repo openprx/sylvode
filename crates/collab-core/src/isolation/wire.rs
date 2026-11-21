@@ -16,6 +16,11 @@ use crate::{SemanticDiff, SemanticSnapshot};
 pub const OPERATION_ENV: &str = "COLLAB_ISOLATION_OPERATION";
 pub const OPERATION_APPLY: &str = "apply";
 pub const OPERATION_DIFF: &str = "diff";
+/// The import of one uploaded document: the snapshot and the update tail are untrusted from the
+/// first byte, so their load, replay, history scans and projection all run inside the metered
+/// window, under the import-specific budget (`isolation::limits`). Takes a [`ReplayDiffRequest`]
+/// with `package_updates_base64` and answers a [`ReplayDiffResult`] with the validated head.
+pub const OPERATION_IMPORT: &str = "import";
 
 /// Child-only window selector, set by the trusted host for a spawn that must run the full
 /// computation in the metered window. The only value the worker acts on is [`WINDOW_FULL`]; the
@@ -121,6 +126,11 @@ pub struct ReplayDiffRequest {
     pub to_frontier: Vec<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_updates_base64: Option<Vec<String>>,
+    /// The versioned package reader whose fingerprint the import window reads (`"v1"` to `"v5"`),
+    /// for the `import` operation. `"v5"` is the fingerprint of the projection itself and needs no
+    /// further read. Absent for every other operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_semantic_model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -590,6 +600,7 @@ mod tests {
             from_frontier: vec![7],
             to_frontier: vec![8],
             package_updates_base64: None,
+            package_semantic_model: None,
         };
         let encoded = encode_replay_diff_request(&request).expect("request encodes");
         assert_eq!(decode_replay_diff_request(&encoded).expect("request decodes"), request);

@@ -15,12 +15,18 @@
 
 use std::mem::MaybeUninit;
 
-use super::limits::DECODE_APPLY_CPU_MS_MAX_MICROS;
+use super::limits::{
+    DECODE_APPLY_CPU_MS_MAX_MICROS, IMPORT_DECODE_CPU_MS_MAX_MICROS, IMPORT_ISOLATED_MEMORY_BYTES_MAX,
+};
 
 /// `ADR-0014` section 3's `RLIMIT_AS` backstop -- independent of, and larger than, the
 /// counting-allocator-enforced `isolated_apply_memory_bytes_max` (128 MiB). Catches allocations
 /// that bypass the counting allocator entirely (a raw `mmap`, an FFI allocator, a JIT reservation).
 pub const ADDRESS_SPACE_BACKSTOP_BYTES: u64 = 512 * 1024 * 1024;
+
+/// The `RLIMIT_AS` backstop of the `import` operation: four times its counting-allocator ceiling,
+/// the same relation the write path has between its 128 MiB ceiling and the 512 MiB backstop.
+pub const IMPORT_ADDRESS_SPACE_BACKSTOP_BYTES: u64 = 4 * IMPORT_ISOLATED_MEMORY_BYTES_MAX;
 
 /// `ADR-0014` section 10, self-assertion 1, adapted: verifies this process is single-threaded
 /// using the kernel's own bookkeeping (`/proc/self/task`), not an assumption from startup
@@ -39,9 +45,19 @@ pub fn is_single_threaded() -> bool {
 /// it "for every case, not just the fixture built specifically to probe it", for the identical
 /// reason: bypassing allocations can happen at any point, not only inside the counted window.
 pub fn set_address_space_backstop() {
+    set_address_space_limit(ADDRESS_SPACE_BACKSTOP_BYTES);
+}
+
+/// [`set_address_space_backstop`] with [`IMPORT_ADDRESS_SPACE_BACKSTOP_BYTES`], for the worker of
+/// the `import` operation only.
+pub fn set_address_space_backstop_for_import() {
+    set_address_space_limit(IMPORT_ADDRESS_SPACE_BACKSTOP_BYTES);
+}
+
+fn set_address_space_limit(bytes: u64) {
     let limit = libc::rlimit {
-        rlim_cur: ADDRESS_SPACE_BACKSTOP_BYTES,
-        rlim_max: ADDRESS_SPACE_BACKSTOP_BYTES,
+        rlim_cur: bytes,
+        rlim_max: bytes,
     };
     // SAFETY: `&limit` is a valid, fully-initialized `rlimit`; `RLIMIT_AS` is always a valid
     // resource on Linux. This runs at process startup before any request-driven allocation, so
@@ -79,6 +95,16 @@ fn sigprof_only_set() -> libc::sigset_t {
 /// Must be called from the single process thread (verified by [`is_single_threaded`] before this
 /// is ever invoked), immediately before the metered decode/apply/shape-validate work begins.
 pub fn arm_sigprof() {
+    arm_sigprof_micros(DECODE_APPLY_CPU_MS_MAX_MICROS);
+}
+
+/// [`arm_sigprof`] with the import-specific CPU budget ([`IMPORT_DECODE_CPU_MS_MAX_MICROS`]), for
+/// the worker of the `import` operation only.
+pub fn arm_sigprof_for_import() {
+    arm_sigprof_micros(IMPORT_DECODE_CPU_MS_MAX_MICROS);
+}
+
+fn arm_sigprof_micros(budget_micros: i64) {
     let mut old_action = MaybeUninit::<libc::sigaction>::uninit();
     // SAFETY: `libc::sigaction` is a C struct of plain integers/function-pointer-sized fields with
     // no Rust-level validity invariant beyond "some bit pattern"; every field this function
@@ -104,9 +130,11 @@ pub fn arm_sigprof() {
 
     let timer_value = libc::itimerval {
         it_interval: libc::timeval { tv_sec: 0, tv_usec: 0 },
+        // `setitimer` refuses a `tv_usec` of a second or more, so a budget above one second is
+        // split into whole seconds and the remainder.
         it_value: libc::timeval {
-            tv_sec: 0,
-            tv_usec: DECODE_APPLY_CPU_MS_MAX_MICROS,
+            tv_sec: budget_micros / 1_000_000,
+            tv_usec: budget_micros % 1_000_000,
         },
     };
     // SAFETY: `&timer_value` is a valid, fully-initialized `itimerval`; passing `null` for the
