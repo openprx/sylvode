@@ -505,3 +505,21 @@ async fn a_shutdown_during_a_run_fails_the_task_as_retryable() {
         "the runner stopped the run before the agent ended the task"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hostile_directory_name_is_escaped_in_the_log() {
+    let fx = Fixture::new().await;
+    let hostile = std::path::PathBuf::from("/tmp/x\u{1b}[31mred\nforged log line");
+    fx.set_view(vec![(200, view(&hostile, "headless", true))]);
+    let mut server = Server::start(RUNNER, &fx.config(), &[("RUST_LOG", "info")]).expect("starts");
+    let (_, answer) = post_signed(&server.url("/webhook"), &delivery()).await;
+    assert_eq!(answer["reason_code"], "path_outside_allowlist", "{answer}");
+    assert!(server.wait_for_line("working directory declined", Duration::from_secs(5)));
+    let lines = server.stdout().to_vec();
+    assert!(lines.iter().all(|l| !l.contains('\u{1b}')), "{lines:?}");
+    assert!(lines.iter().all(|l| !l.starts_with("forged log line")), "{lines:?}");
+    assert!(
+        lines.iter().any(|l| l.contains("\\u{1b}") && l.contains("\\n")),
+        "{lines:?}"
+    );
+}

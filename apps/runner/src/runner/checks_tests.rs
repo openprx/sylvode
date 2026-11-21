@@ -29,6 +29,7 @@ struct Dir(PathBuf);
 
 impl Dir {
     fn new() -> Self {
+        fs::create_dir_all(std::env::temp_dir().join("sylvode-checks-home")).expect("home");
         let dir = std::env::temp_dir().join(format!("sylvode-checks-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("create dir");
         Self(dir.canonicalize().expect("canonical"))
@@ -173,7 +174,11 @@ impl Fixture {
         payload: &Value,
         mismatch: Option<String>,
     ) -> Verdict {
-        let roots = AllowedRoots::from_entries(&config.runner.allowed_roots, None).map(|r| r.roots);
+        let roots = AllowedRoots::from_entries(
+            &config.runner.allowed_roots,
+            Some(&std::env::temp_dir().join("sylvode-checks-home")),
+        )
+        .map(|r| r.roots);
         let client = SvClient::new(reqwest::Client::new(), &format!("http://{addr}"), TOKEN, "mcp_stdio");
         check_delivery(
             Context {

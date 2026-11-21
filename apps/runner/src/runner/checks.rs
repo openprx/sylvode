@@ -207,11 +207,11 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     let dir = match roots.check_directory(raw_dir) {
         Ok(dir) => dir,
         Err(refusal) => {
-            tracing::info!(code = refusal.code, directory = %raw_dir, "working directory declined");
+            tracing::info!(code = refusal.code, directory = ?raw_dir, "working directory declined");
             return refuse(refusal.code, refusal.reason);
         }
     };
-    tracing::info!(directory = %dir.display(), "working directory accepted");
+    tracing::info!(directory = ?dir, "working directory accepted");
     // 7. Channel and CLI.
     let channel = match str_at(execution, &["channel"]) {
         Some("tmux") => Channel::Tmux,

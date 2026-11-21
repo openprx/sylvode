@@ -33,9 +33,17 @@ impl Drop for Dir {
     }
 }
 
+/// A home directory that is not related to any test directory.
+fn fake_home() -> PathBuf {
+    let home = std::env::temp_dir().join("sylvode-paths-test-home");
+    fs::create_dir_all(&home).expect("home");
+    home
+}
+
 fn roots(entries: &[&Path], home: Option<&Path>) -> Result<AllowedRoots, String> {
     let entries: Vec<String> = entries.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-    AllowedRoots::from_entries(&entries, home).map(|report| report.roots)
+    let fallback = fake_home();
+    AllowedRoots::from_entries(&entries, Some(home.unwrap_or(&fallback))).map(|report| report.roots)
 }
 
 fn code(roots: &AllowedRoots, raw: &str) -> &'static str {
@@ -192,6 +200,9 @@ fn roots_are_validated_at_start_up() {
     assert!(error.contains("allowed_roots entry `/`"), "{error}");
     // `~/` without a home.
     assert!(AllowedRoots::from_entries(&["~/x".to_string()], None).is_err());
+    // Without a known home directory no root is accepted at all.
+    let error = AllowedRoots::from_entries(&[ok.to_string_lossy().into_owned()], None).expect_err("refused");
+    assert!(error.contains("home directory"), "{error}");
 }
 
 #[test]
@@ -218,6 +229,14 @@ fn system_directories_are_never_roots() {
         "/boot",
         "/lib",
         "/root",
+        "/Volumes",
+        "/Applications",
+        "/run",
+        "/srv",
+        "/nix",
+        "/snap",
+        "/media",
+        "/cores",
     ] {
         if !Path::new(system).is_dir() {
             continue; // not on this platform
@@ -227,13 +246,7 @@ fn system_directories_are_never_roots() {
     }
     // A directory below a parent-only entry is fine.
     let below = home.sub("below");
-    assert!(
-        AllowedRoots::from_entries(
-            &[below.to_string_lossy().into_owned()],
-            Some(Path::new("/nonexistent-home"))
-        )
-        .is_ok()
-    );
+    assert!(AllowedRoots::from_entries(&[below.to_string_lossy().into_owned()], Some(&fake_home())).is_ok());
 }
 
 #[test]
@@ -241,13 +254,13 @@ fn a_world_writable_root_is_warned_about() {
     let base = Dir::new();
     let root = base.sub("open");
     fs::set_permissions(&root, fs::Permissions::from_mode(0o777)).expect("chmod");
-    let report = AllowedRoots::from_entries(&[root.to_string_lossy().into_owned()], None).expect("roots");
+    let report = AllowedRoots::from_entries(&[root.to_string_lossy().into_owned()], Some(&fake_home())).expect("roots");
     assert_eq!(report.warnings.len(), 1);
     assert!(report.warnings[0].contains("world-writable"));
     let closed = base.sub("closed");
     fs::set_permissions(&closed, fs::Permissions::from_mode(0o755)).expect("chmod");
     assert!(
-        AllowedRoots::from_entries(&[closed.to_string_lossy().into_owned()], None)
+        AllowedRoots::from_entries(&[closed.to_string_lossy().into_owned()], Some(&fake_home()))
             .expect("roots")
             .warnings
             .is_empty()
@@ -262,10 +275,105 @@ fn duplicate_roots_are_kept_once() {
     std::os::unix::fs::symlink(&root, &link).expect("symlink");
     let report = AllowedRoots::from_entries(
         &[root.to_string_lossy().into_owned(), link.to_string_lossy().into_owned()],
-        None,
+        Some(&fake_home()),
     )
     .expect("roots");
     let project = root.join("p");
     fs::create_dir_all(&project).expect("mkdir");
     assert!(report.roots.check_directory(&project.to_string_lossy()).is_ok());
+}
+
+/// What the answer says must not depend on what exists outside the roots.
+#[test]
+fn paths_outside_every_root_all_get_the_same_answer() {
+    let base = Dir::new();
+    let root = base.sub("work");
+    let outside_dir = base.sub("elsewhere");
+    let outside_file = base.0.join("elsewhere").join("secret.txt");
+    fs::write(&outside_file, "x").expect("write");
+    let allowed = roots(&[&root], None).expect("roots");
+    for probe in [
+        outside_dir.to_string_lossy().into_owned(),
+        outside_file.to_string_lossy().into_owned(),
+        base.0.join("missing").to_string_lossy().into_owned(),
+        base.0
+            .join("elsewhere/secret.txt/deeper")
+            .to_string_lossy()
+            .into_owned(),
+        "/etc/passwd".to_string(),
+        "/definitely/not/here".to_string(),
+        "/proc/1/mem".to_string(),
+    ] {
+        assert_eq!(code(&allowed, &probe), "path_outside_allowlist", "{probe}");
+    }
+    // Inside a root the specific codes are reported.
+    assert_eq!(code(&allowed, &root.join("absent").to_string_lossy()), "path_missing");
+    fs::write(root.join("f"), "x").expect("write");
+    assert_eq!(code(&allowed, &root.join("f").to_string_lossy()), "path_not_directory");
+    // A link inside the root to a missing place outside does not reveal that it is missing.
+    std::os::unix::fs::symlink(base.0.join("nowhere"), root.join("dangling")).expect("symlink");
+    assert_eq!(
+        code(&allowed, &root.join("dangling").to_string_lossy()),
+        "path_outside_allowlist"
+    );
+    std::os::unix::fs::symlink(&outside_dir, root.join("to-outside")).expect("symlink");
+    assert_eq!(
+        code(&allowed, &root.join("to-outside/absent").to_string_lossy()),
+        "path_outside_allowlist"
+    );
+    assert_eq!(
+        code(&allowed, &root.join("to-outside/secret.txt").to_string_lossy()),
+        "path_outside_allowlist"
+    );
+}
+
+/// A root may be given in a form that differs from its canonical path (a link, `/tmp` on macOS).
+#[test]
+fn a_directory_may_name_the_root_as_written_or_canonical() {
+    let base = Dir::new();
+    let real = base.sub("real");
+    let project = base.sub("real/p");
+    let alias = base.0.join("alias");
+    std::os::unix::fs::symlink(&real, &alias).expect("symlink");
+    let allowed = roots(&[&alias], None).expect("roots");
+    assert_eq!(
+        allowed.check_directory(&alias.join("p").to_string_lossy()),
+        Ok(project.clone())
+    );
+    assert_eq!(allowed.check_directory(&real.join("p").to_string_lossy()), Ok(project));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_canonical_path_that_is_not_utf8_is_refused() {
+    use std::os::unix::ffi::OsStrExt;
+    let base = Dir::new();
+    let root = base.sub("work");
+    let odd = root.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+    fs::create_dir_all(&odd).expect("mkdir");
+    std::os::unix::fs::symlink(&odd, root.join("plain")).expect("symlink");
+    let allowed = roots(&[&root], None).expect("roots");
+    assert_eq!(
+        code(&allowed, &root.join("plain").to_string_lossy()),
+        "path_outside_allowlist"
+    );
+}
+
+/// macOS volumes ignore case: the system and home rules must too.
+#[cfg(target_os = "macos")]
+#[test]
+fn case_variants_of_system_trees_and_home_are_refused() {
+    let home = Dir::new();
+    for variant in ["/USR/local", "/system/Library", "/LIBRARY", "/applications", "/VOLUMES"] {
+        if Path::new(variant).exists() {
+            assert!(
+                AllowedRoots::from_entries(&[variant.to_string()], Some(home.path())).is_err(),
+                "{variant}"
+            );
+        }
+    }
+    let upper = PathBuf::from(home.path().to_string_lossy().to_uppercase());
+    if upper.exists() {
+        assert!(AllowedRoots::from_entries(&[upper.to_string_lossy().into_owned()], Some(home.path())).is_err());
+    }
 }

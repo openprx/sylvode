@@ -101,7 +101,7 @@ pub fn state_dir(config: &Config, home: Option<&std::path::Path>) -> Option<Path
 impl RunnerRuntime {
     /// Validates the roots and opens the registry. Warnings are logged here.
     pub fn new(config: &Config) -> Self {
-        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let home = paths::service_user_home();
         let roots = match AllowedRoots::from_entries(&config.runner.allowed_roots, home.as_deref()) {
             Ok(report) => {
                 for warning in &report.warnings {

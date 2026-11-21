@@ -38,7 +38,7 @@ const SYSTEM_TREES: [&str; 14] = [
 
 /// Directories that are never roots themselves (they hold other people's data), though a
 /// directory below them is fine.
-const SYSTEM_PARENTS: [&str; 8] = [
+const SYSTEM_PARENTS: [&str; 16] = [
     "/var",
     "/private/var",
     "/home",
@@ -47,6 +47,14 @@ const SYSTEM_PARENTS: [&str; 8] = [
     "/private/tmp",
     "/root",
     "/mnt",
+    "/Volumes",
+    "/Applications",
+    "/run",
+    "/srv",
+    "/nix",
+    "/snap",
+    "/media",
+    "/cores",
 ];
 
 /// Why a working directory was declined, with the code of the refusal answer.
@@ -60,7 +68,15 @@ pub struct PathRefusal {
 /// The validated roots, canonical.
 #[derive(Clone, Debug, Default)]
 pub struct AllowedRoots {
-    roots: Vec<PathBuf>,
+    roots: Vec<Root>,
+}
+
+/// One root: as the operator wrote it (expanded) and canonical. A directory from Sylvode must lie
+/// lexically under one of the two before the file system is touched for it.
+#[derive(Clone, Debug)]
+struct Root {
+    original: PathBuf,
+    canonical: PathBuf,
 }
 
 /// Roots and what was worth a warning while validating them.
@@ -77,12 +93,16 @@ impl AllowedRoots {
     ///
     /// A message naming the entry; an invalid root refuses the `runner` agents.
     pub fn from_entries(entries: &[String], home: Option<&Path>) -> Result<RootsReport, String> {
-        let canonical_home = home.and_then(|home| home.canonicalize().ok());
-        let mut roots = Vec::new();
+        // Without a known home directory the "not the home directory" rule cannot be applied, so no
+        // root is accepted.
+        let canonical_home = home
+            .and_then(|home| home.canonicalize().ok())
+            .ok_or_else(|| "runner.allowed_roots cannot be checked: the home directory is not known".to_string())?;
+        let mut roots: Vec<Root> = Vec::new();
         let mut warnings = Vec::new();
         for entry in entries {
-            let root = validate_root(entry, home, canonical_home.as_deref())?;
-            let mode = std::fs::metadata(&root).map_or(0, |m| m.permissions().mode());
+            let root = validate_root(entry, home, Some(&canonical_home))?;
+            let mode = std::fs::metadata(&root.canonical).map_or(0, |m| m.permissions().mode());
             let world_writable = mode & 0o002 != 0;
             let sticky = mode & 0o1000 != 0;
             if world_writable && !sticky {
@@ -91,7 +111,7 @@ impl AllowedRoots {
                      directory inside it that a project may then use"
                 ));
             }
-            if !roots.contains(&root) {
+            if !roots.iter().any(|known| known.canonical == root.canonical) {
                 roots.push(root);
             }
         }
@@ -102,6 +122,13 @@ impl AllowedRoots {
     }
 
     /// Checks the working directory Sylvode sent and returns the canonical path to use.
+    ///
+    /// The order matters, because the answer reaches workspace members: first the syntax, then
+    /// whether the path lies lexically under an allowed root (as the operator wrote the root, or
+    /// canonical); a path that does not is refused as `path_outside_allowlist` WITHOUT the file
+    /// system being touched, so nothing about the host outside the roots can be learned from the
+    /// answer. Only inside a root is existence, readability and type probed and reported. After
+    /// `canonicalize` (which resolves every link) containment is decided again on the real path.
     ///
     /// # Errors
     ///
@@ -114,9 +141,22 @@ impl AllowedRoots {
         if !syntactically_acceptable(raw) {
             return Err(OUTSIDE);
         }
-        let canonical = match Path::new(raw).canonicalize() {
+        let given = Path::new(raw);
+        if !self
+            .roots
+            .iter()
+            .any(|root| lexically_under(given, &root.original) || lexically_under(given, &root.canonical))
+        {
+            return Err(OUTSIDE);
+        }
+        let canonical = match given.canonicalize() {
             Ok(path) => path,
             Err(e) => {
+                // A link inside a root can lead out of it: if the nearest part that exists is
+                // outside every root, the answer is the same as for any outside path.
+                if !self.nearest_existing_is_inside(given) {
+                    return Err(OUTSIDE);
+                }
                 return Err(match e.kind() {
                     ErrorKind::NotFound => PathRefusal {
                         code: "path_missing",
@@ -134,23 +174,84 @@ impl AllowedRoots {
                 });
             }
         };
+        // Components, not bytes: `/work/svwl-evil` is not under `/work/svwl`.
+        let inside = self.roots.iter().any(|root| canonical.starts_with(&root.canonical));
+        // A path that is not valid UTF-8 cannot be handed on as text without becoming another path.
+        let plain = canonical
+            .to_str()
+            .is_some_and(|text| !text.contains('#') && !text.chars().any(char::is_control));
+        if !inside || !plain {
+            return Err(OUTSIDE);
+        }
         if !canonical.is_dir() {
             return Err(PathRefusal {
                 code: "path_not_directory",
                 reason: "the project working directory is not a directory",
             });
         }
-        // Components, not bytes: `/work/svwl-evil` is not under `/work/svwl`.
-        let inside = self.roots.iter().any(|root| canonical.starts_with(root));
-        if !inside || canonical.to_string_lossy().contains('#') || has_control(&canonical) {
-            return Err(OUTSIDE);
-        }
         Ok(canonical)
+    }
+
+    /// Whether the longest existing prefix of `path` resolves to somewhere inside a root. A
+    /// symbolic link on the way (even a dangling one) is followed, so a link out of a root is
+    /// seen for what it is.
+    fn nearest_existing_is_inside(&self, path: &Path) -> bool {
+        self.inside_following_links(path, 0)
+    }
+
+    fn inside_following_links(&self, path: &Path, depth: usize) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        let mut current = Some(path);
+        while let Some(candidate) = current {
+            if let Ok(meta) = std::fs::symlink_metadata(candidate)
+                && meta.file_type().is_symlink()
+            {
+                let Ok(target) = std::fs::read_link(candidate) else {
+                    return false;
+                };
+                let resolved = if target.is_absolute() {
+                    target
+                } else {
+                    candidate.parent().map_or_else(|| PathBuf::from("/"), Path::to_path_buf).join(target)
+                };
+                return self.inside_following_links(&resolved, depth + 1);
+            }
+            if let Ok(resolved) = candidate.canonicalize() {
+                return self.roots.iter().any(|root| resolved.starts_with(&root.canonical));
+            }
+            current = candidate.parent();
+        }
+        false
     }
 }
 
-fn has_control(path: &Path) -> bool {
-    path.to_string_lossy().chars().any(char::is_control)
+/// Whether `path` lies under `root`, component by component.
+fn lexically_under(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
+}
+
+/// Whether two paths are the same, as the file system sees it: case-insensitively on macOS, whose
+/// usual volumes ignore case.
+fn same_path(a: &Path, b: &Path) -> bool {
+    if cfg!(target_os = "macos") {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    } else {
+        a == b
+    }
+}
+
+/// Whether `path` is `base` or lies below it, with [`same_path`]'s notion of equality.
+fn at_or_below(path: &Path, base: &Path) -> bool {
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        if same_path(candidate, base) {
+            return true;
+        }
+        current = candidate.parent();
+    }
+    false
 }
 
 /// The API's syntactic checks, repeated: absolute, no NUL or control characters, no `.` or `..`
@@ -168,7 +269,7 @@ fn syntactically_acceptable(raw: &str) -> bool {
         || raw == "/"
 }
 
-fn validate_root(entry: &str, home: Option<&Path>, canonical_home: Option<&Path>) -> Result<PathBuf, String> {
+fn validate_root(entry: &str, home: Option<&Path>, canonical_home: Option<&Path>) -> Result<Root, String> {
     let name = |why: &str| format!("runner.allowed_roots entry `{entry}`: {why}");
     let expanded = if let Some(rest) = entry.strip_prefix("~/") {
         let home = home.ok_or_else(|| name("`~/` needs a home directory and none is known"))?;
@@ -197,7 +298,7 @@ fn validate_root(entry: &str, home: Option<&Path>, canonical_home: Option<&Path>
         return Err(name("must not be `/`"));
     }
     if let Some(home) = canonical_home
-        && home.starts_with(&canonical)
+        && at_or_below(home, &canonical)
     {
         return Err(name("must not be the home directory or a directory that contains it"));
     }
@@ -205,7 +306,7 @@ fn validate_root(entry: &str, home: Option<&Path>, canonical_home: Option<&Path>
         let tree = Path::new(tree);
         let resolved = tree.canonicalize().unwrap_or_else(|_| tree.to_path_buf());
         for candidate in [tree, resolved.as_path()] {
-            if canonical.starts_with(candidate) || candidate.starts_with(&canonical) {
+            if at_or_below(&canonical, candidate) || at_or_below(candidate, &canonical) {
                 return Err(name("is, contains or lies inside a system directory"));
             }
         }
@@ -213,9 +314,28 @@ fn validate_root(entry: &str, home: Option<&Path>, canonical_home: Option<&Path>
     for parent in SYSTEM_PARENTS {
         let parent = Path::new(parent);
         let resolved = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
-        if canonical == parent || canonical == resolved {
+        if same_path(&canonical, parent) || same_path(&canonical, &resolved) {
             return Err(name("is a directory that holds other users' or system data"));
         }
     }
-    Ok(canonical)
+    if canonical.to_str().is_none() {
+        return Err(name("must be a valid UTF-8 path"));
+    }
+    Ok(Root {
+        original: expanded,
+        canonical,
+    })
+}
+
+/// The home directory of the user the runner runs as: `HOME`, else the passwd entry of the user.
+pub fn service_user_home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .or_else(|| {
+            nix::unistd::User::from_uid(nix::unistd::Uid::effective())
+                .ok()
+                .flatten()
+                .map(|user| user.dir)
+        })
 }
