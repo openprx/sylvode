@@ -27,6 +27,7 @@ pub mod auth;
 pub mod credentials;
 pub mod description;
 pub mod envelope;
+pub mod followup;
 pub mod ingest;
 pub mod notify;
 pub mod response;

@@ -1322,3 +1322,159 @@ async fn the_migration_can_run_again_and_completes_a_table_that_lost_a_constrain
     assert!(refused.is_err());
     w.scratch.drop_self().await;
 }
+
+#[tokio::test]
+async fn a_completed_task_is_announced_once_and_a_retry_is_not_an_outcome() {
+    use super::followup::{FollowupReport, run_once};
+    let w = world!("inbound_followup_ok");
+    assert_eq!(w.post(&w.event("e-1", "k", "high")).await.0, StatusCode::ACCEPTED);
+    let announced =
+        "SELECT count(*) AS count FROM notifications WHERE type = 'alert_task_completed' OR type = 'alert_task_failed'";
+
+    // Pending and processing tasks announce nothing.
+    assert_eq!(run_once(w.db()).await.unwrap(), FollowupReport::default());
+    exec(w.db(), "UPDATE ai_tasks SET status = 'processing'", vec![]).await;
+    assert_eq!(run_once(w.db()).await.unwrap().announced, 0);
+    // A failed attempt that goes back to pending is not an outcome.
+    exec(
+        w.db(),
+        "UPDATE ai_tasks SET status = 'pending', attempts = 1, error_message = 'retry'",
+        vec![],
+    )
+    .await;
+    assert_eq!(run_once(w.db()).await.unwrap().announced, 0);
+    assert_eq!(w.n(announced).await, 0);
+
+    exec(
+        w.db(),
+        "UPDATE ai_tasks SET status = 'completed', completed_at = now()",
+        vec![],
+    )
+    .await;
+    assert_eq!(run_once(w.db()).await.unwrap().announced, 1);
+    assert_eq!(
+        w.n(&format!(
+            "SELECT count(*) AS count FROM notifications WHERE type = 'alert_task_completed' AND user_id = '{}' \
+             AND workspace_id IS NOT NULL AND content LIKE 'alert_task_completed:%' AND related_issue_id IS NOT NULL \
+             AND payload ->> 'task_id' IS NOT NULL AND payload ->> 'severity' = 'high'",
+            w.tenant.member_id
+        ))
+        .await,
+        1
+    );
+    assert_eq!(
+        w.n(
+            "SELECT count(*) AS count FROM inbound_alerts WHERE task_ended_at IS NOT NULL \
+             AND outcome_notified_task_id = task_id"
+        )
+        .await,
+        1
+    );
+    // A second tick announces nothing.
+    assert_eq!(run_once(w.db()).await.unwrap().announced, 0);
+    assert_eq!(w.n(announced).await, 1);
+    w.scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn a_failed_task_is_announced_once_and_a_second_task_is_announced_separately() {
+    use super::followup::run_once;
+    let w = world!("inbound_followup_fail");
+    exec(w.db(), "UPDATE alert_rules SET rearm_after_secs = 0", vec![]).await;
+    assert_eq!(w.post(&w.event("e-1", "k", "high")).await.0, StatusCode::ACCEPTED);
+    exec(
+        w.db(),
+        "UPDATE ai_tasks SET status = 'failed', attempts = 3, error_message = 'no active webhook found'",
+        vec![],
+    )
+    .await;
+    assert_eq!(run_once(w.db()).await.unwrap().announced, 1);
+    assert_eq!(run_once(w.db()).await.unwrap().announced, 0);
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM notifications WHERE type = 'alert_task_failed'")
+            .await,
+        1
+    );
+
+    // A new occurrence starts the alert's second task, whose end is announced on its own.
+    assert_eq!(w.post(&w.event("e-2", "k", "high")).await.0, StatusCode::ACCEPTED);
+    assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 2);
+    exec(
+        w.db(),
+        "UPDATE ai_tasks SET status = 'completed', completed_at = now() WHERE status = 'pending'",
+        vec![],
+    )
+    .await;
+    assert_eq!(run_once(w.db()).await.unwrap().announced, 1);
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM notifications WHERE type = 'alert_task_completed'")
+            .await,
+        1
+    );
+    w.scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn the_tick_closes_alerts_in_a_terminal_state_or_past_their_window() {
+    use super::followup::run_once;
+    let w = world!("inbound_followup_close");
+    assert_eq!(w.post(&w.event("e-1", "k-1", "high")).await.0, StatusCode::ACCEPTED);
+    assert_eq!(w.post(&w.event("e-2", "k-2", "high")).await.0, StatusCode::ACCEPTED);
+    assert_eq!(run_once(w.db()).await.unwrap().closed, 0, "both are open and fresh");
+    exec(
+        w.db(),
+        "UPDATE work_items SET state = 'done' WHERE id = (SELECT work_item_id FROM inbound_alerts WHERE dedup_key = 'k-1')",
+        vec![],
+    )
+    .await;
+    exec(
+        w.db(),
+        "UPDATE inbound_alerts SET last_seen_at = now() - interval '2 hours' WHERE dedup_key = 'k-2'",
+        vec![],
+    )
+    .await;
+    assert_eq!(run_once(w.db()).await.unwrap().closed, 2);
+    assert_eq!(w.n("SELECT count(*) AS count FROM inbound_alerts WHERE open").await, 0);
+    assert_eq!(
+        w.n(
+            "SELECT count(*) AS count FROM business_events WHERE event_type = 'alert.closed' \
+             AND payload ->> 'reason' = 'terminal_state'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        w.n(
+            "SELECT count(*) AS count FROM business_events WHERE event_type = 'alert.closed' \
+             AND payload ->> 'reason' = 'window_expired'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(run_once(w.db()).await.unwrap().closed, 0);
+    w.scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn stored_events_past_the_retention_are_pruned() {
+    use super::followup::prune_events;
+    let w = world!("inbound_prune");
+    assert_eq!(w.post(&w.event("old", "k-1", "high")).await.0, StatusCode::ACCEPTED);
+    assert_eq!(w.post(&w.event("new", "k-2", "high")).await.0, StatusCode::ACCEPTED);
+    exec(
+        w.db(),
+        "UPDATE inbound_events SET received_at = now() - interval '31 days' WHERE event_id = 'old'",
+        vec![],
+    )
+    .await;
+    assert_eq!(prune_events(w.db(), 30).await.unwrap(), 1);
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM inbound_events WHERE event_id = 'new'")
+            .await,
+        1
+    );
+    assert_eq!(w.n("SELECT count(*) AS count FROM inbound_events").await, 1);
+    // The alert and its work item survive the pruning of an event.
+    assert_eq!(w.n("SELECT count(*) AS count FROM inbound_alerts").await, 2);
+    w.scratch.drop_self().await;
+}
