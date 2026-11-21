@@ -19,9 +19,9 @@ are contract section 17, `docs/runbooks/oauth-authorization-server.md`, and the 
 ## 1. Binaries and frontend
 
 `build-backend.sh` of the existing deployment builds `api`, `worker` and
-`collab-isolated-apply-worker` from `/Users/nn/worker/llama/ops/sylvode-next`. For this suite:
+`collab-isolated-apply-worker` from the checkout of the development branch. For this suite:
 
-- point its `src` at the worktree that holds this branch (`/Users/nn/worker/llama/ops/sylvode-p4`, or
+- point its `src` at the worktree that holds this branch (the worktree of `feat/p4-oauth`, or
   the branch once merged), because the OAuth code is only there;
 - add the MCP server, which that script does not build:
   `cargo rustc --locked -p mcp-server --bin mcp-server -- $LINK` followed by
