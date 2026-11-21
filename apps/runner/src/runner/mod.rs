@@ -9,8 +9,9 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use self::checks::{BotCreds, Context, SessionRegistry, Verdict};
+use self::checks::{BotCreds, Context, Verdict};
 use self::paths::AllowedRoots;
+use self::registry::SessionRegistry;
 use self::sv_client::SvClient;
 use crate::AppState;
 use crate::config::{AgentConfig, AiTaskCallback, Config};
@@ -31,6 +32,8 @@ pub mod machine;
 pub mod paths;
 #[allow(dead_code, reason = "used by the session worker")]
 pub mod queue;
+#[allow(dead_code, reason = "release, entries and owner are used by the sessions command")]
+pub mod registry;
 pub mod sv_client;
 
 #[allow(dead_code, reason = "used by the session manager, which is a later package")]
@@ -59,6 +62,8 @@ mod message_tests;
 #[cfg(test)]
 mod paths_tests;
 #[cfg(test)]
+mod registry_tests;
+#[cfg(test)]
 mod sanitize_tests;
 #[cfg(test)]
 mod sv_client_tests;
@@ -69,7 +74,8 @@ pub struct RunnerRuntime {
     pub state: Result<Arc<files::StateDir>, String>,
     /// The validated roots, or why they are not valid (which refuses the `runner` agents only).
     pub roots: Result<AllowedRoots, String>,
-    pub registry: SessionRegistry,
+    /// The session-name registry, or why it cannot be used (which refuses `runner` agents).
+    pub registry: Result<SessionRegistry, String>,
     /// Shared by every client: no redirects, so a bearer token never follows one.
     pub http: reqwest::Client,
 }
@@ -124,10 +130,16 @@ impl RunnerRuntime {
         {
             tracing::error!("the runner state directory cannot be used: {e}; `runner` agents will refuse every task");
         }
+        let registry = SessionRegistry::open(state_path.as_deref());
+        if let Err(e) = &registry
+            && config.agents.iter().any(|a| a.agent_type == "runner")
+        {
+            tracing::error!("{e}; `runner` agents will refuse every task");
+        }
         Self {
             state,
             roots,
-            registry: SessionRegistry::open(state_path.as_deref()),
+            registry,
             http,
         }
     }
@@ -161,11 +173,18 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
         api_url: target.api_url.to_string(),
         token: target.token.to_string(),
     };
+    let Ok(registry) = &state.runner.registry else {
+        return Ok(refused(
+            agent,
+            "runner_agent_disabled",
+            "the runner's session registry cannot be used",
+        ));
+    };
     let verdict = checks::check_delivery(
         Context {
             config,
             roots: &state.runner.roots,
-            registry: &state.runner.registry,
+            registry,
             protocol_mismatch: state.handshake.mismatch_text(),
             client,
             bot: bot_creds,

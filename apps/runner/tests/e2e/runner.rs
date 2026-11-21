@@ -295,11 +295,11 @@ async fn invalid_roots_refuse_runner_agents_only() {
 async fn a_key_change_is_recorded_and_a_shared_key_is_refused() {
     let fx = Fixture::new().await;
     let server = fx.serve();
-    fx.set_view(vec![(200, view(&fx.project, "tmux", true))]);
+    fx.set_view(vec![(200, view(&fx.project, "headless", true))]);
     let (_, first) = post_signed(&server.url("/webhook"), &delivery()).await;
-    assert_eq!(first["reason_code"], "tmux_unavailable");
+    assert_eq!(first["status"], "dispatched", "{first}");
     // Another project with the same key on this runner.
-    let mut other = view(&fx.project, "tmux", true);
+    let mut other = view(&fx.project, "headless", true);
     let other_project = "44444444-4444-4444-8444-444444444444";
     other["project"]["id"] = json!(other_project);
     fx.set_view(vec![(200, other)]);
@@ -420,7 +420,14 @@ async fn the_headless_cli_gets_an_allow_listed_environment() {
     let (_, answer) = post_signed(&server.url("/webhook"), &delivery()).await;
     assert_eq!(answer["status"], "dispatched", "{answer}");
     wait_lines(&fx.record, 5, Duration::from_secs(10));
-    let env = std::fs::read_to_string(format!("{}.env", fx.record.display())).expect("env");
+    let env_file = format!("{}.env", fx.record.display());
+    for _ in 0..100 {
+        if std::fs::metadata(&env_file).is_ok_and(|m| m.len() > 0) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let env = std::fs::read_to_string(&env_file).expect("env");
     let names: Vec<&str> = env.lines().filter_map(|l| l.split_once('=').map(|(n, _)| n)).collect();
     for leaked in [
         "SV_SENTINEL_SECRET",

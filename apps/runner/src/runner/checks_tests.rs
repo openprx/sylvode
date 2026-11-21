@@ -14,8 +14,9 @@ use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 
-use super::checks::{BotCreds, Channel, Context, SessionRegistry, Verdict, check_delivery, valid_project_key};
+use super::checks::{BotCreds, Channel, Context, Verdict, check_delivery, valid_project_key};
 use super::paths::AllowedRoots;
+use super::registry::SessionRegistry;
 use super::sv_client::SvClient;
 use crate::config::Config;
 
@@ -129,7 +130,7 @@ impl Fixture {
         let claude = base.path().join("claude");
         fs::write(&claude, "#!/bin/sh\n").expect("claude");
         fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).expect("chmod");
-        let registry = SessionRegistry::open(Some(&base.sub("state")));
+        let registry = SessionRegistry::open(Some(&base.sub("state"))).expect("registry");
         Self {
             base,
             root,
@@ -464,36 +465,6 @@ async fn project_keys_are_session_names_bound_to_one_project() {
     assert!(matches!(fx.run(&config, m, addr, &delivery()).await, Verdict::Run(_)));
 }
 
-#[test]
-fn a_renamed_project_records_its_new_key_and_frees_the_old_one() {
-    let base = Dir::new();
-    let registry = SessionRegistry::open(Some(base.path()));
-    assert!(registry.bind("p1", "AAA").is_ok());
-    assert!(registry.bind("p1", "AAA").is_ok());
-    assert!(registry.bind("p2", "AAA").is_err());
-    assert!(registry.bind("p1", "BBB").is_ok());
-    assert!(
-        registry.bind("p2", "AAA").is_ok(),
-        "the old key is free after the rename"
-    );
-    assert!(registry.bind("p1", "AAA").is_err());
-    // Saved with mode 0600 in a 0700 directory, and read back by the next process.
-    let file = base.path().join("sessions").join("registry.json");
-    assert_eq!(fs::metadata(&file).expect("meta").permissions().mode() & 0o777, 0o600);
-    assert_eq!(
-        fs::metadata(file.parent().expect("dir"))
-            .expect("meta")
-            .permissions()
-            .mode()
-            & 0o777,
-        0o700
-    );
-    let again = SessionRegistry::open(Some(base.path()));
-    assert!(again.bind("p3", "BBB").is_err());
-    assert!(again.bind("p3", "AAA").is_err());
-    assert!(again.bind("p3", "CCC").is_ok());
-}
-
 #[tokio::test]
 async fn working_directories_are_checked_against_the_roots() {
     let fx = Fixture::new();
@@ -626,4 +597,34 @@ async fn no_refusal_text_holds_the_token() {
         texts.iter().all(|t| !t.contains("opr_") && !t.contains(TOKEN)),
         "{texts:?}"
     );
+}
+
+#[tokio::test]
+async fn a_refused_delivery_never_binds_a_key() {
+    let fx = Fixture::new();
+    let outside = fx.base.sub("elsewhere");
+    // Refused at the path check (and at the channel check): the key stays free.
+    for (dir, channel, cli) in [
+        (outside.clone(), "headless", "claude"),
+        (fx.project_dir.clone(), "carrier-pigeon", "claude"),
+        (fx.project_dir.clone(), "headless", "emacs"),
+        (fx.project_dir.clone(), "headless", "codex"),
+    ] {
+        let m = ok_mock(task_view(&dir, channel, cli));
+        let (addr, _server) = serve(m.clone()).await;
+        let verdict = fx.run(&fx.config(addr), m, addr, &delivery()).await;
+        assert!(matches!(verdict, Verdict::Refused(_)), "{verdict:?}");
+        assert!(
+            fx.registry.entries().is_empty(),
+            "{channel} {cli}: a refused delivery bound a key"
+        );
+    }
+    // The legitimate project, delivered after a squatter was refused, is not in collision.
+    let m = ok_mock(task_view(&fx.project_dir, "headless", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    assert!(matches!(
+        fx.run(&fx.config(addr), m, addr, &delivery()).await,
+        Verdict::Run(_)
+    ));
+    assert_eq!(fx.registry.owner("SVWL").as_deref(), Some(PROJECT));
 }

@@ -6,15 +6,14 @@
 //! A refusal carries a code from the design's list and a one-line reason without any path; the
 //! path goes to the runner log at `info`.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use parking_lot::Mutex;
 use serde_json::Value;
 use sylvode_prereq::{Checker, InstallKind};
 
 use super::paths::AllowedRoots;
+use super::registry::SessionRegistry;
 use super::sv_client::{SvClient, SvError, TASK_PROTOCOL, token_refused};
 use crate::config::Config;
 
@@ -93,81 +92,6 @@ pub enum Verdict {
     Ignored(String),
     /// Sylvode could not answer in time: answer HTTP 503 so the worker re-queues.
     Unavailable,
-}
-
-/// Which project key a project last used, and the reverse check that a key is never shared
-/// (design C16). Kept in `sessions/registry.json` under the state directory (mode 0600).
-#[derive(Debug, Default)]
-pub struct SessionRegistry {
-    file: Option<PathBuf>,
-    keys: Mutex<HashMap<String, String>>,
-}
-
-impl SessionRegistry {
-    /// A registry persisted at `<state_dir>/sessions/registry.json`; an unreadable or unparsable
-    /// file starts an empty registry (a warning is logged).
-    pub fn open(state_dir: Option<&Path>) -> Self {
-        let file = state_dir.map(|dir| dir.join("sessions").join("registry.json"));
-        let keys = file
-            .as_deref()
-            .and_then(|file| std::fs::read(file).ok())
-            .and_then(|bytes| serde_json::from_slice::<HashMap<String, String>>(&bytes).ok())
-            .unwrap_or_default();
-        Self {
-            file,
-            keys: Mutex::new(keys),
-        }
-    }
-
-    /// Records that `project_id` uses `key`. A project that changes its key records the new one and
-    /// leaves the old session alone; a key already bound to another project is a collision.
-    ///
-    /// # Errors
-    ///
-    /// `Err(())` when `key` is bound to a different project.
-    pub fn bind(&self, project_id: &str, key: &str) -> Result<(), ()> {
-        let snapshot = {
-            let mut keys = self.keys.lock();
-            if keys.iter().any(|(other, bound)| bound == key && other != project_id) {
-                return Err(());
-            }
-            if keys.get(project_id).map(String::as_str) == Some(key) {
-                return Ok(());
-            }
-            keys.insert(project_id.to_string(), key.to_string());
-            keys.clone()
-        };
-        if let Some(file) = &self.file
-            && let Err(e) = persist(file, &snapshot)
-        {
-            tracing::warn!("could not save the session registry: {e}");
-        }
-        Ok(())
-    }
-}
-
-fn persist(file: &Path, keys: &HashMap<String, String>) -> Result<(), String> {
-    use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let dir = file.parent().ok_or("no directory")?;
-    std::fs::create_dir_all(dir).map_err(|e| e.kind().to_string())?;
-    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-    let temp = dir.join(format!(".registry.{}.tmp", uuid::Uuid::new_v4().simple()));
-    let result = (|| {
-        let mut out = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)
-            .map_err(|e| e.kind().to_string())?;
-        out.write_all(&serde_json::to_vec(keys).map_err(|e| e.to_string())?)
-            .map_err(|e| e.kind().to_string())?;
-        std::fs::rename(&temp, file).map_err(|e| e.kind().to_string())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
 }
 
 /// Whether `key` is a valid session name: `^[A-Z0-9]{1,32}$`.
@@ -272,7 +196,7 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     if !valid_project_key(project_key) {
         return refuse("invalid_project_key", "the project key is not a valid session name");
     }
-    if ctx.registry.bind(project_id, project_key).is_err() {
+    if ctx.registry.check(project_id, project_key).is_err() {
         return refuse(
             "session_name_collision",
             "another project already uses this session name on this runner",
@@ -330,6 +254,13 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
             "the task view cannot be turned into a task message",
         );
     };
+    // Every check passed: only now does the project own its key.
+    if ctx.registry.bind(project_id, project_key).is_err() {
+        return refuse(
+            "session_name_collision",
+            "another project already uses this session name on this runner",
+        );
+    }
     Verdict::Run(Box::new(Accepted {
         client: ctx.client,
         bot: ctx.bot,
