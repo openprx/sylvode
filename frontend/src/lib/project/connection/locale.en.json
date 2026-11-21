@@ -1,0 +1,10 @@
+{
+	"execution": {
+		"connection": {
+			"managed": {
+				"chip": "Managed by project connection",
+				"reason": "Change it in the project's Execution settings"
+			}
+		}
+	}
+}

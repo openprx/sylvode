@@ -13,6 +13,7 @@
 	} from '#lib/bots/transport-surfaces.js';
 	import { createBotRequest } from '#lib/bots/create-bot-request.js';
 	import { membersApi, type WorkspaceMember, type WorkspaceMemberRole } from '#lib/api/members.js';
+	import { copyText } from '#lib/clipboard.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
@@ -20,6 +21,8 @@
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Modal from '#lib/components/Modal.svelte';
+	import ManagedNotice from '#lib/project/connection/ManagedNotice.svelte';
+	import { managedBotIds, managedLock, parseManagedBy } from '#lib/project/connection/managed.js';
 
 	type EditableRole = Exclude<WorkspaceMemberRole, 'owner'>;
 	type BotPermission = 'read' | 'write' | 'admin';
@@ -59,6 +62,11 @@
 	let bots = $state<Bot[]>([]);
 	let createdToken = $state<CreateBotResponse | null>(null);
 
+	/** Bots a project connection manages: their token and seat are changed on the project. */
+	const managedBots = $derived(managedBotIds(bots));
+	/** A managed bot's member row cannot be removed here: it leaves with its last connection. */
+	const memberLock = (userId: string) =>
+		managedLock(managedBots.has(userId) ? { kind: 'project_connection', projects: [] } : null);
 	const memberIds = $derived(new Set(members.map((member) => member.user_id)));
 
 	onMount(async () => {
@@ -276,24 +284,8 @@
 
 	async function copyCreatedToken() {
 		if (!createdToken?.token) return;
-
-		try {
-			if (navigator.clipboard?.writeText) {
-				await navigator.clipboard.writeText(createdToken.token);
-			} else {
-				const ta = document.createElement('textarea');
-				ta.value = createdToken.token;
-				ta.style.position = 'fixed';
-				ta.style.opacity = '0';
-				document.body.appendChild(ta);
-				ta.select();
-				document.execCommand('copy');
-				document.body.removeChild(ta);
-			}
-			toast.success(get(t)('members.copyTokenSuccess'));
-		} catch {
-			toast.error(get(t)('members.copyTokenFailed'));
-		}
+		if (await copyText(createdToken.token)) toast.success(get(t)('members.copyTokenSuccess'));
+		else toast.error(get(t)('members.copyTokenFailed'));
 	}
 
 	function closeCreatedTokenModal() {
@@ -419,7 +411,10 @@
 									<Button
 										variant="danger"
 										size="sm"
-										disabled={member.role === 'owner'}
+										disabled={member.role === 'owner' || memberLock(member.user_id).disabled}
+										disabledReason={memberLock(member.user_id).reasonKey
+											? $t(memberLock(member.user_id).reasonKey ?? '')
+											: undefined}
 										loading={removingMemberId === member.user_id}
 										onclick={() => removeMember(member)}
 									>
@@ -497,7 +492,15 @@
 					<tbody class="divide-y divide-line bg-raised">
 						{#each bots as bot (bot.id)}
 							<tr>
-								<td class="px-4 py-3 text-sm font-medium text-fg">{bot.name}</td>
+								<td class="px-4 py-3 text-sm font-medium text-fg">
+									<div>{bot.name}</div>
+									{#if parseManagedBy(bot.managed_by)}
+										{@const managed = parseManagedBy(bot.managed_by)}
+										{#if managed}
+											<div class="mt-1"><ManagedNotice {workspaceId} managedBy={managed} /></div>
+										{/if}
+									{/if}
+								</td>
 								<td class="px-4 py-3 text-sm font-mono text-fg-muted">{bot.token_prefix}</td>
 								<td class="px-4 py-3 text-sm text-fg-muted">
 									<span
@@ -545,7 +548,11 @@
 									<Button
 										variant="danger"
 										size="sm"
-										disabled={!bot.is_active}
+										disabled={!bot.is_active ||
+											managedLock(parseManagedBy(bot.managed_by)).disabled}
+										disabledReason={managedLock(parseManagedBy(bot.managed_by)).reasonKey
+											? $t(managedLock(parseManagedBy(bot.managed_by)).reasonKey ?? '')
+											: undefined}
 										loading={revokingBotId === bot.id}
 										onclick={() => revokeToken(bot)}
 									>

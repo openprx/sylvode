@@ -3,6 +3,7 @@
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
 	import { page } from '$app/state';
+	import { botsApi } from '#lib/api/bots.js';
 	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import {
 		webhooksApi,
@@ -17,6 +18,13 @@
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Modal from '#lib/components/Modal.svelte';
+	import ManagedNotice from '#lib/project/connection/ManagedNotice.svelte';
+	import {
+		managedBotIds,
+		managedLock,
+		parseManagedBy,
+		pickableBots
+	} from '#lib/project/connection/managed.js';
 	import {
 		WEBHOOK_EVENT_GROUPS,
 		toggleWebhookEvent,
@@ -31,6 +39,9 @@
 	let deletingId = $state<string | null>(null);
 	let webhooks = $state<Webhook[]>([]);
 	let botUsers = $state<WorkspaceMember[]>([]);
+	/** Bots a project connection manages: their deliveries are not chosen on this page. */
+	let managedBots = $state<Set<string>>(new Set());
+	const choosableBots = $derived(pickableBots(botUsers, managedBots));
 
 	let showModal = $state(false);
 	let editingWebhook = $state<Webhook | null>(null);
@@ -102,6 +113,10 @@
 			return;
 		}
 		botUsers = (response.data?.items ?? []).filter((member) => member.entity_type === 'bot');
+		// Which of them a connection manages is read from the Bots list. That list is for owners
+		// and admins; for anyone else it stays empty and the picker is unchanged.
+		const bots = await botsApi.list(workspaceId);
+		managedBots = bots.code === 0 ? managedBotIds(bots.data ?? []) : new Set();
 	}
 
 	function toggleEvent(eventName: string) {
@@ -411,6 +426,7 @@
 					</thead>
 					<tbody class="divide-y divide-line bg-raised">
 						{#each webhooks as webhook (webhook.id)}
+							{@const lock = managedLock(parseManagedBy(webhook.managed_by))}
 							<tr>
 								<td class="max-w-xs px-4 py-3 text-sm text-fg">{webhook.url}</td>
 								<td class="px-4 py-3 text-sm text-fg-muted">{webhook.events.join(', ')}</td>
@@ -426,6 +442,12 @@
 										</div>
 									{:else}
 										<span class="text-fg-muted">{$t('webhook.noBot')}</span>
+									{/if}
+									{#if parseManagedBy(webhook.managed_by)}
+										{@const managed = parseManagedBy(webhook.managed_by)}
+										{#if managed}
+											<div class="mt-1"><ManagedNotice {workspaceId} managedBy={managed} /></div>
+										{/if}
 									{/if}
 								</td>
 								<td class="px-4 py-3 text-sm">
@@ -445,18 +467,29 @@
 											onclick={() => viewDeliveries(webhook)}>{$t('webhook.records')}</button
 										>
 
-										<button
-											class="text-sm text-fg-muted hover:text-fg transition-colors"
-											onclick={() => editWebhook(webhook)}>{$t('common.edit')}</button
-										>
+										{#if lock.disabled}
+											<Button
+												variant="ghost"
+												size="sm"
+												disabled
+												disabledReason={lock.reasonKey ? $t(lock.reasonKey) : undefined}
+												>{$t('common.edit')}</Button
+											>
+											<Button variant="ghost" size="sm" disabled>{$t('common.delete')}</Button>
+										{:else}
+											<button
+												class="text-sm text-fg-muted hover:text-fg transition-colors"
+												onclick={() => editWebhook(webhook)}>{$t('common.edit')}</button
+											>
 
-										<button
-											class="text-sm text-fg-muted hover:text-danger transition-colors disabled:text-fg-muted disabled:cursor-not-allowed"
-											disabled={deletingId === webhook.id}
-											onclick={() => deleteWebhook(webhook)}
-										>
-											{$t('common.delete')}
-										</button>
+											<button
+												class="text-sm text-fg-muted hover:text-danger transition-colors disabled:text-fg-muted disabled:cursor-not-allowed"
+												disabled={deletingId === webhook.id}
+												onclick={() => deleteWebhook(webhook)}
+											>
+												{$t('common.delete')}
+											</button>
+										{/if}
 									</div>
 								</td>
 							</tr>
@@ -498,7 +531,7 @@
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 			>
 				<option value="">{$t('webhook.noBot')}</option>
-				{#each botUsers as bot (bot.user_id)}
+				{#each choosableBots as bot (bot.user_id)}
 					<option value={bot.user_id}>{bot.name} ({getBotType(bot.user_id)})</option>
 				{/each}
 			</select>

@@ -1,0 +1,10 @@
+{
+	"execution": {
+		"connection": {
+			"managed": {
+				"chip": "由项目连接管理",
+				"reason": "请在项目的执行设置中修改"
+			}
+		}
+	}
+}
