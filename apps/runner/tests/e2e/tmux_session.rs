@@ -14,11 +14,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-/// The start of the stand-in: finds its settings file in its arguments and defines `fire EVENT`,
-/// which runs the hook command registered for that event, exactly as the CLI would.
-const PRELUDE: &str = "settings=''\nfor a in \"$@\"; do [ \"$prev\" = '--settings' ] && settings=\"$a\"; prev=\"$a\"; done\n\
-fire() { c=$(grep -o '\"command\": \".*\"' \"$settings\" | grep -F -- \"'--event' '$1'\" | head -1 | sed 's/^\"command\": \"//; s/\"$//'); [ -n \"$c\" ] && /bin/sh -c \"$c\" </dev/null; }\n";
-
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
 const TOKEN: &str = concat!("opr", "_", "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a");
 const PROJECT: &str = "22222222-2222-4222-8222-222222222222";
@@ -84,6 +79,29 @@ struct Fixture {
     log: PathBuf,
 }
 
+/// The stand-in CLI, compiled once per test run with `rustc` (`standin_cli.rs`).
+fn standin_binary() -> PathBuf {
+    static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            let dir = PathBuf::from("/tmp").join(format!("svs-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]));
+            std::fs::create_dir_all(&dir).expect("scratch");
+            let source = dir.join("standin_cli.rs");
+            std::fs::write(&source, include_str!("standin_cli.rs")).expect("source");
+            let out = dir.join("claude");
+            let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+            let status = Command::new(rustc)
+                .args(["--edition", "2021", "-O", "-o"])
+                .arg(&out)
+                .arg(&source)
+                .status()
+                .expect("rustc runs");
+            assert!(status.success(), "the stand-in did not compile");
+            out
+        })
+        .clone()
+}
+
 /// What the stand-in CLI does: `Normal` runs turns, `Untrusted` shows the trust dialog and
 /// nothing else, `Long` takes a long time over a turn.
 #[derive(Clone, Copy)]
@@ -102,37 +120,21 @@ impl Fixture {
         let project = canonical.join("svwl");
         std::fs::create_dir_all(&project).expect("mkdir");
         let bin = TempDir::new("ts-bin");
-        let log = bin.file("standin.log");
-        // The stand-in does what the CLI does: it reads the hook commands from the settings file
-        // named by its `--settings` argument and runs them (they carry the launch's nonce).
-        let fire = |event: &str| format!("fire {event}");
-        let body = if matches!(standin, Standin::Untrusted) {
-            format!(
-                "echo \"argv: $*\" >> '{log}'\nprintf 'Is this a project you created or one you trust?\\n  Yes, I trust this folder\\n'\n/bin/sleep 600",
-                log = log.display()
-            )
-        } else {
-            {
-                let turn = if matches!(standin, Standin::Long) {
-                    "/bin/sleep 600"
-                } else {
-                    "/bin/sleep 1"
-                };
-                format!(
-                    "{prelude}echo \"argv: $*\" >> '{log}'\n/usr/bin/env | /usr/bin/sort >> '{log}.env'\nprintf '\\033[?2004h'\n{start}\n\
-                     end=$(printf '\\033[201~')\n\
-                     while true; do\n  printf '> '\n  IFS= read -r first || exit 0\n  text=\"$first\"\n\
-                     case \"$first\" in *\"$end\"*) ;; *) while IFS= read -r more; do text=\"$text|$more\"; case \"$more\" in *\"$end\"*) break;; esac; done;; esac\n\
-                     {submit}\n  printf 'TEXT: %s\\n' \"$text\" >> '{log}'\n  {turn}\n  {stop}\ndone",
-                    log = log.display(),
-                    prelude = PRELUDE,
-                    start = fire("SessionStart"),
-                    submit = fire("UserPromptSubmit"),
-                    stop = fire("Stop"),
-                )
-            }
+        // The state directory exists before the runner starts, so the stand-in has somewhere to
+        // log and to read its control files from; the runner accepts it (mode 0700).
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(tmux.state())
+            .expect("state dir");
+        let log = tmux.state().join("standin.log");
+        let cfg = match standin {
+            Standin::Normal => "",
+            Standin::Untrusted => "trust=dialog",
+            Standin::Long => "turn=forever",
         };
-        write_script(bin.path(), "claude", &body);
+        std::fs::write(tmux.state().join("standin.cfg"), cfg).expect("cfg");
+        // The stand-in is a real executable called `claude`: the pane's foreground process has
+        // the CLI's name, so the runner's foreground check is exercised, not bypassed.
+        std::fs::copy(standin_binary(), bin.file("claude")).expect("install the stand-in");
         write_script(bin.path(), "mcp-server", "exit 0");
         Self {
             api,
@@ -155,8 +157,8 @@ impl Fixture {
              [ai_task_callback]\nenabled = true\napi_url = \"{}\"\n\
              [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n\
              [runner]\nstate_dir = \"{}\"\nallowed_roots = [\"{}\"]\nreport_interval_secs = 600\ndelivery_check_timeout_secs = 3\n\
-             [runner.tmux]\nenabled = true\nbinary = \"{}\"\nsocket_name = \"{}\"\npush_settle_ms = 100\nuser_idle_secs = 0\nready_timeout_secs = 20\n\
-             [runner.cli.claude]\nbinary = \"{}\"\nprocess_names = [\"sh\", \"bash\", \"dash\"]\n\
+             [runner.tmux]\nenabled = true\nbinary = \"{}\"\nsocket_name = \"{}\"\npush_settle_ms = 100\nready_timeout_secs = 20\n\
+             [runner.cli.claude]\nbinary = \"{}\"\n\
              [runner.mcp]\nserver_binary = \"{}\"\n\
              [[agents]]\nid = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{BOT}\"]\n",
             self.api.url(),
