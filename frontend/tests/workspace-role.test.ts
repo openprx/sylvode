@@ -174,12 +174,12 @@ await suite.checkAsync('a failed or thrown read leaves the links hidden', async 
 });
 
 suite.check(
-	'the app layout re-reads the role on workspace change and drops the instance-admin grant',
+	'the shell session re-reads the role on workspace change and drops the instance-admin grant',
 	() => {
 		const root = fileURLToPath(new URL('..', import.meta.url));
-		const layout = readFileSync(join(root, 'src/routes/(app)/+layout.svelte'), 'utf8');
+		const layout = readFileSync(join(root, 'src/lib/shell/session.svelte.ts'), 'utf8');
 		assert(
-			/\$effect\(\(\) => \{\s*void roleTracker\.select\(currentWorkspaceId, currentUserId\);\s*\}\);/.test(
+			/\$effect\(\(\) => \{\s*void roleTracker\.select\(session\.workspaceId, session\.userId\);\s*\}\);/.test(
 				layout
 			),
 			'an $effect re-selects the role from currentWorkspaceId'

@@ -49,6 +49,7 @@
 	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
 	import FieldValue from './FieldValue.svelte';
 	import Popover from './Popover.svelte';
+	import Dialog from '#lib/ui/dialog/Dialog.svelte';
 
 	interface Props {
 		record: FormRecord | null;
@@ -101,6 +102,12 @@
 		onmodechange?: (mode: PanelMode) => void;
 		/** Opens the full in-page record details (link and child record editing). */
 		onmoredetails?: () => void;
+		/**
+		 * Hosted in another application's frame: body only. The toolbar, the resize handle and the
+		 * floating and sheet modes are not rendered (the host owns header, close and navigation), and
+		 * links that would move the window ask the host through `onmoredetails` instead.
+		 */
+		hosted?: boolean;
 	}
 
 	let {
@@ -145,7 +152,8 @@
 		onfocuslist,
 		onannounce,
 		onmodechange,
-		onmoredetails
+		onmoredetails,
+		hosted = false
 	}: Props = $props();
 
 	const MIN_WIDTH = 360;
@@ -163,21 +171,35 @@
 	let preview = $state<{ items: ImageItem[]; index: number; trigger: HTMLElement | null } | null>(
 		null
 	);
-	let previewDialog = $state<HTMLElement | null>(null);
 
 	const mode = $derived<PanelMode>(
-		viewportWidth < SHEET_MAX_VIEWPORT
-			? 'sheet'
-			: containerWidth >= DOCK_MIN_CONTAINER
-				? 'docked'
-				: 'overlay'
+		hosted
+			? 'docked'
+			: viewportWidth < SHEET_MAX_VIEWPORT
+				? 'sheet'
+				: containerWidth >= DOCK_MIN_CONTAINER
+					? 'docked'
+					: 'overlay'
 	);
 	const maxWidth = $derived(Math.max(MIN_WIDTH, Math.min(720, Math.round(containerWidth * 0.6))));
 	const effectiveWidth = $derived(
-		mode === 'sheet' ? viewportWidth : Math.min(Math.max(width, MIN_WIDTH), maxWidth)
+		hosted
+			? width
+			: mode === 'sheet'
+				? viewportWidth
+				: Math.min(Math.max(width, MIN_WIDTH), maxWidth)
 	);
 	const wide = $derived(effectiveWidth >= 560);
 	const narrowToolbar = $derived(effectiveWidth < 400);
+	const rootClass = $derived(
+		hosted
+			? 'hosted min-h-0 min-w-0 flex-1'
+			: mode === 'sheet'
+				? 'sheet fixed inset-0 z-50'
+				: mode === 'overlay'
+					? 'overlay fixed end-4 top-4 bottom-4 z-40 rounded-float border shadow-overlay'
+					: 'docked sticky top-4 max-h-[calc(100dvh-2rem)] shrink-0 self-start rounded-card border'
+	);
 	const intl = $derived(intlLocale($locale ?? 'en'));
 	const panelId = 'record-panel';
 	const headingId = 'record-panel-title';
@@ -397,7 +419,6 @@
 	// Image preview dialog.
 	function openPreview(items: ImageItem[], index: number, trigger: HTMLElement) {
 		preview = { items, index, trigger };
-		void tick().then(() => previewDialog?.focus());
 	}
 
 	function closePreview() {
@@ -408,25 +429,11 @@
 
 	function onPreviewKey(event: KeyboardEvent) {
 		if (!preview) return;
-		if (event.key === 'Escape') {
-			event.preventDefault();
-			event.stopPropagation();
-			closePreview();
-		} else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+		if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
 			event.preventDefault();
 			const forward = (event.key === 'ArrowRight') !== isRtl();
 			const total = preview.items.length;
 			preview = { ...preview, index: (preview.index + (forward ? 1 : total - 1)) % total };
-		} else if (event.key === 'Tab') {
-			// The preview is modal: keep focus on its controls.
-			const controls = Array.from(previewDialog?.querySelectorAll<HTMLElement>('button') ?? []);
-			if (controls.length === 0) return;
-			const index = controls.indexOf(document.activeElement as HTMLElement);
-			event.preventDefault();
-			const next = event.shiftKey
-				? (index <= 0 ? controls.length : index) - 1
-				: (index + 1) % controls.length;
-			controls[next]?.focus();
 		}
 	}
 
@@ -465,9 +472,9 @@
 	}
 
 	const iconButton =
-		'inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100';
+		'inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] text-fg-muted hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:text-fg-muted';
 	const menuItem =
-		'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
+		'flex min-h-8 w-full items-center gap-2 rounded-row px-2 py-1.5 text-start text-sm text-fg hover:bg-surface focus:bg-surface';
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -- links are full record page paths built by the caller -->
@@ -482,19 +489,14 @@
 	aria-busy={status === 'loading' ? 'true' : undefined}
 	{inert}
 	tabindex="-1"
-	class="record-panel flex flex-col border-slate-200 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 {mode ===
-	'sheet'
-		? 'sheet fixed inset-0 z-50'
-		: mode === 'overlay'
-			? 'overlay fixed end-4 top-4 bottom-4 z-40 rounded-lg border shadow-xl dark:ring-1 dark:ring-slate-700'
-			: 'docked sticky top-4 max-h-[calc(100dvh-2rem)] shrink-0 self-start rounded-lg border'}"
-	style={mode === 'sheet' ? undefined : `width:${effectiveWidth}px;`}
+	class="record-panel flex flex-col border-line bg-raised text-fg {rootClass}"
+	style={mode === 'sheet' || hosted ? undefined : `width:${effectiveWidth}px;`}
 	data-record-panel={record?.id ?? ''}
-	data-record-panel-mode={mode}
+	data-record-panel-mode={hosted ? 'hosted' : mode}
 	data-record-panel-status={status}
 	onkeydown={onKeydown}
 >
-	{#if mode !== 'sheet'}
+	{#if mode !== 'sheet' && !hosted}
 		<!-- A focusable separator is the APG window splitter widget, operated with the arrow keys. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 		<div
@@ -506,93 +508,93 @@
 			aria-valuemin={MIN_WIDTH}
 			aria-valuemax={maxWidth}
 			tabindex="0"
-			class="group absolute inset-y-0 -start-1 z-10 flex w-2 cursor-col-resize justify-center focus-visible:outline-none"
+			class="group absolute inset-y-0 -start-1 z-10 flex w-2 cursor-col-resize justify-center"
 			data-record-panel-resize
 			onkeydown={onSeparatorKey}
 			onpointerdown={onSeparatorPointerDown}
 			ondblclick={() => setWidth(PANEL_DEFAULT_WIDTH)}
 		>
 			<span
-				class="h-full w-px bg-transparent group-hover:bg-blue-400 group-focus-visible:w-0.5 group-focus-visible:bg-blue-500"
+				class="h-full w-px bg-transparent group-hover:bg-line-strong group-focus-visible:w-0.5 group-focus-visible:bg-fg"
 			></span>
 		</div>
 	{/if}
 
-	<div
-		class="flex min-h-12 flex-wrap items-center gap-1 border-b border-slate-200 px-3 py-2 dark:border-slate-700"
-		data-record-panel-toolbar
-	>
-		<button
-			type="button"
-			class={iconButton}
-			aria-label={$t('forms.recordPanel.previous')}
-			title={$t('forms.recordPanel.previous')}
-			disabled={!inView || !position || position.index <= 1}
-			data-record-panel-prev
-			onclick={onprev}><ChevronUp class="h-4 w-4" aria-hidden="true" /></button
+	{#if !hosted}
+		<div
+			class="flex min-h-12 flex-wrap items-center gap-1 border-b border-line px-3 py-2"
+			data-record-panel-toolbar
 		>
-		<button
-			type="button"
-			class={iconButton}
-			aria-label={$t('forms.recordPanel.next')}
-			title={$t('forms.recordPanel.next')}
-			disabled={!inView || !position || position.index >= position.total}
-			data-record-panel-next
-			onclick={onnext}><ChevronDown class="h-4 w-4" aria-hidden="true" /></button
-		>
-		{#if position && inView}
-			<span
-				class="px-1 text-xs tabular-nums text-slate-500 dark:text-slate-400"
-				data-record-panel-position
-				>{$t('forms.recordPanel.position', {
-					values: { index: position.index, total: position.total }
-				})}</span
-			>
-		{/if}
-		<span class="flex-1"></span>
-		{#if canEdit && record && status === 'ready'}
 			<button
 				type="button"
-				class="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 px-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-				data-record-panel-edit
-				onclick={onedit}
-			>
-				<Pencil class="h-3.5 w-3.5" aria-hidden="true" />
-				{$t('forms.recordPanel.edit')}
-			</button>
-		{/if}
-		{#if !narrowToolbar}
-			<a
-				href={fullPageHref}
 				class={iconButton}
-				aria-label={$t('forms.recordPanel.openFullPage')}
-				title={$t('forms.recordPanel.openFullPage')}
-				data-record-panel-full-page
-				><ExternalLink class="h-4 w-4 rtl:-scale-x-100" aria-hidden="true" /></a
+				aria-label={$t('forms.recordPanel.previous')}
+				title={$t('forms.recordPanel.previous')}
+				disabled={!inView || !position || position.index <= 1}
+				data-record-panel-prev
+				onclick={onprev}><ChevronUp class="h-4 w-4" aria-hidden="true" /></button
 			>
-		{/if}
-		<button
-			type="button"
-			bind:this={moreButton}
-			class={iconButton}
-			aria-label={$t('forms.recordPanel.more')}
-			title={$t('forms.recordPanel.more')}
-			aria-haspopup="menu"
-			aria-expanded={moreOpen}
-			aria-controls="record-panel-menu"
-			data-record-panel-more
-			onclick={() => (moreOpen = !moreOpen)}
-			><MoreHorizontal class="h-4 w-4" aria-hidden="true" /></button
-		>
-		<button
-			type="button"
-			class={iconButton}
-			aria-label={$t('forms.recordPanel.close')}
-			title={$t('forms.recordPanel.close')}
-			data-record-panel-close
-			onclick={onclose}><X class="h-4 w-4" aria-hidden="true" /></button
-		>
-	</div>
+			<button
+				type="button"
+				class={iconButton}
+				aria-label={$t('forms.recordPanel.next')}
+				title={$t('forms.recordPanel.next')}
+				disabled={!inView || !position || position.index >= position.total}
+				data-record-panel-next
+				onclick={onnext}><ChevronDown class="h-4 w-4" aria-hidden="true" /></button
+			>
+			{#if position && inView}
+				<span class="px-1 text-xs tabular-nums text-fg-muted" data-record-panel-position
+					>{$t('forms.recordPanel.position', {
+						values: { index: position.index, total: position.total }
+					})}</span
+				>
+			{/if}
+			<span class="flex-1"></span>
+			{#if canEdit && record && status === 'ready'}
+				<button
+					type="button"
+					class="inline-flex h-8 items-center gap-1.5 rounded-control border border-input px-2.5 text-sm font-medium text-fg hover:bg-surface"
+					data-record-panel-edit
+					onclick={onedit}
+				>
+					<Pencil class="h-3.5 w-3.5" aria-hidden="true" />
+					{$t('forms.recordPanel.edit')}
+				</button>
+			{/if}
+			{#if !narrowToolbar}
+				<a
+					href={fullPageHref}
+					class={iconButton}
+					aria-label={$t('forms.recordPanel.openFullPage')}
+					title={$t('forms.recordPanel.openFullPage')}
+					data-record-panel-full-page
+					><ExternalLink class="h-4 w-4 rtl:-scale-x-100" aria-hidden="true" /></a
+				>
+			{/if}
+			<button
+				type="button"
+				bind:this={moreButton}
+				class={iconButton}
+				aria-label={$t('forms.recordPanel.more')}
+				title={$t('forms.recordPanel.more')}
+				aria-haspopup="menu"
+				aria-expanded={moreOpen}
+				aria-controls="record-panel-menu"
+				data-record-panel-more
+				onclick={() => (moreOpen = !moreOpen)}
+				><MoreHorizontal class="h-4 w-4" aria-hidden="true" /></button
+			>
+			<button
+				type="button"
+				class={iconButton}
+				aria-label={$t('forms.recordPanel.close')}
+				title={$t('forms.recordPanel.close')}
+				data-record-panel-close
+				onclick={onclose}><X class="h-4 w-4" aria-hidden="true" /></button
+			>
+		</div>
+	{/if}
 
 	<Popover
 		open={moreOpen}
@@ -667,7 +669,7 @@
 					type="button"
 					role="menuitem"
 					tabindex="-1"
-					class="{menuItem} text-red-700 dark:text-red-400"
+					class="{menuItem} text-danger"
 					data-record-panel-delete
 					onclick={() => runMenu(ondelete)}
 					><Trash2 class="h-4 w-4" aria-hidden="true" />{$t('forms.recordPanel.delete')}</button
@@ -678,28 +680,26 @@
 
 	<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
 		{#if !online}
-			<p
-				class="border-b border-slate-200 px-4 py-1.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400"
-			>
+			<p class="border-b border-line px-4 py-1.5 text-xs text-fg-muted">
 				{$t('forms.recordPanel.offline')}
 			</p>
 		{/if}
 		{#if record && !inView && status === 'ready'}
 			<div
-				class="flex flex-wrap items-center gap-2 border-b border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100"
+				class="flex flex-wrap items-center gap-2 border-b border-line bg-surface px-4 py-2 text-sm text-fg"
 				data-record-panel-not-in-view
 			>
 				<span>{$t('forms.recordPanel.notInView')}</span>
 				<button
 					type="button"
-					class="min-h-6 font-medium underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-blue-500"
+					class="min-h-6 font-medium underline underline-offset-2"
 					onclick={onshowall}>{$t('forms.recordPanel.showInAll')}</button
 				>
 			</div>
 		{/if}
 		{#if changedElsewhere && status === 'ready'}
 			<div
-				class="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+				class="flex items-center gap-2 border-b border-line bg-warning-soft px-4 py-2 text-sm text-warning"
 			>
 				<span>{$t('forms.recordPanel.updatedElsewhere')}</span>
 				<button
@@ -715,12 +715,12 @@
 
 		{#if status === 'loading' && !record}
 			<div class="skeleton space-y-3 p-4" aria-hidden="true">
-				<div class="h-5 w-2/3 rounded bg-slate-200 dark:bg-slate-700"></div>
-				<div class="h-3 w-1/3 rounded bg-slate-200 dark:bg-slate-700"></div>
+				<div class="h-5 w-2/3 rounded-control bg-surface"></div>
+				<div class="h-3 w-1/3 rounded-control bg-surface"></div>
 				{#each [0, 1, 2, 3, 4, 5] as row (row)}
 					<div class="space-y-1.5 pt-2">
-						<div class="h-2.5 w-20 rounded bg-slate-200 dark:bg-slate-700"></div>
-						<div class="h-3.5 w-1/2 rounded bg-slate-200 dark:bg-slate-700"></div>
+						<div class="h-2.5 w-20 rounded-control bg-surface"></div>
+						<div class="h-3.5 w-1/2 rounded-control bg-surface"></div>
 					</div>
 				{/each}
 			</div>
@@ -735,15 +735,15 @@
 					bind:this={heading}
 					class="flex items-center gap-2 text-base font-semibold"
 				>
-					<AlertTriangle class="h-4 w-4 text-amber-600" aria-hidden="true" />
+					<AlertTriangle class="h-4 w-4 text-warning" aria-hidden="true" />
 					{$t('forms.recordPanel.loadError')}
 				</h2>
 				{#if errorMessage}
-					<p class="text-sm text-slate-500 dark:text-slate-400">{errorMessage}</p>
+					<p class="text-sm text-fg-muted">{errorMessage}</p>
 				{/if}
 				<button
 					type="button"
-					class="inline-flex h-8 items-center rounded-md border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+					class="inline-flex h-8 items-center rounded-control border border-input px-3 text-sm font-medium hover:bg-surface"
 					onclick={onretry}>{$t('forms.recordPanel.retry')}</button
 				>
 			</div>
@@ -755,7 +755,7 @@
 					bind:this={heading}
 					class="flex items-center gap-2 text-base font-semibold"
 				>
-					<Lock class="h-4 w-4 text-slate-500" aria-hidden="true" />
+					<Lock class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 					{$t('forms.recordPanel.forbidden')}
 				</h2>
 			</div>
@@ -767,7 +767,7 @@
 				{#if canRestore}
 					<button
 						type="button"
-						class="inline-flex h-8 items-center rounded-md border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+						class="inline-flex h-8 items-center rounded-control border border-input px-3 text-sm font-medium hover:bg-surface"
 						onclick={onrestore}>{$t('forms.recordPanel.restore')}</button
 					>
 				{/if}
@@ -780,15 +780,13 @@
 							id={headingId}
 							tabindex="-1"
 							bind:this={heading}
-							class="text-base font-semibold leading-snug break-words focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+							class="text-base font-semibold leading-snug break-words"
 							style="display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;"
 							title={record.title}
 						>
 							{record.title}
 						</h2>
-						<div
-							class="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
-						>
+						<div class="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
 							{#if identifier}
 								<span
 									class="font-mono [unicode-bidi:isolate]"
@@ -797,7 +795,7 @@
 								>
 								<button
 									type="button"
-									class="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-slate-800"
+									class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted hover:bg-surface"
 									aria-label={$t('forms.recordPanel.copyIdentifier')}
 									title={$t('forms.recordPanel.copyIdentifier')}
 									onclick={() => void copyValue('identifier', identifier.copy)}
@@ -817,7 +815,7 @@
 								/>
 							{/if}
 						</div>
-						<p class="text-xs text-slate-500 dark:text-slate-400" data-record-panel-subtitle>
+						<p class="text-xs text-fg-muted" data-record-panel-subtitle>
 							{#if header.subtitle && hasValue(header.subtitle)}
 								<FieldValue
 									field={header.subtitle}
@@ -842,14 +840,14 @@
 
 					{#if header.highlights.length > 0}
 						<dl
-							class="grid gap-x-4 gap-y-3 border-y border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/40 {wide
+							class="grid gap-x-4 gap-y-3 border-y border-line bg-surface px-4 py-3 {wide
 								? 'grid-cols-2'
 								: 'grid-cols-1'}"
 							data-record-panel-highlights
 						>
 							{#each header.highlights as field (field.key)}
 								<div class="min-w-0">
-									<dt class="text-xs font-medium uppercase text-slate-500 dark:text-slate-400">
+									<dt class="text-xs font-medium uppercase text-fg-muted">
 										{fieldLabel(field)}
 									</dt>
 									<dd class="mt-0.5 text-base font-semibold">
@@ -869,12 +867,12 @@
 					{/if}
 
 					{#if noValues}
-						<div class="space-y-2 px-4 py-4 text-sm text-slate-500 dark:text-slate-400">
+						<div class="space-y-2 px-4 py-4 text-sm text-fg-muted">
 							<p>{$t('forms.recordPanel.noValues')}</p>
 							{#if canEdit}
 								<button
 									type="button"
-									class="inline-flex h-8 items-center rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700"
+									class="inline-flex h-8 items-center rounded-control rf-filled bg-primary px-3 text-sm font-medium text-on-primary"
 									onclick={onedit}>{$t('forms.recordPanel.edit')}</button
 								>
 							{/if}
@@ -882,7 +880,7 @@
 					{:else}
 						{#each visibleSections as entry (entry.section.key)}
 							<details
-								class="group/section border-b border-slate-200 dark:border-slate-700"
+								class="group/section border-b border-line"
 								open={!entry.section.collapsible || !entry.section.defaultCollapsed}
 								data-record-panel-section={`${record.id}:${entry.section.key}`}
 								ontoggle={(event) => {
@@ -891,7 +889,7 @@
 								}}
 							>
 								<summary
-									class="flex min-h-10 list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-slate-600 uppercase marker:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300 {entry
+									class="flex min-h-10 list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase marker:hidden focus-visible:-outline-offset-2 {entry
 										.section.collapsible
 										? 'cursor-pointer'
 										: 'cursor-default'}"
@@ -917,42 +915,38 @@
 											data-field-type={field.type ?? 'text'}
 										>
 											<dt
-												class="pt-0.5 text-xs font-medium text-slate-500 uppercase break-words dark:text-slate-400 {wide
+												class="pt-0.5 text-xs font-medium text-fg-muted uppercase break-words {wide
 													? ''
 													: 'col-start-1 row-start-1'}"
 											>
 												{fieldLabel(field)}
 												{#if field.type === 'ai_summary'}
 													<span
-														class="ms-1 rounded bg-violet-100 px-1 text-[10px] font-semibold text-violet-700 normal-case dark:bg-violet-950 dark:text-violet-300"
+														class="ms-1 rounded-control bg-surface px-1 text-[10px] font-semibold text-fg normal-case"
 														aria-label={$t('forms.fieldValue.aiGenerated')}
 														title={$t('forms.fieldValue.aiGenerated')}
 														>{$t('forms.fieldValue.aiLabel')}</span
 													>
 												{:else if field.type === 'formula'}
 													<span
-														class="ms-1 font-serif text-slate-400 normal-case italic"
+														class="ms-1 font-serif text-fg-muted normal-case italic"
 														aria-label={$t('forms.fieldValue.calculated')}
 														title={$t('forms.fieldValue.calculated')}>ƒ</span
 													>
 												{/if}
 												{#each badges as badge (badge)}
 													<span
-														class="ms-1 rounded bg-slate-100 px-1 text-[10px] text-slate-600 normal-case dark:bg-slate-800 dark:text-slate-300"
+														class="ms-1 rounded-control bg-surface px-1 text-[10px] text-fg-muted normal-case"
 														>{badge}</span
 													>
 												{/each}
 											</dt>
-											<dd
-												class="min-w-0 text-sm text-slate-900 dark:text-slate-100 {wide
-													? ''
-													: 'col-span-2'}"
-											>
+											<dd class="min-w-0 text-sm text-fg {wide ? '' : 'col-span-2'}">
 												{#if field.type === 'child_table'}
 													{@const table = childTable(field)}
 													{#if detailsLoading && table.rows.length === 0}
 														<div
-															class="skeleton h-4 w-32 rounded bg-slate-200 dark:bg-slate-700"
+															class="skeleton h-4 w-32 rounded-control bg-surface"
 															aria-hidden="true"
 														></div>
 													{:else if table.rows.length === 0}
@@ -963,16 +957,12 @@
 															{ctx}
 														/>
 													{:else}
-														<div
-															class="overflow-x-auto rounded-md border border-slate-200 dark:border-slate-700"
-														>
+														<div class="overflow-x-auto rounded-card border border-line">
 															<table
 																class="w-full text-xs"
 																data-record-panel-child-table={field.key}
 															>
-																<thead
-																	class="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
-																>
+																<thead class="bg-nav text-fg-muted">
 																	<tr>
 																		<th class="px-2 py-1.5 text-start font-medium"
 																			>{$t('forms.views.titleField')}</th
@@ -984,7 +974,7 @@
 																		{/each}
 																	</tr>
 																</thead>
-																<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+																<tbody class="divide-y divide-line">
 																	{#each table.rows.slice(0, 5) as child (child.record.id)}
 																		<tr>
 																			<td class="max-w-40 truncate px-2 py-1.5"
@@ -1005,10 +995,21 @@
 																</tbody>
 															</table>
 														</div>
-														{#if table.rows.length > 5}
+														{#if table.rows.length > 5 && hosted}
+															{#if onmoredetails}
+																<button
+																	type="button"
+																	class="mt-1 inline-block text-xs text-fg hover:underline"
+																	onclick={onmoredetails}
+																	>{$t('forms.fieldValue.viewAllChildren', {
+																		values: { count: table.rows.length }
+																	})}</button
+																>
+															{/if}
+														{:else if table.rows.length > 5}
 															<a
 																href={fullPageHref}
-																class="mt-1 inline-block text-xs text-blue-700 hover:underline dark:text-blue-300"
+																class="mt-1 inline-block text-xs text-fg hover:underline"
 																>{$t('forms.fieldValue.viewAllChildren', {
 																	values: { count: table.rows.length }
 																})}</a
@@ -1030,7 +1031,7 @@
 											{#if copy}
 												<button
 													type="button"
-													class="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 hover:bg-slate-100 focus:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-slate-800 {wide
+													class="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-muted opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 hover:bg-surface focus:opacity-100 {wide
 														? ''
 														: 'col-start-2 row-start-1'}"
 													aria-label={$t('forms.recordPanel.copyField', {
@@ -1056,13 +1057,13 @@
 
 					{#if plugins.enabled}
 						<details
-							class="border-b border-slate-200 dark:border-slate-700"
+							class="border-b border-line"
 							open={appsOpen}
 							data-record-panel-apps
 							ontoggle={(event) => (appsOpen = (event.currentTarget as HTMLDetailsElement).open)}
 						>
 							<summary
-								class="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-slate-600 uppercase marker:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300"
+								class="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase marker:hidden focus-visible:-outline-offset-2"
 							>
 								<ChevronRight
 									class="h-3.5 w-3.5 transition-transform {appsOpen
@@ -1101,12 +1102,9 @@
 						</details>
 					{/if}
 
-					<details
-						class="border-b border-slate-200 dark:border-slate-700"
-						data-record-panel-details
-					>
+					<details class="border-b border-line" data-record-panel-details>
 						<summary
-							class="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-slate-600 uppercase marker:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300"
+							class="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 py-2 text-xs font-semibold tracking-wide text-fg-muted uppercase marker:hidden focus-visible:-outline-offset-2"
 						>
 							<ChevronRight
 								class="details-chevron h-3.5 w-3.5 transition-transform rtl:-scale-x-100"
@@ -1117,30 +1115,30 @@
 						<dl
 							class="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 pb-4 text-sm"
 						>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.created')}
 							</dt>
 							<dd>{formatInstant(record.created_at)}</dd>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.createdBy')}
 							</dt>
 							<dd>{record.created_by ? memberName(record.created_by) : '—'}</dd>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.updated')}
 							</dt>
 							<dd>{formatInstant(record.updated_at)}</dd>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.updatedByLabel')}
 							</dt>
 							<dd>{record.updated_by ? memberName(record.updated_by) : '—'}</dd>
-							<dt class="text-xs text-slate-500 uppercase dark:text-slate-400">
+							<dt class="text-xs text-fg-muted uppercase">
 								{$t('forms.recordPanel.recordId')}
 							</dt>
 							<dd class="flex min-w-0 items-center gap-1">
 								<span class="truncate font-mono text-xs" dir="ltr">{record.id}</span>
 								<button
 									type="button"
-									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-slate-800"
+									class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-fg-muted hover:bg-surface"
 									aria-label={$t('forms.recordPanel.copyId')}
 									onclick={() => void copyValue('record-id', record?.id ?? null)}
 								>
@@ -1160,33 +1158,30 @@
 
 {#if preview}
 	{@const item = preview.items[preview.index]}
-	<div
-		class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 p-4"
-		role="presentation"
-		onclick={(event) => {
-			if (event.target === event.currentTarget) closePreview();
-		}}
+	<Dialog
+		open
+		headless
+		size="wide"
+		title={$t('forms.recordPanel.previewTitle')}
+		onclose={closePreview}
 	>
+		<!-- Escape, the focus trap and focus return belong to the dialog; the arrows page through the images. -->
 		<div
-			bind:this={previewDialog}
-			role="dialog"
-			aria-modal="true"
-			aria-label={$t('forms.recordPanel.previewTitle')}
-			tabindex="-1"
-			class="relative flex max-h-full max-w-full flex-col items-center gap-3 focus:outline-none"
+			class="relative flex max-h-full max-w-full flex-col items-center gap-3 p-3"
 			data-record-panel-preview
+			role="presentation"
 			onkeydown={onPreviewKey}
 		>
 			<img
 				src={item.full ?? item.src}
 				alt={item.alt}
-				class="max-h-[80dvh] max-w-full rounded bg-white object-contain"
+				class="max-h-[80dvh] max-w-full rounded-control bg-raised object-contain"
 			/>
-			<div class="flex items-center gap-2 text-sm text-white">
+			<div class="flex items-center gap-2 text-sm text-fg">
 				{#if preview.items.length > 1}
 					<button
 						type="button"
-						class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+						class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line bg-surface hover:bg-selected"
 						aria-label={$t('forms.recordPanel.previewPrevious')}
 						onclick={() =>
 							preview &&
@@ -1202,7 +1197,7 @@
 					>
 					<button
 						type="button"
-						class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+						class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line bg-surface hover:bg-selected"
 						aria-label={$t('forms.recordPanel.previewNext')}
 						onclick={() =>
 							preview &&
@@ -1212,13 +1207,13 @@
 				{/if}
 				<button
 					type="button"
-					class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+					class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line bg-surface hover:bg-selected"
 					aria-label={$t('forms.recordPanel.close')}
 					onclick={closePreview}><X class="h-4 w-4" aria-hidden="true" /></button
 				>
 			</div>
 		</div>
-	</div>
+	</Dialog>
 {/if}
 
 <style>

@@ -1,0 +1,23 @@
+{
+	"ui": {
+		"multiSelect": {
+			"placeholder": "选择选项",
+			"clear": "清除",
+			"clearAll": "全部清除",
+			"clearedAll": "已清除所选项",
+			"selected": "已选 {n} 项",
+			"more": "+{n}",
+			"summary": "{label}：{labels}",
+			"summaryMore": "{label}：{labels}等 {n} 项",
+			"removed": "已移除 {label}",
+			"sample": {
+				"label": "标签",
+				"choose": "选择标签",
+				"bug": "缺陷",
+				"urgent": "紧急",
+				"docs": "文档",
+				"infra": "基础设施"
+			}
+		}
+	}
+}

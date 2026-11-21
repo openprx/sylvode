@@ -108,7 +108,7 @@ restaurant_log="$ARTIFACT_DIR/restaurant-ordering.log"
 
 (
   cd "$ROOT_DIR/frontend"
-  OPENPR_FORMS_UI_SCREENSHOT_DIR="$ARTIFACT_DIR/forms-ui" "$FRONTEND_BUN" run smoke:forms-ui
+  OPENPR_FORMS_UI_SCREENSHOT_DIR="$ARTIFACT_DIR/forms-ui" "$FRONTEND_BUN" run smoke:forms-page-interactions
 ) >"$forms_log" 2>&1
 
 (

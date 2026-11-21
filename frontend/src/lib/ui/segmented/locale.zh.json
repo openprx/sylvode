@@ -1,0 +1,14 @@
+{
+	"ui": {
+		"segmented": {
+			"sample": {
+				"label": "视图",
+				"table": "表格",
+				"board": "看板",
+				"calendar": "日历",
+				"light": "浅色",
+				"dark": "深色"
+			}
+		}
+	}
+}

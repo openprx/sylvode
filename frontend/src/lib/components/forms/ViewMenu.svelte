@@ -120,13 +120,13 @@
 	}
 
 	const itemClass =
-		'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
+		'flex min-h-8 w-full items-center gap-2 rounded-row px-2 py-1.5 text-start text-sm text-fg hover:bg-surface focus:bg-surface';
 </script>
 
 <button
 	type="button"
 	bind:this={button}
-	class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-slate-300 dark:hover:bg-slate-800"
+	class="inline-flex h-8 w-8 items-center justify-center rounded-control text-fg-muted hover:bg-surface"
 	aria-haspopup="menu"
 	aria-expanded={open}
 	aria-label={$t('forms.views.viewMenu')}
@@ -161,11 +161,9 @@
 				}}
 			>
 				<label class="block space-y-1">
-					<span class="text-xs font-medium text-slate-600 dark:text-slate-300"
-						>{$t('forms.views.renameTitle')}</span
-					>
+					<span class="text-xs font-medium text-fg-muted">{$t('forms.views.renameTitle')}</span>
 					<input
-						class="h-8 w-full rounded-md border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-slate-800"
+						class="h-8 w-full rounded-control border border-input bg-field px-2 text-sm"
 						maxlength="80"
 						bind:value={renameValue}
 						data-view-rename-input
@@ -174,12 +172,12 @@
 				<div class="flex justify-end gap-2">
 					<button
 						type="button"
-						class="h-8 rounded-md px-3 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+						class="h-8 rounded-control px-3 text-sm hover:bg-surface"
 						onclick={() => (stage = 'menu')}>{$t('common.cancel')}</button
 					>
 					<button
 						type="submit"
-						class="h-8 rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+						class="h-8 rounded-control rf-filled bg-primary px-3 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 						disabled={!renameValue.trim()}
 						data-view-rename-save>{$t('common.save')}</button
 					>
@@ -187,7 +185,7 @@
 			</form>
 		{:else if stage === 'confirm-delete' && view}
 			<div class="space-y-3 p-1" role="alertdialog" aria-labelledby="view-delete-question">
-				<p id="view-delete-question" class="text-sm text-slate-800 dark:text-slate-100">
+				<p id="view-delete-question" class="text-sm text-fg">
 					{isPrivate
 						? $t('forms.views.deletePrivateConfirm', { values: { name: view.name } })
 						: $t('forms.views.deleteConfirm', { values: { name: view.name } })}
@@ -195,13 +193,13 @@
 				<div class="flex justify-end gap-2">
 					<button
 						type="button"
-						class="h-8 rounded-md px-3 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+						class="h-8 rounded-control px-3 text-sm hover:bg-surface"
 						data-view-delete-cancel
 						onclick={() => (stage = 'menu')}>{$t('common.cancel')}</button
 					>
 					<button
 						type="button"
-						class="h-8 rounded-md bg-red-600 px-3 text-sm font-medium text-white hover:bg-red-700"
+						class="h-8 rounded-control bg-danger-soft px-3 text-sm font-medium text-danger"
 						data-view-delete-confirm
 						onclick={() => run(ondelete)}>{$t('common.delete')}</button
 					>
@@ -301,7 +299,7 @@
 					type="button"
 					role="menuitem"
 					tabindex="-1"
-					class="{itemClass} text-red-700 dark:text-red-400"
+					class="{itemClass} text-danger"
 					data-view-menu-delete
 					onclick={confirmDelete}
 					><Trash2 class="h-4 w-4" aria-hidden="true" />{$t('forms.views.deleteView')}</button

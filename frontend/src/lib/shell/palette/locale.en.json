@@ -1,0 +1,43 @@
+{
+	"shell": {
+		"palette": {
+			"title": "Search and commands",
+			"placeholder": "Search or type a command",
+			"results": "Results",
+			"hint": "↑ ↓ select · Enter open · Esc back",
+			"searching": "Searching...",
+			"none": "No results.",
+			"count": "{count} results",
+			"seeAll": "See all results for \"{query}\"",
+			"untitled": "Untitled",
+			"comment": "Comment",
+			"allWorkspaces": "All workspaces",
+			"verbOpen": "Open",
+			"verbSwitch": "Switch",
+			"verbApply": "Apply",
+			"verbSignOut": "Sign out",
+			"switchWorkspace": "Switch to workspace {name}",
+			"switchPersonal": "Switch to Personal",
+			"theme": {
+				"light": "Theme: Light",
+				"dark": "Theme: Dark",
+				"system": "Theme: System"
+			},
+			"language": "Language: {name}",
+			"pinCurrent": "Pin current page to rail",
+			"editNavigation": "Edit navigation",
+			"openSettings": "Open settings",
+			"signOut": "Sign out",
+			"groups": {
+				"goto": "Go to",
+				"recent": "Recent",
+				"projects": "Projects",
+				"forms": "Forms",
+				"flow": "Flow pages",
+				"issues": "Issues and comments",
+				"actions": "Actions",
+				"results": "More"
+			}
+		}
+	}
+}

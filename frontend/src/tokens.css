@@ -1,0 +1,326 @@
+/*
+ * Ramflux / Sylvode design tokens. One language, two products.
+ * Source: Ramflux-Desktop-Design 2.pen (revision saved 2026-11-18), read through the Pencil MCP tools on 2026-11-19.
+ * Naming: every "--rf-<name>" below is the file variable "rf-<name>" with the same value, except values marked ADOPTED.
+ * Blocks marked PROPOSED are not in the design file; they are derived for behaviour the file does not define.
+ *   Code must not rely on PROPOSED tokens until the owner approves them.
+ * Values marked ADOPTED differ from the design file by decision of 2026-11-20; the file value is given next to
+ *   each one and in the spec's "Deviations from the design file" table, so each can be reverted in one place.
+ * Theme axis in the file: mode = light | dark. Dark applies under ".dark" or [data-theme="dark"].
+ * The file's unthemed "pilot-*" variables are legacy duplicates of the light values and are not exported.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- Colour (file) ---- */
+  --rf-bg: #FCFBF9;
+  --rf-nav: #F5F4F1;
+  --rf-rail: #EDECE8;
+  --rf-rail-active: #E2E1DE;  /* defined in file, not applied to any node */
+  --rf-surface: #EFEFEF;
+  --rf-surface-white: #FFFFFF;
+  --rf-selected: #E6E5E2;
+  --rf-overlay: #FFFFFF;
+  --rf-overlay-border: #E2E2E2;
+  --rf-input: #FFFFFF;
+  --rf-input-border: #8E8E8E;  /* ADOPTED 2026-11-20 (D1), differs from the design file: file value #E0E0E0 */
+  --rf-text: #161616;
+  --rf-secondary: #585858;
+  --rf-control: #8E8E8E;  /* boundary and disabled colour only; readable text uses --rf-secondary (D3, adopted 2026-11-20) */
+  --rf-line: #E6E6E6;
+  --rf-line-strong: #D4D4D4;
+  --rf-line-soft: #EFEFEF;  /* defined in file, not applied to any node */
+  --rf-line-nav: #E2E2E1;  /* defined in file, not applied to any node */
+  --rf-primary: #222224;
+  --rf-on-primary: #FFFFFF;
+  --rf-accent: #161616;
+  --rf-on-accent: #FFFFFF;
+  --rf-focus: #222224;
+  --rf-badge: #222224;
+  --rf-on-badge: #FFFFFF;
+  --rf-tooltip: #222224;  /* defined in file, not applied to any node */
+  --rf-on-tooltip: #FFFFFF;  /* defined in file, not applied to any node */
+  --rf-scrim: rgb(0 0 0 / 0.30);
+  --rf-shadow: rgb(0 0 0 / 0.12);  /* defined in file, not applied to any node */
+  --rf-success: #2B782F;  /* ADOPTED 2026-11-20 (D4), differs from the design file: file value #2E7D32 */
+  --rf-success-bg: #E8F2E9;
+  --rf-on-success: #FFFFFF;
+  --rf-warning: #9A5800;
+  --rf-warning-bg: #FBF0DE;
+  --rf-danger: #C62828;
+  --rf-danger-bg: #FCEBEB;
+  --rf-on-danger: #FFFFFF;
+  --rf-avatar-person: #E7E7E7;
+  --rf-on-avatar-person: #161616;
+  --rf-agent-av: #222224;
+  --rf-on-agent-av: #FFFFFF;
+  --rf-incoming: #EFEFEF;
+  --rf-incoming-meta: #5C5C5C;
+  --rf-incoming-quote: #E3E3E3;
+  --rf-outgoing: #222224;
+  --rf-outgoing-text: #F6F6F6;
+  --rf-outgoing-meta: #ABABAB;
+  --rf-outgoing-quote: #343436;
+  --rf-chart-1: #2A78D6;
+  --rf-chart-2: #EB6834;
+
+  /* ---- Typography (file) ---- */
+  /* The file sets a family per text node: rf-font ("Noto Sans SC") on CJK strings,
+     rf-font-latin ("Hanken Grotesk") on Latin, numeric and identifier strings, rf-font-mono on codes. */
+  --rf-font: "Noto Sans SC";
+  --rf-font-latin: "Hanken Grotesk";
+  --rf-font-mono: "JetBrains Mono";
+  --rf-font-serif: "Hanken Grotesk"; /* alias in file; no serif face is used */
+  /* PROPOSED implementation stacks: Latin face first so Latin glyphs and digits come from Hanken Grotesk
+     and CJK falls through to Noto Sans SC, then to platform CJK faces. */
+  --rf-font-sans-stack: "Hanken Grotesk", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --rf-font-mono-stack: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Noto Sans SC", monospace;
+
+  --rf-size-caption: 11px;
+  --rf-size-meta: 12px;
+  --rf-size-secondary: 13px;
+  --rf-size-button: 14px;
+  --rf-size-body: 15px;
+  --rf-size-subheading: 17px;
+  --rf-size-title: 20px;
+  --rf-size-page: 24px;
+  --rf-size-metric: 32px;
+  --rf-size-mobile-caption: 11px;
+  --rf-size-mobile-body: 17px;
+  --rf-size-mobile-large-title: 32px;
+
+  /* Line-height ratios used per size in the file (as used by the core components) */
+  --rf-leading-caption: 1.333;
+  --rf-leading-meta: 1.4;
+  --rf-leading-secondary: 1.45;
+  --rf-leading-button: 1.4;
+  --rf-leading-body: 1.6;
+  --rf-leading-body-tight: 1.45;   /* body text inside dialogs, cards and rows */
+  --rf-leading-subheading: 1.4;
+  --rf-leading-title: 1.3;
+  --rf-leading-page: 1.45;
+
+  --rf-weight-regular: 400;
+  --rf-weight-medium: 500;
+  --rf-weight-semibold: 600;
+  --rf-weight-bold: 700;           /* unread count, mobile large title, brand monogram only */
+
+  /* ---- Radius (file) ---- */
+  --rf-radius-xs: 4px;
+  --rf-radius-sm: 6px;
+  --rf-radius-md: 8px;
+  --rf-radius-lg: 12px;
+  --rf-radius-xl: 16px;
+  --rf-radius-full: 999px;
+  --rf-radius-button: 4px;
+  --rf-radius-input: 4px;
+  --rf-radius-chip: 4px;
+  --rf-radius-card: 8px;
+  --rf-radius-menu: 12px;
+  --rf-radius-dialog: 12px;
+  --rf-radius-sheet: 12px;
+  --rf-radius-bubble: 12px;
+  --rf-radius-bubble-joined: 4px;
+
+  /* ---- Layout numbers (file variables) ---- */
+  --rf-gap: 16px;
+  --rf-bubble-max: 600px;
+  --rf-mobile-bubble-max: 300px;
+  --rf-column-max: 880px;
+  --rf-composer-min: 48px;
+  --rf-row-conversation: 64px;
+  --rf-menu-item-height: 38px;
+
+  /* ---- Layout numbers (read from frames, not variables) ---- */
+  --rf-layout-rail: 68px;
+  --rf-layout-list: 264px;          /* 232px at 1024 wide */
+  --rf-layout-header: 88px;
+  --rf-layout-drag-region: 52px;
+  --rf-layout-dock: 480px;          /* context dock */
+  --rf-layout-panel: 600px;         /* nonmodal work panel */
+  --rf-layout-thread: 340px;
+  --rf-layout-reading: 760px;       /* settings and form column */
+  --rf-layout-dialog: 480px;        /* 680px for the task-detail dialog */
+  --rf-control-height: 32px;        /* button, icon button, segmented, jump-to-latest */
+  --rf-field-height: 36px;          /* text field box; search field is 34px */
+  --rf-touch-target: 44px;          /* mobile minimum; mobile buttons are 52px */
+
+  /* ---- Spacing scale (gap and padding values in use) ---- */
+  --rf-space-1: 2px;
+  --rf-space-2: 4px;
+  --rf-space-3: 6px;
+  --rf-space-4: 8px;
+  --rf-space-5: 12px;
+  --rf-space-6: 16px;
+  --rf-space-7: 20px;
+  --rf-space-8: 24px;
+  --rf-space-9: 32px;
+
+  /* ---- Borders (file) ---- */
+  --rf-border-width: 1px;
+  --rf-border-width-control: 1.5px; /* unchecked checkbox and radio; mobile checkbox */
+  --rf-border-width-focus: 2px;
+  --rf-border-width-quote: 3px;     /* leading rule of a reply excerpt */
+
+  /* ---- Elevation (file) ---- */
+  --rf-shadow-overlay: 0 8px 24px var(--rf-shadow);   /* menu, info popover, dialog component, mobile context menu */
+  --rf-shadow-modal: 0 16px 48px var(--rf-shadow);    /* large pickers and dialogs drawn in screens */
+  --rf-shadow-sheet: 0 -4px 24px var(--rf-shadow);    /* mobile bottom sheet */
+
+  /* ---- Icons (file) ---- */
+  --rf-icon-sm: 14px;
+  --rf-icon-md: 16px;
+  --rf-icon-lg: 18px;
+  --rf-icon-xl: 20px;
+  --rf-icon-2xl: 24px;
+
+  /* ================= PROPOSED (not in file) ================= */
+  /* States. The file draws hover only for menu items (fill = rf-surface) and never draws pressed. */
+  --rf-hover: var(--rf-surface);            /* on bg, surface-white, overlay */
+  --rf-hover-nav: var(--rf-selected);       /* on nav */
+  --rf-hover-rail: var(--rf-rail-active);   /* on rail; uses the file's reserved variable */
+  --rf-pressed: var(--rf-selected);
+  --rf-disabled-opacity: 0.45;              /* file: 9 nodes at 0.45, 5 at 0.4; prefer the Disabled variants */
+
+  /* Categorical palette for charts with more than two series and for user-defined tags.
+     1 and 2 are the file's chart colours; 3 to 8 are proposed and each is at least 3:1 on surface-white. */
+  --rf-cat-1: var(--rf-chart-1);
+  --rf-cat-2: var(--rf-chart-2);
+  --rf-cat-3: #12877A; /* teal */
+  --rf-cat-4: #7A55D1; /* violet */
+  --rf-cat-5: #3F8F3A; /* green */
+  --rf-cat-6: #C93C7A; /* pink */
+  --rf-cat-7: #A07400; /* ochre */
+  --rf-cat-8: #6B6B6B; /* grey */
+  --rf-cat-tint: 14%;                       /* tag ground = color-mix(in oklab, cat N var(--rf-cat-tint), var(--rf-surface-white)) */
+
+  /* Density. "comfortable" is the file as drawn; "compact" is proposed for data views. */
+  --rf-density-row: 44px;
+  --rf-density-row-two-line: 64px;
+  --rf-density-cell-pad: 12px;
+  --rf-density-text: var(--rf-size-body);
+  --rf-density-control: 32px;
+
+  /* Motion. The file defines none. */
+  --rf-duration-fast: 120ms;
+  --rf-duration-base: 180ms;
+  --rf-duration-slow: 240ms;
+  --rf-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --rf-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Stacking */
+  --rf-z-sticky: 10;
+  --rf-z-panel: 20;
+  --rf-z-scrim: 40;
+  --rf-z-toast: 45;                         /* toast region: above the scrim, below overlays */
+  --rf-z-overlay: 50;
+  --rf-z-tooltip: 60;
+
+  /* PROPOSED: layout and type additions used by lib/ui components. */
+  --rf-layout-header-compact: 56px;         /* page header in its compact (sticky or narrow) form; the file's header is 88px */
+  --rf-leading-metric: 1.25;                /* line height of the 32px metric figure */
+}
+
+.dark,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* ---- Colour (file) ---- */
+  --rf-bg: #171716;
+  --rf-nav: #121211;
+  --rf-rail: #0D0D0C;
+  --rf-rail-active: #222221;
+  --rf-surface: #212121;
+  --rf-surface-white: #1E1E1E;
+  --rf-selected: #222221;
+  --rf-overlay: #1E1E1E;
+  --rf-overlay-border: #303030;
+  --rf-input: #1C1C1C;
+  --rf-input-border: #7A7A7A;  /* ADOPTED 2026-11-20 (D1): file value #2C2C2C */
+  --rf-text: #EBEBEB;
+  --rf-secondary: #9E9E9E;
+  --rf-control: #7A7A7A;
+  --rf-line: #262626;
+  --rf-line-strong: #3A3A3A;
+  --rf-line-soft: #1E1E1E;
+  --rf-line-nav: #1E1E1E;
+  --rf-primary: #EBEBEB;
+  --rf-on-primary: #121211;
+  --rf-accent: #EBEBEB;
+  --rf-on-accent: #121211;
+  --rf-focus: #C8C8C8;
+  --rf-badge: #EBEBEB;
+  --rf-on-badge: #121211;
+  --rf-tooltip: #EBEBEB;
+  --rf-on-tooltip: #121211;
+  --rf-scrim: rgb(0 0 0 / 0.55);
+  --rf-shadow: rgb(0 0 0 / 0.48);
+  --rf-success: #5FD27A;
+  --rf-success-bg: #14251A;
+  --rf-on-success: #121211;
+  --rf-warning: #F2B94B;
+  --rf-warning-bg: #2B2210;
+  --rf-danger: #FF6B6B;
+  --rf-danger-bg: #2E1818;
+  --rf-on-danger: #121211;
+  --rf-avatar-person: #2A2A2A;
+  --rf-on-avatar-person: #EBEBEB;
+  --rf-agent-av: #EBEBEB;
+  --rf-on-agent-av: #121211;
+  --rf-incoming: #242424;
+  --rf-incoming-meta: #A2A2A2;
+  --rf-incoming-quote: #2E2E2E;
+  --rf-outgoing: #3A3A3C;
+  --rf-outgoing-text: #F7F7F7;
+  --rf-outgoing-meta: #C4C4C4;
+  --rf-outgoing-quote: #4A4A4C;
+  --rf-chart-1: #3987E5;
+  --rf-chart-2: #D95926;
+
+  /* PROPOSED */
+  --rf-cat-3: #2FB5A5;
+  --rf-cat-4: #9B7BEA;
+  --rf-cat-5: #62B85C;
+  --rf-cat-6: #E2609A;
+  --rf-cat-7: #D6A21E;
+  --rf-cat-8: #9A9A9A;
+  --rf-cat-tint: 22%;
+
+  /* Derived tokens (F1): repeated so that a nested .dark or [data-theme="dark"] container re-resolves them
+     from its own theme values; the :root declarations would keep the light values there. */
+  --rf-hover: var(--rf-surface);
+  --rf-hover-nav: var(--rf-selected);
+  --rf-hover-rail: var(--rf-rail-active);
+  --rf-pressed: var(--rf-selected);
+  --rf-shadow-overlay: 0 8px 24px var(--rf-shadow);
+  --rf-shadow-modal: 0 16px 48px var(--rf-shadow);
+  --rf-shadow-sheet: 0 -4px 24px var(--rf-shadow);
+  --rf-cat-1: var(--rf-chart-1);
+  --rf-cat-2: var(--rf-chart-2);
+}
+
+/* PROPOSED: compact density for tables, boards, timelines and property lists. */
+[data-density="compact"] {
+  --rf-density-row: 32px;
+  --rf-density-row-two-line: 48px;
+  --rf-density-cell-pad: 8px;
+  --rf-density-text: var(--rf-size-secondary);
+  --rf-density-control: 28px;
+}
+
+/* Focus: 2px ring in rf-focus drawn on the control's own edge (file: I13, menu item "State focus"). */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--rf-border-width-focus) solid var(--rf-focus);
+  outline-offset: -1px;
+}
+/* ADOPTED 2026-11-20 (D2), differs from the design file (file: ring on the control's own edge for every control).
+   rf-focus equals rf-primary in light mode (1.00:1 against a primary fill), so a ring drawn on the
+   edge of a filled control is invisible. Filled controls move the ring 2px outside, onto the surrounding ground. */
+:where(.rf-filled, [data-filled]):focus-visible {
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --rf-duration-fast: 0ms; --rf-duration-base: 0ms; --rf-duration-slow: 0ms; }
+}

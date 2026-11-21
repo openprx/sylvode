@@ -1,0 +1,8 @@
+{
+	"surface": {
+		"error": {
+			"generic": "Something went wrong. Try again.",
+			"retry": "Retry"
+		}
+	}
+}

@@ -166,17 +166,17 @@
 </script>
 
 <Modal bind:open taskScoped title={$t('flow.shared.manageSource')} maxWidthClass="max-w-2xl">
-	{#if !canManage}<p role="status" class="text-sm text-slate-500">
+	{#if !canManage}<p role="status" class="text-sm text-fg-muted">
 			{$t('flow.shared.sourceUnavailable')}
 		</p>
-	{:else if !draft || !manager}<p role="status" class="text-sm text-slate-500">
+	{:else if !draft || !manager}<p role="status" class="text-sm text-fg-muted">
 			{$t('common.loading')}
 		</p>
 	{:else}<div class="space-y-5" data-testid="flow-block-sharing-source">
-			<p class="text-sm text-slate-500">{$t('flow.shared.sourceBoundary')}</p>
+			<p class="text-sm text-fg-muted">{$t('flow.shared.sourceBoundary')}</p>
 			{#if rootCid && draft.form.rootCid && rootCid !== draft.form.rootCid}<p
 					role="status"
-					class="text-sm text-amber-700"
+					class="text-sm text-warning"
 				>
 					{$t('flow.shared.finishSourceDraft')}
 				</p>{/if}
@@ -227,7 +227,7 @@
 								>{/each}
 						</select></label
 					>
-					{#if workspaceFailed}<p role="alert" class="text-sm text-red-600">
+					{#if workspaceFailed}<p role="alert" class="text-sm text-danger">
 							{$t('flow.shared.targetsFailed')}
 						</p>{/if}
 					{#if draft.form.workspaceId}<label class="block text-sm"
@@ -256,11 +256,11 @@
 								disabled={targetLoading}
 								onclick={moreProjects}>{$t('common.loadMore')}</button
 							>{/if}
-						{#if targetLoading}<p role="status" class="text-sm text-slate-500">
+						{#if targetLoading}<p role="status" class="text-sm text-fg-muted">
 								{$t('common.loading')}
-							</p>{:else if targetFailed}<p role="alert" class="text-sm text-red-600">
+							</p>{:else if targetFailed}<p role="alert" class="text-sm text-danger">
 								{$t('flow.shared.targetsFailed')}
-							</p>{:else if !admin}<p role="status" class="text-sm text-amber-700">
+							</p>{:else if !admin}<p role="status" class="text-sm text-warning">
 								{$t('flow.shared.targetAdminRequired')}
 							</p>{/if}
 					{/if}
@@ -309,15 +309,15 @@
 														: draft!.form.recipients.filter((id) => id !== member.user_id)
 												})}
 										/><span
-											>{member.name}<span class="ms-2 text-xs text-slate-500">{member.email}</span
+											>{member.name}<span class="ms-2 text-xs text-fg-muted">{member.email}</span
 											></span
 										></label
 									>{/each}
-								{#if !matching.length}<p class="text-sm text-slate-500">
+								{#if !matching.length}<p class="text-sm text-fg-muted">
 										{$t('flow.shared.noMembers')}
 									</p>{/if}
 							</div>
-							{#each missing as id (id)}<div class="flex gap-2 text-sm text-amber-700">
+							{#each missing as id (id)}<div class="flex gap-2 text-sm text-warning">
 									<span>{$t('flow.shared.memberUnavailable')}</span><button
 										type="button"
 										class="underline"
@@ -343,14 +343,14 @@
 					>
 					<button
 						type="submit"
-						class="rounded border px-3 py-2 text-sm disabled:opacity-40"
+						class="rounded border px-3 py-2 text-sm disabled:text-fg-muted disabled:hover:bg-transparent"
 						data-testid="flow-share-review"
 						disabled={frozen || !targetValid}
 						>{draft.status === 'reviewing'
 							? $t('flow.shared.synchronizing')
 							: $t('flow.shared.reviewPublication')}</button
 					>
-				</form>{:else}<p class="text-sm text-slate-500">{$t('flow.shared.chooseBodyBlock')}</p>{/if}
+				</form>{:else}<p class="text-sm text-fg-muted">{$t('flow.shared.chooseBodyBlock')}</p>{/if}
 			{#if draft.review}<section
 					class="space-y-2 rounded border p-3"
 					data-testid="flow-share-fixed-review"
@@ -358,28 +358,28 @@
 					<h3 class="text-sm font-medium">
 						{$t('flow.shared.fixedPreview', { values: { count: draft.review.members.length } })}
 					</h3>
-					<p class="text-xs text-slate-500">{$t('flow.shared.futureChildrenPrivate')}</p>
+					<p class="text-xs text-fg-muted">{$t('flow.shared.futureChildrenPrivate')}</p>
 					<ol class="max-h-64 space-y-2 overflow-y-auto text-sm">
 						{#each draft.review.members as member (member.block_cid)}<li
 								style={`margin-inline-start:${member.depth * 16}px`}
 								data-review-block-id={member.block_cid}
 							>
-								{#if member.kind === 'image'}<span class="text-xs text-slate-500"
+								{#if member.kind === 'image'}<span class="text-xs text-fg-muted"
 										>{$t('flow.shared.image')}</span
-									>{:else if member.kind === 'attachment'}<span class="text-xs text-slate-500"
+									>{:else if member.kind === 'attachment'}<span class="text-xs text-fg-muted"
 										>{$t('flow.shared.file')}</span
-									>{:else if member.kind === 'childPage'}<span class="text-xs text-slate-500"
+									>{:else if member.kind === 'childPage'}<span class="text-xs text-fg-muted"
 										>{$t('flow.shared.childPlaceholder')}</span
 									>{:else if member.kind === 'divider'}<hr />{/if}
 								<p class="whitespace-pre-wrap">{member.text}</p>
-								{#if member.truncated}<span class="text-xs text-slate-500"
+								{#if member.truncated}<span class="text-xs text-fg-muted"
 										>{$t('flow.shared.previewShortened')}</span
 									>{/if}
 							</li>{/each}
 					</ol>
 					<button
 						type="button"
-						class="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-40"
+						class="rounded bg-primary rf-filled px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted"
 						data-testid="flow-share-publish"
 						disabled={draft.busy || !targetValid}
 						onclick={() => manager?.publish()}
@@ -392,10 +392,10 @@
 									: $t('flow.shared.publish')}</button
 					>
 				</section>{/if}
-			{#if draft.error}<p role="alert" class="text-sm text-red-600">{error}</p>{/if}
-			{#if draft.status === 'uncertain'}<p role="status" class="text-sm text-amber-700">
+			{#if draft.error}<p role="alert" class="text-sm text-danger">{error}</p>{/if}
+			{#if draft.status === 'uncertain'}<p role="status" class="text-sm text-warning">
 					{$t('flow.shared.uncertainPublication')}
-				</p>{:else if draft.status === 'saved'}<p role="status" class="text-sm text-emerald-700">
+				</p>{:else if draft.status === 'saved'}<p role="status" class="text-sm text-success">
 					{$t('flow.shared.published')}
 				</p>{/if}
 			{#if draft.dirty}<button
@@ -407,7 +407,7 @@
 			<section class="space-y-3 border-t pt-4">
 				<h3 class="text-sm font-medium">{$t('flow.shared.existingShares')}</h3>
 				<p role="status">{lifecycleNotice ? $t(lifecycleNotice) : ''}</p>
-				{#if !draft.managed.length}<p class="text-sm text-slate-500">
+				{#if !draft.managed.length}<p class="text-sm text-fg-muted">
 						{$t('flow.shared.noExistingShares')}
 					</p>{/if}
 				{#each draft.managed as share (share.share_id)}<article
@@ -450,7 +450,7 @@
 								<div class="flex flex-wrap gap-3">
 									<button
 										type="button"
-										class="min-h-11 text-red-700 underline dark:text-red-300"
+										class="min-h-11 text-danger underline"
 										disabled={draft.busy}
 										onclick={() => lifecycle(share.share_id, 'revoke')}
 										>{$t('flow.shared.revokeSource')}</button
@@ -474,6 +474,6 @@
 						{/if}
 					</article>{/each}
 			</section>
-			<p class="text-xs text-slate-500">{$t('flow.shared.backgroundPublication')}</p>
+			<p class="text-xs text-fg-muted">{$t('flow.shared.backgroundPublication')}</p>
 		</div>{/if}
 </Modal>
