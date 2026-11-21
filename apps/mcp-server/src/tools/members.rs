@@ -4,6 +4,7 @@ use serde_json::json;
 
 pub fn list_members_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "members.list".to_string(),
         description: "List all members and roles in a workspace".to_string(),
         input_schema: json!({

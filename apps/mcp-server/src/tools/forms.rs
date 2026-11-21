@@ -45,6 +45,7 @@ fn parse_input<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, CallToolR
 
 pub fn list_forms_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "forms.list".to_string(),
         description: "List universal forms in a project. Paginated: per_page defaults to 50 (max 200); \
 check pagination_hint.has_more before treating the result as complete."
@@ -63,6 +64,7 @@ check pagination_hint.has_more before treating the result as complete."
 
 pub fn get_form_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "forms.get".to_string(),
         description: "Get one universal form schema by UUID".to_string(),
         input_schema: json!({
@@ -77,6 +79,7 @@ pub fn get_form_tool() -> ToolDefinition {
 
 pub fn create_form_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "forms.create".to_string(),
         description: "Create a universal form in a project".to_string(),
         input_schema: json!({
@@ -99,6 +102,7 @@ pub fn create_form_tool() -> ToolDefinition {
 
 pub fn create_form_from_template_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "forms.create_from_template".to_string(),
         description: "Create one universal form from a scenario template inside an existing project".to_string(),
         input_schema: json!({
@@ -118,6 +122,7 @@ pub fn create_form_from_template_tool() -> ToolDefinition {
 
 pub fn update_form_schema_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "forms.update_schema".to_string(),
         description: "Update a universal form schema and optional title/detail layout. Pass \
 expected_schema_version (from forms.get) to avoid silently overwriting a concurrent schema change."
@@ -146,6 +151,7 @@ expected_schema_version (from forms.get) to avoid silently overwriting a concurr
 
 pub fn duplicate_form_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "forms.duplicate".to_string(),
         description:
             "Duplicate a universal form schema, detail layout, metadata, and active views without copying records"
@@ -165,6 +171,7 @@ pub fn duplicate_form_tool() -> ToolDefinition {
 
 pub fn get_form_schema_summary_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "forms.schema_summary".to_string(),
         description: "Get schema, view, record, and archive summary metadata for a universal form".to_string(),
         input_schema: json!({
@@ -179,6 +186,7 @@ pub fn get_form_schema_summary_tool() -> ToolDefinition {
 
 pub fn get_form_field_usage_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "forms.field_usage".to_string(),
         description: "Get value usage and dependency counts for fields in a universal form".to_string(),
         input_schema: json!({
@@ -193,6 +201,7 @@ pub fn get_form_field_usage_tool() -> ToolDefinition {
 
 pub fn get_form_field_dependencies_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "forms.field_dependencies".to_string(),
         description: "List view, formula, relation, and title-template dependencies for form fields".to_string(),
         input_schema: json!({
@@ -207,6 +216,7 @@ pub fn get_form_field_dependencies_tool() -> ToolDefinition {
 
 pub fn list_form_schema_versions_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_schema_versions.list".to_string(),
         description: "List archived schema versions for a universal form".to_string(),
         input_schema: json!({
@@ -221,6 +231,7 @@ pub fn list_form_schema_versions_tool() -> ToolDefinition {
 
 pub fn get_form_schema_version_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_schema_versions.get".to_string(),
         description: "Get one archived schema version for a universal form".to_string(),
         input_schema: json!({
@@ -236,6 +247,7 @@ pub fn get_form_schema_version_tool() -> ToolDefinition {
 
 pub fn get_form_permissions_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_permissions.get".to_string(),
         description: "Get form-level role action permission policies and the caller's effective actions".to_string(),
         input_schema: json!({
@@ -250,6 +262,7 @@ pub fn get_form_permissions_tool() -> ToolDefinition {
 
 pub fn update_form_permissions_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_permissions.update".to_string(),
         description: "Upsert form-level role action permission policies for a universal form. At most 20 policies \
 per request. Note that bot tokens (including this MCP server) bypass field-level and record-scope policy, so \
@@ -291,6 +304,7 @@ field restrictions configured here do not constrain agent access."
 
 pub fn list_form_views_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_views.list".to_string(),
         description: "List the saved views of a universal form that the caller can see: every shared view plus the caller's own private (\"only me\") views. Another user's private view is never listed and cannot be used as a view_id. Creating, updating or deleting a private view needs only permission to view the form's records; shared views and the default view need form design permission.".to_string(),
         input_schema: json!({
@@ -305,6 +319,7 @@ pub fn list_form_views_tool() -> ToolDefinition {
 
 pub fn list_form_attachments_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_attachments.list".to_string(),
         description: "List attachment or image metadata rows for a universal form".to_string(),
         input_schema: json!({
@@ -324,6 +339,7 @@ pub fn list_form_attachments_tool() -> ToolDefinition {
 
 pub fn create_form_attachment_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_attachments.create".to_string(),
         description: "Create attachment or image metadata for a form field. This does not upload file bytes."
             .to_string(),
@@ -347,6 +363,7 @@ pub fn create_form_attachment_tool() -> ToolDefinition {
 
 pub fn archive_form_attachment_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_attachments.archive".to_string(),
         description: "Archive one form attachment metadata row".to_string(),
         input_schema: json!({
@@ -361,6 +378,7 @@ pub fn archive_form_attachment_tool() -> ToolDefinition {
 
 pub fn restore_form_attachment_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_attachments.restore".to_string(),
         description: "Restore one archived form attachment metadata row".to_string(),
         input_schema: json!({
@@ -375,6 +393,7 @@ pub fn restore_form_attachment_tool() -> ToolDefinition {
 
 pub fn list_form_relation_targets_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.relation_targets".to_string(),
         description: "List selectable target records for a relation field in a universal form".to_string(),
         input_schema: json!({
@@ -394,6 +413,7 @@ pub fn list_form_relation_targets_tool() -> ToolDefinition {
 
 pub fn list_form_record_children_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.children".to_string(),
         description: "List child records linked to a parent form record".to_string(),
         input_schema: json!({
@@ -412,6 +432,7 @@ pub fn list_form_record_children_tool() -> ToolDefinition {
 
 pub fn create_child_form_record_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.child_create".to_string(),
         description: "Create a child form record and link it to a parent record through a parent_child relation. \
 Amount and number fields must use decimal strings, not JSON numbers."
@@ -435,6 +456,7 @@ Amount and number fields must use decimal strings, not JSON numbers."
 
 pub fn update_child_form_record_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.child_update".to_string(),
         description: "Update a child form record after verifying it is linked to the parent record. Amount and \
 number fields must use decimal strings, not JSON numbers."
@@ -456,6 +478,7 @@ number fields must use decimal strings, not JSON numbers."
 
 pub fn archive_child_form_record_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.child_archive".to_string(),
         description: "Archive a child form record after verifying it is linked to the parent record".to_string(),
         input_schema: json!({
@@ -472,6 +495,7 @@ pub fn archive_child_form_record_tool() -> ToolDefinition {
 
 pub fn restore_child_form_record_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.child_restore".to_string(),
         description: "Restore an archived child form record after verifying it is linked to the parent record"
             .to_string(),
@@ -489,6 +513,7 @@ pub fn restore_child_form_record_tool() -> ToolDefinition {
 
 pub fn list_form_records_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.list".to_string(),
         description: "List records in a universal form with paging, saved-view, sorting and single-field \
 filtering. Returns at most per_page records (default 50, max 200) ordered by updated_at DESC unless sort is \
@@ -518,6 +543,7 @@ has_more and next_page: never summarise or count records without checking has_mo
 
 pub fn export_form_records_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.export".to_string(),
         description: "Export universal form records as current-view or explicit-column CSV/row data".to_string(),
         input_schema: json!({
@@ -538,6 +564,7 @@ pub fn export_form_records_tool() -> ToolDefinition {
 
 pub fn preview_import_form_records_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.import_preview".to_string(),
         description: "Preview CSV/JSON-style universal form record import rows without writing records. At most \
 500 rows per request. Amount and number fields must use decimal strings, not JSON numbers."
@@ -569,6 +596,7 @@ pub fn preview_import_form_records_tool() -> ToolDefinition {
 
 pub fn import_form_records_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.import_commit".to_string(),
         description: "Commit validated universal form import rows through the normal record create pipeline. At \
 most 500 rows per request; any invalid row rejects the whole batch and writes nothing. Amount and number fields \
@@ -606,6 +634,7 @@ must use decimal strings, not JSON numbers."
 
 pub fn get_form_record_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.get".to_string(),
         description: "Get one universal form record by UUID".to_string(),
         input_schema: json!({
@@ -620,6 +649,7 @@ pub fn get_form_record_tool() -> ToolDefinition {
 
 pub fn create_form_record_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.create".to_string(),
         description: "Create a universal form record. Amount and number fields must use decimal strings, not JSON \
 numbers."
@@ -643,6 +673,7 @@ numbers."
 
 pub fn update_form_record_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.update".to_string(),
         description: "Update a universal form record. Only the supplied fields change. Amount and number fields \
 must use decimal strings, not JSON numbers."
@@ -666,6 +697,7 @@ must use decimal strings, not JSON numbers."
 
 pub fn link_form_record_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.link".to_string(),
         description: "Link a form record to another form record, work item, project resource, or external object"
             .to_string(),
@@ -686,6 +718,7 @@ pub fn link_form_record_tool() -> ToolDefinition {
 
 pub fn aggregate_form_records_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "form_records.aggregate".to_string(),
         description:
             "Aggregate a numeric, integer, or amount field using projection indexes. Results use decimal strings."
@@ -708,6 +741,7 @@ pub fn aggregate_form_records_tool() -> ToolDefinition {
 
 pub fn events_tail_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "events.tail".to_string(),
         description: "Read recent business events for a form or a form record, newest first. Provide exactly one \
 of form_id or record_id. Paginated: per_page defaults to 50 (max 200)."

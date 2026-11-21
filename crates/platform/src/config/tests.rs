@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::{fs, process};
 
 use super::{
-    AppConfig, ConfigError, DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH, LogFormat, LogOutput, McpTransport, OpenPrConfig,
-    REDACTED, StdoutRole, StorageBackend, resolve_config_path, resolve_default_config_path,
+    AppConfig, ConfigError, DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH, LogFormat, LogOutput, McpToolMode, McpTransport,
+    OpenPrConfig, REDACTED, StdoutRole, StorageBackend, resolve_config_path, resolve_default_config_path,
 };
 
 const WORKSPACE: &str = "0f8a1b2c-3d4e-4f60-8182-93a4b5c6d7e8";
@@ -1506,6 +1506,40 @@ fn the_mcp_delegated_keys_are_all_or_nothing() {
         assert!(error.contains("set together or not at all"), "{error}");
         assert!(error.contains(missing), "{missing} not in {error}");
     }
+}
+
+#[test]
+fn the_tool_mode_defaults_to_search_and_writes_are_allowed() {
+    let runtime = parse(&mcp_file("")).expect("validates").mcp_runtime().expect("runtime");
+    assert_eq!(runtime.tool_mode, McpToolMode::Search);
+    assert!(runtime.allow_write_call);
+}
+
+#[test]
+fn the_tool_mode_and_the_write_switch_are_read_from_the_file() {
+    let full = parse(&mcp_file("tool_mode = \"full\"\nallow_write_call = false"))
+        .expect("validates")
+        .mcp_runtime()
+        .expect("runtime");
+    assert_eq!(full.tool_mode, McpToolMode::Full);
+    assert!(!full.allow_write_call);
+    let search = parse(&mcp_file("tool_mode = \" Search \""))
+        .expect("validates")
+        .mcp_runtime()
+        .expect("runtime");
+    assert_eq!(search.tool_mode, McpToolMode::Search);
+}
+
+#[test]
+fn an_unknown_tool_mode_or_a_mistyped_switch_is_refused() {
+    let reported = issues(&mcp_file("tool_mode = \"everything\""));
+    assert!(
+        reported
+            .iter()
+            .any(|issue| issue.contains("mcp.tool_mode must be search or full")),
+        "{reported:?}"
+    );
+    assert!(parse(&mcp_file("allow_write_call = \"yes\"")).is_err());
 }
 
 #[test]

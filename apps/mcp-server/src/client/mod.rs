@@ -90,6 +90,15 @@ const fn describe_json_kind(value: &Value) -> &'static str {
     }
 }
 
+/// `/api/v1/ai/tasks/{task_id}{suffix}?attempt={attempt}`. The caller has already checked that
+/// `task_id` is a canonical UUID.
+fn ai_task_path(task_id: &str, suffix: &str, attempt: u32) -> String {
+    format!(
+        "/api/v1/ai/tasks/{}{suffix}?attempt={attempt}",
+        urlencoding::encode(task_id)
+    )
+}
+
 /// Operation-log client label for the stdio transport.
 pub const TRANSPORT_LABEL_STDIO: &str = "mcp_stdio";
 /// Audit label of the HTTP transport.
@@ -103,11 +112,10 @@ pub const TRANSPORT_LABEL_CLI: &str = "cli";
 /// commands' `cli`.
 pub const TRANSPORT_LABEL_CLI_TOOLS_CALL: &str = "cli_tools_call";
 
-/// Attribution headers, canonical spelling first (ADR-0020 D3). Throughout 1.x the legacy
-/// `X-OpenPR-MCP-*` spelling is sent alongside with the identical value, so this client keeps
-/// working against a pre-1.0 API; the API refuses the request if the two ever disagree.
-const MCP_TOOL_HEADERS: [&str; 2] = ["X-Sylvode-MCP-Tool", "X-OpenPR-MCP-Tool"];
-const MCP_SURFACE_HEADERS: [&str; 2] = ["X-Sylvode-MCP-Surface", "X-OpenPR-MCP-Surface"];
+/// Attribution headers (ADR-0020 D3). Only this spelling exists; the retired `X-OpenPR-MCP-*` pair
+/// is neither sent nor read.
+const MCP_TOOL_HEADER: &str = "X-Sylvode-MCP-Tool";
+const MCP_SURFACE_HEADER: &str = "X-Sylvode-MCP-Surface";
 
 /// Names the forwarding component on a delegated call (`X-Sylvode-Forwarded-By: mcp-server`).
 const FORWARDED_BY_HEADER: &str = "X-Sylvode-Forwarded-By";
@@ -367,7 +375,7 @@ impl OpenPrClient {
     #[must_use]
     pub fn recording_operation(&self, tool_name: &str) -> Self {
         let mut scoped = self.clone();
-        scoped.operation_tool_name = Some(tool_name.to_string());
+        scoped.operation_tool_name = Some(crate::tools::entry::attribution_name(tool_name).to_string());
         scoped
     }
 
@@ -382,13 +390,9 @@ impl OpenPrClient {
 
     pub(crate) fn operation_headers(&self, request: RequestBuilder) -> RequestBuilder {
         let request = self.forwarding_headers(request);
-        let request = MCP_SURFACE_HEADERS
-            .iter()
-            .fold(request, |request, name| request.header(*name, self.transport_label));
+        let request = request.header(MCP_SURFACE_HEADER, self.transport_label);
         match self.operation_tool_name.as_deref() {
-            Some(tool_name) => MCP_TOOL_HEADERS
-                .iter()
-                .fold(request, |request, name| request.header(*name, tool_name)),
+            Some(tool_name) => request.header(MCP_TOOL_HEADER, tool_name),
             None => request,
         }
     }
@@ -557,46 +561,69 @@ impl OpenPrClient {
         .await
     }
 
-    pub async fn list_project_resources(&self, project_id: &str) -> Result<Value, String> {
-        self.get(&format!(
-            "/api/v1/projects/{}/resources",
-            urlencoding::encode(project_id)
-        ))
-        .await
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // pub async fn list_project_resources(&self, project_id: &str) -> Result<Value, String> {
+    //     self.get(&format!(
+    //         "/api/v1/projects/{}/resources",
+    //         urlencoding::encode(project_id)
+    //     ))
+    //     .await
+    // }
+    //
+    // pub async fn create_project_resource(&self, project_id: &str, body: Value) -> Result<Value, String> {
+    //     self.post(
+    //         &format!("/api/v1/projects/{}/resources", urlencoding::encode(project_id)),
+    //         &body,
+    //     )
+    //     .await
+    // }
+    //
+    // pub async fn update_project_resource(
+    //     &self,
+    //     project_id: &str,
+    //     resource_id: &str,
+    //     body: Value,
+    // ) -> Result<Value, String> {
+    //     self.patch(
+    //         &format!(
+    //             "/api/v1/projects/{}/resources/{}",
+    //             urlencoding::encode(project_id),
+    //             urlencoding::encode(resource_id)
+    //         ),
+    //         &body,
+    //     )
+    //     .await
+    // }
+    //
+    // pub async fn delete_project_resource(&self, project_id: &str, resource_id: &str) -> Result<Value, String> {
+    //     self.delete(&format!(
+    //         "/api/v1/projects/{}/resources/{}",
+    //         urlencoding::encode(project_id),
+    //         urlencoding::encode(resource_id)
+    //     ))
+    //     .await
+    // }
+
+    // ---- Agent tasks (`/api/v1/ai/tasks`, own bot only) ----
+
+    pub async fn get_ai_task(&self, task_id: &str, attempt: u32) -> Result<Value, String> {
+        self.get(&ai_task_path(task_id, "", attempt)).await
     }
 
-    pub async fn create_project_resource(&self, project_id: &str, body: Value) -> Result<Value, String> {
-        self.post(
-            &format!("/api/v1/projects/{}/resources", urlencoding::encode(project_id)),
-            &body,
-        )
-        .await
+    pub async fn ack_ai_task(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/ack", attempt), &body).await
     }
 
-    pub async fn update_project_resource(
-        &self,
-        project_id: &str,
-        resource_id: &str,
-        body: Value,
-    ) -> Result<Value, String> {
-        self.patch(
-            &format!(
-                "/api/v1/projects/{}/resources/{}",
-                urlencoding::encode(project_id),
-                urlencoding::encode(resource_id)
-            ),
-            &body,
-        )
-        .await
+    pub async fn report_ai_task_progress(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/progress", attempt), &body).await
     }
 
-    pub async fn delete_project_resource(&self, project_id: &str, resource_id: &str) -> Result<Value, String> {
-        self.delete(&format!(
-            "/api/v1/projects/{}/resources/{}",
-            urlencoding::encode(project_id),
-            urlencoding::encode(resource_id)
-        ))
-        .await
+    pub async fn complete_ai_task(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/complete", attempt), &body).await
+    }
+
+    pub async fn fail_ai_task(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/fail", attempt), &body).await
     }
 
     // ---- Universal Forms ----
@@ -1987,9 +2014,9 @@ mod tests {
                     "code": 0,
                     "data": {
                         "tool": all("x-sylvode-mcp-tool"),
-                        "legacy_tool": all("x-openpr-mcp-tool"),
+                        "retired_tool": all("x-openpr-mcp-tool"),
                         "surface": all("x-sylvode-mcp-surface"),
-                        "legacy_surface": all("x-openpr-mcp-surface"),
+                        "retired_surface": all("x-openpr-mcp-surface"),
                         "authorization": headers.get("authorization").and_then(|value| value.to_str().ok())
                     }
                 }))
@@ -2003,11 +2030,11 @@ mod tests {
         let value: Value = client.get("/record").await?;
         let data = value.get("data").and_then(Value::as_object).ok_or("missing data")?;
 
-        // ADR-0020 D3: the canonical and the legacy spelling, each exactly once, same value.
+        // ADR-0020 D3: the attribution headers, each exactly once; the retired spelling is not sent.
         assert_eq!(data.get("tool"), Some(&json!(["bot_operation_logs.list"])));
-        assert_eq!(data.get("legacy_tool"), Some(&json!(["bot_operation_logs.list"])));
+        assert_eq!(data.get("retired_tool"), Some(&json!([])));
         assert_eq!(data.get("surface"), Some(&json!(["cli"])));
-        assert_eq!(data.get("legacy_surface"), Some(&json!(["cli"])));
+        assert_eq!(data.get("retired_surface"), Some(&json!([])));
         assert_eq!(
             data.get("authorization").and_then(Value::as_str),
             Some("Bearer opr_test_token")

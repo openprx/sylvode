@@ -203,7 +203,7 @@ function mcp(method, params) {
   const requestPayload = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) + '\n';
   const result = spawnSync(
     mcpBin,
-    ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', botToken, '--workspace-id', workspaceId, 'serve', '--transport', 'stdio'],
+    ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', botToken, '--workspace-id', workspaceId, 'serve', '--transport', 'stdio', '--tools', 'full'],
     {
       input: requestPayload,
       encoding: 'utf8',
@@ -321,12 +321,12 @@ async function main() {
   const templates = mcp('resources/templates/list', {});
   const templateNames = (templates.result?.resourceTemplates ?? []).map((template) => template.uriTemplate);
   for (const template of [
-    'openpr://projects/{project_id}/forms',
-    'openpr://forms/{form_id}',
-    'openpr://forms/{form_id}/records',
-    'openpr://forms/{form_id}/events',
-    'openpr://form-records/{record_id}',
-    'openpr://form-records/{record_id}/events',
+    'sylvode://projects/{project_id}/forms',
+    'sylvode://forms/{form_id}',
+    'sylvode://forms/{form_id}/records',
+    'sylvode://forms/{form_id}/events',
+    'sylvode://form-records/{record_id}',
+    'sylvode://form-records/{record_id}/events',
   ]) {
     assert(templateNames.includes(template), `MCP resources/templates/list missing ${template}`);
   }
@@ -533,10 +533,10 @@ async function main() {
     'MCP should list relation target records',
   );
 
-  const formsResource = mcp('resources/read', { uri: `openpr://projects/${projectId}/forms` });
+  const formsResource = mcp('resources/read', { uri: `sylvode://projects/${projectId}/forms` });
   assert(JSON.stringify(formsResource).includes('order'), 'MCP project forms resource should include form key');
 
-  const formResource = mcp('resources/read', { uri: `openpr://forms/${formId}` });
+  const formResource = mcp('resources/read', { uri: `sylvode://forms/${formId}` });
   assert(JSON.stringify(formResource).includes('total_amount'), 'MCP form resource should include schema field');
 
   const createdRecord = callTool('form_records.create', {
@@ -750,10 +750,10 @@ async function main() {
   const duplicateRecords = callTool('form_records.list', { form_id: duplicatedFormData.id }).payload;
   assert(itemsOf(duplicateRecords).length === 0, 'MCP duplicate should not copy records');
 
-  const recordsResource = mcp('resources/read', { uri: `openpr://forms/${formId}/records` });
+  const recordsResource = mcp('resources/read', { uri: `sylvode://forms/${formId}/records` });
   assert(JSON.stringify(recordsResource).includes('B01'), 'MCP form records resource should include created record');
 
-  const recordResource = mcp('resources/read', { uri: `openpr://form-records/${recordId}` });
+  const recordResource = mcp('resources/read', { uri: `sylvode://form-records/${recordId}` });
   assert(JSON.stringify(recordResource).includes('0.30'), 'MCP form record resource should preserve amount decimal');
 
   const invalidRecord = callTool('form_records.create', {
@@ -862,7 +862,7 @@ async function main() {
   }).payload;
   assert(itemsOf(updateEvents)[0]?.payload?.values?.total_amount?.decimal === '1.30', 'MCP update should emit business event');
 
-  const recordEventsResource = mcp('resources/read', { uri: `openpr://form-records/${recordId}/events` });
+  const recordEventsResource = mcp('resources/read', { uri: `sylvode://form-records/${recordId}/events` });
   assert(JSON.stringify(recordEventsResource).includes('form.record.created'), 'MCP record events resource should include creation event');
 
   console.log('Forms MCP smoke passed');

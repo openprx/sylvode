@@ -76,7 +76,7 @@ esac
 echo "Testing MCP at $MCP_URL ..."
 
 # tools/list
-TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc" \
+TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
@@ -91,82 +91,9 @@ else
   exit 1
 fi
 
-MISSING=$(printf '%s' "$TOOLS_RESPONSE" | python3 -c 'import json, sys
-required = {
-    "bot_operation_logs.list",
-    "project_types.list",
-    "project_types.get",
-    "scenario_templates.list",
-    "scenario_templates.get",
-    "scenario_templates.install",
-    "project_resources.list",
-    "project_resources.create",
-    "project_resources.update",
-    "project_resources.delete",
-    "forms.list",
-    "forms.get",
-    "forms.create",
-    "forms.create_from_template",
-    "forms.update_schema",
-    "forms.duplicate",
-    "forms.schema_summary",
-    "forms.field_usage",
-    "forms.field_dependencies",
-    "form_schema_versions.list",
-    "form_schema_versions.get",
-    "form_permissions.get",
-    "form_permissions.update",
-    "form_views.list",
-    "form_attachments.list",
-    "form_attachments.create",
-    "form_attachments.archive",
-    "form_attachments.restore",
-    "form_records.list",
-    "form_records.export",
-    "form_records.import_preview",
-    "form_records.import_commit",
-    "form_records.get",
-    "form_records.create",
-    "form_records.update",
-    "form_records.link",
-    "form_records.relation_targets",
-    "form_records.children",
-    "form_records.child_create",
-    "form_records.child_update",
-    "form_records.child_archive",
-    "form_records.child_restore",
-    "form_records.aggregate",
-    "events.tail",
-    "plugins.list",
-    "plugins.get",
-    "plugins.install",
-    "plugins.invoke",
-    "plugin_invocations.list",
-    "context.get_project",
-    "context.get_governance",
-    "context.get_agent_policy",
-    "release.readiness.get",
-    "check_results.create",
-    "proposals.create_from_result",
-    "code.resources.list",
-    "code.directory.get",
-    "code.task_context.get",
-    "code.change_proposal.create",
-    "documents.extract_summary",
-    "documents.review_risk",
-    "approval.request",
-    "inspection.report",
-    "corrective_action.propose",
-    "flow.feature_get",
-    "flow.feature_set",
-    "objects.get",
-    "objects.query",
-    "objects.history",
-    "legacy_pages.inventory",
-    "legacy_pages.import_preview",
-    "legacy_pages.import_commit",
-    "legacy_pages.import_status",
-}
+EXPECTED_NAMES="$(python3 "$SCRIPT_DIR/expected-tool-count.py" --names | tr '\n' ' ')"
+MISSING=$(printf '%s' "$TOOLS_RESPONSE" | EXPECTED_NAMES="$EXPECTED_NAMES" python3 -c 'import json, os, sys
+required = set(os.environ["EXPECTED_NAMES"].split())
 payload = json.load(sys.stdin)
 names = {tool["name"] for tool in payload["result"]["tools"]}
 print(",".join(sorted(required - names)))' 2>/dev/null)
@@ -179,7 +106,7 @@ else
 fi
 
 if [ -n "$PROJECT_ID" ]; then
-  PROJECT_TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc" \
+  PROJECT_TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc?tools=full" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $MCP_BOT_TOKEN" \
     -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{\"project_id\":\"$PROJECT_ID\"}}")
@@ -187,16 +114,10 @@ if [ -n "$PROJECT_ID" ]; then
   PROJECT_TOOLS=$(printf '%s' "$PROJECT_TOOLS_RESPONSE" | \
     python3 -c "import sys,json; print(len(json.load(sys.stdin)['result']['tools']))" 2>/dev/null)
 
-  PROJECT_MISSING=$(printf '%s' "$PROJECT_TOOLS_RESPONSE" | python3 -c 'import json, sys
-required = {
-    "context.get_project",
-    "context.get_agent_policy",
-    "release.readiness.get",
-    "check_results.create",
-    "proposals.create_from_result",
-    "code.resources.list",
-    "code.task_context.get",
-}
+  # Every project, whatever its type, is offered the context tools.
+  CONTEXT_NAMES="$(python3 "$SCRIPT_DIR/expected-tool-count.py" --names --category context | tr '\n' ' ')"
+  PROJECT_MISSING=$(printf '%s' "$PROJECT_TOOLS_RESPONSE" | EXPECTED_NAMES="$CONTEXT_NAMES" python3 -c 'import json, os, sys
+required = set(os.environ["EXPECTED_NAMES"].split())
 payload = json.load(sys.stdin)
 names = {tool["name"] for tool in payload["result"]["tools"]}
 print(",".join(sorted(required - names)))' 2>/dev/null)
@@ -211,7 +132,7 @@ print(",".join(sorted(required - names)))' 2>/dev/null)
 fi
 
 # projects.list
-RESULT=$(curl -s -X POST "$MCP_URL/mcp/rpc" \
+RESULT=$(curl -s -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}')

@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 pub fn get_project_context_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "context.get_project".to_string(),
         description: "Get project-aware MCP context including type, resources, connectors, governance, workflow, and recent decisions".to_string(),
         input_schema: json!({
@@ -19,6 +20,7 @@ pub fn get_project_context_tool() -> ToolDefinition {
 
 pub fn get_governance_context_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "context.get_governance".to_string(),
         description: "Get governance and workflow context for a project".to_string(),
         input_schema: json!({
@@ -33,6 +35,7 @@ pub fn get_governance_context_tool() -> ToolDefinition {
 
 pub fn get_agent_policy_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "context.get_agent_policy".to_string(),
         description: "Get the effective MCP/AI agent policy for a project".to_string(),
         input_schema: json!({

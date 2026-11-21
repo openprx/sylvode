@@ -10,6 +10,7 @@
 !crates/**
 !benches/**
 !migrations/**
+!skills/**
 !spikes/collab-shared/**
 !spikes/collab-loro/**
 !spikes/collab-yrs-yjs/**

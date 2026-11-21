@@ -28,8 +28,9 @@ use super::{
     DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS,
     DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
     LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
-    MAX_FLOW_SETUP_CPU_BUDGET_MS, MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpTransport,
-    MigrationsConfig, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig,
+    MAX_FLOW_SETUP_CPU_BUDGET_MS, MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode,
+    McpTransport, MigrationsConfig, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config, ServerConfig, StorageBackend,
+    StorageConfig,
 };
 
 const DEFAULT_MAX_CONNECTIONS: u32 = 20;
@@ -195,6 +196,8 @@ struct RawMcp {
     oauth_issuer: Option<String>,
     oauth_resource: Option<String>,
     oauth_forward_secret: Option<String>,
+    tool_mode: Option<String>,
+    allow_write_call: Option<bool>,
 }
 
 /// Collects validation problems so the operator sees all of them at once.
@@ -858,6 +861,15 @@ impl RawMcp {
         let oauth_forward_secret = self
             .oauth_forward_secret
             .and_then(|value| issues.record(validate_forward_secret("mcp.oauth_forward_secret", &value)));
+        let tool_mode = self.tool_mode.map_or_else(
+            || Some(McpToolMode::default()),
+            |raw| {
+                issues.record(
+                    McpToolMode::parse(&raw)
+                        .ok_or_else(|| format!("mcp.tool_mode must be search or full, got {}", raw.trim())),
+                )
+            },
+        );
         McpConfig {
             api_url,
             bot_token,
@@ -867,6 +879,8 @@ impl RawMcp {
             oauth_issuer,
             oauth_resource,
             oauth_forward_secret,
+            tool_mode: tool_mode.unwrap_or_default(),
+            allow_write_call: self.allow_write_call,
         }
     }
 }

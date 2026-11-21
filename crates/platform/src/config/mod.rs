@@ -682,6 +682,34 @@ impl McpTransport {
     }
 }
 
+/// Which tools `tools/list` offers: the search entry tools (the default) or the whole registry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum McpToolMode {
+    /// `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools.
+    #[default]
+    Search,
+    /// Every registry tool, callable directly by name.
+    Full,
+}
+
+impl McpToolMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Search => "search",
+            Self::Full => "full",
+        }
+    }
+
+    /// The mode a value names (`search` or `full`, case-insensitive, surrounding blanks ignored).
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "search" => Some(Self::Search),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
 /// `[mcp]` — MCP server settings.
 ///
 /// Every field is optional so that the API and the worker can share the file without declaring a
@@ -706,6 +734,10 @@ pub struct McpConfig {
     pub oauth_resource: Option<String>,
     /// Credential presented to the API when forwarding a delegated token. Never logged.
     pub oauth_forward_secret: Option<Secret>,
+    /// Tool listing mode of the stdio transport and the default of the networked ones.
+    pub tool_mode: McpToolMode,
+    /// Whether `sylvode_write` may be used at all. `None` means the default, `true`.
+    pub allow_write_call: Option<bool>,
 }
 
 /// What a deployment whose transport has no per-request credential is told.
@@ -745,6 +777,8 @@ impl McpConfig {
                 .clone()
                 .unwrap_or_else(|| DEFAULT_MCP_BIND_ADDR.to_string()),
             oauth,
+            tool_mode: self.tool_mode,
+            allow_write_call: self.allow_write_call.unwrap_or(true),
         })
     }
 
@@ -803,6 +837,10 @@ pub struct McpRuntime {
     pub bind_addr: String,
     /// `None` when `[mcp]` carries no `oauth_*` keys: delegated tokens are then refused.
     pub oauth: Option<McpOAuthRuntime>,
+    /// `search` unless the file says `full`.
+    pub tool_mode: McpToolMode,
+    /// `true` unless the file says `false`; the runner writes `false` for its bots.
+    pub allow_write_call: bool,
 }
 
 /// The subset of the configuration carried in `AppState` and reached from request handlers.

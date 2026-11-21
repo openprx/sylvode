@@ -157,7 +157,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         calls.append({
             "path": self.path,
             "authorization_present": bool(self.headers.get("authorization")),
-            "surface": self.headers.get("x-sylvode-mcp-surface") or self.headers.get("x-openpr-mcp-surface"),
+            "surface": self.headers.get("x-sylvode-mcp-surface"),
         })
         body = json.dumps({"code": 0, "data": data}).encode()
         self.send_response(200)
@@ -200,7 +200,7 @@ transport = "stdio"
                    "arguments": {"workspace_id": workspace, "limit": 2}},
     }) + "\n"
     mcp = subprocess.run(
-        [mcp_bin, "serve", "--config", str(config), "--transport", "stdio"],
+        [mcp_bin, "serve", "--config", str(config), "--transport", "stdio", "--tools", "full"],
         cwd=temp, input=request, text=True, capture_output=True, timeout=30, check=False,
     )
 server.shutdown()

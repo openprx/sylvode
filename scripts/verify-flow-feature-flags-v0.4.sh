@@ -252,7 +252,7 @@ run_mcp_probe() {
     return
   fi
   write_mcp_config "$config" "$token" "$transport" "127.0.0.1:$port"
-  "$MCP_BIN" --config "$config" serve --transport "$transport" >"$TMP_DIR/mcp-$identity-$transport.log" 2>&1 & MCP_PID=$!
+  "$MCP_BIN" --config "$config" serve --transport "$transport" --tools full >"$TMP_DIR/mcp-$identity-$transport.log" 2>&1 & MCP_PID=$!
   if ! wait_port "$port" "$MCP_PID"; then
     jq -n -c --arg t "$transport" '{transport:$t,responses:[],errors:["server did not accept a connection"]}'
   elif [[ "$transport" == http ]]; then
