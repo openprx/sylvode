@@ -72,6 +72,10 @@ pub struct SessionRecord {
     pub cli: String,
     pub dir: String,
     pub started_at: u64,
+    /// The project's last delivery went to the headless channel: the session is idle for good and
+    /// `sessions --prune` may remove it.
+    #[serde(default)]
+    pub headless: bool,
 }
 
 /// What was written.
@@ -275,6 +279,20 @@ impl StateDir {
         match read_regular(&dir, "session.json", MAX_FILE_BYTES).ok()? {
             Read_::Data { bytes, .. } => serde_json::from_slice(&bytes).ok(),
             _ => None,
+        }
+    }
+
+    /// Sets or clears the `headless` flag of an existing `session.json`.
+    ///
+    /// # Errors
+    ///
+    /// A message when the record cannot be written.
+    pub fn set_headless(&self, key: &SessionKey, headless: bool) -> Result<(), String> {
+        match self.read_session_record(key) {
+            Some(record) if record.headless != headless => {
+                self.write_session_record(&SessionRecord { headless, ..record })
+            }
+            _ => Ok(()),
         }
     }
 

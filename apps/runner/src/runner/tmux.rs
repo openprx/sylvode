@@ -990,6 +990,27 @@ impl Tmux {
         self.run_ok(&self.send_enter_call(&pane.id)).map(|_| ())
     }
 
+    /// Ends session `key` (exact match). Only for sessions the runner created.
+    ///
+    /// # Errors
+    ///
+    /// A failure status or a timeout.
+    pub fn kill_session(&self, key: &SessionKey) -> Result<(), TmuxError> {
+        self.run_ok(&self.call(&["kill-session", "-t", &key.session_target()]))
+            .map(|_| ())
+    }
+
+    /// The command that attaches the operator's terminal to session `key`. It keeps the caller's
+    /// environment (the terminal needs `TERM`) and standard streams.
+    pub fn attach_command(&self, key: &SessionKey) -> Command {
+        let mut command = Command::new(&self.program);
+        if !self.socket.as_str().is_empty() {
+            command.args(["-L", self.socket.as_str()]);
+        }
+        command.args(["attach", "-t", &key.session_target()]);
+        command
+    }
+
     /// Stops the server on a socket of the runner's own. Refused for the user's default server
     /// (an empty socket name). Meant for tests and for pruning.
     ///

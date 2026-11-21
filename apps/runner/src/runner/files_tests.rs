@@ -253,3 +253,35 @@ fn the_lock_admits_one_runner_per_state_directory() {
     assert!(state.lock().is_ok());
     assert_eq!(mode(&state.root().join("runner.lock")), 0o600);
 }
+
+#[test]
+fn the_headless_mark_is_set_cleared_and_ignored_without_a_record() {
+    use super::files::SessionRecord;
+    let dir = Dir::new();
+    let state = StateDir::open(&dir.state()).expect("open");
+    let key = SessionKey::new("SVWL").expect("key");
+    // No record: nothing is created.
+    state.set_headless(&key, true).expect("no-op");
+    assert!(state.read_session_record(&key).is_none());
+    let record = SessionRecord {
+        key: "SVWL".to_string(),
+        project_id: "p".to_string(),
+        pane_id: "%1".to_string(),
+        pane_pid: 7,
+        cli: "claude".to_string(),
+        dir: "/x".to_string(),
+        started_at: 1,
+        headless: false,
+    };
+    state.write_session_record(&record).expect("write");
+    state.set_headless(&key, true).expect("set");
+    assert_eq!(
+        state.read_session_record(&key),
+        Some(SessionRecord {
+            headless: true,
+            ..record.clone()
+        })
+    );
+    state.set_headless(&key, false).expect("clear");
+    assert_eq!(state.read_session_record(&key), Some(record));
+}

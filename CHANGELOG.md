@@ -10,6 +10,14 @@ name.
 
 ## [Unreleased]
 
+### Added
+
+- **Runner tmux channel.** `sylvode-runner` keeps one tmux session per project key, queues tasks
+  first in first out, types each into an idle, empty prompt as a bracketed paste, follows turns
+  through CLI hooks (`sylvode-runner hook`), reminds and fails forgotten acknowledgements and
+  completions, and rebuilds its state from `GET /ai/tasks/active` after a restart. New
+  subcommands: `sessions [--prune]`, `trust KEY`, `release KEY`.
+
 ### Changed
 
 - **MCP search mode is the default tool listing.** `tools/list` offers nine tools:

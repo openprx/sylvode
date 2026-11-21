@@ -455,3 +455,155 @@ async fn a_killed_session_fails_the_running_task_as_retryable() {
     );
     drop(server);
 }
+
+impl Fixture {
+    /// The path of a config file for the operator subcommands.
+    fn config_file(&self) -> PathBuf {
+        let path = self.bin.file("config.toml");
+        std::fs::write(&path, self.config()).expect("config file");
+        path
+    }
+
+    fn operator(&self, args: &[&str]) -> std::process::Output {
+        Command::new(RUNNER)
+            .args(args)
+            .args(["--config", &self.config_file().to_string_lossy()])
+            .env("TMUX_TMPDIR", &self.tmux.dir)
+            .env_remove("TMUX")
+            .output()
+            .expect("run operator command")
+    }
+
+    /// An active-task view as Sylvode lists it, with a runner phase.
+    fn active_view(&self, task: &str, phase: Option<&str>, acked: bool) -> Value {
+        let mut view = self.view(task, true, acked);
+        view["runner_phase"] = phase.map_or(Value::Null, |p| json!(p));
+        view["status"] = json!(if acked { "acknowledged" } else { "processing" });
+        view["max_attempts"] = json!(3);
+        view
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn after_a_runner_restart_a_pushed_task_is_supervised_again_and_the_next_one_follows() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.set_view(T1, true, true);
+    fx.set_view(T2, true, false);
+    let mut first = fx.serve();
+    assert_eq!(
+        Fixture::deliver(first.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    first.terminate();
+    assert!(first.wait_exit(Duration::from_secs(20)).is_some());
+    // The session outlives the runner.
+    assert!(fx.tmux.raw(&["has-session", "-t", "=SVWL"]).status.success());
+    // Sylvode still shows T1 as pushed and acknowledged; T2 is delivered after the restart.
+    let listed = fx.active_view(T1, Some("pushed"), true);
+    fx.api.script(|s| s.active = vec![listed]);
+    let second = fx.serve();
+    // The restarted runner must not push anything while T1 is open.
+    assert_eq!(Fixture::deliver(second.url("/webhook"), T2).await["queue_position"], 1);
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(fx.typed().len(), 1, "{:?}", fx.typed());
+    // T1 ends in Sylvode: the session is free and T2 goes in.
+    fx.set_view(T1, false, true);
+    let typed = fx.wait_typed(2, 40).await;
+    assert_eq!(typed.len(), 2, "{typed:?}");
+    assert!(typed[1].contains(&format!("id={T2}")), "{typed:?}");
+    assert!(
+        fx.api
+            .requests_to("POST", "/api/v1/ai/tasks/")
+            .iter()
+            .all(|r| !r.path().ends_with("/fail"))
+    );
+    drop(second);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn after_a_restart_a_pushed_task_whose_session_is_gone_fails_and_a_queued_one_is_queued_again() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.set_view(T1, true, true);
+    fx.set_view(T2, true, false);
+    let mut first = fx.serve();
+    assert_eq!(
+        Fixture::deliver(first.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    first.terminate();
+    assert!(first.wait_exit(Duration::from_secs(20)).is_some());
+    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL"]).status.success());
+    let (pushed, queued) = (
+        fx.active_view(T1, Some("pushed"), true),
+        fx.active_view(T2, Some("queued"), false),
+    );
+    fx.api.script(|s| s.active = vec![pushed, queued]);
+    let second = fx.serve();
+    let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
+    assert_eq!(fails.len(), 1, "{fails:?}");
+    assert!(fails[0].path().contains(T1), "{fails:?}");
+    assert_eq!(fails[0].body["retryable"], true);
+    assert_eq!(fails[0].body["reason"], "runner restarted and session SVWL was gone");
+    // The queued task is queued again: the session is created and T2 is typed.
+    let typed = fx.wait_typed(2, 60).await;
+    assert!(
+        typed.last().is_some_and(|t| t.contains(&format!("id={T2}"))),
+        "{typed:?}"
+    );
+    drop(second);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn the_operator_commands_list_refuse_and_release() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.set_view(T1, true, true);
+    let mut server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    server.terminate();
+    assert!(server.wait_exit(Duration::from_secs(20)).is_some());
+    let listing = fx.operator(&["sessions"]);
+    let text = String::from_utf8_lossy(&listing.stdout).to_string();
+    assert!(
+        listing.status.success() && text.contains("SVWL") && text.contains("claude") && text.contains(PROJECT),
+        "{text}"
+    );
+    // A registered, tmux-using session is not pruned, whatever its state.
+    let pruned = String::from_utf8_lossy(&fx.operator(&["sessions", "--prune"]).stdout).to_string();
+    assert!(!pruned.contains("pruned"), "{pruned}");
+    assert!(fx.tmux.raw(&["has-session", "-t", "=SVWL"]).status.success());
+    // The key cannot be released while its session exists, and a stranger's session is not ours.
+    let refused = fx.operator(&["release", "SVWL"]);
+    assert!(!refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("still exists"));
+    let stranger = fx.operator(&["trust", "NOPE"]);
+    assert!(!stranger.status.success());
+    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL"]).status.success());
+    let released = fx.operator(&["release", "SVWL"]);
+    assert!(
+        released.status.success(),
+        "{}",
+        String::from_utf8_lossy(&released.stderr)
+    );
+    let again = fx.operator(&["release", "SVWL"]);
+    assert!(!again.status.success() && String::from_utf8_lossy(&again.stderr).contains("not reserved"));
+}

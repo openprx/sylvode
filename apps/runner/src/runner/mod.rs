@@ -17,6 +17,7 @@ use crate::AppState;
 use crate::config::{AgentConfig, AiTaskCallback, Config};
 
 pub mod checks;
+pub mod cli;
 pub mod config;
 #[allow(dead_code, reason = "used by the session worker")]
 pub mod detect;
@@ -32,6 +33,7 @@ pub mod machine;
 pub mod paths;
 #[allow(dead_code, reason = "used by the session worker")]
 pub mod queue;
+pub mod recovery;
 #[allow(dead_code, reason = "release, entries and owner are used by the sessions command")]
 pub mod registry;
 #[allow(dead_code, reason = "wired in by the application")]
@@ -49,6 +51,8 @@ pub mod tmux;
 
 #[cfg(test)]
 mod checks_tests;
+#[cfg(test)]
+mod cli_tests;
 #[cfg(test)]
 mod detect_tests;
 #[cfg(test)]
@@ -69,6 +73,8 @@ mod message_tests;
 mod paths_tests;
 #[cfg(test)]
 mod queue_tests;
+#[cfg(test)]
+mod recovery_tests;
 #[cfg(test)]
 mod registry_tests;
 #[cfg(test)]
@@ -302,6 +308,11 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
                 ));
             };
             let key = accepted.project_key.clone();
+            if let (Ok(files), Ok(session_key)) = (&state.runner.state, tmux::SessionKey::new(&key))
+                && let Err(e) = files.set_headless(&session_key, false)
+            {
+                tracing::warn!("could not clear the headless mark of session {key}: {e}");
+            }
             let queued = sessions.enqueue(session::TmuxTask::from_accepted(&accepted)).await;
             Ok(queued.map_or_else(
                 || {
@@ -335,6 +346,13 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
                 Err(refusal) => return Ok(refused(agent, refusal.code, &refusal.reason)),
             };
             let key = accepted.project_key.clone();
+            // A session this runner made for the project stays idle from now on: mark it so that
+            // `sessions --prune` may remove it.
+            if let Ok(session_key) = tmux::SessionKey::new(&key)
+                && let Err(e) = files.set_headless(&session_key, true)
+            {
+                tracing::warn!("could not mark session {key} as headless: {e}");
+            }
             headless::start(config, &state.background, roots.clone(), prepared, *accepted);
             Ok(json!({
                 "status": "dispatched",

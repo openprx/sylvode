@@ -41,6 +41,8 @@ pub struct Script {
     /// Task views by task id: answered in order, the last one repeats.
     pub views: HashMap<String, Vec<(u16, Value)>>,
     pub view_delay: Duration,
+    /// The answer of `GET /ai/tasks/active`.
+    pub active: Vec<Value>,
     pub progress_status: u16,
     pub fail_status: u16,
 }
@@ -58,6 +60,7 @@ impl Default for Script {
             report_status: 200,
             views: HashMap::new(),
             view_delay: Duration::ZERO,
+            active: Vec::new(),
             progress_status: 200,
             fail_status: 200,
         }
@@ -117,6 +120,8 @@ async fn handle(
             (script.progress_status, json!({"coalesced": false}))
         } else if path.ends_with("/fail") {
             (script.fail_status, json!({"will_retry": false}))
+        } else if path == "/api/v1/ai/tasks/active" {
+            (200, Value::Array(script.active.clone()))
         } else if let Some(id) = path.strip_prefix("/api/v1/ai/tasks/") {
             match script.views.get_mut(id) {
                 Some(queue) if queue.len() > 1 => queue.remove(0),

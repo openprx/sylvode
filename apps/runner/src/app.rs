@@ -25,6 +25,9 @@ const HELP: &str = "\
 Sylvode runner: receives Sylvode task deliveries and runs agents.
 
 Usage: sylvode-runner [CONFIG]
+       sylvode-runner sessions [--prune] [--config PATH]
+       sylvode-runner trust KEY [--config PATH]
+       sylvode-runner release KEY [--config PATH]
        sylvode-runner --help | --version
 
 Arguments:
@@ -33,6 +36,12 @@ Arguments:
 Options:
   -h, --help     Print this help and exit
   -V, --version  Print the version and exit
+
+Commands:
+  sessions       List the tmux sessions this runner created; --prune ends the idle ones whose
+                 project no longer uses tmux
+  trust KEY      Attach to session KEY to answer its trust or login dialog
+  release KEY    Free the session name KEY once its tmux session is gone
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -41,6 +50,21 @@ enum Command {
     Version,
     Serve {
         config_path: String,
+    },
+    /// `sessions [--prune] [--config P]`.
+    Sessions {
+        config_path: String,
+        prune: bool,
+    },
+    /// `trust KEY [--config P]`.
+    Trust {
+        config_path: String,
+        key: String,
+    },
+    /// `release KEY [--config P]`.
+    Release {
+        config_path: String,
+        key: String,
     },
     /// `hook --cli C --session K --event E --socket P`: report a CLI turn event to the runner.
     Hook {
@@ -60,6 +84,43 @@ fn flag_value(args: &[OsString], flag: &str) -> String {
         .unwrap_or_default()
 }
 
+/// `sessions [--prune]`, `trust KEY`, `release KEY`, each with an optional `--config PATH`.
+fn parse_operator(word: &str, rest: &[OsString]) -> Result<Command, String> {
+    let mut config_path = DEFAULT_CONFIG_PATH.to_string();
+    let mut prune = false;
+    let mut key: Option<String> = None;
+    let mut items = rest.iter();
+    while let Some(item) = items.next() {
+        let text = item
+            .to_str()
+            .ok_or_else(|| "arguments must be valid UTF-8".to_string())?;
+        match text {
+            "--config" => {
+                config_path = items
+                    .next()
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| "--config needs a path".to_string())?
+                    .to_string();
+            }
+            "--prune" if word == "sessions" => prune = true,
+            other if other.starts_with('-') => return Err(format!("unknown option `{other}` for `{word}`")),
+            other if word != "sessions" && key.is_none() => key = Some(other.to_string()),
+            other => return Err(format!("unexpected argument `{other}` for `{word}`")),
+        }
+    }
+    match word {
+        "sessions" => Ok(Command::Sessions { config_path, prune }),
+        "trust" => Ok(Command::Trust {
+            config_path,
+            key: key.ok_or_else(|| "`trust` needs a session name".to_string())?,
+        }),
+        _ => Ok(Command::Release {
+            config_path,
+            key: key.ok_or_else(|| "`release` needs a session name".to_string())?,
+        }),
+    }
+}
+
 fn parse_command(args: &[OsString]) -> Result<Command, String> {
     if args.first().is_some_and(|first| first == "hook") {
         let rest = args.get(1..).unwrap_or_default();
@@ -69,6 +130,13 @@ fn parse_command(args: &[OsString]) -> Result<Command, String> {
             event: flag_value(rest, "--event"),
             socket: flag_value(rest, "--socket"),
         });
+    }
+    if let Some(word) = args
+        .first()
+        .and_then(|first| first.to_str())
+        .filter(|w| matches!(*w, "sessions" | "trust" | "release"))
+    {
+        return parse_operator(word, args.get(1..).unwrap_or_default());
     }
     let Some(arg) = args.first().cloned() else {
         return Ok(Command::Serve {
@@ -124,6 +192,9 @@ pub fn run() -> ExitCode {
         Command::Help => write_stdout(HELP),
         Command::Version => write_stdout(&version_line()),
         Command::Serve { config_path } => serve_blocking(&config_path),
+        Command::Sessions { config_path, prune } => crate::runner::cli::run_sessions(&config_path, prune),
+        Command::Trust { config_path, key } => crate::runner::cli::run_trust(&config_path, &key),
+        Command::Release { config_path, key } => crate::runner::cli::run_release(&config_path, &key),
         Command::Hook {
             cli,
             session,
@@ -250,6 +321,8 @@ async fn serve(config: config::Config) -> ExitCode {
     });
 
     if has_runner_agents {
+        // Rebuild the sessions' state from Sylvode (restart recovery, design 7.8).
+        tokio::spawn(crate::runner::recovery::recover_all(Arc::clone(&state)));
         for line in crate::runner::posture(&state.config) {
             if line.warn {
                 tracing::warn!("runner CLI posture: {}", line.text);
@@ -429,6 +502,53 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(items: &[&str]) -> Vec<OsString> {
+        items.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn the_operator_commands_parse() {
+        assert_eq!(
+            parse_command(&args(&["sessions"])),
+            Ok(Command::Sessions {
+                config_path: "config.toml".to_string(),
+                prune: false
+            })
+        );
+        assert_eq!(
+            parse_command(&args(&["sessions", "--prune", "--config", "/etc/r.toml"])),
+            Ok(Command::Sessions {
+                config_path: "/etc/r.toml".to_string(),
+                prune: true
+            })
+        );
+        assert_eq!(
+            parse_command(&args(&["trust", "SVWL"])),
+            Ok(Command::Trust {
+                config_path: "config.toml".to_string(),
+                key: "SVWL".to_string()
+            })
+        );
+        assert_eq!(
+            parse_command(&args(&["release", "--config", "c.toml", "SVWL"])),
+            Ok(Command::Release {
+                config_path: "c.toml".to_string(),
+                key: "SVWL".to_string()
+            })
+        );
+        for bad in [
+            &["trust"][..],
+            &["release"],
+            &["trust", "A", "B"],
+            &["trust", "--prune", "A"],
+            &["sessions", "KEY"],
+            &["sessions", "--bogus"],
+            &["trust", "A", "--config"],
+        ] {
+            assert!(parse_command(&args(bad)).is_err(), "{bad:?}");
+        }
+    }
 
     #[test]
     fn no_argument_serves_the_default_config() {

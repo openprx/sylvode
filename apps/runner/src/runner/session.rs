@@ -167,7 +167,26 @@ pub fn decide_ensure(key: &str, cli: &str, facts: &EnsureFacts<'_>) -> EnsureDec
 
 // ----- the manager ----------------------------------------------------------------------------
 
+/// A task that was pushed before a restart and is supervised again.
+#[derive(Debug)]
+pub struct Adopt {
+    pub task: Box<TmuxTask>,
+    pub acknowledged: bool,
+    pub blocked: bool,
+}
+
+/// What the runner finds in tmux for a recovered task.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Probe {
+    pub alive: bool,
+    pub scrollback_hit: bool,
+}
+
 enum Cmd {
+    Recover {
+        adopt: Option<Adopt>,
+        requeue: Vec<TmuxTask>,
+    },
     Enqueue {
         task: Box<TmuxTask>,
         reply: oneshot::Sender<usize>,
@@ -261,9 +280,44 @@ impl SessionManager {
         }
     }
 
-    /// Starts the worker of `key` (for recovery) and returns its queue.
-    pub fn ensure_worker(&self, key: &SessionKey) {
-        let _ = self.sender(key);
+    /// Whether the session of `key` has a live CLI pane and shows `id=<task_id>` in its last 200
+    /// lines. Reads tmux only.
+    pub async fn probe(&self, key: &SessionKey, task_id: &str) -> Probe {
+        let tmux = {
+            let mut tmux = Tmux::new(self.shared.socket.clone());
+            if let Some(program) = &self.shared.tmux_program {
+                tmux = tmux.with_program(program);
+            }
+            tmux
+        };
+        let key = key.clone();
+        let needle = format!("id={task_id}");
+        tokio::task::spawn_blocking(move || {
+            if !tmux.has_session(&key).unwrap_or(false) {
+                return Probe::default();
+            }
+            let Ok(pane) = tmux.adopt_pane(&key) else {
+                return Probe::default();
+            };
+            if tmux.pane_state(&pane).map_or(true, |state| state.dead) {
+                return Probe::default();
+            }
+            let hit = tmux
+                .capture_pane(&pane, Some(200))
+                .is_ok_and(|screen| screen.contains(&needle));
+            Probe {
+                alive: true,
+                scrollback_hit: hit,
+            }
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    /// Hands recovered tasks to the worker of `key`: the pushed one is supervised again, the rest
+    /// are queued in the order given.
+    pub async fn recover(&self, key: SessionKey, adopt: Option<Adopt>, requeue: Vec<TmuxTask>) {
+        let _ = self.sender(&key).send(Cmd::Recover { adopt, requeue }).await;
     }
 }
 
@@ -337,16 +391,38 @@ impl Worker {
                 }
                 command = self.rx.recv() => match command {
                     None => return,
-                    Some(command) => self.handle(command),
+                    Some(command) => self.handle(command).await,
                 },
             };
             self.carry_out(actions).await;
         }
     }
 
-    fn handle(&mut self, command: Cmd) -> Vec<Action<TmuxTask>> {
+    async fn handle(&mut self, command: Cmd) -> Vec<Action<TmuxTask>> {
         let now = Instant::now();
         match command {
+            Cmd::Recover { adopt, requeue } => {
+                let mut actions = Vec::new();
+                if let Some(adopt) = adopt {
+                    let tmux = self.tmux();
+                    let key = self.key.clone();
+                    let pane = tokio::task::spawn_blocking(move || tmux.adopt_pane(&key)).await;
+                    if let Ok(Ok(pane)) = pane {
+                        self.pane = Some(pane);
+                        // A session without session.json was not started by this runner: no hooks.
+                        self.screen_mode = self.shared.state.read_session_record(&self.key).is_none();
+                        self.machine.adopt_running(now);
+                        self.machine
+                            .adopt_current(*adopt.task, adopt.acknowledged, adopt.blocked, now);
+                    } else {
+                        actions.extend(self.machine.enqueue(*adopt.task, now));
+                    }
+                }
+                for task in requeue {
+                    actions.extend(self.machine.enqueue(task, now));
+                }
+                actions
+            }
             Cmd::Enqueue { task, reply } => {
                 let id = task.task_id.clone();
                 let actions = self.machine.enqueue(*task, now);
@@ -768,6 +844,7 @@ impl Worker {
             cli: task.cli.clone(),
             dir: task.dir.to_string_lossy().into_owned(),
             started_at: unix_now(),
+            headless: false,
         };
         self.shared.state.write_session_record(&record).map_err(|_| ())
     }
@@ -863,6 +940,7 @@ fn ensure_blocking(
         cli: task.cli.clone(),
         dir: task.dir.to_string_lossy().into_owned(),
         started_at: unix_now(),
+        headless: false,
     };
     if !tmux.has_session(key)? {
         let pane = tmux.new_session(key, dir, cfg.window_width, cfg.window_height, argv)?;
