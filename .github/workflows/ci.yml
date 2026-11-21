@@ -112,6 +112,58 @@ jobs:
           fi
           echo "runner=$changed" >>"$GITHUB_OUTPUT"
 
+  # The skill (`skills/sylvode-mcp`) is the single hand-written source for what an agent is told
+  # about the MCP server; every tool list and count elsewhere is generated from the tool
+  # catalogue. This job fails when the MCP server, the catalogue, the skill or a generated block
+  # changed and the generated files were not regenerated (fix: cargo run -p mcp-server --bin
+  # sylvode-skillgen -- --write). It runs when one of the inputs changed, and on a push whose base
+  # is unknown.
+  skills-sync:
+    name: Skills sync
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Compare with the base
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="$PR_BASE"
+          [ "$EVENT_NAME" = "push" ] && base="$PUSH_BEFORE"
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            changed=true
+          elif git diff --name-only "$base" HEAD -- apps/mcp-server skills apps/api/src/routes/context.rs \
+              apps/api/tests/fixtures README.md docs/README.md apps/runner/src/runner/guide.rs \
+              apps/runner/src/guide.rs crates/platform Cargo.lock .github/workflows/ci.yml | grep -q .; then
+            changed=true
+          else
+            changed=false
+          fi
+          echo "changed=$changed" >>"$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        if: steps.filter.outputs.changed == 'true'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        if: steps.filter.outputs.changed == 'true'
+        with:
+          key: skills-sync
+      - name: Generated files are current
+        if: steps.filter.outputs.changed == 'true'
+        run: cargo run --locked -p mcp-server --bin sylvode-skillgen -- --check
+      - name: Skill text and catalogue lint
+        if: steps.filter.outputs.changed == 'true'
+        run: cargo run --locked -p mcp-server --bin sylvode-skillgen -- --lint
+      - name: Catalogue tests
+        if: steps.filter.outputs.changed == 'true'
+        run: cargo test --locked -p mcp-server --lib catalog::
+      - name: Agent policy names are catalogue names
+        if: steps.filter.outputs.changed == 'true'
+        run: cargo test --locked -p api --lib routes::context
+
   runner:
     name: Runner (${{ matrix.os }})
     needs: runner-changes

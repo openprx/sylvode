@@ -40,7 +40,7 @@ The profile now registers 36 names: 34 actual existing Flow registry tools plus
 read/create/patch/move/link/unlink/diff, grants/inheritance/relations, Collections and
 Records, comments/mentions, page shares/appearance, trash/purge, projection lag and
 Forms references. Success values retain baseline data DTOs; typed business errors
-remain structured. The normal registry is 153 tools.
+remain structured.
 
 `objects.command` additionally requires statically mapped baseline operation policies
 on every affected project (and the outer alias policy). It cannot bypass a denied
@@ -86,7 +86,7 @@ MCP transport acceptance or of backend support for every broader Flow feature.
 
 ## Features
 
-- **153 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
+- **MCP tools** (counts in the tool table below): Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
 - **Three Transport Modes**: stdio (for MCP clients), HTTP JSON-RPC, and SSE
 - **JSON Schema Validation**: All tool parameters are strongly typed
 - **Sylvode API Backend**: Calls the Sylvode API with workspace-scoped bot credentials
@@ -294,64 +294,37 @@ cargo build -p mcp-server --release
 
 ## Available Tools
 
-### Projects
-- `projects.list` - List all projects in a workspace
-- `projects.get` - Get project details by ID
-- `projects.create` - Create a new project
-- `projects.update` - Update project details
+<!-- BEGIN GENERATED: tool-table (sylvode-skillgen; do not edit) -->
+The MCP server registers 153 tools in 19 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
 
-### Project Types and Templates
-- `project_types.list`, `project_types.get`
-- `scenario_templates.list`, `scenario_templates.get`, `scenario_templates.install`
+| Category | Tools | Read | Write | Covers |
+|---|---:|---:|---:|---|
+| `projects`: Projects | 5 | 2 | 3 | Create, read, update and delete projects |
+| `project_types`: Project types | 2 | 2 | 0 | Read the project scenario types and their capability schemas |
+| `scenario_templates`: Scenario templates | 3 | 2 | 1 | Browse and install ready-made multi-form setups |
+| `context`: Context | 3 | 3 | 0 | Read project context, governance and the agent policy |
+| `forms`: Universal forms | 34 | 16 | 18 | Forms, records, attachments, permissions, imports and business events |
+| `plugins`: Plugins | 5 | 3 | 2 | Install, inspect and invoke WASM plugins |
+| `work_items`: Work items | 11 | 5 | 6 | Issues of a project: list, read, create, update, label |
+| `comments`: Comments | 3 | 1 | 2 | Discuss work items |
+| `files`: Files | 1 | 0 | 1 | Upload files and get their URLs |
+| `labels`: Labels | 5 | 2 | 3 | Workspace and project labels |
+| `sprints`: Sprints | 4 | 1 | 3 | Plan iterations of a project |
+| `proposals`: Proposals | 5 | 2 | 3 | Governance proposals and check results |
+| `release`: Release | 1 | 1 | 0 | Release readiness gates and blockers |
+| `code`: Code | 2 | 1 | 1 | Context and governed proposals for code tasks |
+| `documents`: Documents | 3 | 0 | 3 | Governed document summaries, risk reviews and approvals |
+| `operations`: Operations | 2 | 0 | 2 | Governed inspection reports and corrective actions |
+| `workspace`: Workspace | 3 | 3 | 0 | Members, global search and bot operation records |
+| `flow`: Flow | 56 | 21 | 35 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
+| `tasks`: Agent tasks | 5 | 1 | 4 | The protocol of tasks assigned to a bot: get, acknowledge, report progress, complete, fail |
 
-### Universal Forms and Events
-- `forms.list`, `forms.get`, `forms.create`, `forms.create_from_template`, `forms.update_schema`, `forms.duplicate`
-- `forms.schema_summary`, `forms.field_usage`, `forms.field_dependencies`
-- `form_schema_versions.list`, `form_schema_versions.get`
-- `form_views.list`
-- `form_permissions.get`, `form_permissions.update`
-- `form_attachments.list`, `form_attachments.create`, `form_attachments.archive`, `form_attachments.restore`
-- `form_records.list`, `form_records.export`, `form_records.import_preview`, `form_records.import_commit`
-- `form_records.get`, `form_records.create`, `form_records.update`
-- `form_records.link`, `form_records.relation_targets`, `form_records.children`
-- `form_records.child_create`, `form_records.child_update`, `form_records.child_archive`, `form_records.child_restore`, `form_records.aggregate`
-- `events.tail`
+Every tool, one line each, is in [skills/sylvode-mcp/reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
+<!-- END GENERATED: tool-table -->
 
-### WASM Plugins
-- `plugins.list`, `plugins.get`, `plugins.install`, `plugins.invoke`
-- `plugin_invocations.list`
+The Flow tools carry the Flow contracts (`objects.*`, `collections.*`, `records.create`, `collab.*`, `flow.*`, `legacy_pages.*`); `objects.command` is described under the scope-native Flow profile above. The legacy page tools answer `not_required_zero_inventory` on this deployment.
 
-### Work Items
-- `work_items.list` - List work items in a project
-- `work_items.get` - Get work item details by ID
-- `work_items.create` - Create a new work item
-- `work_items.update` - Update work item details
-- `work_items.search` - Search work items by text
-
-### Comments
-- `comments.list` - List comments on a work item
-- `comments.create` - Add a comment to a work item
-
-### Search
-- `search.all` - Global search across projects, work items, and comments
-
-### Agent Tasks
-- `sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress`, `sylvode_task_complete`, `sylvode_task_fail` — the task protocol of a bot; the API serves a task only to its own bot, connected (OAuth) applications cannot call them
-
-### Scenario Tools
-- `code.task_context.get`, `code.change_proposal.create`
-- `documents.extract_summary`, `documents.review_risk`, `approval.request`
-- `inspection.report`, `corrective_action.propose`
-
-### Sylvode Flow (v0.5)
-- `flow.feature_get`, `flow.feature_set` — the Flow workspace rollout flag
-- `objects.get`, `objects.query`, `objects.history` — Flow object read tools
-- `objects.create`, `objects.patch`, `objects.move`, `objects.link`, `objects.unlink` — idempotent Flow writes
-- `objects.diff`, `objects.relations`, `objects.search`, `collab.projection_lag` — policy-filtered derived reads
-- `objects.grants_get`, `objects.grants_set`, `objects.inheritance_set` — object authorization tools with dry-run support
-- `legacy_pages.inventory`, `legacy_pages.import_preview`, `legacy_pages.import_commit`, `legacy_pages.import_status` — ADR-0003 conditional migration tools; this deployment's inventory is zero, so the import tools always answer `not_required_zero_inventory`
-
-The v0.9 registry exposes four static resources and 21 templates under the canonical
+The registry exposes five static resources (the skill `sylvode://skills/sylvode-mcp`, its tool reference `sylvode://skills/sylvode-mcp/tools`, `sylvode://guides/agents`, `sylvode://guides/workflows`, `sylvode://scenario-templates`) and 21 templates under the canonical
 `sylvode://` scheme, including all five frozen Flow resource templates. The matching
 `openpr://` identity remains a read alias for every registry row and resolves to the same
 payload and policy subject; aliases are not duplicated in list results. The native `sylvode`

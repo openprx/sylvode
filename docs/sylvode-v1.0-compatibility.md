@@ -102,9 +102,9 @@ These identifiers keep their OpenPR-era names, with no removal planned:
 - Schema version strings such as `openpr.plugin.v1` and `openpr.event.v1`, and the schema
   identifiers and file names `docs/schemas/openpr-*.schema.json`: documents and stored manifests
   carry them.
-- The MCP skill key `openpr-mcp`: it is part of the resource URI `sylvode://skills/openpr-mcp`
-  and the `provider` value that migration `0029` wrote into scenario templates, as is the
-  `openpr-webhook` provider value.
+- The `provider` values `openpr-mcp` and `openpr-webhook` that migration `0029` wrote into
+  scenario templates. (The MCP skill itself is `sylvode-mcp`: the resource `sylvode://skills/sylvode-mcp`
+  and the directory `skills/sylvode-mcp`; the old name is not served.)
 - The PostgreSQL `LISTEN`/`NOTIFY` channels `openpr_flow_fanout` and `openpr_flow_authz`: every
   API process of a deployment listens on them, and during a rolling upgrade old and new processes
   must keep hearing each other.

@@ -161,7 +161,7 @@
         "**"
       ],
       "pattern": "openpr-mcp(?![\\w-])",
-      "explanation": "The governed skill key `openpr-mcp`: served as the MCP resource sylvode://skills/openpr-mcp, stored in scenario templates by migration 0029, and the path of the skill package. Renaming it is a resource-URI change that needs its own compatibility alias. Also covers the tracked file names that carry the identifier.",
+      "explanation": "The provider value `openpr-mcp` that migration 0029 stored in scenario templates, and the tests and history that name the retired skill key. The skill itself is `sylvode-mcp` (resource sylvode://skills/sylvode-mcp, directory skills/sylvode-mcp); the old resource and directory name are not served and not kept.",
       "applies_to": [
         "content",
         "path"
@@ -612,7 +612,7 @@
         "site/**"
       ],
       "pattern": "openpr-mcp(?![\\w-])",
-      "explanation": "The skill key openpr-mcp served as sylvode://skills/openpr-mcp (see the matching sylvode entry)."
+      "explanation": "The provider value openpr-mcp and the retired skill key (see the matching sylvode entry)."
     },
     {
       "id": "docs-index-formerly-note",

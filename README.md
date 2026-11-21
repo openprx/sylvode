@@ -22,7 +22,7 @@ MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, an
 - **Sylvode Flow** — collaborative pages and objects with live multi-user editing (Loro CRDT over WebSocket), Collections and records, a workspace navigator, search, Forms conversion, and export/import packages. Off by default; enabled per workspace.
 - **WASM plugins** — per-project sandboxed plugins for field validation, formulas, and event handlers.
 - **Events** — transactional business-event ledger and HMAC-signed webhooks.
-- **MCP server** — 153 tools, 4 static resources, 21 resource templates, 3 transports.
+- **MCP server** — a search-first tool surface for agents (see [Tools](#tools)), static guides and resource templates, 3 transports.
 - **`sylvode` CLI** — fifteen command groups for Flow and workspace operations, with a stable JSON output contract.
 - **Scenario templates** — 6 ready-to-start setups: `code_delivery_default`, `contract_review_default`, `equipment_maintenance_default`, `quality_corrective_action_default`, `customer_delivery_default`, `restaurant_ordering_default`.
 
@@ -424,44 +424,26 @@ curl -X POST "http://localhost:8090/messages?session_id=<uuid>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}'
 ```
 
-### Tools (153)
+### Tools
 
-Per-domain counts; the total and sorted-name hash are pinned in
-`apps/mcp-server/tool-registry-baseline.json` and checked against the live registry.
+<!-- BEGIN GENERATED: tool-count (sylvode-skillgen; do not edit) -->
+The MCP server registers 153 tools in 19 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](skills/sylvode-mcp/reference/tools.md).
+<!-- END GENERATED: tool-count -->
 
-| Domain                    | Count | Representative tools                                                      |
-| ------------------------- | ----: | ------------------------------------------------------------------------- |
-| Universal forms & events  |    34 | `forms.create`, `forms.update_schema`, `form_records.create`, `events.tail` |
-| Work items                |    11 | `work_items.create`, `work_items.get_by_identifier`, `work_items.search`   |
-| Scenario tools            |     9 | `code.change_proposal.create`, `documents.review_risk`, `approval.request` |
-| Flow                      |    42 | `objects.create`, `objects.convert_commit`, `collab.status`, `legacy_pages.import_commit` |
-| Project types             |     2 | `project_types.list`, `project_types.get`                                  |
-| Projects                  |     5 | `projects.list`, `projects.create`                                         |
-| Labels                    |     5 | `labels.create`, `labels.list_by_project`                                  |
-| Plugins                   |     5 | `plugins.install`, `plugins.invoke`, `plugin_invocations.list`             |
-| Proposals & check results |     5 | `proposals.create`, `check_results.create`                                 |
-| Sprints                   |     4 | `sprints.create`, `sprints.update`                                         |
-| Comments                  |     3 | `comments.create`, `comments.list`                                         |
-| Context                   |     3 | `context.get_project`, `context.get_agent_policy`                          |
-| Scenario templates        |     3 | `scenario_templates.list`, `scenario_templates.install`                    |
-| Operation records         |     1 | `bot_operation_logs.list`                                                  |
-| Single-tool domains       |   4×1 | `files.upload`, `members.list`, `search.all`, `release.readiness.get`      |
-
-The full list with exact parameter schemas is generated from the code — do not
-transcribe it. Get it with `cargo run --bin list-tools` (no running API needed)
-or a `tools/list` JSON-RPC call.
+The sorted tool names and the read or write class of every tool are pinned in
+`apps/mcp-server/tool-registry-baseline.json` and checked against the live registry. Get the
+exact parameter schemas with `cargo run --bin list-tools` (no running API needed) or
+`sylvode_search` / `tools/list`.
 
 ### Resources
 
-Four static resources — `sylvode://skills/openpr-mcp`, `sylvode://guides/agents`,
-`sylvode://guides/workflows`, `sylvode://scenario-templates` — plus 21 resource
-templates are returned by `resources/templates/list`. The templates include the existing
-project, Forms, scenario and issue resources plus all five frozen Flow resources:
-`sylvode://objects/{object_id}`, object history and schema, Collection records, and the
-workspace/project navigator. The registry lists only `sylvode://` canonical identities;
-`resources/read` continues to accept the corresponding `openpr://` alias for every one and
-returns `_meta.canonical_uri` with the canonical identity, plus `_meta.deprecation` naming the
-replacement and the earliest removal (Sylvode v2.0).
+Five static resources — the skill `sylvode://skills/sylvode-mcp` and its tool reference
+`sylvode://skills/sylvode-mcp/tools`, `sylvode://guides/agents`, `sylvode://guides/workflows`,
+`sylvode://scenario-templates` — plus 21 resource templates are returned by `resources/list` and
+`resources/templates/list`. The templates include the project, Forms, scenario and issue
+resources plus all five frozen Flow resources: `sylvode://objects/{object_id}`, object history
+and schema, Collection records, and the workspace/project navigator. Only the canonical
+`sylvode://` identities exist.
 
 ### Command-line client: `sylvode`
 
@@ -477,7 +459,7 @@ configuration file as the MCP server (`[mcp] api_url`, `bot_token`,
 | Workspace | `projects`, `work-items`, `comments`, `labels`, `sprints`, `search`, `files`, `operation-logs`, `tools` | The tool's JSON on stdout, errors on stderr with exit code 1, global `--workspace-id` |
 
 `--format json` (the default) is the stable machine contract; `--format table` is
-a human display. `tools call` reaches any of the 140 tools by name, an escape
+a human display. `tools call` reaches any tool by name, an escape
 hatch for anything without a dedicated subcommand. It declares the transport
 surface `cli_tools_call` rather than `cli`, so it needs a bot token issued for
 that surface (see the surface table above).
@@ -588,7 +570,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 - `docs/sylvode-v1.0-compatibility.md` — OpenPR compatibility names, deprecation warnings and upgrade sequence
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` — release notes, contributor guide, security policy
 - `apps/mcp-server/AGENTS.md` — coding-agent workflow patterns and tool examples
-- `skills/openpr-mcp/SKILL.md` — governed MCP skill package
+- `skills/sylvode-mcp/SKILL.md` — the MCP skill package (single hand-written source; generated files are checked by `sylvode-skillgen --check`)
 
 ## Tech Stack
 

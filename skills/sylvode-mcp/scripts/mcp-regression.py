@@ -134,58 +134,10 @@ def sse_call(tool, args=None):
 
 CALLERS = {"HTTP": http_call, "STDIO": stdio_call, "SSE": sse_call}
 
-REQUIRED_REGISTRY_TOOLS = {
-    "forms.list",
-    "forms.get",
-    "forms.create",
-    "forms.create_from_template",
-    "scenario_templates.install",
-    "forms.update_schema",
-    "forms.duplicate",
-    "forms.schema_summary",
-    "forms.field_usage",
-    "forms.field_dependencies",
-    "form_schema_versions.list",
-    "form_schema_versions.get",
-    "form_permissions.get",
-    "form_permissions.update",
-    "form_views.list",
-    "form_attachments.list",
-    "form_attachments.create",
-    "form_attachments.archive",
-    "form_attachments.restore",
-    "form_records.list",
-    "form_records.export",
-    "form_records.import_preview",
-    "form_records.import_commit",
-    "form_records.get",
-    "form_records.create",
-    "form_records.update",
-    "form_records.link",
-    "form_records.relation_targets",
-    "form_records.children",
-    "form_records.child_create",
-    "form_records.child_update",
-    "form_records.child_archive",
-    "form_records.child_restore",
-    "form_records.aggregate",
-    "events.tail",
-    "plugins.list",
-    "plugins.get",
-    "plugins.install",
-    "plugins.invoke",
-    "plugin_invocations.list",
-    "bot_operation_logs.list",
-    "flow.feature_get",
-    "flow.feature_set",
-    "objects.get",
-    "objects.query",
-    "objects.history",
-    "legacy_pages.inventory",
-    "legacy_pages.import_preview",
-    "legacy_pages.import_commit",
-    "legacy_pages.import_status",
-}
+REGISTRY_NAMES = set(subprocess.check_output(
+    [sys.executable, os.path.join(os.path.dirname(__file__), "expected-tool-count.py"), "--names"],
+    text=True,
+).split())
 
 def http_list_tools():
     try:
@@ -257,7 +209,7 @@ LISTERS = {"HTTP": http_list_tools, "STDIO": stdio_list_tools, "SSE": sse_list_t
 def registry_matches_expected_tools_with_forms_and_plugins(resp):
     tools = resp.get("result", {}).get("tools", []) if isinstance(resp, dict) else []
     names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
-    return len(tools) == EXPECTED_TOOL_COUNT and REQUIRED_REGISTRY_TOOLS.issubset(names)
+    return len(tools) == EXPECTED_TOOL_COUNT and names == REGISTRY_NAMES
 
 def check(proto, tool, result, expect_fn):
     global PASS, FAIL

@@ -1,0 +1,5 @@
+# Backticked tokens in the hand-written skill text that look like tool names but are not.
+# One token per line, each with a reason after `#`. `sylvode-skillgen --lint` fails on any other
+# token that is neither a registry tool nor an entry tool.
+source.comment.body # field of the task view returned by sylvode_task_get
+source.proposal.id # field of the task view returned by sylvode_task_get
