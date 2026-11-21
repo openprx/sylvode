@@ -8,6 +8,7 @@ use std::io::{self, Read, Write};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CollabError;
+use crate::setup_guard::Fired;
 use crate::window_check::WindowReport;
 use crate::{SemanticDiff, SemanticSnapshot};
 
@@ -187,22 +188,23 @@ pub enum Outcome {
     /// accepted document (`window_check::WindowReport`); `None` when the full computation decided.
     /// The host compares it with its own projection of the accepted document.
     ///
-    /// `setup_guard_fired` says that the worker's setup guard (`crate::setup_guard`) fired, so the
+    /// `setup_guard` says which of the worker's setup guards (`crate::setup_guard`) fired, so that the
     /// window had no base facts and the full computation decided. Telemetry only.
     Success {
         snapshot: Vec<u8>,
         window_cpu_us: Option<u64>,
         window_report: Option<WindowReport>,
-        setup_guard_fired: bool,
+        setup_guard: Option<Fired>,
     },
     Rejected(CollabError),
 }
 
 /// The encoding of a window CPU time that was not measured, when a report follows it.
 const NOT_MEASURED: u64 = u64::MAX;
-/// Flags of a success outcome: a window report follows, and the setup guard fired.
+/// Flags of a success outcome: a window report follows, and which setup guard fired.
 const FLAG_REPORT: u8 = 1;
-const FLAG_SETUP_GUARD: u8 = 2;
+const FLAG_ALLOCATION_GUARD: u8 = 2;
+const FLAG_CPU_GUARD: u8 = 4;
 const TAG_SUCCESS: u8 = 0;
 const TAG_EMPTY_INPUT: u8 = 1;
 const TAG_INPUT_TOO_LARGE: u8 = 2;
@@ -249,7 +251,7 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard_fired,
+            setup_guard,
         } => {
             buf.push(TAG_SUCCESS);
             write_field(&mut buf, snapshot)?;
@@ -260,8 +262,10 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
             if window_report.is_some() {
                 flags |= FLAG_REPORT;
             }
-            if *setup_guard_fired {
-                flags |= FLAG_SETUP_GUARD;
+            match setup_guard {
+                Some(Fired::Allocation) => flags |= FLAG_ALLOCATION_GUARD,
+                Some(Fired::Cpu) => flags |= FLAG_CPU_GUARD,
+                None => {}
             }
             buf.push(flags);
             if let Some(report) = window_report {
@@ -347,7 +351,9 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
             let mut flag_byte = [0u8; 1];
             cursor.read_exact(&mut flag_byte)?;
             let [flags] = flag_byte;
-            if flags & !(FLAG_REPORT | FLAG_SETUP_GUARD) != 0 {
+            if flags & !(FLAG_REPORT | FLAG_ALLOCATION_GUARD | FLAG_CPU_GUARD) != 0
+                || flags & FLAG_ALLOCATION_GUARD != 0 && flags & FLAG_CPU_GUARD != 0
+            {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown outcome flags"));
             }
             let window_report = if flags & FLAG_REPORT == 0 {
@@ -365,7 +371,13 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
                 snapshot,
                 window_cpu_us,
                 window_report,
-                setup_guard_fired: flags & FLAG_SETUP_GUARD != 0,
+                setup_guard: if flags & FLAG_ALLOCATION_GUARD != 0 {
+                    Some(Fired::Allocation)
+                } else if flags & FLAG_CPU_GUARD != 0 {
+                    Some(Fired::Cpu)
+                } else {
+                    None
+                },
             })
         }
         TAG_EMPTY_INPUT => {
@@ -474,12 +486,12 @@ mod tests {
     #[test]
     fn success_outcome_round_trips() {
         for window_cpu_us in [None, Some(0), Some(13_980)] {
-            for setup_guard_fired in [false, true] {
+            for setup_guard in [None, Some(Fired::Allocation), Some(Fired::Cpu)] {
                 let outcome = Outcome::Success {
                     snapshot: b"exported snapshot bytes".to_vec(),
                     window_cpu_us,
                     window_report: None,
-                    setup_guard_fired,
+                    setup_guard,
                 };
                 let payload = encode_outcome(&outcome).expect("encode succeeds");
                 let decoded = decode_outcome(&payload).expect("decode succeeds");
@@ -498,12 +510,12 @@ mod tests {
             longest_bound: 99,
         };
         for window_cpu_us in [None, Some(0), Some(13_980)] {
-            for setup_guard_fired in [false, true] {
+            for setup_guard in [None, Some(Fired::Allocation), Some(Fired::Cpu)] {
                 let outcome = Outcome::Success {
                     snapshot: b"exported snapshot bytes".to_vec(),
                     window_cpu_us,
                     window_report: Some(report),
-                    setup_guard_fired,
+                    setup_guard,
                 };
                 let payload = encode_outcome(&outcome).expect("encode succeeds");
                 assert_eq!(decode_outcome(&payload).expect("decode succeeds"), outcome);
@@ -514,7 +526,7 @@ mod tests {
             snapshot: b"snap".to_vec(),
             window_cpu_us: Some(1),
             window_report: Some(report),
-            setup_guard_fired: false,
+            setup_guard: None,
         })
         .expect("encode succeeds");
         for cut in 1..=48 {
@@ -533,7 +545,7 @@ mod tests {
             snapshot: b"snap".to_vec(),
             window_cpu_us: None,
             window_report: None,
-            setup_guard_fired: false,
+            setup_guard: None,
         })
         .expect("encode succeeds");
         *payload.last_mut().expect("a payload") = 0x80;

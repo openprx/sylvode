@@ -342,6 +342,8 @@ pub mod fault {
         /// The setup's allocation guard never fires: the base facts are built whatever the setup
         /// has cost (`crate::setup_guard`).
         SetupGuardSkipped,
+        /// The setup's CPU guard never fires (`crate::setup_guard`).
+        SetupCpuGuardSkipped,
     }
 
     thread_local! {

@@ -20,7 +20,7 @@ use super::window_round6_tests::{configure_styles, fragmented_page, mark_keys};
 use super::{CollabEngine, LoroCollabEngine};
 use crate::alloc_meter::requested_bytes;
 use crate::facts::BaseFacts;
-use crate::setup_guard::SetupGuard;
+use crate::setup_guard::{Fired, SetupGuard};
 
 /// How a page's hostile texts fill their style state.
 #[derive(Debug, Clone, Copy)]
@@ -93,7 +93,7 @@ pub(super) struct SetupCost {
     pub compute_bytes: u64,
     pub total: Duration,
     pub has_facts: bool,
-    pub fired: bool,
+    pub fired: Option<Fired>,
 }
 
 impl SetupCost {
@@ -105,8 +105,13 @@ impl SetupCost {
 /// Runs the worker's setup (load, prewarm, facts) on `base` under a guard with `limit`, and
 /// measures the allocation of each step and the time of the whole.
 pub(super) fn setup_cost(base: &[u8], limit: u64) -> SetupCost {
+    setup_cost_under(base, || SetupGuard::with_limit(limit))
+}
+
+/// [`setup_cost`] under the guard that `start` makes when the setup begins.
+pub(super) fn setup_cost_under(base: &[u8], start: impl FnOnce() -> SetupGuard) -> SetupCost {
     let started = Instant::now();
-    let guard = SetupGuard::with_limit(limit);
+    let guard = start();
     let before = requested_bytes();
     let engine = LoroCollabEngine::load(base).unwrap();
     let after_load = requested_bytes();
@@ -119,7 +124,7 @@ pub(super) fn setup_cost(base: &[u8], limit: u64) -> SetupCost {
         compute_bytes: requested_bytes() - after_prewarm,
         total: started.elapsed(),
         has_facts: setup.facts.is_some(),
-        fired: setup.guard_fired,
+        fired: setup.guard,
     }
 }
 
@@ -192,6 +197,32 @@ fn window_setup_guard_calibration() {
         &anchor_page(50, 1, 20_000, Anchors::DeletedMarked),
     );
     print_stages("unmark 1 x 4,000 x 100", &unmarked_page(50, 1, 4_000, 100));
+    println!("--- stages, nested same-key and single texts");
+    print_stages(
+        "nested 200 texts x 300",
+        &anchor_page(250, 200, 300, Anchors::NestedSameKey),
+    );
+    print_stages(
+        "nested 200 texts x 350",
+        &anchor_page(250, 200, 350, Anchors::NestedSameKey),
+    );
+    print_stages(
+        "nested 1 text x 500 (window-bound)",
+        &anchor_page(50, 1, 500, Anchors::NestedSameKey),
+    );
+    print_stages(
+        "nested 1 text x 1,500",
+        &anchor_page(50, 1, 1_500, Anchors::NestedSameKey),
+    );
+    print_stages(
+        "nested 1 text x 4,000",
+        &anchor_page(50, 1, 4_000, Anchors::NestedSameKey),
+    );
+    print_stages(
+        "fragmented 1 text x 4,000 x 40 marks",
+        &fragmented_page(50, 1, 4_000, 40),
+    );
+    print_stages("unmark 1 text x 4,000 x 100", &unmarked_page(50, 1, 4_000, 100));
     println!("--- honest pages");
     print_cost("flat 9,950 blocks", &flat_page_of(9_950));
     for (blocks, formatting) in [
@@ -266,7 +297,10 @@ fn assert_cut_off(label: &str, base: &[u8], limit: u64, slack: u64) {
         "{label}: the page must cost more than the limit"
     );
     assert!(setup.facts.is_none(), "{label}: the guard yields no facts");
-    assert!(setup.guard_fired && capped.fired, "{label}: the guard says it fired");
+    assert!(
+        setup.guard == Some(Fired::Allocation) && capped.fired == Some(Fired::Allocation),
+        "{label}: the allocation guard says it fired"
+    );
     assert!(
         capped.compute_bytes <= limit + slack,
         "{label}: the setup went on to {} bytes past a limit of {limit}",
@@ -360,7 +394,7 @@ fn r7_1_a_page_without_facts_because_of_the_guard_is_written_by_the_full_window(
     let mut engine = LoroCollabEngine::load(&base).unwrap();
     engine.prewarm_for_writes();
     let setup = BaseFacts::compute_guarded(&engine, &SetupGuard::with_limit(1024));
-    assert!(setup.facts.is_none() && setup.guard_fired);
+    assert!(setup.facts.is_none() && setup.guard == Some(Fired::Allocation));
     crate::walk_counter::reset();
     let accepted = crate::window_check::run_window(&mut engine, None, &update).expect("accepted, not an error");
     assert!(accepted.report.is_none());
@@ -389,7 +423,7 @@ fn r7_1_the_guard_counts_the_load_and_the_prewarm() {
     );
     crate::walk_counter::reset();
     let setup = BaseFacts::compute_guarded(&engine, &guard);
-    assert!(setup.facts.is_none() && setup.guard_fired);
+    assert!(setup.facts.is_none() && setup.guard == Some(Fired::Allocation));
     assert!(crate::walk_counter::delta_reads().is_empty(), "nothing was counted");
     // The same page without the load in the count: facts.
     let fresh = SetupGuard::with_limit(1024 * 1024 * 1024);
@@ -430,7 +464,7 @@ fn r7_1_the_projection_after_the_count_is_predicted_from_the_count() {
     let guard = SetupGuard::with_limit(limit);
     let setup = BaseFacts::compute_guarded(&engine, &guard);
     assert!(
-        setup.guard_fired && setup.facts.is_none(),
+        setup.guard == Some(Fired::Allocation) && setup.facts.is_none(),
         "limit {limit}, count {count_bytes}"
     );
     assert!(
@@ -473,7 +507,7 @@ fn r7_1_the_largest_honest_formatted_pages_stay_far_under_the_production_limit()
             mib(cost.bytes()),
             mib(crate::setup_guard::SETUP_ALLOCATION_LIMIT_BYTES)
         );
-        assert!(cost.has_facts && !cost.fired, "{formatting:?}");
+        assert!(cost.has_facts && cost.fired.is_none(), "{formatting:?}");
         assert!(
             cost.bytes() / 2 * 3 <= crate::setup_guard::SETUP_ALLOCATION_LIMIT_BYTES,
             "{formatting:?}: {} bytes leave no margin to the limit",
@@ -507,7 +541,12 @@ pub(super) fn round7_cases(scale: u64) -> Vec<super::window_fixtures::Case> {
             ("guarded_typed_other", typed_other),
             ("guarded_marked_other", marked_other),
         ] {
-            for (name, limit) in [("fires", 1024 * 1024), ("holds", u64::MAX)] {
+            for (name, facts) in [
+                ("fires", FactsFrom::Guarded(1024 * 1024)),
+                ("holds", FactsFrom::Guarded(u64::MAX)),
+                ("cpu_fires", FactsFrom::CpuStepped(12)),
+                ("cpu_holds", FactsFrom::CpuStepped(1_000_000)),
+            ] {
                 cases.push(Case {
                     label: format!("round7/{kind}/{name}/{k}"),
                     family: "round7",
@@ -515,7 +554,7 @@ pub(super) fn round7_cases(scale: u64) -> Vec<super::window_fixtures::Case> {
                     base: base.clone(),
                     update: update.clone(),
                     expect: None,
-                    facts: FactsFrom::Guarded(limit),
+                    facts,
                 });
             }
         }
@@ -528,10 +567,146 @@ pub(super) fn round7_cases(scale: u64) -> Vec<super::window_fixtures::Case> {
 fn r7_1_the_mutant_without_the_guard_builds_facts_for_a_page_the_guard_stops() {
     let base = anchor_page(50, 1, 3_000, Anchors::DeletedMarked);
     let (_, setup) = guarded_setup(&base, 1024 * 1024);
-    assert!(setup.facts.is_none() && setup.guard_fired);
+    assert!(setup.facts.is_none() && setup.guard == Some(Fired::Allocation));
     let _fault = crate::window_check::fault::inject(crate::window_check::fault::Fault::SetupGuardSkipped);
     let (_, setup) = guarded_setup(&base, 1024 * 1024);
-    assert!(setup.facts.is_some() && !setup.guard_fired);
+    assert!(setup.facts.is_some() && setup.guard.is_none());
+}
+
+// ---------------------------------------------------------------------------------------------
+// R7-1: the CPU guard (an injectable clock, no real time in any assertion)
+// ---------------------------------------------------------------------------------------------
+
+const STEP_NANOS: u64 = 1_000_000;
+
+/// The facts of a page under a CPU guard on the stepping clock (1 ms per read) with a budget of
+/// `budget_steps` reads, and how often the clock was read. No allocation limit.
+fn cpu_guarded(engine: &LoroCollabEngine, budget_steps: u64) -> (crate::facts::SetupFacts, u64) {
+    crate::setup_guard::stepping_clock::install(STEP_NANOS);
+    let guard = SetupGuard::with_limits(
+        u64::MAX,
+        budget_steps * STEP_NANOS,
+        crate::setup_guard::stepping_clock::read,
+    );
+    let setup = BaseFacts::compute_guarded(engine, &guard);
+    (setup, crate::setup_guard::stepping_clock::reads())
+}
+
+/// A formatted page of 40 marked texts, loaded and prewarmed, and the number of clock reads of a
+/// setup that is never stopped (a budget no setup reaches).
+fn forty_texts() -> (Vec<u8>, u64) {
+    let base = super::window_round6_tests::formatted_page(40, super::window_round6_tests::Formatting::Clusters(1));
+    let (setup, reads) = cpu_guarded(&LoadedPage::new(&base).0, 1_000_000);
+    assert!(setup.facts.is_some() && setup.guard.is_none());
+    (base, reads)
+}
+
+/// The guard fires at the first checkpoint that finds the budget passed: no later checkpoint reads
+/// the clock, no later text is counted, and there are no facts and no error.
+#[test]
+fn r7_1_the_cpu_guard_fires_at_the_checkpoint_after_the_budget_is_passed() {
+    let (base, all_reads) = forty_texts();
+    let budget_steps = 10;
+    crate::walk_counter::reset();
+    let (setup, reads) = cpu_guarded(&LoadedPage::new(&base).0, budget_steps);
+    assert_eq!(setup.guard, Some(Fired::Cpu));
+    assert!(setup.facts.is_none());
+    // The clock starts at its first read; the check after the read that makes the elapsed time pass
+    // the budget is the one that fires, and it is the last read.
+    assert_eq!(reads, budget_steps + 2, "of {all_reads} reads of a full setup");
+    let counted = crate::walk_counter::delta_reads().len();
+    assert!(counted > 0 && counted < 40, "{counted} of 40 texts were counted");
+    // The same page with a budget above every read, and above the prediction of the projection that
+    // doubles the count's, has facts.
+    assert!(
+        cpu_guarded(&LoadedPage::new(&base).0, 2 * all_reads + 10)
+            .0
+            .facts
+            .is_some()
+    );
+}
+
+/// The projection after the count is held against the budget with the count's CPU time once more.
+#[test]
+fn r7_1_the_cpu_budget_holds_for_the_projection_predicted_from_the_count() {
+    let (base, all_reads) = forty_texts();
+    let engine = LoadedPage::new(&base).0;
+    crate::setup_guard::stepping_clock::install(STEP_NANOS);
+    let probe = SetupGuard::with_limits(u64::MAX, u64::MAX - 1, crate::setup_guard::stepping_clock::read);
+    let _ = engine
+        .projection_count_guarded(crate::work::item_budget_ceiling(), probe)
+        .unwrap();
+    let count_reads = crate::setup_guard::stepping_clock::reads();
+    assert!(count_reads > 40, "{count_reads}");
+    // The count passes on its own (about 3 + count_reads steps), the count and its twin do not.
+    let budget_steps = count_reads + count_reads / 2;
+    let (setup, reads) = cpu_guarded(&LoadedPage::new(&base).0, budget_steps);
+    assert_eq!(setup.guard, Some(Fired::Cpu));
+    assert!(reads < all_reads, "the projection ran: {reads} reads of {all_reads}");
+}
+
+/// A fired CPU guard is an ordinary outcome, like the allocation guard: the page is written by the
+/// full window.
+#[test]
+fn r7_1_a_page_without_facts_because_of_the_cpu_guard_is_written_by_the_full_window() {
+    let (base, _) = forty_texts();
+    let update = super::hand_encoded::raw_edit(&base, 48_610, |raw| {
+        first_text(raw, 3).insert(0, "q").unwrap();
+    });
+    let mut engine = LoadedPage::new(&base).0;
+    let (setup, _) = cpu_guarded(&engine, 5);
+    assert!(setup.facts.is_none() && setup.guard == Some(Fired::Cpu));
+    crate::walk_counter::reset();
+    let accepted = crate::window_check::run_window(&mut engine, None, &update).expect("accepted, not an error");
+    assert!(accepted.report.is_none());
+    assert_eq!(
+        accepted.fallback,
+        Some(crate::window_check::FallbackReason::FactsAbsent)
+    );
+}
+
+/// The nested same-key shape that the allocation guard cannot cut off, spread over many texts: no
+/// text is long, the allocation stays far under its limit, and the CPU guard stops the setup.
+#[test]
+fn r7_1_nested_styles_spread_over_many_texts_are_cut_off_by_the_cpu_guard() {
+    let base = anchor_page(60, 40, 300, Anchors::NestedSameKey);
+    let cost = setup_cost(&base, crate::setup_guard::SETUP_ALLOCATION_LIMIT_BYTES);
+    assert!(
+        cost.has_facts && cost.fired.is_none(),
+        "the allocation guard does not stop it"
+    );
+    assert!(
+        cost.bytes() < crate::setup_guard::SETUP_ALLOCATION_LIMIT_BYTES / 8,
+        "{} bytes",
+        cost.bytes()
+    );
+    let (setup, reads) = cpu_guarded(&LoadedPage::new(&base).0, 30);
+    assert_eq!(setup.guard, Some(Fired::Cpu));
+    assert!(setup.facts.is_none() && reads == 32);
+}
+
+/// The mutant without the CPU guard builds facts for the page that the guard stops.
+#[test]
+fn r7_1_the_mutant_without_the_cpu_guard_builds_facts_for_a_page_the_guard_stops() {
+    let (base, _) = forty_texts();
+    let _fault = crate::window_check::fault::inject(crate::window_check::fault::Fault::SetupCpuGuardSkipped);
+    let (setup, _) = cpu_guarded(&LoadedPage::new(&base).0, 5);
+    assert!(setup.facts.is_some() && setup.guard.is_none());
+}
+
+/// A guard's two limits are independent: the allocation guard is the one named when both are passed.
+#[test]
+fn r7_1_the_guard_names_which_limit_fired() {
+    let base = anchor_page(50, 1, 3_000, Anchors::DeletedMarked);
+    crate::setup_guard::stepping_clock::install(STEP_NANOS);
+    let both = SetupGuard::with_limits(1024 * 1024, 2 * STEP_NANOS, crate::setup_guard::stepping_clock::read);
+    let engine = LoadedPage::new(&base).0;
+    assert_eq!(
+        BaseFacts::compute_guarded(&engine, &both).guard,
+        Some(Fired::Allocation)
+    );
+    assert_eq!(Fired::Allocation.name(), "allocation");
+    assert_eq!(Fired::Cpu.name(), "cpu");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -702,8 +877,8 @@ fn r7_3_an_edited_formatted_page_is_charged_for_its_pieces_and_stays_incremental
     );
     assert!(edited_items > plain_items, "the pieces of the edits are charged");
     assert!(edited_items <= budget);
-    let cost = setup_cost(&edited, crate::setup_guard::SETUP_ALLOCATION_LIMIT_BYTES);
-    assert!(cost.has_facts && !cost.fired);
+    let cost = setup_cost_under(&edited, SetupGuard::start);
+    assert!(cost.has_facts && cost.fired.is_none());
 }
 
 /// R7-3, the measurement: formatted pages whose blocks carry the pieces of real edits. Items per

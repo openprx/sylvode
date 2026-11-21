@@ -219,7 +219,7 @@ use loro::{
 };
 
 use crate::operation::NodeId;
-use crate::setup_guard::SetupGuard;
+use crate::setup_guard::{Fired, SetupGuard};
 
 /// Characters of one text container that count as one item.
 pub const CHARS_PER_ITEM: u64 = 256;
@@ -498,8 +498,8 @@ fn text_segment_items(
 ) -> Result<u64, Stop> {
     // The decode of the text's style state (the `iter` before) is paid for; the conversion of its
     // delta, which a hostile shape makes the dearer part, is not started when the setup is over.
-    if guard.is_some_and(SetupGuard::exceeded) {
-        return Err(Stop::Guard);
+    if let Some(fired) = guard.and_then(SetupGuard::fired) {
+        return Err(Stop::Guard(fired));
     }
     let mut bytes: u64 = 0;
     let mut segments: u64 = 0;
@@ -588,8 +588,8 @@ pub(crate) fn block_mark_items_guarded(
             if items > stop_over {
                 return Err(Stop::Ceiling);
             }
-            if guard.is_some_and(SetupGuard::exceeded) {
-                return Err(Stop::Guard);
+            if let Some(fired) = guard.and_then(SetupGuard::fired) {
+                return Err(Stop::Guard(fired));
             }
         }
     }
@@ -601,8 +601,8 @@ pub(crate) fn block_mark_items_guarded(
 pub(crate) enum Stop {
     /// The items passed the ceiling the caller gave.
     Ceiling,
-    /// The setup's allocation guard fired ([`crate::setup_guard`]).
-    Guard,
+    /// A setup guard fired ([`crate::setup_guard`]).
+    Guard(Fired),
 }
 
 /// Counts items against a ceiling and stops counting once it is passed.
@@ -611,7 +611,7 @@ pub(crate) struct ItemCount {
     total: u64,
     ceiling: u64,
     guard: Option<SetupGuard>,
-    stopped_by_guard: bool,
+    stopped_by_guard: Option<Fired>,
     /// The mark items of every editor block that has any, by the block's key: what the base facts
     /// keep, so that the setup converts a marked text once for the count and not again for them.
     marks: HashMap<NodeId, u64>,
@@ -623,7 +623,7 @@ impl ItemCount {
             total: 0,
             ceiling,
             guard: None,
-            stopped_by_guard: false,
+            stopped_by_guard: None,
             marks: HashMap::new(),
         }
     }
@@ -649,15 +649,15 @@ impl ItemCount {
                 self.add(marks)
             }
             Err(Stop::Ceiling) => false,
-            Err(Stop::Guard) => {
-                self.stopped_by_guard = true;
+            Err(Stop::Guard(fired)) => {
+                self.stopped_by_guard = Some(fired);
                 false
             }
         }
     }
 
-    /// Whether the count stopped because the setup guard fired and not because of the ceiling.
-    pub(crate) const fn stopped_by_guard(&self) -> bool {
+    /// Which setup guard stopped the count, if one did and not the ceiling.
+    pub(crate) const fn stopped_by_guard(&self) -> Option<Fired> {
         self.stopped_by_guard
     }
 

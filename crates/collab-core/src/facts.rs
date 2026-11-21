@@ -20,7 +20,7 @@ use crate::engine::{LoroCollabEngine, ProjectionCount};
 use crate::limits::{DocumentLimits, check_snapshot};
 use crate::operation::{NodeId, NodeKind};
 use crate::semantic::SemanticSnapshot;
-use crate::setup_guard::SetupGuard;
+use crate::setup_guard::{Fired, SetupGuard};
 
 /// What one projected node contributes to the limits: the base's pre-image of a unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,23 +125,20 @@ pub struct BaseFacts {
     pub(crate) mark_items: u64,
 }
 
-/// What the setup computed: the facts, or none and whether the setup guard is the reason.
+/// What the setup computed: the facts, or none and which setup guard is the reason, if one is.
 #[derive(Debug, Clone)]
 pub struct SetupFacts {
     pub facts: Option<BaseFacts>,
     /// The setup has cost more than [`SetupGuard`] allows, so there are no facts. Telemetry: the
     /// page takes the full window, as it does for any base without facts.
-    pub guard_fired: bool,
+    pub guard: Option<Fired>,
 }
 
 impl SetupFacts {
-    /// No facts, with or without the guard being the reason.
+    /// No facts, with or without a guard being the reason.
     #[must_use]
-    pub const fn none(guard_fired: bool) -> Self {
-        Self {
-            facts: None,
-            guard_fired,
-        }
+    pub const fn none(guard: Option<Fired>) -> Self {
+        Self { facts: None, guard }
     }
 }
 
@@ -168,25 +165,25 @@ impl BaseFacts {
         // A guard that cannot see the allocation would be silently off: no facts then, the same as
         // for a fired guard, but not reported as one.
         if !crate::alloc_meter::is_installed() {
-            return SetupFacts::none(false);
+            return SetupFacts::none(None);
         }
-        if guard.exceeded() {
-            return SetupFacts::none(true);
+        if let Some(fired) = guard.fired() {
+            return SetupFacts::none(Some(fired));
         }
         match Self::compute_within(engine, guard) {
             Ok(facts) => SetupFacts {
                 facts: Some(facts),
-                guard_fired: false,
+                guard: None,
             },
-            Err(guard_fired) => SetupFacts::none(guard_fired),
+            Err(guard) => SetupFacts::none(guard),
         }
     }
 
-    /// The facts, or `Err(true)` when the guard stopped the setup and `Err(false)` when the base
+    /// The facts, or the guard that stopped the setup (`Err(Some(_))`), or `Err(None)` when the base
     /// has no facts for another reason.
-    fn compute_within(engine: &LoroCollabEngine, guard: &SetupGuard) -> Result<Self, bool> {
-        if engine.has_duplicate_logical_ids() || engine.has_editor_structure().map_err(|_| false)? {
-            return Err(false);
+    fn compute_within(engine: &LoroCollabEngine, guard: &SetupGuard) -> Result<Self, Option<Fired>> {
+        if engine.has_duplicate_logical_ids() || engine.has_editor_structure().map_err(|_| None)? {
+            return Err(None);
         }
         // The work of the full projection, counted before the projection itself runs: a page far
         // over any budget is refused after the ceiling's worth of items, so the walk stops there
@@ -195,28 +192,34 @@ impl BaseFacts {
         // stopped early, so what this setup reads is what the projection reads of the same page.
         // The count also yields the mark items of every block, so no text is converted a third time
         // for them. The guard stops it between texts.
-        let before_count = guard.spent();
+        let (bytes_before, cpu_before) = (guard.spent(), guard.cpu_spent());
         let counted = engine
             .projection_count_guarded(crate::work::item_budget_ceiling(), *guard)
-            .map_err(|_| false)?;
+            .map_err(|_| None)?;
         let ProjectionCount::Within { items, marks } = counted else {
-            return Err(matches!(counted, ProjectionCount::GuardFired));
+            return Err(match counted {
+                ProjectionCount::GuardFired(fired) => Some(fired),
+                ProjectionCount::OverCeiling | ProjectionCount::Within { .. } => None,
+            });
         };
         // The projection that follows converts the texts the count has just converted, so it
-        // allocates about as much as the count did: the limit must hold for both.
-        if guard.exceeded_by(guard.spent().saturating_sub(before_count)) {
-            return Err(true);
+        // costs about what the count did, in allocation and in CPU time: both limits must hold
+        // for the two.
+        let counted_bytes = guard.spent().saturating_sub(bytes_before);
+        let counted_nanos = guard.cpu_spent().saturating_sub(cpu_before);
+        if let Some(fired) = guard.fired_by(counted_bytes, counted_nanos) {
+            return Err(Some(fired));
         }
-        let editor_doc = engine.has_editor_doc().map_err(|_| false)?;
-        let snapshot = engine.semantic_snapshot().map_err(|_| false)?;
-        if guard.exceeded() {
-            return Err(true);
+        let editor_doc = engine.has_editor_doc().map_err(|_| None)?;
+        let snapshot = engine.semantic_snapshot().map_err(|_| None)?;
+        if let Some(fired) = guard.fired() {
+            return Err(Some(fired));
         }
-        check_snapshot(&snapshot, &DocumentLimits::default()).map_err(|_| false)?;
-        let block_order = engine.root_block_ids().map_err(|_| false)?.unwrap_or_default();
+        check_snapshot(&snapshot, &DocumentLimits::default()).map_err(|_| None)?;
+        let block_order = engine.root_block_ids().map_err(|_| None)?.unwrap_or_default();
         let facts = Self::from_snapshot(
             engine.doc().state_vv(),
-            BaseVersion::of(engine.doc()).ok_or(false)?,
+            BaseVersion::of(engine.doc()).ok_or(None)?,
             items,
             editor_doc,
             block_order,
@@ -227,7 +230,7 @@ impl BaseFacts {
         if facts.items <= facts.item_budget() {
             Ok(facts)
         } else {
-            Err(false)
+            Err(None)
         }
     }
 

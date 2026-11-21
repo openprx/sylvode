@@ -296,12 +296,12 @@ fn run_worker(
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard_fired,
+            setup_guard,
         } => Ok(IsolatedApplySuccess {
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard_fired,
+            setup_guard,
         }),
         Outcome::Rejected(err) => Err(IsolatedApplyError::Collab(err)),
     }
@@ -1009,7 +1009,7 @@ mod tests {
                     snapshot: Vec::new(),
                     window_cpu_us: None,
                     window_report: None,
-                    setup_guard_fired: false,
+                    setup_guard: None,
                 }),
                 &observed(Some(150_000)),
                 ceiling
@@ -1023,7 +1023,7 @@ mod tests {
                     snapshot: Vec::new(),
                     window_cpu_us: None,
                     window_report: None,
-                    setup_guard_fired: false,
+                    setup_guard: None,
                 }),
                 &observed(Some(33_000))
             ),

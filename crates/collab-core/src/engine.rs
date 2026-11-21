@@ -296,8 +296,8 @@ pub(crate) enum ProjectionCount {
     Within { items: u64, marks: HashMap<NodeId, u64> },
     /// The items passed the ceiling.
     OverCeiling,
-    /// The setup's allocation guard fired (`crate::setup_guard`).
-    GuardFired,
+    /// A setup guard fired (`crate::setup_guard`).
+    GuardFired(crate::setup_guard::Fired),
 }
 
 impl LoroCollabEngine {
@@ -1305,12 +1305,12 @@ impl LoroCollabEngine {
     pub(crate) fn projection_items(&self, ceiling: u64) -> Result<Option<u64>, CollabError> {
         Ok(match self.count_projection(crate::work::ItemCount::new(ceiling))? {
             ProjectionCount::Within { items, .. } => Some(items),
-            ProjectionCount::OverCeiling | ProjectionCount::GuardFired => None,
+            ProjectionCount::OverCeiling | ProjectionCount::GuardFired(_) => None,
         })
     }
 
     /// [`Self::projection_items`] for the setup: it also yields the mark items of every block, and
-    /// stops with [`ProjectionCount::GuardFired`] once `guard` has passed its limit.
+    /// stops with [`ProjectionCount::GuardFired`] once `guard` has passed a limit.
     pub(crate) fn projection_count_guarded(
         &self,
         ceiling: u64,
@@ -1322,11 +1322,9 @@ impl LoroCollabEngine {
     fn count_projection(&self, mut items: crate::work::ItemCount) -> Result<ProjectionCount, CollabError> {
         use crate::reserved_roots::{ALIASES, DOC, ORDER};
         let stopped = |items: &crate::work::ItemCount| {
-            if items.stopped_by_guard() {
-                ProjectionCount::GuardFired
-            } else {
-                ProjectionCount::OverCeiling
-            }
+            items
+                .stopped_by_guard()
+                .map_or(ProjectionCount::OverCeiling, ProjectionCount::GuardFired)
         };
         for name in [ORDER, ALIASES] {
             // Entries, keys and the payload of the values: the full projection clones all of them

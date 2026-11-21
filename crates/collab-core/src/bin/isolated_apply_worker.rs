@@ -131,7 +131,7 @@ fn main() {
     // started before the load), and yields no facts when the setup has cost more than it allows:
     // an ordinary outcome, the same as for a base the check does not describe.
     let setup = if std::env::var(wire::WINDOW_ENV).as_deref() == Ok(wire::WINDOW_FULL) {
-        SetupFacts::none(false)
+        SetupFacts::none(None)
     } else {
         BaseFacts::compute_guarded(&base_engine, &setup_guard)
     };
@@ -154,7 +154,7 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
                 snapshot,
                 window_cpu_us: None,
                 window_report: None,
-                setup_guard_fired: false,
+                setup_guard: None,
             },
             Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
                 reason: format!("diff result encoding failed: {error}"),
@@ -406,7 +406,7 @@ fn decode_apply_check_and_export(engine: LoroCollabEngine, setup: &SetupFacts, u
                 snapshot,
                 window_cpu_us,
                 window_report,
-                setup_guard_fired: setup.guard_fired,
+                setup_guard: setup.guard,
             },
             Err(err) => wire::Outcome::Rejected(err),
         },
@@ -625,13 +625,13 @@ mod tests {
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard_fired,
+            setup_guard,
         } = outcome
         else {
             panic!("expected Success, a title-only update stays well within every ceiling");
         };
         assert!(window_cpu_us.is_some(), "the worker reports the window CPU time");
-        assert!(!setup_guard_fired, "a tiny base never trips the setup guard");
+        assert!(setup_guard.is_none(), "a tiny base never trips a setup guard");
         assert!(
             window_report.is_some(),
             "a title-only update on a tree page is decided by the incremental check"

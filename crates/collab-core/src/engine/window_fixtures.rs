@@ -86,6 +86,9 @@ pub(super) enum FactsFrom {
     /// The facts of the base, computed under a setup guard with this limit in bytes
     /// (`crate::setup_guard`): none when the setup of the base costs more.
     Guarded(u64),
+    /// The facts of the base, computed under a CPU guard on the tests' stepping clock (1 ms per read)
+    /// with a budget of this many reads.
+    CpuStepped(u64),
     /// The facts of another snapshot of the page: they describe a state the import does not start
     /// from.
     OtherBase(Arc<Vec<u8>>),

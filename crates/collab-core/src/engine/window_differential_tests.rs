@@ -334,10 +334,23 @@ impl Incremental {
         let mut engine = LoroCollabEngine::load(base).expect("the trusted base loads");
         engine.prewarm_for_writes();
         // The setup guard's fault acts while the facts are computed; the others act in the window.
-        let setup_fault = matches!(self.defect, Defect::Fault(Fault::SetupGuardSkipped))
-            .then(|| crate::window_check::fault::inject(Fault::SetupGuardSkipped));
+        let setup_fault = match self.defect {
+            Defect::Fault(fault @ (Fault::SetupGuardSkipped | Fault::SetupCpuGuardSkipped)) => {
+                Some(crate::window_check::fault::inject(fault))
+            }
+            _ => None,
+        };
         let mut facts = match from {
             FactsFrom::Base | FactsFrom::Tampered(_) => BaseFacts::compute(&engine),
+            FactsFrom::CpuStepped(steps) => {
+                crate::setup_guard::stepping_clock::install(1_000_000);
+                let guard = crate::setup_guard::SetupGuard::with_limits(
+                    u64::MAX,
+                    steps * 1_000_000,
+                    crate::setup_guard::stepping_clock::read,
+                );
+                BaseFacts::compute_guarded(&engine, &guard).facts
+            }
             FactsFrom::Guarded(limit) => {
                 BaseFacts::compute_guarded(&engine, &crate::setup_guard::SetupGuard::with_limit(*limit)).facts
             }
@@ -1828,6 +1841,10 @@ fn incremental_mutants() -> Vec<Incremental> {
             defect: Defect::Fault(Fault::SetupGuardSkipped),
         },
         Incremental {
+            name: "mutant: the setup CPU guard never fires (facts are built whatever the setup cost in CPU time)",
+            defect: Defect::Fault(Fault::SetupCpuGuardSkipped),
+        },
+        Incremental {
             name: "mutant: a refusal by a total reports observed + 1",
             defect: Defect::Fault(Fault::RefusalOffByOne),
         },
@@ -1846,6 +1863,7 @@ fn oracle_expected(mutant: &Incremental) -> bool {
                 | Fault::MarkRecountSkipped
                 | Fault::PieceCountSkipped
                 | Fault::SetupGuardSkipped
+                | Fault::SetupCpuGuardSkipped
                 | Fault::RefusalOffByOne
         )
     )

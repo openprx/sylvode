@@ -581,10 +581,11 @@ pub(crate) static WINDOW_SETUP_GUARDS: std::sync::atomic::AtomicU64 = std::sync:
 /// Counts and logs a window that the worker's setup guard sent to the full computation. An ordinary
 /// outcome (the write is decided and accepted or refused like any other, nothing counts toward the
 /// document's cooldown), so the line is a warning for the operator, not an error.
-fn note_setup_guard(document_id: Uuid) {
+fn note_setup_guard(document_id: Uuid, fired: collab_core::setup_guard::Fired) {
     let total = WINDOW_SETUP_GUARDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     tracing::warn!(
         flow_window_setup_guard_total = total,
+        guard = fired.name(),
         document_id = %document_id,
         "window_setup_guard: the page's setup cost more work than the guard allows, so this write was decided by the full window"
     );
@@ -832,8 +833,8 @@ fn window_attempt(
         Ok(success) => success,
         Err(err) => return Ok(WindowAttempt::Rejected(err)),
     };
-    if success.setup_guard_fired {
-        note_setup_guard(document_id);
+    if let Some(fired) = success.setup_guard {
+        note_setup_guard(document_id, fired);
     }
     // Reconstructing `LoroCollabEngine` from the isolated worker's already-shape-validated result
     // is cheap and safe: the worker already bounded this document's tree depth/container
@@ -1046,10 +1047,10 @@ mod window_oracle_tests {
     fn a_window_decided_after_the_setup_guard_fired_is_counted_and_not_cooled() {
         let ids = ids();
         let before = WINDOW_SETUP_GUARDS.load(std::sync::atomic::Ordering::Relaxed);
-        note_setup_guard(ids.document_id);
+        note_setup_guard(ids.document_id, collab_core::setup_guard::Fired::Cpu);
         assert!(WINDOW_SETUP_GUARDS.load(std::sync::atomic::Ordering::Relaxed) > before);
         for _ in 0..(COOLDOWN_THRESHOLD + 2) {
-            note_setup_guard(ids.document_id);
+            note_setup_guard(ids.document_id, collab_core::setup_guard::Fired::Cpu);
         }
         assert!(
             !disagreements()
@@ -1793,7 +1794,7 @@ pub(crate) mod in_process_apply {
             snapshot,
             window_cpu_us: None,
             window_report: None,
-            setup_guard_fired: false,
+            setup_guard: None,
         })
     }
 }
