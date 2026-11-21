@@ -52,5 +52,14 @@ tokio-util = { workspace = true, features = ["rt"] }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", default-features = false, features = ["signal", "fs", "dir", "user"] }
 
+[features]
+# Exposes the tmux driver to `tests/tmux_integration.rs` (which would otherwise compile the driver and
+# its unit tests a second time).
+test-support = []
+
+[[test]]
+name = "tmux_integration"
+required-features = ["test-support"]
+
 [lints]
 workspace = true

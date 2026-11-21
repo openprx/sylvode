@@ -64,6 +64,10 @@
 //! on is newer than 3.2 except `#{bracket_paste_flag}` (3.7), which is optional as described
 //! above. Since 3.4 `paste-buffer` refuses a dead pane, which is reported as an ordinary failure.
 
+// The driver is also exposed (feature `test-support`) to its integration test, which makes its
+// items reachable; the long first paragraphs of their docs are deliberate.
+#![allow(clippy::too_long_first_doc_paragraph)]
+
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -705,7 +709,22 @@ impl Tmux {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = command.spawn().map_err(|e| TmuxError::Spawn(e.kind().to_string()))?;
+        // A program file that was written a moment ago can be "busy" (ETXTBSY) while another
+        // thread's forked child still holds the write descriptor before its own exec; that ends in
+        // milliseconds, so the spawn is tried again a few times. Any other error is final.
+        let mut child = {
+            let mut attempts = 0;
+            loop {
+                match command.spawn() {
+                    Ok(child) => break child,
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 50 => {
+                        attempts += 1;
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => return Err(TmuxError::Spawn(e.kind().to_string())),
+                }
+            }
+        };
         let writer = child.stdin.take().zip(call.stdin.clone()).map(|(mut stdin, data)| {
             thread::spawn(move || {
                 let _ = stdin.write_all(&data);

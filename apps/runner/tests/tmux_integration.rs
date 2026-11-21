@@ -13,11 +13,8 @@
 #![cfg(unix)]
 // Test helpers outside `#[test]` functions may fail loudly; this is test code only.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
-// The module under test is compiled into this test, and only part of it is used here.
-#![allow(dead_code)]
 
-#[path = "../src/runner/tmux.rs"]
-mod tmux;
+use sylvode_runner::tmux_for_tests as tmux;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

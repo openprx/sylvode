@@ -27,6 +27,14 @@ mod tunnel;
 
 pub use app::run;
 
+/// The tmux driver, for the integration test that runs it against a real tmux (feature
+/// `test-support`); it is not part of any interface.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod tmux_for_tests {
+    pub use crate::runner::tmux::*;
+}
+
 pub(crate) struct AppState {
     pub config: config::Config,
     pub background: background::Background,

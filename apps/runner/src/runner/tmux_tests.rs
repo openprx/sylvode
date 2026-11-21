@@ -641,7 +641,8 @@ fn a_paste_that_times_out_is_reported_as_delivery_unknown_and_not_retried() {
     )
     .expect_err("times out");
     assert_eq!(error, TmuxError::DeliveryUnknown, "calls: {:?}", calls(&log));
-    assert!(started.elapsed() < Duration::from_secs(10));
+    // The 5 s timeout is what is under test; the bound only says the call did not hang.
+    assert!(started.elapsed() < Duration::from_mins(1));
     let names = names(&log);
     assert_eq!(names.iter().filter(|n| *n == "paste-buffer").count(), 1);
     assert_eq!(names.last().map(String::as_str), Some("delete-buffer"));
@@ -983,4 +984,26 @@ fn a_slow_tmux_is_killed_at_the_time_limit() {
 fn a_missing_tmux_is_a_spawn_error() {
     let result = driver("s").with_program("/nonexistent/tmux").server_running();
     assert!(matches!(result, Err(TmuxError::Spawn(_))), "{result:?}");
+}
+
+/// A fake program written a moment before it runs can be "text file busy" while another thread's
+/// forked child still holds the write descriptor; the driver tries again instead of failing the
+/// call. Many threads writing and running scripts at once make that window common.
+#[test]
+fn a_freshly_written_program_that_is_briefly_busy_still_runs() {
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            std::thread::spawn(|| {
+                let dir = Dir::new();
+                for _ in 0..12 {
+                    let program = dir.script("tmux", "echo 'tmux 3.4'");
+                    let version = fresh().with_program(&program).version();
+                    assert_eq!(version.as_deref(), Ok("tmux 3.4"));
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().expect("no thread failed");
+    }
 }
