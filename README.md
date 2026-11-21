@@ -173,7 +173,8 @@ internal address is refused, and redirects are not followed.
 matched literally and case-insensitively — no wildcards, no URLs, no paths, all
 three are rejected at startup because they would silently never match. Internal
 receivers (compose services, in-cluster bots) must be listed there or their
-deliveries are refused. `outbound.allow_private = true` disables the checks
+deliveries are refused. The runner address of a project bot connection is checked the same
+way when it is entered, so a runner on an internal address must be listed too. `outbound.allow_private = true` disables the checks
 entirely and is only for a closed network you control end to end.
 
 ```toml
@@ -248,27 +249,35 @@ exactly one of these ways, each writing the `retried` or `failed` task event and
 the matching `ai_task.*` business event with the reason, and `ai.task_failed`
 when the task is failed:
 
-- **The receiver takes it** (`dispatched`) and reports the outcome through
+- **The runner takes it** (`dispatched`) and reports the outcome through
   `POST /api/v1/ai/callbacks/task/{id}/complete` or `.../fail`. Only the task's
-  own AI participant (its bot token) or a system administrator may call them.
+  own bot (its token) or a system administrator may call them.
   A callback may name its attempt (`?attempt=N`, the delivery's `attempts`); it
   is then accepted only while that attempt is `processing`, so a late callback
   never ends a re-queued or later attempt. `fail` with `"retry": false` fails
   the task at once instead of scheduling a retry.
-- **The receiver declines it** in its answer: `no_agent`, `ignored`, `refused`
+- **The runner declines it** in its answer: `no_agent`, `ignored`, `refused`
   (for example safe mode), or an HTTP 4xx other than 408, 409, 425 and 429. The
   worker fails the task at once, without using up the remaining attempts, with
-  an error message that quotes the answer: a repeat seconds later would get the
-  same answer, and the receiver may hold no token that can end the task itself.
-  Fix the receiver's configuration and assign the task again.
+  an error message such as `the runner refused the task (path_outside_allowlist): ...`
+  (the runner's own `reason_code` is stored in the event next to the text): a repeat
+  seconds later would get the same answer, and the runner may hold no token that
+  can end the task itself. Fix the runner's configuration and assign the task
+  again. For a project that has execution settings the issue also gets a
+  `Could not start: ...` comment.
 - **The delivery fails** (no active webhook, a transport error, HTTP 5xx, 408,
   409, 425, 429): the task goes back to `pending` with a delay of
   `attempts * 30` seconds while attempts remain, and is failed after the last.
 - **Nothing ends it** within `[ai_tasks] processing_timeout_secs` (default one
   hour): the worker re-queues it while attempts remain and fails it after the
   last, with a message naming the timeout and the attempt. This covers a
-  receiver that stopped, an agent that hangs, and a callback that was refused or
-  lost. Keep the timeout well above the receiver's longest agent run.
+  runner that stopped, an agent that hangs, and a callback that was refused or
+  lost. Keep the timeout well above the runner's longest agent run.
+
+A bot connected to a project (see below) has a **delivery hold**: after the
+connection is made, and after its credentials are rotated, the worker leaves the
+bot's pending tasks `pending` until the runner has used the new token (its
+start-up handshake does), for at most one hour.
 
 Whichever of these commits first wins; the others find the attempt no longer
 `processing` and change nothing.
@@ -282,7 +291,7 @@ and awaits them sequentially.
 
 | Pipeline             | Source                                                                 | Behavior                                                      |
 | -------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
-| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s; fails a task the receiver declines; re-queues or fails a task left `processing` past `[ai_tasks] processing_timeout_secs` |
+| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s; fails a task the runner declines; holds a newly connected bot's tasks until its token has been used; re-queues or fails a task left `processing` past `[ai_tasks] processing_timeout_secs` |
 | Operation-log cleanup | `bot_operation_logs`                                                  | Deletes metadata records older than `[audit]` retention       |
 | Form jobs            | `form_import_jobs`, `form_export_jobs`, `form_attachment_package_jobs` | Plus expiry cleanup of package artifacts and signature values |
 | Proposal settlement  | `proposals`                                                            | Settles expired proposals (moved off the API read path)       |
@@ -329,7 +338,7 @@ MCP authenticates to the API with **bot tokens** (prefix `opr_`), managed under
 activity feeds, is scoped to one workspace, creates a bot user for audit-trail
 integrity (`entity_type = bot`, `agent_type = mcp`; the same kind of identity an
 administrator creates, so it can be assigned work, named as a webhook's bot user
-and registered as an AI participant), and carries `read`, `write` or `admin` permissions that the
+and connected to a project), and carries `read`, `write` or `admin` permissions that the
 API enforces: safe methods need `read`, every other method needs `write`, and
 `admin` implies both.
 
@@ -515,8 +524,9 @@ Flow (`/flow/*`, `/collab/*`, `/workspaces/{id}/flow/*`); forms (`/forms/*`,
 plugins and events (`/plugins/*`, `/check-results/*`);
 governance (`/proposals/*`, `/proposal-comments/*`, `/decisions/*`,
 `/decision-domains/*`, `/governance/*`, `/trust-scores/*`,
-`/impact-reviews/*`, `/vetoers/*`); AI (`/ai/*`, `/ai-participants/*`,
-`/ai-learning/*`); templates (`/scenario-templates/*`, `/project-types/*`,
+`/impact-reviews/*`, `/vetoers/*`); AI (`/ai/*`, `/ai-learning/*`, the
+project-scoped `/projects/{id}/ai-participants/{bot_id}/learning`); bot connections
+(`/projects/{id}/bot-connection`, `.../disable`, `.../enable`, `.../rotate`); templates (`/scenario-templates/*`, `/project-types/*`,
 `/proposal-templates/*`); files and misc (`/upload`, `/uploads/*`, `/search`,
 `/export/*`, `/notifications/*`).
 

@@ -137,33 +137,6 @@ export interface AuditReport {
 	generated_by: string;
 }
 
-export interface AiLearningRecord {
-	id: number;
-	ai_participant_id: string;
-	review_id: string;
-	proposal_id: string;
-	domain: string;
-	review_rating: string;
-	ai_vote_choice?: string;
-	ai_vote_reason?: string;
-	outcome_alignment: string;
-	lesson_learned?: string;
-	will_change?: string;
-	follow_up_improvement?: string;
-	created_at: string;
-}
-
-export interface AiAlignmentStats {
-	ai_participant_id: string;
-	total: number;
-	aligned: number;
-	misaligned: number;
-	neutral: number;
-	overall_alignment_rate: number;
-	recent_alignment_rate: number;
-	improvement_trend: number;
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
 	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
@@ -204,31 +177,6 @@ function mapAuditReport(raw: Record<string, unknown>): AuditReport {
 		key_insights: raw.key_insights,
 		generated_at: String(raw.generated_at ?? ''),
 		generated_by: String(raw.generated_by ?? '')
-	};
-}
-
-/** Learning records are read per project: the same bot can be a participant of several. */
-function learningBase(projectId: string, aiParticipantId: string): string {
-	return `/api/v1/projects/${encodeURIComponent(projectId)}/ai-participants/${encodeURIComponent(aiParticipantId)}`;
-}
-
-function mapLearning(raw: Record<string, unknown>): AiLearningRecord {
-	return {
-		id: Number(raw.id ?? 0),
-		ai_participant_id: String(raw.ai_participant_id ?? ''),
-		review_id: String(raw.review_id ?? ''),
-		proposal_id: String(raw.proposal_id ?? ''),
-		domain: String(raw.domain ?? ''),
-		review_rating: String(raw.review_rating ?? ''),
-		ai_vote_choice: raw.ai_vote_choice ? String(raw.ai_vote_choice) : undefined,
-		ai_vote_reason: raw.ai_vote_reason ? String(raw.ai_vote_reason) : undefined,
-		outcome_alignment: String(raw.outcome_alignment ?? ''),
-		lesson_learned: raw.lesson_learned ? String(raw.lesson_learned) : undefined,
-		will_change: raw.will_change ? String(raw.will_change) : undefined,
-		follow_up_improvement: raw.follow_up_improvement
-			? String(raw.follow_up_improvement)
-			: undefined,
-		created_at: String(raw.created_at ?? '')
 	};
 }
 
@@ -503,90 +451,5 @@ export const governanceExtApi = {
 			};
 		}
 		return { code: 0, message: res.message, data: mapAuditReport(res.data) };
-	},
-
-	async getAiReviewFeedback(reviewId: string): Promise<ApiResult<{ items: AiLearningRecord[] }>> {
-		const res = await apiClient.get<Record<string, unknown>>(
-			`/api/v1/ai-learning/${reviewId}/feedback`
-		);
-		if (res.code !== 0 || !res.data) {
-			return {
-				code: res.code,
-				message: res.message || get(t)('governanceExt.learningLoadFailed'),
-				data: null
-			};
-		}
-		return {
-			code: 0,
-			message: res.message,
-			data: {
-				items: Array.isArray(res.data.items)
-					? res.data.items.map((item) => mapLearning(asRecord(item)))
-					: []
-			}
-		};
-	},
-
-	async getAiParticipantLearning(
-		projectId: string,
-		aiParticipantId: string,
-		params?: { domain?: string; page?: number; per_page?: number }
-	): Promise<ApiResult<PaginatedData<AiLearningRecord>>> {
-		const query = new URLSearchParams();
-		if (params?.domain) query.set('domain', params.domain);
-		if (params?.page) query.set('page', String(params.page));
-		if (params?.per_page) query.set('per_page', String(params.per_page));
-		const endpoint = query.size
-			? `${learningBase(projectId, aiParticipantId)}/learning?${query.toString()}`
-			: `${learningBase(projectId, aiParticipantId)}/learning`;
-
-		const res = await apiClient.get<PaginatedData<Record<string, unknown>>>(endpoint);
-		if (res.code !== 0 || !res.data) {
-			return {
-				code: res.code,
-				message: res.message || get(t)('governanceExt.learningLoadFailed'),
-				data: null
-			};
-		}
-
-		return {
-			code: 0,
-			message: res.message,
-			data: {
-				...res.data,
-				items: Array.isArray(res.data.items) ? res.data.items.map(mapLearning) : []
-			}
-		};
-	},
-
-	async getAiParticipantAlignmentStats(
-		projectId: string,
-		aiParticipantId: string
-	): Promise<ApiResult<AiAlignmentStats>> {
-		const res = await apiClient.get<Record<string, unknown>>(
-			`${learningBase(projectId, aiParticipantId)}/alignment-stats`
-		);
-		if (res.code !== 0 || !res.data) {
-			return {
-				code: res.code,
-				message: res.message || get(t)('governanceExt.learningLoadFailed'),
-				data: null
-			};
-		}
-
-		return {
-			code: 0,
-			message: res.message,
-			data: {
-				ai_participant_id: String(res.data.ai_participant_id ?? aiParticipantId),
-				total: Number(res.data.total ?? 0),
-				aligned: Number(res.data.aligned ?? 0),
-				misaligned: Number(res.data.misaligned ?? 0),
-				neutral: Number(res.data.neutral ?? 0),
-				overall_alignment_rate: Number(res.data.overall_alignment_rate ?? 0),
-				recent_alignment_rate: Number(res.data.recent_alignment_rate ?? 0),
-				improvement_trend: Number(res.data.improvement_trend ?? 0)
-			}
-		};
 	}
 };

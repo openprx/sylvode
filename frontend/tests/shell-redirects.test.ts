@@ -76,7 +76,6 @@ suite.check('unknown paths are untouched', () => {
 		`/projects/${P}/archive`,
 		`/projects/${P}/audit-reports/a/b`,
 		`/workspace/${W}/projects/${P}/audit-reports`,
-		`/ai-agents/${P}/learning`,
 		'/plugins',
 		'/flow/package',
 		`/workspace/${W}/settings/flow`

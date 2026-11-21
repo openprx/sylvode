@@ -662,6 +662,39 @@ async function sectionConfirmations(api) {
 		await closePage(page);
 	}
 
+	// --- bot connection ---------------------------------------------------------------------
+	// The Execution section's page arrives later; the connection API is what is accepted here:
+	// connect, read, and remove (the last connection releases the bot's token and webhook).
+	await check('remove bot connection: the connection goes, the token is revoked, the webhook is deleted', async () => {
+		const name = `Acc Bot ${stamp}`;
+		const path = `/api/v1/projects/${project}/bot-connection`;
+		const connected = await api.must('POST', path, {
+			bot: { name },
+			runner_url: 'http://93.184.216.34:9090',
+			cli: 'claude',
+			working_directory: '/tmp/acceptance'
+		});
+		expect(connected.config_block?.text?.includes('token = "opr_'), 'the connect answer has no configuration block');
+		secrets.add(connected.config_block.text);
+		const botId = connected.connection.bot.id;
+		const read = await api.must('GET', path);
+		expect(read.connection?.bot?.id === botId, 'the connection is not readable after connect');
+		expect(read.config_block === undefined && !JSON.stringify(read).includes('opr_'), 'a read returned a secret');
+		const hooks = items(await api.must('GET', `/api/v1/workspaces/${ws}/webhooks`));
+		expect(
+			hooks.some((hook) => hook.bot_user_id === botId && hook.managed_by?.kind === 'project_connection'),
+			'the managed webhook is not reported as managed'
+		);
+		await api.must('DELETE', `${path}?expected_version=${read.connection.version}`);
+		expect((await api.must('GET', path)).connection === null, 'the connection is still there after removal');
+		const hooksAfter = items(await api.must('GET', `/api/v1/workspaces/${ws}/webhooks`));
+		expect(!hooksAfter.some((hook) => hook.bot_user_id === botId), 'the webhook was not deleted');
+		const bots = items(await api.must('GET', `/api/v1/workspaces/${ws}/bots`));
+		const left = bots.find((bot) => bot.id === botId);
+		expect(left !== undefined && left.is_active === false, 'the token was not revoked');
+		return 'connected, read, removed; token revoked; webhook deleted';
+	});
+
 	// --- workflow and workflow state -------------------------------------------------------
 	{
 		const name = `acc-workflow-${stamp}`;
@@ -1336,7 +1369,6 @@ async function sectionErrors(api) {
 		{ name: 'non-existent project', path: `/workspace/${ws}/projects/${NIL_ID}` },
 		{ name: 'non-existent workspace members', path: `/workspace/${NIL_ID}/members` },
 		{ name: 'non-existent user trust profile', path: `/users/${NIL_ID}/trust` },
-		{ name: 'non-existent AI participant', path: `/ai-agents/${NIL_ID}/learning?projectId=${NIL_ID}` },
 		{ name: 'non-existent audit report', path: `/workspace/${ws}/projects/${project}/audit-reports/${NIL_ID}`, extra: true },
 		{ name: 'non-existent form record', path: `/workspace/${ws}/projects/${project}/forms/records/${NIL_ID}`, extra: true },
 		{ name: 'non-existent proposal', path: `/proposals/${NIL_ID}`, extra: true },

@@ -1083,19 +1083,7 @@
 		"aiParticipation": "AI 参与统计",
 		"domainStats": "域统计",
 		"keyInsights": "关键洞察",
-		"learningLoadFailed": "加载 AI 学习记录失败",
-		"learningTitle": "AI 参与者学习轨迹",
-		"learningSubtitle": "参与者：{id}",
-		"learningEntry": "学习轨迹",
-		"overallAlignmentRate": "总体对齐率",
-		"recentAlignmentRate": "近期对齐率",
-		"improvementTrend": "改进趋势",
-		"alignment": "对齐结果",
-		"viewFeedback": "查看反馈",
-		"chainEmptyNoLinkedIssues": "该提案尚未关联任何工作项，链路信息暂不可用。",
-		"feedbackForReview": "Review 反馈：{id}",
-		"review": "评审",
-		"rating": "评分"
+		"chainEmptyNoLinkedIssues": "该提案尚未关联任何工作项，链路信息暂不可用。"
 	},
 	"trustBoard": {
 		"title": "信任积分排行榜",
@@ -2527,7 +2515,6 @@
 		"trustBoard": "Sylvode - 信任积分排行榜",
 		"userTrust": "Sylvode - 信任档案 {id}",
 		"vetoDetail": "Sylvode - 否决详情",
-		"aiLearning": "Sylvode - AI 学习轨迹",
 		"trustAppeals": "Sylvode - 积分申诉",
 		"login": "Sylvode - 登录",
 		"flow": "Flow",

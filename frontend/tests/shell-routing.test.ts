@@ -33,7 +33,6 @@ suite.check('destinations by route', () => {
 		[`/workspace/${W}/flow/o1`, 'flow'],
 		['/shared-blocks/s1', 'flow'],
 		['/agents', 'agents'],
-		['/ai-agents/a1/learning', 'agents'],
 		['/governance', 'governance'],
 		['/proposals/abc/chain', 'governance'],
 		['/trust-scores/appeals', 'governance'],

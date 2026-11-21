@@ -27,7 +27,6 @@ const RULES: readonly TitleRule[] = [
 	rule(/^\/decisions\/analytics$/, 'pageTitle.decisionAnalytics'),
 	rule(/^\/governance\/config$/, 'pageTitle.governanceConfig'),
 	rule(/^\/governance\/audit-logs$/, 'pageTitle.governanceAuditLogs'),
-	rule(/^\/ai-agents\/[^/]+\/learning$/, 'pageTitle.aiLearning'),
 	rule(/^\/proposals\/[^/]+\/review$/, 'pageTitle.proposalImpactReview'),
 	rule(/^\/proposals\/[^/]+\/edit$/, 'pageTitle.proposalEdit'),
 	rule(/^\/proposals\/[^/]+\/veto$/, 'pageTitle.vetoDetail'),

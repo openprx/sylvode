@@ -1083,19 +1083,7 @@
 		"aiParticipation": "AI participation",
 		"domainStats": "Domain stats",
 		"keyInsights": "Key insights",
-		"learningLoadFailed": "Failed to load AI learning records",
-		"learningTitle": "AI Participant Learning",
-		"learningSubtitle": "Participant: {id}",
-		"learningEntry": "Learning trajectory",
-		"overallAlignmentRate": "Overall alignment rate",
-		"recentAlignmentRate": "Recent alignment rate",
-		"improvementTrend": "Improvement trend",
-		"alignment": "Alignment",
-		"viewFeedback": "View feedback",
-		"chainEmptyNoLinkedIssues": "This proposal is not linked to any work item yet, so chain data is currently unavailable.",
-		"feedbackForReview": "Feedback for review: {id}",
-		"review": "Review",
-		"rating": "Rating"
+		"chainEmptyNoLinkedIssues": "This proposal is not linked to any work item yet, so chain data is currently unavailable."
 	},
 	"trustBoard": {
 		"title": "Trust Score Leaderboard",
@@ -2527,7 +2515,6 @@
 		"trustBoard": "Sylvode - Trust Board",
 		"userTrust": "Sylvode - Trust Profile {id}",
 		"vetoDetail": "Sylvode - Veto Details",
-		"aiLearning": "Sylvode - AI Learning",
 		"trustAppeals": "Sylvode - Trust Appeals",
 		"login": "Sylvode - Login",
 		"flow": "Flow",

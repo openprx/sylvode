@@ -299,7 +299,6 @@ suite.check('scope change: where each destination goes', () => {
 	assertEqual(go('/workspace/w0', 'w1'), '/workspace/w1', 'home with another workspace id');
 	assertEqual(go('/workspace/w0', 'personal'), '/workspace', 'home to personal');
 	assertEqual(go('/inbox', 'w1'), null, 'home without a workspace id stays');
-	assertEqual(go('/ai-agents/a1/learning', 'w1'), null, 'learning page stays');
 	assertEqual(go('/agents', 'w1'), null, 'agents root stays');
 	assertEqual(go('/governance', 'w1'), null, 'governance stays');
 	assertEqual(

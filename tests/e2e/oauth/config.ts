@@ -22,8 +22,11 @@ export interface Config {
 	p1Name: string;
 	p2Key: string;
 	p2Name: string;
-	botEmail: string;
 	botName: string;
+	/** Where Sylvode delivers the bot's tasks; the connection requires it to pass the outbound policy. */
+	runnerUrl: string;
+	/** The bot's working directory on the runner machine, as typed on the connection. */
+	workingDirectory: string;
 	pinned: { workspaceId?: string; p1Id?: string; p2Id?: string; botId?: string };
 	/** Output directory of the run; empty in modes that do not write results. */
 	outDir: string;
@@ -159,8 +162,9 @@ export function loadConfig(env: Env, mode: Mode): Config {
 		p1Name: get('OAUTH_E2E_P1_NAME') ?? `${NAME_PREFIX}alpha`,
 		p2Key: get('OAUTH_E2E_P2_KEY') ?? 'QPB',
 		p2Name: get('OAUTH_E2E_P2_NAME') ?? `${NAME_PREFIX}beta`,
-		botEmail: get('OAUTH_E2E_BOT_EMAIL') ?? `${NAME_PREFIX}bot@e2e.sylvode.test`,
 		botName: get('OAUTH_E2E_BOT_NAME') ?? `${NAME_PREFIX}bot`,
+		runnerUrl: get('OAUTH_E2E_RUNNER_URL') ?? 'http://127.0.0.1:9',
+		workingDirectory: get('OAUTH_E2E_WORKING_DIRECTORY') ?? '/tmp/qa-p4',
 		pinned: {
 			workspaceId: get('OAUTH_E2E_WORKSPACE_ID'),
 			p1Id: get('OAUTH_E2E_P1_ID'),

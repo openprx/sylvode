@@ -69,6 +69,84 @@ Authorization: Bearer <token>
 
 ---
 
+## Bot Connections
+
+A project is connected to **one** bot, which runs its agent tasks on a runner. A connection owns the
+rows it makes: the bot user, its workspace seat, an `opr_` token (surface `mcp_stdio`, `read` and
+`write`), a webhook (`events = []`, URL = runner address + `/webhook`), the bot's AI participant
+registration for the project and the project's execution settings. They are shown as
+`managed_by` on the Bots and Webhooks endpoints and cannot be edited, revoked or deleted there.
+Every write is one transaction and carries the connection's `version`.
+
+Only workspace owners and admins manage a connection. Bots and connected (OAuth) applications are
+refused. Project members read a reduced view. The token and the webhook's signing secret are
+returned once, inside `config_block.text` (a `sylvode-runner.toml`), with `Cache-Control: no-store`;
+no read returns them again.
+
+### Read the Connection
+```http
+GET /api/v1/projects/:project_id/bot-connection
+Authorization: Bearer <token>
+```
+Owners and admins: `{"connection": {...}, "status": {...}}`, or `null` for both. Members:
+`{"connection": {"bot": {"id", "name"}, "enabled", "cli", "channel"}}`. `status` is computed on
+read: the runner (`waiting`, `online`, `not_reporting`, `unreachable`), the CLI and tmux
+(`ready`, `warning`, `missing`, `disabled`, `unknown`) and the last delivery.
+
+### Connect a Bot
+```http
+POST /api/v1/projects/:project_id/bot-connection
+Content-Type: application/json
+
+{"bot": {"name": "Build bot"}, "runner_url": "https://runner.example.net:9090",
+ "cli": "claude", "working_directory": "/home/dev/work/svwl",
+ "channel": "tmux", "on_complete_state": "auto", "on_fail_label_id": null,
+ "governance": {"max_domain_level": "voter", "can_veto_human_consensus": false,
+                "reason_min_length": 50, "domain_overrides": {}}}
+```
+`bot` is exactly one of `{"name"}` (a new bot) or `{"id"}` (a bot already connected to another
+project of the workspace, with the same `runner_url`). `channel`, `on_complete_state`,
+`on_fail_label_id` and `governance` are optional. The runner address must pass the outbound policy
+(`[outbound] allowed_hosts`). The answer is `{connection, status, config_block}`; `config_block` is
+`null` when an existing bot was added.
+
+### Update, Disable, Enable, Rotate
+```http
+PATCH /api/v1/projects/:project_id/bot-connection            {"expected_version": 3, "cli": "codex"}
+POST  /api/v1/projects/:project_id/bot-connection/disable    {"expected_version": 3}
+POST  /api/v1/projects/:project_id/bot-connection/enable     {"expected_version": 3}
+POST  /api/v1/projects/:project_id/bot-connection/rotate     {"expected_version": 3}
+```
+A stale version answers business code 409 `connection changed; reload` with the current
+connection. Changing the address or rotating bumps the version of every connection of the bot.
+Rotate replaces the token and the signing secret and returns a new `config_block`; the bot's tasks
+wait (at most one hour) until the runner has used the new token.
+
+### Remove the Connection
+```http
+DELETE /api/v1/projects/:project_id/bot-connection?expected_version=3
+```
+Removes the connection, the project's participant registration and its execution settings. When it
+was the bot's last connection the token is revoked, the webhook deleted and the workspace seat
+removed; the bot's user row is kept. Deleting a project does the same.
+
+### Runner Report
+```http
+PUT /api/v1/ai/runner/report
+Authorization: Bearer <bot token>
+```
+The runner's self-report (a subset of `sylvode.doctor.v1`), sent after its handshake and every
+600 seconds. Only component names, states and versions are kept; larger than 16 KiB answers 413.
+`GET /api/v1/ai/protocol` lists the `runner_report` feature and `runner_report_interval_secs`.
+
+### Removed
+The AI participants API (`/projects/:id/ai-participants` and its `{id}` routes) and
+`PUT /projects/:id/execution-settings` are gone. `GET .../execution-settings` stays. Learning
+records are read per project: `GET /projects/:id/ai-participants/:bot_id/learning` and
+`.../alignment-stats`.
+
+---
+
 ## Notification Center
 
 ### List Notifications
@@ -248,6 +326,7 @@ Content-Type: application/json
 | API | Required permission |
 |-----|---------|
 | Webhook management | Workspace administrator |
+| Bot connections | Workspace owner or administrator (members read a reduced view; bots and connected applications are refused) |
 | Notification management | Current user (can only manage their own notifications) |
 | Search | Workspace member (searches only resources the user may access) |
 | Project export | Workspace member |
