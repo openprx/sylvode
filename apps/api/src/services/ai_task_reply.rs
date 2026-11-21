@@ -1152,8 +1152,8 @@ mod tests {
             let proposal = format!("PROP-{}", Uuid::new_v4());
             exec(
                 &self.db,
-                "INSERT INTO ai_participants (id, project_id, name, model, provider, capabilities, registered_by) \
-                 VALUES ($1, $2, 'voter', 'm', 'p', '[]', $3) ON CONFLICT (id) DO NOTHING",
+                "INSERT INTO ai_participants (id, project_id, name, registered_by) \
+                 VALUES ($1, $2, 'voter', $3) ON CONFLICT (project_id, id) DO NOTHING",
                 vec![
                     self.bot.to_string().into(),
                     self.tenant.project_id.into(),

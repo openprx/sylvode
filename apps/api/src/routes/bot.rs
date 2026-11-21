@@ -530,8 +530,8 @@ mod token_bot_identity_database_tests {
 
         exec(
             db,
-            "INSERT INTO ai_participants (id, project_id, name, model, provider, capabilities, registered_by) \
-             VALUES ($1, $2, 'loop bot', 'claude-code', 'anthropic', '{}'::jsonb, $3)",
+            "INSERT INTO ai_participants (id, project_id, name, registered_by) \
+             VALUES ($1, $2, 'loop bot', $3)",
             vec![
                 bot_id.to_string().into(),
                 tenant.project_id.into(),

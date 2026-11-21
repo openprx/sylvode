@@ -9,6 +9,6 @@ DROP TRIGGER IF EXISTS ai_participant_config_version ON ai_participants;
 -- UPDATE OF deliberately advances even an accepted no-op configuration PATCH. A heartbeat that
 -- only writes last_active_at does not run this trigger and cannot invalidate an editing draft.
 CREATE TRIGGER ai_participant_config_version BEFORE UPDATE OF
- name,model,provider,api_endpoint,capabilities,domain_overrides,max_domain_level,
+ name,domain_overrides,max_domain_level,
  can_veto_human_consensus,reason_min_length,is_active
  ON ai_participants FOR EACH ROW EXECUTE FUNCTION touch_ai_participant_config_version();
