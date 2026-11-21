@@ -4045,6 +4045,7 @@ dependencies = [
  "hex",
  "hmac",
  "nix 0.31.3",
+ "parking_lot",
  "reqwest",
  "serde",
  "serde_json",
@@ -4057,6 +4058,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",
+ "unicode-properties",
  "url",
  "uuid",
 ]

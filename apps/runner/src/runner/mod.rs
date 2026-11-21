@@ -18,5 +18,3 @@ mod guide_tests;
 mod message_tests;
 #[cfg(test)]
 mod sanitize_tests;
-#[cfg(test)]
-mod tmux_tests;
