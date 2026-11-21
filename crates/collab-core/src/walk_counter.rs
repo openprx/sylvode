@@ -21,6 +21,7 @@ thread_local! {
     static FALLBACK_REASONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static PLACEMENT_WALKS: Cell<usize> = const { Cell::new(0) };
     static ID_READS: Cell<usize> = const { Cell::new(0) };
+    static DELTA_READS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// One evaluation of the editor-model floor (`minimum_editor_model` without a cache hit).
@@ -104,6 +105,16 @@ pub fn record_id_read() {
     ID_READS.with(|count| count.set(count.get() + 1));
 }
 
+/// One conversion of a text's delta by the work measure (`work::text_mark_items`), by container id.
+pub fn record_delta_read(text_id: String) {
+    DELTA_READS.with(|log| log.borrow_mut().push(text_id));
+}
+
+/// The texts whose delta the work measure converted since the last [`reset`], in order.
+pub fn delta_reads() -> Vec<String> {
+    DELTA_READS.with(|log| log.borrow().clone())
+}
+
 /// The `logical_id` reads recorded since the last [`reset`].
 pub fn id_reads() -> usize {
     ID_READS.with(Cell::get)
@@ -169,6 +180,7 @@ pub fn reset() {
     ROOT_PROBE_LOG.with(|log| log.borrow_mut().clear());
     ROOT_FORKS.with(|count| count.set(0));
     UNIT_EVALUATIONS.with(|count| count.set(0));
+    DELTA_READS.with(|log| log.borrow_mut().clear());
     FALLBACKS.with(|count| count.set(0));
     DIRECT_REFUSALS.with(|count| count.set(0));
     FALLBACK_REASONS.with(|log| log.borrow_mut().clear());

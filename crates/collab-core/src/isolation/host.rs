@@ -164,7 +164,8 @@ pub struct WorkerObservation {
 
 /// Same as [`isolated_apply`], and additionally reports the [`WorkerObservation`] of the run.
 /// Callers use it to log whether a [`IsolatedApplyError::WallCeiling`] came with the worker
-/// having had the CPU or not.
+/// having had the CPU or not. It runs the default (incremental) window mode: it has no mode
+/// parameter, so a caller that needs to observe a [`WindowMode::Full`] attempt needs one added.
 pub fn isolated_apply_observed(
     base_snapshot: &[u8],
     update: &[u8],

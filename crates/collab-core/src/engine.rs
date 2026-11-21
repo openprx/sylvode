@@ -1311,7 +1311,11 @@ impl LoroCollabEngine {
             let mut within = true;
             list.for_each(|element| {
                 if within && let ValueOrContainer::Container(container) = element {
-                    within = items.add_container(&container, 0);
+                    within = items.add_container(&container, 0)
+                        && match &container {
+                            Container::Map(block) => items.add_block_marks(block),
+                            _ => true,
+                        };
                 }
             });
             if !within {
@@ -1319,7 +1323,6 @@ impl LoroCollabEngine {
             }
         }
         // The projection reads a legacy node's text as a plain string, so its marks cost nothing.
-        items.without_marks();
         for tree_id in self.tree.nodes() {
             let meta = self.tree.get_meta(tree_id).map_err(|e| map_loro_error(&e, "<work>"))?;
             if !items.add(1) || !items.add_container(&Container::Map(meta), 0) {
@@ -1329,17 +1332,15 @@ impl LoroCollabEngine {
         Ok(Some(items.total()))
     }
 
-    /// The mark items (see [`crate::work::text_mark_items`]) of every editor block that has any, by
-    /// the block's key. Only blocks: the projection reads a legacy node's text as a plain string
-    /// (`semantic_snapshot`), so marks there cost it nothing and are not counted. `None` only when a
-    /// nesting is too deep to follow, which the item count refuses first. Unbounded in itself: call
-    /// it after `projection_items` accepted the page.
+    /// The mark items (see [`crate::work::block_mark_items`]) of every editor block that has any, by
+    /// the block's key. Only the inline texts the block reader converts count: the projection reads
+    /// no other text's marks (a legacy node's text is a plain string), so nothing else is converted
+    /// here, in setup or anywhere. Call it after `projection_items` accepted the page.
     pub(crate) fn unit_mark_items(&self) -> Option<HashMap<NodeId, u64>> {
         let mut found = HashMap::new();
-        let mut visits = u64::MAX;
         for id in self.root_block_ids().ok()?.unwrap_or_default() {
-            if let Some(container) = self.doc.get_container(id.clone()) {
-                let items = crate::work::container_mark_items(&container, u64::MAX, &mut visits)?;
+            if let Some(Container::Map(block)) = self.doc.get_container(id.clone()) {
+                let items = crate::work::block_mark_items(&block, u64::MAX)?;
                 if items > 0 {
                     found.insert(NodeId::from(id.to_string()), items);
                 }
@@ -1351,31 +1352,33 @@ impl LoroCollabEngine {
     /// What the touched blocks' mark items grew by since `facts`, summed over the blocks that grew
     /// (a block that shrank counts nothing, so the sum stays an upper bound).
     ///
-    /// Bounded before any projection work: the walk of a block stops as soon as the block's items
-    /// pass its base figure plus the `headroom` that is left, and the walks together enter at most
-    /// `visits` containers. `marked` says that the update carries a mark op. `None` means the budget cannot hold the result (or a walk could not be
-    /// completed within the allowance), and the caller falls back.
+    /// The walk of a block stops its value payload as soon as the block's items pass its base figure
+    /// plus the `headroom` that is left; the conversion of a text's delta itself cannot stop early,
+    /// and is bounded by the base figure (which the facts counted) and by the metered import (which
+    /// paid for every attribute the update added). `marked` says that the update carries a mark op.
+    /// `None` means the budget cannot hold the result, and the caller falls back.
     pub(crate) fn mark_items_added(
         &self,
         facts: &crate::facts::BaseFacts,
         blocks: &HashSet<loro::ContainerID>,
         marked: bool,
         headroom: u64,
-        mut visits: u64,
     ) -> Option<u64> {
         let mut added: u64 = 0;
         for id in blocks {
-            let Some(container) = self.doc.get_container(id.clone()) else {
+            let Some(Container::Map(block)) = self.doc.get_container(id.clone()) else {
                 continue;
             };
-            let before = facts.marks.get(id.to_string().as_str()).copied().unwrap_or(0);
-            // A text gains marks only from a mark op: a block with none before and none in the
-            // update has none now, and is not read.
-            if before == 0 && !marked {
+            let key = id.to_string();
+            let before = facts.marks.get(key.as_str()).copied().unwrap_or(0);
+            // A text gains marks only from a mark op, so a block that the projection read with none
+            // before and none in the update has none now. A block the projection did not read (no
+            // unit) may have become readable through this update, and is counted.
+            if before == 0 && !marked && facts.units.contains_key(key.as_str()) {
                 continue;
             }
             let left = headroom.saturating_sub(added);
-            let after = crate::work::container_mark_items(&container, before.saturating_add(left), &mut visits)?;
+            let after = crate::work::block_mark_items(&block, before.saturating_add(left))?;
             added = added.saturating_add(after.saturating_sub(before));
         }
         Some(added)

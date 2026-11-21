@@ -62,6 +62,28 @@ fn supported(kind: &str) -> bool {
             | "childPage"
     )
 }
+/// Whether the block reader converts the inline texts of this block (`page_inline::spans`): the
+/// kind is supported and, unless it is an atom, the block is not a dependency node. The same
+/// conditions as [`current_read`], without building the attributes.
+pub fn reads_inline_marks(map: &LoroMap) -> bool {
+    let Some(kind) = string(map, "nodeName") else {
+        return false;
+    };
+    if !supported(&kind) {
+        return false;
+    }
+    if crate::editor_media::is_atom(&kind) {
+        return true;
+    }
+    match map.get("attributes") {
+        Some(ValueOrContainer::Container(Container::Map(attributes))) => {
+            ["embed_type", "embed_object_id", "child_page_id", "reference_id"]
+                .iter()
+                .all(|key| attributes.get(key).is_none())
+        }
+        _ => true,
+    }
+}
 fn text_children(map: &LoroMap) -> Result<Vec<LoroText>, CollabError> {
     let list = children(map).ok_or_else(|| invalid("editor_block_missing_children"))?;
     let mut texts = Vec::new();

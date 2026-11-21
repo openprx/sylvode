@@ -479,3 +479,105 @@ fn window_realistic_fraction() {
         );
     }
 }
+
+/// The dense mark shape: one block of 20,000 characters cut into segments by `bold: true` marks on
+/// every eighth character (marks on alternate characters, as in the review, make 20,000 segments
+/// and are over the budget by themselves), then full-range marks with fresh one- and two-letter
+/// keys and the value `false` (which the reader skips before it checks the key, so any number of
+/// keys is accepted), added until the page is at its work budget. Each attribute instance is 9
+/// bytes of payload. Times the full window and the incremental window of a one-character edit in
+/// the dense block and in another, and prints the cost per item to compare with the 0.58 us the
+/// budget assumes.
+#[test]
+#[ignore = "calibration, run in release"]
+fn window_dense_mark_calibration() {
+    use super::window_round4_tests::first_text;
+    let keys: Vec<String> = ('b'..='z')
+        .map(String::from)
+        .chain(('a'..='z').flat_map(|a| ('a'..='z').map(move |b| format!("{a}{b}"))))
+        .collect();
+    let configure = |raw: &LoroDoc| {
+        let mut styles = loro::StyleConfigMap::new();
+        for key in keys.iter().map(String::as_str).chain(["bold"]) {
+            styles.insert(
+                key.into(),
+                loro::StyleConfig {
+                    expand: loro::ExpandType::None,
+                },
+            );
+        }
+        raw.config_text_style(styles);
+    };
+    let mut base = super::window_round2_tests::flat_page_of(50);
+    // Snapshots, not updates: the shapes below are far over the 64 KB update limit, which the
+    // measurement does not need.
+    let edited = |base: &[u8], peer: u64, edit: &dyn Fn(&LoroDoc)| {
+        let raw = LoroDoc::new();
+        raw.import(base).unwrap();
+        raw.set_peer_id(peer).unwrap();
+        configure(&raw);
+        edit(&raw);
+        raw.commit();
+        raw.export(ExportMode::snapshot()).unwrap()
+    };
+    base = edited(&base, 47_000, &|raw| {
+        let text = first_text(raw, 0);
+        text.insert(1, &"y".repeat(19_999)).unwrap();
+        for at in (0..20_000).step_by(8) {
+            text.mark(at..at + 1, "bold", true).unwrap();
+        }
+    });
+    let measure_page = |label: &str, base: &[u8]| {
+        let engine = LoroCollabEngine::load(base).unwrap();
+        let items = engine.projection_items(u64::MAX).unwrap().unwrap();
+        let edit = |block: usize, peer: u64| {
+            raw_edit(base, peer, |raw| {
+                first_text(raw, block).insert(1, "z").unwrap();
+            })
+        };
+        let time = |update: &[u8], with_facts: bool| {
+            let mut best = Duration::MAX;
+            for _ in 0..5 {
+                let mut engine = LoroCollabEngine::load(base).unwrap();
+                engine.prewarm_for_writes();
+                let facts = if with_facts {
+                    crate::facts::BaseFacts::compute(&engine)
+                } else {
+                    None
+                };
+                let started = Instant::now();
+                crate::window_check::run_window(&mut engine, facts.as_ref(), update).unwrap();
+                best = best.min(started.elapsed());
+            }
+            best.as_secs_f64() * 1e3
+        };
+        let dense = edit(0, 47_900);
+        let other = edit(1, 47_901);
+        let full = time(&other, false);
+        println!(
+            "{label}: items {items:>7}  full window {full:7.2} ms ({:.3} us/item)  incremental: dense block {:7.2} ms, other block {:7.3} ms",
+            full * 1e3 / items as f64,
+            time(&dense, true),
+            time(&other, true),
+        );
+    };
+    measure_page("segments only", &base);
+    let mut peer = 47_001;
+    for key in &keys {
+        let next = edited(&base, peer, &|raw| {
+            first_text(raw, 0).mark(0..20_000, key, false).unwrap();
+        });
+        peer += 1;
+        let engine = LoroCollabEngine::load(&next).unwrap();
+        let items = engine.projection_items(u64::MAX).unwrap().unwrap();
+        let budget = crate::work::item_budget(50, 1, 20_050);
+        if items > budget {
+            break;
+        }
+        base = next;
+        if (peer - 47_001) % 2 == 0 {
+            measure_page(&format!("{} keys", peer - 47_001), &base);
+        }
+    }
+    measure_page("at the budget", &base);
+}

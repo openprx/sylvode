@@ -86,10 +86,28 @@
 //!
 //! The reader converts every attribute of every delta segment of a text (`page_inline::spans`), so
 //! a large mark value costs once per segment, and an update that splits a text adds segments that
-//! carry the values of marks it does not mention. A text therefore counts, on top of its
-//! characters, the payload of the attributes of each of its delta segments ([`text_mark_items`],
-//! [`BYTES_PER_ITEM`] bytes per item, rounded down per text, early exit at the ceiling). No value
-//! shape is refused.
+//! carry the values of marks it does not mention. The inline texts of the blocks the block reader
+//! converts (supported kind, not a dependency node: [`block_mark_items`]) therefore count, on top of
+//! their characters, the attributes of each delta segment ([`text_mark_items`]): the key and
+//! [`value_bytes`] of the value, at least [`ATTRIBUTE_MIN_BYTES`] per attribute instance, plus
+//! [`SEGMENT_BYTES`] for every segment after the first, [`BYTES_PER_ITEM`] bytes per item, rounded
+//! down per text, early exit at the ceiling. No value shape is refused. Every other text (a value of
+//! the `order` or alias map, a text under another key of a block, a text of a block the reader
+//! skips) is never converted by the projection, and counts by its characters only: converting it
+//! would be work that no window ever bounded, in a setup that has no limit.
+//!
+//! Calibration (`window_calibration_tests::window_dense_mark_calibration`, release, flat page of 50
+//! blocks, one block of 20,000 characters cut into segments by marks, then full-range marks with
+//! fresh keys and the value `false`, which the reader skips before it checks the key):
+//!
+//! | measure | page at the budget | full window | per item |
+//! | --- | --- | --- | --- |
+//! | 9 bytes per instance, nothing per segment, marks on alternate characters | 16,635 | 20.4 ms | 1.23 us |
+//! | 24 bytes per instance, 48 per segment, marks on every eighth character | 16,634 | 5.5 ms | 0.33 us |
+//!
+//! With the second measure the dense block's incremental window (which converts the touched text
+//! twice, once for the re-count and once for the evaluation) takes 7.3 ms, and a write to another
+//! block 0.03 ms.
 //!
 //! An op cannot state the segments it adds, so the window does not bound this part by the ops. The
 //! facts keep the mark items of every block that has any, and the window re-counts the blocks the
@@ -105,8 +123,8 @@
 //! the budget of the exact post-import totals.
 
 use loro::{
-    Container, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOpContent, JsonTextOp, JsonTreeOp, LoroText, LoroValue,
-    TextDelta, ValueOrContainer,
+    Container, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOpContent, JsonTextOp, JsonTreeOp, LoroMap, LoroText,
+    LoroValue, TextDelta, ValueOrContainer,
 };
 
 /// Characters of one text container that count as one item.
@@ -121,6 +139,20 @@ pub const CHARS_PER_ITEM: u64 = 256;
 /// stays an upper bound). The constant comes from `window_calibration_tests::window_payload_calibration`
 /// (see the table in the module documentation).
 pub const BYTES_PER_ITEM: u64 = 64;
+
+/// Bytes the measure charges for every attribute instance of a text segment, at least.
+///
+/// The key and the value of a mark can be a few bytes (`false` under a one-letter key is 9), but
+/// converting one instance costs an allocation, a hash insert and a conversion, about 0.2 us, which
+/// is a third of an item. See `window_calibration_tests::window_dense_mark_calibration`.
+pub const ATTRIBUTE_MIN_BYTES: u64 = 24;
+
+/// Bytes the measure charges for every segment of a text after the first.
+///
+/// A text with marks is cut into segments, each of which the reader walks and builds spans for,
+/// about 0.4 us, which is three quarters of an item. Charged only to a text that is cut at all, so
+/// the unmarked text of a realistic page pays nothing.
+pub const SEGMENT_BYTES: u64 = 48;
 
 /// Items no documented limit bounds that a page may hold on top of what its live totals allow.
 ///
@@ -281,25 +313,31 @@ pub fn op_work(content: &JsonOpContent) -> OpWork {
 /// The items of the style marks of one text: the payload of every attribute of every delta segment
 /// (a key and [`value_bytes`] of its value), divided by [`BYTES_PER_ITEM`] and rounded down.
 ///
-/// This is what the reader pays: `page_inline::spans` and `richtext::read_rich_text` convert every
-/// attribute of every segment, so a large mark value costs once per segment, and every mark that
+/// This is what the reader pays: `page_inline::spans` converts every attribute of every segment, so a large mark value costs once per segment, and every mark that
 /// splits a text adds segments that carry the values of the marks around it. `None` as soon as the
 /// items counted so far pass `stop_over`, so the work is at most `stop_over` items of payload and
 /// one value, whatever the text holds (the segments themselves are bounded by the text's length).
 pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64) -> Option<u64> {
+    #[cfg(test)]
+    crate::walk_counter::record_delta_read(loro::ContainerTrait::id(text).to_string());
     let mut bytes: u64 = 0;
+    let mut segments: u64 = 0;
     for delta in text.to_delta() {
-        let TextDelta::Insert {
-            attributes: Some(attributes),
-            ..
-        } = delta
-        else {
+        let TextDelta::Insert { attributes, .. } = delta else {
             continue;
         };
-        for (key, value) in &attributes {
-            bytes = bytes
-                .saturating_add(u64::try_from(key.len()).unwrap_or(u64::MAX))
-                .saturating_add(value_bytes(value));
+        // A text with no marks is one segment, which costs what its characters cost.
+        if segments > 0 {
+            bytes = bytes.saturating_add(SEGMENT_BYTES);
+        }
+        segments += 1;
+        for (key, value) in attributes.iter().flatten() {
+            bytes = bytes.saturating_add(
+                u64::try_from(key.len())
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(value_bytes(value))
+                    .max(ATTRIBUTE_MIN_BYTES),
+            );
         }
         if bytes / BYTES_PER_ITEM > stop_over {
             return None;
@@ -308,52 +346,29 @@ pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64) -> Option<u64> {
     Some(bytes / BYTES_PER_ITEM)
 }
 
-/// The mark items (see [`text_mark_items`]) of every text in a unit's container, nested to any
-/// depth up to [`MAX_DEPTH`]. `visits` is the number of containers the caller still allows itself
-/// to enter, shared across units; `None` when it runs out, when the total passes `stop_over` or when
-/// the nesting is too deep.
-pub(crate) fn container_mark_items(container: &Container, stop_over: u64, visits: &mut u64) -> Option<u64> {
+/// The mark items (see [`text_mark_items`]) of the texts of one editor block that the block reader
+/// converts: the direct text elements of its `children` list, and only when the reader reads the
+/// block at all ([`crate::editor_doc_bridge::reads_inline_marks`]). Every other text of a page (a
+/// text stored as a value of the `order` or alias map, under another key of a block or in its
+/// `attributes`, or in a block the reader skips) is never converted by the projection and counts by
+/// its characters only; converting it here would be work no window ever bounded.
+///
+/// Rounded down per text, so the sum equals what the base count adds. `None` as soon as the items
+/// counted so far pass `stop_over`.
+pub(crate) fn block_mark_items(block: &LoroMap, stop_over: u64) -> Option<u64> {
+    if !crate::editor_doc_bridge::reads_inline_marks(block) {
+        return Some(0);
+    }
+    let Some(ValueOrContainer::Container(Container::List(children))) = block.get("children") else {
+        return Some(0);
+    };
     let mut items: u64 = 0;
-    let mut pending = vec![(container.clone(), 0_usize)];
-    while let Some((next, depth)) = pending.pop() {
-        if depth > MAX_DEPTH || *visits == 0 {
-            return None;
-        }
-        *visits -= 1;
-        let mut push = |child: ValueOrContainer| {
-            if let ValueOrContainer::Container(child) = child {
-                pending.push((child, depth + 1));
+    for index in 0..children.len() {
+        if let Some(ValueOrContainer::Container(Container::Text(text))) = children.get(index) {
+            items = items.saturating_add(text_mark_items(&text, stop_over.saturating_sub(items))?);
+            if items > stop_over {
+                return None;
             }
-        };
-        match &next {
-            Container::Text(text) => {
-                items = items.saturating_add(text_mark_items(text, stop_over.saturating_sub(items))?);
-                if items > stop_over {
-                    return None;
-                }
-            }
-            Container::Map(map) => {
-                for key in map.keys() {
-                    if let Some(child) = map.get(&key) {
-                        push(child);
-                    }
-                }
-            }
-            Container::List(list) => {
-                for index in 0..list.len() {
-                    if let Some(child) = list.get(index) {
-                        push(child);
-                    }
-                }
-            }
-            Container::MovableList(list) => {
-                for index in 0..list.len() {
-                    if let Some(child) = list.get(index) {
-                        push(child);
-                    }
-                }
-            }
-            _ => {}
         }
     }
     Some(items)
@@ -364,23 +379,17 @@ pub(crate) fn container_mark_items(container: &Container, stop_over: u64, visits
 pub(crate) struct ItemCount {
     total: u64,
     ceiling: u64,
-    /// Whether the style marks of a text are counted (see [`text_mark_items`]).
-    marks: bool,
 }
 
 impl ItemCount {
     pub(crate) const fn new(ceiling: u64) -> Self {
-        Self {
-            total: 0,
-            ceiling,
-            marks: true,
-        }
+        Self { total: 0, ceiling }
     }
 
-    /// Counts no text marks from here on. For the part of the page whose texts the projection reads
-    /// as plain strings (the legacy tree nodes), so marks there cost the projection nothing.
-    pub(crate) const fn without_marks(&mut self) {
-        self.marks = false;
+    /// Adds the mark items of an editor block (see [`block_mark_items`]). False once the ceiling is
+    /// passed.
+    pub(crate) fn add_block_marks(&mut self, block: &LoroMap) -> bool {
+        block_mark_items(block, self.ceiling.saturating_sub(self.total)).is_some_and(|marks| self.add(marks))
     }
 
     /// Adds `n` items. False once the ceiling is passed.
@@ -455,13 +464,11 @@ impl ItemCount {
                 list.for_each(|value| self.add_element(value, depth, &mut within, &mut bytes));
                 within && self.add(bytes / BYTES_PER_ITEM)
             }
-            Container::Text(text) => {
-                self.add(
-                    u64::try_from(text.len_unicode())
-                        .unwrap_or(u64::MAX)
-                        .div_ceil(CHARS_PER_ITEM),
-                ) && (!self.marks || text_mark_items(text, self.ceiling).is_some_and(|marks| self.add(marks)))
-            }
+            Container::Text(text) => self.add(
+                u64::try_from(text.len_unicode())
+                    .unwrap_or(u64::MAX)
+                    .div_ceil(CHARS_PER_ITEM),
+            ),
             // A tree nested in a document is not read by the projection; its nodes are counted so
             // that it cannot hide growth.
             Container::Tree(tree) => self.add(u64::try_from(tree.nodes().len()).unwrap_or(u64::MAX)),
