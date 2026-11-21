@@ -470,23 +470,6 @@ pub fn project_argument(args: &Value) -> Result<Option<String>, String> {
     }
 }
 
-/// The instructions `initialize` carries until the generated guide replaces them (P3.7).
-pub const fn instructions(mode: McpToolMode) -> &'static str {
-    match mode {
-        McpToolMode::Search => {
-            "Sylvode. Find tools with sylvode_search, call tools that only read with sylvode_read and tools \
-             that change data with sylvode_write. When a task is assigned to you, handle it with \
-             sylvode_task_get, sylvode_task_ack, sylvode_task_progress and finally sylvode_task_complete or \
-             sylvode_task_fail."
-        }
-        McpToolMode::Full => {
-            "Sylvode. Every tool is listed; call it by name. When a task is assigned to you, handle it with \
-             sylvode_task_get, sylvode_task_ack, sylvode_task_progress and finally sylvode_task_complete or \
-             sylvode_task_fail."
-        }
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::indexing_slicing, clippy::needless_pass_by_value)]
 mod tests {

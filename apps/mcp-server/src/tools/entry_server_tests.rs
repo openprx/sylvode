@@ -165,7 +165,7 @@ async fn initialize_carries_the_instructions_and_the_task_capability_for_a_plain
         );
         assert_eq!(
             response.pointer("/result/instructions").and_then(Value::as_str),
-            Some(entry::instructions(mode))
+            Some(crate::guides::SERVER_INSTRUCTIONS)
         );
         assert!(response.pointer("/result/capabilities/tools").is_some());
     }

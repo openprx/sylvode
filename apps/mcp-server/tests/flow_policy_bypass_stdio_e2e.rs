@@ -537,7 +537,8 @@ async fn all_resource_aliases_are_identical_over_stdio_http_and_sse() -> TestRes
     assert_eq!(registry_identities(&http_list, &http_templates)?, observed);
     assert_eq!(registry_identities(&sse_list, &sse_templates)?, observed);
     let expected = [
-        "sylvode://skills/openpr-mcp",
+        "sylvode://skills/sylvode-mcp",
+        "sylvode://skills/sylvode-mcp/tools",
         "sylvode://guides/agents",
         "sylvode://guides/workflows",
         "sylvode://scenario-templates",

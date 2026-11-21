@@ -3,8 +3,19 @@
 use mcp_server::skillgen::{Catalogue, LintInput, Output, Sources, lint, outputs, paths, unified_diff};
 use mcp_server::tools::catalog::{CATALOG, CATEGORIES};
 use mcp_server::tools::entry::ENTRY_TOOL_NAMES;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+/// Writes to stdout. A closed pipe is not worth failing the run for.
+fn say(text: &str) {
+    drop(write!(std::io::stdout().lock(), "{text}"));
+}
+
+/// Writes to stderr.
+fn warn(text: &str) {
+    drop(write!(std::io::stderr().lock(), "{text}"));
+}
 
 const USAGE: &str = "usage: sylvode-skillgen (--write | --check | --lint) [--root PATH]";
 const FIX: &str = "cargo run -p mcp-server --bin sylvode-skillgen -- --write";
@@ -37,10 +48,10 @@ fn parse(arguments: &[String]) -> Result<Arguments, String> {
             }
             other => return Err(format!("unknown argument {other}")),
         };
-        if let Some(chosen) = chosen {
-            if mode.replace(chosen).is_some() {
-                return Err("choose one of --write, --check and --lint".to_string());
-            }
+        if let Some(chosen) = chosen
+            && mode.replace(chosen).is_some()
+        {
+            return Err("choose one of --write, --check and --lint".to_string());
         }
     }
     Ok(Arguments {
@@ -82,7 +93,7 @@ fn write_all(root: &Path, generated: &[Output]) -> Result<usize, String> {
             std::fs::create_dir_all(parent).map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
         }
         std::fs::write(&path, &output.content).map_err(|error| format!("cannot write {}: {error}", output.path))?;
-        println!("wrote {}", output.path);
+        say(&format!("wrote {}\n", output.path));
         written += 1;
     }
     Ok(written)
@@ -95,11 +106,11 @@ fn check_all(root: &Path, generated: &[Output]) -> bool {
         let diff = unified_diff(output.path, &current, &output.content);
         if !diff.is_empty() {
             stale = true;
-            print!("{diff}");
+            say(&diff);
         }
     }
     if stale {
-        eprintln!("The generated files are out of date. Fix with: {FIX}");
+        warn(&format!("The generated files are out of date. Fix with: {FIX}\n"));
     }
     !stale
 }
@@ -122,7 +133,7 @@ fn run_lint(root: &Path, generated: &[Output]) -> Result<bool, String> {
         allow: &allow,
     });
     for problem in &problems {
-        eprintln!("lint: {problem}");
+        warn(&format!("lint: {problem}\n"));
     }
     Ok(problems.is_empty())
 }
@@ -141,7 +152,7 @@ fn main() -> ExitCode {
     let parsed = match parse(&arguments) {
         Ok(parsed) => parsed,
         Err(error) => {
-            eprintln!("{error}\n{USAGE}");
+            warn(&format!("{error}\n{USAGE}\n"));
             return ExitCode::from(2);
         }
     };
@@ -149,7 +160,7 @@ fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("{error}");
+            warn(&format!("{error}\n"));
             ExitCode::FAILURE
         }
     }

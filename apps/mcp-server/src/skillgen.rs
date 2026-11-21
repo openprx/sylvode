@@ -419,63 +419,51 @@ pub fn unified_diff(path: &str, old: &str, new: &str) -> String {
     if old == new {
         return String::new();
     }
-    let a = old.lines().collect::<Vec<_>>();
-    let b = new.lines().collect::<Vec<_>>();
+    let before = old.lines().collect::<Vec<_>>();
+    let after = new.lines().collect::<Vec<_>>();
+    let cell = |table: &[Vec<usize>], row: usize, col: usize| {
+        table.get(row).and_then(|line| line.get(col)).copied().unwrap_or(0)
+    };
     // Longest common subsequence table, filled from the end.
-    let mut table = vec![vec![0_usize; b.len() + 1]; a.len() + 1];
-    for i in (0..a.len()).rev() {
-        for j in (0..b.len()).rev() {
-            let diagonal = table.get(i + 1).and_then(|row| row.get(j + 1)).copied().unwrap_or(0);
-            let down = table.get(i + 1).and_then(|row| row.get(j)).copied().unwrap_or(0);
-            let right = table.get(i).and_then(|row| row.get(j + 1)).copied().unwrap_or(0);
-            let value = if a.get(i) == b.get(j) {
-                diagonal + 1
+    let mut table = vec![vec![0_usize; after.len() + 1]; before.len() + 1];
+    for row in (0..before.len()).rev() {
+        for col in (0..after.len()).rev() {
+            let value = if before.get(row) == after.get(col) {
+                cell(&table, row + 1, col + 1) + 1
             } else {
-                down.max(right)
+                cell(&table, row + 1, col).max(cell(&table, row, col + 1))
             };
-            if let Some(cell) = table.get_mut(i).and_then(|row| row.get_mut(j)) {
-                *cell = value;
+            if let Some(slot) = table.get_mut(row).and_then(|line| line.get_mut(col)) {
+                *slot = value;
             }
         }
     }
     let mut script: Vec<(char, &str)> = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() || j < b.len() {
-        match (a.get(i), b.get(j)) {
-            (Some(x), Some(y)) if x == y => {
-                script.push((' ', x));
-                i += 1;
-                j += 1;
+    let (mut row, mut col) = (0, 0);
+    while row < before.len() || col < after.len() {
+        match (before.get(row), after.get(col)) {
+            (Some(old_line), Some(new_line)) if old_line == new_line => {
+                script.push((' ', old_line));
+                row += 1;
+                col += 1;
             }
-            (Some(x), _)
-                if j >= b.len()
-                    || table.get(i + 1).and_then(|row| row.get(j)).copied().unwrap_or(0)
-                        >= table.get(i).and_then(|row| row.get(j + 1)).copied().unwrap_or(0) =>
-            {
-                script.push(('-', x));
-                i += 1;
+            (Some(old_line), _) if col >= after.len() || cell(&table, row + 1, col) >= cell(&table, row, col + 1) => {
+                script.push(('-', old_line));
+                row += 1;
             }
-            (_, Some(y)) => {
-                script.push(('+', y));
-                j += 1;
+            (_, Some(new_line)) => {
+                script.push(('+', new_line));
+                col += 1;
             }
-            (None, None) => break,
-            (Some(x), None) => {
-                script.push(('-', x));
-                i += 1;
-            }
+            _ => break,
         }
     }
-    let changed = script
-        .iter()
-        .enumerate()
-        .filter(|(_, (kind, _))| *kind != ' ')
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
     let mut shown = vec![false; script.len()];
-    for index in changed {
-        for slot in shown.iter_mut().take(index + 4).skip(index.saturating_sub(3)) {
-            *slot = true;
+    for (index, (kind, _)) in script.iter().enumerate() {
+        if *kind != ' ' {
+            for slot in shown.iter_mut().take(index + 4).skip(index.saturating_sub(3)) {
+                *slot = true;
+            }
         }
     }
     let mut diff = format!("--- a/{path}\n+++ b/{path}\n");

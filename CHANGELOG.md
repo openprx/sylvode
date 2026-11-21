@@ -19,6 +19,15 @@ name.
   mode (`[mcp] tool_mode = "full"`, `serve --tools full`, `?tools=full` or the
   `X-Sylvode-Tool-Mode: full` header). `[mcp] allow_write_call = false` disables `sylvode_write`.
   Connected (OAuth) applications are not affected: they keep the scoped read tools.
+- **The MCP skill is `sylvode-mcp`.** `skills/openpr-mcp` is renamed to `skills/sylvode-mcp` and
+  rewritten for an agent that receives a task message: the task procedure (get, acknowledge with a
+  plan, progress, complete or fail), what Sylvode does on completion (`reply_policy`), search mode
+  as the default way of working and full mode as the opt-in. The resources are
+  `sylvode://skills/sylvode-mcp` (the skill) and `sylvode://skills/sylvode-mcp/tools` (every tool);
+  `sylvode://skills/openpr-mcp` is gone, with no alias. The server's `instructions` and the guide
+  resources are the generated skill files. `sylvode-skillgen --check` (and the CI job
+  `skills-sync`) fails when a tool list, count or the skill no longer follows the MCP server;
+  `sylvode-skillgen --write` regenerates.
 - The project-resource MCP tools (`project_resources.*`, `code.resources.list`,
   `code.directory.get`) and the `sylvode://projects/{project_id}/resources` resource template are
   parked: they are no longer registered, listed or callable.

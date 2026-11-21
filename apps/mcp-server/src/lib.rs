@@ -1,4 +1,5 @@
 // Library interface for MCP server modules
+pub mod guides;
 pub mod protocol;
 pub mod server;
 pub mod skillgen;

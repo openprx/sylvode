@@ -76,8 +76,9 @@ const CONTEXT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Largest token-context answer read. The real answer is a few hundred bytes.
 const MAX_CONTEXT_BODY: usize = 16 * 1024;
 /// The static documentation resources a delegated caller may read.
-const STATIC_GUIDE_RESOURCES: [&str; 3] = [
-    "sylvode://skills/openpr-mcp",
+const STATIC_GUIDE_RESOURCES: [&str; 4] = [
+    "sylvode://skills/sylvode-mcp",
+    "sylvode://skills/sylvode-mcp/tools",
     "sylvode://guides/agents",
     "sylvode://guides/workflows",
 ];
@@ -1338,7 +1339,8 @@ mod tests {
         for uri in [
             "sylvode://scenario-templates",
             "sylvode://forms/22222222-2222-4222-8222-222222222222/records",
-            "sylvode://skills/openpr-mcp/",
+            "sylvode://skills/sylvode-mcp/tools/",
+            "sylvode://skills/openpr-mcp",
             "",
         ] {
             assert!(!is_static_guide_resource(uri), "{uri}");
