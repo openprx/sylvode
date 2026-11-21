@@ -231,7 +231,7 @@ fn r4_2_an_update_far_over_the_budget_is_refused_before_a_unit_is_evaluated() {
     let facts = BaseFacts::compute(&engine);
     assert!(facts.is_some(), "the base must be within its budget");
     crate::walk_counter::reset();
-    crate::window_check::run_window(&mut engine, facts.as_ref(), &update).unwrap();
+    crate::window_check::run_window(&mut engine, facts.as_ref(), &update, &mut |_| {}).unwrap();
     assert_eq!(
         crate::walk_counter::fallback_reasons().last().map(String::as_str),
         Some("WorkBudget")
@@ -419,7 +419,7 @@ fn mark_window_timing() {
                 let facts = if with_facts { BaseFacts::compute(&engine) } else { None };
                 assert_eq!(facts.is_some(), with_facts);
                 let started = std::time::Instant::now();
-                crate::window_check::run_window(&mut engine, facts.as_ref(), &update).unwrap();
+                crate::window_check::run_window(&mut engine, facts.as_ref(), &update, &mut |_| {}).unwrap();
                 best = best.min(started.elapsed());
             }
             best
@@ -492,7 +492,7 @@ fn r5_1_no_delta_is_converted_for_a_text_the_projection_does_not_read() {
         first_text(raw, 3).insert(1, "z").unwrap();
     });
     crate::walk_counter::reset();
-    crate::window_check::run_window(&mut engine, facts.as_ref(), &update).unwrap();
+    crate::window_check::run_window(&mut engine, facts.as_ref(), &update, &mut |_| {}).unwrap();
     for id in crate::walk_counter::delta_reads() {
         assert!(
             !unread.contains(&id),
@@ -518,7 +518,7 @@ fn r5_1_marking_an_unread_text_through_the_window_converts_nothing_and_is_nexts_
         engine.prewarm_for_writes();
         let facts = BaseFacts::compute(&engine);
         crate::walk_counter::reset();
-        let decided = crate::window_check::run_window(&mut engine, facts.as_ref(), &update);
+        let decided = crate::window_check::run_window(&mut engine, facts.as_ref(), &update, &mut |_| {});
         let reads = crate::walk_counter::delta_reads();
         assert!(!reads.contains(id), "the window converted {id}");
         let judged = super::window_round2_tests::judge(&base, &update);

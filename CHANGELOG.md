@@ -106,6 +106,14 @@ name.
 
 ### Changed
 
+- **Form plugin protocols 1 and 2 removed; protocol 3 is the only one.** Installing an
+  `openpr.plugin.v2` manifest now fails with `manifest_protocol_unsupported`. The
+  `plugin-panels` discovery and invoke routes, the host's bridge 1, the per-package layout code and
+  the `SV_FORM_PLUGIN_LAYOUTS_ENABLED` switch are gone; the Plugin Creator's order amount template
+  now builds a protocol 3 `wasm` package with the same `amount.*` capabilities and the same panel
+  behaviour, so it needs `SV_FORM_PLUGIN_EXTENSIONS_ENABLED=1` like every other protocol 3
+  package. No migration: `form_plugin_layouts` and rows of the retired protocols stay in the
+  database, unread and unwritten (see `docs/universal-forms-and-plugins.md`).
 - **Forms page restructured.** The Forms page is split into a state object, controllers, pure
   modules and components, with unit tests for the modules and a browser smoke for the
   interactions. Internal refactor, no behaviour change.

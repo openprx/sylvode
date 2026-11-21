@@ -233,7 +233,10 @@ pub(super) fn read_regular(parent: &impl AsFd, name: &str, cap: u64) -> Result<R
     }
     Ok(Read_::Data {
         bytes,
-        mode: u32::from(stat.st_mode as u16) & 0o777,
+        // `st_mode` is `u16` on macOS and `u32` on Linux; `u32::from` is lossless on both and an
+        // identity conversion on Linux only.
+        #[allow(clippy::useless_conversion)]
+        mode: u32::from(stat.st_mode) & 0o777,
     })
 }
 

@@ -56,7 +56,7 @@ export const FLOW_LOCAL_ERROR_CODES = ['network_error'] as const satisfies reado
 export const PACKAGE_ROUND_TRIP_ERROR_CODES = ['checksum_mismatch', 'unsupported_format'] as const;
 
 /** `server_draining`'s frozen, REQUIRED discriminator values. */
-export const SERVER_DRAINING_REASONS = ['drain', 'contention'] as const;
+export const SERVER_DRAINING_REASONS = ['drain', 'contention', 'apply_busy'] as const;
 export type ServerDrainingReason = (typeof SERVER_DRAINING_REASONS)[number];
 
 /** The WebSocket close code the server uses to end a session because the workspace is draining
@@ -166,6 +166,26 @@ export function parseServerDrainingReason(details: unknown): ServerDrainingReaso
 		: null;
 }
 
+/** How a load refusal (`server_draining` / `apply_busy`) wants its write retried: `resend` sends
+ * the same update id again, `rebase` re-encodes the unsent local edits on top of the head and
+ * sends them under a new id. `null` when `details.retry_mode` is missing or unknown: the producer
+ * violated the contract, and the caller fails closed (a permanent refusal) instead of guessing. */
+export type RetryMode = 'resend' | 'rebase';
+
+export function parseRetryMode(details: unknown): RetryMode | null {
+	if (typeof details !== 'object' || details === null) return null;
+	const mode = (details as { retry_mode?: unknown }).retry_mode;
+	return mode === 'resend' || mode === 'rebase' ? mode : null;
+}
+
+/** The retry mode of an `apply_busy` refusal, or `null` when `error` is not one or its mode is
+ * unusable. */
+export function applyBusyRetryMode(error: Pick<FlowError, 'code' | 'details'>): RetryMode | null {
+	if (error.code !== 'server_draining') return null;
+	if (parseServerDrainingReason(error.details) !== 'apply_busy') return null;
+	return parseRetryMode(error.details);
+}
+
 /** `details.retry_after_ms` when the producer supplied a usable one, else `null`. It is a LOWER
  * bound on the client's own backoff (`ui-surface-v1.md` step 6: "`server_draining.details.
  * retry_after_ms` 是下限"), never an upper bound and never a substitute for backoff. */
@@ -219,6 +239,14 @@ const DRAIN_DISPOSITIONS: Readonly<
 		keepConnection: true,
 		reconnects: false,
 		closeCode: null
+	},
+	apply_busy: {
+		reason: 'apply_busy',
+		i18nKey: 'flow.error.server_draining.apply_busy',
+		syncState: 'local',
+		keepConnection: true,
+		reconnects: false,
+		closeCode: null
 	}
 };
 
@@ -231,6 +259,9 @@ export function drainDisposition(
 	if (error.code !== 'server_draining') return null;
 	const reason = parseServerDrainingReason(error.details);
 	if (!reason) return null;
+	// `apply_busy` without a usable `retry_mode` violates the contract: fail closed like an
+	// unknown reason.
+	if (reason === 'apply_busy' && parseRetryMode(error.details) === null) return null;
 	return { ...DRAIN_DISPOSITIONS[reason], retryAfterMs: parseRetryAfterMs(error.details) };
 }
 

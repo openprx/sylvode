@@ -2,7 +2,7 @@
 """Verify the protocol 3 extension backend against an isolated API and a fresh PostgreSQL.
 
 Run against a throwaway API started with SV_FORM_PLUGIN_PACKAGES_ENABLED=1,
-SV_FORM_PLUGIN_LAYOUTS_ENABLED=1 and SV_FORM_PLUGIN_EXTENSIONS_ENABLED=1:
+SV_FORM_PLUGIN_EXTENSIONS_ENABLED=1:
 
     verify_extension.py --base http://127.0.0.1:18995 --context /private/path/context.json
 
@@ -10,8 +10,6 @@ The default phase covers the backend parts of acceptance cases X1-X18. It writes
 file that the follow-up phases read after the API is restarted:
 
     --phase gate-off   API restarted with SV_FORM_PLUGIN_EXTENSIONS_ENABLED=0 (X21)
-    --phase legacy     API replaced by the previous release with packages enabled (X22, API only)
-    --phase restored   API restored to this build with every switch on (X22 restore)
 """
 import argparse
 import base64
@@ -528,8 +526,7 @@ def run_main(context_path):
     assert saved["values"]["amount"]["decimal"] == "25.00"
     receipts = request("GET", f"{p1.ops}/invocations", token=owner)
     assert {row["contribution_id"] for row in receipts if row["key"] == "order_amount_v3"} == {"actions"}
-    assert request("GET", f"/api/v1/form-records/{owner_record}/plugin-panels", token=member) == []
-    check("X5 v3 WASM preview and apply with contribution receipts; legacy discovery excludes v3")
+    check("X5 v3 WASM preview and apply with contribution receipts")
 
     # X6: restricted member policy (field denial and owned scope), then preview-only.
     request("PATCH", policies, {"policies": [{"subject_type": "role", "subject_id": "member", "policy": {
@@ -664,43 +661,12 @@ def run_gate_off(context_path):
     check("X21 switch off: v3 install, discovery, entry and binding refused; disable allowed")
 
 
-def run_legacy(context_path):
-    context = load(context_path)
-    owner, project = context["owner_token"], context["project_id"]
-    ops = f"/api/v1/projects/{project}/plugin-packages"
-    catalog = request("GET", ops, token=owner)
-    assert any(item["manifest"]["schema_version"] == "openpr.plugin.v3" for item in catalog["items"])
-    assert request("GET", f"/api/v1/form-records/{context['record_id']}/plugin-panels", token=owner) == []
-    body = {"generation": context["board_generation"], "capability": "amount.preview", "input": {},
-            "request_id": str(uuid4())}
-    request("POST", f"/api/v1/form-records/{context['record_id']}/plugin-panels/{context['board_package']}/invoke",
-            body, owner, expect=404)
-    record = request("GET", f"/api/v1/form-records/{context['record_id']}", token=owner)
-    assert record["values"]["amount"]["decimal"] == "25.00"
-    check("X22 previous release lists v3 rows but legacy discovery and invoke exclude them")
-
-
-def run_restored(context_path):
-    context = load(context_path)
-    owner, project = context["owner_token"], context["project_id"]
-    items = request("GET", f"/api/v1/projects/{project}/plugin-contributions?surface=project", token=owner)
-    assert [item["key"] for item in items["items"]] == ["order_board"]
-    assert items["items"][0]["generation"] == context["board_generation"]
-    catalog = request("GET", f"/api/v1/projects/{project}/plugin-packages", token=owner)
-    amount = next(row for row in catalog["bindings"] if row["key"] == "order_amount_v3")
-    assert amount["package_id"] is None and amount["grants"] == []
-    board = next(row for row in catalog["bindings"] if row["key"] == "order_board")
-    assert sorted(row["id"] for row in board["placements"]) == ["board", "list_tool", "record_summary"]
-    check("X22 restored build: layouts intact and revocations did not come back")
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base", default=BASE)
     parser.add_argument("--context", type=Path, help="private file shared between phases")
-    parser.add_argument("--phase", choices=["main", "gate-off", "legacy", "restored"], default="main")
+    parser.add_argument("--phase", choices=["main", "gate-off"], default="main")
     arguments = parser.parse_args()
     BASE = arguments.base
-    summary = {"main": run_main, "gate-off": run_gate_off, "legacy": run_legacy,
-               "restored": run_restored}[arguments.phase](arguments.context) or {}
+    summary = {"main": run_main, "gate-off": run_gate_off}[arguments.phase](arguments.context) or {}
     print(json.dumps({"base_url": BASE, "phase": arguments.phase, **summary, "verified": VERIFIED}, indent=2))

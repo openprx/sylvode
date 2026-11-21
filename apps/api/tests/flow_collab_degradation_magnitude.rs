@@ -398,6 +398,7 @@ async fn write_once(
         10,
         None,
         UpdateRequest {
+            rebase_policy: api::flow::collab::write::RebasePolicy::None,
             origin: CommandOrigin::first_request_from(EventSurface::Rest),
             document_id,
             update_id: Uuid::new_v4(),

@@ -245,11 +245,10 @@ printf '\nApplication secret configuration coverage:\n'
 not_contains "compose hands no application secret to a service through the environment" "$COMPOSE_FILE" "JWT_SECRET"
 contains "platform refuses the shipped example as a live configuration" "$ROOT_DIR/crates/platform/src/config/tests.rs" "the_shipped_example_is_refused_because_it_is_all_placeholders"
 contains "env example keeps API and worker credentials in TOML" "$ROOT_DIR/.env.example" 'including all API and worker credentials, come from the TOML file'
-for flag in SV_FORM_PLUGIN_PACKAGES_ENABLED SV_FORM_PLUGIN_LAYOUTS_ENABLED; do
-  contains "env example documents $flag as disabled" "$ROOT_DIR/.env.example" "#$flag=0"
-  expected="$(printf '%s: "${%s:-0}"' "$flag" "$flag")"
-  contains "compose keeps $flag opt-in" "$COMPOSE_FILE" "$expected"
-done
+flag=SV_FORM_PLUGIN_PACKAGES_ENABLED
+contains "env example documents $flag as disabled" "$ROOT_DIR/.env.example" "#$flag=0"
+expected="$(printf '%s: "${%s:-0}"' "$flag" "$flag")"
+contains "compose keeps $flag opt-in" "$COMPOSE_FILE" "$expected"
 not_contains "compose does not default JWT secret to change-me" "$COMPOSE_FILE" 'JWT_SECRET: ${JWT_SECRET:-change-me-in-production}'
 not_contains "env example does not enable weak JWT secret" "$ROOT_DIR/.env.example" "JWT_SECRET=change-me-in-production"
 

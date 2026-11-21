@@ -105,9 +105,13 @@
 //! every internal piece of the text before it merges equal neighbours, so the cost is the pieces
 //! times the attributes, whatever the merged segments look like. Text typed in reverse order, or
 //! interleaved by two peers, keeps one piece per character through a snapshot. The pieces are
-//! counted with `LoroText::iter` (one copy of the text, linear in its characters, which the measure
-//! and the documented limit bound) before the delta is built, so a text whose pieces alone pass the
-//! ceiling is refused without converting it.
+//! counted with `LoroText::iter` before the delta is built. The copy `iter` makes is linear in the
+//! text's characters (which the measure and the documented limit bound), but the call also runs the
+//! library's lazy decode of the text's state, which costs its style anchors and annotations and is
+//! not priced here. A text whose pieces alone pass the ceiling is refused without `to_delta` (the
+//! decode has run by then, and the early exit can only fire when the ceiling left is below about
+//! 28,000 items, which on a page of more than about 700 blocks it never is). The decode is what
+//! [`crate::setup_guard`] bounds in the setup.
 //!
 //! The sum is divided by [`BYTES_PER_ITEM`] and rounded down per text, with an early exit at the
 //! ceiling. No value shape is refused. Every other text (a value of the `order` or alias map, a text
@@ -143,8 +147,14 @@
 //! 1.4 s on the reference runner; projection 142 ms). The setup converts a text's delta before it
 //! knows what the delta costs, so a stored page that was never accepted under this measure can
 //! cost more to count than it is charged: pieces times marks, linear in the pieces of one text
-//! (at most the 1,000,000 characters of the limit) and in its marks. The pages the host accepts
-//! are within it, because every window that accepted one charged its pieces.
+//! (at most the 1,000,000 characters of the limit) and in its marks. A page written through the
+//! incremental window since the pieces are charged was within the measure when it was accepted;
+//! a page accepted by the full window (a fallback, a concurrent import, `incremental_window =
+//! false`) or before this measure was charged by nothing of the kind. Each of its texts was
+//! converted inside a window that metered it, though, and the count stops at the ceiling, so the
+//! setup pays at most the ceiling's worth of charged work plus one text. What the measure cannot
+//! see at all (style anchors, null-valued styles) is bounded by the setup guard
+//! ([`crate::setup_guard`]), not by this measure.
 //!
 //! An op cannot state the segments it adds, so the window does not bound this part by the ops. The
 //! facts keep the mark items of every block that has any, and the window re-counts the blocks the
@@ -187,14 +197,29 @@
 //! about 0.6 s here (2.2 s on the reference runner), under its 5 s timeout, at the 0.2 to 0.4 us per
 //! item the calibrated formatting shapes cost.
 //!
+//! Edited pages (`window_setup_guard_tests::window_edit_history_calibration`, release): blocks that
+//! carry the pieces of 30 single-character edits by two peers lose the incremental path sooner. Two
+//! clusters per block: 72.5 items per block against a budget of 79.2 at 700 blocks (incremental),
+//! 72.4 against 72.3 at 1,000 blocks and 72.7 against 69.6 at 1,200 (full window); six marks on
+//! 2,000 blocks: 71.3 against 64.3; one cluster on 3,000 blocks: 46.9 against 56.1 (incremental);
+//! two clusters on 1,200 blocks with 10 edits per block: 63.2 against 69.6 (incremental). The
+//! setup of these pages costs 76 to 240 MiB of allocation, far under the setup guard's limit, so
+//! the allowance is what decides them. No behaviour changes: the figures are the measurement the
+//! review asked for.
+//!
 //! The window keeps the measure without reading the page again: the items of the base plus an
 //! upper bound on the items the update added (the sum of [`op_work`] over its ops), compared with
 //! the budget of the exact post-import totals.
+
+use std::collections::HashMap;
 
 use loro::{
     Container, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOpContent, JsonTextOp, JsonTreeOp, LoroMap, LoroText,
     LoroValue, TextDelta, ValueOrContainer,
 };
+
+use crate::operation::NodeId;
+use crate::setup_guard::{Fired, SetupGuard};
 
 /// Characters of one text container that count as one item.
 pub const CHARS_PER_ITEM: u64 = 256;
@@ -435,18 +460,19 @@ pub fn op_work(content: &JsonOpContent) -> OpWork {
 /// segment, whatever the merged output looks like. Text typed in reverse order, or interleaved by
 /// two peers, keeps one piece per character through a snapshot.
 ///
-/// The pieces are counted first (`LoroText::iter`, which copies the text once: linear in the
-/// characters, which the measure and the documented limit bound), and the count stops the work as
-/// soon as the pieces alone pass `stop_over`, before the delta is built. The delta itself cannot
+/// The pieces are counted first (`LoroText::iter`: the copy it makes is linear in the characters,
+/// which the measure and the documented limit bound, but the call also runs the library's lazy
+/// decode of the text's state, which the measure does not price), and the count stops the work as
+/// soon as the pieces alone pass `stop_over`, before `to_delta` is called. The delta itself cannot
 /// stop early: its cost is the pieces times the attributes, which the base figure counted (setup) or
 /// which the metered import paid for (window). `None` as soon as the items counted so far pass
 /// `stop_over`.
-pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64) -> Option<u64> {
+pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64, guard: Option<&SetupGuard>) -> Result<u64, Stop> {
     #[cfg(test)]
     crate::walk_counter::record_delta_read(loro::ContainerTrait::id(text).to_string());
     #[cfg(test)]
     if crate::window_check::fault::active() == Some(crate::window_check::fault::Fault::PieceCountSkipped) {
-        return text_segment_items(text, &[], stop_over);
+        return text_segment_items(text, &[], stop_over, guard);
     }
     let mut pieces: Vec<usize> = Vec::new();
     let mut within = true;
@@ -457,14 +483,24 @@ pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64) -> Option<u64> {
         within
     });
     if !within {
-        return None;
+        return Err(Stop::Ceiling);
     }
-    text_segment_items(text, &pieces, stop_over)
+    text_segment_items(text, &pieces, stop_over, guard)
 }
 
 /// The segment and piece charges of [`text_mark_items`], given the lengths in characters of the
 /// text's internal pieces in order.
-fn text_segment_items(text: &LoroText, pieces: &[usize], stop_over: u64) -> Option<u64> {
+fn text_segment_items(
+    text: &LoroText,
+    pieces: &[usize],
+    stop_over: u64,
+    guard: Option<&SetupGuard>,
+) -> Result<u64, Stop> {
+    // The decode of the text's style state (the `iter` before) is paid for; the conversion of its
+    // delta, which a hostile shape makes the dearer part, is not started when the setup is over.
+    if let Some(fired) = guard.and_then(SetupGuard::fired) {
+        return Err(Stop::Guard(fired));
+    }
     let mut bytes: u64 = 0;
     let mut segments: u64 = 0;
     // The piece that the next segment starts with, and where that piece starts.
@@ -513,10 +549,10 @@ fn text_segment_items(text: &LoroText, pieces: &[usize], stop_over: u64) -> Opti
                 .saturating_mul(PIECE_BYTES.saturating_add(piece_attribute_bytes)),
         );
         if bytes / BYTES_PER_ITEM > stop_over {
-            return None;
+            return Err(Stop::Ceiling);
         }
     }
-    Some(bytes / BYTES_PER_ITEM)
+    Ok(bytes / BYTES_PER_ITEM)
 }
 
 /// The mark items (see [`text_mark_items`]) of the texts of one editor block that the block reader
@@ -529,22 +565,44 @@ fn text_segment_items(text: &LoroText, pieces: &[usize], stop_over: u64) -> Opti
 /// Rounded down per text, so the sum equals what the base count adds. `None` as soon as the items
 /// counted so far pass `stop_over`.
 pub(crate) fn block_mark_items(block: &LoroMap, stop_over: u64) -> Option<u64> {
+    block_mark_items_guarded(block, stop_over, None).ok()
+}
+
+/// [`block_mark_items`] for the setup: the text-by-text conversions also stop once the setup's
+/// `guard` has passed its limit ([`Stop::Guard`]).
+pub(crate) fn block_mark_items_guarded(
+    block: &LoroMap,
+    stop_over: u64,
+    guard: Option<&SetupGuard>,
+) -> Result<u64, Stop> {
     if !crate::editor_doc_bridge::reads_inline_marks(block) {
-        return Some(0);
+        return Ok(0);
     }
     let Some(ValueOrContainer::Container(Container::List(children))) = block.get("children") else {
-        return Some(0);
+        return Ok(0);
     };
     let mut items: u64 = 0;
     for index in 0..children.len() {
         if let Some(ValueOrContainer::Container(Container::Text(text))) = children.get(index) {
-            items = items.saturating_add(text_mark_items(&text, stop_over.saturating_sub(items))?);
+            items = items.saturating_add(text_mark_items(&text, stop_over.saturating_sub(items), guard)?);
             if items > stop_over {
-                return None;
+                return Err(Stop::Ceiling);
+            }
+            if let Some(fired) = guard.and_then(SetupGuard::fired) {
+                return Err(Stop::Guard(fired));
             }
         }
     }
-    Some(items)
+    Ok(items)
+}
+
+/// Why a count of mark items stopped before it was done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stop {
+    /// The items passed the ceiling the caller gave.
+    Ceiling,
+    /// A setup guard fired ([`crate::setup_guard`]).
+    Guard(Fired),
 }
 
 /// Counts items against a ceiling and stops counting once it is passed.
@@ -552,17 +610,60 @@ pub(crate) fn block_mark_items(block: &LoroMap, stop_over: u64) -> Option<u64> {
 pub(crate) struct ItemCount {
     total: u64,
     ceiling: u64,
+    guard: Option<SetupGuard>,
+    stopped_by_guard: Option<Fired>,
+    /// The mark items of every editor block that has any, by the block's key: what the base facts
+    /// keep, so that the setup converts a marked text once for the count and not again for them.
+    marks: HashMap<NodeId, u64>,
 }
 
 impl ItemCount {
-    pub(crate) const fn new(ceiling: u64) -> Self {
-        Self { total: 0, ceiling }
+    pub(crate) fn new(ceiling: u64) -> Self {
+        Self {
+            total: 0,
+            ceiling,
+            guard: None,
+            stopped_by_guard: None,
+            marks: HashMap::new(),
+        }
+    }
+
+    /// A count of the setup: it stops, with [`ItemCount::stopped_by_guard`] set, once `guard` has
+    /// passed its limit.
+    pub(crate) fn guarded(ceiling: u64, guard: SetupGuard) -> Self {
+        Self {
+            guard: Some(guard),
+            ..Self::new(ceiling)
+        }
     }
 
     /// Adds the mark items of an editor block (see [`block_mark_items`]). False once the ceiling is
-    /// passed.
+    /// passed or the setup guard fired.
     pub(crate) fn add_block_marks(&mut self, block: &LoroMap) -> bool {
-        block_mark_items(block, self.ceiling.saturating_sub(self.total)).is_some_and(|marks| self.add(marks))
+        match block_mark_items_guarded(block, self.ceiling.saturating_sub(self.total), self.guard.as_ref()) {
+            Ok(marks) => {
+                if marks > 0 {
+                    self.marks
+                        .insert(NodeId::from(loro::ContainerTrait::id(block).to_string()), marks);
+                }
+                self.add(marks)
+            }
+            Err(Stop::Ceiling) => false,
+            Err(Stop::Guard(fired)) => {
+                self.stopped_by_guard = Some(fired);
+                false
+            }
+        }
+    }
+
+    /// Which setup guard stopped the count, if one did and not the ceiling.
+    pub(crate) const fn stopped_by_guard(&self) -> Option<Fired> {
+        self.stopped_by_guard
+    }
+
+    /// The per-block mark items the count saw (complete only for a count that finished).
+    pub(crate) fn into_marks(self) -> HashMap<NodeId, u64> {
+        self.marks
     }
 
     /// Adds `n` items. False once the ceiling is passed.
@@ -654,6 +755,27 @@ impl ItemCount {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// `LoroCollabEngine::mark_items_added` skips a block with no mark items when the update carries
+    /// no mark op. That is sound because an insert can then add at most two pieces to a text whose
+    /// pieces cost nothing yet (one segment with at most two attributes the reader skips): the
+    /// charge of those pieces must stay within what the op is charged (two items at least, for
+    /// [`BYTES_PER_ITEM`] bytes each). It breaks when a piece constant grows past about 28 bytes.
+    #[test]
+    fn the_pieces_an_insert_can_add_to_an_unmarked_text_cost_less_than_the_insert_is_charged() {
+        let added = 2 * (PIECE_BYTES + 2 * PIECE_ATTRIBUTE_MIN_BYTES);
+        let charged = 2 * BYTES_PER_ITEM;
+        assert!(
+            added <= charged,
+            "{added} bytes of pieces against {charged} bytes charged"
+        );
+        // The op's own charge is at least two items, which the bound above relies on.
+        let insert = JsonOpContent::Text(JsonTextOp::Insert {
+            pos: 0,
+            text: "x".to_owned(),
+        });
+        assert!(op_work(&insert).total_items() >= 2);
+    }
 
     #[test]
     fn a_value_is_charged_by_its_payload_recursively() {

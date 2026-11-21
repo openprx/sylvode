@@ -23,11 +23,11 @@ import {
 
 type Item = PluginContributionItem;
 
-/** One shown frame. `item` is null for a legacy (protocol 1/2) panel, which has no entry. */
+/** One shown frame: the entry the user opened, its contribution and the loaded page. */
 export interface SlotFrame<E> {
 	token: number;
 	entry: E;
-	item: Item | null;
+	item: Item;
 	html: string;
 }
 
@@ -46,8 +46,8 @@ export interface SlotState<E> {
 }
 
 export interface SlotDeps<E> {
-	/** The contribution behind an entry, or null for a legacy panel. */
-	itemOf: (entry: E) => Item | null;
+	/** The contribution behind an entry. */
+	itemOf: (entry: E) => Item;
 	loadEntry: (item: Item) => Promise<EntryOutcome>;
 	projectName: () => Promise<string>;
 	/** The server disagreed with the discovery; let it pick the change up. */
@@ -80,14 +80,10 @@ export function closeSlot<E>(
 async function load<E>(
 	state: SlotState<E>,
 	entry: E,
-	target: Item | null,
+	target: Item,
 	deps: SlotDeps<E>
 ): Promise<number> {
 	const mine = ++state.run;
-	if (!target) {
-		state.frame = { token: ++state.tokens, entry, item: null, html: '' };
-		return state.frame.token;
-	}
 	const [result, label] = await Promise.all([deps.loadEntry(target), deps.projectName()]);
 	if (mine !== state.run || deps.alive?.() === false) return 0;
 	state.name = label;
@@ -155,11 +151,6 @@ export async function retireSlot<E>(
 ): Promise<'reopened' | 'closed' | 'ignored'> {
 	const frame = state.frame;
 	if (!frame || frame.token !== token) return 'ignored';
-	if (!frame.item) {
-		// Legacy frames never report a retirement; fail visibly if one ever does.
-		closeSlot(state, deps, 'plugins.accessChanged');
-		return 'closed';
-	}
 	const decision = reopenDecision(current, frame.item);
 	if (decision.kind === 'notice') {
 		closeSlot(state, deps, decision.reason);

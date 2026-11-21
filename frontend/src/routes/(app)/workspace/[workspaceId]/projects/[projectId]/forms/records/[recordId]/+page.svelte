@@ -3,7 +3,7 @@
 	import CreatorPluginLink from '#lib/components/plugins/CreatorPluginLink.svelte';
 	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
 	import RecordPluginActions from '#lib/components/plugins/RecordPluginActions.svelte';
-	import type { RecordPluginActionSurface } from '#lib/plugins/placements.js';
+	import type { RecordPluginActionSurface } from '#lib/plugins/record-entries.js';
 	import {
 		Activity,
 		ArrowLeft,

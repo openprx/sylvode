@@ -10,7 +10,6 @@ import tempfile
 
 MAX_AMOUNT_CENTS = 1_000_000_000_000
 EXAMPLE = Path(__file__).resolve().parent
-AMOUNT_EXAMPLE = EXAMPLE.parent / "form-amount-example"
 
 
 def digest(data):
@@ -67,13 +66,13 @@ def build_wasm():
         module = Path(temp) / "plugin.wasm"
         subprocess.run(
             [
-                "rustc", str(AMOUNT_EXAMPLE / "guest.rs"),
+                "rustc", str(EXAMPLE / "guest.rs"),
                 "--edition=2024", "--target=wasm32-wasip1",
                 "--crate-type=cdylib", "-O", "-C", "panic=abort", "-C", "strip=symbols",
                 "-C", "link-arg=--no-entry", "-o", str(module),
             ],
             check=True,
-            cwd=AMOUNT_EXAMPLE,
+            cwd=EXAMPLE,
         )
         return module.read_bytes()
 

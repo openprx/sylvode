@@ -35,10 +35,6 @@ pub extern "C" fn openpr_invoke(input_ptr: i32, length: i32) -> i64 {
     let quantity = unsigned_field(input, b"\"quantity\":");
     let unit_price = unsigned_field(input, b"\"unit_price_cents\":");
     let mut cents = quantity * unit_price;
-    #[cfg(extra_fee)]
-    {
-        cents += 100;
-    }
     let output_ptr = ptr::addr_of_mut!(OUTPUT).cast::<u8>();
     // The input and output arrays are disjoint and the instance is single-threaded.
     let output = unsafe { slice::from_raw_parts_mut(output_ptr, OUTPUT_BYTES) };
