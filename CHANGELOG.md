@@ -12,6 +12,9 @@ name.
 
 ### Changed
 
+- **Forms page restructured.** The Forms page is split into a state object, controllers, pure
+  modules and components, with unit tests for the modules and a browser smoke for the
+  interactions. Internal refactor, no behaviour change.
 - **Flow writes no longer walk the whole page to guard the editor-model floor.** The isolated
   apply step used to read every editor block once before each import (twice on model 5 pages)
   only to refuse an update that lowers a page from editor model 5. It now reads the model 5

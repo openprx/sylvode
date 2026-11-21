@@ -344,12 +344,23 @@
 		if (!outcome.ok && outcome.close === 'suspend') finish(reasons.suspended);
 		else if (!outcome.ok && outcome.close === 'timeout') finish(reasons.timeout);
 	}
+
+	// While focus is inside the frame, the parent's active element is the frame.
+	let frameFocused = $state(false);
+	function syncFrameFocus(): void {
+		frameFocused = !!frame && document.activeElement === frame;
+	}
 </script>
 
-<svelte:window onmessage={onWindowMessage} />
+<svelte:window
+	onmessage={onWindowMessage}
+	onblur={syncFrameFocus}
+	onfocus={syncFrameFocus}
+	onfocusin={syncFrameFocus}
+/>
 
 {#if stage === 'verifying' || stage === 'opening'}
-	<p class="px-3 pb-2 text-sm text-slate-600 dark:text-slate-300" role="status">
+	<p class="px-3 pb-2 text-sm text-fg-muted" role="status">
 		{$t(legacy ? 'plugins.loadingPanel' : 'plugins.host.loading')}
 	</p>
 {/if}
@@ -362,7 +373,19 @@
 		sandbox="allow-scripts"
 		referrerpolicy="no-referrer"
 		class="block w-full border-0"
+		class:keyboard-ring={frameFocused}
+		onfocus={syncFrameFocus}
+		onblur={syncFrameFocus}
 		style:height={`${height}px`}
 		hidden={stage !== 'ready'}
 	></iframe>
 {/if}
+
+<style>
+	/* The frame's own :focus and :focus-visible do not match while focus is inside its document,
+	   so the ring follows `frameFocused`, which is read from the parent's active element. */
+	iframe.keyboard-ring {
+		outline: var(--rf-border-width-focus) solid var(--rf-focus);
+		outline-offset: 2px;
+	}
+</style>

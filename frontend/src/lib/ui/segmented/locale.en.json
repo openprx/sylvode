@@ -1,0 +1,14 @@
+{
+	"ui": {
+		"segmented": {
+			"sample": {
+				"label": "View",
+				"table": "Table",
+				"board": "Board",
+				"calendar": "Calendar",
+				"light": "Light",
+				"dark": "Dark"
+			}
+		}
+	}
+}

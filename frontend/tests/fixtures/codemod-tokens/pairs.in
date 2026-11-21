@@ -1,0 +1,10 @@
+<p class="text-slate-900 dark:text-slate-100 font-medium">Title</p>
+<p class="text-sm text-slate-600 dark:text-slate-400">Muted</p>
+<p class="text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100">Hover</p>
+<div class="border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800"></div>
+<span class="{error ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300'}">x</span>
+<span class="text-amber-800 dark:text-amber-200">warn</span>
+<p class="text-slate-900">no dark twin stays</p>
+<p class="text-slate-900 dark:text-slate-100/80">opacity twin is not a pair</p>
+<p class="text-blue-600 dark:text-blue-400">blue is by hand</p>
+<p class="bg-white dark:bg-slate-900">backgrounds are by hand</p>

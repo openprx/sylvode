@@ -40,19 +40,19 @@
 	<div>
 		<a
 			href={resolve('/(app)/workspace/[workspaceId]/settings/flow/package', { workspaceId })}
-			class="inline-flex min-h-11 items-center text-sm text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-300"
+			class="inline-flex min-h-11 items-center text-sm text-fg underline"
 		>
 			{$t('flow.import.report.back')}
 		</a>
-		<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">
+		<h1 class="text-2xl font-semibold text-fg">
 			{$t('flow.import.report.title')}
 		</h1>
-		<p class="mt-1 break-all font-mono text-xs text-slate-500 dark:text-slate-400">{importId}</p>
+		<p class="mt-1 break-all font-mono text-xs text-fg-muted">{importId}</p>
 	</div>
 
 	{#if reportState.status === 'loading' || reportState.status === 'pending'}
 		<div
-			class="rounded-lg border border-slate-200 bg-white p-6 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+			class="rounded-card border border-line bg-raised p-6 text-fg-muted"
 			role="status"
 			aria-live="polite"
 			data-testid="flow-import-report-pending"
@@ -71,7 +71,7 @@
 		</div>
 	{:else if reportState.status === 'failed'}
 		<div
-			class="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+			class="rounded-card border border-line bg-danger-soft p-6 text-sm text-danger"
 			role="alert"
 		>
 			{$t(reportState.failure.messageKey, { values: reportState.failure.values })}

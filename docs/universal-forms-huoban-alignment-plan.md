@@ -1,5 +1,12 @@
 # Universal Forms Huoban-Style Alignment Plan
 
+> Note: the per-phase evidence logs below name `smoke:forms-ui`. That was the
+> single-file forms browser smoke, retired when the forms page was split. Its
+> mock server is now `frontend/scripts/forms-smoke-server.mjs`, and the browser
+> checks live in `frontend/scripts/smoke-forms-page-interactions.mjs` and
+> `frontend/scripts/smoke-forms-record-list.mjs`. The log entries are kept as
+> written because they record what ran at the time.
+
 ## Purpose
 
 Sylvode universal forms should become a business-user-facing form builder, not a
@@ -2446,7 +2453,7 @@ Evidence used for Phase 9R:
   durable export/import jobs, file import preview/commit, reusable import
   mapping templates, and current-view export APIs.
 - Verification: `scripts/audit-universal-forms-source-coverage.sh`,
-  `bun run check`, `bun run build`, and `bun run smoke:forms-ui`.
+  `bun run check`, `bun run build`, and `bun run smoke:forms-page-interactions`.
 
 Evidence used for Phase 10R:
 

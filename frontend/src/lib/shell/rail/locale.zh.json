@@ -1,0 +1,32 @@
+{
+	"shell": {
+		"rail": {
+			"label": "主导航",
+			"destinations": "导航目的地",
+			"homeUnread": "{label}，{count} 条未读通知",
+			"editNavigation": "编辑导航",
+			"more": "更多",
+			"account": "账户：{name}",
+			"editor": {
+				"title": "编辑导航",
+				"fixedLabel": "始终显示",
+				"shortcutsLabel": "你的快捷方式",
+				"always": "始终显示",
+				"empty": "还没有快捷方式。可添加当前页面或治理。",
+				"moveUp": "上移 {label}",
+				"moveDown": "下移 {label}",
+				"remove": "移除 {label}",
+				"movedUp": "{label} 已上移",
+				"movedDown": "{label} 已下移",
+				"removed": "{label} 已移除",
+				"added": "{label} 已添加",
+				"restored": "已恢复默认导航",
+				"add": "添加",
+				"addCurrent": "当前页面：{label}",
+				"nothingToAdd": "此页面没有可添加的内容。",
+				"restore": "恢复默认导航",
+				"done": "完成"
+			}
+		}
+	}
+}

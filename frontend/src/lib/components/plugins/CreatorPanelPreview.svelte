@@ -179,7 +179,7 @@
 {#if spec && picked && previewContext}
 	{#if shown.closed !== null}
 		<div class="flex flex-wrap items-center gap-2 text-sm">
-			{#if shown.closed}<p role="alert" class="text-red-800 dark:text-red-200">
+			{#if shown.closed}<p role="alert" class="text-danger">
 					{$t(shown.closed)}
 				</p>{/if}
 			<Button variant="secondary" size="sm" onclick={() => retryPreview(shown)}
@@ -188,7 +188,7 @@
 		</div>
 	{:else}
 		{#key shown.attempt}
-			<div class="rounded border border-slate-300 dark:border-slate-600">
+			<div class="rounded-control border border-line">
 				<PluginFrameHost
 					{html}
 					webSha256={spec.webSha256}
@@ -208,7 +208,7 @@
 		{/key}
 	{/if}
 {:else if failed}
-	<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t('plugins.loadFailed')}</p>
+	<p role="alert" class="text-sm text-danger">{$t('plugins.loadFailed')}</p>
 {:else}
 	{#if !ready}<p role="status" class="text-sm">{$t('plugins.loadingPanel')}</p>{/if}
 	<iframe
@@ -217,7 +217,7 @@
 		src="/plugin-host/frame.html"
 		sandbox="allow-scripts"
 		referrerpolicy="no-referrer"
-		class="block h-72 w-full rounded border border-slate-300 dark:border-slate-600"
+		class="block h-72 w-full rounded-control border border-line"
 		hidden={!ready}
 	></iframe>
 {/if}

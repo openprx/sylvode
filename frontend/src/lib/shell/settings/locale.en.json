@@ -1,0 +1,10 @@
+{
+	"shell": {
+		"settings": {
+			"close": "Close settings",
+			"title": "Settings",
+			"leavesSettings": "opens outside settings",
+			"chooseWorkspaceMenu": "Choose a workspace"
+		}
+	}
+}

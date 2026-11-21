@@ -95,7 +95,7 @@
 	}
 
 	const fieldClass =
-		'mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
+		'mt-1 block min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm disabled:bg-surface disabled:text-fg-muted';
 	const locked = $derived(snap.busy);
 </script>
 
@@ -106,48 +106,45 @@
 		data-mode={view.mode}
 	>
 		{#if view.mode === 'rebuild'}
-			<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.replay.replayed')}</dt>
+			<dt class="text-fg-muted">{$t('flow.operations.replay.replayed')}</dt>
 			<dd class="font-mono" data-testid={`${testid}-count`}>{view.replayed}</dd>
-			<dt class="text-slate-500 dark:text-slate-400">
+			<dt class="text-fg-muted">
 				{$t('flow.operations.replay.skippedAlreadyDelivered')}
 			</dt>
 			<dd class="font-mono">{view.skippedAlreadyDelivered}</dd>
 		{:else}
-			<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.replay.requeued')}</dt>
+			<dt class="text-fg-muted">{$t('flow.operations.replay.requeued')}</dt>
 			<dd class="font-mono" data-testid={`${testid}-count`}>{view.requeued}</dd>
-			<dt class="text-slate-500 dark:text-slate-400">
+			<dt class="text-fg-muted">
 				{$t('flow.operations.replay.skippedNotFailed')}
 			</dt>
 			<dd class="font-mono">{view.skippedNotFailed}</dd>
 		{/if}
-		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.replay.deliveryIds')}</dt>
+		<dt class="text-fg-muted">{$t('flow.operations.replay.deliveryIds')}</dt>
 		<dd class="break-all font-mono text-xs">
 			{view.deliveryIds.length === 0 ? $t('flow.operations.none') : view.deliveryIds.join(', ')}
 		</dd>
-		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.replay.window')}</dt>
+		<dt class="text-fg-muted">{$t('flow.operations.replay.window')}</dt>
 		<dd>{formatWindow(view)}</dd>
 	</dl>
 {/snippet}
 
 <section
-	class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-700 dark:bg-slate-900"
+	class="rounded-card border border-line bg-raised p-4 sm:p-6"
 	aria-labelledby="flow-ops-replay-heading"
 	data-testid="flow-ops-replay"
 >
-	<h2 id="flow-ops-replay-heading" class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+	<h2 id="flow-ops-replay-heading" class="text-lg font-semibold text-fg">
 		{$t('flow.operations.replay.heading')}
 	</h2>
-	<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+	<p class="mt-1 text-sm text-fg-muted">
 		{$t('flow.operations.replay.description', { values: { days: REPLAY_MAX_WINDOW_DAYS } })}
 	</p>
 	<p class="sr-only" role="status" aria-live="polite">{announcement}</p>
 
 	<div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
 		<div>
-			<label
-				for="flow-ops-replay-mode"
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
-			>
+			<label for="flow-ops-replay-mode" class="block text-sm font-medium text-fg">
 				{$t('flow.operations.replay.modeLabel')}
 			</label>
 			<select
@@ -163,10 +160,7 @@
 			</select>
 		</div>
 		<div>
-			<label
-				for="flow-ops-replay-event"
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
-			>
+			<label for="flow-ops-replay-event" class="block text-sm font-medium text-fg">
 				{$t('flow.operations.replay.eventType')}
 			</label>
 			<input
@@ -179,10 +173,7 @@
 			/>
 		</div>
 		<div>
-			<label
-				for="flow-ops-replay-kind"
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
-			>
+			<label for="flow-ops-replay-kind" class="block text-sm font-medium text-fg">
 				{$t('flow.operations.replay.subscriberKind')}
 			</label>
 			<select
@@ -197,10 +188,7 @@
 			</select>
 		</div>
 		<div>
-			<label
-				for="flow-ops-replay-subscriber"
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
-			>
+			<label for="flow-ops-replay-subscriber" class="block text-sm font-medium text-fg">
 				{$t('flow.operations.replay.subscriberId')}
 			</label>
 			<input
@@ -214,10 +202,7 @@
 			/>
 		</div>
 		<div>
-			<label
-				for="flow-ops-replay-from"
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
-			>
+			<label for="flow-ops-replay-from" class="block text-sm font-medium text-fg">
 				{$t('flow.operations.replay.from')}
 			</label>
 			<input
@@ -230,10 +215,7 @@
 			/>
 		</div>
 		<div>
-			<label
-				for="flow-ops-replay-to"
-				class="block text-sm font-medium text-slate-700 dark:text-slate-300"
-			>
+			<label for="flow-ops-replay-to" class="block text-sm font-medium text-fg">
 				{$t('flow.operations.replay.to')}
 			</label>
 			<input
@@ -248,11 +230,7 @@
 	</div>
 
 	{#if snap.validationKey}
-		<p
-			class="mt-3 text-sm text-red-700 dark:text-red-300"
-			role="alert"
-			data-testid="flow-ops-replay-invalid"
-		>
+		<p class="mt-3 text-sm text-danger" role="alert" data-testid="flow-ops-replay-invalid">
 			{$t(snap.validationKey, { values: { days: REPLAY_MAX_WINDOW_DAYS } })}
 		</p>
 	{/if}
@@ -260,7 +238,7 @@
 	{#if snap.executed === null}
 		<button
 			type="button"
-			class="mt-4 min-h-11 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-900"
+			class="mt-4 min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 			disabled={snap.busy || snap.closed}
 			onclick={dryRun}
 			data-testid="flow-ops-replay-dry-run"
@@ -271,7 +249,7 @@
 
 	{#if snap.failure}
 		<div
-			class="mt-3 flex flex-col gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+			class="mt-3 flex flex-col gap-3 rounded-card border border-line bg-danger-soft p-3 text-sm text-danger sm:flex-row sm:items-center sm:justify-between"
 			role="alert"
 			data-testid="flow-ops-replay-error"
 		>
@@ -284,7 +262,7 @@
 			{#if snap.retry}
 				<button
 					type="button"
-					class="min-h-11 rounded-md border border-red-300 px-4 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-700"
+					class="min-h-11 rounded-control border border-danger px-4 text-sm font-medium"
 					onclick={snap.retry === 'execute' ? execute : dryRun}
 				>
 					{$t('flow.operations.retry')}
@@ -294,22 +272,18 @@
 	{/if}
 
 	{#if snap.preview && snap.executed === null}
-		<div
-			class="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50"
-		>
-			<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+		<div class="mt-4 rounded-card border border-line bg-surface p-3">
+			<h3 class="text-sm font-semibold text-fg">
 				{$t('flow.operations.replay.previewHeading')}
 			</h3>
-			<p class="mt-1 text-xs font-medium text-amber-800 dark:text-amber-300">
+			<p class="mt-1 text-xs font-medium text-warning">
 				{$t('flow.operations.replay.previewNote')}
 			</p>
 			{@render outcomeView(snap.preview, 'flow-ops-replay-preview')}
-			<label
-				class="mt-3 flex min-h-11 cursor-pointer items-center gap-3 text-sm text-slate-900 dark:text-slate-100"
-			>
+			<label class="mt-3 flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg">
 				<input
 					type="checkbox"
-					class="h-5 w-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+					class="h-5 w-5"
 					checked={snap.acknowledged}
 					disabled={snap.busy}
 					onchange={acknowledge}
@@ -318,7 +292,7 @@
 			</label>
 			<button
 				type="button"
-				class="mt-2 min-h-11 rounded-md bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-900"
+				class="mt-2 min-h-11 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-fg-muted"
 				disabled={!snap.canExecute}
 				onclick={execute}
 				data-testid="flow-ops-replay-execute"
@@ -329,13 +303,11 @@
 	{/if}
 
 	{#if snap.executed}
-		<div
-			class="mt-4 rounded-md border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/30"
-		>
-			<h3 class="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+		<div class="mt-4 rounded-card border border-line bg-success-soft p-3">
+			<h3 class="text-sm font-semibold text-fg">
 				{$t('flow.operations.replay.executedHeading')}
 			</h3>
-			<p class="mt-1 text-xs text-emerald-800 dark:text-emerald-300">
+			<p class="mt-1 text-xs text-success">
 				{$t('flow.operations.replay.executedNote')}
 			</p>
 			{@render outcomeView(snap.executed, 'flow-ops-replay-result')}

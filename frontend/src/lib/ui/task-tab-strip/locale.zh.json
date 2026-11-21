@@ -1,0 +1,43 @@
+{
+	"ui": {
+		"taskTabStrip": {
+			"openTasks": "已打开的任务",
+			"reorderHint": "按 Alt+Shift+左右方向键移动当前页签，按 Delete 关闭。",
+			"moved": "{title} 已移动到第 {position} 位，共 {total} 个。",
+			"unsaved": "有未保存的更改",
+			"unsavedShort": "有未保存的更改",
+			"updated": "有新的更改",
+			"close": "关闭 {title}",
+			"allTabs": {
+				"other": "显示全部 {count} 个页签"
+			},
+			"tabCount": {
+				"other": "{count} 个页签"
+			},
+			"openTabs": {
+				"other": "已打开 {count} 个页签"
+			},
+			"closeSaved": "关闭所有已保存的页签",
+			"closeTab": "关闭",
+			"closeOthers": "关闭其他已保存的页签",
+			"moveLeft": "左移",
+			"moveRight": "右移",
+			"tabMenu": "页签操作",
+			"discardTitle": "放弃“{title}”中的更改？",
+			"discardBody": "此页签中未保存的输入将丢失，已保存的内容不受影响。",
+			"keep": "保留",
+			"discardClose": "放弃并关闭",
+			"closeOneTitle": "请先关闭一个页签",
+			"closeOneBody": "全部 {count} 个页签都有未保存的更改。打开“{title}”需要空出一个页签。",
+			"cancelOpening": "取消打开",
+			"escape": "Esc",
+			"sampleForm": "客户表单",
+			"sampleFlow": "季度规划，这是一个需要被截断的很长的标题",
+			"sampleProject": "Acme 官网",
+			"sampleIssues": "问题",
+			"sampleDraft": "草稿笔记",
+			"sampleLoading": "Flow",
+			"state": "状态"
+		}
+	}
+}

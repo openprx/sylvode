@@ -77,7 +77,7 @@
 	<div class="relative inline-block" data-plugin-prefs>
 		<button
 			type="button"
-			class="rounded-md px-2 py-1 text-sm text-slate-700 underline focus-visible:outline-blue-600 dark:text-slate-200"
+			class="rounded-control px-2 py-1 text-sm text-fg underline"
 			aria-expanded={open}
 			onclick={() => (open = !open)}>{$t('plugins.prefs.menu')}</button
 		>
@@ -85,11 +85,11 @@
 			<div
 				role="group"
 				aria-label={$t('plugins.prefs.menu')}
-				class="absolute right-0 z-30 mt-1 w-80 max-w-[90vw] space-y-3 rounded-md border border-slate-300 bg-white p-3 text-sm text-slate-900 shadow-lg dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+				class="absolute right-0 z-30 mt-1 w-80 max-w-[90vw] space-y-3 rounded-float border border-overlay-line bg-overlay p-3 text-sm text-fg shadow-overlay"
 			>
 				{#each slots as group (group.slot)}
 					<section>
-						<h4 class="text-xs font-semibold uppercase text-slate-600 dark:text-slate-300">
+						<h4 class="text-xs font-semibold uppercase text-fg-muted">
 							{$t(slotLabels[group.slot])}
 						</h4>
 						<ul class="mt-1 space-y-2">
@@ -97,13 +97,13 @@
 								{@const up = moveUpPosition(group.entries, item)}
 								{@const down = moveDownPosition(group.entries, item)}
 								<li
-									class="space-y-1 rounded border border-slate-200 p-2 dark:border-slate-700"
+									class="space-y-1 rounded-card border border-line p-2"
 									data-plugin-pref={itemKey(item)}
 								>
 									<p class="font-medium">
 										{item.contribution.label}
 										{#if item.preference.hidden}
-											<span class="text-xs font-normal text-slate-600 dark:text-slate-300"
+											<span class="text-xs font-normal text-fg-muted"
 												>· {$t('plugins.prefs.hiddenSection')}</span
 											>
 										{/if}
@@ -111,7 +111,7 @@
 									<div class="flex flex-wrap items-center gap-2">
 										<button
 											type="button"
-											class="underline focus-visible:outline-blue-600"
+											class="underline"
 											disabled={busy}
 											onclick={() => update(item, { hidden: !item.preference.hidden })}
 											>{item.preference.hidden
@@ -121,7 +121,7 @@
 										{#if !item.preference.hidden}
 											<button
 												type="button"
-												class="underline focus-visible:outline-blue-600"
+												class="underline"
 												disabled={busy}
 												onclick={() => update(item, { collapsed: !item.preference.collapsed })}
 												>{item.preference.collapsed
@@ -131,21 +131,21 @@
 										{/if}
 										<button
 											type="button"
-											class="underline focus-visible:outline-blue-600 disabled:opacity-50"
+											class="underline disabled:text-fg-muted"
 											disabled={busy || up === null}
 											onclick={() => up !== null && update(item, { position: up })}
 											>{$t('plugins.prefs.moveUp')}</button
 										>
 										<button
 											type="button"
-											class="underline focus-visible:outline-blue-600 disabled:opacity-50"
+											class="underline disabled:text-fg-muted"
 											disabled={busy || down === null}
 											onclick={() => down !== null && update(item, { position: down })}
 											>{$t('plugins.prefs.moveDown')}</button
 										>
 										<button
 											type="button"
-											class="underline focus-visible:outline-blue-600"
+											class="underline"
 											disabled={busy}
 											onclick={() =>
 												run(() => clearPreference(projectId, item), 'plugins.prefs.resetDone')}
@@ -161,7 +161,7 @@
 											step="1"
 											value={effectivePosition(item)}
 											disabled={busy}
-											class="w-16 rounded border border-slate-300 bg-white px-1 py-0.5 dark:border-slate-600 dark:bg-slate-800"
+											class="w-16 rounded-control border border-input bg-field px-1 py-0.5"
 											onchange={(event) => setPosition(item, event.currentTarget.value)}
 										/>
 									</label>
@@ -173,14 +173,14 @@
 				{#if customized}
 					<button
 						type="button"
-						class="underline focus-visible:outline-blue-600"
+						class="underline"
 						disabled={busy}
 						onclick={() => run(() => clearAllPreferences(projectId), 'plugins.prefs.resetDone')}
 						>{$t('plugins.prefs.resetAll')}</button
 					>
 				{/if}
 				{#if message}
-					<p role="status" class="text-xs text-slate-600 dark:text-slate-300">{$t(message)}</p>
+					<p role="status" class="text-xs text-fg-muted">{$t(message)}</p>
 				{/if}
 			</div>
 		{/if}

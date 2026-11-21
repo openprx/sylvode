@@ -1,0 +1,40 @@
+{
+	"ui": {
+		"dialog": {
+			"close": "Close",
+			"cancel": "Cancel"
+		},
+		"confirm": {
+			"verb": {
+				"delete": "Delete {object}",
+				"remove": "Remove {object}",
+				"discard": "Discard {object}",
+				"revoke": "Revoke {object}",
+				"leave": "Leave {object}",
+				"restore": "Restore {object}"
+			},
+			"gallery": {
+				"open": "Delete member",
+				"openTwo": "Ask twice",
+				"openNeutral": "Restore navigation",
+				"openLong": "Delete long name",
+				"longTitle": "Delete the template with a long name?",
+				"longObject": "template quarterly-review-for-the-regional-operations-team-archived-2026-final.example",
+				"openNested": "Open dialog with confirmation",
+				"ask": "Ask inside dialog",
+				"title": "Delete member Ana?",
+				"body": "Ana loses access to the workspace. Her comments stay. This cannot be undone.",
+				"object": "member Ana",
+				"second": "Remove webhook hooks.example?",
+				"secondObject": "webhook hooks.example",
+				"neutralTitle": "Restore default navigation?",
+				"neutralLabel": "Restore navigation",
+				"result": "Result: {value}",
+				"none": "none",
+				"yes": "confirmed",
+				"no": "declined",
+				"nestedTitle": "Dialog with confirmation"
+			}
+		}
+	}
+}
