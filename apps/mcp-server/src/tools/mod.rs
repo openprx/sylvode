@@ -1,6 +1,10 @@
 pub mod capabilities;
+pub mod catalog;
 pub mod comments;
 pub mod context;
+pub mod entry;
+#[cfg(test)]
+mod entry_server_tests;
 pub mod files;
 pub mod flow_features;
 pub mod flow_scope;
@@ -19,8 +23,12 @@ pub mod proposals;
 pub mod release;
 pub mod scenario_templates;
 pub mod scenario_tools;
+pub mod schema_check;
 pub mod search;
 pub mod sprints;
+pub mod tasks;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod work_items;
 
 use crate::protocol::ToolDefinition;
@@ -37,10 +45,11 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         scenario_templates::list_scenario_templates_tool(),
         scenario_templates::get_scenario_template_tool(),
         scenario_templates::install_scenario_template_tool(),
-        project_types::list_project_resources_tool(),
-        project_types::create_project_resource_tool(),
-        project_types::update_project_resource_tool(),
-        project_types::delete_project_resource_tool(),
+        // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+        // project_types::list_project_resources_tool(),
+        // project_types::create_project_resource_tool(),
+        // project_types::update_project_resource_tool(),
+        // project_types::delete_project_resource_tool(),
         forms::list_forms_tool(),
         forms::get_form_tool(),
         forms::create_form_tool(),
@@ -116,8 +125,9 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         labels::delete_label_tool(),
         work_items::add_labels_to_work_item_tool(),
         search::search_all_tool(),
-        scenario_tools::code_resources_list_tool(),
-        scenario_tools::code_directory_get_tool(),
+        // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+        // scenario_tools::code_resources_list_tool(),
+        // scenario_tools::code_directory_get_tool(),
         scenario_tools::code_task_context_get_tool(),
         scenario_tools::code_change_proposal_create_tool(),
         scenario_tools::documents_extract_summary_tool(),
@@ -142,6 +152,7 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         legacy_pages::legacy_pages_import_commit_tool(),
         legacy_pages::legacy_pages_import_status_tool(),
     ]);
+    tools.extend(tasks::tool_definitions());
     tools
 }
 
@@ -415,8 +426,40 @@ mod tests {
         }
     }
 
+    /// The registry names and the catalogue classification are pinned in the baseline: adding,
+    /// removing or reclassifying a tool needs a reviewed edit of `tool-registry-baseline.json`
+    /// (`skills/openpr-mcp/scripts/expected-tool-count.py` checks the same file against the binary).
     #[test]
-    fn project_type_and_resource_tools_are_registered_once() {
+    fn the_registry_and_the_catalogue_match_the_pinned_baseline() {
+        use sha2::{Digest, Sha256};
+        let baseline: serde_json::Value = serde_json::from_str(include_str!("../../tool-registry-baseline.json"))
+            .expect("the baseline is valid JSON");
+        let digest = |text: &str| hex::encode(Sha256::digest(text.as_bytes()));
+        let mut names = get_all_tool_definitions()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        assert_eq!(
+            baseline.get("count").and_then(serde_json::Value::as_u64),
+            Some(names.len() as u64),
+            "registry count drifted"
+        );
+        assert_eq!(
+            baseline.get("names_sha256").and_then(serde_json::Value::as_str),
+            Some(digest(&names.join("\n")).as_str()),
+            "registry names drifted: update names_sha256 after review"
+        );
+        assert_eq!(
+            baseline.get("catalog_sha256").and_then(serde_json::Value::as_str),
+            Some(digest(&super::catalog::classification_text()).as_str()),
+            "catalogue classification drifted: update catalog_sha256 after review"
+        );
+    }
+
+    #[test]
+    fn project_type_tools_are_registered_once() {
         let tools = get_all_tool_definitions();
         let names = tools.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>();
         let unique = names.iter().copied().collect::<HashSet<_>>();
@@ -428,10 +471,6 @@ mod tests {
             "scenario_templates.list",
             "scenario_templates.get",
             "scenario_templates.install",
-            "project_resources.list",
-            "project_resources.create",
-            "project_resources.update",
-            "project_resources.delete",
             "forms.list",
             "forms.get",
             "forms.create",
@@ -478,8 +517,6 @@ mod tests {
             "check_results.create",
             "release.readiness.get",
             "bot_operation_logs.list",
-            "code.resources.list",
-            "code.directory.get",
             "code.task_context.get",
             "code.change_proposal.create",
             "documents.extract_summary",
@@ -513,6 +550,16 @@ mod tests {
                 unique.contains(expected),
                 "missing Phase 1 MCP tool registration: {expected}"
             );
+        }
+        for parked in [
+            "project_resources.list",
+            "project_resources.create",
+            "project_resources.update",
+            "project_resources.delete",
+            "code.resources.list",
+            "code.directory.get",
+        ] {
+            assert!(!unique.contains(parked), "parked tool is registered: {parked}");
         }
     }
 

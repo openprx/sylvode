@@ -158,7 +158,7 @@ if [[ -z "$(config_value mcp.bot_token)" || -z "$(config_value mcp.workspace_id)
 fi
 
 "$ROOT_DIR/target/debug/mcp-server" --config "$MCP_CONFIG" \
-  serve --transport http --bind-addr "127.0.0.1:$MCP_PORT" >"$MCP_LOG" 2>&1 &
+  serve --transport http --bind-addr "127.0.0.1:$MCP_PORT" --tools full >"$MCP_LOG" 2>&1 &
 mcp_pid=$!
 wait_http "http://127.0.0.1:$MCP_PORT/health" "Sylvode MCP"
 

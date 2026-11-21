@@ -2,19 +2,19 @@ use crate::client::{ListRecordsQuery, ListWorkItemsQuery, OpenPrClient};
 use crate::oauth::{DelegatedGrant, ToolRefusal, gate_tool_call, is_static_guide_resource};
 use crate::protocol::{CallToolParams, CallToolResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, ListToolsResult};
 use crate::tools;
+use platform::config::McpToolMode;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 const SKILL_GUIDE_MD: &str = r"# Sylvode MCP Skill Guide
 
-## Tools (154)
+## Tools (153)
 
 ### Projects: projects.list, projects.get, projects.create, projects.update, projects.delete
 ### Project Types: project_types.list, project_types.get
 ### Scenario Templates: scenario_templates.list, scenario_templates.get, scenario_templates.install
-### Project Resources: project_resources.list, project_resources.create, project_resources.update, project_resources.delete
 ### Context: context.get_project, context.get_governance, context.get_agent_policy
 ### Universal Forms: forms.list, forms.get, forms.create, forms.create_from_template, forms.update_schema, forms.duplicate, forms.schema_summary, forms.field_usage, forms.field_dependencies, form_schema_versions.list, form_schema_versions.get, form_permissions.get, form_permissions.update, form_views.list, form_attachments.list, form_attachments.create, form_attachments.archive, form_attachments.restore, form_records.list, form_records.export, form_records.import_preview, form_records.import_commit, form_records.get, form_records.create, form_records.update, form_records.link, form_records.relation_targets, form_records.children, form_records.child_create, form_records.child_update, form_records.child_archive, form_records.child_restore, form_records.aggregate, events.tail
 ### Plugins: plugins.list, plugins.get, plugins.install, plugins.invoke, plugin_invocations.list
@@ -25,9 +25,10 @@ const SKILL_GUIDE_MD: &str = r"# Sylvode MCP Skill Guide
 ### Sprints: sprints.list, sprints.create, sprints.update, sprints.delete
 ### Proposals: proposals.list, proposals.get, proposals.create, proposals.create_from_result, check_results.create
 ### Release: release.readiness.get (gates, blockers, next actions)
-### Code Scenarios: code.resources.list, code.directory.get, code.task_context.get, code.change_proposal.create
+### Code Scenarios: code.task_context.get, code.change_proposal.create
 ### Traditional Scenarios: documents.extract_summary, documents.review_risk, approval.request, inspection.report, corrective_action.propose
 ### Other: members.list, search.all, bot_operation_logs.list
+### Agent Tasks: sylvode_task_get, sylvode_task_ack, sylvode_task_progress, sylvode_task_complete, sylvode_task_fail
 ### Flow (v0.8): flow.feature_get, flow.feature_set, objects.get, objects.query, objects.history, objects.create, objects.patch, objects.move, objects.link, objects.unlink, objects.diff, objects.grants_get, objects.grants_set, objects.inheritance_set, objects.relations, objects.search, objects.reference, objects.unreference, objects.convert_preview, objects.convert_commit, objects.convert_status, objects.convert_retry, objects.export, objects.export_workspace, objects.import_artifact, objects.import_preview, objects.import_commit, objects.import_status, objects.integrity, collab.projection_lag, collab.status, collab.compact, collab.rebuild_projection, collab.repair_quarantine, deliveries.replay, collections.describe, collections.query, records.create, legacy_pages.inventory, legacy_pages.import_preview, legacy_pages.import_commit, legacy_pages.import_status, flow.comments.list, flow.comments.create, flow.comments.update, flow.comments.delete, flow.comments.resolve, flow.shares.list, flow.shares.create, flow.shares.revoke, flow.appearance.set, flow.appearance.upload, objects.restore, flow.trash.list, objects.purge, flow.mentions.list
 
 ## Workflow: Bug Report
@@ -197,6 +198,10 @@ enum OwnerLookup {
     FlowObject,
     /// `preview_id` / `job_id` -> the conversion's source Flow object owner endpoint.
     FlowConversion,
+    /// `task_id` (with `attempt`) -> `GET /api/v1/ai/tasks/{id}?attempt=N`, whose view names the
+    /// project. The endpoint answers only the task's own bot, so a task of another bot never
+    /// resolves.
+    AiTask,
 }
 
 impl OwnerLookup {
@@ -212,6 +217,7 @@ impl OwnerLookup {
             Self::Comment => "comment_id",
             Self::FlowObject => "object_id, source_object_id or collection_id",
             Self::FlowConversion => "preview_id or job_id",
+            Self::AiTask => "task_id",
         }
     }
 }
@@ -223,7 +229,7 @@ impl OwnerLookup {
 /// labels carry no project column (`migrations/0012_governance_phase1.sql`,
 /// `migrations/0003_labels.sql`), and `resource_id` only ever appears next to a
 /// `project_id` that already scopes the request path.
-const OWNERSHIP_ARGUMENTS: [(&str, OwnerLookup); 14] = [
+const OWNERSHIP_ARGUMENTS: [(&str, OwnerLookup); 15] = [
     ("record_id", OwnerLookup::FormData),
     ("form_id", OwnerLookup::FormData),
     ("attachment_id", OwnerLookup::FormData),
@@ -238,6 +244,7 @@ const OWNERSHIP_ARGUMENTS: [(&str, OwnerLookup); 14] = [
     ("collection_id", OwnerLookup::FlowObject),
     ("preview_id", OwnerLookup::FlowConversion),
     ("job_id", OwnerLookup::FlowConversion),
+    ("task_id", OwnerLookup::AiTask),
 ];
 
 /// The policy scope of every registered tool.
@@ -260,22 +267,23 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
         "scenario_templates.install",
         PolicyScope::DeclaredProject { required: true },
     ),
-    (
-        "project_resources.list",
-        PolicyScope::DeclaredProject { required: true },
-    ),
-    (
-        "project_resources.create",
-        PolicyScope::DeclaredProject { required: true },
-    ),
-    (
-        "project_resources.update",
-        PolicyScope::DeclaredProject { required: true },
-    ),
-    (
-        "project_resources.delete",
-        PolicyScope::DeclaredProject { required: true },
-    ),
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // (
+    //     "project_resources.list",
+    //     PolicyScope::DeclaredProject { required: true },
+    // ),
+    // (
+    //     "project_resources.create",
+    //     PolicyScope::DeclaredProject { required: true },
+    // ),
+    // (
+    //     "project_resources.update",
+    //     PolicyScope::DeclaredProject { required: true },
+    // ),
+    // (
+    //     "project_resources.delete",
+    //     PolicyScope::DeclaredProject { required: true },
+    // ),
     ("forms.list", PolicyScope::DeclaredProject { required: true }),
     ("forms.get", PolicyScope::OwnedBy(OwnerLookup::FormData)),
     ("forms.create", PolicyScope::DeclaredProject { required: true }),
@@ -384,8 +392,9 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("labels.update", PolicyScope::WorkspaceWide),
     ("labels.delete", PolicyScope::WorkspaceWide),
     ("search.all", PolicyScope::WorkspaceWide),
-    ("code.resources.list", PolicyScope::DeclaredProject { required: true }),
-    ("code.directory.get", PolicyScope::DeclaredProject { required: true }),
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // ("code.resources.list", PolicyScope::DeclaredProject { required: true }),
+    // ("code.directory.get", PolicyScope::DeclaredProject { required: true }),
     ("code.task_context.get", PolicyScope::DeclaredProject { required: true }),
     (
         "code.change_proposal.create",
@@ -474,6 +483,11 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("flow.trash.list", PolicyScope::WorkspaceWide),
     ("objects.purge", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
     ("flow.mentions.list", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
+    (tools::tasks::TASK_GET, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
+    (tools::tasks::TASK_ACK, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
+    (tools::tasks::TASK_PROGRESS, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
+    (tools::tasks::TASK_COMPLETE, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
+    (tools::tasks::TASK_FAIL, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
 ];
 
 /// Scope of one registered tool. Unknown names fail closed as mandatory
@@ -573,6 +587,65 @@ struct ResolvedOwner {
 /// Upper bound for the resource to project mapping cache.
 const PROJECT_ID_CACHE_LIMIT: usize = 1_024;
 
+/// The header a connection can name its tool mode with, next to the `?tools=` query parameter.
+pub const TOOL_MODE_HEADER: &str = "x-sylvode-tool-mode";
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct ToolModeQuery {
+    pub tools: Option<String>,
+}
+
+/// The tool mode one connection asked for, or the server's own when it asked for none.
+///
+/// A connection asks with `?tools=` or `X-Sylvode-Tool-Mode`. A value other than `search` or `full`,
+/// and two values that disagree, are refused rather than guessed at.
+pub fn requested_tool_mode(
+    query: Option<&str>,
+    headers: &axum::http::HeaderMap,
+    default: McpToolMode,
+) -> Result<McpToolMode, String> {
+    let from_header = headers
+        .get(TOOL_MODE_HEADER)
+        .map(|value| {
+            value
+                .to_str()
+                .map_err(|_| "X-Sylvode-Tool-Mode is not text".to_string())
+        })
+        .transpose()?;
+    let parse =
+        |source: &str, raw: &str| McpToolMode::parse(raw).ok_or_else(|| format!("{source} must be search or full"));
+    let query = query.map(|raw| parse("the tools query parameter", raw)).transpose()?;
+    let header = from_header.map(|raw| parse("X-Sylvode-Tool-Mode", raw)).transpose()?;
+    match (query, header) {
+        (Some(query), Some(header)) if query != header => {
+            Err("the tools query parameter and X-Sylvode-Tool-Mode disagree".to_string())
+        }
+        (Some(mode), _) | (None, Some(mode)) => Ok(mode),
+        (None, None) => Ok(default),
+    }
+}
+
+/// What a transport decided about the tool listing of the servers it builds: the mode and whether
+/// `sylvode_write` may be used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolSurface {
+    pub mode: McpToolMode,
+    pub allow_write_call: bool,
+}
+
+impl ToolSurface {
+    /// The surface of `[mcp]`: its `tool_mode` and `allow_write_call`.
+    pub const fn new(mode: McpToolMode, allow_write_call: bool) -> Self {
+        Self { mode, allow_write_call }
+    }
+
+    /// The same switches with another mode (a connection that asked for one).
+    #[must_use]
+    pub const fn with_mode(self, mode: McpToolMode) -> Self {
+        Self { mode, ..self }
+    }
+}
+
 pub struct McpServer {
     client: OpenPrClient,
     /// Maps `form:<id>` / `record:<id>` / `work_item:<id>` / ... to the owning project.
@@ -597,15 +670,37 @@ pub struct McpServer {
     /// `resources/*` serves only the static guides. It is fixed when the server is built for one
     /// request and cannot be changed by anything the caller sends.
     delegated: Option<DelegatedGrant>,
+    /// Which tools this server lists and accepts by name. Meaningful for a plain (non-delegated,
+    /// non-Flow-only) server only: a delegated server always serves the scoped registry and a
+    /// Flow-only server its own definitions.
+    tool_mode: McpToolMode,
+    /// Whether `sylvode_write` may be used. `false` makes it answer that writes are disabled.
+    write_call_allowed: bool,
 }
 
 impl McpServer {
-    pub fn new(client: OpenPrClient) -> Self {
+    /// A server for one plain caller. The mode is a required argument so that no construction
+    /// site can end up with a listing nobody chose.
+    pub fn new(client: OpenPrClient, tool_mode: McpToolMode) -> Self {
         Self {
             client,
             project_id_cache: Arc::new(Mutex::new(HashMap::new())),
             delegated: None,
+            tool_mode,
+            write_call_allowed: true,
         }
+    }
+
+    /// A server for one plain caller on a transport that decided its [`ToolSurface`].
+    pub fn for_surface(client: OpenPrClient, surface: ToolSurface) -> Self {
+        Self::new(client, surface.mode).with_write_call_allowed(surface.allow_write_call)
+    }
+
+    /// Sets whether `sylvode_write` may be used (`[mcp] allow_write_call`).
+    #[must_use]
+    pub const fn with_write_call_allowed(mut self, allowed: bool) -> Self {
+        self.write_call_allowed = allowed;
+        self
     }
 
     /// A server for one delegated caller. `client` must already act for that caller
@@ -615,6 +710,9 @@ impl McpServer {
             client,
             project_id_cache: Arc::new(Mutex::new(HashMap::new())),
             delegated: Some(grant),
+            // Ignored: a delegated server lists the scoped registry whatever a transport asked.
+            tool_mode: McpToolMode::Full,
+            write_call_allowed: true,
         }
     }
 
@@ -681,11 +779,14 @@ impl McpServer {
     }
 
     async fn handle_list_tools(&self, id: Option<Value>, params: Option<Value>) -> JsonRpcResponse {
-        let mut static_tools = if self.client.is_flow_only() {
+        let search_listing = self.applicable_mode() == Some(McpToolMode::Search);
+        let mut static_tools = tools::catalog::annotate(if self.client.is_flow_only() {
             tools::flow_scope::definitions()
+        } else if search_listing {
+            tools::entry::search_mode_listing()
         } else {
             tools::get_all_tool_definitions()
-        };
+        });
         if let Some(grant) = &self.delegated {
             static_tools.retain(|tool| crate::oauth_scopes::allowed(grant.scopes, &tool.name));
         }
@@ -697,7 +798,13 @@ impl McpServer {
             Some(project_id) => match self.client.get_project_agent_policy(&project_id).await {
                 Ok(policy) => match tools::capabilities::extract_enabled_tool_names(&policy) {
                     Some(enabled_tool_names) => {
-                        let missing = tools::capabilities::unknown_tool_names(&static_tools, &enabled_tool_names);
+                        // The policy names registry tools, which the search listing does not contain.
+                        let known = if search_listing {
+                            tools::get_all_tool_definitions()
+                        } else {
+                            static_tools.clone()
+                        };
+                        let missing = tools::capabilities::unknown_tool_names(&known, &enabled_tool_names);
                         if !missing.is_empty() {
                             tracing::warn!(
                                 project_id = %project_id,
@@ -705,7 +812,15 @@ impl McpServer {
                                 "Project agent policy references tools not registered by this MCP server"
                             );
                         }
-                        tools::capabilities::filter_tool_definitions(static_tools, &enabled_tool_names)
+                        if search_listing {
+                            // Entry tools are not policy subjects; the task tools are always enabled.
+                            static_tools.retain(|tool| {
+                                tools::entry::is_entry_tool(&tool.name) || enabled_tool_names.contains(&tool.name)
+                            });
+                            static_tools
+                        } else {
+                            tools::capabilities::filter_tool_definitions(static_tools, &enabled_tool_names)
+                        }
                     }
                     None => static_tools,
                 },
@@ -758,7 +873,95 @@ impl McpServer {
         }
     }
 
+    /// The mode that decides which names this server accepts, or `None` when mode does not apply
+    /// (a delegated server, which has its scope table, and a Flow-only server).
+    fn applicable_mode(&self) -> Option<McpToolMode> {
+        (self.delegated.is_none() && !self.client.is_flow_only()).then_some(self.tool_mode)
+    }
+
+    /// Runs one `tools/call`: the delegated gate, then the mode (a name `tools/list` does not offer
+    /// is refused), then the entry tools or, for a registry tool, the policy chain.
     pub async fn call_tool(&self, name: &str, args: Value) -> CallToolResult {
+        if let Some(grant) = &self.delegated
+            && let Err(refusal) = gate_tool_call(grant, name, Some(&args))
+        {
+            return CallToolResult::error(refusal.message());
+        }
+        let mode = self.applicable_mode();
+        if let Some(mode) = mode
+            && let Some(refusal) = tools::entry::unlisted_refusal(mode, name)
+        {
+            return CallToolResult::error(refusal);
+        }
+        if mode == Some(McpToolMode::Search) && tools::entry::is_entry_tool(name) {
+            return self.call_entry_tool(name, args).await;
+        }
+        self.call_registry_tool(name, args).await
+    }
+
+    /// The four search mode entry tools. They are handled before the scoped client and the policy
+    /// chain exist: `sylvode_overview` and `sylvode_search` read the catalogue (and, for a named
+    /// project, its agent policy), and the wrappers hand their target to
+    /// [`Self::call_registry_tool`], which applies every check of a direct call under the
+    /// target's own name, so the operation log shows `work_items.update`, not `sylvode_write`.
+    async fn call_entry_tool(&self, name: &str, args: Value) -> CallToolResult {
+        match name {
+            tools::entry::OVERVIEW | tools::entry::SEARCH => self.call_catalogue_tool(name, &args).await,
+            _ => {
+                if name == tools::entry::WRITE && !self.write_call_allowed {
+                    return CallToolResult::error(tools::entry::writes_disabled_message());
+                }
+                match tools::entry::resolve_wrapper_call(name, &args) {
+                    Ok((tool, arguments)) => self.call_registry_tool(&tool, arguments).await,
+                    Err(error) => CallToolResult::error(error),
+                }
+            }
+        }
+    }
+
+    async fn call_catalogue_tool(&self, name: &str, args: &Value) -> CallToolResult {
+        let project = match tools::entry::project_argument(args) {
+            Ok(project) => project,
+            Err(error) => return CallToolResult::error(error),
+        };
+        let enabled = match &project {
+            Some(project_id) => match self.enabled_tools_of(name, project_id).await {
+                Ok(enabled) => enabled,
+                Err(error) => return CallToolResult::error(error),
+            },
+            None => None,
+        };
+        let answer = if name == tools::entry::OVERVIEW {
+            Ok(tools::entry::overview(project.as_deref(), enabled.as_ref()))
+        } else {
+            tools::entry::search(args, enabled.as_ref())
+        };
+        match answer {
+            Ok(value) => CallToolResult::success(value.to_string()),
+            Err(error) => CallToolResult::error(error),
+        }
+    }
+
+    /// The tools a project's agent policy offers, or `None` when the policy names none and so
+    /// restricts nothing. One API call, as `tools/list` with a project makes.
+    async fn enabled_tools_of(&self, operation: &str, project_id: &str) -> Result<Option<BTreeSet<String>>, String> {
+        let policy = self
+            .client
+            .recording_operation(operation)
+            .get_project_agent_policy(project_id)
+            .await
+            .map_err(|error| format!("Failed to load project agent policy for {operation}: {error}"))?;
+        if !policy.get("data").is_some_and(Value::is_object) {
+            return Err(format!(
+                "Refusing {operation}: the agent-policy response for project {project_id} carries no policy object"
+            ));
+        }
+        Ok(tools::capabilities::extract_enabled_tool_names(&policy))
+    }
+
+    /// A registry tool through the delegated gate, the scoped client and the policy chain: the
+    /// one door every direct call and every wrapper call goes through.
+    async fn call_registry_tool(&self, name: &str, args: Value) -> CallToolResult {
         if let Some(grant) = &self.delegated
             && let Err(refusal) = gate_tool_call(grant, name, Some(&args))
         {
@@ -772,6 +975,8 @@ impl McpServer {
                 Arc::clone(&self.project_id_cache)
             },
             delegated: self.delegated.clone(),
+            tool_mode: self.tool_mode,
+            write_call_allowed: self.write_call_allowed,
         };
         if scoped.client.is_flow_only() {
             let request = match tools::flow_scope::prepare(&scoped.client, name, &args).await {
@@ -880,10 +1085,11 @@ impl McpServer {
             "scenario_templates.install" => {
                 tools::scenario_templates::install_scenario_template(&self.client, args).await
             }
-            "project_resources.list" => tools::project_types::list_project_resources(&self.client, args).await,
-            "project_resources.create" => tools::project_types::create_project_resource(&self.client, args).await,
-            "project_resources.update" => tools::project_types::update_project_resource(&self.client, args).await,
-            "project_resources.delete" => tools::project_types::delete_project_resource(&self.client, args).await,
+            // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+            // "project_resources.list" => tools::project_types::list_project_resources(&self.client, args).await,
+            // "project_resources.create" => tools::project_types::create_project_resource(&self.client, args).await,
+            // "project_resources.update" => tools::project_types::update_project_resource(&self.client, args).await,
+            // "project_resources.delete" => tools::project_types::delete_project_resource(&self.client, args).await,
             "forms.list" => tools::forms::list_forms(&self.client, args).await,
             "forms.get" => tools::forms::get_form(&self.client, args).await,
             "forms.create" => tools::forms::create_form(&self.client, args).await,
@@ -973,8 +1179,9 @@ impl McpServer {
 
             // Search
             "search.all" => tools::search::search_all(&self.client, args).await,
-            "code.resources.list" => tools::scenario_tools::code_resources_list(&self.client, args).await,
-            "code.directory.get" => tools::scenario_tools::code_directory_get(&self.client, args).await,
+            // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+            // "code.resources.list" => tools::scenario_tools::code_resources_list(&self.client, args).await,
+            // "code.directory.get" => tools::scenario_tools::code_directory_get(&self.client, args).await,
             "code.task_context.get" => tools::scenario_tools::code_task_context_get(&self.client, args).await,
             "code.change_proposal.create" => {
                 tools::scenario_tools::code_change_proposal_create(&self.client, args).await
@@ -1028,6 +1235,11 @@ impl McpServer {
             "legacy_pages.import_preview" => tools::legacy_pages::legacy_pages_import_preview(&self.client, args).await,
             "legacy_pages.import_commit" => tools::legacy_pages::legacy_pages_import_commit(&self.client, args).await,
             "legacy_pages.import_status" => tools::legacy_pages::legacy_pages_import_status(&self.client, args).await,
+            tools::tasks::TASK_GET => tools::tasks::get(&self.client, args).await,
+            tools::tasks::TASK_ACK => tools::tasks::ack(&self.client, args).await,
+            tools::tasks::TASK_PROGRESS => tools::tasks::progress(&self.client, args).await,
+            tools::tasks::TASK_COMPLETE => tools::tasks::complete(&self.client, args).await,
+            tools::tasks::TASK_FAIL => tools::tasks::fail(&self.client, args).await,
             "flow.comments.list" => tools::flow_social::list_comments(&self.client, args).await,
             "flow.comments.create" => tools::flow_social::create_comment(&self.client, args).await,
             "flow.comments.update" => tools::flow_social::update_comment(&self.client, args).await,
@@ -1045,6 +1257,13 @@ impl McpServer {
 
             _ => CallToolResult::error(format!("Unknown tool: {name}")),
         }
+    }
+
+    /// Test-only door for `tools::catalog`'s HTTP method witness: runs the tool body without the
+    /// policy chain so that the witness sees exactly the requests the tool itself issues.
+    #[cfg(test)]
+    pub(crate) async fn execute_tool_for_catalog_witness(&self, name: &str, args: Value) -> CallToolResult {
+        self.execute_tool(name, args).await
     }
 
     /// Resolves the project whose agent policy governs this call.
@@ -1171,6 +1390,7 @@ impl McpServer {
             OwnerLookup::FlowConversion => Err(format!(
                 "Tool '{tool_name}' is refused: FlowConversion ownership must be resolved through its source lookup"
             )),
+            OwnerLookup::AiTask => self.resolve_ai_task_owner(tool_name, args).await,
             OwnerLookup::FormData => self.resolve_form_data_owner(tool_name, args).await,
             OwnerLookup::Sprint | OwnerLookup::Comment => {
                 let id = required_owner_argument(tool_name, lookup, args)?;
@@ -1248,6 +1468,34 @@ impl McpServer {
             .get("data")
             .ok_or_else(|| format!("API response for flow object {object_id} carries no data"))?;
         Ok(data.get("project_id").and_then(Value::as_str).map(str::to_string))
+    }
+
+    /// Reads a task's project from the task view. The API serves the view only to the task's own
+    /// bot, so a task of another bot (or any caller that is not a bot) fails here with the API's
+    /// refusal and never reaches the policy check or the tool.
+    async fn resolve_ai_task_owner(&self, tool_name: &str, args: &Value) -> Result<String, String> {
+        let (task_id, attempt) = tools::tasks::task_target(args)
+            .map_err(|error| format!("Tool '{tool_name}' cannot resolve the task's project: {error}"))?;
+        let cache_key = format!("ai_task:{task_id}");
+        if let Some(owner) = self.cached_project_id(&cache_key).await {
+            return Ok(owner.project_id);
+        }
+        let response = self
+            .client
+            .get_ai_task(&task_id, attempt)
+            .await
+            .map_err(|error| format!("Failed to resolve owning project for task {task_id}: {error}"))?;
+        let project_id = response
+            .pointer("/data/project/id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("API response for task {task_id} carries no project id"))?;
+        let owner = ResolvedOwner {
+            project_id,
+            form_id: None,
+        };
+        self.cache_project_id(cache_key, &owner).await;
+        Ok(owner.project_id)
     }
 
     async fn resolve_flow_conversion_owner(&self, tool_name: &str, args: &Value) -> Result<Option<String>, String> {
@@ -1544,6 +1792,19 @@ impl McpServer {
         {
             fields.insert("capabilities".into(), json!({"tools":{"listChanged":false}}));
         }
+        // The task protocol and the instructions are for a plain caller only: a delegated server
+        // has no task tools and a Flow-only server none of this surface.
+        if let Some(mode) = self.applicable_mode()
+            && let Some(fields) = result.as_object_mut()
+        {
+            if let Some(capabilities) = fields.get_mut("capabilities").and_then(Value::as_object_mut) {
+                capabilities.insert(
+                    "experimental".to_string(),
+                    json!({ "sylvode/task-protocol": { "version": tools::entry::TASK_PROTOCOL_VERSION } }),
+                );
+            }
+            fields.insert("instructions".to_string(), json!(tools::entry::instructions(mode)));
+        }
         JsonRpcResponse::success(id, result)
     }
 
@@ -1687,12 +1948,13 @@ impl McpServer {
                 "description": "Read project type, settings, and scenario metadata for a project",
                 "mimeType": "application/json"
             }),
-            json!({
-                "uriTemplate": "sylvode://projects/{project_id}/resources",
-                "name": "Project Resources",
-                "description": "Read project resources of kind directory or custom",
-                "mimeType": "application/json"
-            }),
+            // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+            // json!({
+            //     "uriTemplate": "sylvode://projects/{project_id}/resources",
+            //     "name": "Project Resources",
+            //     "description": "Read project resources of kind directory or custom",
+            //     "mimeType": "application/json"
+            // }),
             json!({
                 "uriTemplate": "sylvode://projects/{project_id}/recent-decisions",
                 "name": "Project Recent Decisions",
@@ -2163,24 +2425,25 @@ impl McpServer {
             };
         }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/resources") {
-            return match self.client.list_project_resources(project_id).await {
-                Ok(resources) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": resources.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project resources: {error}")),
-                ),
-            };
-        }
+        // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+        // if let Some(project_id) = parse_project_resource_uri(&uri, "/resources") {
+        //     return match self.client.list_project_resources(project_id).await {
+        //         Ok(resources) => JsonRpcResponse::success(
+        //             id,
+        //             json!({
+        //                 "contents": [{
+        //                     "uri": uri,
+        //                     "mimeType": "application/json",
+        //                     "text": resources.to_string()
+        //                 }]
+        //             }),
+        //         ),
+        //         Err(error) => JsonRpcResponse::error(
+        //             id,
+        //             JsonRpcError::internal_error(format!("Failed to read project resources: {error}")),
+        //         ),
+        //     };
+        // }
 
         if let Some(project_id) = parse_project_resource_uri(&uri, "/recent-decisions") {
             return match self.client.get_project_governance_context(project_id).await {
@@ -2308,7 +2571,7 @@ fn attach_canonical_resource_metadata(mut response: JsonRpcResponse, legacy_alia
 /// `/recent-decisions` maps to `context.get_governance` because that is the call it is
 /// served from: it reads the governance context and returns one field of it, so it can
 /// carry no weaker authorization than the whole document does.
-const PROJECT_RESOURCE_POLICY_TOOLS: [(&str, &str); 10] = [
+const PROJECT_RESOURCE_POLICY_TOOLS: [(&str, &str); 9] = [
     ("/issues", "work_items.list"),
     ("/forms", "forms.list"),
     ("/context", "context.get_project"),
@@ -2316,7 +2579,8 @@ const PROJECT_RESOURCE_POLICY_TOOLS: [(&str, &str); 10] = [
     ("/agent-policy", "context.get_agent_policy"),
     ("/release-readiness", "release.readiness.get"),
     ("/type", "projects.get"),
-    ("/resources", "project_resources.list"),
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // ("/resources", "project_resources.list"),
     ("/recent-decisions", "context.get_governance"),
     ("/sprints", "sprints.list"),
 ];
@@ -2804,6 +3068,7 @@ mod tests {
         Json, Router,
         routing::{delete, get, post},
     };
+    use platform::config::McpToolMode;
     use serde_json::{Value, json};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2839,7 +3104,10 @@ mod tests {
     }
 
     fn server(base_url: String) -> Result<super::McpServer, String> {
-        Ok(super::McpServer::new(crate::client::test_api::client(base_url)?))
+        Ok(super::McpServer::new(
+            crate::client::test_api::client(base_url)?,
+            McpToolMode::Full,
+        ))
     }
 
     fn request(id: i64, method: &str, params: Option<Value>) -> JsonRpcRequest {
@@ -2925,7 +3193,6 @@ mod tests {
             "sylvode://projects/{project_id}/agent-policy",
             "sylvode://projects/{project_id}/release-readiness",
             "sylvode://projects/{project_id}/type",
-            "sylvode://projects/{project_id}/resources",
             "sylvode://projects/{project_id}/recent-decisions",
             "sylvode://projects/{project_id}/sprints",
             "sylvode://issues/{identifier}",
@@ -2945,7 +3212,7 @@ mod tests {
             )
             .collect::<Vec<_>>();
         assert_eq!(resources.len(), 4, "static resource registry cardinality drifted");
-        assert_eq!(templates.len(), 22, "template registry cardinality drifted");
+        assert_eq!(templates.len(), 21, "template registry cardinality drifted");
         assert_eq!(
             observed.len(),
             expected.len(),
@@ -3094,6 +3361,49 @@ mod tests {
         );
         assert!(extract_tools_list_project_id(Some(&json!({ "project_id": "p1" }))).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn a_connection_chooses_its_tool_mode_by_query_or_header_and_a_conflict_is_refused() {
+        use axum::http::{HeaderMap, HeaderValue};
+        let headers = |value: Option<&str>| {
+            let mut map = HeaderMap::new();
+            if let Some(value) = value {
+                map.insert(
+                    super::TOOL_MODE_HEADER,
+                    HeaderValue::from_str(value).expect("header value"),
+                );
+            }
+            map
+        };
+        let choose = |query: Option<&str>, header: Option<&str>, default| {
+            super::requested_tool_mode(query, &headers(header), default)
+        };
+        for default in [McpToolMode::Search, McpToolMode::Full] {
+            assert_eq!(
+                choose(None, None, default),
+                Ok(default),
+                "no choice keeps the server's own"
+            );
+            assert_eq!(choose(Some("full"), None, default), Ok(McpToolMode::Full));
+            assert_eq!(choose(Some("search"), None, default), Ok(McpToolMode::Search));
+            assert_eq!(choose(None, Some("full"), default), Ok(McpToolMode::Full));
+            assert_eq!(choose(None, Some(" Search "), default), Ok(McpToolMode::Search));
+            assert_eq!(choose(Some("full"), Some("FULL"), default), Ok(McpToolMode::Full));
+            for (query, header) in [(Some("full"), Some("search")), (Some("search"), Some("full"))] {
+                assert!(choose(query, header, default).is_err_and(|error| error.contains("disagree")));
+            }
+            for bad in ["", "all", "fulll", "search,full"] {
+                assert!(choose(Some(bad), None, default).is_err(), "{bad:?}");
+                assert!(choose(None, Some(bad), default).is_err(), "{bad:?}");
+            }
+        }
+        let mut binary = HeaderMap::new();
+        binary.insert(
+            super::TOOL_MODE_HEADER,
+            HeaderValue::from_bytes(&[0xff, 0xfe]).expect("opaque bytes"),
+        );
+        assert!(super::requested_tool_mode(None, &binary, McpToolMode::Search).is_err());
     }
 
     #[test]
@@ -4115,10 +4425,6 @@ mod tests {
 
         let router = Router::new()
             .route(&format!("/api/v1/projects/{PROJECT}"), delete(denied))
-            .route(
-                &format!("/api/v1/projects/{PROJECT}/resources/{RESOURCE}"),
-                delete(denied),
-            )
             .route(&format!("/api/v1/labels/{LABEL}"), delete(denied))
             .route(
                 &format!("/api/v1/issues/{WORK_ITEM}"),
@@ -4138,10 +4444,6 @@ mod tests {
 
         let calls = [
             ("projects.delete", json!({ "project_id": PROJECT })),
-            (
-                "project_resources.delete",
-                json!({ "project_id": PROJECT, "resource_id": RESOURCE }),
-            ),
             ("labels.delete", json!({ "label_id": LABEL })),
             ("work_items.delete", json!({ "work_item_id": WORK_ITEM })),
             (
@@ -4240,10 +4542,6 @@ mod tests {
                 "release.readiness.get",
             ),
             (format!("openpr://projects/{PROJECT}/type"), "projects.get"),
-            (
-                format!("openpr://projects/{PROJECT}/resources"),
-                "project_resources.list",
-            ),
             (
                 format!("openpr://projects/{PROJECT}/recent-decisions"),
                 "context.get_governance",
@@ -4344,9 +4642,9 @@ mod tests {
     #[test]
     fn resource_uris_carrying_an_unparsable_id_are_refused() {
         for uri in [
-            "openpr://projects/not-a-uuid/resources",
+            "openpr://projects/not-a-uuid/sprints",
             &format!("openpr://projects/{PROJECT}%2Fpad/agent-policy"),
-            &format!("openpr://projects/{PROJECT}?pad=/resources"),
+            &format!("openpr://projects/{PROJECT}?pad=/sprints"),
             "openpr://forms/not-a-uuid/records",
             "openpr://form-records/not-a-uuid/events",
             "openpr://issues/PRX 42",
@@ -4356,6 +4654,27 @@ mod tests {
                 "{uri} was classified instead of refused"
             );
         }
+    }
+
+    /// The project resources template is parked: no URI of that shape is listed or read, and
+    /// the read never reaches the API (nothing listens on the port below).
+    #[tokio::test]
+    async fn the_parked_project_resources_template_is_unknown() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        let uri = format!("sylvode://projects/{PROJECT}/resources");
+        assert!(
+            PROJECT_RESOURCE_POLICY_TOOLS
+                .iter()
+                .all(|(suffix, _)| *suffix != "/resources"),
+            "the policy table still maps /resources"
+        );
+        assert_eq!(resource_policy_subject(&uri)?, ResourceSubject::Ungoverned);
+        let response = server
+            .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })))
+            .await;
+        let body = serde_json::to_string(&response)?;
+        assert!(body.contains("Unknown resource URI"), "{uri} -> {body}");
+        Ok(())
     }
 
     /// A traversal shaped URI is stopped one step earlier: the id would span a `/`, so no

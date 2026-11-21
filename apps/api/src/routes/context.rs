@@ -387,7 +387,6 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
             "context.get_governance",
             "context.get_agent_policy",
             "release.readiness.get",
-            "project_resources.list",
             "members.list",
             "search.all",
         ]),
@@ -451,12 +450,7 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
     if capability_set.contains("code_context") {
         groups.insert(
             "code",
-            tool_set(&[
-                "code.resources.list",
-                "code.directory.get",
-                "code.task_context.get",
-                "code.change_proposal.create",
-            ]),
+            tool_set(&["code.task_context.get", "code.change_proposal.create"]),
         );
     }
 
@@ -549,17 +543,21 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
         || capability_set.contains("inspection")
         || capability_set.contains("corrective_action")
     {
-        groups.insert(
-            "resources",
-            tool_set(&[
-                "project_resources.list",
-                "project_resources.create",
-                "project_resources.update",
-                "project_resources.delete",
-                "files.upload",
-            ]),
-        );
+        groups.insert("resources", tool_set(&["files.upload"]));
     }
+
+    // The task protocol is never a policy choice: a policy that hid it would leave a task the
+    // bot cannot acknowledge, complete or fail.
+    groups.insert(
+        "tasks",
+        tool_set(&[
+            "sylvode_task_get",
+            "sylvode_task_ack",
+            "sylvode_task_progress",
+            "sylvode_task_complete",
+            "sylvode_task_fail",
+        ]),
+    );
 
     let enabled_tools = groups
         .values()
@@ -632,7 +630,17 @@ mod tests {
         assert!(tools.contains(&"proposals.create".to_string()));
         assert!(tools.contains(&"proposals.create_from_result".to_string()));
         assert!(tools.contains(&"check_results.create".to_string()));
-        assert!(tools.contains(&"project_resources.create".to_string()));
+        assert!(tools.contains(&"files.upload".to_string()));
+        for parked in [
+            "project_resources.list",
+            "project_resources.create",
+            "project_resources.update",
+            "project_resources.delete",
+            "code.resources.list",
+            "code.directory.get",
+        ] {
+            assert!(!tools.contains(&parked.to_string()), "{parked} is parked");
+        }
         assert!(tools.contains(&"forms.create_from_template".to_string()));
         assert!(tools.contains(&"scenario_templates.install".to_string()));
         assert!(tools.contains(&"forms.duplicate".to_string()));
@@ -654,6 +662,43 @@ mod tests {
         assert!(tools.contains(&"plugins.invoke".to_string()));
     }
 
+    /// The `tasks` group is added for every project type, whatever its capabilities.
+    #[test]
+    fn the_tasks_group_is_present_for_every_capability_set() {
+        // Groups are sorted sets.
+        let task_tools = [
+            "sylvode_task_ack",
+            "sylvode_task_complete",
+            "sylvode_task_fail",
+            "sylvode_task_get",
+            "sylvode_task_progress",
+        ];
+        for capabilities in [
+            json!([]),
+            json!(["mcp"]),
+            json!(["issues"]),
+            json!(["code_context"]),
+            json!(["documents", "forms"]),
+            json!(["inspection", "corrective_action"]),
+            json!([
+                "issues",
+                "sprints",
+                "mcp",
+                "governance",
+                "code_context",
+                "forms",
+                "plugins"
+            ]),
+        ] {
+            let registry = build_mcp_tool_registry(&capabilities);
+            assert_eq!(registry["groups"]["tasks"], json!(task_tools), "{capabilities}");
+            let tools = enabled_tools(&registry);
+            for tool in task_tools {
+                assert!(tools.contains(&tool.to_string()), "{tool} for {capabilities}");
+            }
+        }
+    }
+
     #[test]
     fn mcp_tool_registry_hides_disabled_capability_tools() {
         let registry = build_mcp_tool_registry(&json!(["issues", "mcp"]));
@@ -663,6 +708,18 @@ mod tests {
         assert!(!tools.iter().any(|tool| tool.starts_with("invocations.")));
         assert!(!tools.contains(&"sprints.create".to_string()));
         assert!(!tools.contains(&"proposals.create".to_string()));
+    }
+
+    /// The `resources` group outlives the parked project-resource tools: for projects without
+    /// issues or board it is the only source of `files.upload`, and it holds nothing else.
+    #[test]
+    fn the_resources_group_holds_only_files_upload() {
+        let registry = build_mcp_tool_registry(&json!(["code_context", "mcp"]));
+        assert_eq!(registry["groups"]["resources"], json!(["files.upload"]));
+        assert!(registry["groups"].get("work_items").is_none());
+        let tools = enabled_tools(&registry);
+        assert!(tools.contains(&"files.upload".to_string()));
+        assert!(tools.contains(&"code.task_context.get".to_string()));
     }
 
     /// V2. `GET /projects/{id}/context` exposes `recent_decisions`, and the query behind it used

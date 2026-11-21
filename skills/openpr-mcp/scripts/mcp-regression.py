@@ -43,6 +43,10 @@ with open(os.open(MCP_CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w"
         f'bot_token = "{TOKEN}"\nworkspace_id = "{WS}"\ntransport = "stdio"\n'
     )
 
+# The registry checks below call registry tools by name, which is the opt-in "full" tool mode.
+# The default mode ("search") is checked by search_mode_checks().
+FULL_TOOLS_ARGS = ["--tools", "full"]
+
 PASS = FAIL = SKIP = 0
 ERRORS = []
 
@@ -56,7 +60,7 @@ def extract(resp):
 
 def http_call(tool, args=None):
     try:
-        r = requests.post(f"{MCP_HTTP}/mcp/rpc", json={"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":tool,"arguments":args or {}}}, timeout=15)
+        r = requests.post(f"{MCP_HTTP}/mcp/rpc?tools=full", json={"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":tool,"arguments":args or {}}}, timeout=15)
         return extract(r.json())
     except Exception as e: return {"error": str(e)}
 
@@ -64,7 +68,7 @@ def stdio_call(tool, args=None):
     payload = json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":tool,"arguments":args or {}}})
     try:
         env = {"PATH":"/usr/bin:/bin"}
-        proc = subprocess.run([MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG], input=payload, capture_output=True, text=True, timeout=15, env=env)
+        proc = subprocess.run([MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG] + FULL_TOOLS_ARGS, input=payload, capture_output=True, text=True, timeout=15, env=env)
         for line in proc.stdout.strip().split("\n"):
             line = line.strip()
             if line.startswith("{"):
@@ -81,7 +85,7 @@ def sse_call(tool, args=None):
         
         def listen():
             try:
-                r = requests.get(f"{MCP_HTTP}/sse", stream=True, headers={"Accept":"text/event-stream"}, timeout=30)
+                r = requests.get(f"{MCP_HTTP}/sse?tools=full", stream=True, headers={"Accept":"text/event-stream"}, timeout=30)
                 event_type = None
                 for line in r.iter_lines(decode_unicode=True):
                     if stop.is_set(): break
@@ -185,7 +189,7 @@ REQUIRED_REGISTRY_TOOLS = {
 
 def http_list_tools():
     try:
-        r = requests.post(f"{MCP_HTTP}/mcp/rpc", json={"jsonrpc":"2.0","id":1,"method":"tools/list"}, timeout=15)
+        r = requests.post(f"{MCP_HTTP}/mcp/rpc?tools=full", json={"jsonrpc":"2.0","id":1,"method":"tools/list"}, timeout=15)
         return r.json()
     except Exception as e: return {"error": str(e)}
 
@@ -193,7 +197,7 @@ def stdio_list_tools():
     payload = json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/list"})
     try:
         env = {"PATH":"/usr/bin:/bin"}
-        proc = subprocess.run([MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG], input=payload, capture_output=True, text=True, timeout=15, env=env)
+        proc = subprocess.run([MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG] + FULL_TOOLS_ARGS, input=payload, capture_output=True, text=True, timeout=15, env=env)
         for line in proc.stdout.strip().split("\n"):
             line = line.strip()
             if line.startswith("{"):
@@ -209,7 +213,7 @@ def sse_list_tools():
 
         def listen():
             try:
-                r = requests.get(f"{MCP_HTTP}/sse", stream=True, headers={"Accept":"text/event-stream"}, timeout=30)
+                r = requests.get(f"{MCP_HTTP}/sse?tools=full", stream=True, headers={"Accept":"text/event-stream"}, timeout=30)
                 event_type = None
                 for line in r.iter_lines(decode_unicode=True):
                     if stop.is_set(): break
@@ -272,12 +276,64 @@ def get_id(r):
     except: return None
 def ok_or_str(r): return is_ok(r) or (isinstance(r, str) and any(w in r.lower() for w in ["added","removed","deleted","success"]))
 
+
+SEARCH_MODE_TOOLS = {
+    "sylvode_overview", "sylvode_search", "sylvode_read", "sylvode_write",
+    "sylvode_task_get", "sylvode_task_ack", "sylvode_task_progress", "sylvode_task_complete", "sylvode_task_fail",
+}
+
+def _search_http(method, params=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    return requests.post(f"{MCP_HTTP}/mcp/rpc", json=body, timeout=15).json()
+
+def _search_stdio(method, params=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    proc = subprocess.run([MCP_BIN, "serve", "--transport", "stdio", "--config", MCP_CONFIG],
+                          input=json.dumps(body), capture_output=True, text=True, timeout=15, env={"PATH": "/usr/bin:/bin"})
+    for line in proc.stdout.strip().split("\n"):
+        if line.strip().startswith("{"):
+            return json.loads(line)
+    return {"error": "no JSON output"}
+
+def _tool_text(resp):
+    content = resp.get("result", {}).get("content", []) if isinstance(resp, dict) else []
+    return content[0].get("text", "") if content else ""
+
+def _is_tool_error(resp):
+    return isinstance(resp, dict) and resp.get("result", {}).get("isError") is True
+
+def search_mode_checks(proto, rpc):
+    """The default tool mode: nine tools, search finds a tool with its schema, the wrappers route by access."""
+    print(f"\n🔎 Search mode ({proto}, default)")
+    def tools_call(name, arguments):
+        return rpc("tools/call", {"name": name, "arguments": arguments})
+    listed = {t.get("name") for t in rpc("tools/list").get("result", {}).get("tools", [])}
+    check(proto, "search mode lists exactly the nine tools", listed, lambda names: names == SEARCH_MODE_TOOLS)
+    found = json.loads(_tool_text(tools_call("sylvode_search", {"query": "work_items.get"})) or "{}")
+    check(proto, "sylvode_search returns work_items.get first with its schema", found,
+          lambda r: r.get("results", [{}])[0].get("name") == "work_items.get" and "inputSchema" in r["results"][0])
+    check(proto, "sylvode_read projects.list succeeds",
+          tools_call("sylvode_read", {"tool": "projects.list", "arguments": {}}), lambda r: not _is_tool_error(r))
+    check(proto, "sylvode_read refuses work_items.create",
+          tools_call("sylvode_read", {"tool": "work_items.create", "arguments": {}}), _is_tool_error)
+    check(proto, "sylvode_write refuses projects.list",
+          tools_call("sylvode_write", {"tool": "projects.list", "arguments": {}}), _is_tool_error)
+    check(proto, "a direct registry call is refused in search mode",
+          tools_call("projects.list", {}), _is_tool_error)
+
 print("=" * 60)
 # Single-source marker: scripts/verify-flow-tool-registry-v0.4.sh requires this banner to render
 # "{EXPECTED_TOOL_COUNT} registered tools" from the derived count, never a literal number.
 print(f"  Sylvode MCP core regression ({EXPECTED_TOOL_COUNT} registered tools x 3 transports)")
 print(f"  {time.strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 60)
+
+search_mode_checks("HTTP", _search_http)
+search_mode_checks("STDIO", _search_stdio)
 
 for proto, call in CALLERS.items():
     print(f"\n{'━'*50}\n  Transport: {proto}\n{'━'*50}")
@@ -305,51 +361,6 @@ for proto, call in CALLERS.items():
         call("scenario_templates.get", {"key": "contract_review_default"}),
         is_ok,
     )
-    check(proto, "project_resources.list", call("project_resources.list", {"project_id": PID}), is_ok)
-    ts = int(time.time()) % 100000
-    res = call("project_resources.create", {
-        "project_id": PID,
-        "kind": "custom",
-        "name": f"{proto}-regression-resource-{ts}",
-        "locator": {"source": "mcp-regression", "protocol": proto},
-        "sync_status": "manual"
-    })
-    check(proto, "project_resources.create", res, has_id)
-    dir_res = call("project_resources.create", {
-        "project_id": PID,
-        "kind": "directory",
-        "name": f"{proto}-regression-directory-{ts}",
-        "locator": {"path": "/tmp/mcp-regression"},
-        "sync_status": "manual"
-    })
-    check(proto, "project_resources.create directory", dir_res, has_id)
-    dir_id = get_id(dir_res)
-    if dir_id:
-        call("project_resources.delete", {"project_id": PID, "resource_id": dir_id})
-    check(
-        proto,
-        "project_resources.create rejects removed kind",
-        call("project_resources.create", {
-            "project_id": PID,
-            "kind": "repo",
-            "name": f"{proto}-regression-removed-kind-{ts}",
-        }),
-        lambda r: not is_ok(r),
-    )
-    res_id = get_id(res)
-    if res_id:
-        check(proto, "project_resources.update", call("project_resources.update", {
-            "project_id": PID,
-            "resource_id": res_id,
-            "name": f"{proto}-regression-resource-updated-{ts}",
-            "sync_status": "synced"
-        }), is_ok)
-        check(proto, "project_resources.delete", call("project_resources.delete", {
-            "project_id": PID,
-            "resource_id": res_id
-        }), ok_or_str)
-    else:
-        SKIP += 2
 
     # === Context ===
     print("\n🧠 Context")
@@ -451,7 +462,6 @@ for proto, call in CALLERS.items():
 
     # === Scenario Tools ===
     print(f"\n🏭 Scenario tools (code/traditional governed entries)")
-    check(proto, "code.resources.list", call("code.resources.list", {"project_id": PID}), is_ok)
     check(proto, "code.task_context.get", call("code.task_context.get", {"project_id": PID}), lambda r: isinstance(r, dict) or isinstance(r, str))
     for tool, title, summary in [
         ("code.change_proposal.create", "Code change proposal", "Governed code change proposal from regression."),

@@ -90,6 +90,15 @@ const fn describe_json_kind(value: &Value) -> &'static str {
     }
 }
 
+/// `/api/v1/ai/tasks/{task_id}{suffix}?attempt={attempt}`. The caller has already checked that
+/// `task_id` is a canonical UUID.
+fn ai_task_path(task_id: &str, suffix: &str, attempt: u32) -> String {
+    format!(
+        "/api/v1/ai/tasks/{}{suffix}?attempt={attempt}",
+        urlencoding::encode(task_id)
+    )
+}
+
 /// Operation-log client label for the stdio transport.
 pub const TRANSPORT_LABEL_STDIO: &str = "mcp_stdio";
 /// Audit label of the HTTP transport.
@@ -557,46 +566,69 @@ impl OpenPrClient {
         .await
     }
 
-    pub async fn list_project_resources(&self, project_id: &str) -> Result<Value, String> {
-        self.get(&format!(
-            "/api/v1/projects/{}/resources",
-            urlencoding::encode(project_id)
-        ))
-        .await
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // pub async fn list_project_resources(&self, project_id: &str) -> Result<Value, String> {
+    //     self.get(&format!(
+    //         "/api/v1/projects/{}/resources",
+    //         urlencoding::encode(project_id)
+    //     ))
+    //     .await
+    // }
+    //
+    // pub async fn create_project_resource(&self, project_id: &str, body: Value) -> Result<Value, String> {
+    //     self.post(
+    //         &format!("/api/v1/projects/{}/resources", urlencoding::encode(project_id)),
+    //         &body,
+    //     )
+    //     .await
+    // }
+    //
+    // pub async fn update_project_resource(
+    //     &self,
+    //     project_id: &str,
+    //     resource_id: &str,
+    //     body: Value,
+    // ) -> Result<Value, String> {
+    //     self.patch(
+    //         &format!(
+    //             "/api/v1/projects/{}/resources/{}",
+    //             urlencoding::encode(project_id),
+    //             urlencoding::encode(resource_id)
+    //         ),
+    //         &body,
+    //     )
+    //     .await
+    // }
+    //
+    // pub async fn delete_project_resource(&self, project_id: &str, resource_id: &str) -> Result<Value, String> {
+    //     self.delete(&format!(
+    //         "/api/v1/projects/{}/resources/{}",
+    //         urlencoding::encode(project_id),
+    //         urlencoding::encode(resource_id)
+    //     ))
+    //     .await
+    // }
+
+    // ---- Agent tasks (`/api/v1/ai/tasks`, own bot only) ----
+
+    pub async fn get_ai_task(&self, task_id: &str, attempt: u32) -> Result<Value, String> {
+        self.get(&ai_task_path(task_id, "", attempt)).await
     }
 
-    pub async fn create_project_resource(&self, project_id: &str, body: Value) -> Result<Value, String> {
-        self.post(
-            &format!("/api/v1/projects/{}/resources", urlencoding::encode(project_id)),
-            &body,
-        )
-        .await
+    pub async fn ack_ai_task(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/ack", attempt), &body).await
     }
 
-    pub async fn update_project_resource(
-        &self,
-        project_id: &str,
-        resource_id: &str,
-        body: Value,
-    ) -> Result<Value, String> {
-        self.patch(
-            &format!(
-                "/api/v1/projects/{}/resources/{}",
-                urlencoding::encode(project_id),
-                urlencoding::encode(resource_id)
-            ),
-            &body,
-        )
-        .await
+    pub async fn report_ai_task_progress(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/progress", attempt), &body).await
     }
 
-    pub async fn delete_project_resource(&self, project_id: &str, resource_id: &str) -> Result<Value, String> {
-        self.delete(&format!(
-            "/api/v1/projects/{}/resources/{}",
-            urlencoding::encode(project_id),
-            urlencoding::encode(resource_id)
-        ))
-        .await
+    pub async fn complete_ai_task(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/complete", attempt), &body).await
+    }
+
+    pub async fn fail_ai_task(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/fail", attempt), &body).await
     }
 
     // ---- Universal Forms ----

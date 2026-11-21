@@ -76,7 +76,7 @@ esac
 echo "Testing MCP at $MCP_URL ..."
 
 # tools/list
-TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc" \
+TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
@@ -99,10 +99,6 @@ required = {
     "scenario_templates.list",
     "scenario_templates.get",
     "scenario_templates.install",
-    "project_resources.list",
-    "project_resources.create",
-    "project_resources.update",
-    "project_resources.delete",
     "forms.list",
     "forms.get",
     "forms.create",
@@ -148,8 +144,6 @@ required = {
     "release.readiness.get",
     "check_results.create",
     "proposals.create_from_result",
-    "code.resources.list",
-    "code.directory.get",
     "code.task_context.get",
     "code.change_proposal.create",
     "documents.extract_summary",
@@ -179,7 +173,7 @@ else
 fi
 
 if [ -n "$PROJECT_ID" ]; then
-  PROJECT_TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc" \
+  PROJECT_TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc?tools=full" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $MCP_BOT_TOKEN" \
     -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{\"project_id\":\"$PROJECT_ID\"}}")
@@ -194,7 +188,6 @@ required = {
     "release.readiness.get",
     "check_results.create",
     "proposals.create_from_result",
-    "code.resources.list",
     "code.task_context.get",
 }
 payload = json.load(sys.stdin)
@@ -211,7 +204,7 @@ print(",".join(sorted(required - names)))' 2>/dev/null)
 fi
 
 # projects.list
-RESULT=$(curl -s -X POST "$MCP_URL/mcp/rpc" \
+RESULT=$(curl -s -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}')

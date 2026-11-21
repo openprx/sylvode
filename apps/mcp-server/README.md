@@ -6,7 +6,7 @@ Model Context Protocol (MCP) server for Sylvode project management system.
 
 The MCP Server provides AI models with tools to interact with Sylvode's project management features, including:
 - Project management (CRUD operations)
-- Project types, scenario templates, and project resources
+- Project types and scenario templates
 - Universal forms, form records, aggregate queries, and business events
 - WASM plugin install/invoke and plugin invocation history
 - Work item/issue tracking
@@ -40,7 +40,7 @@ The profile now registers 36 names: 34 actual existing Flow registry tools plus
 read/create/patch/move/link/unlink/diff, grants/inheritance/relations, Collections and
 Records, comments/mentions, page shares/appearance, trash/purge, projection lag and
 Forms references. Success values retain baseline data DTOs; typed business errors
-remain structured. The normal 154-tool registry is unchanged.
+remain structured. The normal registry is 153 tools.
 
 `objects.command` additionally requires statically mapped baseline operation policies
 on every affected project (and the outer alias policy). It cannot bypass a denied
@@ -86,7 +86,7 @@ MCP transport acceptance or of backend support for every broader Flow feature.
 
 ## Features
 
-- **154 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
+- **153 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
 - **Three Transport Modes**: stdio (for MCP clients), HTTP JSON-RPC, and SSE
 - **JSON Schema Validation**: All tool parameters are strongly typed
 - **Sylvode API Backend**: Calls the Sylvode API with workspace-scoped bot credentials
@@ -132,9 +132,39 @@ not renamed; see the
 | `mcp.oauth_issuer` | with the two keys below | Issuer of the Sylvode authorization server. |
 | `mcp.oauth_resource` | with the other two | Identifier of this server as a protected resource: the exact URL that receives JSON-RPC posts, for example `http://127.0.0.1:8090/mcp/rpc`, or `https://sv.example.com/mcp` behind a proxy that maps that path to `/mcp/rpc`. Must equal `[oauth] mcp_resource` of the API. |
 | `mcp.oauth_forward_secret` | with the other two | Internal forwarding credential, at least 32 bytes, never logged. Must equal `[oauth] internal_forward_secret` of the API. |
+| `mcp.tool_mode` | no, default `search` | Which tools `tools/list` offers; see [Tool modes](#tool-modes). |
+| `mcp.allow_write_call` | no, default `true` | Whether `sylvode_write` may be used; `false` makes it answer that writes are disabled. |
 
 There is no `mcp.auth_token` key any more. If your configuration file still has one, delete
 it — the server refuses to start rather than run with a key that no longer does anything.
+
+### Tool modes
+
+`tools/list` offers nine tools by default (**search mode**): `sylvode_overview` (categories and how
+to call), `sylvode_search` (find a tool by words, category or exact name; the answer carries the
+tool's input schema), `sylvode_read` and `sylvode_write` (call one registry tool by name,
+`sylvode_read` only a tool that reads, `sylvode_write` only a tool that changes data), and the five
+task tools `sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress`,
+`sylvode_task_complete` and `sylvode_task_fail`. The other tools are not listed, and calling one
+of them by its name is refused with a pointer to `sylvode_read` or `sylvode_write`. The wrappers run
+every check of a direct call (project agent policy, ownership, admin rules) under the target's name,
+validate the arguments against the target's own schema, and the operation log shows the target.
+
+**Full mode** is the explicit opt-in: every registry tool is listed and callable by name, and the
+four entry tools are not offered.
+
+| Transport | Chosen by |
+| --- | --- |
+| stdio | `[mcp] tool_mode`; `serve --tools search|full` overrides it |
+| HTTP `/mcp/rpc` | per request: `?tools=search|full` or the `X-Sylvode-Tool-Mode` header (a conflict or an unknown value is a 400); otherwise `[mcp] tool_mode` |
+| SSE | when the stream opens (`GET /sse?tools=...` or the header); the session keeps it |
+| `serve --flow-only` | not applicable; `--tools` is refused |
+| connected (OAuth) applications | ignored: they always get the scoped read tools and no entry or task tools |
+
+`[mcp] allow_write_call = false` keeps `sylvode_write` listed but makes it answer `writes are
+disabled for this bot by the runner configuration`; `sylvode_read` and the task tools are not
+affected. A plain caller's `initialize` also carries `instructions` and
+`capabilities.experimental["sylvode/task-protocol"] = {"version": 1}`.
 
 ### Inbound authentication (HTTP/SSE)
 
@@ -270,10 +300,9 @@ cargo build -p mcp-server --release
 - `projects.create` - Create a new project
 - `projects.update` - Update project details
 
-### Project Types, Templates, and Resources
+### Project Types and Templates
 - `project_types.list`, `project_types.get`
 - `scenario_templates.list`, `scenario_templates.get`, `scenario_templates.install`
-- `project_resources.list`, `project_resources.create`, `project_resources.update`, `project_resources.delete`
 
 ### Universal Forms and Events
 - `forms.list`, `forms.get`, `forms.create`, `forms.create_from_template`, `forms.update_schema`, `forms.duplicate`
@@ -306,8 +335,11 @@ cargo build -p mcp-server --release
 ### Search
 - `search.all` - Global search across projects, work items, and comments
 
+### Agent Tasks
+- `sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress`, `sylvode_task_complete`, `sylvode_task_fail` — the task protocol of a bot; the API serves a task only to its own bot, connected (OAuth) applications cannot call them
+
 ### Scenario Tools
-- `code.resources.list`, `code.directory.get`, `code.task_context.get`, `code.change_proposal.create`
+- `code.task_context.get`, `code.change_proposal.create`
 - `documents.extract_summary`, `documents.review_risk`, `approval.request`
 - `inspection.report`, `corrective_action.propose`
 
@@ -319,7 +351,7 @@ cargo build -p mcp-server --release
 - `objects.grants_get`, `objects.grants_set`, `objects.inheritance_set` — object authorization tools with dry-run support
 - `legacy_pages.inventory`, `legacy_pages.import_preview`, `legacy_pages.import_commit`, `legacy_pages.import_status` — ADR-0003 conditional migration tools; this deployment's inventory is zero, so the import tools always answer `not_required_zero_inventory`
 
-The v0.9 registry exposes four static resources and 22 templates under the canonical
+The v0.9 registry exposes four static resources and 21 templates under the canonical
 `sylvode://` scheme, including all five frozen Flow resource templates. The matching
 `openpr://` identity remains a read alias for every registry row and resolves to the same
 payload and policy subject; aliases are not duplicated in list results. The native `sylvode`
@@ -329,7 +361,7 @@ CLI (a second `[[bin]]` in this package) shares the same client and command cont
 
 ### List Tools
 ```bash
-# Using stdin/stdout
+# Using stdin/stdout: nine tools (search mode); add --tools full for the whole registry
 echo '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | \
   ./target/release/mcp-server serve --transport stdio --config config/sylvode.toml
 
@@ -340,7 +372,8 @@ echo '{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"project_id
 
 ### Call a Tool
 ```bash
-# List projects in a workspace
+# List projects in a workspace. Registry tools are called by name in full mode; in the default
+# search mode send {"name": "sylvode_read", "arguments": {"tool": "projects.list", "arguments": {...}}}.
 echo '{
   "jsonrpc": "2.0",
   "id": 2,
@@ -351,7 +384,7 @@ echo '{
       "workspace_id": "550e8400-e29b-41d4-a716-446655440000"
     }
   }
-}' | ./target/release/mcp-server serve --transport stdio --config config/sylvode.toml
+}' | ./target/release/mcp-server serve --transport stdio --tools full --config config/sylvode.toml
 ```
 
 ### HTTP Mode Example
@@ -360,7 +393,8 @@ echo '{
 ./target/release/mcp-server serve --transport http --config config/sylvode.toml
 
 # Call tool via HTTP -- Authorization carries the caller's own MCP-type account token.
-curl -X POST http://localhost:8090/mcp/rpc \
+# `?tools=full` lists and accepts registry names directly; without it use sylvode_read/sylvode_write.
+curl -X POST "http://localhost:8090/mcp/rpc?tools=full" \
   -H "Authorization: Bearer opr_your_own_account_token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -454,6 +488,8 @@ cargo run --bin list-tools
 ```
 
 This outputs the currently registered MCP tools with their complete JSON Schema definitions.
+
+`cargo run --bin list-tools -- --json` prints one row per tool with its name, access class (`read` or `write`) and category, taken from the tool catalogue in `src/tools/catalog.rs`. The full `tools/list` carries `annotations.readOnlyHint` from the same catalogue.
 
 ### Adding a New Tool
 

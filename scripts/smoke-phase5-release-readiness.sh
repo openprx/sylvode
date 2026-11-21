@@ -200,7 +200,7 @@ function mcpRequest(method, params) {
   const requestPayload = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) + '\n';
   const result = spawnSync(
     mcpBin,
-    ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', botToken, '--workspace-id', workspaceId, 'serve', '--transport', 'stdio'],
+    ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', botToken, '--workspace-id', workspaceId, 'serve', '--transport', 'stdio', '--tools', 'full'],
     { input: requestPayload, encoding: 'utf8', env: process.env, timeout: 20000 },
   );
   if (result.status !== 0) {

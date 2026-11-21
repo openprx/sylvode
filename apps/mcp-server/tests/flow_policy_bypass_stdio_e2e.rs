@@ -35,7 +35,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use support::{ConfigFile, McpSettings, write_config};
+use support::{ConfigFile, FULL_TOOLS, McpSettings, write_config_with_extra_mcp_keys};
 use tokio::process::{Child, Command};
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -215,13 +215,16 @@ struct StdioClient {
 
 impl StdioClient {
     fn spawn(api_url: &str) -> Result<Self, Box<dyn Error>> {
-        let config = write_config(&McpSettings {
-            api_url,
-            bot_token: Some(BOT_TOKEN),
-            workspace_id: WORKSPACE,
-            transport: Some("stdio"),
-            bind_addr: None,
-        })?;
+        let config = write_config_with_extra_mcp_keys(
+            &McpSettings {
+                api_url,
+                bot_token: Some(BOT_TOKEN),
+                workspace_id: WORKSPACE,
+                transport: Some("stdio"),
+                bind_addr: None,
+            },
+            FULL_TOOLS,
+        )?;
         let mut child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])
             .arg(config.path())
@@ -327,13 +330,16 @@ struct NetworkedServer {
 impl NetworkedServer {
     async fn spawn(api_url: &str, transport: &str) -> Result<Self, Box<dyn Error>> {
         let bind_addr = format!("127.0.0.1:{}", free_port().await?);
-        let config = write_config(&McpSettings {
-            api_url,
-            bot_token: None,
-            workspace_id: WORKSPACE,
-            transport: Some(transport),
-            bind_addr: Some(&bind_addr),
-        })?;
+        let config = write_config_with_extra_mcp_keys(
+            &McpSettings {
+                api_url,
+                bot_token: None,
+                workspace_id: WORKSPACE,
+                transport: Some(transport),
+                bind_addr: Some(&bind_addr),
+            },
+            FULL_TOOLS,
+        )?;
         let child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])
             .arg(config.path())
@@ -548,7 +554,6 @@ async fn all_resource_aliases_are_identical_over_stdio_http_and_sse() -> TestRes
         "sylvode://projects/{project_id}/agent-policy",
         "sylvode://projects/{project_id}/release-readiness",
         "sylvode://projects/{project_id}/type",
-        "sylvode://projects/{project_id}/resources",
         "sylvode://projects/{project_id}/recent-decisions",
         "sylvode://projects/{project_id}/sprints",
         "sylvode://issues/{identifier}",

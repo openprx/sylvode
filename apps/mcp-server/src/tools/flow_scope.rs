@@ -103,7 +103,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 {"required":["embed_page_id"],"properties":{"type":{"const":"collection"}},"not":{"anyOf":[{"required":["personal"]},{"required":["parent_id"]}]}}
             ]));
         }
-        ToolDefinition{name:(*name).into(),description:format!("Bounded Flow-only {name}: current semantic resources and typed commands. Global-user scopes use v2 authority; OPR retains real-workspace legacy rules. Package/history restoration and raw collaborative payloads are not advertised. Home is resolved only on an actual call."),input_schema:schema}
+        ToolDefinition{annotations:None,name:(*name).into(),description:format!("Bounded Flow-only {name}: current semantic resources and typed commands. Global-user scopes use v2 authority; OPR retains real-workspace legacy rules. Package/history restoration and raw collaborative payloads are not advertised. Home is resolved only on an actual call."),input_schema:schema}
     }).collect::<Vec<_>>();
     result.extend(super::flow_scope_existing::definitions());
     result

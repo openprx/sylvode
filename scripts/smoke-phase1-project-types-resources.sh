@@ -216,7 +216,7 @@ function assertApiCode(payload, code, message) {
 
 function mcpCall(token, workspace, method, params) {
   const requestPayload = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) + '\n';
-  const result = spawnSync(mcpBin, ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', token, '--workspace-id', workspace, 'serve', '--transport', 'stdio'], {
+  const result = spawnSync(mcpBin, ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', token, '--workspace-id', workspace, 'serve', '--transport', 'stdio', '--tools', 'full'], {
     input: requestPayload,
     encoding: 'utf8',
     env: process.env,
@@ -327,18 +327,21 @@ assertApiCode(
 
 const mcpTools = mcpCall(botAToken, workspaceId, 'tools/list', {});
 const toolNames = (mcpTools.result?.tools ?? []).map((tool) => tool.name);
-for (const name of ['project_types.list', 'project_types.get', 'project_resources.list', 'project_resources.create', 'project_resources.update', 'project_resources.delete']) {
+for (const name of ['project_types.list', 'project_types.get']) {
   assert(toolNames.includes(name), `MCP tools/list missing ${name}`);
+}
+// The project-resource tools and the resource template are parked: REST stays, the MCP surface is gone.
+for (const name of ['project_resources.list', 'project_resources.create', 'project_resources.update', 'project_resources.delete', 'code.resources.list', 'code.directory.get']) {
+  assert(!toolNames.includes(name), `MCP tools/list must not contain parked tool ${name}`);
 }
 
 const mcpType = mcpCall(botAToken, workspaceId, 'resources/read', { uri: `openpr://projects/${projectId}/type` });
 assert(JSON.stringify(mcpType).includes('contract_review'), 'MCP type resource should include project type');
 
-const mcpResources = mcpCall(botAToken, workspaceId, 'resources/read', { uri: `openpr://projects/${projectId}/resources` });
-assert(JSON.stringify(mcpResources).includes('Product Repository Updated'), 'MCP resources read should include updated resource');
-
-const mcpDenied = mcpCall(botBToken, otherWorkspaceId, 'resources/read', { uri: `openpr://projects/${projectId}/resources` });
-assert(JSON.stringify(mcpDenied).includes('bot not authorized') || JSON.stringify(mcpDenied).includes('Forbidden'), 'MCP should deny cross-workspace bot resource read');
+const mcpTemplates = mcpCall(botAToken, workspaceId, 'resources/templates/list', {});
+assert(!JSON.stringify(mcpTemplates).includes('/resources"'), 'MCP resource templates must not list the parked project resources template');
+const mcpResources = mcpCall(botAToken, workspaceId, 'resources/read', { uri: `sylvode://projects/${projectId}/resources` });
+assert(JSON.stringify(mcpResources).includes('Unknown resource URI'), 'MCP project resources template is parked and must read as unknown');
 
 console.log('Phase 1 project types/resources live API+MCP smoke passed');
 }

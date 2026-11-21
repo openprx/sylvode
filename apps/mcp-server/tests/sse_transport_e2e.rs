@@ -33,7 +33,7 @@ use std::fmt::Write as _;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
-use support::{ConfigFile, McpSettings, write_config};
+use support::{ConfigFile, FULL_TOOLS, McpSettings, write_config_with_extra_mcp_keys};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
@@ -156,13 +156,16 @@ impl SseServer {
     /// Started with no `bot_token` at all: a networked deployment holds no identity, so a
     /// message that arrived without a caller credential has nothing to fall back onto.
     fn spawn(api_url: &str, bind_addr: &str) -> Result<Self, Box<dyn Error>> {
-        let config = write_config(&McpSettings {
-            api_url,
-            bot_token: None,
-            workspace_id: WORKSPACE,
-            transport: Some("sse"),
-            bind_addr: Some(bind_addr),
-        })?;
+        let config = write_config_with_extra_mcp_keys(
+            &McpSettings {
+                api_url,
+                bot_token: None,
+                workspace_id: WORKSPACE,
+                transport: Some("sse"),
+                bind_addr: Some(bind_addr),
+            },
+            FULL_TOOLS,
+        )?;
 
         let child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])

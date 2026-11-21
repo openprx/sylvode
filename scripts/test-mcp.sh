@@ -144,7 +144,7 @@ echo ""
 
 # Test 2: List Tools
 echo "📋 Test 2: List Available Tools"
-tools_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc" \
+tools_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
@@ -236,7 +236,7 @@ echo ""
 
 # Test 3: Call a stable read-only tool.
 echo "📋 Test 3: Invoke Tool (projects.list)"
-call_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc" \
+call_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}')

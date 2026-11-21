@@ -23,7 +23,7 @@ Run these in order so a client can use the Sylvode MCP server immediately.
 
 ### 1. Capability line (verify connectivity)
 ```
-tools/list                          → enumerate all 154 tools
+tools/list                          → enumerate all 153 tools
 tools/list { project_id }           → enumerate tools enabled by the project capability registry
 members.list                       → verify auth + workspace access
 bot_operation_logs.list            → inspect metadata-only bot operation history
@@ -39,7 +39,6 @@ context.get_agent_policy           → effective AI/MCP action policy and tool r
 release.readiness.get              → release/acceptance gates, blockers, next actions, and governance evidence
 project_types.list → project_types.get
 scenario_templates.list → scenario_templates.get → scenario_templates.install
-project_resources.list             → project context resources
 forms.list → forms.get → form_views.list
 forms.schema_summary → forms.field_usage → forms.field_dependencies → form_schema_versions.list → form_schema_versions.get
 form_permissions.get → form_permissions.update
@@ -63,7 +62,6 @@ labels.create → labels.update → labels.delete
 sprints.create → sprints.update → sprints.delete
 proposals.create
 check_results.create → proposals.create_from_result
-project_resources.create → project_resources.update → project_resources.delete
 forms.create → forms.create_from_template → scenario_templates.install → forms.update_schema → forms.duplicate
 form_records.create → form_records.import_commit → form_records.update → form_records.link
 plugins.install → plugins.invoke
@@ -227,7 +225,7 @@ Bot tokens (`opr_...`) and user tokens are unaffected and keep the full tool sur
 
 ## Scripts
 
-- Regression test: `scripts/mcp-regression.py` — tests the core tool surface across 3 transports and checks the 154-tool registry includes universal forms, plugins, and Sylvode Flow. It reads `SYLVODE_MCP_REGRESSION_TOKEN`, `SYLVODE_MCP_REGRESSION_WORKSPACE_ID` and `SYLVODE_MCP_REGRESSION_PROJECT_ID` (and optionally `SYLVODE_MCP_REGRESSION_MCP_URL` / `SYLVODE_MCP_REGRESSION_API_URL`) from the environment and exits when one is missing.
+- Regression test: `scripts/mcp-regression.py` — tests the core tool surface across 3 transports and checks the 153-tool registry includes universal forms, plugins, and Sylvode Flow. It reads `SYLVODE_MCP_REGRESSION_TOKEN`, `SYLVODE_MCP_REGRESSION_WORKSPACE_ID` and `SYLVODE_MCP_REGRESSION_PROJECT_ID` (and optionally `SYLVODE_MCP_REGRESSION_MCP_URL` / `SYLVODE_MCP_REGRESSION_API_URL`) from the environment and exits when one is missing.
 - Validation: `scripts/validate-mcp.sh` — quick smoke test for connectivity
 
 ## References

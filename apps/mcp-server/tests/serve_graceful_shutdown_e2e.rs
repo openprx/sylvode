@@ -17,7 +17,7 @@ use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use support::{ConfigFile, McpSettings, write_config};
+use support::{ConfigFile, FULL_TOOLS, McpSettings, write_config_with_extra_mcp_keys};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
@@ -144,13 +144,16 @@ fn assert_labels_answer(response: &Value) {
 }
 
 fn network_config(api_url: &str, transport: &str, bind_addr: &str) -> Result<ConfigFile, Box<dyn Error>> {
-    write_config(&McpSettings {
-        api_url,
-        bot_token: None,
-        workspace_id: WORKSPACE,
-        transport: Some(transport),
-        bind_addr: Some(bind_addr),
-    })
+    write_config_with_extra_mcp_keys(
+        &McpSettings {
+            api_url,
+            bot_token: None,
+            workspace_id: WORKSPACE,
+            transport: Some(transport),
+            bind_addr: Some(bind_addr),
+        },
+        FULL_TOOLS,
+    )
 }
 
 #[tokio::test]
@@ -343,13 +346,16 @@ async fn sse_transport_delivers_the_result_in_flight_then_ends_the_stream_and_ex
 }
 
 fn stdio_config(api_url: &str) -> Result<ConfigFile, Box<dyn Error>> {
-    write_config(&McpSettings {
-        api_url,
-        bot_token: Some(TOKEN),
-        workspace_id: WORKSPACE,
-        transport: Some("stdio"),
-        bind_addr: None,
-    })
+    write_config_with_extra_mcp_keys(
+        &McpSettings {
+            api_url,
+            bot_token: Some(TOKEN),
+            workspace_id: WORKSPACE,
+            transport: Some("stdio"),
+            bind_addr: None,
+        },
+        FULL_TOOLS,
+    )
 }
 
 #[tokio::test]

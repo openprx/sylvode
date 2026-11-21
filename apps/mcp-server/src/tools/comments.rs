@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 pub fn list_comments_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "comments.list".to_string(),
         description: "List all comments on a work item".to_string(),
         input_schema: json!({
@@ -44,6 +45,7 @@ pub async fn list_comments(client: &OpenPrClient, args: serde_json::Value) -> Ca
 
 pub fn create_comment_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "comments.create".to_string(),
         description: "Create a new comment on a work item. @mentions in content (e.g. @Codex CLI) are automatically resolved to user UUIDs.".to_string(),
         input_schema: json!({
@@ -274,6 +276,7 @@ fn merge_mentions(explicit: Option<Vec<String>>, auto_resolved: Vec<String>) -> 
 
 pub fn delete_comment_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "comments.delete".to_string(),
         description: "Delete a comment".to_string(),
         input_schema: json!({
