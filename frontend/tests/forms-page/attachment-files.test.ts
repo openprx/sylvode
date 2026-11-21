@@ -459,16 +459,26 @@ suite.check('recordValueUrl reads a string or the url of an object', () => {
 	assertEqual(files.recordValueUrl(7), '', 'number');
 });
 
+suite.check('isSvgDataUrl recognises SVG data URLs only', () => {
+	assertEqual(files.isSvgDataUrl('data:image/svg+xml;base64,AAAA'), true, 'svg+xml');
+	assertEqual(files.isSvgDataUrl('DATA:IMAGE/SVG+XML,<svg/>'), true, 'upper case');
+	assertEqual(files.isSvgDataUrl('  data:image/svg+xml,<svg/>'), true, 'leading space');
+	assertEqual(files.isSvgDataUrl('data:image/png;base64,AAAA'), false, 'png');
+	assertEqual(files.isSvgDataUrl('/uploads/signatures/svg.png'), false, 'path');
+	assertEqual(files.isSvgDataUrl(''), false, 'empty');
+});
+
 suite.check('signatureImageValue accepts only the three allowed prefixes', () => {
 	const png = 'data:image/png;base64,AAAA';
 	assertEqual(files.signatureImageValue({ sig: png }, 'sig'), png, 'data image');
-	// CURRENT BEHAVIOUR: any data:image/ prefix passes, svg+xml included, although safeImageUrl
-	// (used for thumbnails) rejects svg data URLs because svg can carry scripts.
-	assertEqual(
-		files.signatureImageValue({ sig: 'data:image/svg+xml;base64,AAAA' }, 'sig'),
+	for (const svg of [
 		'data:image/svg+xml;base64,AAAA',
-		'svg data URL is accepted'
-	);
+		'data:image/svg+xml,<svg onload=alert(1)>',
+		'data:image/SVG+xml;base64,AAAA',
+		'data:image/svg;base64,AAAA'
+	]) {
+		assertEqual(files.signatureImageValue({ sig: svg }, 'sig'), '', `svg data URL refused: ${svg}`);
+	}
 	assertEqual(
 		files.signatureImageValue({ sig: '/api/v1/uploads/signatures/a.png' }, 'sig'),
 		'/api/v1/uploads/signatures/a.png',
