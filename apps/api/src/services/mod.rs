@@ -1,6 +1,7 @@
 pub mod ai_task_reply;
 pub mod ai_task_service;
 pub mod ai_task_view;
+pub mod bot_connections;
 pub mod bot_identity;
 pub mod bots;
 pub mod comments;
@@ -11,12 +12,16 @@ pub mod issues;
 pub mod object_storage;
 pub mod permission_service;
 pub mod proposals;
+pub mod runner_config_block;
 pub mod teardown;
 pub mod trust_score_service;
 pub mod veto_service;
 pub mod webhooks;
 pub mod work_item_service;
 pub mod workflow_service;
+
+#[cfg(test)]
+mod bot_connection_tests;
 
 #[cfg(test)]
 mod managed_rows_tests;

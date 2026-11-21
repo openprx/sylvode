@@ -64,12 +64,21 @@ pub struct WebhookResponse {
 /// This is the only place the secret ever leaves the API, once, so the receiver can be configured
 /// with it (including one the server generated). [`WebhookResponse`], which list, get and update
 /// answer with and which is copied into the webhook's business events, has no secret field.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct WebhookWithSecretResponse {
     #[serde(flatten)]
     pub webhook: WebhookResponse,
     /// HMAC-SHA256 key of `X-Webhook-Signature`; not retrievable afterwards.
     pub secret: String,
+}
+
+impl std::fmt::Debug for WebhookWithSecretResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookWithSecretResponse")
+            .field("webhook", &self.webhook)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
 }
 
 /// What it takes to create a webhook.

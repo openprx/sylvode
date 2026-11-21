@@ -1029,7 +1029,41 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
         .route(
             "/api/v1/projects/{project_id}/execution-settings",
             get(routes::project_execution::get_execution_settings)
-                .put(routes::project_execution::put_execution_settings)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connection",
+            get(routes::project_bot_connection::get_bot_connection)
+                .post(routes::project_bot_connection::connect_bot)
+                .patch(routes::project_bot_connection::update_bot_connection)
+                .delete(routes::project_bot_connection::remove_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connection/disable",
+            post(routes::project_bot_connection::disable_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connection/enable",
+            post(routes::project_bot_connection::enable_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connection/rotate",
+            post(routes::project_bot_connection::rotate_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
                     middleware::bot_auth::bot_or_user_auth_middleware,

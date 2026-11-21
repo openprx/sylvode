@@ -201,7 +201,6 @@ pub struct NewBot<'a> {
 }
 
 /// A created bot, with its raw token: the only place the token ever exists in clear.
-#[derive(Debug)]
 pub struct CreatedBot {
     pub id: Uuid,
     pub workspace_id: Uuid,
@@ -215,6 +214,18 @@ pub struct CreatedBot {
     /// The Flow authorization epoch advanced: the caller invalidates the workspace's permission
     /// cache after the surrounding transaction commits.
     pub epoch_advanced: bool,
+}
+
+impl std::fmt::Debug for CreatedBot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreatedBot")
+            .field("id", &self.id)
+            .field("workspace_id", &self.workspace_id)
+            .field("name", &self.name)
+            .field("token_prefix", &self.token_prefix)
+            .field("token", &"<redacted>")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Creates the bot user, its workspace seat and its `workspace_bots` row on `tx`. The caller owns
@@ -332,12 +343,20 @@ pub async fn set_token_active(db: &impl ConnectionTrait, bot_id: Uuid, active: b
 }
 
 /// A token issued by [`rotate_token`].
-#[derive(Debug)]
 pub struct RotatedToken {
     pub token: String,
     pub token_prefix: String,
     /// Prefix of the token that stopped working, for the audit event.
     pub previous_prefix: String,
+}
+
+impl std::fmt::Debug for RotatedToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RotatedToken")
+            .field("token_prefix", &self.token_prefix)
+            .field("token", &"<redacted>")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Replaces a bot's token. The old token stops working with the surrounding commit. 404 when the
