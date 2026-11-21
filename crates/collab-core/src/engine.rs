@@ -1709,6 +1709,32 @@ impl LoroCollabEngine {
         crate::floor_guard::refuse_shadow_roots(&self.doc)
     }
 
+    /// The host's check of the document a worker returned for an update on `base_snapshot`: the ops
+    /// it gained over the base are read with the rules of [`crate::tree_refs`]. The base's version
+    /// is read from the snapshot header, so the base is not loaded.
+    ///
+    /// # Errors
+    /// `tree_parent_missing`, `tree_parent_cycle`, or a header that cannot be read.
+    pub fn refuse_unresolved_tree_parents_over(&self, base_snapshot: &[u8]) -> Result<(), CollabError> {
+        crate::tree_refs::refuse_unresolved_tree_parents_over(&self.doc, base_snapshot)
+    }
+
+    /// Refuses a document whose history holds a tree op that names a parent that does not exist
+    /// when the op runs ([`crate::tree_refs`]), for a document that arrives from outside, such as
+    /// an uploaded package: O(history), so never for the write window.
+    ///
+    /// # Errors
+    /// `tree_parent_missing`, `tree_parent_cycle`, or `reserved_root_scan_incomplete` for a
+    /// document whose history cannot be read.
+    pub fn refuse_unresolved_tree_parents_in_history(&self) -> Result<(), CollabError> {
+        if self.doc.is_shallow() {
+            return Err(CollabError::OperationFailed {
+                reason: crate::reserved_roots::SCAN_INCOMPLETE_REASON.into(),
+            });
+        }
+        crate::tree_refs::refuse_unresolved_tree_parents(&self.doc, &loro::VersionVector::default())
+    }
+
     /// Materialises, ahead of a write, the parts of the *trusted base* that the import of a client
     /// update would otherwise build inside the metered window: the root key index (the first root
     /// lookup lists the keys of a lazily loaded store), and the decoded state of the containers a
@@ -1827,6 +1853,11 @@ impl LoroCollabEngine {
         } else {
             None
         };
+        // A tree op that names a parent which does not exist when it runs would panic every
+        // subscribed client that imports the update: refused here, in the window, on every path.
+        if client_scan.is_some() {
+            summary.refuse_unresolved_tree_parents(&self.doc, &before_ops)?;
+        }
         // The id caches are rebuilt from the update's own ops only for a strictly sequential
         // import (`OpSummary::strictly_sequential`), the only one that cannot add a node no op of
         // it names, and only when the ops name every tree node they created (no move or delete,

@@ -550,8 +550,9 @@ pub struct FlowConfig {
     pub body_asset_max_bytes: u64,
     /// Whether the collab write window may decide the structural limits incrementally. Off makes
     /// every write run the full computation (today's bounded cost, without the incremental
-    /// check), whatever the page: the worker's decision is then the previous behaviour's for every
-    /// input.
+    /// check), whatever the page: the worker's decision is then the full computation's for every
+    /// input, except that an update whose tree ops name a parent that does not exist is refused
+    /// with either setting (`collab_core::tree_refs`).
     pub incremental_window: bool,
 }
 

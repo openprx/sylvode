@@ -217,9 +217,9 @@ allow_private = false
 #
 # Whether the collab write window may decide a write's structural limits incrementally, from the
 # facts of the page and the units the update touched. Set false to make every write run the full
-# computation (the incremental check is then never used), which is the previous behaviour of the
-# worker. The limits enforced are the same. With it on, the worker also refuses an update that
-# rewrites the logical id of an existing tree node.
+# computation (the incremental check is then never used). The limits enforced are the same. With it
+# on, the worker also refuses an update that rewrites the logical id of an existing tree node. An
+# update whose tree ops name a parent that does not exist is refused with either setting.
 # Default: true.
 # incremental_window = true
 

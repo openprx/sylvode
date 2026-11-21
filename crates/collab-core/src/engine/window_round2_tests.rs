@@ -53,6 +53,8 @@ pub(super) fn next_decision(base: &[u8], update: &[u8]) -> Result<(), String> {
 pub(super) struct Judged {
     /// `next`.
     pub next: Result<(), String>,
+    /// What an independent read of the update says `tree_refs` must refuse it with, if anything.
+    pub tree_reference: Option<&'static str>,
     /// The window with facts: `Ok(path)` (`None` when the check decided, the fallback reason when the
     /// full computation did) or the refusal.
     pub window: Result<Option<crate::window_check::FallbackReason>, String>,
@@ -98,6 +100,7 @@ pub(super) fn judge(base: &[u8], update: &[u8]) -> Judged {
         .map_err(|e| e.to_string());
     Judged {
         next,
+        tree_reference: super::window_differential_tests::unresolved_tree_reference(base, update),
         window,
         incremental,
         reason,
@@ -112,6 +115,14 @@ impl Judged {
     /// fresh load, and the report of an incremental decision holds; the switched-off window is
     /// `next`'s as well.
     pub(super) fn assert_sound(&self, label: &str) {
+        // A tree op naming a parent that does not exist when it runs: `next` accepts, the window
+        // refuses with or without facts, and the update explains the refusal.
+        if let Some(reason) = self.tree_reference {
+            let refusal = Err(format!("operation failed: {reason}"));
+            assert_eq!(self.window.clone().map(|_| ()), refusal, "{label}: {self:?}");
+            assert_eq!(self.full_window, refusal, "{label}: {self:?}");
+            return;
+        }
         assert_eq!(self.next.is_ok(), self.window.is_ok(), "{label}: {self:?}");
         if let (Err(next), Err(window)) = (&self.next, &self.window) {
             assert_eq!(next, window, "{label}: the refusals differ");
