@@ -1,4 +1,4 @@
-//! Permission settings of the CLI executors, per agent.
+//! Permission settings of the CLI executors, as `[runner.cli.*]` gives them to a run.
 //!
 //! Each executor has its own permission model, so the settings are executor specific:
 //!
@@ -19,9 +19,7 @@
 //! for codex) needs `dangerously_bypass_permissions = true` as well, and logs a warning at
 //! start-up.
 
-use std::path::{Path, PathBuf};
-
-use crate::config::CliAgentConfig;
+use serde::Deserialize;
 
 /// `--permission-mode` values of the Claude Code CLI (`claude --help`).
 pub const CLAUDE_PERMISSION_MODES: [&str; 6] =
@@ -36,7 +34,33 @@ pub const CODEX_SANDBOX_MODES: [&str; 3] = ["read-only", "workspace-write", "dan
 pub const DEFAULT_CODEX_SANDBOX: &str = "read-only";
 const CODEX_FULL_ACCESS: &str = "danger-full-access";
 
-/// The permission settings of one agent's executor, validated.
+/// The settings one run of a CLI is validated from: the executor and the `[runner.cli.*]` and
+/// `[runner.mcp]` values that decide its permissions. They are not a configuration section of
+/// their own.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ExecutorSettings {
+    pub executor: String,
+    pub mcp_config_path: Option<String>,
+    pub permission_mode: Option<String>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub disallowed_tools: Option<Vec<String>>,
+    pub strict_mcp_config: Option<bool>,
+    pub sandbox: Option<String>,
+    #[serde(default)]
+    pub dangerously_bypass_permissions: bool,
+}
+
+impl ExecutorSettings {
+    /// Settings for `executor` with every permission key unset.
+    pub fn new(executor: &str) -> Self {
+        Self {
+            executor: executor.to_string(),
+            ..Self::default()
+        }
+    }
+}
+
+/// The permission settings of one executor, validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecutorPermissions {
     ClaudeCode(ClaudeCodePermissions),
@@ -63,7 +87,7 @@ pub enum CodexPermissions {
 impl ExecutorPermissions {
     /// Validates the permission settings of `cfg` against its executor. An executor outside the
     /// whitelist is refused with the same message the dispatcher has always used.
-    pub fn from_config(cfg: &CliAgentConfig) -> Result<Self, String> {
+    pub fn from_config(cfg: &ExecutorSettings) -> Result<Self, String> {
         match cfg.executor.as_str() {
             "claude-code" => claude_code(cfg).map(Self::ClaudeCode),
             "codex" => codex(cfg).map(Self::Codex),
@@ -88,90 +112,9 @@ impl ExecutorPermissions {
             Self::OpenCode => false,
         }
     }
-
-    /// One line for the start-up log saying how the executor runs.
-    pub fn describe(&self) -> String {
-        match self {
-            Self::ClaudeCode(p) => {
-                let allowed = p.allowed_tools.as_ref().map_or_else(
-                    || "every server in mcp_config_path".to_string(),
-                    |tools| format!("[{}]", tools.join(", ")),
-                );
-                format!(
-                    "claude-code permission_mode = {}, allowed_tools = {allowed}, disallowed_tools = [{}], \
-                     strict_mcp_config = {}",
-                    p.mode,
-                    p.disallowed_tools.join(", "),
-                    p.strict_mcp_config
-                )
-            }
-            Self::Codex(CodexPermissions::Sandbox(mode)) => format!("codex sandbox = {mode}"),
-            Self::Codex(CodexPermissions::BypassApprovalsAndSandbox) => {
-                "codex --dangerously-bypass-approvals-and-sandbox (no sandbox, no approvals)".to_string()
-            }
-            Self::OpenCode => "opencode with its own permission configuration".to_string(),
-        }
-    }
-
-    /// The executor's permission arguments, appended after the prompt.
-    ///
-    /// `mcp_servers` are the server names of `mcp_config_path`, used as the claude-code allow
-    /// list when `allowed_tools` is not set.
-    pub fn arguments(&self, mcp_config_path: Option<&str>, mcp_servers: &[String]) -> Vec<String> {
-        let mut args = Vec::new();
-        match self {
-            Self::ClaudeCode(p) => {
-                args.push("--permission-mode".to_string());
-                args.push(p.mode.to_string());
-                let allowed: Vec<String> = p
-                    .allowed_tools
-                    .clone()
-                    .unwrap_or_else(|| mcp_servers.iter().map(|server| format!("mcp__{server}")).collect());
-                // Each list is one variadic option followed by its entries; the next option ends
-                // it, and the prompt is never after it, so no entry can be read as the prompt.
-                if !allowed.is_empty() {
-                    args.push("--allowedTools".to_string());
-                    args.extend(allowed);
-                }
-                if !p.disallowed_tools.is_empty() {
-                    args.push("--disallowedTools".to_string());
-                    args.extend(p.disallowed_tools.iter().cloned());
-                }
-                // Without an MCP config the agent's own Claude Code configuration supplies the
-                // servers, so strict mode (which would drop them all) only applies with one.
-                if let Some(path) = mcp_config_path {
-                    args.push("--mcp-config".to_string());
-                    args.push(path.to_string());
-                    if p.strict_mcp_config {
-                        args.push("--strict-mcp-config".to_string());
-                    }
-                }
-            }
-            Self::Codex(CodexPermissions::Sandbox(mode)) => {
-                args.push("--sandbox".to_string());
-                args.push((*mode).to_string());
-            }
-            Self::Codex(CodexPermissions::BypassApprovalsAndSandbox) => {
-                args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
-            }
-            Self::OpenCode => {}
-        }
-        args
-    }
-
-    /// Whether building the arguments needs the server names of `mcp_config_path`.
-    pub const fn needs_mcp_servers(&self) -> bool {
-        matches!(
-            self,
-            Self::ClaudeCode(ClaudeCodePermissions {
-                allowed_tools: None,
-                ..
-            })
-        )
-    }
 }
 
-fn claude_code(cfg: &CliAgentConfig) -> Result<ClaudeCodePermissions, String> {
+fn claude_code(cfg: &ExecutorSettings) -> Result<ClaudeCodePermissions, String> {
     refuse_set("claude-code", &codex_keys(cfg))?;
     let requested = cfg
         .permission_mode
@@ -214,7 +157,7 @@ fn claude_code(cfg: &CliAgentConfig) -> Result<ClaudeCodePermissions, String> {
     })
 }
 
-fn codex(cfg: &CliAgentConfig) -> Result<CodexPermissions, String> {
+fn codex(cfg: &ExecutorSettings) -> Result<CodexPermissions, String> {
     refuse_set("codex", &claude_keys(cfg))?;
     let sandbox = match cfg.sandbox.as_deref().map(str::trim) {
         None => None,
@@ -246,7 +189,7 @@ fn codex(cfg: &CliAgentConfig) -> Result<CodexPermissions, String> {
     }
 }
 
-const fn claude_keys(cfg: &CliAgentConfig) -> [(&'static str, bool); 4] {
+const fn claude_keys(cfg: &ExecutorSettings) -> [(&'static str, bool); 4] {
     [
         ("permission_mode", cfg.permission_mode.is_some()),
         ("allowed_tools", cfg.allowed_tools.is_some()),
@@ -255,7 +198,7 @@ const fn claude_keys(cfg: &CliAgentConfig) -> [(&'static str, bool); 4] {
     ]
 }
 
-const fn codex_keys(cfg: &CliAgentConfig) -> [(&'static str, bool); 1] {
+const fn codex_keys(cfg: &ExecutorSettings) -> [(&'static str, bool); 1] {
     [("sandbox", cfg.sandbox.is_some())]
 }
 
@@ -291,108 +234,16 @@ fn tool_list(key: &str, tools: &[String]) -> Result<Vec<String>, String> {
         .collect()
 }
 
-/// The file `mcp_config_path` names, as the executor resolves it: relative to `workdir` when the
-/// path is relative and a `workdir` is set (the executor runs there).
-pub fn resolve_mcp_config_path(mcp_config_path: &str, workdir: Option<&str>) -> PathBuf {
-    let path = Path::new(mcp_config_path);
-    match workdir {
-        Some(dir) if path.is_relative() => Path::new(dir).join(path),
-        _ => path.to_path_buf(),
-    }
-}
-
-/// The server names of an MCP config file (`{"mcpServers": {"<name>": {...}}}`).
-pub fn mcp_server_names(path: &Path) -> Result<Vec<String>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    parse_mcp_server_names(&text).map_err(|e| format!("{}: {e}", path.display()))
-}
-
-fn parse_mcp_server_names(text: &str) -> Result<Vec<String>, String> {
-    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
-    let servers = value
-        .get("mcpServers")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| "has no `mcpServers` object".to_string())?;
-    let mut names: Vec<String> = servers.keys().cloned().collect();
-    names.sort();
-    Ok(names)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        ClaudeCodePermissions, CodexPermissions, ExecutorPermissions, parse_mcp_server_names, resolve_mcp_config_path,
-    };
-    use crate::config::CliAgentConfig;
+    use super::{ClaudeCodePermissions, CodexPermissions, ExecutorPermissions, ExecutorSettings};
 
-    fn cli(executor: &str, extra: &str) -> CliAgentConfig {
+    fn cli(executor: &str, extra: &str) -> ExecutorSettings {
         toml::from_str(&format!("executor = '{executor}'\n{extra}")).expect("cli config parses")
     }
 
     fn permissions(executor: &str, extra: &str) -> Result<ExecutorPermissions, String> {
         ExecutorPermissions::from_config(&cli(executor, extra))
-    }
-
-    fn args(executor: &str, extra: &str, mcp: Option<&str>, servers: &[&str]) -> Vec<String> {
-        let servers: Vec<String> = servers.iter().map(ToString::to_string).collect();
-        permissions(executor, extra).expect("valid").arguments(mcp, &servers)
-    }
-
-    #[test]
-    fn claude_code_defaults_to_dont_ask_with_the_mcp_servers_allowed() {
-        assert_eq!(
-            args("claude-code", "", Some("mcp.json"), &["sylvode", "docs"]),
-            [
-                "--permission-mode",
-                "dontAsk",
-                "--allowedTools",
-                "mcp__sylvode",
-                "mcp__docs",
-                "--mcp-config",
-                "mcp.json",
-                "--strict-mcp-config"
-            ]
-        );
-        assert_eq!(
-            args("claude-code", "", None, &[]),
-            ["--permission-mode", "dontAsk"],
-            "nothing allowed beyond what dontAsk permits without asking"
-        );
-    }
-
-    #[test]
-    fn claude_code_explicit_lists_replace_the_default() {
-        assert_eq!(
-            args(
-                "claude-code",
-                "permission_mode = 'acceptEdits'\nallowed_tools = ['mcp__sylvode', 'Bash(git status)']\n\
-                 disallowed_tools = ['WebFetch']\nstrict_mcp_config = false",
-                Some("/etc/mcp.json"),
-                &["ignored"],
-            ),
-            [
-                "--permission-mode",
-                "acceptEdits",
-                "--allowedTools",
-                "mcp__sylvode",
-                "Bash(git status)",
-                "--disallowedTools",
-                "WebFetch",
-                "--mcp-config",
-                "/etc/mcp.json"
-            ]
-        );
-        assert_eq!(
-            args("claude-code", "allowed_tools = []", Some("m.json"), &["sylvode"]),
-            [
-                "--permission-mode",
-                "dontAsk",
-                "--mcp-config",
-                "m.json",
-                "--strict-mcp-config"
-            ],
-            "an empty list allows nothing extra, not the default"
-        );
     }
 
     #[test]
@@ -405,7 +256,6 @@ mod tests {
         )
         .expect("explicit opt-in");
         assert!(bypass.bypasses_permissions());
-        assert_eq!(bypass.arguments(None, &[]), ["--permission-mode", "bypassPermissions"]);
         let stray = permissions("claude-code", "dangerously_bypass_permissions = true").expect_err("refused");
         assert!(stray.contains("no effect"), "{stray}");
     }
@@ -457,10 +307,13 @@ mod tests {
 
     #[test]
     fn codex_defaults_to_a_read_only_sandbox_and_bypass_is_opt_in() {
-        assert_eq!(args("codex", "", None, &[]), ["--sandbox", "read-only"]);
         assert_eq!(
-            args("codex", "sandbox = 'workspace-write'", None, &[]),
-            ["--sandbox", "workspace-write"]
+            permissions("codex", "").expect("valid"),
+            ExecutorPermissions::Codex(CodexPermissions::Sandbox("read-only"))
+        );
+        assert_eq!(
+            permissions("codex", "sandbox = 'workspace-write'").expect("valid"),
+            ExecutorPermissions::Codex(CodexPermissions::Sandbox("workspace-write"))
         );
         let full = permissions("codex", "sandbox = 'danger-full-access'").expect_err("refused");
         assert!(full.contains("dangerously_bypass_permissions"), "{full}");
@@ -470,15 +323,10 @@ mod tests {
         )
         .expect("opt-in");
         assert!(full.bypasses_permissions());
-        assert_eq!(full.arguments(None, &[]), ["--sandbox", "danger-full-access"]);
         let bypass = permissions("codex", "dangerously_bypass_permissions = true").expect("opt-in");
         assert_eq!(
             bypass,
             ExecutorPermissions::Codex(CodexPermissions::BypassApprovalsAndSandbox)
-        );
-        assert_eq!(
-            bypass.arguments(None, &[]),
-            ["--dangerously-bypass-approvals-and-sandbox"]
         );
         let contradiction =
             permissions("codex", "sandbox = 'read-only'\ndangerously_bypass_permissions = true").expect_err("refused");
@@ -489,24 +337,13 @@ mod tests {
     fn opencode_is_unchanged() {
         let opencode = permissions("opencode", "").expect("valid");
         assert_eq!(opencode, ExecutorPermissions::OpenCode);
-        assert!(opencode.arguments(Some("m.json"), &["s".to_string()]).is_empty());
         assert!(!opencode.bypasses_permissions());
     }
 
     #[test]
-    fn the_log_line_names_the_mode() {
+    fn the_default_claude_settings_are_strict_and_do_not_bypass() {
         let default = permissions("claude-code", "").expect("valid");
-        assert!(
-            default.describe().contains("permission_mode = dontAsk"),
-            "{}",
-            default.describe()
-        );
-        assert!(default.describe().contains("every server in mcp_config_path"));
         assert!(!default.bypasses_permissions());
-        assert_eq!(
-            permissions("codex", "").expect("valid").describe(),
-            "codex sandbox = read-only"
-        );
         assert!(matches!(
             default,
             ExecutorPermissions::ClaudeCode(ClaudeCodePermissions {
@@ -514,27 +351,5 @@ mod tests {
                 ..
             })
         ));
-    }
-
-    #[test]
-    fn mcp_server_names_come_from_the_mcp_servers_object() {
-        assert_eq!(
-            parse_mcp_server_names(r#"{"mcpServers":{"sylvode":{"command":"x"},"a":{}}}"#).expect("parses"),
-            ["a", "sylvode"]
-        );
-        assert!(parse_mcp_server_names(r#"{"servers":{}}"#).is_err());
-        assert!(parse_mcp_server_names("not json").is_err());
-        assert_eq!(
-            resolve_mcp_config_path("mcp.json", Some("/work")),
-            std::path::Path::new("/work/mcp.json")
-        );
-        assert_eq!(
-            resolve_mcp_config_path("/abs/mcp.json", Some("/work")),
-            std::path::Path::new("/abs/mcp.json")
-        );
-        assert_eq!(
-            resolve_mcp_config_path("mcp.json", None),
-            std::path::Path::new("mcp.json")
-        );
     }
 }

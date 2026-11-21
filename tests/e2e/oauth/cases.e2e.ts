@@ -488,8 +488,8 @@ test('A08 last hop: task', async ({ browser, world }) => {
 				new Recorder(),
 				'end the task',
 				'POST',
-				`/api/v1/ai/callbacks/task/${taskId}/fail`,
-				{ error_message: 'qa-p4 cleanup', retry: false }
+				`/api/v1/ai/tasks/${taskId}/fail?attempt=1`,
+				{ reason: 'qa-p4 cleanup', retryable: false }
 			);
 		});
 		const t0 = created.doneAt;
@@ -1074,8 +1074,8 @@ test('A21 alert chain', async ({ browser, world }) => {
 				new Recorder(),
 				'end the task',
 				'POST',
-				`/api/v1/ai/callbacks/task/${id}/fail`,
-				{ error_message: 'qa-p4 cleanup', retry: false }
+				`/api/v1/ai/tasks/${id}/fail?attempt=1`,
+				{ reason: 'qa-p4 cleanup', retryable: false }
 			);
 		});
 

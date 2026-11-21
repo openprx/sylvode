@@ -13,13 +13,11 @@ allow_unsigned = false
 # Worker AI tasks carry no timestamp; see "Replayed requests" in the README.
 max_delivery_age_secs = 300
 
-# Feature flags: all new Phase-B paths default OFF.
+# Feature flags: every optional path defaults OFF.
 [features]
 tunnel_enabled = false
-cli_enabled = false
-callback_enabled = false
 
-# Runtime guardrails
+# Runtime guardrails (cli_max_concurrency bounds the headless runs of `runner` agents)
 [runtime]
 cli_max_concurrency = 1
 http_timeout_secs = 15
@@ -47,39 +45,33 @@ heartbeat_secs = 20
 # (start-up is refused without it)
 require_inbound_sig = false
 
-# Optional: end worker AI tasks in Sylvode. The Sylvode worker marks an AI task `processing` when
-# it delivers it (a delivery with `task_id` and `ai_participant_id`), and only the API's
-# POST /api/v1/ai/callbacks/task/{task_id}/complete or .../fail ends that state. When enabled,
-# the agent that ran the task calls `complete` after a successful run and `fail` after any other
-# end; a task that no agent matches is failed too, with the token of its bot. (The worker also
-# fails a task this receiver answers `no_agent` or `refused`, and takes back a task nobody ends
-# within its [ai_tasks] processing_timeout_secs.) Off by default; safe mode turns it off too.
+# The bots' tokens for the Sylvode API. A `runner` agent reads and reports its tasks with them; a
+# forwarding agent (webhook, openclaw, openprx, custom) that cannot hand a delivery over fails the
+# task with POST /api/v1/ai/tasks/{task_id}/fail and the token of the task's bot (the receiving
+# side ends a task it accepted, with the task tools). Off by default; safe mode turns it off too.
 [ai_task_callback]
 enabled = false
 # Base URL of the Sylvode API (no path, query or credentials). Required when enabled.
 api_url = "http://127.0.0.1:8080"
 # Bearer token of the bot that is the tasks' AI participant: the API lets only that bot (or a
 # system administrator) end a task, so a token works ONLY for the tasks of the bot that owns it.
-# Required when enabled, here, per bot or per agent below.
+# Required when enabled, here or per bot below.
 token = "replace-with-the-bot-token-of-the-ai-participant"
 # The id of the bot that owns `token` (its user id in Sylvode). With it, `token` is used only for
 # that bot's tasks; without it, for every task no other token covers (and refused for other bots).
 # bot_id = "00000000-0000-0000-0000-000000000000"
 # The transport the token is registered with in Sylvode: rest (no header), mcp_http, mcp_sse,
-# mcp_stdio, cli or cli_tools_call (sent as X-Sylvode-MCP-Surface and X-OpenPR-MCP-Surface).
+# mcp_stdio, cli or cli_tools_call (sent as X-Sylvode-MCP-Surface).
 surface = "rest"
-# Attempts per callback, including the first (1 to 10). Transport errors, HTTP 5xx/429 and API
-# codes of 500 or more are retried; a refusal (for example code 400, task not processing) is not.
+# Attempts per report, including the first (1 to 10). Transport errors and HTTP 5xx are retried;
+# a refusal (for example HTTP 400, the attempt is no longer active) is not.
 max_attempts = 3
 # Delay before the first retry in milliseconds, doubled after each further failure (at most
 # 60000; the wait between two attempts never exceeds 30 seconds).
 retry_delay_ms = 1000
-# At most this many trailing characters of the agent's output go into the callback.
-max_output_chars = 4000
 
-# One entry per further bot this receiver serves, keyed by the bot's id: used for that bot's tasks
-# that no agent token covers, including tasks no agent matches. A task whose bot has no token at
-# all is not reported (and logged); the worker then ends it.
+# One entry per further bot this receiver serves, keyed by the bot's id. A task whose bot has no
+# token at all is not reported (and logged); the worker then ends it.
 # [[ai_task_callback.bots]]
 # bot_id = "00000000-0000-0000-0000-000000000000"
 # token = "replace-with-the-bot-token-of-that-bot"
@@ -100,100 +92,28 @@ max_output_chars = 4000
 # channel = "signal"
 # target = "uuid:your-user-uuid"
 
-# cli agents run only with [features].cli_enabled = true, and never in safe mode.
-[[agents]]
-id = "vano-cli"
-name = "Vano CLI"
-agent_type = "cli"
-# A cli agent is given prompt_template (below); message_template does not apply.
-
-# Optional scenario route constraints. When present, the Sylvode bot task or
-# worker AI task must match these fields before the agent is selected.
-# Empty lists mean "no constraint" for that dimension.
-[agents.route]
-bot_agent_types = ["cli"]
-project_types = ["code_delivery"]
+# A webhook agent forwards the delivery, unchanged, to another receiver, which owns the task from
+# then on. A failed forward ends the task through the protocol (see [ai_task_callback]).
+#
+# [[agents]]
+# id = "forward"
+# name = "Forward"
+# agent_type = "webhook"
+#
+# [agents.webhook]
+# url = "https://receiver.example.com/hook"
+#
+# Optional scenario route constraints. When present, the Sylvode bot task or worker AI task must
+# match these fields before the agent is selected. Empty lists mean "no constraint".
+# [agents.route]
+# bot_agent_types = ["claude-code"]
+# project_types = ["code_delivery"]
 # Values Sylvode sends: assigned, created, status_changed, mentioned, completed,
 # failed (webhook deliveries) and assigned, mention, proposal_vote, manual
 # (worker AI tasks). Any other value refuses start-up.
-trigger_kinds = ["assigned", "mentioned"]
-# Event routing. Only events a webhook subscription can request are ever
-# delivered; see WEBHOOK_EVENTS in the Sylvode API.
+# trigger_kinds = ["assigned", "mentioned"]
 # events = ["issue.assigned", "comment.created"]
 # form_keys = ["order", "print_job"]
-
-[agents.cli]
-executor = "codex" # codex | claude-code | opencode
-workdir = "/path/to/your/repository"
-timeout_secs = 900
-max_output_chars = 12000
-prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
-callback = "mcp" # mcp | api
-callback_url = "http://127.0.0.1:8090/mcp/rpc"
-callback_token = "opr_xxx"
-update_state_on_start = "in_progress"
-update_state_on_success = "done"
-update_state_on_fail = "todo"
-# codex runs in its read-only sandbox by default. To let it write in workdir:
-# sandbox = "workspace-write"           # read-only | workspace-write | danger-full-access
-# The old behaviour (no sandbox, no approvals) is an explicit opt-in, warned about at start-up:
-# dangerously_bypass_permissions = true
-
-# --- MCP closed-loop example (AI reads full issue context via MCP) ---
-
-[[agents]]
-id = "ai-fixer"
-name = "AI Issue Fixer"
-agent_type = "cli"
-
-[agents.cli]
-executor = "claude-code"
-workdir = "/path/to/your/repository"
-timeout_secs = 900
-max_output_chars = 12000
-prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
-
-# MCP closed-loop: AI updates issue state directly via MCP tools,
-# so we skip the callback state update to avoid duplication.
-skip_callback_state = true
-callback = "mcp"
-callback_url = "http://127.0.0.1:8090/mcp/rpc"
-callback_token = "opr_xxx"
-
-# Path to an MCP config for claude-code (--mcp-config flag). Setting it (or
-# mcp_instructions, or env_vars) also appends the default MCP instructions to
-# the prompt. If omitted, claude-code uses its global ~/.claude.json MCP config.
-mcp_config_path = "/path/to/mcp-config.json"
-
-# Permissions of claude-code. The default is permission_mode = "dontAsk": anything
-# that would ask for permission is denied without asking, so the agent can read
-# files in workdir and use the allowed tools, and cannot run shell commands or
-# edit files. Without allowed_tools, every MCP server named in mcp_config_path is
-# allowed (mcp__<server>), and --strict-mcp-config ignores every other MCP server.
-# permission_mode = "dontAsk"          # acceptEdits | auto | dontAsk | manual | plan | bypassPermissions
-# allowed_tools = ["mcp__sylvode", "Read", "Edit(//path/to/your/repository/**)", "Bash(cargo test *)"]
-# disallowed_tools = ["WebFetch"]
-# strict_mcp_config = true
-# Turning every permission check off needs both lines and is warned about at start-up:
-# permission_mode = "bypassPermissions"
-# dangerously_bypass_permissions = true
-
-# Custom MCP instructions appended to the prompt. If omitted, a sensible
-# default is used that instructs the AI to read/write via Sylvode MCP tools.
-# mcp_instructions = "Use work_items.get to read issue {issue_id}, then fix it."
-
-# Extra environment variables injected into the executor subprocess.
-# The Sylvode MCP server reads its API URL, bot token and workspace from its
-# own config file (mcp-server serve --config ...), not from these variables.
-# [agents.cli.env_vars]
-# HTTPS_PROXY = "http://proxy.internal:3128"
-
-# Optional per-agent overrides of [ai_task_callback]. `enabled` defaults to true for every agent
-# type except `webhook` (a forwarding agent hands the task to another receiver, which owns it).
-# [agents.ai_task_callback]
-# enabled = true
-# token = "replace-with-the-bot-token-of-this-agents-bot"
-# surface = "mcp_stdio"
 
 # A `runner` agent executes the tasks of a bot that is connected to a project in Sylvode; the
 # connection issues this block. It needs [ai_task_callback] enabled with a token for the bot

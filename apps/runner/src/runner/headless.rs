@@ -26,7 +26,8 @@ use super::config::RunnerConfig;
 use super::files::{BotFiles, StateDir};
 use super::launch;
 use super::paths::AllowedRoots;
-use crate::config::{CliAgentConfig, Config};
+use crate::config::Config;
+use crate::executor_permissions::ExecutorSettings;
 use crate::process::{self, End};
 
 /// How long one headless run may take.
@@ -41,25 +42,25 @@ pub const UNFINISHED_REASON: &str = "agent ended without completing or failing t
 /// The text the task is failed with when the runner cut the run short.
 pub const CUT_SHORT_REASON: &str = "the runner stopped the run before the agent ended the task";
 
-/// The settings of `cli` in `dir` as the legacy executor takes them. The launch code validates its
+/// The settings of `cli` as the permission validation takes them. The launch code validates its
 /// permissions through the same settings, so every channel refuses the same combinations.
-pub fn settings_for(runner: &RunnerConfig, cli: &str, dir: &str) -> CliAgentConfig {
+pub fn settings_for(runner: &RunnerConfig, cli: &str) -> ExecutorSettings {
     let mut cfg = match cli {
         "claude" => {
             let claude = &runner.cli.claude;
-            let mut cfg = CliAgentConfig::headless("claude-code", dir, RUN_TIMEOUT_SECS);
+            let mut cfg = ExecutorSettings::new("claude-code");
             cfg.permission_mode = Some(claude.permission_mode.clone());
             cfg.dangerously_bypass_permissions = claude.dangerously_bypass_permissions;
             cfg
         }
         "codex" => {
             let codex = &runner.cli.codex;
-            let mut cfg = CliAgentConfig::headless("codex", dir, RUN_TIMEOUT_SECS);
+            let mut cfg = ExecutorSettings::new("codex");
             cfg.sandbox = Some(codex.sandbox.clone());
             cfg.dangerously_bypass_permissions = codex.dangerously_bypass_permissions;
             cfg
         }
-        _ => CliAgentConfig::headless("opencode", dir, RUN_TIMEOUT_SECS),
+        _ => ExecutorSettings::new("opencode"),
     };
     cfg.mcp_config_path.clone_from(&runner.mcp.mcp_config_path);
     cfg

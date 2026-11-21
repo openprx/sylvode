@@ -9,8 +9,6 @@ use std::time::Duration;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-use crate::callback::MCP_SURFACE_HEADER;
-
 /// The task protocol version this runner speaks.
 pub const TASK_PROTOCOL: u32 = 1;
 
@@ -47,6 +45,9 @@ impl std::fmt::Display for SvError {
 }
 
 impl std::error::Error for SvError {}
+
+/// The header that names the transport a bot token is registered with.
+pub const MCP_SURFACE_HEADER: &str = "X-Sylvode-MCP-Surface";
 
 /// One bot's connection to the Sylvode API.
 #[derive(Clone)]

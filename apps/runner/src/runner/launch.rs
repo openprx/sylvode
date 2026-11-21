@@ -118,7 +118,7 @@ pub struct LaunchFiles<'a> {
     pub hook_socket: &'a Path,
 }
 
-fn permissions(settings: &crate::config::CliAgentConfig) -> Result<ExecutorPermissions, LaunchError> {
+fn permissions(settings: &crate::executor_permissions::ExecutorSettings) -> Result<ExecutorPermissions, LaunchError> {
     ExecutorPermissions::from_config(settings).map_err(LaunchError::Permissions)
 }
 
@@ -229,7 +229,7 @@ struct ClaudeParts {
 fn claude_parts(cfg: &RunnerClaudeConfig, dir: &Path) -> Result<ClaudeParts, LaunchError> {
     let dir_text = rule_safe_dir(dir)?;
     // The same validation the headless channel applies.
-    let mut settings = crate::config::CliAgentConfig::headless("claude-code", dir_text, 1);
+    let mut settings = crate::executor_permissions::ExecutorSettings::new("claude-code");
     settings.permission_mode = Some(cfg.permission_mode.clone());
     settings.dangerously_bypass_permissions = cfg.dangerously_bypass_permissions;
     let ExecutorPermissions::ClaudeCode(permissions) = permissions(&settings)? else {
@@ -309,7 +309,7 @@ pub fn codex_argv(
     key: &SessionKey,
 ) -> Result<Vec<String>, LaunchError> {
     let dir_text = rule_safe_dir(dir)?;
-    let mut settings = crate::config::CliAgentConfig::headless("codex", dir_text, 1);
+    let mut settings = crate::executor_permissions::ExecutorSettings::new("codex");
     settings.sandbox = Some(cfg.sandbox.clone());
     settings.dangerously_bypass_permissions = cfg.dangerously_bypass_permissions;
     let ExecutorPermissions::Codex(CodexPermissions::Sandbox(sandbox)) = permissions(&settings)? else {
@@ -364,8 +364,8 @@ pub fn codex_headless_argv(
     mcp_toml: &Path,
     prompt: &str,
 ) -> Result<Vec<String>, LaunchError> {
-    let dir_text = rule_safe_dir(dir)?;
-    let mut settings = crate::config::CliAgentConfig::headless("codex", dir_text, 1);
+    rule_safe_dir(dir)?;
+    let mut settings = crate::executor_permissions::ExecutorSettings::new("codex");
     settings.sandbox = Some(cfg.sandbox.clone());
     settings.dangerously_bypass_permissions = cfg.dangerously_bypass_permissions;
     let ExecutorPermissions::Codex(CodexPermissions::Sandbox(sandbox)) = permissions(&settings)? else {

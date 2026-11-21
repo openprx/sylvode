@@ -1040,26 +1040,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_legacy_callbacks_still_route_nothing() {
-        use crate::routes::ai_callback::{CallbackAttemptQuery, complete_task};
-        let scratch = scratch_or_skip!("reply_legacy");
-        let env = Env::new(&scratch.db, "lg").await;
-        let task = env.assignment("processing").await;
-        complete_task(
-            State(state_for(env.db.clone())),
-            Extension(claims_for(env.bot)),
-            Path(task),
-            Query(CallbackAttemptQuery { attempt: Some(1) }),
-            Json(json!({"status": "success"})),
-        )
-        .await
-        .unwrap_or_else(|err| panic!("legacy complete: {err:?}"));
-        assert!(env.comments().await.is_empty());
-        assert_eq!(env.state().await, "todo");
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
     async fn a_start_refusal_is_reported_on_the_issue_for_configured_projects() {
         let scratch = scratch_or_skip!("reply_start_refusal");
         let env = Env::new(&scratch.db, "sr").await;

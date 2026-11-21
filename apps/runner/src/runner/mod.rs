@@ -180,7 +180,7 @@ pub fn posture(config: &Config) -> Vec<PostureLine> {
     } else {
         ""
     };
-    let settings = headless::settings_for(runner, "claude", "/");
+    let settings = headless::settings_for(runner, "claude");
     let bypass = ExecutorPermissions::from_config(&settings).is_ok_and(|p| p.bypasses_permissions());
     lines.push(PostureLine {
         warn: bypass,
@@ -195,7 +195,7 @@ pub fn posture(config: &Config) -> Vec<PostureLine> {
         ),
     });
     let codex = &runner.cli.codex;
-    let settings = headless::settings_for(runner, "codex", "/");
+    let settings = headless::settings_for(runner, "codex");
     let codex_open = ExecutorPermissions::from_config(&settings).is_ok_and(|p| p.bypasses_permissions());
     lines.push(PostureLine {
         warn: codex_open,
@@ -300,7 +300,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             "the runner's HTTP client is not available",
         ));
     };
-    let AiTaskCallback::Report(target) = config.ai_task_callback_for(Some(agent), bot) else {
+    let AiTaskCallback::Report(target) = config.ai_task_callback_for(bot) else {
         return Ok(refused(
             agent,
             "runner_agent_disabled",

@@ -7,7 +7,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 
 mod ai_task;
-mod cli;
 mod handshake;
 mod hook;
 mod mock_sv;

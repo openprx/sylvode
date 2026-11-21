@@ -1176,31 +1176,6 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
             ),
         )
         .route(
-            "/api/v1/ai/callbacks/task/{task_id}/complete",
-            post(routes::ai_callback::complete_task).route_layer(
-                axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                ),
-            ),
-        )
-        .route(
-            "/api/v1/ai/callbacks/task/{task_id}/fail",
-            post(routes::ai_callback::fail_task).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
-            "/api/v1/ai/callbacks/task/{task_id}/progress",
-            post(routes::ai_callback::report_progress).route_layer(
-                axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                ),
-            ),
-        )
-        .route(
             "/api/v1/projects/{project_id}/check-results",
             get(routes::check_result::list_project_check_results)
                 .post(routes::check_result::create_project_check_result)

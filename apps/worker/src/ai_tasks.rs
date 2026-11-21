@@ -5,11 +5,11 @@
 //! delivered to the bot's webhook. It ends in one of four ways:
 //!
 //! - The runner takes the task (`dispatched`, or any other 2xx answer it does not decline) and
-//!   later reports the outcome through the API's complete or fail callback.
+//!   later ends the attempt through the task protocol (`complete` or `fail`, with `?attempt=N`).
 //! - The runner answers the delivery that it will not run the task (`no_agent`, `ignored`,
 //!   `refused`, or an HTTP 4xx a repeat cannot change): the worker fails the task at once. The
 //!   answer depends on the runner's configuration, which a retry seconds later does not change,
-//!   and the runner's own fail callback may be refused (it may hold no token for this bot).
+//!   and the runner's own fail call may be refused (it may hold no token for this bot).
 //! - The delivery does not reach a runner that takes it (no webhook, a transport error, HTTP
 //!   5xx, 408, 409, 425, 429): the worker re-queues the task while attempts remain.
 //! - Nothing ends the attempt before its lease runs out (`[ai_tasks] processing_timeout_secs` from
@@ -17,7 +17,7 @@
 //!   the task while attempts remain and fails it otherwise.
 //!
 //! Every transition the worker makes is a compare-and-set on the active statuses (`processing`
-//! and `acknowledged`) and the attempt number (`api::services::ai_task_service`), so a callback
+//! and `acknowledged`) and the attempt number (`api::services::ai_task_service`), so an end
 //! that commits first wins and several workers never end the same attempt twice.
 
 use api::outbound::validate_outbound_url;
@@ -78,7 +78,7 @@ struct DeliveryAnswer {
 /// What a delivery's answer means for the attempt.
 #[derive(Debug, PartialEq, Eq)]
 enum DeliveryVerdict {
-    /// The runner took the task; it ends the attempt through a callback, or the timeout does.
+    /// The runner took the task; it ends the attempt through the task protocol, or the timeout does.
     Accepted,
     /// The runner will not run the task; a repeat would get the same answer. `code` is the
     /// runner's own refusal code, when it sent one of the right shape.
@@ -242,7 +242,7 @@ async fn settle_delivery(state: &AppState, task: &AiTaskDispatchRow, verdict: De
     Ok(())
 }
 
-/// Ends the attempt just delivered, unless a callback already ended it, and sends
+/// Ends the attempt just delivered, unless the agent already ended it, and sends
 /// `ai.task_failed` when the task is failed. Returns the task when this call ended it.
 async fn end_attempt(
     state: &AppState,
@@ -297,7 +297,7 @@ pub async fn end_stalled_tasks(state: &AppState, concurrency: usize) -> anyhow::
 }
 
 /// `ai.task_failed` for a task the worker failed, sent on behalf of the task's AI participant,
-/// the way the API's fail callback sends it. A failure to send is logged; the task stays failed.
+/// the way the task protocol's fail endpoint sends it. A failure to send is logged; the task stays failed.
 async fn notify_failed(state: &AppState, task: &api::services::ai_task_service::AiTaskRow) {
     if let Err(err) = notify_ai_task_failed(state, task, task.ai_participant_id).await {
         tracing::warn!(task_id = %task.id, error = %err, "ai.task_failed could not be sent");

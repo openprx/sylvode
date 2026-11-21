@@ -274,6 +274,7 @@ pub async fn post_with(url: &str, body: &str, headers: &[(&str, &str)]) -> (u16,
 #[derive(Debug, Clone)]
 pub struct Recorded {
     pub path: String,
+    pub query: Option<String>,
     pub headers: HeaderMap,
     pub body: Value,
 }
@@ -294,12 +295,18 @@ async fn record(
 ) -> &'static str {
     let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let path = uri.path().to_owned();
-    let answer = if path.starts_with("/api/v1/ai/callbacks/task/") {
+    let query = uri.query().map(ToOwned::to_owned);
+    let answer = if path.starts_with("/api/v1/ai/tasks/") {
         r#"{"code":0,"message":"success","data":{}}"#
     } else {
         r#"{"jsonrpc":"2.0","id":1,"result":{"content":[]}}"#
     };
-    let _ = tx.send(Recorded { path, headers, body });
+    let _ = tx.send(Recorded {
+        path,
+        query,
+        headers,
+        body,
+    });
     answer
 }
 
@@ -327,45 +334,6 @@ impl StubApi {
 impl Drop for StubApi {
     fn drop(&mut self) {
         self.task.abort();
-    }
-}
-
-/// Whether process `pid` is alive (a zombie counts as dead). Read from `/proc` where it exists,
-/// from `ps` elsewhere (macOS).
-pub fn alive(pid: i32) -> bool {
-    if !Path::new("/proc/self/stat").exists() {
-        let out = Command::new("ps")
-            .args(["-o", "stat=", "-p", &pid.to_string()])
-            .output()
-            .expect("run ps");
-        let state = String::from_utf8_lossy(&out.stdout);
-        return state.trim().chars().next().is_some_and(|state| state != 'Z');
-    }
-    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-        stat.rsplit_once(')')
-            .and_then(|(_, rest)| rest.split_whitespace().next())
-            .is_some_and(|state| state != "Z" && state != "X")
-    })
-}
-
-/// Reads one pid per line from `file`.
-pub fn read_pids(file: &Path) -> Vec<i32> {
-    std::fs::read_to_string(file)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| line.trim().parse().ok())
-        .collect()
-}
-
-/// Waits until none of `pids` is alive; returns the survivors otherwise.
-pub fn wait_all_dead(pids: &[i32], timeout: Duration) -> Vec<i32> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let survivors: Vec<i32> = pids.iter().copied().filter(|pid| alive(*pid)).collect();
-        if survivors.is_empty() || Instant::now() >= deadline {
-            return survivors;
-        }
-        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

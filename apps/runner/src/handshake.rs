@@ -141,7 +141,7 @@ pub fn targets(config: &Config) -> Vec<Target> {
             if out.iter().any(|t| t.bot_id.eq_ignore_ascii_case(&id)) {
                 continue;
             }
-            if let AiTaskCallback::Report(t) = config.ai_task_callback_for(Some(agent), &id) {
+            if let AiTaskCallback::Report(t) = config.ai_task_callback_for(&id) {
                 out.push(Target {
                     bot_id: id,
                     api_url: t.api_url.to_string(),

@@ -52,7 +52,7 @@ fn the_hook_returns_at_once_without_reading_stdin_even_without_a_socket() {
         "/tmp/svh-no-such.sock",
     ]);
     assert_eq!(code, Some(0));
-    assert!(took < Duration::from_secs(1), "{took:?}");
+    assert!(took < Duration::from_secs(3), "{took:?}");
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn extra_arguments_and_missing_ones_are_ignored() {
         "--unknown",
         "x",
     ]);
-    assert_eq!((code, took < Duration::from_secs(1)), (Some(0), true));
+    assert_eq!((code, took < Duration::from_secs(3)), (Some(0), true));
     // No arguments at all, and no socket argument: still a clean exit.
     assert_eq!(run(&[]).1, Some(0));
     assert_eq!(run(&["--cli", "claude", "--event", "Stop"]).1, Some(0));

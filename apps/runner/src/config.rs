@@ -1,10 +1,5 @@
 use serde::Deserialize;
 
-use crate::executor_permissions::ExecutorPermissions;
-
-/// The executors a `cli` agent may run.
-pub const KNOWN_EXECUTORS: [&str; 3] = ["codex", "claude-code", "opencode"];
-
 #[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -34,10 +29,6 @@ pub struct Config {
 pub struct FeatureConfig {
     #[serde(default)]
     pub tunnel_enabled: bool,
-    #[serde(default)]
-    pub cli_enabled: bool,
-    #[serde(default)]
-    pub callback_enabled: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -96,11 +87,7 @@ pub struct AgentConfig {
     pub openprx: Option<OpenPRXConfig>,
     pub webhook: Option<WebhookAgentConfig>,
     pub custom: Option<CustomConfig>,
-    pub cli: Option<CliAgentConfig>,
     pub message_template: Option<String>,
-    /// Per-agent overrides of `[ai_task_callback]` (`[agents.ai_task_callback]`).
-    #[serde(default)]
-    pub ai_task_callback: Option<AgentAiTaskCallbackConfig>,
 }
 
 impl AgentConfig {
@@ -113,12 +100,11 @@ impl AgentConfig {
     }
 }
 
-/// Reports the outcome of a worker AI task back to the Sylvode API.
+/// The bots' tokens for the Sylvode API (`[ai_task_callback]`).
 ///
-/// The Sylvode worker marks an AI task `processing` when it delivers it, and only
-/// `POST /api/v1/ai/callbacks/task/{task_id}/complete` or `.../fail` ends that state. With this
-/// enabled, an agent that ran such a task (a delivery carrying `task_id` and `ai_participant_id`)
-/// calls the matching endpoint once the run ends.
+/// The runner reads and reports tasks with them (`runner` agents), and a forwarding agent
+/// (`webhook`, `openclaw`, `openprx`, `custom`) that cannot forward a task ends it through
+/// `POST /api/v1/ai/tasks/{task_id}/fail` with the task's bot token.
 #[derive(Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AiTaskCallbackConfig {
@@ -149,9 +135,6 @@ pub struct AiTaskCallbackConfig {
     /// Delay before the first retry, doubled after each further failed attempt (up to 60000).
     #[serde(default = "default_ai_task_retry_delay_ms")]
     pub retry_delay_ms: u64,
-    /// At most this many trailing characters of the agent's output go into the callback.
-    #[serde(default = "default_ai_task_max_output_chars")]
-    pub max_output_chars: usize,
 }
 
 impl Default for AiTaskCallbackConfig {
@@ -165,7 +148,6 @@ impl Default for AiTaskCallbackConfig {
             surface: default_ai_task_surface(),
             max_attempts: default_ai_task_max_attempts(),
             retry_delay_ms: default_ai_task_retry_delay_ms(),
-            max_output_chars: default_ai_task_max_output_chars(),
         }
     }
 }
@@ -184,17 +166,6 @@ pub struct AiTaskCallbackBotConfig {
     /// secret only (and a delivery for another bot never with it). Without it the bot's deliveries
     /// are verified with `security.webhook_secrets`, which must then belong to this bot alone.
     pub webhook_secret: Option<String>,
-}
-
-/// Per-agent overrides of [`AiTaskCallbackConfig`].
-#[derive(Deserialize, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct AgentAiTaskCallbackConfig {
-    /// Whether this agent reports AI task outcomes. Defaults to true for every agent type except
-    /// `webhook`, which forwards the delivery to another receiver that owns the task.
-    pub enabled: Option<bool>,
-    pub token: Option<String>,
-    pub surface: Option<String>,
 }
 
 /// Shows that a token is set without showing it.
@@ -216,7 +187,6 @@ impl std::fmt::Debug for AiTaskCallbackConfig {
             .field("surface", &self.surface)
             .field("max_attempts", &self.max_attempts)
             .field("retry_delay_ms", &self.retry_delay_ms)
-            .field("max_output_chars", &self.max_output_chars)
             .finish()
     }
 }
@@ -228,16 +198,6 @@ impl std::fmt::Debug for AiTaskCallbackBotConfig {
             .field("token", &"<redacted>")
             .field("surface", &self.surface)
             .field("webhook_secret", &redacted(self.webhook_secret.as_deref()))
-            .finish()
-    }
-}
-
-impl std::fmt::Debug for AgentAiTaskCallbackConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AgentAiTaskCallbackConfig")
-            .field("enabled", &self.enabled)
-            .field("token", &redacted(self.token.as_deref()))
-            .field("surface", &self.surface)
             .finish()
     }
 }
@@ -277,37 +237,6 @@ impl std::fmt::Debug for TunnelConfig {
             .field("hmac_secret", &redacted(self.hmac_secret.as_deref()))
             .field("require_inbound_sig", &self.require_inbound_sig)
             .field("allow_insecure_transport", &self.allow_insecure_transport)
-            .finish()
-    }
-}
-
-impl std::fmt::Debug for CliAgentConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The callback token and the values of the environment are secrets.
-        let mut names: Vec<&String> = self.env_vars.keys().collect();
-        names.sort();
-        f.debug_struct("CliAgentConfig")
-            .field("executor", &self.executor)
-            .field("workdir", &self.workdir)
-            .field("timeout_secs", &self.timeout_secs)
-            .field("max_output_chars", &self.max_output_chars)
-            .field("prompt_template", &self.prompt_template)
-            .field("callback", &self.callback)
-            .field("callback_url", &self.callback_url)
-            .field("callback_token", &redacted(self.callback_token.as_deref()))
-            .field("update_state_on_start", &self.update_state_on_start)
-            .field("update_state_on_success", &self.update_state_on_success)
-            .field("update_state_on_fail", &self.update_state_on_fail)
-            .field("mcp_instructions", &self.mcp_instructions)
-            .field("skip_callback_state", &self.skip_callback_state)
-            .field("mcp_config_path", &self.mcp_config_path)
-            .field("env_vars", &format_args!("names {names:?}, values redacted"))
-            .field("permission_mode", &self.permission_mode)
-            .field("allowed_tools", &self.allowed_tools)
-            .field("disallowed_tools", &self.disallowed_tools)
-            .field("strict_mcp_config", &self.strict_mcp_config)
-            .field("sandbox", &self.sandbox)
-            .field("dangerously_bypass_permissions", &self.dangerously_bypass_permissions)
             .finish()
     }
 }
@@ -416,83 +345,6 @@ pub struct CustomConfig {
 
 #[derive(Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct CliAgentConfig {
-    pub executor: String,
-    pub workdir: Option<String>,
-    #[serde(default = "default_timeout_secs")]
-    pub timeout_secs: u64,
-    #[serde(default = "default_max_output_chars")]
-    pub max_output_chars: usize,
-    pub prompt_template: Option<String>,
-    pub callback: Option<String>,
-    pub callback_url: Option<String>,
-    pub callback_token: Option<String>,
-    pub update_state_on_start: Option<String>,
-    pub update_state_on_success: Option<String>,
-    pub update_state_on_fail: Option<String>,
-    /// MCP instructions appended to the CLI prompt, enabling AI agents
-    /// to read full issue context and write results back via MCP tools.
-    pub mcp_instructions: Option<String>,
-    /// When true, the callback will not include a state update field,
-    /// because the AI agent updates issue state directly via MCP.
-    #[serde(default)]
-    pub skip_callback_state: bool,
-    /// Path to an MCP config file passed to claude-code via `--mcp-config`.
-    pub mcp_config_path: Option<String>,
-    /// Extra environment variables injected into the executor subprocess.
-    #[serde(default)]
-    pub env_vars: std::collections::HashMap<String, String>,
-    /// claude-code `--permission-mode`; default `dontAsk`. See [`crate::executor_permissions`].
-    pub permission_mode: Option<String>,
-    /// claude-code `--allowedTools`; default: every server of `mcp_config_path`.
-    pub allowed_tools: Option<Vec<String>>,
-    /// claude-code `--disallowedTools`.
-    pub disallowed_tools: Option<Vec<String>>,
-    /// claude-code `--strict-mcp-config` when `mcp_config_path` is set; default `true`.
-    pub strict_mcp_config: Option<bool>,
-    /// codex `--sandbox`; default `read-only`.
-    pub sandbox: Option<String>,
-    /// Acknowledges a setting that turns the executor's permission checks off. Required for
-    /// claude-code `permission_mode = "bypassPermissions"` and codex `sandbox =
-    /// "danger-full-access"`; for codex without `sandbox` it selects
-    /// `--dangerously-bypass-approvals-and-sandbox`.
-    #[serde(default)]
-    pub dangerously_bypass_permissions: bool,
-}
-
-impl CliAgentConfig {
-    /// The settings of one headless run of a `runner` agent: `executor` in `workdir` (the
-    /// canonical directory), with the permissions of `[runner.cli.*]`. There is no callback and no
-    /// state change: the agent ends the task through the task tools.
-    pub fn headless(executor: &str, workdir: &str, timeout_secs: u64) -> Self {
-        Self {
-            executor: executor.to_string(),
-            workdir: Some(workdir.to_string()),
-            timeout_secs,
-            max_output_chars: default_max_output_chars(),
-            prompt_template: None,
-            callback: None,
-            callback_url: None,
-            callback_token: None,
-            update_state_on_start: None,
-            update_state_on_success: None,
-            update_state_on_fail: None,
-            mcp_instructions: None,
-            skip_callback_state: true,
-            mcp_config_path: None,
-            env_vars: std::collections::HashMap::new(),
-            permission_mode: None,
-            allowed_tools: None,
-            disallowed_tools: None,
-            strict_mcp_config: None,
-            sandbox: None,
-            dangerously_bypass_permissions: false,
-        }
-    }
-}
-
-#[derive(Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct TunnelConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -514,14 +366,6 @@ pub struct TunnelConfig {
 
 const fn default_max_delivery_age_secs() -> u64 {
     300
-}
-
-const fn default_timeout_secs() -> u64 {
-    900
-}
-
-const fn default_max_output_chars() -> usize {
-    12000
 }
 
 const fn default_reconnect_secs() -> u64 {
@@ -554,10 +398,6 @@ const fn default_ai_task_max_attempts() -> u32 {
 
 const fn default_ai_task_retry_delay_ms() -> u64 {
     1000
-}
-
-const fn default_ai_task_max_output_chars() -> usize {
-    4000
 }
 
 /// Upper bound of `ai_task_callback.max_attempts`.
@@ -624,24 +464,6 @@ fn is_remote_plain_ws(url: &str) -> bool {
         |_| url.get(..5).is_some_and(|scheme| scheme.eq_ignore_ascii_case("ws://")),
         |parsed| parsed.scheme() == "ws" && !is_loopback_url(&parsed),
     )
-}
-
-/// Whether `agent` reports worker AI task outcomes when `[ai_task_callback]` is enabled.
-fn agent_reports_ai_tasks(agent: &AgentConfig) -> bool {
-    agent
-        .ai_task_callback
-        .as_ref()
-        .and_then(|o| o.enabled)
-        .unwrap_or(agent.agent_type != "webhook")
-}
-
-/// The token `agent` reports AI task outcomes with: its own, else the global one.
-fn agent_ai_task_token<'a>(cfg: &'a AiTaskCallbackConfig, agent: &'a AgentConfig) -> Option<&'a str> {
-    agent
-        .ai_task_callback
-        .as_ref()
-        .and_then(|o| o.token.as_deref())
-        .or(cfg.token.as_deref())
 }
 
 /// Whether `bot_id` (a configured id) names the task bot `task_bot` (the delivery's
@@ -739,8 +561,9 @@ impl Config {
             return Ok(());
         }
         for cli in ["claude", "codex"] {
-            let settings = crate::runner::headless::settings_for(&self.runner, cli, "/");
-            ExecutorPermissions::from_config(&settings).map_err(|e| format!("runner.cli.{cli}: {e}"))?;
+            let settings = crate::runner::headless::settings_for(&self.runner, cli);
+            crate::executor_permissions::ExecutorPermissions::from_config(&settings)
+                .map_err(|e| format!("runner.cli.{cli}: {e}"))?;
         }
         let cfg = &self.ai_task_callback;
         // The bearer token goes to this URL: in clear text only to a loopback host.
@@ -758,21 +581,11 @@ impl Config {
         }
         for agent in &runners {
             let id = &agent.id;
-            if agent.openclaw.is_some()
-                || agent.openprx.is_some()
-                || agent.webhook.is_some()
-                || agent.custom.is_some()
-                || agent.cli.is_some()
+            if agent.openclaw.is_some() || agent.openprx.is_some() || agent.webhook.is_some() || agent.custom.is_some()
             {
                 return Err(format!(
-                    "agent `{id}`: a runner agent takes no [agents.cli], [agents.custom] or other agent type \
+                    "agent `{id}`: a runner agent takes no [agents.custom] or other agent type \
                      table; its permissions come from [runner.cli.*]"
-                ));
-            }
-            if agent.ai_task_callback.is_some() {
-                return Err(format!(
-                    "agent `{id}`: a runner agent takes no [agents.ai_task_callback]: its bots' tokens and \
-                     transports come from [[ai_task_callback.bots]]"
                 ));
             }
             if !cfg.enabled {
@@ -797,11 +610,7 @@ impl Config {
                 let surface = if let Some(entry) = cfg.bots.iter().find(|b| same_bot(&b.bot_id, &bot)) {
                     entry.surface.as_deref().unwrap_or(cfg.surface.as_str())
                 } else if cfg.token.is_some() && cfg.bot_id.as_deref().is_none_or(|owner| same_bot(owner, &bot)) {
-                    agent
-                        .ai_task_callback
-                        .as_ref()
-                        .and_then(|o| o.surface.as_deref())
-                        .unwrap_or(cfg.surface.as_str())
+                    cfg.surface.as_str()
                 } else {
                     return Err(format!(
                         "agent `{id}`: bot {bot} has no token in [ai_task_callback]; add a \
@@ -857,11 +666,13 @@ impl Config {
         self.validate_tunnel()?;
         self.validate_ai_task_callback()?;
         for agent in &self.agents {
-            if let Some(cli) = &agent.cli
-                && KNOWN_EXECUTORS.contains(&cli.executor.as_str())
-            {
-                // An executor outside the whitelist keeps failing at dispatch, as before.
-                ExecutorPermissions::from_config(cli).map_err(|e| format!("agent `{}`: {e}", agent.id))?;
+            if agent.agent_type == "cli" {
+                return Err(format!(
+                    "agent `{}`: agent_type = \"cli\" was removed; use agent_type = \"runner\" with the \
+                     project's execution channel set to headless (the CLI's permissions come from \
+                     [runner.cli.*])",
+                    agent.id
+                ));
             }
             if let Some(route) = &agent.route {
                 for kind in &route.trigger_kinds {
@@ -1007,12 +818,7 @@ impl Config {
     /// without a token.
     fn validate_ai_task_callback(&self) -> Result<(), String> {
         let cfg = &self.ai_task_callback;
-        let surfaces = std::iter::once(("ai_task_callback.surface".to_string(), cfg.surface.as_str())).chain(
-            self.agents.iter().filter_map(|agent| {
-                let surface = agent.ai_task_callback.as_ref()?.surface.as_deref()?;
-                Some((format!("agent `{}`: ai_task_callback.surface", agent.id), surface))
-            }),
-        );
+        let surfaces = std::iter::once(("ai_task_callback.surface".to_string(), cfg.surface.as_str()));
         let bot_surfaces = cfg.bots.iter().filter_map(|bot| {
             Some((
                 format!("ai_task_callback.bots (bot {}): surface", bot.bot_id.trim()),
@@ -1090,43 +896,28 @@ impl Config {
                     .to_string(),
             );
         }
-        // An agent may also report with the token of the task's bot from `bots`, so with any
-        // `bots` entry an agent without its own token is accepted; a task whose bot has no token
-        // is then answered `no_token` instead of being reported with the wrong one.
-        let has_bot_tokens = !cfg.bots.is_empty();
-        for agent in self.agents.iter().filter(|agent| agent_reports_ai_tasks(agent)) {
-            let own_token = agent.ai_task_callback.as_ref().and_then(|o| o.token.as_deref());
-            let token = agent_ai_task_token(cfg, agent).unwrap_or_default();
-            let covered = usable_token(token) || (own_token.is_none() && has_bot_tokens);
-            if !covered {
-                return Err(format!(
-                    "ai_task_callback is enabled but agent `{}` has no usable token: set \
-                     ai_task_callback.token, [agents.ai_task_callback].token or a [[ai_task_callback.bots]] \
-                     entry to the opr_ token of the bot that is the task's AI participant (a token works only \
-                     for the tasks of the bot that owns it), or set [agents.ai_task_callback].enabled = false",
-                    agent.id
-                ));
-            }
+        if cfg.bots.is_empty() && !cfg.token.as_deref().is_some_and(usable_token) {
+            return Err(
+                "ai_task_callback is enabled but has no usable token: set ai_task_callback.token or add a \
+                 [[ai_task_callback.bots]] entry with the opr_ token of the bot that is the task's AI \
+                 participant"
+                    .to_string(),
+            );
         }
         Ok(())
     }
 
-    /// How the outcome of a worker AI task for bot `task_bot` is reported: by `agent`, or, with
-    /// `None`, for a task no agent matches.
-    ///
-    /// The token is the first that applies: the agent's own `[agents.ai_task_callback].token`, the
-    /// `[[ai_task_callback.bots]]` entry of the task's bot, then the global `token` (only for its
-    /// `bot_id` when that is set). Without one the answer is [`AiTaskCallback::NoToken`].
-    pub fn ai_task_callback_for<'a>(&'a self, agent: Option<&'a AgentConfig>, task_bot: &str) -> AiTaskCallback<'a> {
+    /// The token and transport for bot `task_bot`: the `[[ai_task_callback.bots]]` entry of the
+    /// bot, else the global `token` (only for its `bot_id` when that is set). Without one the
+    /// answer is [`AiTaskCallback::NoToken`].
+    pub fn ai_task_callback_for<'a>(&'a self, task_bot: &str) -> AiTaskCallback<'a> {
         let cfg = &self.ai_task_callback;
-        if self.safe_mode || !cfg.enabled || agent.is_some_and(|agent| !agent_reports_ai_tasks(agent)) {
+        if self.safe_mode || !cfg.enabled {
             return AiTaskCallback::Off;
         }
         let Some(api_url) = cfg.api_url.as_deref() else {
             return AiTaskCallback::Off;
         };
-        let agent_override = agent.and_then(|agent| agent.ai_task_callback.as_ref());
-        let agent_surface = agent_override.and_then(|o| o.surface.as_deref());
         let target = |token: &'a str, surface: Option<&'a str>| {
             AiTaskCallback::Report(AiTaskCallbackTarget {
                 api_url,
@@ -1134,12 +925,6 @@ impl Config {
                 surface: surface.unwrap_or(cfg.surface.as_str()),
             })
         };
-        if let Some(token) = agent_override
-            .and_then(|o| o.token.as_deref())
-            .filter(|t| usable_token(t))
-        {
-            return target(token, agent_surface);
-        }
         if let Some(bot) = cfg
             .bots
             .iter()
@@ -1149,7 +934,7 @@ impl Config {
         }
         let owner_matches = cfg.bot_id.as_deref().is_none_or(|owner| same_bot(owner, task_bot));
         match cfg.token.as_deref().filter(|token| usable_token(token)) {
-            Some(token) if owner_matches => target(token, agent_surface),
+            Some(token) if owner_matches => target(token, None),
             _ => AiTaskCallback::NoToken,
         }
     }
@@ -1192,38 +977,7 @@ impl Config {
                     .to_string(),
             );
         }
-        for (agent, permissions) in self.cli_agent_permissions() {
-            if permissions.bypasses_permissions() {
-                warnings.push(format!(
-                    "agent `{}`: the executor runs with its permission checks turned off ({}); every task \
-                     it receives can run any command and edit any file the service user can. Use this \
-                     only inside a sandbox",
-                    agent.id,
-                    permissions.describe()
-                ));
-            }
-        }
         warnings
-    }
-
-    /// The validated executor permissions of every `cli` agent with a whitelisted executor, for
-    /// the start-up log.
-    pub fn cli_agent_permissions(&self) -> Vec<(&AgentConfig, ExecutorPermissions)> {
-        self.agents
-            .iter()
-            .filter_map(|agent| {
-                let permissions = ExecutorPermissions::from_config(agent.cli.as_ref()?).ok()?;
-                Some((agent, permissions))
-            })
-            .collect()
-    }
-
-    pub const fn cli_enabled(&self) -> bool {
-        !self.safe_mode && self.features.cli_enabled
-    }
-
-    pub const fn callback_enabled(&self) -> bool {
-        !self.safe_mode && self.features.callback_enabled
     }
 
     pub fn tunnel_enabled(&self) -> bool {
@@ -1236,42 +990,6 @@ mod tests {
     use super::Config;
 
     #[test]
-    fn parses_cli_agent_config() {
-        let toml = r#"
-[server]
-listen = "0.0.0.0:9090"
-
-[security]
-webhook_secrets = ["s"]
-allow_unsigned = false
-
-[[agents]]
-id = "vano-cli"
-name = "Vano CLI"
-agent_type = "cli"
-
-[agents.cli]
-executor = "codex"
-workdir = "/tmp"
-callback = "mcp"
-callback_url = "http://127.0.0.1:8090/mcp/rpc"
-"#;
-
-        let cfg: Config = toml::from_str(toml).expect("should parse config");
-        let agent = cfg.agents.first().expect("should have agent");
-        let cli = agent.cli.as_ref().expect("cli config should exist");
-
-        assert_eq!(agent.agent_type, "cli");
-        assert_eq!(cli.executor, "codex");
-        assert_eq!(cli.timeout_secs, 900);
-        assert_eq!(cli.max_output_chars, 12000);
-        assert_eq!(cli.callback.as_deref(), Some("mcp"));
-        assert!(!cfg.features.cli_enabled);
-        assert_eq!(cfg.runtime.http_timeout_secs, 15);
-        assert_eq!(cfg.runtime.cli_max_concurrency, 1);
-    }
-
-    #[test]
     fn safe_mode_turns_every_gated_path_off() {
         let toml = r#"
 [server]
@@ -1282,19 +1000,15 @@ allow_unsigned = true
 
 [features]
 tunnel_enabled = true
-cli_enabled = true
-callback_enabled = true
 
 [tunnel]
 enabled = true
 "#;
         let mut cfg: Config = toml::from_str(toml).expect("should parse config");
         assert!(!cfg.safe_mode, "safe mode is never read from the file");
-        assert!(cfg.cli_enabled() && cfg.callback_enabled() && cfg.tunnel_enabled());
+        assert!(cfg.tunnel_enabled());
 
         cfg.safe_mode = true;
-        assert!(!cfg.cli_enabled());
-        assert!(!cfg.callback_enabled());
         assert!(!cfg.tunnel_enabled());
     }
 
@@ -1678,12 +1392,10 @@ url = "http://127.0.0.1:9000/hook"
         assert!(!cfg.security.allow_unsigned, "the example verifies signatures");
         assert_eq!(cfg.server.listen, "127.0.0.1:9090", "the example binds loopback only");
         assert!(
-            cfg.agents
-                .iter()
-                .all(|agent| agent.agent_type == "cli" || agent.agent_type == "webhook"),
-            "every example agent that runs a command is gated by cli_enabled"
+            cfg.agents.is_empty(),
+            "the example runs nothing until an agent is added"
         );
-        assert!(!cfg.features.cli_enabled);
+        assert!(!cfg.features.tunnel_enabled);
         assert!(!cfg.ai_task_callback.enabled, "AI task callbacks are off by default");
     }
 
@@ -1709,7 +1421,6 @@ url = "http://127.0.0.1:9000/hook"
             assert_eq!(callback.surface, "rest");
             assert_eq!(callback.max_attempts, 3);
             assert_eq!(callback.retry_delay_ms, 1000);
-            assert_eq!(callback.max_output_chars, 4000);
 
             let enabled = filled.replace(
                 "[ai_task_callback]\nenabled = false",
@@ -1766,13 +1477,13 @@ url = "http://127.0.0.1:9000/hook"
             .expect_err("an owner without a token");
         assert!(err.contains("bot_id is set but ai_task_callback.token is not"), "{err}");
 
-        // An explicit agent token that is a placeholder is still refused.
+        // A token per agent no longer exists: the bots' tokens are the only ones.
         let err = load_str(&base(
             &bot(BOT_B, "opr_b"),
-            "[agents.ai_task_callback]\ntoken = \"replace-with-the-bot-token\"\n",
+            "[agents.ai_task_callback]\ntoken = \"opr_agent\"\n",
         ))
-        .expect_err("placeholder agent token");
-        assert!(err.contains("no usable token"), "{err}");
+        .expect_err("no agent-level token");
+        assert!(err.contains("unknown field `ai_task_callback`"), "{err}");
 
         // Without bot_id the global token is used for every bot, and the log says it works only
         // for its owner.
@@ -1919,76 +1630,6 @@ url = "http://127.0.0.1:9000/hook"
         load_str(&tunnel_config(true, false, "require_inbound_sig = true")).expect("tunnel disabled");
     }
 
-    fn cli_agent_config(cli: &str) -> String {
-        format!(
-            "[server]\nlisten = \"127.0.0.1:9090\"\n[security]\nwebhook_secrets = [\"a-real-secret-value\"]\n\
-             [[agents]]\nid = \"fixer\"\nname = \"Fixer\"\nagent_type = \"cli\"\n[agents.cli]\n{cli}\n"
-        )
-    }
-
-    /// Executor permission settings are validated at start-up, naming the agent.
-    #[test]
-    fn executor_permission_settings_are_validated_at_start_up() {
-        for (cli, expected) in [
-            (
-                "executor = \"claude-code\"\npermission_mode = \"yolo\"",
-                "not a claude-code permission mode",
-            ),
-            (
-                "executor = \"claude-code\"\npermission_mode = \"bypassPermissions\"",
-                "dangerously_bypass_permissions",
-            ),
-            (
-                "executor = \"codex\"\nsandbox = \"danger-full-access\"",
-                "dangerously_bypass_permissions",
-            ),
-            (
-                "executor = \"opencode\"\nallowed_tools = [\"Read\"]",
-                "not a setting of the opencode executor",
-            ),
-        ] {
-            let err = Config::from_toml(&cli_agent_config(cli)).expect_err(cli);
-            assert!(err.contains("agent `fixer`") && err.contains(expected), "{cli}: {err}");
-        }
-        // An executor outside the whitelist still fails only when a task is dispatched.
-        Config::from_toml(&cli_agent_config("executor = \"not-whitelisted\"")).expect("accepted");
-    }
-
-    /// Bypassing the executor's permission checks starts, with a warning naming the agent; the
-    /// default does not warn.
-    #[test]
-    fn bypassing_executor_permissions_is_warned_about() {
-        let bypass = Config::from_toml(&cli_agent_config(
-            "executor = \"claude-code\"\npermission_mode = \"bypassPermissions\"\n\
-                 dangerously_bypass_permissions = true",
-        ))
-        .expect("explicit opt-in starts");
-        assert!(
-            bypass
-                .startup_warnings()
-                .iter()
-                .any(|w| w.contains("agent `fixer`") && w.contains("bypassPermissions")),
-            "{:?}",
-            bypass.startup_warnings()
-        );
-        let default = Config::from_toml(&cli_agent_config("executor = \"claude-code\"")).expect("starts");
-        assert!(
-            !default
-                .startup_warnings()
-                .iter()
-                .any(|w| w.contains("permission checks")),
-            "{:?}",
-            default.startup_warnings()
-        );
-        let permissions = default.cli_agent_permissions();
-        assert_eq!(permissions.len(), 1);
-        assert!(
-            permissions
-                .first()
-                .is_some_and(|(_, p)| p.describe().contains("permission_mode = dontAsk"))
-        );
-    }
-
     /// The configuration block Sylvode hands out when a bot is connected to a project, byte for
     /// byte as the API's contract test fixture holds it.
     const GOLDEN_BLOCK: &str = include_str!("../../api/tests/fixtures/runner-config-block.toml");
@@ -2020,7 +1661,7 @@ url = "http://127.0.0.1:9000/hook"
         assert!(!cfg.runner.cli.codex.enabled && !cfg.runner.cli.opencode.enabled);
         assert_eq!(cfg.runner.tmux.socket_name, "sylvode");
         // The agent resolves a token for its bot, with the surface the block registered.
-        match cfg.ai_task_callback_for(Some(agent), GOLDEN_BOT) {
+        match cfg.ai_task_callback_for(GOLDEN_BOT) {
             super::AiTaskCallback::Report(target) => {
                 assert_eq!(target.surface, "mcp_stdio");
                 assert_eq!(target.api_url, "https://sylvode.example.net");
@@ -2097,8 +1738,8 @@ url = "http://127.0.0.1:9000/hook"
         .expect_err("by name");
         assert!(error.contains("route.bot_ids"), "{error}");
         // No agent type table next to a runner agent.
-        let error =
-            Config::from_toml(&format!("{GOLDEN_BLOCK}\n[agents.cli]\nexecutor = \"codex\"\n")).expect_err("cli table");
+        let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n[agents.custom]\ncommand = \"echo\"\n"))
+            .expect_err("custom table");
         assert!(error.contains("[runner.cli.*]"), "{error}");
     }
 
@@ -2143,12 +1784,11 @@ url = "http://127.0.0.1:9000/hook"
         let with_global = Config::from_toml(
             "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n\
              [ai_task_callback]\nenabled = true\napi_url = \"http://127.0.0.1:2\"\ntoken = \"opr_zzzzzzzzzzzz\"\n\
-             [[agents]]\nid = \"a\"\nname = \"a\"\nagent_type = \"custom\"\n[agents.custom]\ncommand = \"echo\"\n\
-             [agents.ai_task_callback]\ntoken = \"opr_yyyyyyyyyyyy\"\n",
+             [[agents]]\nid = \"a\"\nname = \"a\"\nagent_type = \"custom\"\n[agents.custom]\ncommand = \"echo\"\n",
         )
         .expect("loads");
         let shown = format!("{with_global:?}");
-        assert!(!shown.contains("opr_zzz") && !shown.contains("opr_yyy"), "{shown}");
+        assert!(!shown.contains("opr_zzz"), "{shown}");
     }
 
     /// `[runner.mcp] mcp_config_path` decides which programs a CLI starts, so a project must not be
@@ -2206,7 +1846,7 @@ url = "http://127.0.0.1:9000/hook"
             "q1".repeat(14)
         ))
         .expect_err("agent-level token");
-        assert!(error.contains("[agents.ai_task_callback]"), "{error}");
+        assert!(error.contains("unknown field `ai_task_callback`"), "{error}");
     }
 
     #[test]
@@ -2246,9 +1886,7 @@ url = "http://127.0.0.1:9000/hook"
              [ai_task_callback]\nenabled = true\napi_url = \"https://api.test.net\"\ntoken = \"opr_{global}\"\nbot_id = \"{BOT}\"\n\
              [[ai_task_callback.bots]]\nbot_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_{bot}\"\nwebhook_secret = \"{bot_secret}\"\n\
              [[agents]]\nid = \"hook\"\nname = \"hook\"\nagent_type = \"webhook\"\n[agents.webhook]\nurl = \"https://h.test.net\"\nsecret = \"{hook}\"\n\
-             [[agents]]\nid = \"cli\"\nname = \"cli\"\nagent_type = \"cli\"\n[agents.cli]\nexecutor = \"codex\"\ncallback_token = \"{cb}\"\n\
-             [agents.cli.env_vars]\nAPI_KEY = \"{env}\"\n\
-             [agents.ai_task_callback]\ntoken = \"opr_{agent_tok}\"\n",
+             [[agents]]\nid = \"fwd\"\nname = \"fwd\"\nagent_type = \"custom\"\n[agents.custom]\ncommand = \"echo\"\n",
             BOT = "00000000-0000-4000-8000-000000000009",
             w1 = marker("w1"),
             w2 = marker("w2"),
@@ -2258,16 +1896,11 @@ url = "http://127.0.0.1:9000/hook"
             bot = marker("bot"),
             bot_secret = marker("botsecret"),
             hook = marker("hook"),
-            cb = marker("cb"),
-            env = marker("env"),
-            agent_tok = marker("agent"),
         );
         let cfg = Config::from_toml(&toml).expect("loads");
         let shown = format!("{cfg:?}");
         assert!(!shown.contains("SECRET-"), "{shown}");
         assert!(!shown.contains("zzzzzzzz"), "{shown}");
-        // The names of environment variables are not secret and stay visible.
-        assert!(shown.contains("API_KEY"));
     }
 
     /// A delivery is verified only with the secret of the bot it names.
@@ -2340,9 +1973,40 @@ url = "http://127.0.0.1:9000/hook"
         }
         let error = Config::from_toml(
             "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n\
-             [[agents]]\nid = \"c\"\nname = \"c\"\nagent_type = \"cli\"\n[agents.cli]\nexecutor = \"codex\"\nmystery = 1\n",
+             [[agents]]\nid = \"c\"\nname = \"c\"\nagent_type = \"custom\"\n[agents.custom]\ncommand = \"echo\"\nmystery = 1\n",
         )
-        .expect_err("agents.cli");
+        .expect_err("agents.custom");
         assert!(error.contains("mystery"), "{error}");
+    }
+
+    /// `agent_type = "cli"` and the settings that only it used are gone: a configuration that
+    /// still has them is refused, naming what replaces them.
+    #[test]
+    fn the_retired_cli_agent_and_its_settings_are_refused() {
+        let base = |extra: &str| {
+            format!(
+                "[server]\nlisten = \"127.0.0.1:9090\"\n[security]\nwebhook_secrets = [\"a-real-secret-value\"]\n{extra}"
+            )
+        };
+        let err = load_str(&base(
+            "[[agents]]\nid = \"fixer\"\nname = \"Fixer\"\nagent_type = \"cli\"\n",
+        ))
+        .expect_err("a cli agent is refused");
+        assert!(
+            err.contains("agent `fixer`") && err.contains("agent_type = \"runner\"") && err.contains("headless"),
+            "{err}"
+        );
+        for (extra, key) in [
+            ("[features]\ncli_enabled = true\n", "cli_enabled"),
+            ("[features]\ncallback_enabled = true\n", "callback_enabled"),
+            ("[ai_task_callback]\nmax_output_chars = 10\n", "max_output_chars"),
+            (
+                "[[agents]]\nid = \"a\"\nname = \"A\"\nagent_type = \"webhook\"\n[agents.cli]\nexecutor = \"codex\"\n",
+                "cli",
+            ),
+        ] {
+            let err = load_str(&base(extra)).expect_err(extra);
+            assert!(err.contains("unknown field") && err.contains(key), "{extra}: {err}");
+        }
     }
 }

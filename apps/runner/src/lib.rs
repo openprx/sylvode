@@ -12,7 +12,6 @@
 mod ai_task;
 mod app;
 mod background;
-mod callback;
 mod config;
 mod dispatcher;
 mod executor_permissions;
