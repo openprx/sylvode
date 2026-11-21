@@ -1,0 +1,27 @@
+[package]
+name = "sylvode-prereq"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+description = "Prerequisite checker shared by sylvode-runner and mcp-server: tmux, agent CLIs, peer binaries and the API protocol"
+repository.workspace = true
+
+[features]
+# The API protocol probe (`GET /api/v1/ai/protocol`). Off by default so the checker stays free of an
+# HTTP client and an async runtime; the binaries that already use reqwest enable it.
+http = ["dep:reqwest"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Test-only: a local HTTP peer for the API protocol probe.
+tokio.workspace = true
+
+[lints]
+workspace = true

@@ -2,17 +2,11 @@
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { apiClient } from '#lib/api/client.js';
-	import {
-		isV3,
-		pluginLibraryApi,
-		type AnyPluginManifest,
-		type ProjectPluginRequest
-	} from '#lib/api/plugin-packages.js';
+	import { pluginLibraryApi, type ProjectPluginRequest } from '#lib/api/plugin-packages.js';
 	import { grantOptionsV3, slotLabelKey } from '#lib/plugins/layout-v3.js';
 	import Button from '#lib/components/Button.svelte';
 
 	let { projectId, onApproved }: { projectId: string; onApproved: () => Promise<void> } = $props();
-	const asAny = (value: AnyPluginManifest) => value;
 	let requests = $state<ProjectPluginRequest[]>([]);
 	let offered = $state(false);
 	let failed = $state(false);
@@ -86,7 +80,7 @@
 		{#if requests.length}
 			<ul class="divide-y divide-line">
 				{#each requests as item (item.source_id)}
-					{@const manifest = asAny(item.manifest)}
+					{@const manifest = item.manifest}
 					<li class="space-y-2 py-3">
 						<div class="flex flex-wrap items-center justify-between gap-2">
 							<div>
@@ -109,53 +103,39 @@
 							<div class="space-y-3 border-l-2 border-line-strong pl-3 text-sm">
 								<p>{$t('plugins.library.submittedBy', { values: { owner: item.owner_id } })}</p>
 								<p class="break-all font-mono text-xs">SHA-256 {item.package_sha256}</p>
-								{#if isV3(manifest)}
-									<p>{$t(`plugins.layoutV3.profile.${manifest.profile}`)}</p>
-									<h4 class="font-medium">{$t('plugins.contributedLocations')}</h4>
-									<ul class="list-disc pl-5">
-										{#each manifest.contributions as contribution (contribution.id)}
-											<li>
-												{contribution.label} · {$t(slotLabelKey(contribution.slot))} ·
-												{contribution.route
-													? $t('plugins.layoutV3.route', { values: { route: contribution.route } })
-													: $t('plugins.layoutV3.form', {
-															values: { form: contribution.form_key }
-														})}
-											</li>
-										{/each}
-									</ul>
-									<h4 class="font-medium">{$t('plugins.layoutV3.grantsTitle')}</h4>
-									<ul class="list-disc pl-5">
-										{#each grantOptionsV3(manifest) as option (option.grant)}
-											<li>
-												{#if option.kind === 'display'}
-													{$t('plugins.layoutV3.grant.display')}
-												{:else if option.kind === 'read' && option.read}
-													{$t('plugins.layoutV3.grant.read', {
-														values: {
-															fields: option.read.fields.join(', '),
-															form: option.read.form_key
-														}
+								<p>{$t(`plugins.layoutV3.profile.${manifest.profile}`)}</p>
+								<h4 class="font-medium">{$t('plugins.contributedLocations')}</h4>
+								<ul class="list-disc pl-5">
+									{#each manifest.contributions as contribution (contribution.id)}
+										<li>
+											{contribution.label} · {$t(slotLabelKey(contribution.slot))} ·
+											{contribution.route
+												? $t('plugins.layoutV3.route', { values: { route: contribution.route } })
+												: $t('plugins.layoutV3.form', {
+														values: { form: contribution.form_key }
 													})}
-												{:else}
-													{$t(`plugins.capability.${option.grant}`)}
-												{/if}
-											</li>
-										{/each}
-									</ul>
-								{:else}
-									<p>
-										{$t('plugins.creator.targetForm', {
-											values: { form: manifest.ui.form_key }
-										})}
-									</p>
-									<h4 class="font-medium">{$t('plugins.requestedCapabilities')}</h4>
-									<ul class="list-disc pl-5">
-										{#each manifest.capabilities as capability (capability.name)}
-											<li>{$t(`plugins.capability.${capability.name}`)}</li>
-										{/each}
-									</ul>
-								{/if}
+										</li>
+									{/each}
+								</ul>
+								<h4 class="font-medium">{$t('plugins.layoutV3.grantsTitle')}</h4>
+								<ul class="list-disc pl-5">
+									{#each grantOptionsV3(manifest) as option (option.grant)}
+										<li>
+											{#if option.kind === 'display'}
+												{$t('plugins.layoutV3.grant.display')}
+											{:else if option.kind === 'read' && option.read}
+												{$t('plugins.layoutV3.grant.read', {
+													values: {
+														fields: option.read.fields.join(', '),
+														form: option.read.form_key
+													}
+												})}
+											{:else}
+												{$t(`plugins.capability.${option.grant}`)}
+											{/if}
+										</li>
+									{/each}
+								</ul>
 								<p>{$t('plugins.library.approvalHelp')}</p>
 								<div class="flex flex-wrap gap-2">
 									<Button disabled={busy} onclick={() => review(true)}

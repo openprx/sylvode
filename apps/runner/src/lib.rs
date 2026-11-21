@@ -19,6 +19,7 @@ mod executor_permissions;
 mod handler;
 mod process;
 mod replay;
+mod runner;
 mod signature;
 #[cfg(test)]
 mod test_support;

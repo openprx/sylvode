@@ -333,13 +333,33 @@ impl Incremental {
     ) -> (Result<WindowAccepted, CollabError>, LoroCollabEngine) {
         let mut engine = LoroCollabEngine::load(base).expect("the trusted base loads");
         engine.prewarm_for_writes();
+        // The setup guard's fault acts while the facts are computed; the others act in the window.
+        let setup_fault = match self.defect {
+            Defect::Fault(fault @ (Fault::SetupGuardSkipped | Fault::SetupCpuGuardSkipped)) => {
+                Some(crate::window_check::fault::inject(fault))
+            }
+            _ => None,
+        };
         let mut facts = match from {
             FactsFrom::Base | FactsFrom::Tampered(_) => BaseFacts::compute(&engine),
+            FactsFrom::CpuStepped(steps) => {
+                crate::setup_guard::stepping_clock::install(1_000_000);
+                let guard = crate::setup_guard::SetupGuard::with_limits(
+                    u64::MAX,
+                    steps * 1_000_000,
+                    crate::setup_guard::stepping_clock::read,
+                );
+                BaseFacts::compute_guarded(&engine, &guard).facts
+            }
+            FactsFrom::Guarded(limit) => {
+                BaseFacts::compute_guarded(&engine, &crate::setup_guard::SetupGuard::with_limit(*limit)).facts
+            }
             FactsFrom::OtherBase(other) => {
                 let other = LoroCollabEngine::load(other).expect("the other base loads");
                 BaseFacts::compute(&other)
             }
         };
+        drop(setup_fault);
         if let (FactsFrom::Tampered(tamper), Some(facts)) = (from, facts.as_mut()) {
             tamper(facts);
         }
@@ -354,7 +374,7 @@ impl Incremental {
             Defect::Fault(fault) => Some(crate::window_check::fault::inject(fault)),
             _ => None,
         };
-        let outcome = run_window(&mut engine, facts.as_ref(), update);
+        let outcome = run_window(&mut engine, facts.as_ref(), update, &mut |_| {});
         (outcome, engine)
     }
 }
@@ -1467,7 +1487,7 @@ fn with_the_switch_off_the_window_is_next_on_every_case() {
         let next_decision = next.next_window(&case.update);
         let mut worker = LoroCollabEngine::load(&case.base).unwrap();
         worker.prewarm_for_writes();
-        let worker_decision = run_window(&mut worker, None, &case.update).map(|_| ());
+        let worker_decision = run_window(&mut worker, None, &case.update, &mut |_| {}).map(|_| ());
         // The one input `next` accepts and the worker refuses with the switch off: a tree op that
         // names a parent that does not exist when it runs (`tree_refs`), found by an independent
         // read of the update.
@@ -1817,6 +1837,14 @@ fn incremental_mutants() -> Vec<Incremental> {
             defect: Defect::Fault(Fault::PathlessContainerSkipped),
         },
         Incremental {
+            name: "mutant: the setup guard never fires (facts are built whatever the setup cost)",
+            defect: Defect::Fault(Fault::SetupGuardSkipped),
+        },
+        Incremental {
+            name: "mutant: the setup CPU guard never fires (facts are built whatever the setup cost in CPU time)",
+            defect: Defect::Fault(Fault::SetupCpuGuardSkipped),
+        },
+        Incremental {
             name: "mutant: a refusal by a total reports observed + 1",
             defect: Defect::Fault(Fault::RefusalOffByOne),
         },
@@ -1831,7 +1859,12 @@ fn oracle_expected(mutant: &Incremental) -> bool {
     !matches!(
         mutant.defect,
         Defect::Fault(
-            Fault::WorkBudgetSkipped | Fault::MarkRecountSkipped | Fault::PieceCountSkipped | Fault::RefusalOffByOne
+            Fault::WorkBudgetSkipped
+                | Fault::MarkRecountSkipped
+                | Fault::PieceCountSkipped
+                | Fault::SetupGuardSkipped
+                | Fault::SetupCpuGuardSkipped
+                | Fault::RefusalOffByOne
         )
     )
 }
@@ -1987,7 +2020,7 @@ fn measure_window(model: Model, blocks: usize, shape: Shape) -> WindowWork {
     let facts = BaseFacts::compute(&engine);
     walk_counter::reset();
     let allocated_before = test_alloc::allocated_bytes();
-    let accepted = run_window(&mut engine, facts.as_ref(), &update).expect("the update is accepted");
+    let accepted = run_window(&mut engine, facts.as_ref(), &update, &mut |_| {}).expect("the update is accepted");
     let allocated = test_alloc::allocated_bytes().saturating_sub(allocated_before);
     WindowWork {
         counts: walk_counter::window_counts(),

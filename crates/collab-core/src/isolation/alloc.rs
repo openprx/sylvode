@@ -69,6 +69,8 @@ pub struct CountingAllocator;
 // `self.alloc`, so it is covered by the same reasoning.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // The setup guard's meter counts armed or not: the setup runs before the window opens.
+        crate::alloc_meter::record(layout.size());
         if !ARMED.load(Ordering::SeqCst) {
             // SAFETY: passthrough -- `layout` is forwarded unchanged to `System`, whose
             // `GlobalAlloc::alloc` has the identical safety contract as this method.
@@ -101,6 +103,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        crate::alloc_meter::record(new_size.saturating_sub(layout.size()));
         if !ARMED.load(Ordering::SeqCst) {
             // SAFETY: passthrough per `GlobalAlloc::realloc`'s contract, arguments forwarded
             // unchanged.

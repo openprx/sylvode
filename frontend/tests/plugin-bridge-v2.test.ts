@@ -4,8 +4,9 @@ import {
 	bridgeErrorCode,
 	clampFrameHeight,
 	parseBridgeV2,
-	pluginRequest,
+	isShellSignal,
 	shellInitMessage,
+	verifyPanelHtml,
 	type PluginHostContext
 } from '../src/lib/plugins/bridge';
 import { createHostDispatcher } from '../src/lib/plugins/host-methods';
@@ -77,18 +78,6 @@ describe('bridge protocol 2 parsing', () => {
 		assert.equal((parsed as { params?: unknown }).params, undefined);
 	});
 
-	test('leaves protocol 1 parsing untouched', () => {
-		const legacy = {
-			protocol: 1,
-			type: 'request',
-			request_id: requestId,
-			method: 'amount.preview',
-			input: {}
-		};
-		assert.deepEqual(pluginRequest(legacy), { method: 'amount.preview', requestId });
-		assert.equal(pluginRequest({ ...legacy, protocol: 2 }), undefined);
-	});
-
 	test('clamps heights and normalises error codes', () => {
 		assert.equal(clampFrameHeight(10, 320, 4000), 320);
 		assert.equal(clampFrameHeight(99999, 160, 800), 800);
@@ -97,8 +86,8 @@ describe('bridge protocol 2 parsing', () => {
 		assert.equal(bridgeErrorCode('anything'), 'failed');
 	});
 
-	test('builds protocol 2 shell init with context and without placement', () => {
-		assert.deepEqual(shellInitMessage({ bridge: 2, html: 'x', grants: ['ui.display'], context }), {
+	test('builds the shell init with the page, grants and display context', () => {
+		assert.deepEqual(shellInitMessage({ html: 'x', grants: ['ui.display'], context }), {
 			protocol: 1,
 			type: 'sylvode-plugin-shell-init',
 			html: 'x',
@@ -106,24 +95,25 @@ describe('bridge protocol 2 parsing', () => {
 			bridge: 2,
 			context
 		});
-		assert.deepEqual(
-			shellInitMessage({ bridge: 1, html: 'x', grants: [], placement: { id: 'a', slot: 'b' } }),
-			{
-				protocol: 1,
-				type: 'sylvode-plugin-shell-init',
-				html: 'x',
-				grants: [],
-				placement: { id: 'a', slot: 'b' }
-			}
-		);
-		assert.equal('bridge' in shellInitMessage({ bridge: 1, html: 'x', grants: [] }), false);
+	});
+
+	test('recognises only shell signals of the shell protocol', () => {
+		const ready = 'sylvode-plugin-shell-ready';
+		assert.equal(isShellSignal({ protocol: 1, type: ready }, ready), true);
+		assert.equal(isShellSignal({ protocol: 2, type: ready }, ready), false);
+		assert.equal(isShellSignal(null, 'ready'), false);
+	});
+
+	test('verifies the exact page bytes against the declared digest', async () => {
+		const sha = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
+		assert.equal(await verifyPanelHtml({ html: 'abc', web_sha256: sha }), true);
+		assert.equal(await verifyPanelHtml({ html: 'abc\n', web_sha256: sha }), false);
 	});
 });
 
 describe('bridge protocol 2 request ledger', () => {
 	test('rejects a reused request ID', async () => {
 		const dispatcher = createHostDispatcher({
-			bridge: 2,
 			grants: () => ['ui.display'],
 			context: () => context,
 			transport: async () => ({ ok: true, result: null })
@@ -140,7 +130,6 @@ describe('bridge protocol 2 request ledger', () => {
 
 	test('caps requests per frame at 500, including rejected ones', async () => {
 		const dispatcher = createHostDispatcher({
-			bridge: 2,
 			grants: () => ['ui.display'],
 			context: () => context,
 			transport: async () => ({ ok: true, result: null })
@@ -158,7 +147,6 @@ describe('bridge protocol 2 request ledger', () => {
 	test('allows at most four data requests in flight', async () => {
 		const pending: (() => void)[] = [];
 		const dispatcher = createHostDispatcher({
-			bridge: 2,
 			grants: () => ['ui.display', 'read:orders'],
 			context: () => context,
 			transport: () =>

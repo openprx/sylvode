@@ -885,23 +885,6 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                 )),
         )
         .route(
-            "/api/v1/form-records/{record_id}/plugin-panels",
-            get(routes::plugin_package::discover)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::auth::jwt_auth_middleware,
-                )),
-        )
-        .route(
-            "/api/v1/form-records/{record_id}/plugin-panels/{package_id}/invoke",
-            post(routes::plugin_package::invoke)
-                .layer(DefaultBodyLimit::max(4 * 1024))
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::auth::jwt_auth_middleware,
-                )),
-        )
-        .route(
             "/api/v1/projects/{project_id}/plugin-contributions",
             get(routes::plugin_package::extension::project_contributions)
                 .route_layer(axum_middleware::from_fn_with_state(

@@ -33,7 +33,7 @@
 		X
 	} from '@lucide/svelte';
 	import type { FormChildRecord, FormField, FormRecord, UniversalForm } from '#lib/api/forms.js';
-	import type { RecordPluginActionSurface } from '#lib/plugins/placements.js';
+	import type { RecordPluginActionSurface } from '#lib/plugins/record-entries.js';
 	import type { DetailHeaderFields, DetailSection } from '#lib/forms/detail-layout.js';
 	import { sectionFieldsForRecord } from '#lib/forms/detail-layout.js';
 	import {

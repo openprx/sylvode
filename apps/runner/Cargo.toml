@@ -32,6 +32,13 @@ futures-util = "0.3"
 # The same major version axum's `ws` feature already resolves in this workspace.
 tokio-tungstenite = "0.29"
 uuid.workspace = true
+# NFC normalisation of titles put into a CLI session.
+unicode-normalization.workspace = true
+# General categories (format, private-use and unassigned characters) for the title sanitiser and the
+# paste guard.
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+# Concurrency-safe locks (std's Mutex is disallowed in this workspace).
+parking_lot.workspace = true
 # Parses listen addresses and tunnel URLs to compare their host exactly (already used by reqwest).
 url = "2"
 # CancellationToken and TaskTracker: stop running executors on shutdown and wait for their
@@ -41,7 +48,7 @@ tokio-util = { workspace = true, features = ["rt"] }
 # Signals a whole process group (killpg) through a safe API; the crate forbids `unsafe`.
 # The same version zip already resolves in this workspace.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["signal"] }
+nix = { version = "0.31", default-features = false, features = ["signal", "fs", "dir"] }
 
 [lints]
 workspace = true

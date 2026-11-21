@@ -32,6 +32,7 @@
 	import Tag from '#lib/components/Tag.svelte';
 	import Textarea from '#lib/components/Textarea.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
+	import AgentTasksPanel from '#lib/project/agent-tasks/AgentTasksPanel.svelte';
 
 	type SelectOption = {
 		label: string;
@@ -90,6 +91,7 @@
 	let newLabelColor = $state('#2563eb');
 	let creatingLabel = $state(false);
 
+	let agentTasksRefresh = $state(0);
 	let newComment = $state('');
 	let commentSubmitting = $state(false);
 	let editingCommentId = $state<string | null>(null);
@@ -818,6 +820,7 @@
 
 		if (response.data) {
 			comments = [...comments, response.data].sort(sortByCreatedAsc);
+			agentTasksRefresh += 1;
 			newComment = '';
 			commentAttachments = [];
 			mentionedUsers = [];
@@ -1152,6 +1155,8 @@
 							</div>
 						{/if}
 					</div>
+
+					<AgentTasksPanel {issueId} names={memberNameMap} refreshKey={agentTasksRefresh} />
 
 					<div class="rounded-card border border-line bg-raised p-5">
 						<h2 class="mb-4 text-lg font-semibold text-fg">

@@ -76,7 +76,9 @@ interface ScenarioResult {
 const scenarios: ScenarioResult[] = [];
 
 /** JSON with object keys sorted, so two docs with the same content compare equal regardless of
- * the order their root containers were created in. */
+ * the order their root containers were created in. Empty root containers are dropped: merely
+ * reading one (`getMap`, as the page-model check on `accepted` does) makes it appear in
+ * `toJSON()` although it holds no operation and never syncs. */
 function canonical(value: unknown): string {
 	const sort = (v: unknown): unknown => {
 		if (Array.isArray(v)) return v.map(sort);
@@ -89,7 +91,12 @@ function canonical(value: unknown): string {
 		}
 		return v;
 	};
-	return JSON.stringify(sort(value));
+	const sorted = sort(value) as Record<string, unknown>;
+	const isEmpty = (v: unknown) =>
+		v === '' ||
+		(Array.isArray(v) && v.length === 0) ||
+		(!!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0);
+	return JSON.stringify(Object.fromEntries(Object.entries(sorted).filter(([, v]) => !isEmpty(v))));
 }
 
 async function setup(server: FakeCollabServer) {

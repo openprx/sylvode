@@ -1,14 +1,15 @@
 //! Plugin manifest protocol 3: pure parsing and validation, with no database access.
 //!
-//! Protocol 1/2 manifests keep their structure and validation in [`super::package`]; this module
-//! only adds the `openpr.plugin.v3` manifest, the v3 binding grant rules and the v3 layout helpers.
+//! Protocol 3 is the only form plugin protocol. This module holds the `openpr.plugin.v3` manifest,
+//! the binding grant rules and the layout helpers; the shared pieces (capabilities, amount
+//! helpers, limits) live in [`super::package`].
 
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::package::{APPLY, Capability, MAX_AMOUNT_CENTS, Manifest, PREVIEW, Placement, Protocol, valid_label};
+use super::package::{APPLY, Capability, MAX_AMOUNT_CENTS, PREVIEW, Placement, Protocol, valid_label};
 use crate::{
     error::{ApiError, ApiErrorKind},
     forms::schema::normalize_key,
@@ -18,7 +19,6 @@ pub const SCHEMA_V3: &str = "openpr.plugin.v3";
 pub const UI_DISPLAY: &str = "ui.display";
 pub const READ_GRANT_PREFIX: &str = "read:";
 
-const SCHEMA_V2: &str = "openpr.plugin.v2";
 const WASM_ABI: &str = "openpr.plugin.v1";
 const ENTRY_PATH: &str = "panel.html";
 const WASM_PATH: &str = "plugin.wasm";
@@ -115,12 +115,6 @@ pub struct ManifestV3 {
     pub capabilities: Vec<Capability>,
 }
 
-#[derive(Debug)]
-pub enum AnyManifest {
-    V2(Manifest),
-    V3(ManifestV3),
-}
-
 /// Builds the v3 error envelope: `details.reason` carries the stable reason string.
 pub fn plugin_error(kind: ApiErrorKind, reason: &'static str, message: &str) -> ApiError {
     ApiError::typed_with_details(kind, message, json!({ "reason": reason }))
@@ -158,21 +152,19 @@ fn unsupported(message: &str) -> ApiError {
     )
 }
 
-/// Parses a manifest and dispatches on `schema_version`. Performs no semantic validation.
-pub fn parse_manifest(value: Value) -> Result<AnyManifest, ApiError> {
+/// Parses a protocol 3 manifest. Every other `schema_version`, including the retired
+/// `openpr.plugin.v2`, is `manifest_protocol_unsupported`. Performs no semantic validation.
+pub fn parse_manifest(value: Value) -> Result<ManifestV3, ApiError> {
     let schema = value
         .get("schema_version")
         .and_then(Value::as_str)
         .ok_or_else(|| malformed("manifest requires a string schema_version"))?;
-    match schema {
-        SCHEMA_V2 => serde_json::from_value(value)
-            .map(AnyManifest::V2)
-            .map_err(|_| malformed("manifest does not match the plugin package schema")),
-        SCHEMA_V3 => serde_json::from_value(value)
-            .map(AnyManifest::V3)
-            .map_err(|_| malformed("manifest does not match the plugin package schema")),
-        _ => Err(unsupported("unsupported plugin manifest schema version")),
+    if schema != SCHEMA_V3 {
+        return Err(unsupported(
+            "unsupported plugin manifest schema version; only openpr.plugin.v3 (protocol 3) is supported",
+        ));
     }
+    serde_json::from_value(value).map_err(|_| malformed("manifest does not match the plugin package schema"))
 }
 
 fn is_key(value: &str, max_len: usize) -> bool {
@@ -555,10 +547,7 @@ mod tests {
     }
 
     fn parse_v3(value: Value) -> ManifestV3 {
-        match parse_manifest(value) {
-            Ok(AnyManifest::V3(manifest)) => manifest,
-            other => panic!("expected a v3 manifest, got {other:?}"),
-        }
+        parse_manifest(value).unwrap_or_else(|error| panic!("expected a v3 manifest, got {error:?}"))
     }
 
     fn reason(error: ApiError) -> String {
@@ -855,100 +844,55 @@ mod tests {
     }
 
     #[test]
-    fn v2_sample_still_parses_and_validates() {
-        // Manifest of the order-amount 3.0.0 sample package (protocol 2).
-        let manifest: Value = serde_json::from_str(
-            r#"{
-    "schema_version": "openpr.plugin.v2",
-    "key": "order_amount",
-    "name": "Order amount controls",
-    "version": "3.0.0",
-    "publisher": "Sylvode examples",
-    "host_protocol": {
-        "min": 2,
-        "max": 2
-    },
-    "wasm_abi": "openpr.plugin.v1",
-    "wasm": {
-        "path": "plugin.wasm",
-        "size": 4492,
-        "sha256": "b6e4451d420835fe6197ddca5d43962241b7595eca31757fb1c0106a99880dc2"
-    },
-    "ui": {
-        "entry": {
-            "path": "panel.html",
-            "size": 4674,
-            "sha256": "2a99e572d6fd5c6443326d82b0589ec43b14edb1954633dfb58370cda580e856"
-        },
-        "slot": "form.record.detail",
-        "bridge_version": 1,
-        "form_key": "order_line",
-        "contributions": [
-            {
-                "id": "detail_panel",
-                "slot": "form.record.detail",
-                "label": "Order amount panel"
-            },
-            {
-                "id": "amount_action",
-                "slot": "form.record.actions",
-                "label": "Calculate order amount"
-            }
-        ]
-    },
-    "capabilities": [
-        {
-            "name": "amount.preview",
-            "permission": "record.read",
-            "input_schema": {
-                "type": "object",
-                "additionalProperties": false
-            },
-            "output_schema": {
-                "type": "object",
-                "properties": {
-                    "amount_cents": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1000000000000
-                    }
-                },
-                "required": [
-                    "amount_cents"
-                ],
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "amount.apply",
-            "permission": "record.update",
-            "input_schema": {
-                "type": "object",
-                "additionalProperties": false
-            },
-            "output_schema": {
-                "type": "object",
-                "properties": {
-                    "amount_cents": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1000000000000
-                    }
-                },
-                "required": [
-                    "amount_cents"
-                ],
-                "additionalProperties": false
-            }
+    fn protocol_1_and_2_manifests_are_unsupported() {
+        for (schema, protocol) in [
+            ("openpr.plugin.v2", 1),
+            ("openpr.plugin.v2", 2),
+            ("openpr.plugin.v1", 1),
+        ] {
+            let manifest = json!({
+                "schema_version": schema, "key": "order_amount", "name": "Order amount controls",
+                "version": "3.0.0", "publisher": "Sylvode examples",
+                "host_protocol": {"min": protocol, "max": protocol}, "wasm_abi": "openpr.plugin.v1",
+                "wasm": {"path": "plugin.wasm", "size": 4492, "sha256": HASH},
+                "ui": {"entry": {"path": "panel.html", "size": 4674, "sha256": HASH},
+                       "slot": "form.record.detail", "bridge_version": 1, "form_key": "order_line"},
+                "capabilities": [amount_capability("amount.preview", "record.read"),
+                                 amount_capability("amount.apply", "record.update")]
+            });
+            let error = parse_manifest(manifest).expect_err("a legacy manifest is rejected");
+            assert!(matches!(
+                &error,
+                ApiError::Typed {
+                    kind: ApiErrorKind::UnsupportedProtocol,
+                    ..
+                }
+            ));
+            assert_eq!(reason(error), "manifest_protocol_unsupported");
         }
-    ]
-}"#,
-        )
-        .expect("sample manifest is JSON");
-        match parse_manifest(manifest) {
-            Ok(AnyManifest::V2(manifest)) => assert!(manifest.validate().is_ok()),
-            other => panic!("expected a v2 manifest, got {other:?}"),
-        }
+    }
+
+    #[test]
+    fn creator_order_amount_template_shape_validates() {
+        // The wasm profile manifest the Creator's order amount template builds.
+        let manifest = parse_v3(json!({
+            "schema_version": SCHEMA_V3, "key": "order_amount", "name": "Order amount controls",
+            "version": "3.0.0", "publisher": "Sylvode examples",
+            "host_protocol": {"min": 3, "max": 3}, "profile": "wasm", "bridge_version": 2,
+            "entry": {"path": "panel.html", "size": 4674, "sha256": HASH},
+            "wasm": {"abi": "openpr.plugin.v1", "path": "plugin.wasm", "size": 4492, "sha256": HASH,
+                     "form_key": "order_line"},
+            "contributions": [
+                {"id": "detail_panel", "kind": "panel", "slot": "form.record.detail",
+                 "label": "Order amount panel", "view": "detail", "route": null, "form_key": "order_line"},
+                {"id": "amount_action", "kind": "action", "slot": "form.record.actions",
+                 "label": "Calculate order amount", "view": "actions", "route": null, "form_key": "order_line"}
+            ],
+            "reads": [],
+            "capabilities": [amount_capability("amount.preview", "record.read"),
+                             amount_capability("amount.apply", "record.update")]
+        }));
+        manifest.validate().expect("the template manifest is valid");
     }
 
     #[test]

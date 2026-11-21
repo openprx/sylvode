@@ -425,7 +425,7 @@ fn simulate(
                 engine.prewarm_for_writes();
                 let facts = crate::facts::BaseFacts::compute(&engine);
                 crate::walk_counter::reset();
-                let accepted = run_window(&mut engine, facts.as_ref(), &bytes).unwrap();
+                let accepted = run_window(&mut engine, facts.as_ref(), &bytes, &mut |_| {}).unwrap();
                 total += 1;
                 if accepted.report.is_some() {
                     incremental += 1;
@@ -509,7 +509,7 @@ fn measure_dense_page(label: &str, base: &[u8]) {
                 None
             };
             let started = Instant::now();
-            crate::window_check::run_window(&mut engine, facts.as_ref(), update).unwrap();
+            crate::window_check::run_window(&mut engine, facts.as_ref(), update, &mut |_| {}).unwrap();
             best = best.min(started.elapsed());
         }
         best.as_secs_f64() * 1e3
@@ -648,7 +648,7 @@ fn measure_fragmented(label: &str, base: &[u8]) {
         let mut engine = LoroCollabEngine::load(base).unwrap();
         engine.prewarm_for_writes();
         let started = Instant::now();
-        crate::window_check::run_window(&mut engine, None, &update).unwrap();
+        crate::window_check::run_window(&mut engine, None, &update, &mut |_| {}).unwrap();
         full = full.min(started.elapsed());
     }
     let ms = |d: Duration| d.as_secs_f64() * 1e3;

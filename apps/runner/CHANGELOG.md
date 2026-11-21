@@ -13,6 +13,10 @@ together as 0.3.53.
 
 ## Unreleased
 
+- The one-string form `command = "openclaw message send"` is removed, with its start-up warning. A
+  `command` of `openclaw`, `openprx` or `custom` names one program; its arguments go in `args`, and
+  a value with whitespace is refused at start-up with `agent <id>: <key> must name one program; put
+  its arguments in args`.
 - The service is now the Sylvode runner: crate `sylvode-runner` (directory `apps/runner`, library
   `sylvode_runner`), one executable `sylvode-runner`, image `ghcr.io/openprx/sylvode-runner`,
   release archive `sylvode-runner-<platform>.tar.gz`, safe-mode variable `SYLVODE_RUNNER_SAFE_MODE`,

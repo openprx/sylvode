@@ -44,6 +44,7 @@ fn request_for(
     checked_epoch: i64,
 ) -> UpdateRequest {
     UpdateRequest {
+        rebase_policy: crate::flow::collab::write::RebasePolicy::None,
         origin: crate::flow::event_origin::CommandOrigin::first_request_from(
             crate::flow::event_origin::EventSurface::Rest,
         ),

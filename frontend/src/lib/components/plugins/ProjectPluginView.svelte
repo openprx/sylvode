@@ -229,7 +229,6 @@
 					<PluginFrameHost
 						html={opened.html}
 						webSha256={opened.item.web_sha256}
-						bridge={2}
 						grants={[...opened.item.grants]}
 						{context}
 						{transport}

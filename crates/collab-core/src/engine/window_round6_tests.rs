@@ -277,7 +277,7 @@ fn assert_a_block_becoming_readable_is_counted(base: &[u8], text_id: &str, updat
         "the unread block has no mark items in the facts"
     );
     crate::walk_counter::reset();
-    crate::window_check::run_window(&mut engine, facts.as_ref(), update).unwrap();
+    crate::window_check::run_window(&mut engine, facts.as_ref(), update, &mut |_| {}).unwrap();
     assert!(
         crate::walk_counter::delta_reads().iter().any(|id| id == text_id),
         "the block that became readable was not re-counted"
@@ -321,55 +321,4 @@ fn r6_4_a_block_that_becomes_readable_when_a_dependency_attribute_is_removed_is_
         attributes.delete("embed_type").unwrap();
     });
     assert_a_block_becoming_readable_is_counted(&base, &text_id, &update);
-}
-
-/// R5-1, the decode half: counting the items of a page does not decode the style state of a text
-/// the projection does not read (`len_unicode` of a lazily loaded text reads only its string), which
-/// costs the pieces times the styles and is the work the setup must not pay for unread texts. Timed
-/// against the conversion of the same text, with a margin of five.
-#[test]
-fn r6_4_counting_a_page_does_not_decode_the_style_state_of_an_unread_text() {
-    let raw = LoroDoc::new();
-    raw.import(&flat_page_of(50)).unwrap();
-    raw.set_peer_id(48_400).unwrap();
-    let keys = mark_keys(60);
-    configure_styles(&raw, &keys);
-    let text = raw
-        .get_map("order")
-        .insert_container("t", loro::LoroText::new())
-        .unwrap();
-    for _ in 0..3_000 {
-        text.insert(0, "y").unwrap();
-    }
-    for key in &keys {
-        text.mark(0..3_000, key, false).unwrap();
-    }
-    raw.commit();
-    let base = raw.export(ExportMode::snapshot()).unwrap();
-    let time = |convert: bool| {
-        (0..3)
-            .map(|_| {
-                let engine = LoroCollabEngine::load(&base).unwrap();
-                let started = std::time::Instant::now();
-                if convert {
-                    let Some(loro::ValueOrContainer::Container(loro::Container::Text(text))) =
-                        engine.doc.get_map("order").get("t")
-                    else {
-                        panic!("no text")
-                    };
-                    let _ = text.to_delta();
-                } else {
-                    engine.projection_items(u64::MAX).unwrap().unwrap();
-                }
-                started.elapsed()
-            })
-            .min()
-            .unwrap()
-    };
-    let (counted, converted) = (time(false), time(true));
-    println!("count {counted:?}, conversion {converted:?}");
-    assert!(
-        counted * 5 < converted,
-        "counting took {counted:?}, converting the text {converted:?}: the style state is decoded"
-    );
 }

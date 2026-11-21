@@ -70,9 +70,9 @@ pub async fn list(
                       LEFT JOIN form_plugin_bindings b ON b.project_id=r.project_id AND b.key=s.key
                      WHERE r.source_id=s.id
                 ),'[]'::jsonb) AS project_links
-           FROM form_plugin_library s WHERE s.owner_id=$1
+           FROM form_plugin_library s WHERE s.owner_id=$1 AND s.manifest->>'schema_version'=$2
           ORDER BY s.archived_at NULLS FIRST,s.key,s.installed_at DESC,s.id",
-        vec![actor.into()],
+        vec![actor.into(), SCHEMA_V3.into()],
     ))
     .all(&state.db)
     .await?;
@@ -121,8 +121,8 @@ pub async fn save(
     }
     let count = tx
         .query_one(statement(
-            "SELECT count(*) AS count FROM form_plugin_library WHERE owner_id=$1",
-            vec![actor.into()],
+            "SELECT count(*) AS count FROM form_plugin_library WHERE owner_id=$1 AND manifest->>'schema_version'=$2",
+            vec![actor.into(), SCHEMA_V3.into()],
         ))
         .await?
         .ok_or(ApiError::Internal)?
@@ -162,8 +162,8 @@ pub async fn archive(
     let tx = state.db.begin().await?;
     tx.query_one(statement(
         "UPDATE form_plugin_library SET archived_at=COALESCE(archived_at,clock_timestamp())
-          WHERE id=$1 AND owner_id=$2 RETURNING id",
-        vec![source.into(), actor.into()],
+          WHERE id=$1 AND owner_id=$2 AND manifest->>'schema_version'=$3 RETURNING id",
+        vec![source.into(), actor.into(), SCHEMA_V3.into()],
     ))
     .await?
     .ok_or_else(package_missing)?;
@@ -187,9 +187,8 @@ pub async fn panel(
     let row = state
         .db
         .query_one(statement(
-            "SELECT html,CASE WHEN manifest->>'schema_version'=$3 THEN manifest->'entry'->>'sha256'
-                    ELSE manifest->'ui'->'entry'->>'sha256' END AS web_sha256 FROM form_plugin_library
-          WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL",
+            "SELECT html,manifest->'entry'->>'sha256' AS web_sha256 FROM form_plugin_library
+          WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL AND manifest->>'schema_version'=$3",
             vec![source.into(), actor.into(), SCHEMA_V3.into()],
         ))
         .await?
@@ -223,8 +222,9 @@ pub async fn preview(
     let profile = state
         .db
         .query_one(statement(
-            "SELECT manifest->>'schema_version'=$3 AND manifest->>'profile'='ui' AS ui_only
-               FROM form_plugin_library WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL",
+            "SELECT manifest->>'profile'='ui' AS ui_only
+               FROM form_plugin_library WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL
+                AND manifest->>'schema_version'=$3",
             vec![source.into(), actor.into(), SCHEMA_V3.into()],
         ))
         .await?
@@ -237,9 +237,10 @@ pub async fn preview(
         ));
     }
     let package = ActivePackage::find_by_statement(statement(
-        "SELECT key,version,wasm_bytes,manifest->'wasm'->>'sha256' AS wasm_sha256
-           FROM form_plugin_library WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL",
-        vec![source.into(), actor.into()],
+        "SELECT version,wasm_bytes,manifest->'wasm'->>'sha256' AS wasm_sha256
+           FROM form_plugin_library WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL
+            AND manifest->>'schema_version'=$3",
+        vec![source.into(), actor.into(), SCHEMA_V3.into()],
     ))
     .one(&state.db)
     .await?
@@ -322,8 +323,8 @@ async fn install_projection(
     } else {
         let count = tx
             .query_one(statement(
-                "SELECT count(*) AS count FROM form_plugin_packages WHERE project_id=$1",
-                vec![project.into()],
+                "SELECT count(*) AS count FROM form_plugin_packages p WHERE p.project_id=$1 AND p.manifest->>'schema_version'=$2",
+                vec![project.into(), SCHEMA_V3.into()],
             ))
             .await?
             .ok_or(ApiError::Internal)?
@@ -335,12 +336,11 @@ async fn install_projection(
     let item = Package::find_by_statement(statement(
         "INSERT INTO form_plugin_packages (project_id,key,version,manifest,package_sha256,wasm_bytes,html,installed_by,library_source_id)
          SELECT $1,s.key,s.version,s.manifest,s.package_sha256,s.wasm_bytes,s.html,$3,s.id
-           FROM form_plugin_library s WHERE s.id=$2 AND s.archived_at IS NULL
+           FROM form_plugin_library s WHERE s.id=$2 AND s.archived_at IS NULL AND s.manifest->>'schema_version'=$4
          ON CONFLICT (project_id,key,version) DO UPDATE SET library_revoked_at=NULL
           WHERE form_plugin_packages.library_source_id=EXCLUDED.library_source_id
-         RETURNING id,manifest,package_sha256,installed_by,installed_at,library_source_id,
-                   (SELECT placements FROM form_plugin_layouts WHERE package_id=form_plugin_packages.id) AS placements",
-        vec![project.into(),source.into(),actor.into()],
+         RETURNING id,manifest,package_sha256,installed_by,installed_at,library_source_id",
+        vec![project.into(),source.into(),actor.into(),SCHEMA_V3.into()],
     )).one(tx).await?.ok_or_else(package_missing)?;
     set_status(tx, project, source, "attached", actor).await?;
     item.with_layout(tx, project).await
@@ -356,17 +356,14 @@ pub async fn attach(
     let tx = state.db.begin().await?;
     let role = member_role(&tx, project, actor).await?;
     lock_project(&tx, project).await?;
-    let release = tx
-        .query_one(statement(
-            "SELECT manifest->>'schema_version'=$3 AS v3 FROM form_plugin_library
-              WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL FOR SHARE",
-            vec![source.into(), actor.into(), SCHEMA_V3.into()],
-        ))
-        .await?
-        .ok_or_else(package_missing)?;
-    if release.try_get::<bool>("", "v3")? {
-        require_extensions()?;
-    }
+    tx.query_one(statement(
+        "SELECT 1 FROM form_plugin_library
+              WHERE id=$1 AND owner_id=$2 AND archived_at IS NULL AND manifest->>'schema_version'=$3 FOR SHARE",
+        vec![source.into(), actor.into(), SCHEMA_V3.into()],
+    ))
+    .await?
+    .ok_or_else(package_missing)?;
+    require_extensions()?;
     let response = if role_is_form_admin(&role) {
         let package = install_projection(&tx, project, source, actor).await?;
         json!({"status":"attached","package":package})
@@ -405,9 +402,9 @@ pub async fn requests(
     let items = PendingRequest::find_by_statement(statement(
         "SELECT r.source_id,s.owner_id,s.manifest,s.package_sha256,r.submitted_at
            FROM form_plugin_library_requests r JOIN form_plugin_library s ON s.id=r.source_id
-          WHERE r.project_id=$1 AND r.status='pending' AND s.archived_at IS NULL
+          WHERE r.project_id=$1 AND r.status='pending' AND s.archived_at IS NULL AND s.manifest->>'schema_version'=$2
           ORDER BY r.submitted_at,r.source_id",
-        vec![project.into()],
+        vec![project.into(), SCHEMA_V3.into()],
     ))
     .all(&state.db)
     .await?;
@@ -432,16 +429,15 @@ pub async fn decide(
     lock_project(&tx, project).await?;
     let row = tx
         .query_one(statement(
-            "SELECT s.owner_id,s.manifest->>'schema_version'=$3 AS v3
+            "SELECT s.owner_id
                FROM form_plugin_library_requests r JOIN form_plugin_library s ON s.id=r.source_id
-          WHERE r.project_id=$1 AND r.source_id=$2 AND r.status='pending' AND s.archived_at IS NULL FOR SHARE OF s",
+          WHERE r.project_id=$1 AND r.source_id=$2 AND r.status='pending' AND s.archived_at IS NULL
+            AND s.manifest->>'schema_version'=$3 FOR SHARE OF s",
             vec![project.into(), source.into(), SCHEMA_V3.into()],
         ))
         .await?
         .ok_or_else(|| ApiError::not_found("pending plugin request not found"))?;
-    if row.try_get::<bool>("", "v3")? {
-        require_extensions()?;
-    }
+    require_extensions()?;
     let response = if decision.approve {
         // Membership at submission alone cannot authorize a new project install after removal.
         let owner = row.try_get::<Uuid>("", "owner_id")?;
@@ -478,8 +474,8 @@ pub async fn revoke(
     let owns_link = tx
         .query_one(statement(
             "SELECT 1 FROM form_plugin_library_requests r JOIN form_plugin_library s ON s.id=r.source_id
-          WHERE r.project_id=$1 AND r.source_id=$2 AND s.owner_id=$3",
-            vec![project.into(), source.into(), actor.into()],
+          WHERE r.project_id=$1 AND r.source_id=$2 AND s.owner_id=$3 AND s.manifest->>'schema_version'=$4",
+            vec![project.into(), source.into(), actor.into(), SCHEMA_V3.into()],
         ))
         .await?
         .is_some();
@@ -491,8 +487,10 @@ pub async fn revoke(
     lock_project(&tx, project).await?;
     tx.query_one(statement(
         "UPDATE form_plugin_library_requests SET status='revoked',decided_by=$3,decided_at=clock_timestamp()
-          WHERE project_id=$1 AND source_id=$2 RETURNING source_id",
-        vec![project.into(), source.into(), actor.into()],
+          WHERE project_id=$1 AND source_id=$2
+            AND EXISTS (SELECT 1 FROM form_plugin_library s WHERE s.id=$2 AND s.manifest->>'schema_version'=$4)
+        RETURNING source_id",
+        vec![project.into(), source.into(), actor.into(), SCHEMA_V3.into()],
     ))
     .await?
     .ok_or_else(|| ApiError::not_found("plugin link not found"))?;

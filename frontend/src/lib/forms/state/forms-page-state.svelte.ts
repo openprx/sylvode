@@ -1,5 +1,5 @@
 import { writable, fromStore } from 'svelte/store';
-import type { RecordPluginActionSurface } from '#lib/plugins/placements.js';
+import type { RecordPluginActionSurface } from '#lib/plugins/record-entries.js';
 import { type FormsDraftVersion, FormsRefreshLatch } from '#lib/workbench/forms-session.js';
 import type {
 	BusinessEvent,

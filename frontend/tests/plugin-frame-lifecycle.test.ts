@@ -36,7 +36,6 @@ function harness(options: { transport?: HostTransport; grace?: number } = {}) {
 		close: () => log.push('close')
 	};
 	const dispatcher = createHostDispatcher({
-		bridge: 2,
 		grants: () => ['read:orders', 'ui.display'],
 		context: () => undefined,
 		transport:
@@ -186,7 +185,6 @@ describe('host.navigate reply ordering', () => {
 			api: { data: data as never, invoke: data as never }
 		});
 		const dispatcher = createHostDispatcher({
-			bridge: 2,
 			grants: () => ['ui.display', 'read:orders'],
 			context: () => undefined,
 			transport

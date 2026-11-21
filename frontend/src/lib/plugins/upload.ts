@@ -1,5 +1,4 @@
-import type { PluginUpload, PluginUploadV3 } from '../api/plugin-packages';
-import { isContribution } from './placements';
+import type { PluginUploadV3 } from '../api/plugin-packages';
 
 const slots = ['form.record.detail', 'form.record.actions', 'form.list.toolbar', 'project.view'];
 const kinds = ['panel', 'action', 'view'];
@@ -31,7 +30,7 @@ function isReadV3(value: unknown): boolean {
 	);
 }
 
-/** Structural check of a v3 upload. Rule validation stays on the server. */
+/** Structural check of an upload. Rule validation stays on the server. */
 function validV3(value: Record<string, unknown>): boolean {
 	const manifest = value.manifest;
 	if (!isObject(manifest) || 'ui' in manifest) return false;
@@ -58,30 +57,16 @@ function validV3(value: Record<string, unknown>): boolean {
 	);
 }
 
-export async function readPluginUpload(file: File): Promise<PluginUpload | PluginUploadV3> {
+/** Reads a package file. Only protocol 3 packages (`openpr.plugin.v3`) are accepted. */
+export async function readPluginUpload(file: File): Promise<PluginUploadV3> {
 	if (file.size > 8 * 1024 * 1024) throw new Error();
 	const parsed: unknown = JSON.parse(await file.text());
-	if (!isObject(parsed)) throw new Error();
-	if (isObject(parsed.manifest) && parsed.manifest.schema_version === 'openpr.plugin.v3') {
-		if (!validV3(parsed)) throw new Error();
-		return parsed as unknown as PluginUploadV3;
-	}
-	const value = parsed as unknown as PluginUpload;
 	if (
-		typeof value.wasm_base64 !== 'string' ||
-		typeof value.web_base64 !== 'string' ||
-		typeof value.manifest?.key !== 'string' ||
-		typeof value.manifest?.name !== 'string' ||
-		typeof value.manifest?.version !== 'string' ||
-		typeof value.manifest?.publisher !== 'string' ||
-		typeof value.manifest?.ui?.form_key !== 'string' ||
-		typeof value.manifest?.ui?.bridge_version !== 'number' ||
-		!Array.isArray(value.manifest?.capabilities) ||
-		!value.manifest.capabilities.every((capability) => typeof capability?.name === 'string') ||
-		(value.manifest.ui.contributions !== undefined &&
-			(!Array.isArray(value.manifest.ui.contributions) ||
-				!value.manifest.ui.contributions.every(isContribution)))
+		!isObject(parsed) ||
+		!isObject(parsed.manifest) ||
+		parsed.manifest.schema_version !== 'openpr.plugin.v3' ||
+		!validV3(parsed)
 	)
 		throw new Error();
-	return value;
+	return parsed as unknown as PluginUploadV3;
 }

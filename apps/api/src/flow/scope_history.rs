@@ -81,14 +81,15 @@ pub async fn reconstruct(
         package_updates_base64: None,
     };
     let snapshot = boot.snapshot;
-    let result = tokio::task::spawn_blocking(move || collab_core::isolation::isolated_diff(&snapshot, &request))
-        .await
-        .map_err(|_| ApiError::internal())?
-        .map_err(|error| {
-            super::query::isolated_diff_error(error, object, || {
-                ApiError::resync_required("requested history cannot be reconstructed", None)
-            })
-        })?;
+    let (result, observation) =
+        tokio::task::spawn_blocking(move || collab_core::isolation::isolated_diff_observed(&snapshot, &request))
+            .await
+            .map_err(|_| ApiError::internal())?;
+    let result = result.map_err(|error| {
+        super::query::isolated_diff_error(error, &observation, object, || {
+            ApiError::resync_required("requested history cannot be reconstructed", None)
+        })
+    })?;
     if !scope::proof_current(&state.db, &proof).await? {
         return Err(super::policy::authorization_read_unstable());
     }

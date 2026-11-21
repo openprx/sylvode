@@ -23,9 +23,6 @@ pub struct Config {
     /// Safe mode, resolved once at start-up from `SYLVODE_RUNNER_SAFE_MODE`. Not read from the file.
     #[serde(skip)]
     pub safe_mode: bool,
-    /// Deprecation notices for commands written in the one-string form, logged at start-up.
-    #[serde(skip)]
-    pub legacy_command_notices: Vec<String>,
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
@@ -522,138 +519,47 @@ pub const TRIGGER_KINDS: [&str; 9] = [
     "manual",
 ];
 
-/// A command written as one string, `program arg...`, as earlier documentation showed it
-/// (`command = "openclaw message send"`).
-///
-/// Commands run without a shell, so such a string is accepted only in the one form whose meaning
-/// is unambiguous: the whole string names no file, `args` is empty, the string contains no quote
-/// or backslash (so there is no shell quoting to interpret), and its first word names a program.
-/// It is then split on whitespace into the program and its arguments, once, at start-up; text
-/// substituted later is never split. Any other command containing whitespace that names no file
-/// is refused, showing the `command` and `args` to write instead.
-///
-/// Returns the deprecation notice when the command was split.
-fn resolve_command(
-    agent_id: &str,
-    key: &str,
-    command: &mut String,
-    args_empty: bool,
-    path_var: Option<&std::ffi::OsStr>,
-) -> Result<Option<Vec<String>>, String> {
-    if !command.contains(char::is_whitespace) || names_a_program(command, path_var) {
-        return Ok(None);
-    }
-    let words: Vec<String> = command.split_whitespace().map(str::to_string).collect();
-    let (program, rest) = words.split_first().map_or(("", &[][..]), |(p, r)| (p.as_str(), r));
-    let quoted = rest
-        .iter()
-        .map(|word| format!("{word:?}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let obstacle = if command.contains(['"', '\'', '\\']) {
-        Some("it contains quotes or backslashes, which only a shell would interpret".to_string())
-    } else if !args_empty {
-        Some(format!("{} is also set", key.replace("command", "args")))
-    } else if !names_a_program(program, path_var) {
-        Some(format!("`{program}` is not a file or a program on PATH either"))
-    } else {
-        None
-    };
-    if let Some(obstacle) = obstacle {
+/// Refuses a command that is not one program name. Commands run without a shell, so a value
+/// with whitespace in it (a program followed by arguments) is never split: the arguments belong
+/// in `args`.
+fn check_single_program(agent_id: &str, key: &str, command: &str) -> Result<(), String> {
+    if command.contains(char::is_whitespace) {
         return Err(format!(
-            "agent `{agent_id}`: {key} `{command}` contains whitespace and is not an executable, and cannot be \
-             split unambiguously ({obstacle}); commands run without a shell, so write the program and its \
-             arguments separately: command = {program:?} and args = [{quoted}]"
+            "agent `{agent_id}`: {key} must name one program; put its arguments in {}",
+            key.replace("command", "args")
         ));
     }
-    let split = rest.to_vec();
-    *command = program.to_string();
-    Ok(Some(split))
-}
-
-/// Whether `command` names an existing file, either as a path or as a name found on `path_var`
-/// (the `PATH` the command is resolved with when it is run).
-fn names_a_program(command: &str, path_var: Option<&std::ffi::OsStr>) -> bool {
-    let path = std::path::Path::new(command);
-    if path.components().count() > 1 {
-        return path.is_file();
-    }
-    !command.is_empty()
-        && path_var.is_some_and(|dirs| std::env::split_paths(dirs).any(|dir| dir.join(command).is_file()))
-}
-
-fn legacy_command_notice(agent_id: &str, key: &str, original: &str, program: &str, args: &[String]) -> String {
-    let quoted = args
-        .iter()
-        .map(|word| format!("{word:?}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "agent `{agent_id}`: {key} = {original:?} is the deprecated one-string form; it runs as command = \
-         {program:?} with args = [{quoted}]. Write it that way: commands run without a shell"
-    )
+    Ok(())
 }
 
 impl Config {
     pub fn load(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|e| format!("failed to read config {path}: {e}"))?;
-        Self::from_toml(&content, std::env::var_os("PATH").as_deref())
+        Self::from_toml(&content)
     }
 
-    /// Parses and validates a configuration, resolving commands against `path_var`.
-    pub fn from_toml(content: &str, path_var: Option<&std::ffi::OsStr>) -> Result<Self, String> {
-        let mut config: Self = toml::from_str(content).map_err(|e| format!("failed to parse config: {e}"))?;
-        config.resolve_commands(path_var)?;
+    /// Parses and validates a configuration.
+    pub fn from_toml(content: &str) -> Result<Self, String> {
+        let config: Self = toml::from_str(content).map_err(|e| format!("failed to parse config: {e}"))?;
+        config.validate_commands()?;
         config.validate()?;
         Ok(config)
     }
 
-    /// Splits the deprecated one-string command form, or refuses an unusable command; see
-    /// [`resolve_command`]. Each split adds a notice to `legacy_command_notices`.
-    fn resolve_commands(&mut self, path_var: Option<&std::ffi::OsStr>) -> Result<(), String> {
-        let mut notices = Vec::new();
-        for agent in &mut self.agents {
+    /// Refuses a `command` that is more than one program name; see [`check_single_program`].
+    fn validate_commands(&self) -> Result<(), String> {
+        for agent in &self.agents {
             let id = agent.id.as_str();
-            if let Some(cfg) = agent.openclaw.as_mut() {
-                let original = cfg.command.clone();
-                if let Some(split) =
-                    resolve_command(id, "openclaw.command", &mut cfg.command, cfg.args.is_empty(), path_var)?
-                {
-                    notices.push(legacy_command_notice(
-                        id,
-                        "openclaw.command",
-                        &original,
-                        &cfg.command,
-                        &split,
-                    ));
-                    cfg.args = split;
-                }
+            if let Some(cfg) = agent.openclaw.as_ref() {
+                check_single_program(id, "openclaw.command", &cfg.command)?;
             }
-            if let Some(cfg) = agent.openprx.as_mut()
-                && let Some(command) = cfg.command.as_mut()
-            {
-                let original = command.clone();
-                if let Some(split) = resolve_command(id, "openprx.command", command, cfg.args.is_empty(), path_var)? {
-                    notices.push(legacy_command_notice(id, "openprx.command", &original, command, &split));
-                    cfg.args = split;
-                }
+            if let Some(command) = agent.openprx.as_ref().and_then(|cfg| cfg.command.as_deref()) {
+                check_single_program(id, "openprx.command", command)?;
             }
-            if let Some(cfg) = agent.custom.as_mut() {
-                let original = cfg.command.clone();
-                let args_empty = cfg.args.as_ref().is_none_or(Vec::is_empty);
-                if let Some(split) = resolve_command(id, "custom.command", &mut cfg.command, args_empty, path_var)? {
-                    notices.push(legacy_command_notice(
-                        id,
-                        "custom.command",
-                        &original,
-                        &cfg.command,
-                        &split,
-                    ));
-                    cfg.args = Some(split);
-                }
+            if let Some(cfg) = agent.custom.as_ref() {
+                check_single_program(id, "custom.command", &cfg.command)?;
             }
         }
-        self.legacy_command_notices = notices;
         Ok(())
     }
 
@@ -941,13 +847,12 @@ impl Config {
 
     /// Configurations that start but deserve a prominent warning in the log.
     pub fn startup_warnings(&self) -> Vec<String> {
-        let mut warnings = self.legacy_command_notices.clone();
-        warnings.extend(
-            self.secret_problems()
-                .into_iter()
-                .filter(|(in_use, _)| !*in_use)
-                .map(|(_, problem)| format!("{problem} (not in use now, so start-up continues)")),
-        );
+        let mut warnings: Vec<String> = self
+            .secret_problems()
+            .into_iter()
+            .filter(|(in_use, _)| !*in_use)
+            .map(|(_, problem)| format!("{problem} (not in use now, so start-up continues)"))
+            .collect();
         if self.security.allow_unsigned {
             warnings.push(format!(
                 "security.allow_unsigned = true: webhook signatures are NOT verified; anyone who can reach \
@@ -1132,45 +1037,53 @@ enabled = true
         )
     }
 
-    /// A directory holding empty executables named `names`, used as `PATH`.
-    struct FakePath(std::path::PathBuf);
-
-    impl FakePath {
-        fn with(names: &[&str]) -> Self {
-            let dir = std::env::temp_dir().join(format!("sylvode webhook path {}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&dir).expect("create dir");
-            for name in names {
-                std::fs::write(dir.join(name), "#!/bin/sh\n").expect("write program");
-            }
-            Self(dir)
-        }
-
-        fn var(&self) -> std::ffi::OsString {
-            self.0.clone().into_os_string()
-        }
-    }
-
-    impl Drop for FakePath {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn parse_with_path(content: &str, path: &FakePath) -> Result<Config, String> {
-        Config::from_toml(content, Some(path.var().as_os_str()))
-    }
-
-    /// The one-string form earlier documentation showed, `openclaw message send`, runs as
-    /// `openclaw` with `args = ["message", "send"]`, with a deprecation notice naming the
-    /// replacement. The same holds for `openprx` and `custom` commands.
+    /// A command is one program name; a value with whitespace is refused naming the key, whether
+    /// or not `args` is also set.
     #[test]
-    fn splits_the_documented_one_string_command_form() {
-        let path = FakePath::with(&["openclaw", "openprx", "echo"]);
+    fn refuses_a_command_with_whitespace() {
+        for (agent_type, section, key, args_key) in [
+            (
+                "openclaw",
+                "[agents.openclaw]\ncommand = \"openclaw message send\"\nchannel = \"c\"\ntarget = \"t\"",
+                "openclaw.command",
+                "openclaw.args",
+            ),
+            (
+                "openclaw",
+                "[agents.openclaw]\ncommand = \"openclaw message\"\nargs = [\"send\"]\nchannel = \"c\"\ntarget = \"t\"",
+                "openclaw.command",
+                "openclaw.args",
+            ),
+            (
+                "openprx",
+                "[agents.openprx]\ncommand = \"openprx  message\\tsend\"\ntarget = \"t\"",
+                "openprx.command",
+                "openprx.args",
+            ),
+            (
+                "custom",
+                "[agents.custom]\ncommand = \"echo hello\"",
+                "custom.command",
+                "custom.args",
+            ),
+        ] {
+            let err = load_str(&command_config(agent_type, section)).expect_err("refused");
+            assert_eq!(
+                err,
+                format!("agent `david`: {key} must name one program; put its arguments in {args_key}"),
+                "{agent_type}"
+            );
+        }
+    }
+
+    /// `command` plus `args` is the one form for `openclaw`, `openprx` and `custom`.
+    #[test]
+    fn accepts_command_with_args() {
         let openclaw = command_config(
             "openclaw",
-            "[agents.openclaw]\ncommand = \"openclaw message send\"\nchannel = \"signal\"\ntarget = \"t\"",
+            "[agents.openclaw]\ncommand = \"openclaw\"\nargs = [\"message\", \"send\"]\nchannel = \"signal\"\ntarget = \"t\"",
         );
-        let cfg = parse_with_path(&openclaw, &path).expect("the documented form is accepted");
+        let cfg = load_str(&openclaw).expect("accepted");
         let agent = cfg
             .agents
             .first()
@@ -1178,19 +1091,12 @@ enabled = true
             .expect("openclaw agent");
         assert_eq!(agent.command, "openclaw");
         assert_eq!(agent.args, vec!["message", "send"]);
-        let warnings = cfg.startup_warnings();
-        assert!(
-            warnings.iter().any(|w| w.contains("agent `david`")
-                && w.contains(r#"openclaw.command = "openclaw message send""#)
-                && w.contains(r#"command = "openclaw" with args = ["message", "send"]"#)),
-            "{warnings:?}"
-        );
 
         let openprx = command_config(
             "openprx",
-            "[agents.openprx]\ncommand = \"openprx  message\tsend\"\ntarget = \"t\"",
+            "[agents.openprx]\ncommand = \"openprx\"\nargs = [\"message\", \"send\"]\ntarget = \"t\"",
         );
-        let cfg = parse_with_path(&openprx, &path).expect("accepted");
+        let cfg = load_str(&openprx).expect("accepted");
         let agent = cfg
             .agents
             .first()
@@ -1199,88 +1105,21 @@ enabled = true
         assert_eq!(agent.command.as_deref(), Some("openprx"));
         assert_eq!(agent.args, vec!["message", "send"]);
 
-        let custom = command_config("custom", "[agents.custom]\ncommand = \"echo hello\"");
-        let cfg = parse_with_path(&custom, &path).expect("accepted");
+        let custom = command_config(
+            "custom",
+            "[agents.custom]\ncommand = \"echo\"\nargs = [\"hello\", \"{message}\"]",
+        );
+        let cfg = load_str(&custom).expect("accepted");
         let agent = cfg
             .agents
             .first()
             .and_then(|a| a.custom.as_ref())
             .expect("custom agent");
         assert_eq!(agent.command, "echo");
-        assert_eq!(agent.args.as_deref(), Some(&["hello".to_string()][..]));
-    }
-
-    /// Any other multi-word command that names no file is refused with the `command` + `args`
-    /// form to write: when `args` is also set, when it contains shell quoting, or when its first
-    /// word is not a program either.
-    #[test]
-    fn refuses_a_multi_word_command_that_cannot_be_split_unambiguously() {
-        let path = FakePath::with(&["openclaw", "echo"]);
-        for (section, why) in [
-            (
-                "[agents.openclaw]\ncommand = \"openclaw message send\"\nargs = [\"x\"]\nchannel = \"c\"\ntarget = \"t\"",
-                "openclaw.args is also set",
-            ),
-            (
-                "[agents.openclaw]\ncommand = 'openclaw \"message send\"'\nchannel = \"c\"\ntarget = \"t\"",
-                "quotes",
-            ),
-            (
-                "[agents.openclaw]\ncommand = \"missing-tool message send\"\nchannel = \"c\"\ntarget = \"t\"",
-                "`missing-tool` is not a file or a program on PATH",
-            ),
-        ] {
-            let err = parse_with_path(&command_config("openclaw", section), &path).expect_err("refused");
-            assert!(err.contains("agent `david`"), "{err}");
-            assert!(err.contains("openclaw.command"), "{err}");
-            assert!(err.contains(why), "{why}: {err}");
-            assert!(err.contains("args = ["), "{err}");
-        }
-        let custom = command_config(
-            "custom",
-            "[agents.custom]\ncommand = \"echo hello\"\nargs = [\"{message}\"]",
+        assert_eq!(
+            agent.args.as_deref(),
+            Some(&["hello".to_string(), "{message}".to_string()][..])
         );
-        assert!(
-            parse_with_path(&custom, &path)
-                .expect_err("refused")
-                .contains("custom.args is also set")
-        );
-    }
-
-    /// A program name that really contains whitespace is found on `PATH` and used as it is.
-    #[test]
-    fn accepts_a_program_name_with_whitespace_found_on_path() {
-        let path = FakePath::with(&["my tool"]);
-        let custom = command_config("custom", "[agents.custom]\ncommand = \"my tool\"");
-        let cfg = parse_with_path(&custom, &path).expect("a program on PATH is accepted");
-        let agent = cfg
-            .agents
-            .first()
-            .and_then(|a| a.custom.as_ref())
-            .expect("custom agent");
-        assert_eq!(agent.command, "my tool");
-        assert_eq!(agent.args, None);
-        assert!(
-            cfg.legacy_command_notices.is_empty(),
-            "{:?}",
-            cfg.legacy_command_notices
-        );
-    }
-
-    /// A path with a space in it is fine when it names an existing file.
-    #[test]
-    fn accepts_an_existing_executable_path_with_whitespace() {
-        let dir = std::env::temp_dir().join(format!("sylvode webhook {}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).expect("create dir");
-        let tool = dir.join("my tool");
-        std::fs::write(&tool, "#!/bin/sh\n").expect("write tool");
-        let custom = command_config(
-            "custom",
-            &format!("[agents.custom]\ncommand = '{}'", tool.to_str().expect("utf-8 path")),
-        );
-        let loaded = load_str(&custom);
-        std::fs::remove_dir_all(&dir).expect("remove dir");
-        loaded.expect("an existing path is accepted");
     }
 
     #[test]
@@ -1799,24 +1638,21 @@ url = "http://127.0.0.1:9000/hook"
                 "not a setting of the opencode executor",
             ),
         ] {
-            let err = Config::from_toml(&cli_agent_config(cli), None).expect_err(cli);
+            let err = Config::from_toml(&cli_agent_config(cli)).expect_err(cli);
             assert!(err.contains("agent `fixer`") && err.contains(expected), "{cli}: {err}");
         }
         // An executor outside the whitelist still fails only when a task is dispatched.
-        Config::from_toml(&cli_agent_config("executor = \"not-whitelisted\""), None).expect("accepted");
+        Config::from_toml(&cli_agent_config("executor = \"not-whitelisted\"")).expect("accepted");
     }
 
     /// Bypassing the executor's permission checks starts, with a warning naming the agent; the
     /// default does not warn.
     #[test]
     fn bypassing_executor_permissions_is_warned_about() {
-        let bypass = Config::from_toml(
-            &cli_agent_config(
-                "executor = \"claude-code\"\npermission_mode = \"bypassPermissions\"\n\
+        let bypass = Config::from_toml(&cli_agent_config(
+            "executor = \"claude-code\"\npermission_mode = \"bypassPermissions\"\n\
                  dangerously_bypass_permissions = true",
-            ),
-            None,
-        )
+        ))
         .expect("explicit opt-in starts");
         assert!(
             bypass
@@ -1826,7 +1662,7 @@ url = "http://127.0.0.1:9000/hook"
             "{:?}",
             bypass.startup_warnings()
         );
-        let default = Config::from_toml(&cli_agent_config("executor = \"claude-code\""), None).expect("starts");
+        let default = Config::from_toml(&cli_agent_config("executor = \"claude-code\"")).expect("starts");
         assert!(
             !default
                 .startup_warnings()
