@@ -1154,6 +1154,21 @@ fn the_incremental_window_is_on_by_default_and_can_be_switched_off() {
 }
 
 #[test]
+fn the_setup_cpu_budget_defaults_to_2500_and_is_bounded() {
+    assert_eq!(parse("").unwrap().flow.setup_cpu_budget_ms, 2_500);
+    for value in [500_u64, 2_500, 3_000, 4_000] {
+        let configured = parse(&format!("[flow]\nsetup_cpu_budget_ms = {value}\n")).unwrap();
+        assert_eq!(configured.flow.setup_cpu_budget_ms, value);
+    }
+    for value in ["0", "499", "4001", "100000", "-1", "\"2500\"", "2.5"] {
+        assert!(
+            parse(&format!("[flow]\nsetup_cpu_budget_ms = {value}\n")).is_err(),
+            "{value} is refused"
+        );
+    }
+}
+
+#[test]
 fn flow_body_asset_limit_is_bounded_and_configurable() {
     let defaulted = parse("").unwrap();
     assert_eq!(defaulted.flow.body_asset_max_bytes, 52_428_800);

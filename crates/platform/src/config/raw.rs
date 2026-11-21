@@ -26,9 +26,9 @@ use super::{
     AiTasksConfig, AuditConfig, AuthConfig, ConfigError, DEFAULT_AI_TASK_LEASE_EXTENSION_SECS,
     DEFAULT_AI_TASK_MAX_PROCESSING_SECS, DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
     DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS,
-    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
+    DEFAULT_FLOW_SETUP_CPU_BUDGET_MS, DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
     LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
-    MIN_JWT_SECRET_LEN, McpConfig, McpTransport, MigrationsConfig, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config,
+    MAX_FLOW_SETUP_CPU_BUDGET_MS, MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpTransport, MigrationsConfig, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config,
     ServerConfig, StorageBackend, StorageConfig,
 };
 
@@ -120,6 +120,7 @@ struct RawFlow {
     conversion_reap_interval_secs: Option<u64>,
     body_asset_max_bytes: Option<u64>,
     incremental_window: Option<bool>,
+    setup_cpu_budget_ms: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -619,12 +620,23 @@ impl RawFlow {
                     DEFAULT_FLOW_BODY_ASSET_MAX_BYTES
                 }
             });
+        let setup_cpu_budget_ms = self
+            .setup_cpu_budget_ms
+            .map_or(DEFAULT_FLOW_SETUP_CPU_BUDGET_MS, |value| {
+                if (MIN_FLOW_SETUP_CPU_BUDGET_MS..=MAX_FLOW_SETUP_CPU_BUDGET_MS).contains(&value) {
+                    value
+                } else {
+                    issues.push("flow.setup_cpu_budget_ms must be between 500 and 4000");
+                    DEFAULT_FLOW_SETUP_CPU_BUDGET_MS
+                }
+            });
         FlowConfig {
             dispatch_max_attempts,
             collab_allowed_origins,
             conversion_reap_interval_secs,
             body_asset_max_bytes,
             incremental_window: self.incremental_window.unwrap_or(true),
+            setup_cpu_budget_ms,
         }
     }
 }

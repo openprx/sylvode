@@ -228,6 +228,15 @@ allow_private = false
 # update whose tree ops name a parent that does not exist is refused with either setting.
 # Default: true.
 # incremental_window = true
+#
+# CPU time, in milliseconds, that the worker's unmetered setup (load of the page, prewarm and the
+# facts of the page that the incremental window starts from) may consume before it gives up on the
+# facts and the write is decided by the full window. The limit is machine-dependent: the default
+# was calibrated on a runner about 3.6 times slower than a developer machine; a host that is
+# slower than that may raise it so its largest honest pages stay on the incremental window. The
+# worker's setup is cut by a wall timeout of 5 seconds whatever this value is, so the accepted
+# range is 500 to 4000. Default: 2500.
+# setup_cpu_budget_ms = 2500
 
 
 # ---------------------------------------------------------------------------------------------
