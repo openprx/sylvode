@@ -11,28 +11,24 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const DEFAULT_SUBPROCESS_TIMEOUT_SECS: u64 = 60;
 
 #[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
-const DEFAULT_MCP_INSTRUCTIONS: &str = r#"## MCP Integration
+const DEFAULT_MCP_INSTRUCTIONS: &str = r#"## Sylvode tools
 
-You have Sylvode MCP tools available. Use them to get full issue context before working:
-
-1. Call `work_items.get` with work_item_id="{issue_id}" to read full issue details (title, description, state, priority, assignee)
-2. Call `comments.list` with work_item_id="{issue_id}" to read all comments and discussion
-3. Call `work_items.list_labels` with work_item_id="{issue_id}" to read labels
-
-After completing your work:
-
-4. Call `comments.create` with work_item_id="{issue_id}" to post a summary of what you did
-5. Call `work_items.update` with work_item_id="{issue_id}" and state="done" if the fix is complete"#;
+You have the Sylvode MCP tools in search mode. Find a tool with `sylvode_search`, call a tool that only reads with `sylvode_read` and one that changes data with `sylvode_write` (both take `tool` and `arguments`; `sylvode_overview` lists what exists).
+Work on issue {issue_id}: read it and its comments with `sylvode_read` (`work_items.get`, `comments.list`), then post a summary comment with `sylvode_write` (`comments.create`).
+If this run came from a delivered task (a line starting `[Sylvode task]` with an id):
+1. Call `sylvode_task_get` with the id and attempt.
+2. Call `sylvode_task_ack` with a short plan, then start work at once.
+3. Call `sylvode_task_progress` at each milestone.
+4. End with `sylvode_task_complete`, or `sylvode_task_fail` with the reason."#;
 
 #[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
-const DEFAULT_FORM_MCP_INSTRUCTIONS: &str = r#"## MCP Integration
+const DEFAULT_FORM_MCP_INSTRUCTIONS: &str = r#"## Sylvode tools
 
-You have Sylvode MCP tools available. This webhook is linked to a universal-form event:
-
-1. Call `forms.get` with form_id="{form_id}" when a form_id is available, or call `forms.list` with project_id="{project_id}" and match form_key="{form_key}".
-2. Call `form_records.get` with record_id="{record_id}" when a record_id is available.
-3. Call `events.tail` with form_id="{form_id}" or record_id="{record_id}" to inspect the recent business-event stream.
-4. Call `comments.create` on the linked work item, when there is one, to report what you did."#;
+You have the Sylvode MCP tools in search mode. Find a tool with `sylvode_search`, read with `sylvode_read` and change data with `sylvode_write` (both take `tool` and `arguments`). This webhook is linked to a universal-form event:
+1. Call `sylvode_read` with tool=`forms.get` and form_id="{form_id}" when a form_id is available, or tool=`forms.list` with project_id="{project_id}" and match form_key="{form_key}".
+2. Call `sylvode_read` with tool=`form_records.get` and record_id="{record_id}" when a record_id is available.
+3. Call `sylvode_read` with tool=`events.tail` and form_id="{form_id}" or record_id="{record_id}" to inspect the recent business-event stream.
+4. Call `sylvode_write` with tool=`comments.create` on the linked work item, when there is one, to report what you did."#;
 
 /// Message sent by the `openclaw`, `openprx` and `custom` agents without a `message_template`.
 #[allow(clippy::literal_string_with_formatting_args)]
@@ -821,7 +817,7 @@ fn is_form_event(payload: &Value) -> bool {
 fn build_project_context_instructions(payload: &Value) -> Option<String> {
     let project_id = extract_project_id(payload)?;
     Some(format!(
-        "## Project MCP Context\n\nBefore changing state or posting final output, call `context.get_project` with project_id=\"{project_id}\" to read the project type, resources, governance context, and effective agent policy. When your MCP client supports project-scoped discovery, call `tools/list` with project_id=\"{project_id}\" and only use tools enabled by that project policy."
+        "## Project MCP Context\n\nBefore changing state or posting final output, call `sylvode_read` with tool=`context.get_project` and project_id=\"{project_id}\" to read the project type, resources, governance context, and effective agent policy, and only use tools that policy enables."
     ))
 }
 
@@ -1254,6 +1250,7 @@ fn render_template_tracked(template: &str, values: &[(&str, &str)]) -> Rendered 
 // `serde_json::Value` indexing returns `Null` for a missing key; it does not panic.
 #[allow(clippy::literal_string_with_formatting_args, clippy::indexing_slicing)]
 mod tests {
+    use super::{DEFAULT_FORM_MCP_INSTRUCTIONS, DEFAULT_MCP_INSTRUCTIONS};
     use super::{
         build_cli_prompt, build_executor_command, dispatch, execute_cli_task, extract_issue_id, format_message,
         outbound_signature_header_value,
@@ -1459,9 +1456,11 @@ OPENPR_API_URL = "http://localhost:3000"
         let prompt = build_cli_prompt(&agent, &payload, "42");
 
         assert!(prompt.starts_with("Fix issue 42: Login bug"));
-        assert!(prompt.contains("work_items.get"));
-        assert!(prompt.contains("comments.list"));
-        assert!(prompt.contains("comments.create"));
+        assert!(prompt.contains("sylvode_search"));
+        assert!(prompt.contains("sylvode_read"));
+        assert!(prompt.contains("sylvode_task_get"));
+        assert!(prompt.contains("sylvode_task_complete"));
+        assert!(prompt.contains("issue 42"));
     }
 
     #[test]
@@ -1484,7 +1483,7 @@ prompt_template = "Fix issue {issue_id}: {title}"
 
         assert!(prompt.starts_with("Fix issue 42: Login bug"));
         assert!(
-            !prompt.contains("work_items.get"),
+            !prompt.contains("sylvode_search"),
             "should not contain MCP instructions"
         );
     }
@@ -1508,7 +1507,75 @@ mcp_instructions = "Custom: read issue {issue_id} first"
         let prompt = build_cli_prompt(&agent, &payload, "99");
 
         assert!(prompt.contains("Custom: read issue 99 first"));
-        assert!(!prompt.contains("work_items.get"));
+        assert!(!prompt.contains("sylvode_search"));
+    }
+
+    /// The entry tools and the five task tools of search mode.
+    const ENTRY_AND_TASK_TOOLS: [&str; 9] = [
+        "sylvode_overview",
+        "sylvode_search",
+        "sylvode_read",
+        "sylvode_write",
+        "sylvode_task_get",
+        "sylvode_task_ack",
+        "sylvode_task_progress",
+        "sylvode_task_complete",
+        "sylvode_task_fail",
+    ];
+
+    /// Registry tools the instructions name as targets of `sylvode_read` and `sylvode_write`.
+    const REGISTRY_TARGETS: [&str; 7] = [
+        "work_items.get",
+        "comments.list",
+        "comments.create",
+        "forms.get",
+        "forms.list",
+        "form_records.get",
+        "events.tail",
+    ];
+
+    fn backticked(text: &str) -> Vec<&str> {
+        text.split('`').skip(1).step_by(2).collect()
+    }
+
+    #[test]
+    fn default_instructions_name_only_entry_task_and_registry_target_tools() {
+        for text in [DEFAULT_MCP_INSTRUCTIONS, DEFAULT_FORM_MCP_INSTRUCTIONS] {
+            assert!(text.lines().count() <= 12, "{} lines", text.lines().count());
+            for name in backticked(text) {
+                let known = ENTRY_AND_TASK_TOOLS.contains(&name)
+                    || REGISTRY_TARGETS.contains(&name)
+                    || matches!(name, "tool" | "arguments");
+                assert!(known, "`{name}` is not an entry tool, a task tool or a named target");
+                if name.starts_with("sylvode_") {
+                    assert!(ENTRY_AND_TASK_TOOLS.contains(&name), "{name}");
+                }
+            }
+        }
+        // Registry names appear only as targets: each is on a line that names sylvode_read or
+        // sylvode_write.
+        for text in [DEFAULT_MCP_INSTRUCTIONS, DEFAULT_FORM_MCP_INSTRUCTIONS] {
+            for line in text.lines() {
+                if REGISTRY_TARGETS.iter().any(|t| line.contains(&format!("`{t}`"))) {
+                    assert!(
+                        line.contains("sylvode_read") || line.contains("sylvode_write"),
+                        "{line}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn default_instructions_golden_text() {
+        assert!(
+            DEFAULT_MCP_INSTRUCTIONS.starts_with("## Sylvode tools\n\nYou have the Sylvode MCP tools in search mode.")
+        );
+        assert!(DEFAULT_MCP_INSTRUCTIONS.contains(
+            "1. Call `sylvode_task_get` with the id and attempt.\n2. Call `sylvode_task_ack` with a short plan, then start work at once.\n3. Call `sylvode_task_progress` at each milestone.\n4. End with `sylvode_task_complete`, or `sylvode_task_fail` with the reason."
+        ));
+        assert!(DEFAULT_FORM_MCP_INSTRUCTIONS.contains("tool=`forms.get` and form_id=\"{form_id}\""));
+        assert!(DEFAULT_FORM_MCP_INSTRUCTIONS.contains("`sylvode_write` with tool=`comments.create`"));
     }
 
     fn callback_config() -> Config {
@@ -1811,10 +1878,10 @@ OPENPR_API_URL = "http://localhost:3000"
 
         assert!(prompt.starts_with("Fix issue issue-99: Worker envelope issue"));
         assert!(prompt.contains("Context: issue.create"));
-        assert!(prompt.contains("work_items.get"));
+        assert!(prompt.contains("sylvode_search"));
         assert!(prompt.contains("Project MCP Context"));
-        assert!(prompt.contains("context.get_project"));
-        assert!(prompt.contains("tools/list"));
+        assert!(prompt.contains("`context.get_project`"));
+        assert!(!prompt.contains("tools/list"));
         assert!(prompt.contains("project_id=\"project-1\""));
     }
 

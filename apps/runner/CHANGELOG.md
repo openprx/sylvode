@@ -13,6 +13,7 @@ together as 0.3.53.
 
 ## Unreleased
 
+- The built-in MCP instructions of `cli` agents name the search-mode entry tools (`sylvode_search`, `sylvode_read`, `sylvode_write`) and the task procedure (`sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress`, `sylvode_task_complete`, `sylvode_task_fail`) instead of registry tools; form events name the `forms.*` tools as targets of `sylvode_read` and `sylvode_write`.
 - The one-string form `command = "openclaw message send"` is removed, with its start-up warning. A
   `command` of `openclaw`, `openprx` or `custom` names one program; its arguments go in `args`, and
   a value with whitespace is refused at start-up with `agent <id>: <key> must name one program; put

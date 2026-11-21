@@ -231,7 +231,7 @@ callback_token = "opr_xxx"                     # sent as Authorization: Bearer <
 skip_callback_state = true
 
 # Optional: custom MCP instructions (overrides built-in default).
-# mcp_instructions = "Use work_items.get to read issue {issue_id}, then fix it."
+# mcp_instructions = "Read issue {issue_id} with sylvode_read (work_items.get), then fix it."
 
 # Path to an MCP config for claude-code (--mcp-config flag). Setting it (or
 # mcp_instructions, or env_vars) also appends the default MCP instructions.
@@ -434,16 +434,16 @@ Logs are written to stdout.
 
 When a CLI agent has Sylvode MCP tools available (via global config or `mcp_config_path`), it can autonomously:
 
-1. **Read full issue context** — title, description, comments, labels, state, priority via `work_items.get` / `comments.list`
+1. **Read full issue context** — through the search-mode entry tools: `sylvode_search` finds a tool, `sylvode_read` calls one that only reads (`work_items.get`, `comments.list`)
 2. **Fix the problem** — analyze context, write code, run tests
-3. **Write results back** — post a summary comment via `comments.create`, update state via `work_items.update`
+3. **Write results back** — `sylvode_write` calls a tool that changes data (`comments.create`, `work_items.update`); for a delivered task, the task tools `sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress` and `sylvode_task_complete` or `sylvode_task_fail`
 
 This eliminates the need for the webhook callback to update issue state (use `skip_callback_state = true`).
 
 Default MCP instructions are appended to the prompt when the agent has MCP-related config
 (`mcp_instructions`, `mcp_config_path`, or `env_vars`); a form event gets form-specific
 instructions instead. You can replace them with `mcp_instructions`. With MCP-related config the
-prompt also asks the agent to read the project context (`context.get_project`) when the task
+prompt also asks the agent to read the project context (`sylvode_read` with `context.get_project`) when the task
 carries a project id, and describes the form record for a form event.
 
 ### MCP Setup
