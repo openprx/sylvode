@@ -1,4 +1,5 @@
 import type { BusinessEvent, FormField, FormRecord } from '#lib/api/forms.js';
+import { csvDownloadBlob } from '#lib/utils/csv.js';
 import * as precedence from '#lib/forms/view-precedence.js';
 import { toast } from '#lib/stores/toast.js';
 import type { TimelineEventLayout, ViewTimelineSource } from '#lib/forms/page-types.js';
@@ -60,7 +61,7 @@ export class ViewTimelineController extends FormsController {
 	exportTimelineEventsCsv = (events: BusinessEvent[]) => {
 		if (!this.s.selectedForm || events.length === 0) return;
 
-		const blob = new Blob([timelineEventsCsv(events)], { type: 'text/csv;charset=utf-8' });
+		const blob = csvDownloadBlob(timelineEventsCsv(events));
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement('a');
 

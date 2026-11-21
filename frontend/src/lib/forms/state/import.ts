@@ -1,4 +1,5 @@
 import { type FormField, type FormRecordImportRow, formsApi } from '#lib/api/forms.js';
+import { csvDownloadBlob } from '#lib/utils/csv.js';
 import { toast } from '#lib/stores/toast.js';
 import type { ImportMappingTransform } from '#lib/forms/page-types.js';
 import { fieldLabel } from '#lib/forms/field-options.js';
@@ -83,7 +84,7 @@ export class ImportController extends FormsController {
 		if (!this.s.selectedForm) return;
 
 		const csv = this.importTemplateCsv();
-		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+		const blob = csvDownloadBlob(csv);
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement('a');
 

@@ -4,7 +4,12 @@
  * Run standalone: `bun tests/forms-csv-export.test.ts`
  */
 
-import { csvExportCell, isPlainNumber, neutralizeCsvFormula } from '../src/lib/utils/csv';
+import {
+	csvDownloadBlob,
+	csvExportCell,
+	isPlainNumber,
+	neutralizeCsvFormula
+} from '../src/lib/utils/csv';
 import { Suite, assert, assertEqual, finish } from './support/harness';
 
 const suite = new Suite('forms-csv-export');
@@ -34,5 +39,24 @@ suite.check('numeric columns keep a plain negative number only', () => {
 		assertEqual(neutralizeCsvFormula(bad, true), `'${bad}`, `numeric column, ${bad}`);
 	}
 });
+
+await suite.checkAsync(
+	'a downloadable CSV starts with one UTF-8 BOM and keeps its content',
+	async () => {
+		const csv = `"name"\n"${csvExportCell('=A1')}"\n"报告"`;
+		const blob = csvDownloadBlob(csv);
+		const bytes = new Uint8Array(await blob.arrayBuffer());
+		assertEqual(blob.type, 'text/csv;charset=utf-8', 'media type');
+		assertEqual(Array.from(bytes.subarray(0, 3)).join(','), '239,187,191', 'EF BB BF');
+		assertEqual(
+			new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes),
+			`\uFEFF${csv}`,
+			'content'
+		);
+		assert(csv.includes("'=A1"), 'formula protection is still applied before the BOM is added');
+		const twice = new Uint8Array(await csvDownloadBlob(`\uFEFF${csv}`).arrayBuffer());
+		assertEqual(twice.length, bytes.length, 'a BOM is never doubled');
+	}
+);
 
 finish(suite.result());
