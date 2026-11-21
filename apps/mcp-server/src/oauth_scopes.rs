@@ -193,6 +193,12 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "sylvode_task_progress",
     "sylvode_task_complete",
     "sylvode_task_fail",
+    // The search mode entry tools. A delegated server ignores the tool mode, and the wrappers would
+    // only re-expose the eight read tools under another name.
+    "sylvode_overview",
+    "sylvode_search",
+    "sylvode_read",
+    "sylvode_write",
 ];
 
 /// The decision for `tool`. A name with no entry is `NotAvailable`.
@@ -226,6 +232,7 @@ mod tests {
     fn registered() -> BTreeSet<String> {
         crate::tools::get_all_tool_definitions()
             .into_iter()
+            .chain(crate::tools::entry::definitions())
             .chain(crate::tools::flow_scope::definitions())
             .map(|tool| tool.name)
             .collect()
@@ -272,10 +279,11 @@ mod tests {
     #[test]
     fn the_first_release_exposes_exactly_these_totals() {
         assert_eq!(SCOPED_TOOLS.len(), 8);
-        assert_eq!(WITHHELD_TOOLS.len(), 147);
-        // The main registry (153 tools) is fully covered; the two extra names are Flow-only.
+        assert_eq!(WITHHELD_TOOLS.len(), 151);
+        // The main registry (153 tools) and the four search mode entry tools are fully covered; the two
+        // extra names are Flow-only.
         assert_eq!(crate::tools::get_all_tool_definitions().len(), 153);
-        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 153 + 2);
+        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 153 + 4 + 2);
     }
 
     /// The five task tools are closed to every connected application, whatever its scopes, and

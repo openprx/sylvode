@@ -34,6 +34,7 @@ use mcp_server::{
     server::McpServer,
     tools::objects::create_flow_object,
 };
+use platform::config::McpToolMode;
 use platform::{
     app::AppState,
     config::{AppConfig, Secret},
@@ -830,12 +831,15 @@ async fn mcp_and_cli_embed_a_collection_after_the_named_block_of_a_real_page() -
             let _ = axum::serve(listener, router).await;
         }
     });
-    let server = McpServer::new(OpenPrClient::new(ClientConfig {
-        base_url: api_url.clone(),
-        credential: Some(Secret::new(MCP_BOT_TOKEN)),
-        workspace_id: workspace_id.to_string(),
-        transport_label: TRANSPORT_LABEL_STDIO,
-    })?);
+    let server = McpServer::new(
+        OpenPrClient::new(ClientConfig {
+            base_url: api_url.clone(),
+            credential: Some(Secret::new(MCP_BOT_TOKEN)),
+            workspace_id: workspace_id.to_string(),
+            transport_label: TRANSPORT_LABEL_STDIO,
+        })?,
+        McpToolMode::Full,
+    );
     let mcp_embed = |title: &'static str, key: &'static str, after: Option<&'static str>| {
         let mut args = json!({
             "workspace_id": workspace_id,

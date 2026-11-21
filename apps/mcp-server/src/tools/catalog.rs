@@ -1318,15 +1318,10 @@ pub fn list_json() -> Value {
 #[cfg(test)]
 mod tests {
     use super::{ACCESS_EXCEPTIONS, Access, CATALOG, CATEGORIES, POST_READ_ENDPOINTS, WRITE_BY_JOB_SEMANTICS};
-    use crate::client::test_api;
     use crate::server::McpServer;
-    use axum::Router;
-    use axum::extract::{Request, State};
-    use axum::response::IntoResponse;
-    use parking_lot::Mutex;
-    use serde_json::{Value, json};
+    use crate::tools::test_support::{Api, Policy, minimal_arguments};
+    use serde_json::json;
     use std::collections::BTreeSet;
-    use std::sync::Arc;
 
     const FROZEN_CATEGORIES: [&str; 19] = [
         "projects",
@@ -1494,108 +1489,20 @@ mod tests {
     /// Read tools that refuse locally and never reach the network on this deployment (ADR-0003).
     const READ_WITHOUT_REQUEST: [&str; 2] = ["legacy_pages.inventory", "legacy_pages.import_status"];
 
-    type Recorded = Arc<Mutex<Vec<(String, String)>>>;
-
-    async fn record(State(recorded): State<Recorded>, request: Request) -> impl IntoResponse {
-        let line = (request.method().to_string(), request.uri().path().to_string());
-        recorded.lock().push(line);
-        axum::Json(json!({ "code": 0, "data": { "document_id": UUID } }))
-    }
-
-    const UUID: &str = "11111111-1111-4111-8111-111111111111";
-
-    /// A minimal valid value for a schema node.
-    fn placeholder(schema: &Value, name: &str) -> Value {
-        if let Some(value) = schema.get("const") {
-            return value.clone();
-        }
-        if let Some(options) = schema.get("enum").and_then(Value::as_array)
-            && let Some(first) = options.first()
-        {
-            return first.clone();
-        }
-        if let Some(options) = schema
-            .get("oneOf")
-            .or_else(|| schema.get("anyOf"))
-            .and_then(Value::as_array)
-            && let Some(first) = options.first()
-        {
-            return placeholder(first, name);
-        }
-        match schema.get("type").and_then(Value::as_str) {
-            Some("integer" | "number") => schema.get("minimum").cloned().unwrap_or_else(|| json!(1)),
-            Some("boolean") => json!(false),
-            Some("array") => {
-                let item = schema
-                    .get("items")
-                    .map_or_else(|| json!("x"), |items| placeholder(items, name));
-                let count = schema.get("minItems").and_then(Value::as_u64).unwrap_or(1).max(1);
-                Value::Array((0..count).map(|_| item.clone()).collect())
-            }
-            Some("object") => {
-                let mut object = serde_json::Map::new();
-                let properties = schema.get("properties").and_then(Value::as_object);
-                for key in schema.get("required").and_then(Value::as_array).into_iter().flatten() {
-                    if let (Some(key), Some(properties)) = (key.as_str(), properties)
-                        && let Some(property) = properties.get(key)
-                    {
-                        object.insert(key.to_string(), placeholder(property, key));
-                    }
-                }
-                Value::Object(object)
-            }
-            _ => {
-                let description = schema.get("description").and_then(Value::as_str).unwrap_or_default();
-                if name == "id" || name.ends_with("_id") || description.contains("UUID") {
-                    json!(UUID)
-                } else {
-                    let length = schema.get("minLength").and_then(Value::as_u64).unwrap_or(1).max(1);
-                    json!("x".repeat(usize::try_from(length).unwrap_or(1)))
-                }
-            }
-        }
-    }
-
-    /// Per tool arguments for the tools whose schema alone does not describe a valid call.
-    fn overrides(name: &str) -> Option<Value> {
-        Some(match name {
-            "events.tail" => json!({ "form_id": UUID }),
-            "work_items.get_by_identifier" => json!({ "identifier": "PRX-1" }),
-            "objects.search" => json!({ "workspace_id": UUID, "q": "x", "unprojected": true }),
-            "objects.integrity" => json!({ "workspace_id": UUID }),
-            "files.upload" => json!({ "filename": "a.txt", "content_base64": "eA==" }),
-            "flow.feature_set" => json!({ "workspace_id": UUID, "idempotency_key": "k", "enabled": true }),
-            "objects.import_artifact" => {
-                json!({ "workspace_id": UUID, "idempotency_key": "k", "package_base64": "eA==" })
-            }
-            "collab.compact" => json!({
-                "object_id": UUID, "document_id": UUID, "confirm_document_id": UUID, "dry_run": false,
-                "expected_head_seq": 1, "idempotency_key": "k"
-            }),
-            "collab.repair_quarantine" => json!({
-                "workspace_id": UUID, "dry_run": false, "confirm_quarantine": true, "idempotency_key": "k"
-            }),
-            _ => return None,
-        })
-    }
-
-    fn minimal_arguments(tool: &crate::protocol::ToolDefinition) -> Value {
-        overrides(&tool.name).unwrap_or_else(|| placeholder(&tool.input_schema, ""))
-    }
-
     /// Calls every registry tool against an in-process API mock and returns the recorded
     /// requests per tool, in registry order.
     async fn requests_per_tool() -> Result<Vec<(String, Vec<(String, String)>)>, Box<dyn std::error::Error>> {
-        let recorded: Recorded = Arc::default();
-        let router = Router::new().fallback(record).with_state(Arc::clone(&recorded));
-        let server = McpServer::new(test_api::client(test_api::spawn(router).await?)?);
+        let api = Api::spawn(Policy::Permissive).await?;
+        let server = McpServer::new(api.client()?, platform::config::McpToolMode::Full);
         let mut rows = Vec::new();
         for tool in crate::tools::get_all_tool_definitions() {
-            recorded.lock().clear();
+            api.clear();
             let arguments = minimal_arguments(&tool);
             let _ = server.execute_tool_for_catalog_witness(&tool.name, arguments).await;
-            let seen = recorded.lock().clone();
-            rows.push((tool.name, seen));
+            rows.push((
+                tool.name,
+                api.seen().into_iter().map(|seen| (seen.method, seen.path)).collect(),
+            ));
         }
         Ok(rows)
     }
@@ -1664,7 +1571,10 @@ mod tests {
 
     #[tokio::test]
     async fn the_full_listing_carries_the_read_only_hint_of_the_catalogue() -> Result<(), Box<dyn std::error::Error>> {
-        let server = McpServer::new(test_api::client("http://127.0.0.1:1".to_string())?);
+        let server = McpServer::new(
+            crate::client::test_api::client("http://127.0.0.1:1".to_string())?,
+            platform::config::McpToolMode::Full,
+        );
         let request = crate::protocol::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(json!(1)),

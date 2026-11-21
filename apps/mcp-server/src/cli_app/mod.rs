@@ -1131,7 +1131,9 @@ async fn run_flow_only(cli: &Cli, command: &command::FlowOnlyCmd) -> Result<Valu
         .client()
         .map_err(CliError::usage)?
         .with_transport_label(crate::client::TRANSPORT_LABEL_CLI);
-    let result = crate::server::McpServer::new(client).call_tool(name, args).await;
+    let result = crate::server::McpServer::new(client, platform::config::McpToolMode::Full)
+        .call_tool(name, args)
+        .await;
     let text = result
         .content
         .iter()

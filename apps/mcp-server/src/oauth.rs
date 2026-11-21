@@ -29,7 +29,7 @@
 use crate::client::OpenPrClient;
 use crate::oauth_scopes::{self, ToolDecision};
 use crate::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
-use crate::server::McpServer;
+use crate::server::{McpServer, ToolSurface};
 use api::oauth::metadata::{PROTECTED_RESOURCE_WELL_KNOWN, protected_resource_well_known_path};
 use api::oauth::scopes::{Scope, ScopeSet, TokenResource};
 use axum::{
@@ -763,14 +763,18 @@ fn refusal_response(id: Option<Value>, refusal: ToolRefusal, settings: &OAuthSet
 /// credential is sent. A delegated caller is served by a server built for that one request, acting
 /// in the workspace of its token context with its token and the forwarding credential, narrowed by
 /// the scope table.
+///
+/// `surface` is the tool listing the connection asked for; it applies to a legacy caller only. A
+/// delegated caller is served the scoped registry whatever it says.
 pub async fn handle_rpc(
     client: &OpenPrClient,
     auth: &InboundAuth,
     caller: Caller,
+    surface: ToolSurface,
     request: JsonRpcRequest,
 ) -> Response {
     match caller {
-        Caller::Legacy(token) => respond(McpServer::new(client.acting_as(token)), request).await,
+        Caller::Legacy(token) => respond(McpServer::for_surface(client.acting_as(token), surface), request).await,
         Caller::Delegated(delegated) => {
             let Some(state) = auth.delegated.as_ref() else {
                 // A delegated caller can only have been made by a layer that had delegated access.

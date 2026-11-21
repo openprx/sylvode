@@ -216,7 +216,7 @@ function assertApiCode(payload, code, message) {
 
 function mcpCall(token, workspace, method, params) {
   const requestPayload = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) + '\n';
-  const result = spawnSync(mcpBin, ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', token, '--workspace-id', workspace, 'serve', '--transport', 'stdio'], {
+  const result = spawnSync(mcpBin, ['--config', mcpConfig, '--api-url', apiUrl, '--bot-token', token, '--workspace-id', workspace, 'serve', '--transport', 'stdio', '--tools', 'full'], {
     input: requestPayload,
     encoding: 'utf8',
     env: process.env,

@@ -655,7 +655,10 @@ async function verify() {
     return;
   }
 
-  const response = await fetchWithTimeout(mcpUrl, {
+  // projects.list is called by its registry name, which needs the whole registry listed.
+  const callUrl = new URL(mcpUrl);
+  callUrl.searchParams.set('tools', 'full');
+  const response = await fetchWithTimeout(callUrl.toString(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

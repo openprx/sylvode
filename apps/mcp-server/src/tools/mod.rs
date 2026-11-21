@@ -2,6 +2,9 @@ pub mod capabilities;
 pub mod catalog;
 pub mod comments;
 pub mod context;
+pub mod entry;
+#[cfg(test)]
+mod entry_server_tests;
 pub mod files;
 pub mod flow_features;
 pub mod flow_scope;
@@ -20,9 +23,12 @@ pub mod proposals;
 pub mod release;
 pub mod scenario_templates;
 pub mod scenario_tools;
+pub mod schema_check;
 pub mod search;
 pub mod sprints;
 pub mod tasks;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod work_items;
 
 use crate::protocol::ToolDefinition;

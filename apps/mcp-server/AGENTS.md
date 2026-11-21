@@ -5,6 +5,7 @@
 - Sylvode (formerly OpenPR) is an open-source project management platform with governance and AI integration.
 - The MCP server exposes 153 tools for managing projects, context, project types/templates, operation records, universal forms, WASM plugins, issues, sprints, labels, comments, proposals, check results, release next actions, files, scenario-specific governed work, and Sylvode Flow (v0.9).
 - Transports: HTTP (`POST /mcp/rpc`), stdio (stdin/stdout), SSE (`GET /sse` + `POST /messages`).
+- Tool mode: `search` by default (nine tools: `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the five task tools; registry names are refused when called directly), `full` is the opt-in (`[mcp] tool_mode`, `serve --tools`, `?tools=` / `X-Sylvode-Tool-Mode`). Tests and scripts that call registry tools by name must opt into `full`. `[mcp] allow_write_call = false` disables `sylvode_write`.
 
 ## MCP Surface (Quick Reference)
 
@@ -81,7 +82,12 @@ docker compose down && docker compose up -d --build
 curl -X POST http://localhost:8090/mcp/rpc \
   -H "Authorization: Bearer opr_your_own_account_token" \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'   # search mode: nine tools
+
+curl -X POST "http://localhost:8090/mcp/rpc?tools=full" \
+  -H "Authorization: Bearer opr_your_own_account_token" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'   # full mode: the registry
 
 curl -X POST http://localhost:8090/mcp/rpc \
   -H "Authorization: Bearer opr_your_own_account_token" \

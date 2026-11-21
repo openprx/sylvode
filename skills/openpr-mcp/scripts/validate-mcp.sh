@@ -76,7 +76,7 @@ esac
 echo "Testing MCP at $MCP_URL ..."
 
 # tools/list
-TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc" \
+TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
@@ -173,7 +173,7 @@ else
 fi
 
 if [ -n "$PROJECT_ID" ]; then
-  PROJECT_TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc" \
+  PROJECT_TOOLS_RESPONSE=$(curl -s -X POST "$MCP_URL/mcp/rpc?tools=full" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $MCP_BOT_TOKEN" \
     -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{\"project_id\":\"$PROJECT_ID\"}}")
@@ -204,7 +204,7 @@ print(",".join(sorted(required - names)))' 2>/dev/null)
 fi
 
 # projects.list
-RESULT=$(curl -s -X POST "$MCP_URL/mcp/rpc" \
+RESULT=$(curl -s -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}')

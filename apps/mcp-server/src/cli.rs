@@ -17,7 +17,9 @@ use std::path::PathBuf;
 use base64::Engine as _;
 use clap::builder::PossibleValuesParser;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
-use platform::config::{MCP_BOT_TOKEN_REQUIRED, McpConfig, McpRuntime, McpTransport, OpenPrConfig, Secret};
+use platform::config::{
+    MCP_BOT_TOKEN_REQUIRED, McpConfig, McpRuntime, McpToolMode, McpTransport, OpenPrConfig, Secret,
+};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -216,6 +218,25 @@ pub enum Transport {
     Stdio,
 }
 
+/// The tool listing of `serve --tools`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ToolsMode {
+    /// The entry tools and the task tools; everything else through `sylvode_search`, `sylvode_read`
+    /// and `sylvode_write`.
+    Search,
+    /// Every tool, callable by name.
+    Full,
+}
+
+impl From<ToolsMode> for McpToolMode {
+    fn from(mode: ToolsMode) -> Self {
+        match mode {
+            ToolsMode::Search => Self::Search,
+            ToolsMode::Full => Self::Full,
+        }
+    }
+}
+
 impl From<Transport> for McpTransport {
     fn from(transport: Transport) -> Self {
         match transport {
@@ -247,6 +268,9 @@ pub struct ServeArgs {
     /// Bind address for HTTP/SSE transports (overrides `mcp.bind_addr`) [default: 127.0.0.1:8090]
     #[arg(long)]
     pub bind_addr: Option<String>,
+    /// Tools to list (overrides `mcp.tool_mode`) [default: search]. Not valid with --flow-only.
+    #[arg(long, value_enum)]
+    pub tools: Option<ToolsMode>,
 }
 
 // ---- Projects ----
@@ -729,6 +753,9 @@ fn apply_cli_overrides(mcp: &mut McpConfig, global: &GlobalArgs, serve: Option<&
         if let Some(bind_addr) = serve.bind_addr.as_deref() {
             mcp.bind_addr = Some(checked_bind_addr(bind_addr)?);
         }
+        if let Some(tools) = serve.tools {
+            mcp.tool_mode = tools.into();
+        }
     }
     Ok(())
 }
@@ -815,7 +842,7 @@ async fn run_cli_command(
     format: &OutputFormat,
     client: OpenPrClient,
 ) -> anyhow::Result<()> {
-    let server = McpServer::new(client);
+    let server = McpServer::new(client, platform::config::McpToolMode::Full);
 
     // Files upload requires async disk I/O before calling execute_tool, handle it separately
     if let BusinessCommands::Files(files_cmd) = command {
@@ -1004,7 +1031,7 @@ mod tests {
         checked_workspace_id, parse_tool_args_json, tool_invocation,
     };
     use clap::{CommandFactory, Parser};
-    use platform::config::DEFAULT_MCP_API_URL;
+    use platform::config::{DEFAULT_MCP_API_URL, McpConfig, McpToolMode};
     use serde_json::json;
 
     /// `--priority` accepts exactly what the `work_items.*` tools accept, in both executables:
@@ -1272,6 +1299,42 @@ mod tests {
         assert!(parse_tool_args_json(r#"{"project_id":"project-1"}"#).is_ok());
         assert!(parse_tool_args_json("[]").is_err());
         assert!(parse_tool_args_json("{not-json}").is_err());
+    }
+
+    /// `--tools` is optional so that `[mcp] tool_mode` decides when it is absent, and a flag wins
+    /// over the file in both directions.
+    #[test]
+    fn the_tools_flag_defers_to_the_file_when_absent_and_overrides_it_when_given() {
+        let serve = |extra: &[&str]| {
+            let mut args = vec!["mcp-server", "serve"];
+            args.extend(extra);
+            match Cli::try_parse_from(args).expect("serve should parse").command {
+                Commands::Serve(args) => args,
+                Commands::Business(_) => panic!("expected serve command"),
+            }
+        };
+        assert_eq!(serve(&[]).tools, None);
+        assert_eq!(serve(&["--tools", "full"]).tools, Some(super::ToolsMode::Full));
+        assert_eq!(serve(&["--tools", "search"]).tools, Some(super::ToolsMode::Search));
+        assert!(Cli::try_parse_from(["mcp-server", "serve", "--tools", "everything"]).is_err());
+
+        let global = Cli::try_parse_from(["mcp-server", "serve"])
+            .expect("bare serve parses")
+            .global;
+        for (configured, flag, expected) in [
+            (McpToolMode::Search, None, McpToolMode::Search),
+            (McpToolMode::Full, None, McpToolMode::Full),
+            (McpToolMode::Search, Some("full"), McpToolMode::Full),
+            (McpToolMode::Full, Some("search"), McpToolMode::Search),
+        ] {
+            let mut mcp = McpConfig {
+                tool_mode: configured,
+                ..McpConfig::default()
+            };
+            let args = flag.map_or_else(|| serve(&[]), |flag| serve(&["--tools", flag]));
+            super::apply_cli_overrides(&mut mcp, &global, Some(&args)).expect("overrides apply");
+            assert_eq!(mcp.tool_mode, expected, "{configured:?} with {flag:?}");
+        }
     }
 
     /// An unspecified `--bind-addr` must stay `None` so `[mcp] bind_addr` still decides.

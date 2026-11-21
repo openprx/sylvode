@@ -89,7 +89,7 @@ def mcp_get(args: argparse.Namespace, transport: str, object_id: str, label: str
     else:
         log = (pathlib.Path(args.work_dir) / f"mcp-{transport}-{label}.log").open("w", encoding="utf-8")
         server = subprocess.Popen(
-            [args.mcp_binary, "--config", str(config), "serve", "--transport", transport],
+            [args.mcp_binary, "--config", str(config), "serve", "--transport", transport, "--tools", "full"],
             stdout=log,
             stderr=subprocess.STDOUT,
             text=True,

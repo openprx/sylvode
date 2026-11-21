@@ -10,7 +10,25 @@ name.
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP search mode is the default tool listing.** `tools/list` offers nine tools:
+  `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the five task tools.
+  Registry tools are found with `sylvode_search` and called through `sylvode_read` or
+  `sylvode_write`; calling a registry name directly is refused unless the connection chose full
+  mode (`[mcp] tool_mode = "full"`, `serve --tools full`, `?tools=full` or the
+  `X-Sylvode-Tool-Mode: full` header). `[mcp] allow_write_call = false` disables `sylvode_write`.
+  Connected (OAuth) applications are not affected: they keep the scoped read tools.
+- The project-resource MCP tools (`project_resources.*`, `code.resources.list`,
+  `code.directory.get`) and the `sylvode://projects/{project_id}/resources` resource template are
+  parked: they are no longer registered, listed or callable.
+
 ### Added
+
+- **MCP tool catalogue and task tools.** One catalogue entry per tool (category, read or write,
+  summary, keywords), `annotations.readOnlyHint` in the full listing, `list-tools --json`, and the
+  tools `sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress`, `sylvode_task_complete` and
+  `sylvode_task_fail` for the task protocol of a bot.
 
 - **Sylvode as an OAuth 2.1 authorization server for its own API and MCP server (P4).** A person
   can connect Ramflux, the one pre-registered public client, to one workspace: Ramflux holds its own

@@ -2,8 +2,9 @@ use crate::client::{ListRecordsQuery, ListWorkItemsQuery, OpenPrClient};
 use crate::oauth::{DelegatedGrant, ToolRefusal, gate_tool_call, is_static_guide_resource};
 use crate::protocol::{CallToolParams, CallToolResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, ListToolsResult};
 use crate::tools;
+use platform::config::McpToolMode;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -586,6 +587,65 @@ struct ResolvedOwner {
 /// Upper bound for the resource to project mapping cache.
 const PROJECT_ID_CACHE_LIMIT: usize = 1_024;
 
+/// The header a connection can name its tool mode with, next to the `?tools=` query parameter.
+pub const TOOL_MODE_HEADER: &str = "x-sylvode-tool-mode";
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct ToolModeQuery {
+    pub tools: Option<String>,
+}
+
+/// The tool mode one connection asked for, or the server's own when it asked for none.
+///
+/// A connection asks with `?tools=` or `X-Sylvode-Tool-Mode`. A value other than `search` or `full`,
+/// and two values that disagree, are refused rather than guessed at.
+pub fn requested_tool_mode(
+    query: Option<&str>,
+    headers: &axum::http::HeaderMap,
+    default: McpToolMode,
+) -> Result<McpToolMode, String> {
+    let from_header = headers
+        .get(TOOL_MODE_HEADER)
+        .map(|value| {
+            value
+                .to_str()
+                .map_err(|_| "X-Sylvode-Tool-Mode is not text".to_string())
+        })
+        .transpose()?;
+    let parse =
+        |source: &str, raw: &str| McpToolMode::parse(raw).ok_or_else(|| format!("{source} must be search or full"));
+    let query = query.map(|raw| parse("the tools query parameter", raw)).transpose()?;
+    let header = from_header.map(|raw| parse("X-Sylvode-Tool-Mode", raw)).transpose()?;
+    match (query, header) {
+        (Some(query), Some(header)) if query != header => {
+            Err("the tools query parameter and X-Sylvode-Tool-Mode disagree".to_string())
+        }
+        (Some(mode), _) | (None, Some(mode)) => Ok(mode),
+        (None, None) => Ok(default),
+    }
+}
+
+/// What a transport decided about the tool listing of the servers it builds: the mode and whether
+/// `sylvode_write` may be used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolSurface {
+    pub mode: McpToolMode,
+    pub allow_write_call: bool,
+}
+
+impl ToolSurface {
+    /// The surface of `[mcp]`: its `tool_mode` and `allow_write_call`.
+    pub const fn new(mode: McpToolMode, allow_write_call: bool) -> Self {
+        Self { mode, allow_write_call }
+    }
+
+    /// The same switches with another mode (a connection that asked for one).
+    #[must_use]
+    pub const fn with_mode(self, mode: McpToolMode) -> Self {
+        Self { mode, ..self }
+    }
+}
+
 pub struct McpServer {
     client: OpenPrClient,
     /// Maps `form:<id>` / `record:<id>` / `work_item:<id>` / ... to the owning project.
@@ -610,15 +670,37 @@ pub struct McpServer {
     /// `resources/*` serves only the static guides. It is fixed when the server is built for one
     /// request and cannot be changed by anything the caller sends.
     delegated: Option<DelegatedGrant>,
+    /// Which tools this server lists and accepts by name. Meaningful for a plain (non-delegated,
+    /// non-Flow-only) server only: a delegated server always serves the scoped registry and a
+    /// Flow-only server its own definitions.
+    tool_mode: McpToolMode,
+    /// Whether `sylvode_write` may be used. `false` makes it answer that writes are disabled.
+    write_call_allowed: bool,
 }
 
 impl McpServer {
-    pub fn new(client: OpenPrClient) -> Self {
+    /// A server for one plain caller. The mode is a required argument so that no construction
+    /// site can end up with a listing nobody chose.
+    pub fn new(client: OpenPrClient, tool_mode: McpToolMode) -> Self {
         Self {
             client,
             project_id_cache: Arc::new(Mutex::new(HashMap::new())),
             delegated: None,
+            tool_mode,
+            write_call_allowed: true,
         }
+    }
+
+    /// A server for one plain caller on a transport that decided its [`ToolSurface`].
+    pub fn for_surface(client: OpenPrClient, surface: ToolSurface) -> Self {
+        Self::new(client, surface.mode).with_write_call_allowed(surface.allow_write_call)
+    }
+
+    /// Sets whether `sylvode_write` may be used (`[mcp] allow_write_call`).
+    #[must_use]
+    pub const fn with_write_call_allowed(mut self, allowed: bool) -> Self {
+        self.write_call_allowed = allowed;
+        self
     }
 
     /// A server for one delegated caller. `client` must already act for that caller
@@ -628,6 +710,9 @@ impl McpServer {
             client,
             project_id_cache: Arc::new(Mutex::new(HashMap::new())),
             delegated: Some(grant),
+            // Ignored: a delegated server lists the scoped registry whatever a transport asked.
+            tool_mode: McpToolMode::Full,
+            write_call_allowed: true,
         }
     }
 
@@ -694,8 +779,11 @@ impl McpServer {
     }
 
     async fn handle_list_tools(&self, id: Option<Value>, params: Option<Value>) -> JsonRpcResponse {
+        let search_listing = self.applicable_mode() == Some(McpToolMode::Search);
         let mut static_tools = tools::catalog::annotate(if self.client.is_flow_only() {
             tools::flow_scope::definitions()
+        } else if search_listing {
+            tools::entry::search_mode_listing()
         } else {
             tools::get_all_tool_definitions()
         });
@@ -710,7 +798,13 @@ impl McpServer {
             Some(project_id) => match self.client.get_project_agent_policy(&project_id).await {
                 Ok(policy) => match tools::capabilities::extract_enabled_tool_names(&policy) {
                     Some(enabled_tool_names) => {
-                        let missing = tools::capabilities::unknown_tool_names(&static_tools, &enabled_tool_names);
+                        // The policy names registry tools, which the search listing does not contain.
+                        let known = if search_listing {
+                            tools::get_all_tool_definitions()
+                        } else {
+                            static_tools.clone()
+                        };
+                        let missing = tools::capabilities::unknown_tool_names(&known, &enabled_tool_names);
                         if !missing.is_empty() {
                             tracing::warn!(
                                 project_id = %project_id,
@@ -718,7 +812,15 @@ impl McpServer {
                                 "Project agent policy references tools not registered by this MCP server"
                             );
                         }
-                        tools::capabilities::filter_tool_definitions(static_tools, &enabled_tool_names)
+                        if search_listing {
+                            // Entry tools are not policy subjects; the task tools are always enabled.
+                            static_tools.retain(|tool| {
+                                tools::entry::is_entry_tool(&tool.name) || enabled_tool_names.contains(&tool.name)
+                            });
+                            static_tools
+                        } else {
+                            tools::capabilities::filter_tool_definitions(static_tools, &enabled_tool_names)
+                        }
                     }
                     None => static_tools,
                 },
@@ -771,7 +873,95 @@ impl McpServer {
         }
     }
 
+    /// The mode that decides which names this server accepts, or `None` when mode does not apply
+    /// (a delegated server, which has its scope table, and a Flow-only server).
+    fn applicable_mode(&self) -> Option<McpToolMode> {
+        (self.delegated.is_none() && !self.client.is_flow_only()).then_some(self.tool_mode)
+    }
+
+    /// Runs one `tools/call`: the delegated gate, then the mode (a name `tools/list` does not offer
+    /// is refused), then the entry tools or, for a registry tool, the policy chain.
     pub async fn call_tool(&self, name: &str, args: Value) -> CallToolResult {
+        if let Some(grant) = &self.delegated
+            && let Err(refusal) = gate_tool_call(grant, name, Some(&args))
+        {
+            return CallToolResult::error(refusal.message());
+        }
+        let mode = self.applicable_mode();
+        if let Some(mode) = mode
+            && let Some(refusal) = tools::entry::unlisted_refusal(mode, name)
+        {
+            return CallToolResult::error(refusal);
+        }
+        if mode == Some(McpToolMode::Search) && tools::entry::is_entry_tool(name) {
+            return self.call_entry_tool(name, args).await;
+        }
+        self.call_registry_tool(name, args).await
+    }
+
+    /// The four search mode entry tools. They are handled before the scoped client and the policy
+    /// chain exist: `sylvode_overview` and `sylvode_search` read the catalogue (and, for a named
+    /// project, its agent policy), and the wrappers hand their target to
+    /// [`Self::call_registry_tool`], which applies every check of a direct call under the
+    /// target's own name, so the operation log shows `work_items.update`, not `sylvode_write`.
+    async fn call_entry_tool(&self, name: &str, args: Value) -> CallToolResult {
+        match name {
+            tools::entry::OVERVIEW | tools::entry::SEARCH => self.call_catalogue_tool(name, &args).await,
+            _ => {
+                if name == tools::entry::WRITE && !self.write_call_allowed {
+                    return CallToolResult::error(tools::entry::writes_disabled_message());
+                }
+                match tools::entry::resolve_wrapper_call(name, &args) {
+                    Ok((tool, arguments)) => self.call_registry_tool(&tool, arguments).await,
+                    Err(error) => CallToolResult::error(error),
+                }
+            }
+        }
+    }
+
+    async fn call_catalogue_tool(&self, name: &str, args: &Value) -> CallToolResult {
+        let project = match tools::entry::project_argument(args) {
+            Ok(project) => project,
+            Err(error) => return CallToolResult::error(error),
+        };
+        let enabled = match &project {
+            Some(project_id) => match self.enabled_tools_of(name, project_id).await {
+                Ok(enabled) => enabled,
+                Err(error) => return CallToolResult::error(error),
+            },
+            None => None,
+        };
+        let answer = if name == tools::entry::OVERVIEW {
+            Ok(tools::entry::overview(project.as_deref(), enabled.as_ref()))
+        } else {
+            tools::entry::search(args, enabled.as_ref())
+        };
+        match answer {
+            Ok(value) => CallToolResult::success(value.to_string()),
+            Err(error) => CallToolResult::error(error),
+        }
+    }
+
+    /// The tools a project's agent policy offers, or `None` when the policy names none and so
+    /// restricts nothing. One API call, as `tools/list` with a project makes.
+    async fn enabled_tools_of(&self, operation: &str, project_id: &str) -> Result<Option<BTreeSet<String>>, String> {
+        let policy = self
+            .client
+            .recording_operation(operation)
+            .get_project_agent_policy(project_id)
+            .await
+            .map_err(|error| format!("Failed to load project agent policy for {operation}: {error}"))?;
+        if !policy.get("data").is_some_and(Value::is_object) {
+            return Err(format!(
+                "Refusing {operation}: the agent-policy response for project {project_id} carries no policy object"
+            ));
+        }
+        Ok(tools::capabilities::extract_enabled_tool_names(&policy))
+    }
+
+    /// A registry tool through the delegated gate, the scoped client and the policy chain: the
+    /// one door every direct call and every wrapper call goes through.
+    async fn call_registry_tool(&self, name: &str, args: Value) -> CallToolResult {
         if let Some(grant) = &self.delegated
             && let Err(refusal) = gate_tool_call(grant, name, Some(&args))
         {
@@ -785,6 +975,8 @@ impl McpServer {
                 Arc::clone(&self.project_id_cache)
             },
             delegated: self.delegated.clone(),
+            tool_mode: self.tool_mode,
+            write_call_allowed: self.write_call_allowed,
         };
         if scoped.client.is_flow_only() {
             let request = match tools::flow_scope::prepare(&scoped.client, name, &args).await {
@@ -1599,6 +1791,19 @@ impl McpServer {
             && let Some(fields) = result.as_object_mut()
         {
             fields.insert("capabilities".into(), json!({"tools":{"listChanged":false}}));
+        }
+        // The task protocol and the instructions are for a plain caller only: a delegated server
+        // has no task tools and a Flow-only server none of this surface.
+        if let Some(mode) = self.applicable_mode()
+            && let Some(fields) = result.as_object_mut()
+        {
+            if let Some(capabilities) = fields.get_mut("capabilities").and_then(Value::as_object_mut) {
+                capabilities.insert(
+                    "experimental".to_string(),
+                    json!({ "sylvode/task-protocol": { "version": tools::entry::TASK_PROTOCOL_VERSION } }),
+                );
+            }
+            fields.insert("instructions".to_string(), json!(tools::entry::instructions(mode)));
         }
         JsonRpcResponse::success(id, result)
     }
@@ -2863,6 +3068,7 @@ mod tests {
         Json, Router,
         routing::{delete, get, post},
     };
+    use platform::config::McpToolMode;
     use serde_json::{Value, json};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2898,7 +3104,10 @@ mod tests {
     }
 
     fn server(base_url: String) -> Result<super::McpServer, String> {
-        Ok(super::McpServer::new(crate::client::test_api::client(base_url)?))
+        Ok(super::McpServer::new(
+            crate::client::test_api::client(base_url)?,
+            McpToolMode::Full,
+        ))
     }
 
     fn request(id: i64, method: &str, params: Option<Value>) -> JsonRpcRequest {
@@ -3152,6 +3361,49 @@ mod tests {
         );
         assert!(extract_tools_list_project_id(Some(&json!({ "project_id": "p1" }))).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn a_connection_chooses_its_tool_mode_by_query_or_header_and_a_conflict_is_refused() {
+        use axum::http::{HeaderMap, HeaderValue};
+        let headers = |value: Option<&str>| {
+            let mut map = HeaderMap::new();
+            if let Some(value) = value {
+                map.insert(
+                    super::TOOL_MODE_HEADER,
+                    HeaderValue::from_str(value).expect("header value"),
+                );
+            }
+            map
+        };
+        let choose = |query: Option<&str>, header: Option<&str>, default| {
+            super::requested_tool_mode(query, &headers(header), default)
+        };
+        for default in [McpToolMode::Search, McpToolMode::Full] {
+            assert_eq!(
+                choose(None, None, default),
+                Ok(default),
+                "no choice keeps the server's own"
+            );
+            assert_eq!(choose(Some("full"), None, default), Ok(McpToolMode::Full));
+            assert_eq!(choose(Some("search"), None, default), Ok(McpToolMode::Search));
+            assert_eq!(choose(None, Some("full"), default), Ok(McpToolMode::Full));
+            assert_eq!(choose(None, Some(" Search "), default), Ok(McpToolMode::Search));
+            assert_eq!(choose(Some("full"), Some("FULL"), default), Ok(McpToolMode::Full));
+            for (query, header) in [(Some("full"), Some("search")), (Some("search"), Some("full"))] {
+                assert!(choose(query, header, default).is_err_and(|error| error.contains("disagree")));
+            }
+            for bad in ["", "all", "fulll", "search,full"] {
+                assert!(choose(Some(bad), None, default).is_err(), "{bad:?}");
+                assert!(choose(None, Some(bad), default).is_err(), "{bad:?}");
+            }
+        }
+        let mut binary = HeaderMap::new();
+        binary.insert(
+            super::TOOL_MODE_HEADER,
+            HeaderValue::from_bytes(&[0xff, 0xfe]).expect("opaque bytes"),
+        );
+        assert!(super::requested_tool_mode(None, &binary, McpToolMode::Search).is_err());
     }
 
     #[test]

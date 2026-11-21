@@ -512,7 +512,10 @@ mod tests {
 
     async fn mock(answer: Answer) -> Result<(McpServer, Arc<Mutex<Vec<Seen>>>), Box<dyn std::error::Error>> {
         let (url, seen) = spawn_mock(answer).await?;
-        Ok((McpServer::new(test_api::client(url)?), seen))
+        Ok((
+            McpServer::new(test_api::client(url)?, platform::config::McpToolMode::Full),
+            seen,
+        ))
     }
 
     fn text(result: &CallToolResult) -> String {

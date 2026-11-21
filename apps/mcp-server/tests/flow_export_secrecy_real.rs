@@ -8,6 +8,7 @@
     reason = "the harness prints an explicit notice when no test database is configured"
 )]
 
+use platform::config::McpToolMode;
 use std::{error::Error, time::Duration};
 
 use api::{
@@ -279,12 +280,15 @@ async fn mcp_object_export_of_a_secret_record_is_redacted_and_its_package_refuse
     let server_task = tokio::spawn(async move {
         let _ = axum::serve(listener, export_router(state)).await;
     });
-    let server = McpServer::new(OpenPrClient::new(ClientConfig {
-        base_url: format!("http://{address}"),
-        credential: Some(Secret::new(BOT_TOKEN)),
-        workspace_id: workspace_id.to_string(),
-        transport_label: TRANSPORT_LABEL_STDIO,
-    })?);
+    let server = McpServer::new(
+        OpenPrClient::new(ClientConfig {
+            base_url: format!("http://{address}"),
+            credential: Some(Secret::new(BOT_TOKEN)),
+            workspace_id: workspace_id.to_string(),
+            transport_label: TRANSPORT_LABEL_STDIO,
+        })?,
+        McpToolMode::Full,
+    );
 
     let exported = server
         .call_tool(

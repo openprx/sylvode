@@ -200,7 +200,7 @@ transport = "stdio"
                    "arguments": {"workspace_id": workspace, "limit": 2}},
     }) + "\n"
     mcp = subprocess.run(
-        [mcp_bin, "serve", "--config", str(config), "--transport", "stdio"],
+        [mcp_bin, "serve", "--config", str(config), "--transport", "stdio", "--tools", "full"],
         cwd=temp, input=request, text=True, capture_output=True, timeout=30, check=False,
     )
 server.shutdown()
