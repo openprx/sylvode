@@ -337,6 +337,7 @@ async fn accept_inner(
                 should_advance_snapshot: false,
             };
             let request = write::UpdateRequest {
+                rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                 document_id: document,
                 update_id: update,
                 bytes: bytes.clone(),

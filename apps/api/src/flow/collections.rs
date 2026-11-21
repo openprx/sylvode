@@ -1249,6 +1249,7 @@ async fn execute_document_update(
         };
         let tx = state.db.begin().await?;
         let request = write::UpdateRequest {
+            rebase_policy: crate::flow::collab::write::RebasePolicy::None,
             document_id,
             update_id,
             bytes: bytes.clone(),
@@ -2981,6 +2982,7 @@ async fn create_collection_embed(
         write::set_locked_phase_statement_budgets(&tx, 1).await?;
         authz::fence_epoch_for_share(&tx, workspace_id, checked_epoch).await?;
         let request = write::UpdateRequest {
+            rebase_policy: crate::flow::collab::write::RebasePolicy::None,
             document_id: page.document_id,
             update_id,
             bytes: bytes.clone(),

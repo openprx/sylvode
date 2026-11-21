@@ -273,11 +273,12 @@ async fn replay_snapshot(
     if let Ok(Some(result)) = TEST_VERIFIED_REPLAY.try_with(|map| map.get(&object).cloned()) {
         return Ok(result);
     }
-    let result = tokio::task::spawn_blocking(move || collab_core::isolation::isolated_diff(&snapshot, &request))
-        .await
-        .map_err(|_| ApiError::internal())?;
+    let (result, observation) =
+        tokio::task::spawn_blocking(move || collab_core::isolation::isolated_diff_observed(&snapshot, &request))
+            .await
+            .map_err(|_| ApiError::internal())?;
     result.map_err(|e| {
-        super::query::isolated_diff_error(e, object, || {
+        super::query::isolated_diff_error(e, &observation, object, || {
             ApiError::checksum_mismatch("package snapshot cannot be reconstructed")
         })
     })

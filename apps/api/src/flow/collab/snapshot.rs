@@ -742,6 +742,7 @@ mod database_tests {
                 10,
                 None,
                 UpdateRequest {
+                    rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                     origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                         crate::flow::event_origin::EventSurface::Rest,
                     ),
@@ -1036,6 +1037,7 @@ mod database_tests {
                 10,
                 None,
                 UpdateRequest {
+                    rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                     origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                         crate::flow::event_origin::EventSurface::Rest,
                     ),

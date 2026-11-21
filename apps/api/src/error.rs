@@ -268,6 +268,12 @@ pub enum ServerDrainingReason {
     /// or a snapshot hard-trigger). Retryable almost immediately against the same server; never a
     /// sign of maintenance.
     Contention,
+    /// The isolated write window could not decide this update for a load reason (the host gave the
+    /// worker too little CPU, a concurrent edit made the update not sequential, or the host is short
+    /// of resources), not because the document is over a limit. Retryable: `details.retry_mode` says
+    /// whether to resend the same update or to rebase the edit onto the head and send a new one.
+    /// Produced by `flow::collab::write::refusal`; never means the content itself is refused.
+    ApplyBusy,
 }
 
 impl ServerDrainingReason {
@@ -280,6 +286,7 @@ impl ServerDrainingReason {
         match self {
             Self::Drain => "drain",
             Self::Contention => "contention",
+            Self::ApplyBusy => "apply_busy",
         }
     }
 }
@@ -414,7 +421,7 @@ impl ApiErrorKind {
             Self::AuthorizationChurn => "authorization churn",
             Self::ServerRejected => "server rejected",
             Self::ServerDraining(ServerDrainingReason::Drain) => "server draining",
-            Self::ServerDraining(ServerDrainingReason::Contention) => "server busy",
+            Self::ServerDraining(ServerDrainingReason::Contention | ServerDrainingReason::ApplyBusy) => "server busy",
             Self::ChecksumMismatch => "checksum mismatch",
             Self::UnsupportedFormat => "unsupported format",
         }
@@ -485,7 +492,7 @@ impl ApiErrorKind {
             // is that killing a healthy connection turns one local failure into a full reconnect.
             // Its close is the repeated-failure one below, never a single-rejection close.
             | Self::ServerRejected
-            | Self::ServerDraining(ServerDrainingReason::Contention)
+            | Self::ServerDraining(ServerDrainingReason::Contention | ServerDrainingReason::ApplyBusy)
             | Self::ChecksumMismatch
             | Self::UnsupportedFormat => None,
         }
@@ -576,6 +583,7 @@ impl ApiErrorKind {
             Self::ServerRejected => "flow.error.server_rejected",
             Self::ServerDraining(ServerDrainingReason::Drain) => "flow.error.server_draining.drain",
             Self::ServerDraining(ServerDrainingReason::Contention) => "flow.error.server_draining.contention",
+            Self::ServerDraining(ServerDrainingReason::ApplyBusy) => "flow.error.server_draining.apply_busy",
             Self::ChecksumMismatch => "flow.error.checksum_mismatch",
             Self::UnsupportedFormat => "flow.error.unsupported_format",
         }
@@ -997,6 +1005,18 @@ impl ApiError {
         )
     }
 
+    /// `server_draining` with the reason `apply_busy`: the write was refused for a load reason and
+    /// nothing was applied. `details` carries `retry_after_ms` (a lower bound on the next attempt),
+    /// `retry_mode` (`"resend"` or `"rebase"`; REST callers always get `"resend"`) and `cause` (a
+    /// diagnostic: `cpu_starved`, `needs_sequential`, `setup_starved`, `worker_resources`).
+    pub fn server_busy(cause: &str, retry_mode: &str, retry_after_ms: u64) -> Self {
+        Self::typed_with_details(
+            ApiErrorKind::ServerDraining(ServerDrainingReason::ApplyBusy),
+            "server_draining",
+            json!({ "retry_after_ms": retry_after_ms, "retry_mode": retry_mode, "cause": cause }),
+        )
+    }
+
     /// The best-effort [`ApiErrorKind`] for any [`ApiError`], including the legacy string-typed
     /// variants that predate this contract. [`Self::Typed`] returns its own exact discriminant;
     /// `Unauthorized`/`Forbidden`/`NotFound` return the one [`ApiErrorKind`] their HTTP status
@@ -1105,6 +1125,45 @@ impl IntoResponse for ApiError {
                 Self::legacy_response(500, "database error", "database error")
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::panic)]
+mod apply_busy_tests {
+    use super::{ApiError, ApiErrorKind, ServerDrainingReason};
+
+    /// The `apply_busy` reason is a retryable `server_draining`: it shares the HTTP envelope code 409,
+    /// the CLI exit code 9 and the kept-open WebSocket with `contention`, and has its own wire value
+    /// and UI key.
+    #[test]
+    fn apply_busy_is_a_retryable_server_draining_on_every_channel() {
+        let kind = ApiErrorKind::ServerDraining(ServerDrainingReason::ApplyBusy);
+        assert_eq!(ServerDrainingReason::ApplyBusy.wire_value(), "apply_busy");
+        assert_eq!(kind.stable_code(), "server_draining");
+        assert_eq!(kind.http_status_code(), 409);
+        assert_eq!(kind.cli_exit_code(), 9);
+        assert!(kind.recoverable());
+        assert_eq!(kind.ws_close_code(), None, "the connection is kept");
+        assert_eq!(kind.error_summary(), "server busy");
+        assert_eq!(kind.ui_key(), "flow.error.server_draining.apply_busy");
+        assert_ne!(kind, ApiErrorKind::ServerDraining(ServerDrainingReason::Contention));
+    }
+
+    #[test]
+    fn server_busy_carries_retry_after_retry_mode_and_cause() {
+        let error = ApiError::server_busy("cpu_starved", "resend", 250);
+        assert_eq!(
+            error.kind(),
+            ApiErrorKind::ServerDraining(ServerDrainingReason::ApplyBusy)
+        );
+        let ApiError::Typed { details, .. } = error else {
+            panic!("a typed error");
+        };
+        assert_eq!(
+            details,
+            Some(serde_json::json!({"retry_after_ms": 250, "retry_mode": "resend", "cause": "cpu_starved"}))
+        );
     }
 }
 

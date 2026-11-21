@@ -83,11 +83,15 @@ use super::cache::{HeadKey, WarmCache};
 use super::coordinator::DocumentCoordinator;
 use super::frame::{
     Frame, PROTOCOL_VERSION, RejectedCode, SERVER_REJECTED_REASON_DATABASE,
-    SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM, WriteState, encode_bytes,
+    SERVER_REJECTED_REASON_ISOLATED_APPLY_FAILED, SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM,
+    SERVER_REJECTED_REASON_WINDOW_DIVERGENCE, WriteState, encode_bytes,
 };
 use super::limits::{DOCUMENT_LOCK_HOLD_MS_MAX, MAX_REBASE_ATTEMPTS};
 use super::registry::SessionRegistry;
 use super::snapshot::{self, SnapshotAdvancer, Trigger};
+
+pub(crate) mod refusal;
+pub use refusal::RebasePolicy;
 
 /// Wall-clock budget for the *staged* portion of the locked phase (everything between `begin` and
 /// `COMMIT`). Four times `document_lock_hold_ms_max` because that constant is a single-statement
@@ -230,6 +234,12 @@ pub struct UpdateRequest {
     /// *different* origin from a first-request one: same surface and correlation, but a
     /// `causation_id` naming the `flow.object.moved` event that caused it.
     pub origin: CommandOrigin,
+    /// Whether the surface that submitted this update can follow a `retry_mode = rebase` answer:
+    /// the WebSocket `update` frame (the client re-encodes its unsent edits) and the REST content
+    /// command (the server rebuilds the update from the head). Every other caller sets
+    /// [`RebasePolicy::None`] and gets the content answer where a sequential update would have been
+    /// needed. See [`refusal::classify`].
+    pub rebase_policy: RebasePolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -342,6 +352,33 @@ fn server_rejected(update_id: Option<Uuid>, reason: &'static str, write_state: W
         recoverable: ApiErrorKind::ServerRejected.recoverable(),
         write_state,
         details: Some(serde_json::json!({"reason": reason})),
+        current_seq: None,
+        current_frontier: None,
+    })
+}
+
+/// `server_draining{apply_busy}`: the isolated write window could not decide this update for a load
+/// reason, nothing was applied (every busy answer is produced before any transaction opens, so
+/// `write_state` is always `not_applied`). `retry_mode` tells the caller whether to send the same
+/// update again or to rebase its edit onto the head and send a new one; `retry_after_ms` is a lower
+/// bound on the next attempt; `cause` is a diagnostic.
+fn apply_busy(
+    update_id: Uuid,
+    cause: refusal::BusyCause,
+    mode: refusal::RetryMode,
+    retry_after_ms: u64,
+) -> AcceptOutcome {
+    AcceptOutcome::Rejected(Rejected {
+        update_id: Some(update_id),
+        code: RejectedCode::ServerDraining,
+        recoverable: true,
+        write_state: WriteState::NotApplied,
+        details: Some(serde_json::json!({
+            "reason": "apply_busy",
+            "retry_after_ms": retry_after_ms,
+            "retry_mode": mode.wire_value(),
+            "cause": cause.wire_value(),
+        })),
         current_seq: None,
         current_frontier: None,
     })
@@ -795,7 +832,7 @@ fn disagreements() -> &'static parking_lot::Mutex<DisagreementTracker> {
 /// What one attempt of the isolated window produced.
 enum WindowAttempt {
     /// The worker refused, or did not finish: the rejection is `isolated_apply_rejection`'s.
-    Rejected(collab_core::isolation::IsolatedApplyError),
+    Rejected(RefusedAttempt),
     /// The worker accepted with a result the host's projection contradicts. `from_report` is true
     /// when the worker's incremental check decided (it reported), false when the full computation
     /// did; only the first counts toward the document's cooldown.
@@ -805,6 +842,19 @@ enum WindowAttempt {
     },
     /// The worker accepted, and the host's projection agrees with whatever it reported.
     Prepared(Box<WindowPrepared>),
+}
+
+/// One refused attempt of the isolated window with what the host knows about it, which is what the
+/// answer is classified from (`refusal::classify`).
+struct RefusedAttempt {
+    error: collab_core::isolation::IsolatedApplyError,
+    /// What the host observed of the worker: its CPU, and its decision record.
+    observation: collab_core::isolation::WorkerObservation,
+    /// The mode the host asked the worker for in this attempt.
+    mode: collab_core::isolation::WindowMode,
+    /// Whether the document was on the full window because its incremental checks kept
+    /// disagreeing (per-document cooling). Set by `decide_window_with`; for the log only.
+    cooling: bool,
 }
 
 /// An accepted window with everything the host derived from it.
@@ -817,6 +867,13 @@ struct WindowPrepared {
     incremental: bool,
 }
 
+/// The error of a defect of the isolated apply path that is not a refusal of the worker: its result
+/// does not load or does not project. Permanent for this update (`server_rejected`), never the
+/// retryable `contention` that an unclassified internal error is reported as on the WebSocket.
+fn isolated_apply_defect() -> ApiError {
+    ApiError::server_rejected(SERVER_REJECTED_REASON_ISOLATED_APPLY_FAILED)
+}
+
 /// One attempt: the isolated window in `mode`, then the host's load and projection of the document
 /// it returned, compared with the worker's report. Blocking and CPU heavy (process spawn, pipe I/O,
 /// load, a full projection): run it on a blocking thread, never on an async worker.
@@ -827,11 +884,18 @@ fn window_attempt(
     mode: collab_core::isolation::WindowMode,
 ) -> Result<WindowAttempt, ApiError> {
     let isolated_step = WriteStep::start("isolated_apply");
-    let isolated = apply_isolated(document_id, base_snapshot, update, mode);
+    let (isolated, observation) = apply_isolated(document_id, base_snapshot, update, mode);
     isolated_step.finish();
     let success = match isolated {
         Ok(success) => success,
-        Err(err) => return Ok(WindowAttempt::Rejected(err)),
+        Err(error) => {
+            return Ok(WindowAttempt::Rejected(RefusedAttempt {
+                error,
+                observation,
+                mode,
+                cooling: false,
+            }));
+        }
     };
     if let Some(fired) = success.setup_guard {
         note_setup_guard(document_id, fired);
@@ -844,7 +908,7 @@ fn window_attempt(
     let candidate_load_step = WriteStep::start("candidate_load");
     let candidate = LoroCollabEngine::load(&success.snapshot).map_err(|err| {
         tracing::error!(error = %err, "collab write: reload of isolated-apply result snapshot failed");
-        ApiError::internal()
+        isolated_apply_defect()
     })?;
     candidate_load_step.finish();
     // A wrong worker must not be able to commit an update whose tree ops name a parent that does
@@ -852,15 +916,18 @@ fn window_attempt(
     // document gained over the base with the same rules the window applies. The base's version
     // comes from the blob header, so the base is not loaded a second time.
     if let Err(err) = candidate.refuse_unresolved_tree_parents_over(base_snapshot) {
-        return Ok(WindowAttempt::Rejected(
-            collab_core::isolation::IsolatedApplyError::Collab(err),
-        ));
+        return Ok(WindowAttempt::Rejected(RefusedAttempt {
+            error: collab_core::isolation::IsolatedApplyError::Collab(err),
+            observation,
+            mode,
+            cooling: false,
+        }));
     }
     // The floor comes from the same block pass as the projection, so it costs no second walk.
     let host_snapshot_step = WriteStep::start("host_semantic_snapshot");
     let (semantic, minimum_editor_model) = candidate.semantic_snapshot_with_floor().map_err(|err| {
         tracing::error!(error = %err, "collab write: semantic_snapshot failed after a successful isolated apply");
-        ApiError::internal()
+        isolated_apply_defect()
     })?;
     host_snapshot_step.finish();
     if let Err(divergence) = verify_window_report(success.window_report.as_ref(), &semantic) {
@@ -887,9 +954,9 @@ fn window_attempt(
 /// disagrees, or a full window's document that the host's projection finds over a limit), the
 /// worker's word is not taken: the disagreement is counted and logged at error level, and the
 /// decision is made once more by the full window. If that result is contradicted too, or the first
-/// attempt was the full window already, the write is refused with an internal error and never
-/// accepted. The retry is the one decided by the full computation, so a wrong incremental check can
-/// neither commit a document the full computation would refuse nor turn into a plain failure the
+/// attempt was the full window already, the write is refused as `server_rejected` with the reason
+/// `window_divergence` and never accepted. The retry is the one decided by the full computation, so
+/// a wrong incremental check can neither commit a document the full computation would refuse nor turn into a plain failure the
 /// client retries forever, and no worker result the host's projection contradicts is committed.
 fn decide_window(
     ids: WindowIds,
@@ -916,7 +983,7 @@ fn decide_window_with(
         from_report,
     } = first
     else {
-        return Ok(first);
+        return Ok(first.cooling(cooling));
     };
     // Only a contradicted incremental check counts toward the cooldown. A full computation that
     // the host's projection contradicts is not a fault of the incremental check, and switching to
@@ -935,7 +1002,7 @@ fn decide_window_with(
     // full computation already: a second one repeats it and diverges again, so it is refused here.
     if first_mode == WindowMode::Full || !from_report {
         log_window_divergence(&divergence, ids, DivergenceAnswer::Refuse);
-        return Err(ApiError::internal());
+        return Err(window_divergence_refusal());
     }
     log_window_divergence(&divergence, ids, DivergenceAnswer::DecideAgain);
     match attempt(WindowMode::Full)? {
@@ -952,9 +1019,27 @@ fn decide_window_with(
                     incremental: false,
                 })));
             }
-            Err(ApiError::internal())
+            Err(window_divergence_refusal())
         }
-        decided => Ok(decided),
+        decided => Ok(decided.cooling(cooling)),
+    }
+}
+
+/// The refusal of a write whose worker result the host's projection contradicts and that no second
+/// computation can change: `server_rejected{window_divergence}`, permanent (every resend is refused
+/// identically), where it used to be an internal error that the WebSocket reported as the
+/// retryable `contention`.
+fn window_divergence_refusal() -> ApiError {
+    ApiError::server_rejected(SERVER_REJECTED_REASON_WINDOW_DIVERGENCE)
+}
+
+impl WindowAttempt {
+    /// Records on a refused attempt whether the document was cooling (for the log line).
+    fn cooling(self, cooling: bool) -> Self {
+        match self {
+            Self::Rejected(refused) => Self::Rejected(RefusedAttempt { cooling, ..refused }),
+            other => other,
+        }
     }
 }
 
@@ -994,6 +1079,19 @@ mod window_oracle_tests {
             window_cpu_us: None,
             incremental,
         }))
+    }
+
+    fn rejected_in(mode: WindowMode, error: IsolatedApplyError) -> WindowAttempt {
+        WindowAttempt::Rejected(RefusedAttempt {
+            error,
+            observation: collab_core::isolation::WorkerObservation::default(),
+            mode,
+            cooling: false,
+        })
+    }
+
+    fn rejected(error: IsolatedApplyError) -> WindowAttempt {
+        rejected_in(WindowMode::Incremental, error)
     }
 
     fn diverged_with(from_report: bool) -> WindowAttempt {
@@ -1065,12 +1163,15 @@ mod window_oracle_tests {
         let mut attempts = 0;
         let decided = decide_window(ids(), WindowMode::Incremental, |_| {
             attempts += 1;
-            Ok(WindowAttempt::Rejected(IsolatedApplyError::CpuCeiling))
+            Ok(rejected(IsolatedApplyError::CpuCeiling))
         })
         .expect("decides");
         assert!(matches!(
             decided,
-            WindowAttempt::Rejected(IsolatedApplyError::CpuCeiling)
+            WindowAttempt::Rejected(RefusedAttempt {
+                error: IsolatedApplyError::CpuCeiling,
+                ..
+            })
         ));
         assert_eq!(attempts, 1);
     }
@@ -1097,7 +1198,7 @@ mod window_oracle_tests {
     fn the_full_window_can_refuse_what_the_incremental_one_accepted() {
         let decided = decide_window(ids(), WindowMode::Incremental, |mode| {
             Ok(if mode == WindowMode::Full {
-                WindowAttempt::Rejected(IsolatedApplyError::Collab(CollabError::LimitExceeded {
+                rejected(IsolatedApplyError::Collab(CollabError::LimitExceeded {
                     limit_kind: "tree_depth",
                     limit: 32,
                     observed: 33,
@@ -1109,21 +1210,77 @@ mod window_oracle_tests {
         .expect("decides");
         assert!(matches!(
             decided,
-            WindowAttempt::Rejected(IsolatedApplyError::Collab(CollabError::LimitExceeded {
-                observed: 33,
+            WindowAttempt::Rejected(RefusedAttempt {
+                error: IsolatedApplyError::Collab(CollabError::LimitExceeded { observed: 33, .. }),
                 ..
-            }))
+            })
         ));
     }
 
+    /// The error of a refused divergence: a permanent `server_rejected{window_divergence}`, not the
+    /// internal error that the WebSocket reports as the retryable `contention`.
+    fn assert_window_divergence(refused: Result<WindowAttempt, ApiError>) {
+        let Err(error) = refused else {
+            panic!("a divergence that cannot be decided again is refused");
+        };
+        assert_eq!(error.kind(), ApiErrorKind::ServerRejected, "{error:?}");
+        let ApiError::Typed { details, .. } = error else {
+            panic!("server_rejected is a typed error");
+        };
+        assert_eq!(details, Some(serde_json::json!({"reason": "window_divergence"})));
+    }
+
+    /// Row 12 of the classification: the full-window retry after an incremental divergence is
+    /// contradicted as well.
     #[test]
-    fn a_divergence_that_survives_the_full_window_is_an_internal_error() {
-        let refused = decide_window(ids(), WindowMode::Incremental, |_| Ok(diverged()));
-        assert!(
-            matches!(&refused, Err(error) if format!("{error:?}") == format!("{:?}", ApiError::internal())),
-            "{:?}",
-            refused.err()
-        );
+    fn a_divergence_that_survives_the_full_window_is_server_rejected_window_divergence() {
+        assert_window_divergence(decide_window(ids(), WindowMode::Incremental, |_| Ok(diverged())));
+    }
+
+    /// Row 11 of the classification: a full first attempt, and an attempt that carried no report,
+    /// ran the full computation already; a second one is not made and the write is refused.
+    #[test]
+    fn a_diverged_full_attempt_or_one_without_a_report_is_server_rejected_window_divergence() {
+        assert_window_divergence(decide_window(ids(), WindowMode::Full, |_| Ok(diverged())));
+        assert_window_divergence(decide_window(ids(), WindowMode::Incremental, |_| {
+            Ok(diverged_with(false))
+        }));
+    }
+
+    /// A refused attempt carries what the answer is classified from: the mode it ran in, whether the
+    /// document was cooling, and the observation of the worker.
+    #[test]
+    fn a_refused_attempt_keeps_its_mode_and_whether_the_document_was_cooling() {
+        let mut modes = Vec::new();
+        let decided = decide_window(ids(), WindowMode::Incremental, |mode| {
+            modes.push(mode);
+            Ok(rejected_in(mode, IsolatedApplyError::WallCeiling))
+        })
+        .expect("decides");
+        let WindowAttempt::Rejected(refused) = decided else {
+            panic!("the refusal is passed on");
+        };
+        assert_eq!(refused.mode, WindowMode::Incremental);
+        assert!(!refused.cooling);
+        assert_eq!(modes, [WindowMode::Incremental]);
+
+        // A cooling document's first attempt is the full window, and says so.
+        let tracker = parking_lot::Mutex::new(DisagreementTracker::default());
+        let ids = ids();
+        let now = std::time::Instant::now();
+        for _ in 0..COOLDOWN_THRESHOLD {
+            tracker.lock().record(ids.document_id, now);
+        }
+        assert!(tracker.lock().cooling(ids.document_id, now));
+        let decided = decide_window_with(&tracker, ids, WindowMode::Incremental, |mode| {
+            Ok(rejected_in(mode, IsolatedApplyError::WallCeiling))
+        })
+        .expect("decides");
+        let WindowAttempt::Rejected(refused) = decided else {
+            panic!("the refusal is passed on");
+        };
+        assert_eq!(refused.mode, WindowMode::Full);
+        assert!(refused.cooling);
     }
 
     #[test]
@@ -1174,11 +1331,7 @@ mod window_oracle_tests {
             Ok(diverged())
         });
         assert_eq!(modes, [WindowMode::Incremental, WindowMode::Full]);
-        assert!(
-            matches!(&refused, Err(error) if format!("{error:?}") == format!("{:?}", ApiError::internal())),
-            "{:?}",
-            refused.err()
-        );
+        assert_window_divergence(refused);
     }
 
     #[test]
@@ -1356,38 +1509,55 @@ mod window_oracle_tests {
     }
 }
 
-/// Maps an [`isolated_apply`](collab_core::isolation::isolated_apply) refusal to the rejection
-/// `hydrate_and_apply` reports, or to `Err` when the isolation host itself broke.
+/// Maps a refused isolated attempt to the rejection `hydrate_and_apply` reports.
+///
+/// The classification is [`refusal::classify`] (see its table); this builds the answer, counts it
+/// and writes its log line (`flow::apply_refusal`):
 ///
 /// - `Collab` -- the worker's in-band rejection, built exactly as a direct in-process call's.
-/// - The three resource ceilings -- `limit_exceeded` with their frozen `limit_kind`
-///   (`contracts/limits-v1.md`'s "Isolated decode/apply" table).
-/// - `HostFailure` -- `ApiError::Internal`; not a business rejection.
+/// - A resource ceiling the content reached -- `limit_exceeded` with its frozen `limit_kind`
+///   (`contracts/limits-v1.md`'s "Isolated decode/apply" table), not retryable.
+/// - A load refusal -- `server_draining` with the reason `apply_busy`, `write_state: not_applied`,
+///   `retry_mode` and `retry_after_ms` (see [`apply_busy`]).
+/// - A defect of the isolation host -- `server_rejected` with a named reason, `not_applied`.
 /// - `UnsupportedPlatform` -- this build has no isolation boundary (`ADR-0014`'s platform matrix
 ///   is Linux). `server_rejected` with `write_state: not_applied` (nothing was decoded, so nothing
 ///   can have been written) and the safe classification
 ///   [`SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM`]: every retry would be refused identically.
-fn isolated_apply_rejection(
-    update_id: Uuid,
-    document_id: Uuid,
-    err: collab_core::isolation::IsolatedApplyError,
-) -> Result<AcceptOutcome, ApiError> {
-    use collab_core::isolation::{
-        DECODE_APPLY_CPU_MS_MAX, DECODE_APPLY_WALL_MS_MAX, ISOLATED_APPLY_MEMORY_BYTES_MAX, IsolatedApplyError,
-    };
+fn isolated_apply_rejection(ids: WindowIds, refused: RefusedAttempt, policy: RebasePolicy) -> AcceptOutcome {
+    use collab_core::isolation::IsolatedApplyError;
 
-    let ceiling = |limit_kind: &'static str, limit: u64| {
-        reject_from_collab_error(
-            Some(update_id),
-            &CollabError::LimitExceeded {
-                limit_kind,
-                limit,
-                observed: limit + 1,
-            },
-        )
-    };
-    match err {
-        IsolatedApplyError::Collab(err) => {
+    let RefusedAttempt {
+        error,
+        observation,
+        mode,
+        cooling,
+    } = refused;
+    let stopped = refusal::Stopped::of(&error);
+    if let IsolatedApplyError::HostFailure(failure) = &error {
+        tracing::warn!(
+            detail = failure.detail.as_str(),
+            document_id = %ids.document_id,
+            "collab write: isolated apply host failure"
+        );
+    }
+    let classified = refusal::classify(error, &observation, mode, policy);
+    refusal::record(
+        &refusal::AttemptLog {
+            document_id: ids.document_id,
+            update_id: Some(ids.update_id),
+            base_head_seq: Some(ids.base_head_seq),
+            requested: mode,
+            cooling,
+            observation: &observation,
+        },
+        stopped,
+        &classified,
+    );
+    let update_id = ids.update_id;
+    let document_id = ids.document_id;
+    match classified {
+        refusal::Refusal::Collab(err) => {
             if matches!(&err, CollabError::OperationFailed { reason } if reason == collab_core::window_check::ID_REWRITE_REASON)
             {
                 tracing::warn!(
@@ -1407,32 +1577,33 @@ fn isolated_apply_rejection(
                     "collab write: refused, the update names a tree parent that does not exist when the op runs or moves a node below itself"
                 );
             }
-            Ok(reject_from_collab_error(Some(update_id), &err))
+            reject_from_collab_error(Some(update_id), &err)
         }
-        IsolatedApplyError::CpuCeiling => Ok(ceiling("decode_apply_cpu_ms", DECODE_APPLY_CPU_MS_MAX)),
-        IsolatedApplyError::WallCeiling => Ok(ceiling("decode_apply_wall_ms", DECODE_APPLY_WALL_MS_MAX)),
-        IsolatedApplyError::MemoryCeiling => {
-            Ok(ceiling("isolated_apply_memory_bytes", ISOLATED_APPLY_MEMORY_BYTES_MAX))
-        }
-        IsolatedApplyError::HostFailure(reason) => {
-            tracing::error!(
-                reason,
-                document_id = %document_id,
-                "collab write: isolated apply host failure"
-            );
-            Err(ApiError::internal())
-        }
-        IsolatedApplyError::UnsupportedPlatform { os } => {
+        refusal::Refusal::Content { limit_kind, limit } => reject_from_collab_error(
+            Some(update_id),
+            &CollabError::LimitExceeded {
+                limit_kind,
+                limit,
+                observed: limit + 1,
+            },
+        ),
+        refusal::Refusal::Busy {
+            cause,
+            mode,
+            retry_after_ms,
+        } => apply_busy(update_id, cause, mode, retry_after_ms),
+        refusal::Refusal::Defect { reason } => server_rejected(Some(update_id), reason, WriteState::NotApplied),
+        refusal::Refusal::Unsupported { os } => {
             tracing::error!(
                 os,
                 document_id = %document_id,
                 "collab write: refused, the isolated-apply boundary requires Linux (ADR-0014)"
             );
-            Ok(server_rejected(
+            server_rejected(
                 Some(update_id),
                 SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM,
                 WriteState::NotApplied,
-            ))
+            )
         }
     }
 }
@@ -1736,12 +1907,13 @@ pub(crate) async fn prepare_build_engine(
     }
 }
 
-/// The isolated apply of `update` onto `base`. Production always runs the real worker. Under
-/// `cfg(test)` a document a test registered with [`in_process_apply::enable`] is applied in this
-/// process instead (the worker's own sequence: `import_client_update`, `semantic_snapshot`,
-/// `check_snapshot`, `export_snapshot`, without the process boundary and its resource ceilings), so
-/// tests of the base and cache handling run on every platform; every other document, and every
-/// existing test, still goes through the worker.
+/// The isolated apply of `update` onto `base`, with the host's observation of the worker.
+/// Production always runs the real worker. Under `cfg(test)` a document a test registered with
+/// [`scripted_attempts::enable`] gets its scripted answers first, and one registered with
+/// [`in_process_apply::enable`] is applied in this process instead (the worker's own sequence:
+/// `import_client_update`, `semantic_snapshot`, `check_snapshot`, `export_snapshot`, without the
+/// process boundary and its resource ceilings), so tests of the base and cache handling run on every
+/// platform; every other document, and every existing test, still goes through the worker.
 // Not `const` on every target: the worker host is Linux-only and a stub elsewhere.
 #[allow(clippy::missing_const_for_fn)]
 fn apply_isolated(
@@ -1749,14 +1921,95 @@ fn apply_isolated(
     base: &[u8],
     update: &[u8],
     mode: collab_core::isolation::WindowMode,
-) -> Result<collab_core::isolation::IsolatedApplySuccess, collab_core::isolation::IsolatedApplyError> {
+) -> (
+    Result<collab_core::isolation::IsolatedApplySuccess, collab_core::isolation::IsolatedApplyError>,
+    collab_core::isolation::WorkerObservation,
+) {
+    #[cfg(test)]
+    if let Some(scripted) = scripted_attempts::next(document_id, mode) {
+        return match scripted {
+            scripted_attempts::Scripted::Refuse(error, observation) => (Err(error), observation),
+            scripted_attempts::Scripted::InProcess => (
+                in_process_apply::apply(base, update),
+                collab_core::isolation::WorkerObservation::default(),
+            ),
+            scripted_attempts::Scripted::InProcessReporting(report) => (
+                in_process_apply::apply(base, update).map(|success| collab_core::isolation::IsolatedApplySuccess {
+                    window_report: Some(report),
+                    ..success
+                }),
+                collab_core::isolation::WorkerObservation::default(),
+            ),
+        };
+    }
     #[cfg(test)]
     if in_process_apply::is_enabled(document_id) {
-        return in_process_apply::apply(base, update);
+        return (
+            in_process_apply::apply(base, update),
+            collab_core::isolation::WorkerObservation::default(),
+        );
     }
     #[cfg(not(test))]
     let _ = document_id;
-    collab_core::isolation::isolated_apply_with(base, update, mode)
+    collab_core::isolation::isolated_apply_with_observed(base, update, mode)
+}
+
+/// Scripted answers of the isolated apply for the tests of the write path: each attempt on a
+/// registered document takes the next entry, so a test can make the first attempt a refusal with a
+/// chosen observation (a starved wall kill, a CPU kill after a `NotSequential` decision, ...) and
+/// the next one an acceptance. Once the script is used up the document is applied in process.
+#[cfg(test)]
+pub(crate) mod scripted_attempts {
+    use super::{LazyLock, Mutex, Uuid};
+    use collab_core::isolation::{IsolatedApplyError, WindowMode, WorkerObservation};
+    use std::collections::{HashMap, VecDeque};
+
+    pub enum Scripted {
+        /// This attempt is refused as the host would report it.
+        Refuse(IsolatedApplyError, WorkerObservation),
+        /// This attempt is accepted: the document is applied in process.
+        InProcess,
+        /// This attempt is accepted with this incremental report, which the host's projection of the
+        /// document may contradict (a divergence).
+        InProcessReporting(collab_core::window_check::WindowReport),
+    }
+
+    #[derive(Default)]
+    struct Script {
+        queue: VecDeque<Scripted>,
+        modes: Vec<WindowMode>,
+    }
+
+    static SCRIPTS: LazyLock<Mutex<HashMap<Uuid, Script>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    /// Registers `script` for `document_id`.
+    pub fn enable(document_id: Uuid, script: Vec<Scripted>) {
+        SCRIPTS.lock().insert(
+            document_id,
+            Script {
+                queue: script.into(),
+                modes: Vec::new(),
+            },
+        );
+    }
+
+    /// The window modes the attempts on `document_id` ran in, in order.
+    pub fn modes(document_id: Uuid) -> Vec<WindowMode> {
+        SCRIPTS
+            .lock()
+            .get(&document_id)
+            .map(|script| script.modes.clone())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn next(document_id: Uuid, mode: WindowMode) -> Option<Scripted> {
+        let mut scripts = SCRIPTS.lock();
+        let script = scripts.get_mut(&document_id)?;
+        script.modes.push(mode);
+        let next = script.queue.pop_front().unwrap_or(Scripted::InProcess);
+        drop(scripts);
+        Some(next)
+    }
 }
 
 #[cfg(test)]
@@ -1799,6 +2052,10 @@ pub(crate) mod in_process_apply {
     }
 }
 
+/// [`hydrate_and_apply_with_policy`] for a caller that cannot follow a `rebase` answer
+/// ([`RebasePolicy::None`]): everything that is not the WebSocket `update` frame or the REST content
+/// command. A resend of such a write is the same bytes against whatever the head is, so a refusal
+/// that would need a sequential update is the content answer, and a load refusal is `resend`.
 pub(crate) async fn hydrate_and_apply(
     db: &DatabaseConnection,
     cache: &WarmCache,
@@ -1806,6 +2063,27 @@ pub(crate) async fn hydrate_and_apply(
     update_id: Uuid,
     bytes: &[u8],
     expected_frontier: Option<&[u8]>,
+) -> Result<HydrateOutcome, ApiError> {
+    hydrate_and_apply_with_policy(
+        db,
+        cache,
+        document_id,
+        update_id,
+        bytes,
+        expected_frontier,
+        RebasePolicy::None,
+    )
+    .await
+}
+
+pub(crate) async fn hydrate_and_apply_with_policy(
+    db: &DatabaseConnection,
+    cache: &WarmCache,
+    document_id: Uuid,
+    update_id: Uuid,
+    bytes: &[u8],
+    expected_frontier: Option<&[u8]>,
+    rebase_policy: RebasePolicy,
 ) -> Result<HydrateOutcome, ApiError> {
     let observed = match observe_head(db, document_id, update_id, expected_frontier).await? {
         Ok(observed) => observed,
@@ -1866,7 +2144,7 @@ pub(crate) async fn hydrate_and_apply(
     .await
     .map_err(|err| {
         tracing::error!(error = %err, "collab write: isolated apply task panicked or was cancelled");
-        ApiError::internal()
+        isolated_apply_defect()
     })??;
 
     let WindowPrepared {
@@ -1878,11 +2156,15 @@ pub(crate) async fn hydrate_and_apply(
         incremental,
     } = match window {
         WindowAttempt::Prepared(window) => *window,
-        WindowAttempt::Rejected(err) => {
-            return isolated_apply_rejection(update_id, document_id, err).map(HydrateOutcome::Rejected);
+        WindowAttempt::Rejected(refused) => {
+            return Ok(HydrateOutcome::Rejected(isolated_apply_rejection(
+                ids,
+                refused,
+                rebase_policy,
+            )));
         }
         // `decide_window` retries a divergence with the full window and never returns one.
-        WindowAttempt::Diverged { .. } => return Err(ApiError::internal()),
+        WindowAttempt::Diverged { .. } => return Err(window_divergence_refusal()),
     };
     tracing::debug!(
         window_cpu_us,
@@ -2659,13 +2941,14 @@ pub async fn accept_update_model(
 
     let mut should_advance_snapshot = false;
     let mut prepared_before_first_attempt = {
-        let prepared = match hydrate_and_apply(
+        let prepared = match hydrate_and_apply_with_policy(
             db,
             cache,
             request.document_id,
             request.update_id,
             &request.bytes,
             request.expected_frontier.as_deref(),
+            request.rebase_policy,
         )
         .await?
         {
@@ -2776,13 +3059,14 @@ pub async fn accept_update_model(
         let prepared = if let Some(prepared) = prepared_before_first_attempt.take() {
             prepared
         } else {
-            match hydrate_and_apply(
+            match hydrate_and_apply_with_policy(
                 db,
                 cache,
                 request.document_id,
                 request.update_id,
                 &request.bytes,
                 request.expected_frontier.as_deref(),
+                request.rebase_policy,
             )
             .await?
             {
@@ -2995,7 +3279,9 @@ mod isolation_rejection_tests {
     use collab_core::CollabError;
     use uuid::Uuid;
 
-    use super::{AcceptOutcome, isolated_apply_rejection, reject_from_collab_error};
+    use super::{
+        AcceptOutcome, RebasePolicy, RefusedAttempt, WindowIds, isolated_apply_rejection, reject_from_collab_error,
+    };
     use crate::error::{ApiError, ApiErrorKind};
     use crate::flow::collab::frame::{RejectedCode, SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM, WriteState};
 
@@ -3092,11 +3378,19 @@ mod isolation_rejection_tests {
     fn unsupported_platform_rejects_as_permanent_server_rejected_with_not_applied_and_its_reason() {
         let update_id = Uuid::new_v4();
         let outcome = isolated_apply_rejection(
-            update_id,
-            Uuid::new_v4(),
-            collab_core::isolation::IsolatedApplyError::UnsupportedPlatform { os: "windows" },
-        )
-        .expect("an unsupported platform is a rejection, not an internal error");
+            WindowIds {
+                document_id: Uuid::new_v4(),
+                update_id,
+                base_head_seq: 1,
+            },
+            RefusedAttempt {
+                error: collab_core::isolation::IsolatedApplyError::UnsupportedPlatform { os: "windows" },
+                observation: collab_core::isolation::WorkerObservation::default(),
+                mode: collab_core::isolation::WindowMode::Incremental,
+                cooling: false,
+            },
+            RebasePolicy::None,
+        );
         let AcceptOutcome::Rejected(rejected) = outcome else {
             panic!("an unsupported platform must reject, not accept");
         };
@@ -3462,6 +3756,7 @@ mod database_tests {
             10,
             None,
             UpdateRequest {
+                rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                 origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                     crate::flow::event_origin::EventSurface::Rest,
                 ),
@@ -3588,6 +3883,7 @@ mod database_tests {
             10,
             None,
             UpdateRequest {
+                rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                 origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                     crate::flow::event_origin::EventSurface::Rest,
                 ),
@@ -3667,6 +3963,7 @@ mod database_tests {
                     10,
                     None,
                     UpdateRequest {
+                        rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                         origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                             crate::flow::event_origin::EventSurface::Rest,
                         ),
@@ -3755,6 +4052,7 @@ mod database_tests {
                 10,
                 None,
                 UpdateRequest {
+                    rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                     origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                         crate::flow::event_origin::EventSurface::Rest,
                     ),
@@ -3933,6 +4231,7 @@ mod database_tests {
                     10,
                     None,
                     UpdateRequest {
+                        rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                         origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                             crate::flow::event_origin::EventSurface::Rest,
                         ),
@@ -4106,6 +4405,7 @@ mod database_tests {
             10,
             None,
             UpdateRequest {
+                rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                 origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                     crate::flow::event_origin::EventSurface::Rest,
                 ),
@@ -4263,6 +4563,7 @@ mod database_tests {
                     10,
                     None,
                     UpdateRequest {
+                        rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                         origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                             crate::flow::event_origin::EventSurface::Rest,
                         ),
@@ -4426,6 +4727,7 @@ mod database_tests {
                 10,
                 None,
                 UpdateRequest {
+                    rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                     origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                         crate::flow::event_origin::EventSurface::Rest,
                     ),
@@ -4629,6 +4931,7 @@ mod database_tests {
                 10,
                 None,
                 UpdateRequest {
+                    rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                     origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                         crate::flow::event_origin::EventSurface::Rest,
                     ),
@@ -4867,6 +5170,7 @@ mod database_tests {
             10,
             None,
             UpdateRequest {
+                rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                 origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                     crate::flow::event_origin::EventSurface::Rest,
                 ),
@@ -5969,6 +6273,7 @@ mod database_tests {
         let head_before = head_seq_of(&state, document_id).await;
 
         let request = UpdateRequest {
+            rebase_policy: crate::flow::collab::write::RebasePolicy::None,
             origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                 crate::flow::event_origin::EventSurface::Rest,
             ),
@@ -6288,5 +6593,6 @@ mod database_tests {
     }
 
     mod base_cache_tests;
+    mod busy_tests;
     mod timing_tests;
 }
