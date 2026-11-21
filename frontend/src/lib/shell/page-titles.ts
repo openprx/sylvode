@@ -11,7 +11,7 @@ const rule = (pattern: RegExp, key: string): TitleRule => ({ pattern, key });
 /**
  * Document title of each route, as the app layout built it; first match wins. The tail adds the
  * routes of the shell redesign: the Agents root and the project Apps index, and the project
- * pages that moved under the workspace (AI participants, audit reports).
+ * pages that moved under the workspace (audit reports).
  */
 const RULES: readonly TitleRule[] = [
 	rule(/^\/plugins(\/|$)/, 'plugins.library.title'),
@@ -27,7 +27,6 @@ const RULES: readonly TitleRule[] = [
 	rule(/^\/decisions\/analytics$/, 'pageTitle.decisionAnalytics'),
 	rule(/^\/governance\/config$/, 'pageTitle.governanceConfig'),
 	rule(/^\/governance\/audit-logs$/, 'pageTitle.governanceAuditLogs'),
-	rule(/^\/ai-agents\/[^/]+\/learning$/, 'pageTitle.aiLearning'),
 	rule(/^\/proposals\/[^/]+\/review$/, 'pageTitle.proposalImpactReview'),
 	rule(/^\/proposals\/[^/]+\/edit$/, 'pageTitle.proposalEdit'),
 	rule(/^\/proposals\/[^/]+\/veto$/, 'pageTitle.vetoDetail'),
@@ -36,7 +35,6 @@ const RULES: readonly TitleRule[] = [
 	rule(/^\/trust-board$/, 'pageTitle.trustBoard'),
 	rule(/^\/trust-scores\/appeals$/, 'pageTitle.trustAppeals'),
 	{ pattern: /^\/users\/[^/]+\/trust$/, key: 'pageTitle.userTrust', values: { id: '' } },
-	rule(/^\/projects\/[^/]+\/ai-agents$/, 'pageTitle.aiAgents'),
 	rule(/^\/projects\/[^/]+\/audit-reports\/[^/]+$/, 'pageTitle.auditReportDetail'),
 	rule(/^\/projects\/[^/]+\/audit-reports$/, 'pageTitle.auditReports'),
 	rule(/^\/search$/, 'pageTitle.search'),
@@ -75,7 +73,6 @@ const RULES: readonly TitleRule[] = [
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+$/, 'pageTitle.projectDetail'),
 	rule(/^\/agents$/, 'shell.pageTitle.agents'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/apps$/, 'shell.pageTitle.projectApps'),
-	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/ai-agents$/, 'pageTitle.aiAgents'),
 	rule(
 		/^\/workspace\/[^/]+\/projects\/[^/]+\/audit-reports\/[^/]+$/,
 		'pageTitle.auditReportDetail'

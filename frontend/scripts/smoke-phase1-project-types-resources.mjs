@@ -343,11 +343,6 @@ location.replace('/workspace/${workspaceId}/projects?phase1_project_types_smoke=
 		return;
 	}
 
-	if (pathname === `/api/v1/projects/${projectId}/ai-participants`) {
-		json(res, 200, apiResult(paginated([])));
-		return;
-	}
-
 	if (pathname === `/api/v1/projects/${projectId}/resources` && req.method === 'GET') {
 		json(res, 200, apiResult(paginated(resources)));
 		return;

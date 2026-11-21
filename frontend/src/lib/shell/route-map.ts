@@ -88,12 +88,7 @@ export function resolveRoute(url: URL, routeId: string | null = null): RouteCont
 	if (segs[0] === 'admin')
 		return inSettings(settings('instance', (segs[1] && ADMIN_SECTIONS[segs[1]]) || 'dashboard'));
 
-	if (
-		segs[0] === 'agents' ||
-		segs[0] === 'ai-agents' ||
-		(inWorkspace && wsSection === 'projects' && segs[4] === 'ai-agents')
-	)
-		return inDestination('agents');
+	if (segs[0] === 'agents') return inDestination('agents');
 	if (segs[0] === 'flow' || segs[0] === 'shared-blocks' || (inWorkspace && wsSection === 'flow'))
 		return inDestination('flow');
 	if ((inWorkspace && wsSection === 'projects') || segs[0] === 'projects')

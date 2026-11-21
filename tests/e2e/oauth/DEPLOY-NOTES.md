@@ -51,6 +51,12 @@ Add (keys of `[oauth]`; only `issuer` is mandatory, the rest is what this enviro
 | `max_streams_per_process` | omit (2000) |
 | `embed_frame_ancestors` | omit (not used) |
 
+The setup connects the bot to the projects with a runner address (`OAUTH_E2E_RUNNER_URL`, default
+`http://127.0.0.1:9`). The API checks every runner address with its outbound policy, which refuses
+loopback addresses, so add the address to the file's `[outbound]` section:
+`allowed_hosts = ["127.0.0.1:9"]`. Nothing listens there: the suite creates tasks for the bot but never
+needs a runner to answer, and the worker's deliveries to it fail and are retried.
+
 Also needed, and normally already true for a UI served over `http` on loopback:
 `[auth] allow_insecure_cookies = true` (the consent page and the settings pages sign in with a
 cookie; the API refuses the flag unless `[server] bind_addr` is a loopback host as the API sees it, which

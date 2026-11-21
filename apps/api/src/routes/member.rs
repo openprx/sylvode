@@ -386,6 +386,10 @@ pub async fn remove_member(
         return Err(ApiError::Forbidden("only owners can remove admins".to_string()));
     }
 
+    // A bot made by a project bot connection leaves the workspace only when its last connection
+    // is removed.
+    crate::services::bots::ensure_editable(&tx, target_user_id, crate::services::bots::ManagedPolicy::Refuse).await?;
+
     // Remove member
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,

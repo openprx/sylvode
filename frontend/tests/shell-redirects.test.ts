@@ -23,14 +23,6 @@ suite.check('status is a temporary redirect', () => {
 	assertEqual(REDIRECT_STATUS, 307, 'case 1');
 });
 
-suite.check('/projects/{pid}/ai-agents', () => {
-	assertEqual(
-		legacyProjectTarget(`/projects/${P}/ai-agents`, W),
-		`/workspace/${W}/projects/${P}/ai-agents`,
-		'case 2'
-	);
-});
-
 suite.check('/projects/{pid}/audit-reports', () => {
 	assertEqual(
 		legacyProjectTarget(`/projects/${P}/audit-reports`, W),
@@ -54,16 +46,16 @@ suite.check('query and fragment are preserved', () => {
 		'case 5'
 	);
 	assertEqual(
-		legacyProjectTarget(`/projects/${P}/ai-agents`, W, 'a=1', 'top'),
-		`/workspace/${W}/projects/${P}/ai-agents?a=1#top`,
+		legacyProjectTarget(`/projects/${P}/audit-reports`, W, 'a=1', 'top'),
+		`/workspace/${W}/projects/${P}/audit-reports?a=1#top`,
 		'case 6'
 	);
 });
 
 suite.check('empty query and fragment add nothing', () => {
 	assertEqual(
-		legacyProjectTarget(`/projects/${P}/ai-agents`, W, '?', '#'),
-		`/workspace/${W}/projects/${P}/ai-agents`,
+		legacyProjectTarget(`/projects/${P}/audit-reports`, W, '?', '#'),
+		`/workspace/${W}/projects/${P}/audit-reports`,
 		'case 7'
 	);
 });
@@ -81,10 +73,9 @@ suite.check('unknown paths are untouched', () => {
 		'/projects',
 		`/projects/${P}`,
 		`/projects/${P}/issues`,
-		`/projects/${P}/ai-agents/extra`,
+		`/projects/${P}/archive`,
 		`/projects/${P}/audit-reports/a/b`,
-		`/workspace/${W}/projects/${P}/ai-agents`,
-		`/ai-agents/${P}/learning`,
+		`/workspace/${W}/projects/${P}/audit-reports`,
 		'/plugins',
 		'/flow/package',
 		`/workspace/${W}/settings/flow`
@@ -95,7 +86,7 @@ suite.check('unknown paths are untouched', () => {
 });
 
 suite.check('a malformed escape is not redirected', () => {
-	assertEqual(parseLegacyProjectUrl('/projects/%E0%A4%A/ai-agents'), null, 'case 9');
+	assertEqual(parseLegacyProjectUrl('/projects/%E0%A4%A/audit-reports'), null, 'case 9');
 });
 
 suite.check('path parameters are encoded in the target', () => {

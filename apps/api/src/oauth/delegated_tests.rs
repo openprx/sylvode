@@ -511,8 +511,8 @@ async fn the_central_guard_refuses_every_agent_task_creation_under_a_delegated_r
     .await;
     exec(
         db,
-        "INSERT INTO ai_participants (id, project_id, name, model, provider, capabilities, registered_by) \
-         VALUES ($1, $2, 'central bot', 'm', 'p', '{}'::jsonb, $3)",
+        "INSERT INTO ai_participants (id, project_id, name, registered_by) \
+         VALUES ($1, $2, 'central bot', $3)",
         vec![bot.to_string().into(), one.project_id.into(), one.member_id.into()],
     )
     .await;

@@ -7,8 +7,10 @@
 
 use axum::{
     Extension, Json,
+    body::Bytes,
     extract::{Path, Query, State},
-    response::IntoResponse,
+    http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::TransactionTrait;
@@ -32,6 +34,7 @@ use crate::{
             notify_ai_task_failed, report_progress,
         },
         ai_task_view::build_task_view,
+        bot_connection_status::{self, MAX_REPORT_BYTES, RUNNER_REPORT_INTERVAL_SECS},
     },
 };
 
@@ -96,13 +99,44 @@ pub async fn get_protocol() -> impl IntoResponse {
     ApiResponse::success(json!({
         "task_protocol": TASK_PROTOCOL,
         "api_version": env!("CARGO_PKG_VERSION"),
-        "features": ["ack", "lease", "reply_routing", "runner_phase"],
+        "features": ["ack", "lease", "reply_routing", "runner_phase", "runner_report"],
+        "runner_report_interval_secs": RUNNER_REPORT_INTERVAL_SECS,
         "lease": {
             "processing_timeout_secs": config.processing_timeout_secs,
             "lease_extension_secs": config.lease_extension_secs,
             "max_processing_secs": config.max_processing_secs,
         },
     }))
+}
+
+/// `PUT /api/v1/ai/runner/report`: the runner's self-report.
+///
+/// Only the bot of a project bot connection may report: a person is refused, and so is a bot that
+/// no connection made. The body is reduced to component names, states and versions before it is
+/// stored (see [`bot_connection_status::sanitize_report`]); a body over 16 KiB is refused with 413.
+pub async fn put_runner_report(
+    State(state): State<AppState>,
+    bot: Option<Extension<BotAuthContext>>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let Some(Extension(bot)) = bot else {
+        return Err(ApiError::Forbidden("only a runner bot can report".to_string()));
+    };
+    if body.len() > MAX_REPORT_BYTES {
+        return Ok((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            ApiResponse::<()>::error(413, "the report is larger than 16 KiB"),
+        )
+            .into_response());
+    }
+    let report: Value = serde_json::from_slice(&body)
+        .map_err(|_| ApiError::BadRequest("the report must be a JSON object".to_string()))?;
+    if !report.is_object() {
+        return Err(ApiError::BadRequest("the report must be a JSON object".to_string()));
+    }
+    bot_connection_status::store_report(&state.db, bot.bot_id, &bot_connection_status::sanitize_report(&report))
+        .await?;
+    Ok(ApiResponse::success(json!({ "accepted": true, "interval_secs": RUNNER_REPORT_INTERVAL_SECS })).into_response())
 }
 
 /// `GET /api/v1/ai/tasks/active`: the calling bot's own active tasks, oldest first.
@@ -715,8 +749,9 @@ mod tests {
         assert_eq!(data(&answer)["task_protocol"], 1);
         assert_eq!(
             data(&answer)["features"],
-            json!(["ack", "lease", "reply_routing", "runner_phase"])
+            json!(["ack", "lease", "reply_routing", "runner_phase", "runner_report"])
         );
+        assert_eq!(data(&answer)["runner_report_interval_secs"], 600);
         assert_eq!(data(&answer)["api_version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(data(&answer)["lease"]["lease_extension_secs"], 1800);
         assert_eq!(data(&answer)["lease"]["max_processing_secs"], 86400);

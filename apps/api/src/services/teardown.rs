@@ -101,6 +101,9 @@ pub async fn delete_workspace_content(tx: &DatabaseTransaction, workspace_id: Uu
 
 /// Deletes everything that blocks the removal of `project_id`; the caller then deletes the project.
 pub async fn delete_project_content(tx: &DatabaseTransaction, project_id: Uuid) -> Result<(), ApiError> {
+    // A connected bot's token, webhook and seat go with its last project, so a deleted project never
+    // leaves a live credential or an orphaned managed webhook behind.
+    crate::services::bot_connections::release_for_project(tx, project_id).await?;
     let pr = || vec![project_id.into()];
     let in_project = "(SELECT id FROM flow_objects WHERE project_id = $1)";
     run(
