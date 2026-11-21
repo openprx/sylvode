@@ -1,5 +1,6 @@
 //! The inbound endpoint against PostgreSQL: authentication, idempotency, deduplication, the rule
 //! engine, the safety caps and the dispatch guard, through the real route and middleware.
+#![cfg(test)]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -31,7 +32,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::{INBOUND_EVENTS_PATH, auth::compute_signature, credentials, routes_with};
+use super::{INBOUND_EVENTS_PATH, auth::compute_signature, auth_state, credentials};
 use crate::routes::context::tenant_fixture::{Scratch, Tenant, count, exec, seed_bot_user, seed_tenant};
 
 pub fn enabled() -> InboundConfig {
@@ -210,7 +211,16 @@ impl World {
     }
 
     pub fn router(&self, config: InboundConfig) -> Router {
-        routes_with(&self.state, config).with_state(self.state.clone())
+        // The route as `main.rs` registers it: the handler under the source-credential layer only.
+        Router::new()
+            .route(
+                INBOUND_EVENTS_PATH,
+                axum::routing::post(super::ingest::post_event).route_layer(axum::middleware::from_fn_with_state(
+                    auth_state(&self.state, config),
+                    super::auth::inbound_source_auth,
+                )),
+            )
+            .with_state(self.state.clone())
     }
 
     /// Sends a raw request to the route and returns status, headers and JSON body.

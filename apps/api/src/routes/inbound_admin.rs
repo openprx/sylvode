@@ -7,11 +7,9 @@
 //! Every change writes a business event with the old and new values, never a secret.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path, Query, State},
-    middleware as axum_middleware,
     response::IntoResponse,
-    routing::{get, post},
 };
 use platform::{app::AppState, auth::JwtClaims, timestamp::Timestamp};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
@@ -26,7 +24,7 @@ use crate::{
         rule_input::{RuleInput, ValidatedRule},
         rules::{RULE_COLUMNS, RuleRow},
     },
-    middleware::bot_auth::{BotAuthContext, bot_or_user_auth_middleware, require_workspace_access_from_auth},
+    middleware::bot_auth::{BotAuthContext, require_workspace_access_from_auth},
     response::ApiResponse,
 };
 
@@ -36,44 +34,6 @@ const EVENTS_DEFAULT_LIMIT: i64 = 50;
 const EVENTS_MAX_LIMIT: i64 = 100;
 /// The only source format of this stage; the adapters come later.
 const FORMAT_NATIVE: &str = "native_v1";
-
-/// The routes of this module, each behind the session-or-bot authentication layer and then the
-/// owner-or-admin check of its handler.
-pub fn routes(state: &AppState) -> Router<AppState> {
-    let auth = || axum_middleware::from_fn_with_state(state.clone(), bot_or_user_auth_middleware);
-    Router::new()
-        .route(
-            "/api/v1/projects/{project_id}/inbound-sources",
-            get(list_sources).post(create_source).route_layer(auth()),
-        )
-        .route(
-            "/api/v1/inbound-sources/{id}",
-            get(get_source)
-                .patch(patch_source)
-                .delete(delete_source)
-                .route_layer(auth()),
-        )
-        .route(
-            "/api/v1/inbound-sources/{id}/rotate",
-            post(rotate_source).route_layer(auth()),
-        )
-        .route(
-            "/api/v1/inbound-sources/{id}/events",
-            get(list_source_events).route_layer(auth()),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/alert-rules",
-            get(list_rules).post(create_rule).route_layer(auth()),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/alert-rules/reorder",
-            post(reorder_rules).route_layer(auth()),
-        )
-        .route(
-            "/api/v1/alert-rules/{id}",
-            get(get_rule).put(replace_rule).delete(delete_rule).route_layer(auth()),
-        )
-}
 
 // ---------------------------------------------------------------------------------------------
 // Authorization

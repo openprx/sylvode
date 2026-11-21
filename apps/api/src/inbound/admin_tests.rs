@@ -1,5 +1,6 @@
 //! The management routes for sources and rules against PostgreSQL, through the real router layer
 //! with real session and bot credentials.
+#![cfg(test)]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -14,10 +15,13 @@
 )]
 
 use axum::{
+    Router,
     body::Body,
     http::{Method, Request, StatusCode},
+    middleware::from_fn_with_state,
+    routing::{get, post},
 };
-use platform::auth::JwtManager;
+use platform::{app::AppState, auth::JwtManager};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
@@ -25,12 +29,57 @@ use uuid::Uuid;
 
 use super::db_tests::{World, enabled};
 use crate::{
+    middleware::bot_auth::bot_or_user_auth_middleware,
     oauth::{
         delegated::{DelegatedAuthContext, with_context},
         scopes::{ProjectScope, ScopeSet, TokenResource},
     },
     routes::{context::tenant_fixture::exec, inbound_admin},
 };
+
+/// The management routes as `main.rs` registers them, each behind the session-or-bot layer.
+fn router(state: &AppState) -> Router<AppState> {
+    let auth = || from_fn_with_state(state.clone(), bot_or_user_auth_middleware);
+    Router::new()
+        .route(
+            "/api/v1/projects/{project_id}/inbound-sources",
+            get(inbound_admin::list_sources)
+                .post(inbound_admin::create_source)
+                .route_layer(auth()),
+        )
+        .route(
+            "/api/v1/inbound-sources/{id}",
+            get(inbound_admin::get_source)
+                .patch(inbound_admin::patch_source)
+                .delete(inbound_admin::delete_source)
+                .route_layer(auth()),
+        )
+        .route(
+            "/api/v1/inbound-sources/{id}/rotate",
+            post(inbound_admin::rotate_source).route_layer(auth()),
+        )
+        .route(
+            "/api/v1/inbound-sources/{id}/events",
+            get(inbound_admin::list_source_events).route_layer(auth()),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/alert-rules",
+            get(inbound_admin::list_rules)
+                .post(inbound_admin::create_rule)
+                .route_layer(auth()),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/alert-rules/reorder",
+            post(inbound_admin::reorder_rules).route_layer(auth()),
+        )
+        .route(
+            "/api/v1/alert-rules/{id}",
+            get(inbound_admin::get_rule)
+                .put(inbound_admin::replace_rule)
+                .delete(inbound_admin::delete_rule)
+                .route_layer(auth()),
+        )
+}
 
 macro_rules! world {
     ($label:expr) => {{
@@ -49,7 +98,7 @@ impl World {
     /// Calls a management route. Returns the HTTP status and the JSON body; the API's own routes
     /// carry a refusal in the body's `code`.
     async fn call(&self, method: Method, uri: &str, token: Option<&str>, body: Option<&Value>) -> (StatusCode, Value) {
-        let router = inbound_admin::routes(&self.state).with_state(self.state.clone());
+        let router = router(&self.state).with_state(self.state.clone());
         let mut builder = Request::builder().method(method).uri(uri);
         if let Some(token) = token {
             builder = builder.header("authorization", format!("Bearer {token}"));
