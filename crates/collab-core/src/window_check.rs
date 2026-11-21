@@ -276,9 +276,10 @@
 //!
 //! The payload of text marks is the one part the ops cannot bound (a mark that splits a text adds
 //! segments that carry the values of other marks). The facts keep the mark items per editor block,
-//! and `recount_marks` re-counts the touched blocks after the import and before any is evaluated, with
-//! an early exit at the headroom the budget has left, so a text whose segments already cost more than
-//! the budget allows falls back (`WorkBudget`) before its segments are read.
+//! and `recount_marks` re-counts the touched blocks after the import and before any is evaluated.
+//! The value walk stops at the headroom the budget has left; the conversion of a text's delta itself
+//! cannot stop early, and is bounded by the base figure (which the facts counted) and by the metered
+//! import (which paid for every attribute the update added).
 //!
 //! The incremental window is O(the update): its id-cache rebuild reads the created nodes only (a
 //! node without a logical id gains one only through a write of the key, which falls back). The
@@ -938,10 +939,11 @@ fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTra
 /// What bounds the re-count: the budget of the page after the update is at most that of the base's
 /// totals plus one block and one navigator per op (an op names at most one unit, so it adds at most
 /// one live block or navigator) and the documented character limit. The headroom is that budget
-/// less the base's items and the update's own bound, and a unit's walk stops once its items pass its
-/// base figure plus the headroom still left, so the payload read is at most the base figure of the
-/// touched blocks (what the evaluation of those blocks reads anyway) plus the headroom, and one
-/// value. The containers entered are bounded by the page's items, since units do not overlap.
+/// less the base's items and the update's own bound, and a block's value walk stops once its items
+/// pass its base figure plus the headroom still left. The conversion of a text's delta cannot stop
+/// early: it costs what the base figure says (which the facts counted and the evaluation of the
+/// block pays again) plus what the metered import paid for the attributes the update added. Only
+/// the inline texts that the block reader converts are read at all.
 fn recount_marks(
     engine: &LoroCollabEngine,
     facts: &BaseFacts,
@@ -966,7 +968,6 @@ fn recount_marks(
             &touched.blocks,
             summary.has_mark_ops(),
             cap.saturating_sub(spent),
-            spent.saturating_add(1),
         )
         .ok_or(FallbackReason::WorkBudget)
 }

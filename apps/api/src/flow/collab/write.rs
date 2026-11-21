@@ -1715,6 +1715,9 @@ pub(crate) mod in_process_apply {
         DOCUMENTS.lock().contains(&document_id)
     }
 
+    /// The window mode is not passed: this applies the worker's full sequence and reports no
+    /// incremental result, so a test that enables it never exercises the report path. Tests of the
+    /// decision itself go through `decide_window` with a given attempt.
     pub(super) fn apply(base: &[u8], update: &[u8]) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
         let mut engine = LoroCollabEngine::load(base).map_err(IsolatedApplyError::Collab)?;
         // The entry point the worker calls (`isolated_apply_worker::decode_apply_and_check`), so

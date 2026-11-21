@@ -68,7 +68,7 @@ fn r4_1_alias_values_are_charged_by_their_payload() {
 // ---------------------------------------------------------------------------------------------
 
 /// The first inline text of block `index`.
-fn first_text(raw: &LoroDoc, index: usize) -> LoroText {
+pub(super) fn first_text(raw: &LoroDoc, index: usize) -> LoroText {
     let list = super::floor_equivalence_tests::children(raw);
     let Some(ValueOrContainer::Container(Container::Map(block))) = list.get(index) else {
         panic!("no block at {index}")
@@ -315,8 +315,9 @@ fn r4_2_marks_on_a_legacy_node_text_are_not_charged_because_the_projection_does_
     assert!(items <= budget, "{items} > {budget}");
 }
 
-/// Ordinary marks (`bold`, `italic` and a `link` with a string value) on every block of a page at the
-/// block limit stay within the budget, and a one-character edit is still decided incrementally.
+/// Ordinary marks (a `bold` range and a `link` with a string value, two marks and four segments in
+/// every block's text) on every block of a page at the block limit stay within the budget, and a
+/// one-character edit or mark is still decided incrementally.
 #[test]
 fn ordinary_marks_on_a_page_at_the_block_limit_stay_incremental() {
     let blocks = crate::limits::DOCUMENT_BLOCK_COUNT_MAX - 50;
@@ -331,7 +332,6 @@ fn ordinary_marks_on_a_page_at_the_block_limit_stay_incremental() {
             let text = first_text(raw, index);
             text.insert(1, "abcdefghijklmn").unwrap();
             text.mark(0..6, "bold", true).unwrap();
-            text.mark(4..9, "italic", true).unwrap();
             text.mark(8..12, "link", "https://example.test/a/page").unwrap();
         }
     }
@@ -403,7 +403,6 @@ fn mark_window_timing() {
                 let text = first_text(&raw, index);
                 text.insert(1, "abcdefghijklmn").unwrap();
                 text.mark(0..6, "bold", true).unwrap();
-                text.mark(4..9, "italic", true).unwrap();
                 text.mark(8..12, "link", "https://example.test/a/page").unwrap();
             }
             raw.commit();
@@ -430,5 +429,100 @@ fn mark_window_timing() {
             time(false).as_secs_f64() * 1e3,
             time(true).as_secs_f64() * 1e3
         );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// R5-1: marks are counted only on the texts the block reader converts
+// ---------------------------------------------------------------------------------------------
+
+/// A page whose setup could be made to convert texts the projection never reads: a text stored as a
+/// value of the `order` map, a text under an unread key of a block, and the inline text of a block
+/// with an unsupported `nodeName`, each carrying marks. Returns the snapshot and the ids of those
+/// three texts.
+fn page_with_unread_marked_texts() -> (Vec<u8>, Vec<String>) {
+    let base = flat_page_of(50);
+    let raw = LoroDoc::new();
+    raw.import(&base).unwrap();
+    raw.set_peer_id(46_000).unwrap();
+    let mut ids = Vec::new();
+    let mut marked = |text: &LoroText| {
+        text.insert(0, &"u".repeat(200)).unwrap();
+        for at in 0..50 {
+            text.mark(at * 2..at * 2 + 1, "italic", true).unwrap();
+        }
+        ids.push(loro::ContainerTrait::id(text).to_string());
+    };
+    marked(&raw.get_map("order").insert_container("t", LoroText::new()).unwrap());
+    let list = super::floor_equivalence_tests::children(&raw);
+    let Some(ValueOrContainer::Container(Container::Map(block0))) = list.get(0) else {
+        panic!("no block 0")
+    };
+    marked(&block0.insert_container("x", LoroText::new()).unwrap());
+    let odd = list.insert_container(list.len(), loro::LoroMap::new()).unwrap();
+    odd.insert("nodeName", "unknownKind").unwrap();
+    marked(
+        &odd.insert_container("children", loro::LoroList::new())
+            .unwrap()
+            .insert_container(0, LoroText::new())
+            .unwrap(),
+    );
+    raw.commit();
+    (raw.export(loro::ExportMode::snapshot()).unwrap(), ids)
+}
+
+/// Neither the setup (`BaseFacts::compute`) nor the window converts the delta of a text that the
+/// projection does not read.
+#[test]
+fn r5_1_no_delta_is_converted_for_a_text_the_projection_does_not_read() {
+    let (base, unread) = page_with_unread_marked_texts();
+    let mut engine = LoroCollabEngine::load(&base).unwrap();
+    engine.prewarm_for_writes();
+    crate::walk_counter::reset();
+    let facts = BaseFacts::compute(&engine);
+    assert!(facts.is_some(), "the page must have facts");
+    for id in crate::walk_counter::delta_reads() {
+        assert!(
+            !unread.contains(&id),
+            "setup converted the delta of the unread text {id}"
+        );
+    }
+    // A write to block 3, and a write that marks the unread text through the window.
+    let update = super::hand_encoded::raw_edit(&base, 46_001, |raw| {
+        first_text(raw, 3).insert(1, "z").unwrap();
+    });
+    crate::walk_counter::reset();
+    crate::window_check::run_window(&mut engine, facts.as_ref(), &update).unwrap();
+    for id in crate::walk_counter::delta_reads() {
+        assert!(
+            !unread.contains(&id),
+            "the window converted the delta of the unread text {id}"
+        );
+    }
+}
+
+/// A mark op on each unread text goes through the window without converting any of them, and the
+/// decision is `next`'s.
+#[test]
+fn r5_1_marking_an_unread_text_through_the_window_converts_nothing_and_is_nexts_decision() {
+    let (base, unread) = page_with_unread_marked_texts();
+    for (index, id) in unread.iter().enumerate() {
+        let update = super::hand_encoded::raw_edit(&base, 46_100 + index as u64, |raw| {
+            let Some(Container::Text(text)) = raw.get_container(loro::ContainerID::try_from(id.as_str()).unwrap())
+            else {
+                panic!("no text {id}")
+            };
+            text.mark(1..2, "bold", true).unwrap();
+        });
+        let mut engine = LoroCollabEngine::load(&base).unwrap();
+        engine.prewarm_for_writes();
+        let facts = BaseFacts::compute(&engine);
+        crate::walk_counter::reset();
+        let decided = crate::window_check::run_window(&mut engine, facts.as_ref(), &update);
+        let reads = crate::walk_counter::delta_reads();
+        assert!(!reads.contains(id), "the window converted {id}");
+        let judged = super::window_round2_tests::judge(&base, &update);
+        judged.assert_sound(&format!("a mark on the unread text {id}"));
+        assert!(decided.is_ok(), "{decided:?}");
     }
 }

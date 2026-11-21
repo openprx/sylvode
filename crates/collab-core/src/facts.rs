@@ -136,8 +136,11 @@ impl BaseFacts {
             return None;
         }
         // The work of the full projection, counted before the projection itself runs: a page far
-        // over any budget is refused after the ceiling's worth of items, so this setup stays
-        // bounded whatever the page holds (`crate::work`).
+        // over any budget is refused after the ceiling's worth of items, so the walk stops there
+        // (`crate::work`). The count converts a text's delta only where the projection converts it
+        // (the inline texts of the blocks it reads, `work::block_mark_items`), and a delta cannot be
+        // stopped early, so what this setup reads is what the projection reads of the same page,
+        // which the last window that accepted its state already paid for under its own limits.
         let items = engine.projection_items(crate::work::item_budget_ceiling()).ok()??;
         let editor_doc = engine.has_editor_doc().ok()?;
         let snapshot = engine.semantic_snapshot().ok()?;
