@@ -186,16 +186,23 @@ pub enum Outcome {
     /// `window_report` is what the worker's incremental window check established about the
     /// accepted document (`window_check::WindowReport`); `None` when the full computation decided.
     /// The host compares it with its own projection of the accepted document.
+    ///
+    /// `setup_guard_fired` says that the worker's setup guard (`crate::setup_guard`) fired, so the
+    /// window had no base facts and the full computation decided. Telemetry only.
     Success {
         snapshot: Vec<u8>,
         window_cpu_us: Option<u64>,
         window_report: Option<WindowReport>,
+        setup_guard_fired: bool,
     },
     Rejected(CollabError),
 }
 
 /// The encoding of a window CPU time that was not measured, when a report follows it.
 const NOT_MEASURED: u64 = u64::MAX;
+/// Flags of a success outcome: a window report follows, and the setup guard fired.
+const FLAG_REPORT: u8 = 1;
+const FLAG_SETUP_GUARD: u8 = 2;
 const TAG_SUCCESS: u8 = 0;
 const TAG_EMPTY_INPUT: u8 = 1;
 const TAG_INPUT_TOO_LARGE: u8 = 2;
@@ -242,16 +249,21 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
             snapshot,
             window_cpu_us,
             window_report,
+            setup_guard_fired,
         } => {
             buf.push(TAG_SUCCESS);
             write_field(&mut buf, snapshot)?;
-            // Optional trailing fields: absent when both are `None`, so the payload stays
-            // byte-identical to the pre-telemetry encoding and a decoder that predates the fields
-            // (which ignores trailing bytes) still reads it. The CPU time is written whenever
-            // anything is (`u64::MAX` standing for "not measured"), the report after it.
-            if window_cpu_us.is_some() || window_report.is_some() {
-                write_u64(&mut buf, window_cpu_us.unwrap_or(NOT_MEASURED))?;
+            // The CPU time (`u64::MAX` standing for "not measured"), the flags, and the report when
+            // the flags say there is one.
+            write_u64(&mut buf, window_cpu_us.unwrap_or(NOT_MEASURED))?;
+            let mut flags = 0;
+            if window_report.is_some() {
+                flags |= FLAG_REPORT;
             }
+            if *setup_guard_fired {
+                flags |= FLAG_SETUP_GUARD;
+            }
+            buf.push(flags);
             if let Some(report) = window_report {
                 for value in [
                     report.blocks,
@@ -331,13 +343,14 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
     match tag_byte {
         TAG_SUCCESS => {
             let snapshot = read_field(&mut cursor, MAX_RESPONSE_PAYLOAD_BYTES)?;
-            // An outcome written before the telemetry fields existed ends here.
-            let window_cpu_us = if cursor.is_empty() {
-                None
-            } else {
-                Some(read_u64(&mut cursor)?).filter(|micros| *micros != NOT_MEASURED)
-            };
-            let window_report = if cursor.is_empty() {
+            let window_cpu_us = Some(read_u64(&mut cursor)?).filter(|micros| *micros != NOT_MEASURED);
+            let mut flag_byte = [0u8; 1];
+            cursor.read_exact(&mut flag_byte)?;
+            let [flags] = flag_byte;
+            if flags & !(FLAG_REPORT | FLAG_SETUP_GUARD) != 0 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown outcome flags"));
+            }
+            let window_report = if flags & FLAG_REPORT == 0 {
                 None
             } else {
                 Some(WindowReport {
@@ -352,6 +365,7 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
                 snapshot,
                 window_cpu_us,
                 window_report,
+                setup_guard_fired: flags & FLAG_SETUP_GUARD != 0,
             })
         }
         TAG_EMPTY_INPUT => {
@@ -460,38 +474,18 @@ mod tests {
     #[test]
     fn success_outcome_round_trips() {
         for window_cpu_us in [None, Some(0), Some(13_980)] {
-            let outcome = Outcome::Success {
-                snapshot: b"exported snapshot bytes".to_vec(),
-                window_cpu_us,
-                window_report: None,
-            };
-            let payload = encode_outcome(&outcome).expect("encode succeeds");
-            let decoded = decode_outcome(&payload).expect("decode succeeds");
-            assert_eq!(decoded, outcome);
-        }
-    }
-
-    #[test]
-    fn success_outcome_without_the_telemetry_field_decodes_as_none() {
-        // The exact bytes an outcome had before `window_cpu_us` existed: tag, length, snapshot.
-        let mut legacy = vec![TAG_SUCCESS];
-        write_field(&mut legacy, b"old snapshot").expect("write succeeds");
-        assert_eq!(
-            decode_outcome(&legacy).expect("legacy outcome decodes"),
-            Outcome::Success {
-                snapshot: b"old snapshot".to_vec(),
-                window_cpu_us: None,
-                window_report: None,
+            for setup_guard_fired in [false, true] {
+                let outcome = Outcome::Success {
+                    snapshot: b"exported snapshot bytes".to_vec(),
+                    window_cpu_us,
+                    window_report: None,
+                    setup_guard_fired,
+                };
+                let payload = encode_outcome(&outcome).expect("encode succeeds");
+                let decoded = decode_outcome(&payload).expect("decode succeeds");
+                assert_eq!(decoded, outcome);
             }
-        );
-        // `None` encodes to precisely those bytes, so old hosts keep reading new workers.
-        let encoded = encode_outcome(&Outcome::Success {
-            snapshot: b"old snapshot".to_vec(),
-            window_cpu_us: None,
-            window_report: None,
-        })
-        .expect("encode succeeds");
-        assert_eq!(encoded, legacy);
+        }
     }
 
     #[test]
@@ -504,22 +498,26 @@ mod tests {
             longest_bound: 99,
         };
         for window_cpu_us in [None, Some(0), Some(13_980)] {
-            let outcome = Outcome::Success {
-                snapshot: b"exported snapshot bytes".to_vec(),
-                window_cpu_us,
-                window_report: Some(report),
-            };
-            let payload = encode_outcome(&outcome).expect("encode succeeds");
-            assert_eq!(decode_outcome(&payload).expect("decode succeeds"), outcome);
+            for setup_guard_fired in [false, true] {
+                let outcome = Outcome::Success {
+                    snapshot: b"exported snapshot bytes".to_vec(),
+                    window_cpu_us,
+                    window_report: Some(report),
+                    setup_guard_fired,
+                };
+                let payload = encode_outcome(&outcome).expect("encode succeeds");
+                assert_eq!(decode_outcome(&payload).expect("decode succeeds"), outcome);
+            }
         }
         // A report cut short is a corrupt payload, not a report with fewer fields.
         let payload = encode_outcome(&Outcome::Success {
             snapshot: b"snap".to_vec(),
             window_cpu_us: Some(1),
             window_report: Some(report),
+            setup_guard_fired: false,
         })
         .expect("encode succeeds");
-        for cut in 1..=39 {
+        for cut in 1..=48 {
             let truncated = payload.get(..payload.len() - cut).expect("cut within the payload");
             let decoded = decode_outcome(truncated);
             assert!(
@@ -527,6 +525,19 @@ mod tests {
                 "a payload cut by {cut} bytes must not decode: {decoded:?}"
             );
         }
+    }
+
+    #[test]
+    fn success_outcome_with_unknown_flags_is_rejected() {
+        let mut payload = encode_outcome(&Outcome::Success {
+            snapshot: b"snap".to_vec(),
+            window_cpu_us: None,
+            window_report: None,
+            setup_guard_fired: false,
+        })
+        .expect("encode succeeds");
+        *payload.last_mut().expect("a payload") = 0x80;
+        assert!(decode_outcome(&payload).is_err());
     }
 
     #[test]

@@ -56,11 +56,13 @@ use std::io::Write;
 #[cfg(target_os = "linux")]
 use collab_core::error::CollabError;
 #[cfg(target_os = "linux")]
-use collab_core::facts::BaseFacts;
+use collab_core::facts::{BaseFacts, SetupFacts};
 #[cfg(target_os = "linux")]
 use collab_core::isolation::{alloc, child_runtime, host, wire};
 #[cfg(target_os = "linux")]
 use collab_core::limits::{DocumentLimits, check_snapshot};
+#[cfg(target_os = "linux")]
+use collab_core::setup_guard::SetupGuard;
 #[cfg(target_os = "linux")]
 use collab_core::window_check::{self, WindowReport};
 #[cfg(target_os = "linux")]
@@ -101,6 +103,9 @@ fn main() {
         exit_without_response(1);
     }
 
+    // The setup guard's count starts here, before the base is decoded.
+    let setup_guard = SetupGuard::start();
+
     // `LoroCollabEngine::load`'s error is reported via the normal response frame (it is a real,
     // well-typed `CollabError` a caller-facing rejection can be built from), not treated as a
     // host failure -- so this cannot be a `let...else` (clippy's suggested rewrite): the
@@ -122,14 +127,17 @@ fn main() {
     // not describe, and then the window takes the full computation.
     // The host can ask for the full computation (`wire::WINDOW_FULL`): then there are no facts, which
     // is the same as a base the check does not describe. Nothing can ask for less checking.
-    let facts = if std::env::var(wire::WINDOW_ENV).as_deref() == Ok(wire::WINDOW_FULL) {
-        None
+    // The setup guard counts the allocation of the whole setup, load and prewarm included (it was
+    // started before the load), and yields no facts when the setup has cost more than it allows:
+    // an ordinary outcome, the same as for a base the check does not describe.
+    let setup = if std::env::var(wire::WINDOW_ENV).as_deref() == Ok(wire::WINDOW_FULL) {
+        SetupFacts::none(false)
     } else {
-        BaseFacts::compute(&base_engine)
+        BaseFacts::compute_guarded(&base_engine, &setup_guard)
     };
 
     write_marker_or_exit();
-    respond_and_exit(&decode_apply_check_and_export(base_engine, facts.as_ref(), &update));
+    respond_and_exit(&decode_apply_check_and_export(base_engine, &setup, &update));
 }
 
 #[cfg(target_os = "linux")]
@@ -146,6 +154,7 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
                 snapshot,
                 window_cpu_us: None,
                 window_report: None,
+                setup_guard_fired: false,
             },
             Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
                 reason: format!("diff result encoding failed: {error}"),
@@ -389,14 +398,15 @@ fn decode_apply_and_check(
 /// inside the window (as an earlier version of this file did) was spending real budget on work the
 /// contract does not ask this ceiling to bound.
 #[cfg(target_os = "linux")]
-fn decode_apply_check_and_export(engine: LoroCollabEngine, facts: Option<&BaseFacts>, update: &[u8]) -> wire::Outcome {
-    let Metered { verdict, window_cpu_us } = run_metered(engine, facts, update);
+fn decode_apply_check_and_export(engine: LoroCollabEngine, setup: &SetupFacts, update: &[u8]) -> wire::Outcome {
+    let Metered { verdict, window_cpu_us } = run_metered(engine, setup.facts.as_ref(), update);
     match verdict {
         Ok((accepted, window_report)) => match accepted.export_snapshot() {
             Ok(snapshot) => wire::Outcome::Success {
                 snapshot,
                 window_cpu_us,
                 window_report,
+                setup_guard_fired: setup.guard_fired,
             },
             Err(err) => wire::Outcome::Rejected(err),
         },
@@ -609,17 +619,19 @@ mod tests {
         writer.set_title("hello").expect("set_title succeeds");
         let update = writer.export_from(&base_frontier).expect("export succeeds");
 
-        let facts = BaseFacts::compute(&base);
-        let outcome = decode_apply_check_and_export(base, facts.as_ref(), &update);
+        let setup = BaseFacts::compute_guarded(&base, &SetupGuard::start());
+        let outcome = decode_apply_check_and_export(base, &setup, &update);
         let wire::Outcome::Success {
             snapshot,
             window_cpu_us,
             window_report,
+            setup_guard_fired,
         } = outcome
         else {
             panic!("expected Success, a title-only update stays well within every ceiling");
         };
         assert!(window_cpu_us.is_some(), "the worker reports the window CPU time");
+        assert!(!setup_guard_fired, "a tiny base never trips the setup guard");
         assert!(
             window_report.is_some(),
             "a title-only update on a tree page is decided by the incremental check"
@@ -677,8 +689,8 @@ mod tests {
             .expect("insert_text succeeds at the engine level (check_snapshot, not the engine, enforces this ceiling)");
         let update = writer.export_from(&base_frontier).expect("export succeeds");
 
-        let facts = BaseFacts::compute(&base);
-        let outcome = decode_apply_check_and_export(base, facts.as_ref(), &update);
+        let setup = BaseFacts::compute_guarded(&base, &SetupGuard::start());
+        let outcome = decode_apply_check_and_export(base, &setup, &update);
         let wire::Outcome::Rejected(CollabError::LimitExceeded { limit_kind, .. }) = outcome else {
             panic!("expected a document_text_chars rejection, got {outcome:?}");
         };

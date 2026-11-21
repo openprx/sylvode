@@ -572,6 +572,24 @@ pub(crate) struct Prepared {
 /// the API has no metrics endpoint or other exported counters, so the log line is where it shows.
 pub(crate) static WINDOW_CHECK_DIVERGENCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// How many windows the worker decided with the full computation because its setup guard fired
+/// (the base cost more setup work than `collab_core::setup_guard` allows), since the process
+/// started. Exported as the `flow_window_setup_guard_total` field of the log line of
+/// [`note_setup_guard`].
+pub(crate) static WINDOW_SETUP_GUARDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Counts and logs a window that the worker's setup guard sent to the full computation. An ordinary
+/// outcome (the write is decided and accepted or refused like any other, nothing counts toward the
+/// document's cooldown), so the line is a warning for the operator, not an error.
+fn note_setup_guard(document_id: Uuid) {
+    let total = WINDOW_SETUP_GUARDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    tracing::warn!(
+        flow_window_setup_guard_total = total,
+        document_id = %document_id,
+        "window_setup_guard: the page's setup cost more work than the guard allows, so this write was decided by the full window"
+    );
+}
+
 /// The identifiers that reproduce a window decision: the document, the update and the head it was
 /// applied to. Never content.
 #[derive(Clone, Copy)]
@@ -814,6 +832,9 @@ fn window_attempt(
         Ok(success) => success,
         Err(err) => return Ok(WindowAttempt::Rejected(err)),
     };
+    if success.setup_guard_fired {
+        note_setup_guard(document_id);
+    }
     // Reconstructing `LoroCollabEngine` from the isolated worker's already-shape-validated result
     // is cheap and safe: the worker already bounded this document's tree depth/container
     // count/block count/text volume inside the metered window, so this load and the
@@ -1017,6 +1038,25 @@ mod window_oracle_tests {
         .expect("decides");
         assert!(matches!(decided, WindowAttempt::Prepared(window) if window.incremental));
         assert_eq!(modes, [WindowMode::Incremental]);
+    }
+
+    /// A window whose setup guard fired is an ordinary outcome: it is counted and logged, and it
+    /// never counts toward the document's cooldown.
+    #[test]
+    fn a_window_decided_after_the_setup_guard_fired_is_counted_and_not_cooled() {
+        let ids = ids();
+        let before = WINDOW_SETUP_GUARDS.load(std::sync::atomic::Ordering::Relaxed);
+        note_setup_guard(ids.document_id);
+        assert!(WINDOW_SETUP_GUARDS.load(std::sync::atomic::Ordering::Relaxed) > before);
+        for _ in 0..(COOLDOWN_THRESHOLD + 2) {
+            note_setup_guard(ids.document_id);
+        }
+        assert!(
+            !disagreements()
+                .lock()
+                .cooling(ids.document_id, std::time::Instant::now()),
+            "a fired setup guard is not a disagreement"
+        );
     }
 
     #[test]
@@ -1753,6 +1793,7 @@ pub(crate) mod in_process_apply {
             snapshot,
             window_cpu_us: None,
             window_report: None,
+            setup_guard_fired: false,
         })
     }
 }

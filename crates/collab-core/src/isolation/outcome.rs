@@ -29,6 +29,10 @@ pub struct IsolatedApplySuccess {
     /// it decided (`None` when the full computation did). The host compares it with its own
     /// projection of the document.
     pub window_report: Option<crate::window_check::WindowReport>,
+    /// The worker's setup guard fired (`crate::setup_guard`): the base took more work than the
+    /// guard allows, so there were no base facts and the full computation decided. Not an error;
+    /// telemetry for the host's log.
+    pub setup_guard_fired: bool,
 }
 
 pub type IsolatedDiffSuccess = wire::ReplayDiffResult;
