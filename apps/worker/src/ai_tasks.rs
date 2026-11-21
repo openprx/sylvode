@@ -286,6 +286,9 @@ async fn pickup_pending_tasks(
                 started_at = now(),
                 lease_expires_at = now() + make_interval(secs => $2::bigint),
                 runner_phase = NULL,
+                acknowledged_at = NULL,
+                plan = NULL,
+                last_progress_at = NULL,
                 next_retry_at = NULL,
                 updated_at = now()
             FROM picked
@@ -853,6 +856,7 @@ mod database_tests {
     struct Lease {
         lease_secs: f64,
         phase_is_null: bool,
+        attempt_fields_are_null: bool,
     }
 
     async fn events(db: &DatabaseConnection, task: Uuid, event_type: &str) -> i64 {
@@ -872,10 +876,11 @@ mod database_tests {
         let scratch = scratch_or_skip!("pickup_lease");
         let db = &scratch.db;
         let task_id = seed_pending_task(db).await;
-        // A re-queued task carries the phase of its earlier attempt.
+        // A re-queued task carries what its earlier attempt acknowledged and reported.
         exec(
             db,
-            "UPDATE ai_tasks SET runner_phase = 'pushed' WHERE id = $1",
+            "UPDATE ai_tasks SET runner_phase = 'pushed', plan = 'old plan', acknowledged_at = now(), \
+             last_progress_at = now() WHERE id = $1",
             vec![task_id.into()],
         )
         .await;
@@ -890,7 +895,8 @@ mod database_tests {
         let lease = Lease::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT EXTRACT(EPOCH FROM (lease_expires_at - started_at))::float8 AS lease_secs, \
-                    (runner_phase IS NULL) AS phase_is_null \
+                    (runner_phase IS NULL) AS phase_is_null, \
+                    (plan IS NULL AND acknowledged_at IS NULL AND last_progress_at IS NULL) AS attempt_fields_are_null \
              FROM ai_tasks WHERE id = $1",
             vec![task_id.into()],
         ))
@@ -900,6 +906,10 @@ mod database_tests {
         .expect("task exists");
         assert!((lease.lease_secs - 3_600.0).abs() < 1.0, "lease {}", lease.lease_secs);
         assert!(lease.phase_is_null);
+        assert!(
+            lease.attempt_fields_are_null,
+            "a new attempt starts without the previous attempt's plan and progress"
+        );
         scratch.drop_self().await;
     }
 
