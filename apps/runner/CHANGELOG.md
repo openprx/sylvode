@@ -11,6 +11,17 @@ earlier releases are described on the
 were never released: their changes are listed under 0.3.9. Versions 0.3.9 to 0.3.53 are released
 together as 0.3.53.
 
+## Unreleased
+
+- The crate is now `sylvode-runner` (directory `apps/runner`, library `sylvode_runner`) and the
+  executable is `sylvode-runner`. `sylvode-webhook` and `openpr-webhook` are built from the same
+  library and kept for the whole Sylvode 1.x line; each writes one deprecation line to stderr.
+- `SYLVODE_RUNNER_SAFE_MODE` replaces `SYLVODE_WEBHOOK_SAFE_MODE` and `OPENPR_WEBHOOK_SAFE_MODE`,
+  which are still read; `RUST_LOG` directives naming `sylvode_webhook` or `openpr_webhook` are
+  rewritten to `sylvode_runner`. Each legacy spelling writes one deprecation line.
+- No change to the HTTP interface, the configuration format, answers or callback bodies: the callback
+  `source` stays `sylvode-webhook`.
+
 ## Upgrading from 0.3.3
 
 ### Breaking: configurations that started with 0.3.3 and are refused now

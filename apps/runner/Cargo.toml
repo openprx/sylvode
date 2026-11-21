@@ -1,17 +1,22 @@
 [package]
-name = "sylvode-webhook"
+name = "sylvode-runner"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Webhook receiver and agent dispatcher for Sylvode (formerly OpenPR Webhook)"
+description = "Sylvode runner: receives Sylvode task deliveries and runs agents (formerly Sylvode Webhook)"
 repository.workspace = true
 
 [lib]
-name = "sylvode_webhook"
+name = "sylvode_runner"
 path = "src/lib.rs"
 
-# One library entry point, two executables: the canonical name and the legacy name kept for Sylvode 1.x.
+# One library entry point, three executables: the canonical name and the two former names kept for
+# Sylvode 1.x.
+[[bin]]
+name = "sylvode-runner"
+path = "src/bin/sylvode-runner.rs"
+
 [[bin]]
 name = "sylvode-webhook"
 path = "src/bin/sylvode-webhook.rs"

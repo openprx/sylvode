@@ -853,13 +853,13 @@
       "reason": "formerly_note",
       "repo": "sylvode",
       "paths": [
-        "apps/webhook/Cargo.toml",
-        "apps/webhook/Dockerfile",
-        "apps/webhook/README.md",
-        "apps/webhook/SECURITY.md",
-        "apps/webhook/CHANGELOG.md",
-        "apps/webhook/src/app.rs",
-        "apps/webhook/src/lib.rs"
+        "apps/runner/Cargo.toml",
+        "apps/runner/Dockerfile",
+        "apps/runner/README.md",
+        "apps/runner/SECURITY.md",
+        "apps/runner/CHANGELOG.md",
+        "apps/runner/src/app.rs",
+        "apps/runner/src/lib.rs"
       ],
       "pattern": "[Ff]ormerly (?:`OpenPR`|OpenPR) Webhook|called OpenPR Webhook|Migrating from OpenPR Webhook|from OpenPR Webhook|#migrating-from-openpr-webhook",
       "explanation": "Notes in the in-repository webhook receiver (apps/webhook, imported from the openpr-webhook repository) that Sylvode Webhook was formerly OpenPR Webhook, and the README anchor of its migration section (ADR-0020 D4)."
@@ -869,24 +869,24 @@
       "reason": "legacy_alias_documented",
       "repo": "sylvode",
       "paths": [
-        "apps/webhook/CHANGELOG.md",
-        "apps/webhook/Cargo.toml",
-        "apps/webhook/Dockerfile",
-        "apps/webhook/README.md",
-        "apps/webhook/SECURITY.md",
-        "apps/webhook/scripts/install.sh",
-        "apps/webhook/scripts/uninstall.sh",
-        "apps/webhook/src/app.rs",
-        "apps/webhook/src/compat.rs",
-        "apps/webhook/src/lib.rs",
-        "apps/webhook/src/signature.rs",
-        "apps/webhook/src/bin/openpr-webhook.rs",
-        "apps/webhook/tests/e2e/main.rs",
-        "apps/webhook/tests/e2e/support.rs",
-        "apps/webhook/tests/executable_names.rs",
-        "apps/webhook/tests/http_signature.rs",
-        "apps/webhook/tests/install_scripts.rs",
-        "apps/webhook/tests/legacy_environment.rs"
+        "apps/runner/CHANGELOG.md",
+        "apps/runner/Cargo.toml",
+        "apps/runner/Dockerfile",
+        "apps/runner/README.md",
+        "apps/runner/SECURITY.md",
+        "apps/runner/scripts/install.sh",
+        "apps/runner/scripts/uninstall.sh",
+        "apps/runner/src/app.rs",
+        "apps/runner/src/compat.rs",
+        "apps/runner/src/lib.rs",
+        "apps/runner/src/signature.rs",
+        "apps/runner/src/bin/openpr-webhook.rs",
+        "apps/runner/tests/e2e/main.rs",
+        "apps/runner/tests/e2e/support.rs",
+        "apps/runner/tests/executable_names.rs",
+        "apps/runner/tests/http_signature.rs",
+        "apps/runner/tests/install_scripts.rs",
+        "apps/runner/tests/legacy_environment.rs"
       ],
       "pattern": "(?:ghcr\\.io/openprx/|/app/|/old/|target/release/|src/bin/)?openpr-webhook(?:[\\w.<>${}:-]*)?|openpr_webhook[\\w:\\[\\]=]*|dev\\.openpr\\.webhook|legacy_openpr_header\\w*",
       "explanation": "Compatibility names of apps/webhook kept through the Sylvode 1.x line (ADR-0020 D4): the legacy openpr-webhook executable (its src/bin file and Cargo [[bin]] entry), image, archive, systemd unit and launchd label names, and the openpr_webhook RUST_LOG target. Limited to the files that carry the compatibility layer or document it: packaging, the install scripts, the compat module, the signature code, their tests and the release notes.",
@@ -900,7 +900,7 @@
       "reason": "legacy_behaviour_test",
       "repo": "sylvode",
       "paths": [
-        "apps/webhook/tests/http_signature.rs"
+        "apps/runner/tests/http_signature.rs"
       ],
       "pattern": "\\\"openpr (?:good|bad)\\\"|good sylvode \\+ bad openpr",
       "explanation": "Test case names of the legacy x-openpr-signature header that apps/webhook still accepts through 1.x."
@@ -910,7 +910,7 @@
       "reason": "legacy_behaviour_test",
       "repo": "sylvode",
       "paths": [
-        "apps/webhook/src/dispatcher.rs"
+        "apps/runner/src/dispatcher.rs"
       ],
       "pattern": "OPENPR_API_URL = \"http://localhost:3000\"",
       "explanation": "An environment entry in the apps/webhook dispatcher's test configurations, passed through to an agent unchanged; the test checks pass-through, not the name."

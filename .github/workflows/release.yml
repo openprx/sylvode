@@ -120,7 +120,7 @@ jobs:
           cross build --release -p mcp-server --bin mcp-server --target ${{ matrix.target }}
           cross build --release -p mcp-server --bin sylvode --target ${{ matrix.target }}
           # The webhook receiver ships in its own archive on the Unix targets (it is Unix-only).
-          cross build --release -p sylvode-webhook --bins --target ${{ matrix.target }}
+          cross build --release -p sylvode-runner --bins --target ${{ matrix.target }}
 
       # Builds every workspace binary, collab-isolated-apply-worker included.
       - name: Build all binaries (native)
@@ -259,7 +259,7 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
 
       - name: Build the image
-        run: docker build -f apps/webhook/Dockerfile -t "webhook-check:${{ matrix.arch }}" .
+        run: docker build -f apps/runner/Dockerfile -t "webhook-check:${{ matrix.arch }}" .
 
       # The same kind of check the Image contents job in ci.yml makes for the api and worker images.
       - name: Check the image contents

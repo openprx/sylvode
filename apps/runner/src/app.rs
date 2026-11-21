@@ -12,15 +12,15 @@ use std::time::Duration;
 use tower_http::trace::TraceLayer;
 
 const DEFAULT_CONFIG_PATH: &str = "config.toml";
-const DEFAULT_LOG_FILTER: &str = "sylvode_webhook=info";
+const DEFAULT_LOG_FILTER: &str = "sylvode_runner=info";
 
 /// Help text. It names the canonical executable whichever name the process was started under,
 /// so stdout is byte-for-byte identical for both names.
 const HELP: &str = "\
-Sylvode Webhook (formerly OpenPR Webhook): receives Sylvode webhook deliveries and dispatches them to agents.
+Sylvode runner (formerly Sylvode Webhook): receives Sylvode task deliveries and runs agents.
 
-Usage: sylvode-webhook [CONFIG]
-       sylvode-webhook --help | --version
+Usage: sylvode-runner [CONFIG]
+       sylvode-runner --help | --version
 
 Arguments:
   [CONFIG]       Path to the TOML configuration file [default: config.toml]
@@ -29,7 +29,7 @@ Options:
   -h, --help     Print this help and exit
   -V, --version  Print the version and exit
 
-The legacy executable name openpr-webhook runs the same program and is not removed before Sylvode v2.0.
+The former executable names sylvode-webhook and openpr-webhook run the same program and are not removed before Sylvode v2.0.
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -79,11 +79,17 @@ fn write_stderr_line(text: &str) {
     let _ = writeln!(stderr, "{text}");
 }
 
-/// Runs the service. Both executables call this; `invocation` only decides whether the
-/// deprecation notice for the legacy executable name is written.
+/// Runs the service. Every executable calls this; `invocation` only decides whether the
+/// deprecation notice for a former executable name is written.
 pub fn run(invocation: compat::Invocation) -> ExitCode {
-    if invocation == compat::Invocation::Legacy {
-        compat::warn_once(compat::LegacyEntry::ExecutableName);
+    match invocation {
+        compat::Invocation::Canonical => {}
+        compat::Invocation::WebhookAlias => {
+            compat::warn_once(compat::LegacyEntry::WebhookExecutableName);
+        }
+        compat::Invocation::Legacy => {
+            compat::warn_once(compat::LegacyEntry::ExecutableName);
+        }
     }
 
     let command = match parse_command(std::env::args_os().nth(1)) {
@@ -101,11 +107,11 @@ pub fn run(invocation: compat::Invocation) -> ExitCode {
     }
 }
 
-/// Sets up logging from `RUST_LOG`, honouring directives for the legacy `openpr_webhook` target.
+/// Sets up logging from `RUST_LOG`, honouring directives for the former `sylvode_webhook` and `openpr_webhook` targets.
 fn init_tracing() -> Result<(), String> {
     let resolved = compat::resolve_log_filter(std::env::var("RUST_LOG").ok().as_deref())?;
-    if resolved.used_legacy {
-        compat::warn_once(compat::LegacyEntry::LogTarget);
+    for entry in resolved.used_legacy {
+        compat::warn_once(entry);
     }
     let filter = resolved
         .value
@@ -119,10 +125,11 @@ fn init_tracing() -> Result<(), String> {
 
 fn resolve_safe_mode() -> Result<bool, String> {
     let canonical = std::env::var(compat::SAFE_MODE_ENV).ok();
+    let webhook = std::env::var(compat::WEBHOOK_SAFE_MODE_ENV).ok();
     let legacy = std::env::var(compat::LEGACY_SAFE_MODE_ENV).ok();
-    let resolved = compat::resolve_safe_mode(canonical.as_deref(), legacy.as_deref())?;
-    if resolved.used_legacy {
-        compat::warn_once(compat::LegacyEntry::SafeModeEnv);
+    let resolved = compat::resolve_safe_mode(canonical.as_deref(), webhook.as_deref(), legacy.as_deref())?;
+    for entry in resolved.used_legacy {
+        compat::warn_once(entry);
     }
     Ok(resolved.value)
 }
@@ -346,9 +353,9 @@ mod tests {
         assert_eq!(parse_command(Some("--version".into())), Ok(Command::Version));
         assert_eq!(parse_command(Some("-V".into())), Ok(Command::Version));
         assert_eq!(
-            parse_command(Some("/etc/sylvode-webhook/config.toml".into())),
+            parse_command(Some("/etc/sylvode-runner/config.toml".into())),
             Ok(Command::Serve {
-                config_path: "/etc/sylvode-webhook/config.toml".to_string()
+                config_path: "/etc/sylvode-runner/config.toml".to_string()
             })
         );
     }
@@ -374,7 +381,7 @@ mod tests {
     fn version_line_uses_the_canonical_name_and_crate_version() {
         assert_eq!(
             version_line(),
-            format!("sylvode-webhook {}\n", env!("CARGO_PKG_VERSION"))
+            format!("sylvode-runner {}\n", env!("CARGO_PKG_VERSION"))
         );
     }
 }

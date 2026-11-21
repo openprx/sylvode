@@ -1,9 +1,10 @@
-//! Sylvode Webhook (formerly `OpenPR` Webhook).
+//! The Sylvode runner (formerly Sylvode Webhook).
 //!
-//! The service is built as a library with two thin executables: `sylvode-webhook`, the canonical
-//! name, and `openpr-webhook`, the legacy name kept for the whole Sylvode 1.x line. Both call [`run`], so
-//! there is exactly one code path; the only difference is the [`Invocation`] each passes, which
-//! decides whether the one-line deprecation notice is written to stderr.
+//! The service is built as a library with three thin executables: `sylvode-runner`, the canonical
+//! name, `sylvode-webhook` and `openpr-webhook`, the former names kept for the whole Sylvode 1.x
+//! line. All call [`run`], so there is exactly one code path; the only difference is the
+//! [`Invocation`] each passes, which decides whether the one-line deprecation notice is written to
+//! stderr.
 //!
 //! The service manages executors as process groups and handles `SIGTERM`, so it is Unix only. On
 //! any other target this crate is empty (the cfg below) and the executables only print that the

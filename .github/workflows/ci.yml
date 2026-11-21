@@ -79,16 +79,16 @@ jobs:
           bash scripts/verify-sylvode-brand-residue.sh --json --strict >/dev/null
           bash scripts/verify-sylvode-brand-residue.sh --json --self-test >/dev/null
 
-  # A fast signal for the webhook receiver (apps/webhook): fmt, clippy and its tests on Linux and
+  # A fast signal for the runner (apps/runner): fmt, clippy and its tests on Linux and
   # macOS, without waiting for the workspace-wide jobs. It runs when the push or pull request
-  # changes apps/webhook or what it builds with; a push whose base is unknown (a new branch) runs
+  # changes apps/runner or what it builds with; a push whose base is unknown (a new branch) runs
   # it as well. The workspace-wide Lint and Test jobs still cover the receiver on every run.
-  webhook-changes:
-    name: Webhook changes
+  runner-changes:
+    name: Runner changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      webhook: ${{ steps.filter.outputs.webhook }}
+      runner: ${{ steps.filter.outputs.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -104,18 +104,18 @@ jobs:
           [ "$EVENT_NAME" = "push" ] && base="$PUSH_BEFORE"
           if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
             changed=true
-          elif git diff --name-only "$base" HEAD -- apps/webhook config/sylvode-webhook.example.toml \
+          elif git diff --name-only "$base" HEAD -- apps/runner config/sylvode-webhook.example.toml \
               Cargo.toml Cargo.lock rust-toolchain.toml .github/workflows/ci.yml | grep -q .; then
             changed=true
           else
             changed=false
           fi
-          echo "webhook=$changed" >>"$GITHUB_OUTPUT"
+          echo "runner=$changed" >>"$GITHUB_OUTPUT"
 
-  webhook:
-    name: Webhook (${{ matrix.os }})
-    needs: webhook-changes
-    if: needs.webhook-changes.outputs.webhook == 'true'
+  runner:
+    name: Runner (${{ matrix.os }})
+    needs: runner-changes
+    if: needs.runner-changes.outputs.runner == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -129,13 +129,13 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: webhook
+          key: runner
       - name: Format check
-        run: cargo fmt -p sylvode-webhook -- --check
+        run: cargo fmt -p sylvode-runner -- --check
       - name: Clippy
-        run: cargo clippy -p sylvode-webhook --all-targets --all-features -- -D warnings
+        run: cargo clippy -p sylvode-runner --all-targets --all-features -- -D warnings
       - name: Tests
-        run: cargo test -p sylvode-webhook --all-features
+        run: cargo test -p sylvode-runner --all-features
 
   test:
     name: Test

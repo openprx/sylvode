@@ -1,6 +1,6 @@
 //! Start-up: what the service logs and what it refuses to start with.
 
-use crate::support::{CANONICAL, LEGACY, SECRET, Server};
+use crate::support::{CANONICAL, LEGACY, SECRET, Server, WEBHOOK_ALIAS};
 
 fn minimal_config() -> String {
     format!("[server]\nlisten = \"127.0.0.1:0\"\n\n[security]\nwebhook_secrets = [\"{SECRET}\"]\n")
@@ -40,6 +40,7 @@ fn successful_start_writes_the_same_stdout_under_both_names() {
             .any(|line| line.contains("listening on 127.0.0.1:PORT")),
         "{canonical:?}"
     );
+    assert_eq!(normalized(WEBHOOK_ALIAS), canonical);
     assert_eq!(normalized(LEGACY), canonical);
 }
 

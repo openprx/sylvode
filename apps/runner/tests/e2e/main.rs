@@ -1,4 +1,4 @@
-//! End-to-end tests: each one runs the real `sylvode-webhook` (or `openpr-webhook`) executable
+//! End-to-end tests: each one runs the real `sylvode-runner` (or a former name, `sylvode-webhook` or `openpr-webhook`) executable
 //! against a generated configuration and observes it from outside, through HTTP, the tunnel
 //! WebSocket, the requests it makes to a stub Sylvode API, the processes it starts and its output.
 

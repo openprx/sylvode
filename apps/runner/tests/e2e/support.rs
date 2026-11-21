@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
-pub const CANONICAL: &str = env!("CARGO_BIN_EXE_sylvode-webhook");
+pub const CANONICAL: &str = env!("CARGO_BIN_EXE_sylvode-runner");
+pub const WEBHOOK_ALIAS: &str = env!("CARGO_BIN_EXE_sylvode-webhook");
 pub const LEGACY: &str = env!("CARGO_BIN_EXE_openpr-webhook");
 pub const SECRET: &str = "e2e-webhook-secret";
 
@@ -26,7 +27,7 @@ pub struct TempDir(pub PathBuf);
 
 impl TempDir {
     pub fn new(label: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("sylvode-webhook-e2e-{label}-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("sylvode-runner-e2e-{label}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         Self(dir)
     }
@@ -107,6 +108,7 @@ impl Server {
         command
             .arg(&config_path)
             .env_remove("RUST_LOG")
+            .env_remove("SYLVODE_RUNNER_SAFE_MODE")
             .env_remove("SYLVODE_WEBHOOK_SAFE_MODE")
             .env_remove("OPENPR_WEBHOOK_SAFE_MODE")
             .env("NO_COLOR", "1")

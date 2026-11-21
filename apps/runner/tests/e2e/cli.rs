@@ -298,7 +298,8 @@ async fn a_worker_task_payload_cannot_choose_the_agent_type() {
 #[tokio::test(flavor = "multi_thread")]
 async fn safe_mode_variables_turn_the_cli_path_off() {
     for (env, disabled, notice) in [
-        (Some("SYLVODE_WEBHOOK_SAFE_MODE"), true, false),
+        (Some("SYLVODE_RUNNER_SAFE_MODE"), true, false),
+        (Some("SYLVODE_WEBHOOK_SAFE_MODE"), true, true),
         (Some("OPENPR_WEBHOOK_SAFE_MODE"), true, true),
         (None, false, false),
     ] {
@@ -337,7 +338,7 @@ async fn safe_mode_variables_turn_the_cli_path_off() {
         assert_eq!(
             stderr
                 .iter()
-                .any(|line| line.contains("`OPENPR_WEBHOOK_SAFE_MODE` is deprecated")),
+                .any(|line| line.contains("_WEBHOOK_SAFE_MODE` is deprecated")),
             notice,
             "{env:?}: {stderr:?}"
         );

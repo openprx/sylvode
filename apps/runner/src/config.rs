@@ -20,8 +20,8 @@ pub struct Config {
     /// Terminal callbacks for worker AI tasks (`[ai_task_callback]`).
     #[serde(default)]
     pub ai_task_callback: AiTaskCallbackConfig,
-    /// Safe mode, resolved once at start-up from `SYLVODE_WEBHOOK_SAFE_MODE` (or the legacy
-    /// `OPENPR_WEBHOOK_SAFE_MODE`). Not read from the file.
+    /// Safe mode, resolved once at start-up from `SYLVODE_RUNNER_SAFE_MODE` (or the former
+    /// `SYLVODE_WEBHOOK_SAFE_MODE` and `OPENPR_WEBHOOK_SAFE_MODE`). Not read from the file.
     #[serde(skip)]
     pub safe_mode: bool,
     /// Deprecation notices for commands written in the one-string form, logged at start-up.

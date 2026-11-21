@@ -15,12 +15,14 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-const CANONICAL: &str = env!("CARGO_BIN_EXE_sylvode-webhook");
+const CANONICAL: &str = env!("CARGO_BIN_EXE_sylvode-runner");
+const WEBHOOK_ALIAS: &str = env!("CARGO_BIN_EXE_sylvode-webhook");
 const LEGACY: &str = env!("CARGO_BIN_EXE_openpr-webhook");
 const SECRET: &str = "integration-secret";
 const BODY: &str = r#"{"event":"issue.created","data":{"title":"signature test"}}"#;
-const EXECUTABLE_NOTICE: &str = "warning: the executable name `openpr-webhook` is deprecated, use `sylvode-webhook` \
+const EXECUTABLE_NOTICE: &str = "warning: the executable name `openpr-webhook` is deprecated, use `sylvode-runner` \
                                  instead; `openpr-webhook` is not removed before Sylvode v2.0";
+const ALIAS_NOTICE: &str = "sylvode-webhook is now sylvode-runner; the old name is kept until Sylvode v2.0";
 const HEADER_NOTICE: &str = "warning: the inbound signature header `x-openpr-signature` is deprecated, use \
                              `x-sylvode-signature` instead; `x-openpr-signature` is not removed before Sylvode v2.0";
 
@@ -67,7 +69,7 @@ impl Drop for TempDir {
 /// Starts `binary` on a port the system chooses and reads that port from the listening line, so
 /// parallel tests cannot collide on a port reserved and released beforehand.
 fn start(binary: &str) -> Server {
-    let dir = std::env::temp_dir().join(format!("sylvode-webhook-it-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("sylvode-runner-it-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let config = dir.join("config.toml");
     std::fs::write(
@@ -78,6 +80,7 @@ fn start(binary: &str) -> Server {
     let mut child = Command::new(binary)
         .arg(&config)
         .env_remove("RUST_LOG")
+        .env_remove("SYLVODE_RUNNER_SAFE_MODE")
         .env_remove("SYLVODE_WEBHOOK_SAFE_MODE")
         .env_remove("OPENPR_WEBHOOK_SAFE_MODE")
         .env("NO_COLOR", "1")
@@ -187,13 +190,16 @@ async fn answers(binary: &str) -> (Vec<(u16, String)>, Vec<String>) {
 }
 
 #[tokio::test]
-async fn both_names_answer_every_header_case_identically() {
+async fn all_names_answer_every_header_case_identically() {
     let (canonical, canonical_stderr) = answers(CANONICAL).await;
+    let (alias, alias_stderr) = answers(WEBHOOK_ALIAS).await;
     let (legacy, legacy_stderr) = answers(LEGACY).await;
+    assert_eq!(alias, canonical, "responses must not depend on the executable name");
     assert_eq!(legacy, canonical, "responses must not depend on the executable name");
 
     // Both processes saw x-openpr-signature several times: one header notice each, no repeats.
     assert_eq!(canonical_stderr, vec![HEADER_NOTICE.to_string()]);
+    assert_eq!(alias_stderr, vec![ALIAS_NOTICE.to_string(), HEADER_NOTICE.to_string()]);
     assert_eq!(
         legacy_stderr,
         vec![EXECUTABLE_NOTICE.to_string(), HEADER_NOTICE.to_string()]

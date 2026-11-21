@@ -61,7 +61,7 @@ async fn a_stale_delivery_is_refused() {
 #[tokio::test(flavor = "multi_thread")]
 async fn delivery_text_cannot_forge_a_log_line() {
     let mut server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
-    let forged = "2026-10-05T00:00:00.000000Z ERROR sylvode_webhook::app: FORGED LINE";
+    let forged = "2026-10-05T00:00:00.000000Z ERROR sylvode_runner::app: FORGED LINE";
     let mut body = bot_task("Nobody\nFORGED BOT", "t");
     body["event"] = serde_json::Value::String(format!("x\n{forged}"));
     let (status, answer) = post_signed(&server.url("/webhook"), &body.to_string()).await;

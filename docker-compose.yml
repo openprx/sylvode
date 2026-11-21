@@ -175,7 +175,7 @@ services:
       - connectors
     build:
       context: .
-      dockerfile: apps/webhook/Dockerfile
+      dockerfile: apps/runner/Dockerfile
     image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/sylvode-webhook:latest}
     volumes:
       - ${SYLVODE_WEBHOOK_CONFIG:-./config/sylvode-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro
