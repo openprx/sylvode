@@ -1,7 +1,7 @@
 //! `[ai_task_callback]` through the real executable: a worker AI task ends in Sylvode with
 //! `complete` or `fail`, also when no agent matches it.
 
-use crate::support::{CANONICAL, SECRET, Server, StubApi, TempDir, path_with, post_signed, write_script};
+use crate::support::{RUNNER, SECRET, Server, StubApi, TempDir, path_with, post_signed, write_script};
 use std::time::Duration;
 
 const BOT_TOKEN: &str = "e2e-bot-token";
@@ -66,7 +66,7 @@ async fn a_successful_cli_run_completes_the_worker_task() {
     let bin = TempDir::new("bin");
     write_script(bin.path(), "codex", "echo fixed it");
     let mut api = StubApi::start().await;
-    let server = Server::start(CANONICAL, &config(&api), &[("PATH", &path_with(bin.path()))]).expect("server starts");
+    let server = Server::start(RUNNER, &config(&api), &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let (status, answer) = post_signed(&server.url("/webhook"), &worker_task(&task_id, "bot-1").to_string()).await;
@@ -76,7 +76,7 @@ async fn a_successful_cli_run_completes_the_worker_task() {
     let call = api.next(Duration::from_secs(20)).await.expect("complete call");
     assert_eq!(call.path, format!("/api/v1/ai/callbacks/task/{task_id}/complete"));
     assert_eq!(bearer(&call), Some(format!("Bearer {BOT_TOKEN}").as_str()));
-    assert_eq!(call.body["source"], "sylvode-webhook");
+    assert_eq!(call.body["source"], "sylvode-runner");
     assert_eq!(call.body["agent_id"], "bot-1");
     assert_eq!(call.body["status"], "success", "{:?}", call.body);
     assert_eq!(call.body["exit_code"], 0);
@@ -94,7 +94,7 @@ async fn a_failing_cli_run_fails_the_worker_task() {
     let bin = TempDir::new("bin");
     write_script(bin.path(), "codex", "echo broken >&2\nexit 3");
     let mut api = StubApi::start().await;
-    let server = Server::start(CANONICAL, &config(&api), &[("PATH", &path_with(bin.path()))]).expect("server starts");
+    let server = Server::start(RUNNER, &config(&api), &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let (status, answer) = post_signed(&server.url("/webhook"), &worker_task(&task_id, "bot-1").to_string()).await;
@@ -122,7 +122,7 @@ async fn a_failing_cli_run_fails_the_worker_task() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_worker_task_no_agent_matches_is_failed() {
     let mut api = StubApi::start().await;
-    let server = Server::start(CANONICAL, &routed_config(&api), &[]).expect("server starts");
+    let server = Server::start(RUNNER, &routed_config(&api), &[]).expect("server starts");
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let mut task = worker_task(&task_id, "bot-unknown");
@@ -175,7 +175,7 @@ fn two_bot_config(api: &StubApi) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn each_bots_unmatched_task_uses_its_own_token_or_none() {
     let mut api = StubApi::start().await;
-    let server = Server::start(CANONICAL, &two_bot_config(&api), &[]).expect("server starts");
+    let server = Server::start(RUNNER, &two_bot_config(&api), &[]).expect("server starts");
 
     let task_b = uuid::Uuid::new_v4().to_string();
     let mut task = worker_task(&task_b, BOT_B);
@@ -203,7 +203,7 @@ async fn each_bots_unmatched_task_uses_its_own_token_or_none() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_direct_bot_task_no_agent_matches_calls_nothing() {
     let mut api = StubApi::start().await;
-    let server = Server::start(CANONICAL, &routed_config(&api), &[]).expect("server starts");
+    let server = Server::start(RUNNER, &routed_config(&api), &[]).expect("server starts");
 
     let mut body = crate::support::bot_task("Nobody", "unmatched");
     body["bot_context"]["bot_agent_type"] = serde_json::Value::String("openclaw".to_owned());
@@ -222,12 +222,8 @@ async fn a_bot_ids_only_route_does_not_catch_another_bot() {
     let bin = TempDir::new("bin");
     write_script(bin.path(), "codex", "echo fixed it");
     let mut api = StubApi::start().await;
-    let server = Server::start(
-        CANONICAL,
-        &bot_id_routed_config(&api),
-        &[("PATH", &path_with(bin.path()))],
-    )
-    .expect("server starts");
+    let server =
+        Server::start(RUNNER, &bot_id_routed_config(&api), &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
     let other_id = uuid::Uuid::new_v4().to_string();
     let other = worker_task(&other_id, "bot-unknown");

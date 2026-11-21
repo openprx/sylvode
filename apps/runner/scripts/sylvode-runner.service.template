@@ -1,6 +1,6 @@
 [Unit]
 Description=Sylvode Runner Service
-Documentation=https://github.com/openprx/openpr-webhook
+Documentation=https://github.com/openprx/sylvode
 After=network.target
 Wants=network-online.target
 

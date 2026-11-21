@@ -1,8 +1,8 @@
-//! Canonical executable of the Sylvode runner.
+//! The Sylvode runner executable.
 
 #[cfg(unix)]
 fn main() -> std::process::ExitCode {
-    sylvode_runner::run(sylvode_runner::Invocation::Canonical)
+    sylvode_runner::run()
 }
 
 /// The service needs Unix process groups and signals; the library is empty elsewhere.

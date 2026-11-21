@@ -5,10 +5,6 @@ use std::time::Duration;
 
 /// Identifies this dispatcher in the Sylvode API's bot operation ledger.
 pub const MCP_SURFACE_HEADER: &str = "X-Sylvode-MCP-Surface";
-/// Legacy name of [`MCP_SURFACE_HEADER`]. Sent alongside it with the identical value for the
-/// whole Sylvode 1.x line, so this service records the same surface against an API that only
-/// knows the legacy header and against one that knows both (ADR-0020 D3).
-pub const LEGACY_MCP_SURFACE_HEADER: &str = "X-OpenPR-MCP-Surface";
 /// The surface this dispatcher reports for a plain API callback.
 const CLI_SURFACE: &str = "cli";
 
@@ -259,11 +255,7 @@ fn api_callback_request(
     payload: &CallbackPayload,
     token: Option<&str>,
 ) -> reqwest::RequestBuilder {
-    let mut req = client
-        .post(url)
-        .header(MCP_SURFACE_HEADER, CLI_SURFACE)
-        .header(LEGACY_MCP_SURFACE_HEADER, CLI_SURFACE)
-        .json(payload);
+    let mut req = client.post(url).header(MCP_SURFACE_HEADER, CLI_SURFACE).json(payload);
     if let Some(token) = token
         && !token.is_empty()
     {
@@ -350,21 +342,15 @@ mod tests {
     }
 
     #[test]
-    fn api_callback_sends_canonical_and_legacy_surface_headers_with_one_value() {
+    fn api_callback_sends_the_surface_header_and_the_bearer_token() {
         let client = build_client(5).unwrap();
         let request = api_callback_request(&client, "http://127.0.0.1:9/callback", &sample_payload(), Some("opr_x"))
             .build()
             .unwrap();
         let headers = request.headers();
 
-        let canonical: Vec<_> = headers.get_all("x-sylvode-mcp-surface").iter().collect();
-        let legacy: Vec<_> = headers.get_all("x-openpr-mcp-surface").iter().collect();
-        assert_eq!(canonical, vec!["cli"], "canonical surface header");
-        assert_eq!(
-            legacy,
-            vec!["cli"],
-            "legacy surface header for an API that predates the rename"
-        );
+        let surface: Vec<_> = headers.get_all("x-sylvode-mcp-surface").iter().collect();
+        assert_eq!(surface, vec!["cli"], "surface header");
         assert_eq!(
             headers.get("authorization").and_then(|v| v.to_str().ok()),
             Some("Bearer opr_x")

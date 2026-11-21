@@ -5,31 +5,19 @@
 #   Linux  — installs a systemd user service (sylvode-runner.service)
 #   macOS  — installs a launchd user agent (dev.sylvode.runner)
 #
-# An existing installation under a former name (sylvode-webhook.service or
-# openpr-webhook.service on Linux; dev.sylvode.webhook or dev.openpr.webhook
-# on macOS) is updated in place under its own name, so units that are already
-# enabled keep working; the installer prints a deprecation notice that names
-# --migrate. With --migrate the former unit is stopped, disabled and removed
-# and the canonical unit is installed, enabled and started in its place, using
-# the binary and config directory of this run. Running it again changes
-# nothing more. Having two of the three names installed is an error, because
-# both would bind the same port.
+# Running it again rewrites the unit or agent in place.
 #
 # Usage:
-#   ./scripts/install.sh [--binary-path <path>] [--config-dir <path>] [--migrate]
+#   ./scripts/install.sh [--binary-path <path>] [--config-dir <path>]
 #
 # Options:
 #   --binary-path PATH   Path to the sylvode-runner binary.
 #                        Default: ./sylvode-runner, then
 #                                 ./target/release/sylvode-runner, then the
-#                                 Sylvode workspace target/release; then the
-#                                 same for the former sylvode-webhook name and
-#                                 last for the former openpr-webhook name
+#                                 Sylvode workspace target/release
 #   --config-dir  PATH   Directory that contains config.toml (and will be
 #                        used as the service working directory).
 #                        Default: current working directory
-#   --migrate            Replace an installed former unit (sylvode-webhook or
-#                        openpr-webhook) with the canonical sylvode-runner unit
 #
 # Examples:
 #   # Use defaults (binary in cwd, config in cwd)
@@ -49,17 +37,8 @@ set -euo pipefail
 log()  { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
-# deprecated KIND OLD NEW
-deprecated() {
-    warn "the $1 $2 is deprecated, use $3 instead; $2 is not removed before Sylvode v2.0"
-}
-
-CANONICAL_NAME="sylvode-runner"
-WEBHOOK_NAME="sylvode-webhook"
-LEGACY_NAME="openpr-webhook"
-CANONICAL_LABEL="dev.sylvode.runner"
-WEBHOOK_LABEL="dev.sylvode.webhook"
-LEGACY_LABEL="dev.openpr.webhook"
+NAME="sylvode-runner"
+LABEL="dev.sylvode.runner"
 
 # resolve_path: canonicalise a path without requiring it to exist yet.
 # Falls back to a simple absolute-path construction when realpath is absent.
@@ -81,7 +60,6 @@ resolve_path() {
 
 BINARY_PATH=""
 CONFIG_DIR=""
-MIGRATE=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -94,10 +72,6 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2-}" ]] || die "--config-dir requires an argument"
             CONFIG_DIR="$(resolve_path "$2")"
             shift 2
-            ;;
-        --migrate)
-            MIGRATE=1
-            shift
             ;;
         -h|--help)
             sed -n '2,/^set -/p' "$0" | grep '^#' | sed 's/^# \?//'
@@ -135,21 +109,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "$BINARY_PATH" ]]; then
     # Try common locations in order of preference.
     for candidate in \
-        "$PWD/$CANONICAL_NAME" \
-        "$PWD/target/release/$CANONICAL_NAME" \
-        "$SCRIPT_DIR/../$CANONICAL_NAME" \
-        "$SCRIPT_DIR/../target/release/$CANONICAL_NAME" \
-        "$SCRIPT_DIR/../../../target/release/$CANONICAL_NAME" \
-        "$PWD/$WEBHOOK_NAME" \
-        "$PWD/target/release/$WEBHOOK_NAME" \
-        "$SCRIPT_DIR/../$WEBHOOK_NAME" \
-        "$SCRIPT_DIR/../target/release/$WEBHOOK_NAME" \
-        "$SCRIPT_DIR/../../../target/release/$WEBHOOK_NAME" \
-        "$PWD/$LEGACY_NAME" \
-        "$PWD/target/release/$LEGACY_NAME" \
-        "$SCRIPT_DIR/../$LEGACY_NAME" \
-        "$SCRIPT_DIR/../target/release/$LEGACY_NAME" \
-        "$SCRIPT_DIR/../../../target/release/$LEGACY_NAME"
+        "$PWD/$NAME" \
+        "$PWD/target/release/$NAME" \
+        "$SCRIPT_DIR/../$NAME" \
+        "$SCRIPT_DIR/../target/release/$NAME" \
+        "$SCRIPT_DIR/../../../target/release/$NAME"
     do
         if [[ -f "$candidate" ]]; then
             BINARY_PATH="$(resolve_path "$candidate")"
@@ -160,7 +124,7 @@ if [[ -z "$BINARY_PATH" ]]; then
 fi
 
 [[ -n "$BINARY_PATH" ]] \
-    || die "Could not locate the $CANONICAL_NAME binary. Build it first with
+    || die "Could not locate the $NAME binary. Build it first with
        'cargo build --release', then re-run with --binary-path <path>."
 
 [[ -f "$BINARY_PATH" ]] \
@@ -171,10 +135,6 @@ fi
        Run: chmod +x $BINARY_PATH"
 
 log "Binary: $BINARY_PATH"
-case "$(basename "$BINARY_PATH")" in
-    "$WEBHOOK_NAME") deprecated "executable name" "$WEBHOOK_NAME" "$CANONICAL_NAME" ;;
-    "$LEGACY_NAME") deprecated "executable name" "$LEGACY_NAME" "$CANONICAL_NAME" ;;
-esac
 
 # ---------------------------------------------------------------------------
 # Resolve config directory
@@ -307,32 +267,7 @@ xml_escape() {
 
 install_linux() {
     local service_dir="$HOME/.config/systemd/user"
-    local unit_name="$CANONICAL_NAME"
-    local installed="" name legacy=""
-
-    for name in "$CANONICAL_NAME" "$WEBHOOK_NAME" "$LEGACY_NAME"; do
-        if [[ -f "$service_dir/$name.service" ]]; then
-            installed="${installed:+$installed }$name"
-        fi
-    done
-    case "$installed" in
-        *" "*)
-            die "More than one of these units exist: $installed (in $service_dir); they would bind the same port.
-       Stop and remove all but one first, for example:
-         systemctl --user disable --now <name> && rm $service_dir/<name>.service"
-            ;;
-        "$WEBHOOK_NAME"|"$LEGACY_NAME") legacy="$installed" ;;
-    esac
-
-    if [[ -n "$legacy" && "$MIGRATE" -eq 1 ]]; then
-        command -v systemctl &>/dev/null || die "systemctl not found; cannot migrate $legacy.service automatically."
-        log "Migrating $legacy.service to $CANONICAL_NAME.service"
-        systemctl --user disable --now "$legacy"
-    elif [[ -n "$legacy" ]]; then
-        unit_name="$legacy"
-        deprecated "systemd unit" "$legacy.service" "$CANONICAL_NAME.service"
-        warn "Updating the existing unit in place. To move it to $CANONICAL_NAME.service, run this script again with --migrate."
-    fi
+    local unit_name="$NAME"
     local service_file="$service_dir/$unit_name.service"
 
     mkdir -p "$service_dir"
@@ -353,13 +288,6 @@ install_linux() {
         log "systemd user daemon reloaded"
     else
         warn "systemctl not found; skipping daemon-reload. Run manually later."
-    fi
-
-    if [[ -n "$legacy" && "$MIGRATE" -eq 1 ]]; then
-        systemctl --user enable --now "$unit_name"
-        rm -f "$service_dir/$legacy.service"
-        log "Removed: $service_dir/$legacy.service"
-        systemctl --user daemon-reload
     fi
 
     cat <<EOF
@@ -391,34 +319,8 @@ EOF
 install_macos() {
     local agents_dir="$HOME/Library/LaunchAgents"
     local log_dir="$HOME/Library/Logs"
-    local label="$CANONICAL_LABEL"
-    local log_name="$CANONICAL_NAME"
-    local installed="" name legacy_label="" legacy_name=""
-
-    for name in "$CANONICAL_LABEL" "$WEBHOOK_LABEL" "$LEGACY_LABEL"; do
-        if [[ -f "$agents_dir/$name.plist" ]]; then
-            installed="${installed:+$installed }$name"
-        fi
-    done
-    case "$installed" in
-        *" "*)
-            die "More than one of these agents are installed: $installed (in $agents_dir); they would bind the same port.
-       Unload and remove all but one first, for example:
-         launchctl unload $agents_dir/<label>.plist && rm $agents_dir/<label>.plist"
-            ;;
-        "$WEBHOOK_LABEL") legacy_label="$WEBHOOK_LABEL"; legacy_name="$WEBHOOK_NAME" ;;
-        "$LEGACY_LABEL") legacy_label="$LEGACY_LABEL"; legacy_name="$LEGACY_NAME" ;;
-    esac
-
-    if [[ -n "$legacy_label" && "$MIGRATE" -eq 1 ]]; then
-        log "Migrating $legacy_label to $CANONICAL_LABEL"
-        launchctl unload "$agents_dir/$legacy_label.plist" 2>/dev/null || warn "$legacy_label was not loaded."
-    elif [[ -n "$legacy_label" ]]; then
-        label="$legacy_label"
-        log_name="$legacy_name"
-        deprecated "launchd label" "$legacy_label" "$CANONICAL_LABEL"
-        warn "Updating the existing agent in place. To move it to $CANONICAL_LABEL, run this script again with --migrate."
-    fi
+    local label="$LABEL"
+    local log_name="$NAME"
     local plist_file="$agents_dir/$label.plist"
 
     mkdir -p "$agents_dir" "$log_dir"
@@ -449,11 +351,6 @@ install_macos() {
 
     launchctl load "$plist_file"
     log "Agent loaded via launchctl"
-
-    if [[ -n "$legacy_label" && "$MIGRATE" -eq 1 ]]; then
-        rm -f "$agents_dir/$legacy_label.plist"
-        log "Removed: $agents_dir/$legacy_label.plist"
-    fi
 
     cat <<EOF
 

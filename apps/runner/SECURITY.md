@@ -2,10 +2,8 @@
 
 ## Supported versions
 
-Security fixes are made on the latest Sylvode release, which carries the webhook receiver
-(formerly OpenPR Webhook) at the same version; see the repository's
-[security policy](../../SECURITY.md). The legacy `openpr-webhook` executable, image and archive names receive the same fixes, because they
-are the same build.
+Security fixes are made on the latest Sylvode release, which carries the runner at the same
+version; see the repository's [security policy](../../SECURITY.md).
 
 ## Reporting a vulnerability
 
@@ -28,7 +26,7 @@ the advisory unless you prefer otherwise.
   refuse start-up. Signed requests are also checked for replay (`id`) and freshness (`timestamp`).
 - Several agent types run local commands, and they are gated differently:
   - `cli` runs `codex`, `claude` or `opencode` with permission checks bypassed. It runs only with
-    `features.cli_enabled = true`, never in safe mode (`SYLVODE_WEBHOOK_SAFE_MODE=1`), at most
+    `features.cli_enabled = true`, never in safe mode (`SYLVODE_RUNNER_SAFE_MODE=1`), at most
     `runtime.cli_max_concurrency` at a time, and its whole process group is stopped on timeout or
     shutdown.
   - `openclaw`, `openprx` (with `command`) and `custom` run their configured command for every

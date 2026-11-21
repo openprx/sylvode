@@ -2,8 +2,8 @@
 //! and the terminal callback each of them sends.
 
 use crate::support::{
-    CANONICAL, SECRET, Server, StubApi, TempDir, bot_task, path_with, post_signed, read_pids, wait_all_dead,
-    wait_lines, write_script,
+    RUNNER, SECRET, Server, StubApi, TempDir, bot_task, path_with, post_signed, read_pids, wait_all_dead, wait_lines,
+    write_script,
 };
 use std::time::{Duration, Instant};
 
@@ -67,7 +67,7 @@ async fn a_timeout_terminates_the_whole_executor_tree_before_reporting() {
     let pids = forking_codex(&bin);
     let mut api = StubApi::start().await;
     let server =
-        Server::start(CANONICAL, &cli_config(&api, 1), &[("PATH", &path_with(bin.path()))]).expect("server starts");
+        Server::start(RUNNER, &cli_config(&api, 1), &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
     for attempt in 1..=TIMEOUT_TEST_ATTEMPTS {
         // The previous run's process group is gone: its timeout callback has been received.
@@ -113,7 +113,7 @@ async fn sigterm_terminates_a_running_executor_and_sends_its_terminal_callback()
     let pids = forking_codex(&bin);
     let mut api = StubApi::start().await;
     let mut server =
-        Server::start(CANONICAL, &cli_config(&api, 900), &[("PATH", &path_with(bin.path()))]).expect("server starts");
+        Server::start(RUNNER, &cli_config(&api, 900), &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
     let (status, answer) = post_signed(&server.url("/webhook"), &bot_task("Fixer", "Long fix").to_string()).await;
     assert_eq!(status, 200, "{answer}");
@@ -172,7 +172,7 @@ async fn webhook_triggered_runs_respect_cli_max_concurrency() {
     let log = sequenced_codex(&bin);
     let api = StubApi::start().await;
     let config = cli_config(&api, 30).replace("[features]", "[runtime]\ncli_max_concurrency = 1\n\n[features]");
-    let server = Server::start(CANONICAL, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
+    let server = Server::start(RUNNER, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
     for title in ["first", "second"] {
         let (status, answer) = post_signed(&server.url("/webhook"), &bot_task("Fixer", title).to_string()).await;
@@ -208,7 +208,7 @@ fn worker_task_with_hostile_payload(agent_type: Option<&str>) -> serde_json::Val
 async fn a_worker_task_payload_cannot_redirect_the_callback_to_another_issue() {
     let mut api = StubApi::start().await;
     let config = cli_config(&api, 30).replace("id = \"fixer\"", "id = \"bot-1\"");
-    let server = Server::start(CANONICAL, &config, &[]).expect("server starts");
+    let server = Server::start(RUNNER, &config, &[]).expect("server starts");
 
     let body = worker_task_with_hostile_payload(Some("cli")).to_string();
     let (status, answer) = post_signed(&server.url("/webhook"), &body).await;
@@ -233,7 +233,7 @@ async fn a_comment_mention_task_reports_on_the_commented_issue() {
     );
     let mut api = StubApi::start().await;
     let config = cli_config(&api, 30).replace("id = \"fixer\"", "id = \"bot-1\"");
-    let server = Server::start(CANONICAL, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
+    let server = Server::start(RUNNER, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
     let body = serde_json::json!({
         "task_id": uuid::Uuid::new_v4().to_string(),
@@ -284,7 +284,7 @@ async fn a_comment_mention_task_reports_on_the_commented_issue() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_worker_task_payload_cannot_choose_the_agent_type() {
     let api = StubApi::start().await;
-    let server = Server::start(CANONICAL, &cli_config(&api, 30), &[]).expect("server starts");
+    let server = Server::start(RUNNER, &cli_config(&api, 30), &[]).expect("server starts");
 
     let body = worker_task_with_hostile_payload(None).to_string();
     let (status, answer) = post_signed(&server.url("/webhook"), &body).await;
@@ -293,16 +293,11 @@ async fn a_worker_task_payload_cannot_choose_the_agent_type() {
     assert_eq!(answer["route"]["agent_type"], serde_json::Value::Null, "{answer}");
 }
 
-/// Safe mode, through either environment variable, really turns the `cli` path off in the
+/// Safe mode, through its environment variable, really turns the `cli` path off in the
 /// running service; without it the same delivery starts the executor.
 #[tokio::test(flavor = "multi_thread")]
-async fn safe_mode_variables_turn_the_cli_path_off() {
-    for (env, disabled, notice) in [
-        (Some("SYLVODE_RUNNER_SAFE_MODE"), true, false),
-        (Some("SYLVODE_WEBHOOK_SAFE_MODE"), true, true),
-        (Some("OPENPR_WEBHOOK_SAFE_MODE"), true, true),
-        (None, false, false),
-    ] {
+async fn safe_mode_variable_turns_the_cli_path_off() {
+    for (env, disabled) in [(Some("SYLVODE_RUNNER_SAFE_MODE"), true), (None, false)] {
         let bin = TempDir::new("bin");
         let marker = bin.file("ran");
         write_script(bin.path(), "codex", &format!("echo ran > '{}'", marker.display()));
@@ -312,7 +307,7 @@ async fn safe_mode_variables_turn_the_cli_path_off() {
         if let Some(name) = env {
             vars.push((name, "1"));
         }
-        let mut server = Server::start(CANONICAL, &cli_config(&api, 30), &vars).expect("server starts");
+        let mut server = Server::start(RUNNER, &cli_config(&api, 30), &vars).expect("server starts");
 
         let (status, answer) = post_signed(&server.url("/webhook"), &bot_task("Fixer", "safe").to_string()).await;
         assert_eq!(status, 200, "{answer}");
@@ -335,13 +330,7 @@ async fn safe_mode_variables_turn_the_cli_path_off() {
         }
         server.terminate();
         let (_, stderr) = server.wait_exit(Duration::from_secs(20)).expect("server exits");
-        assert_eq!(
-            stderr
-                .iter()
-                .any(|line| line.contains("_WEBHOOK_SAFE_MODE` is deprecated")),
-            notice,
-            "{env:?}: {stderr:?}"
-        );
+        assert!(stderr.is_empty(), "{env:?}: {stderr:?}");
     }
 }
 
@@ -373,7 +362,7 @@ async fn the_answer_does_not_wait_for_a_hanging_start_callback() {
     let (url, hole) = black_hole().await;
     let api = StubApi::start().await;
     let config = cli_config(&api, 30).replace(&api.url("/callback"), &url);
-    let server = Server::start(CANONICAL, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
+    let server = Server::start(RUNNER, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
     let begun = Instant::now();
     let (status, answer) = post_signed(&server.url("/webhook"), &bot_task("Fixer", "hanging api").to_string()).await;
@@ -400,7 +389,7 @@ async fn sigterm_reports_a_queued_run_as_cancelled() {
     let pids = forking_codex(&bin);
     let mut api = StubApi::start().await;
     let config = cli_config(&api, 900).replace("[features]", "[runtime]\ncli_max_concurrency = 1\n\n[features]");
-    let mut server = Server::start(CANONICAL, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
+    let mut server = Server::start(RUNNER, &config, &[("PATH", &path_with(bin.path()))]).expect("server starts");
 
     for issue in ["RUNNING", "QUEUED"] {
         let mut body = bot_task("Fixer", issue);

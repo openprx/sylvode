@@ -13,27 +13,26 @@ together as 0.3.53.
 
 ## Unreleased
 
-- The crate is now `sylvode-runner` (directory `apps/runner`, library `sylvode_runner`) and the
-  executable is `sylvode-runner`. `sylvode-webhook` and `openpr-webhook` are built from the same
-  library and kept for the whole Sylvode 1.x line; each writes one deprecation line to stderr.
-- `SYLVODE_RUNNER_SAFE_MODE` replaces `SYLVODE_WEBHOOK_SAFE_MODE` and `OPENPR_WEBHOOK_SAFE_MODE`,
-  which are still read; `RUST_LOG` directives naming `sylvode_webhook` or `openpr_webhook` are
-  rewritten to `sylvode_runner`. Each legacy spelling writes one deprecation line.
-- The installer creates `sylvode-runner.service` (Linux) or `dev.sylvode.runner` (macOS) and looks
-  for the `sylvode-runner` binary first, then `sylvode-webhook`, then `openpr-webhook`. A unit
-  installed under `sylvode-webhook` or `openpr-webhook` (agent `dev.sylvode.webhook` or
-  `dev.openpr.webhook`) is still updated in place under its own name, with a deprecation line that
-  names the new `--migrate` flag; `--migrate` moves it to the canonical unit and can be repeated.
-  Two or more of the three names installed together are refused. `uninstall.sh` removes all three.
-- No change to the HTTP interface, the configuration format, answers or callback bodies: the callback
-  `source` stays `sylvode-webhook`.
+- The service is now the Sylvode runner: crate `sylvode-runner` (directory `apps/runner`, library
+  `sylvode_runner`), one executable `sylvode-runner`, image `ghcr.io/openprx/sylvode-runner`,
+  release archive `sylvode-runner-<platform>.tar.gz`, safe-mode variable `SYLVODE_RUNNER_SAFE_MODE`,
+  log target `sylvode_runner`, unit `sylvode-runner.service` and agent `dev.sylvode.runner`. The
+  former executable, image, archive, variable, log-target and unit names are gone.
+- The callback `source` is `sylvode-runner`, the `no_agent` answer reads "sylvode-runner has no
+  agent for this AI task ...", and the example secret placeholder is
+  `replace-with-the-secret-of-your-sylvode-runner`.
+- The inbound `X-OpenPR-Signature` header is no longer a signature header, and callbacks no longer
+  send `X-OpenPR-MCP-Surface`; `X-Sylvode-Signature`, `X-Webhook-Signature` and
+  `X-Sylvode-MCP-Surface` remain.
+- `install.sh` and `uninstall.sh` manage only `sylvode-runner.service` (Linux) and
+  `dev.sylvode.runner` (macOS).
 
 ## Upgrading from 0.3.3
 
 ### Breaking: configurations that started with 0.3.3 and are refused now
 
 Each exits 1 at start-up with the error shown (logged as `failed to load config from <path>:
-<error>` unless noted). The README's [Upgrade checks](README.md#upgrade-checks) has the same list.
+<error>` unless noted). The README's [Upgrading from 0.3.3](README.md#upgrading-from-033) has the same list.
 
 1. `route.trigger_kinds` with a value Sylvode never sends, such as `assignment`:
    ``agent `X`: route.trigger_kinds contains `assignment`, which Sylvode never sends; valid values:

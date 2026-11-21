@@ -126,9 +126,13 @@ sylvode_resolve_env_into SYLVODE_FRONTEND_PORT "$ENV_FILE" SYLVODE_FRONTEND_PORT
 sylvode_resolve_env_into SYLVODE_MCP_PORT "$ENV_FILE" SYLVODE_MCP_PORT MCP_SERVER_PORT 8090
 sylvode_resolve_env_into SYLVODE_RUNTIME_BASE "$ENV_FILE" SYLVODE_RUNTIME_BASE OPENPR_RUNTIME_BASE ''
 sylvode_resolve_env_into SYLVODE_FRONTEND_DOCKERFILE "$ENV_FILE" SYLVODE_FRONTEND_DOCKERFILE OPENPR_FRONTEND_DOCKERFILE Dockerfile
-sylvode_resolve_env_into SYLVODE_RUNNER_PORT "$ENV_FILE" SYLVODE_RUNNER_PORT SYLVODE_WEBHOOK_PORT,OPENPR_WEBHOOK_PORT 9090
-sylvode_resolve_env_into SYLVODE_RUNNER_IMAGE "$ENV_FILE" SYLVODE_RUNNER_IMAGE SYLVODE_WEBHOOK_IMAGE,OPENPR_WEBHOOK_IMAGE ghcr.io/openprx/sylvode-runner:latest
-sylvode_resolve_env_into SYLVODE_RUNNER_CONFIG "$ENV_FILE" SYLVODE_RUNNER_CONFIG SYLVODE_WEBHOOK_CONFIG,OPENPR_WEBHOOK_CONFIG ./config/sylvode-runner.example.toml
+# The runner variables have one name each: a value from the environment or .env, else the default.
+SYLVODE_RUNNER_PORT=$(sylvode_configured_env_value "$ENV_FILE" SYLVODE_RUNNER_PORT)
+SYLVODE_RUNNER_PORT=${SYLVODE_RUNNER_PORT:-9090}
+SYLVODE_RUNNER_IMAGE=$(sylvode_configured_env_value "$ENV_FILE" SYLVODE_RUNNER_IMAGE)
+SYLVODE_RUNNER_IMAGE=${SYLVODE_RUNNER_IMAGE:-ghcr.io/openprx/sylvode-runner:latest}
+SYLVODE_RUNNER_CONFIG=$(sylvode_configured_env_value "$ENV_FILE" SYLVODE_RUNNER_CONFIG)
+SYLVODE_RUNNER_CONFIG=${SYLVODE_RUNNER_CONFIG:-./config/sylvode-runner.example.toml}
 # Ports reach generated TOML and compose port mappings, so anything but a port number is refused
 # here, before any file is written.
 for port_var in SYLVODE_API_PORT SYLVODE_FRONTEND_PORT SYLVODE_MCP_PORT SYLVODE_RUNNER_PORT; do
@@ -260,9 +264,9 @@ continue_on_error = false
 
 [outbound]
 # Webhook and other outbound endpoints resolving to a private address are refused unless the host is
-# listed here. These are the in-compose services, including the optional webhook receiver.
+# listed here. These are the in-compose services, including the optional runner.
 # Entries are matched literally: "host" or "host:port", no wildcards and no URLs.
-allowed_hosts = ["webhook:9090", "api:8080", "mcp-server:8090", "frontend:80"]
+allowed_hosts = ["runner:9090", "api:8080", "mcp-server:8090", "frontend:80"]
 allow_private = false
 
 [flow]

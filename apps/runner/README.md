@@ -3,11 +3,6 @@
 The runner of [Sylvode](https://github.com/openprx/sylvode). It receives webhook deliveries
 from a Sylvode deployment and dispatches them to AI agents, chat platforms or external services.
 
-> **Formerly Sylvode Webhook.** Every old name (executable,
-> container image, release archive, signature header, environment variable, log target, service
-> unit) keeps working for the whole Sylvode 1.x line and is not removed before Sylvode v2.0; see
-> [Migrating from the former names](#migrating-from-the-former-names).
-
 Built with **Rust** (Axum).
 
 ## How It Works
@@ -439,8 +434,7 @@ is enough, `docker stop` needs `--time 45` (its default is 10 s).
 | `SYLVODE_RUNNER_SAFE_MODE` | `1`/`true`/`yes`/`on` forces the tunnel, CLI and callback paths off at runtime — a one-switch rollback to webhook-only behavior. `openclaw`, `openprx` and `custom` agents still run their commands |
 | `RUST_LOG` | Log filter. This service's events use the `sylvode_runner` target, e.g. `RUST_LOG=sylvode_runner=debug`; the default is `sylvode_runner=info` |
 
-Logs are written to stdout. Deprecation notices for legacy names are written to stderr, once per
-process.
+Logs are written to stdout.
 
 ## MCP Closed-Loop Automation
 
@@ -510,9 +504,7 @@ A callback is sent only when `[features].callback_enabled = true` and the agent 
 #### Callback attribution
 
 A plain API callback (`callback = "api"`) reports its surface as `cli` in both
-`X-Sylvode-MCP-Surface` and the legacy `X-OpenPR-MCP-Surface`, with the same value, so the API
-records it correctly whether it predates the rename or not. Both headers are sent for the whole
-Sylvode 1.x line.
+`X-Sylvode-MCP-Surface`.
 
 ### AI task callbacks
 
@@ -566,7 +558,7 @@ surface = "mcp_stdio"
   that is not a UUID, or a bot listed twice, is always refused. Tokens are never logged.
 - **`surface`** is the transport the token is registered with in Sylvode: `rest` sends no surface
   header; `mcp_http`, `mcp_sse`, `mcp_stdio`, `cli` or `cli_tools_call` is sent in
-  `X-Sylvode-MCP-Surface` and the legacy `X-OpenPR-MCP-Surface`.
+  `X-Sylvode-MCP-Surface`.
 - **When.** A `cli` agent reports once its background run ends: `complete` after exit code 0,
   `fail` after a failure, a timeout or a cancellation by shutdown. Other agent types report right
   after their dispatch: `complete` when it succeeded, `fail` otherwise. A `webhook` agent forwards
@@ -747,9 +739,8 @@ keyed with one of `webhook_secrets`. It is accepted in any of these headers:
 
 | Header | Status |
 |--------|--------|
-| `X-Sylvode-Signature` | Canonical |
-| `X-Webhook-Signature` | Canonical; the header the Sylvode API sends today |
-| `X-OpenPR-Signature` | Legacy; accepted with a deprecation notice, not removed before Sylvode v2.0 |
+| `X-Sylvode-Signature` | Accepted |
+| `X-Webhook-Signature` | Accepted; the header the Sylvode API sends today |
 
 Every signature header present is read. When they carry different signatures (or one header is
 repeated with different values) the request is refused with `401`, even if one of them is valid: an
@@ -791,18 +782,9 @@ What this covers, and what it does not:
 ```
 
 The installer creates the user service `sylvode-runner.service` on Linux or the launch agent
-`dev.sylvode.runner` on macOS. When no `--binary-path` is given it looks for `sylvode-runner`, then
-for `sylvode-webhook`, then for `openpr-webhook` (each with a deprecation line when a former name is
-used).
-
-An existing `sylvode-webhook.service` or `openpr-webhook.service` (Linux), or `dev.sylvode.webhook` or
-`dev.openpr.webhook` (macOS), is updated in place under its own name, so an enabled unit keeps
-working; the installer prints a deprecation line that names `--migrate`. To move it, run
-`./scripts/install.sh --migrate` with the same options: the installer stops and disables the former
-unit, writes the `sylvode-runner` unit with the binary and config directory of that run, enables and
-starts it, and removes the former unit file. Running it again changes nothing more. Two or more of
-the three names installed at once is refused, because they would bind the same port. The uninstaller
-removes all three.
+`dev.sylvode.runner` on macOS. When no `--binary-path` is given it looks for `sylvode-runner` in the
+working directory, in `./target/release` and in the workspace `target/release`. Running it again
+rewrites the unit or agent in place, and the uninstaller removes it.
 
 ### Systemd
 
@@ -839,9 +821,7 @@ the non-root user `sylvode` (uid 10001), so the mounted `config.toml` must be re
 10001, and `listen` must not be loopback inside the container (use `0.0.0.0:9090`, with a secret).
 The image contains only the runner executables and CA certificates: no `codex`, `claude`,
 `opencode` or `openclaw`, so `cli`, `openclaw` and command-based agents need an image derived from
-this one that adds them. It contains the former `/app/sylvode-webhook` and `/app/openpr-webhook` as well, so a compose file
-whose `command` names either keeps working. It is also published as `ghcr.io/openprx/sylvode-webhook`
-and `ghcr.io/openprx/openpr-webhook` with the same digest. See [`Dockerfile`](Dockerfile).
+this one that adds them. See [`Dockerfile`](Dockerfile).
 
 ### Versioning
 
@@ -853,35 +833,10 @@ Sylvode-versioned release is 0.5.0, which continues above that line.
 ### Release archives
 
 Each release ships `sylvode-runner-<platform>.tar.gz` with a `.sha256`, for `linux-amd64`,
-`linux-arm64`, `macos-amd64` and `macos-arm64`. Every archive contains the `sylvode-runner`,
-`sylvode-webhook` and `openpr-webhook` executables. The same archive is also published as
-`sylvode-webhook-<platform>.tar.gz` and `openpr-webhook-<platform>.tar.gz`, each with its own
-`.sha256`.
+`linux-arm64`, `macos-amd64` and `macos-arm64`. Every archive contains the `sylvode-runner`
+executable.
 
-## Migrating from the former names
-
-Every former name below keeps working for the whole Sylvode 1.x line and is not removed before
-Sylvode v2.0. Using one writes a single deprecation line to stderr per process, naming the
-replacement. stdout and exit codes are the same for a former and the canonical name. The wire
-strings are unchanged: the callback `source` is still `sylvode-webhook`.
-
-| Former | Canonical | When both are supplied |
-|--------|-----------|------------------------|
-| Executables `sylvode-webhook`, `openpr-webhook` | `sylvode-runner` | — |
-| Images `ghcr.io/openprx/sylvode-webhook`, `ghcr.io/openprx/openpr-webhook` | `ghcr.io/openprx/sylvode-runner` (same digest) | — |
-| Archives `sylvode-webhook-<platform>.tar.gz`, `openpr-webhook-<platform>.tar.gz` | `sylvode-runner-<platform>.tar.gz` (same bytes) | — |
-| Header `X-OpenPR-Signature` | `X-Sylvode-Signature` (or `X-Webhook-Signature`) | Different values are refused with `401` |
-| Env `SYLVODE_WEBHOOK_SAFE_MODE`, `OPENPR_WEBHOOK_SAFE_MODE` | `SYLVODE_RUNNER_SAFE_MODE` | Disagreeing values refuse to start |
-| `RUST_LOG` targets `sylvode_webhook`, `openpr_webhook` | `sylvode_runner` | A directive for the same target with a different level refuses to start |
-| Services `sylvode-webhook.service`, `openpr-webhook.service`; agents `dev.sylvode.webhook`, `dev.openpr.webhook` | `sylvode-runner.service` / `dev.sylvode.runner` | The installer refuses to proceed; `--migrate` moves a former unit |
-| Compose variables `SYLVODE_WEBHOOK_*`, `OPENPR_WEBHOOK_*` (read by `scripts/start.sh`) | `SYLVODE_RUNNER_PORT`, `SYLVODE_RUNNER_IMAGE`, `SYLVODE_RUNNER_CONFIG` | Different values are refused |
-| Outbound header `X-OpenPR-MCP-Surface` | `X-Sylvode-MCP-Surface` | Both are always sent with the same value |
-
-The compose service is now `runner` (it was `webhook`). A service name cannot be aliased, so a command
-that names it, such as `docker compose logs webhook`, must say `runner`; the host name `webhook` still
-resolves on the compose network.
-
-### Upgrade checks
+## Upgrading from 0.3.3
 
 Upgrading from OpenPR Webhook 0.3.3 (the last published standalone release) is not a drop-in replacement for every configuration. Start-up
 now refuses configurations that cannot work or are unsafe, and some behaviour changed. Before
@@ -903,9 +858,7 @@ Each of these started with 0.3.3 and refuses to start now. The error is logged o
 | 6 | An example placeholder secret in `webhook_secrets` or `tunnel.hmac_secret`: one of `your-secret-here`, `shared-hmac-secret`, `replace_with_webhook_secret` (the Sylvode repository's compose example) or the new example's placeholders, or any value containing `replace_with`, `replace-with`, `your_`, `your-`, `changeme` or `example`, ignoring case and surrounding whitespace. Only a secret in use refuses: `webhook_secrets` unless `allow_unsigned = true`, `hmac_secret` while the tunnel is enabled; an unused one (such as the `hmac_secret = "shared-hmac-secret"` beside `enabled = false` in the old examples) is logged as a warning | `security.webhook_secrets[N] is still the example placeholder; ...` / `tunnel.hmac_secret is still an example placeholder; ...` | Set a long random secret, the same as on the Sylvode webhook or the control plane |
 | 7 | `allow_unsigned = true` with a `listen` address other than loopback, as in the old `config.example.toml` (`0.0.0.0:9090`) | `security.allow_unsigned = true with server.listen = "0.0.0.0:9090", which is not a loopback address: ...` | Set `allow_unsigned = false` and a secret, or listen on `127.0.0.1`; only if unsigned access from the network is really intended, set `allow_unsigned_non_loopback = true` |
 | 8 | An enabled tunnel whose `url` is `ws://` to a host other than loopback | `tunnel.url = "ws://..." uses unencrypted ws:// to a host other than loopback, ...` | Use `wss://`, or set `tunnel.allow_insecure_transport = true` if the network path is trusted |
-| 9 | `SYLVODE_RUNNER_SAFE_MODE` and a former safe-mode variable set, disagreeing | `SYLVODE_RUNNER_SAFE_MODE="1" and OPENPR_WEBHOOK_SAFE_MODE="0" disagree; set only SYLVODE_RUNNER_SAFE_MODE` | Set only the canonical variable |
-| 10 | `RUST_LOG` with a `sylvode_webhook` or `openpr_webhook` directive and a `sylvode_runner` directive for the same target at different levels | On stderr: `error: RUST_LOG directive "sylvode_runner=error" and the legacy directive "openpr_webhook=debug" disagree; ...` | Use only `sylvode_runner` directives |
-| 11 | A config path that starts with `-` (including exactly `-h`, `--help`, `-V`, `--version`) | On stderr: ``error: unknown option `-x`; see --help (write a config path that starts with `-` as ./-x)``, or help or version output | Pass the path as `./-x` |
+| 9 | A config path that starts with `-` (including exactly `-h`, `--help`, `-V`, `--version`) | On stderr: ``error: unknown option `-x`; see --help (write a config path that starts with `-` as ./-x)``, or help or version output | Pass the path as `./-x` |
 
 #### Behaves differently
 
@@ -955,8 +908,7 @@ These configurations still start, but the service behaves differently:
 Unchanged on purpose: the configuration file format and its default path `config.toml`, the
 `/webhook` and `/health` routes, the outbound `X-Webhook-Signature`, the `openprx` agent type
 (it names the OpenPRX assistant, not this product), the tunnel `agent_id` (always taken from your
-configuration). The runner now lives in the Sylvode repository (`apps/runner`), and the old
-`openprx/openpr-webhook` repository is no longer its home.
+configuration).
 
 ## Links
 

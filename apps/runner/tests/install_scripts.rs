@@ -1,9 +1,7 @@
 //! `scripts/install.sh` and `scripts/uninstall.sh`, run against a temporary `HOME` with fake
-//! `uname`, `systemctl` and `launchctl` that record their calls: a fresh install, an in-place
-//! update of a unit installed under a former name, `--migrate`, the refusal when two names are
-//! installed, the order in which the binary is looked for, and an uninstall that removes all
-//! three names. Both platforms are exercised on either host, because the platform comes from the
-//! fake `uname`.
+//! `uname`, `systemctl` and `launchctl` that record their calls: a fresh install, a second install
+//! over the first, the binary search, and an uninstall. Both platforms are exercised on either
+//! host, because the platform comes from the fake `uname`.
 
 #![cfg(unix)]
 // Test helpers outside `#[test]` functions may fail loudly; this is test code only.
@@ -14,12 +12,8 @@ use std::process::{Command, Output};
 
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
-const CANONICAL: &str = "sylvode-runner";
-const WEBHOOK: &str = "sylvode-webhook";
-const LEGACY: &str = "openpr-webhook";
-const CANONICAL_LABEL: &str = "dev.sylvode.runner";
-const WEBHOOK_LABEL: &str = "dev.sylvode.webhook";
-const LEGACY_LABEL: &str = "dev.openpr.webhook";
+const NAME: &str = "sylvode-runner";
+const LABEL: &str = "dev.sylvode.runner";
 
 #[derive(Clone, Copy)]
 enum Platform {
@@ -48,7 +42,7 @@ impl Sandbox {
             let entry = entry.unwrap();
             std::fs::copy(entry.path(), sandbox.root.join("pkg/scripts").join(entry.file_name())).unwrap();
         }
-        sandbox.add_binary(CANONICAL);
+        sandbox.add_binary(NAME);
         std::fs::write(sandbox.config_dir().join("config.toml"), "").unwrap();
         let uname = match platform {
             Platform::Linux => "Linux",
@@ -81,7 +75,7 @@ impl Sandbox {
     }
 
     fn binary(&self) -> PathBuf {
-        self.config_dir().join(CANONICAL)
+        self.config_dir().join(NAME)
     }
 
     /// An executable file called `name` in the config directory.
@@ -109,13 +103,6 @@ impl Sandbox {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "placeholder\n").unwrap();
         path
-    }
-
-    fn installed(&self, name: &str) -> PathBuf {
-        match self.platform {
-            Platform::Linux => self.unit(name),
-            Platform::MacOs => self.plist(name),
-        }
     }
 
     fn run_in(&self, dir: &Path, script: &str, args: &[&str]) -> Output {
@@ -171,10 +158,6 @@ impl Sandbox {
             .filter(|call| call != "launchctl list")
             .collect()
     }
-
-    fn clear_calls(&self) {
-        let _ = std::fs::remove_file(self.root.join("calls.log"));
-    }
 }
 
 impl Drop for Sandbox {
@@ -193,11 +176,6 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-/// The lines of `calls` that name `needle`, in order.
-fn calls_with(calls: &[String], needle: &str) -> Vec<String> {
-    calls.iter().filter(|call| call.contains(needle)).cloned().collect()
-}
-
 /// systemd's quoting of `value` inside a double-quoted setting.
 fn quoted(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"").replace('%', "%%")
@@ -209,14 +187,12 @@ fn quoted_arg(value: &str) -> String {
 }
 
 #[test]
-fn a_fresh_install_writes_a_correctly_quoted_canonical_unit() {
+fn a_fresh_install_writes_a_correctly_quoted_unit() {
     let sandbox = Sandbox::new(Platform::Linux);
     let output = sandbox.install();
     assert!(output.status.success(), "{}", stderr(&output));
 
-    let unit = std::fs::read_to_string(sandbox.unit(CANONICAL)).expect("canonical unit written");
-    assert!(!sandbox.unit(WEBHOOK).exists());
-    assert!(!sandbox.unit(LEGACY).exists());
+    let unit = std::fs::read_to_string(sandbox.unit(NAME)).expect("unit written");
     let binary = sandbox.binary();
     let dir = sandbox.config_dir();
     assert!(
@@ -237,262 +213,82 @@ fn a_fresh_install_writes_a_correctly_quoted_canonical_unit() {
     assert!(unit.contains("journalctl --user -u sylvode-runner"), "{unit}");
     assert!(unit.contains("Description=Sylvode Runner Service"), "{unit}");
     assert!(!unit.contains("{{"), "unrendered placeholder: {unit}");
-    assert!(sandbox.calls().contains(&"systemctl --user daemon-reload".to_string()));
-    assert!(!stderr(&output).contains("deprecated"), "{}", stderr(&output));
+    assert_eq!(sandbox.calls(), ["systemctl --user daemon-reload"]);
+    assert!(stderr(&output).is_empty(), "{}", stderr(&output));
 }
 
 #[test]
-fn a_unit_installed_under_a_former_name_is_updated_in_place() {
-    for (name, expected_notice) in [
-        (
-            WEBHOOK,
-            "sylvode-webhook.service is deprecated, use sylvode-runner.service instead",
-        ),
-        (
-            LEGACY,
-            "openpr-webhook.service is deprecated, use sylvode-runner.service instead",
-        ),
-    ] {
-        let sandbox = Sandbox::new(Platform::Linux);
-        let old = sandbox.install_placeholder(name);
-        let output = sandbox.install();
-        assert!(output.status.success(), "{name}: {}", stderr(&output));
-        let unit = std::fs::read_to_string(&old).unwrap();
-        assert!(!unit.contains("placeholder"), "{name}: the unit was rewritten: {unit}");
-        assert!(unit.contains(&format!("journalctl --user -u {name}")), "{name}: {unit}");
-        assert!(!sandbox.unit(CANONICAL).exists(), "{name}: no second unit");
-        let err = stderr(&output);
-        assert!(err.contains(expected_notice), "{name}: {err}");
-        assert!(
-            err.contains("--migrate"),
-            "{name}: the notice must name --migrate: {err}"
-        );
-        // An update in place neither stops nor enables anything.
-        assert_eq!(sandbox.calls(), ["systemctl --user daemon-reload"], "{name}");
-    }
-}
-
-#[test]
-fn migrate_replaces_a_former_unit_with_the_canonical_one() {
-    for name in [WEBHOOK, LEGACY] {
-        let sandbox = Sandbox::new(Platform::Linux);
-        let old = sandbox.install_placeholder(name);
-        let output = sandbox.install_with(&["--migrate"]);
-        assert!(output.status.success(), "{name}: {}", stderr(&output));
-        assert!(!old.exists(), "{name}: the former unit file is removed");
-        let unit = std::fs::read_to_string(sandbox.unit(CANONICAL)).expect("canonical unit written");
-        let binary = sandbox.binary();
-        assert!(
-            unit.contains(&format!("ExecStart=\"{}\"", quoted(binary.to_str().unwrap()))),
-            "{name}: {unit}"
-        );
-        assert!(unit.contains("journalctl --user -u sylvode-runner"), "{name}: {unit}");
-        assert_eq!(
-            sandbox.calls(),
-            [
-                format!("systemctl --user disable --now {name}"),
-                "systemctl --user daemon-reload".to_string(),
-                "systemctl --user enable --now sylvode-runner".to_string(),
-                "systemctl --user daemon-reload".to_string(),
-            ],
-            "{name}"
-        );
-
-        // Running it again changes nothing that matters: no former unit, so nothing to stop.
-        let canonical_before = std::fs::read_to_string(sandbox.unit(CANONICAL)).unwrap();
-        sandbox.clear_calls();
-        let again = sandbox.install_with(&["--migrate"]);
-        assert!(again.status.success(), "{name}: {}", stderr(&again));
-        assert_eq!(
-            std::fs::read_to_string(sandbox.unit(CANONICAL)).unwrap(),
-            canonical_before,
-            "{name}"
-        );
-        assert!(
-            !sandbox.unit(WEBHOOK).exists() && !sandbox.unit(LEGACY).exists(),
-            "{name}"
-        );
-        assert!(
-            calls_with(&sandbox.calls(), "disable").is_empty(),
-            "{:?}",
-            sandbox.calls()
-        );
-    }
-}
-
-#[test]
-fn two_or_more_names_installed_is_refused() {
-    for names in [
-        vec![LEGACY, CANONICAL],
-        vec![WEBHOOK, CANONICAL],
-        vec![LEGACY, WEBHOOK],
-        vec![LEGACY, WEBHOOK, CANONICAL],
-    ] {
-        for extra in [&[][..], &["--migrate"][..]] {
-            let sandbox = Sandbox::new(Platform::Linux);
-            for name in &names {
-                sandbox.install_placeholder(name);
-            }
-            let output = sandbox.install_with(extra);
-            assert!(!output.status.success(), "{names:?} {extra:?}");
-            assert!(
-                stderr(&output).contains("would bind the same port"),
-                "{names:?}: {}",
-                stderr(&output)
-            );
-            for name in &names {
-                assert_eq!(
-                    std::fs::read_to_string(sandbox.unit(name)).unwrap(),
-                    "placeholder\n",
-                    "{names:?}: {name} must not be touched"
-                );
-            }
-            assert!(sandbox.calls().is_empty(), "{:?}", sandbox.calls());
-        }
-    }
-}
-
-#[test]
-fn uninstall_removes_all_three_units() {
+fn installing_again_rewrites_the_unit_in_place() {
     let sandbox = Sandbox::new(Platform::Linux);
-    for name in [LEGACY, WEBHOOK, CANONICAL] {
-        sandbox.install_placeholder(name);
-    }
-    let output = sandbox.run("uninstall.sh", &[]);
-    assert!(output.status.success(), "{}", stderr(&output));
-    for name in [LEGACY, WEBHOOK, CANONICAL] {
-        assert!(!sandbox.unit(name).exists(), "{name}");
-        let calls = sandbox.calls();
-        assert!(
-            calls.contains(&format!("systemctl --user is-active --quiet {name}")),
-            "{calls:?}"
-        );
-    }
-}
-
-#[test]
-fn the_binary_is_looked_for_under_the_runner_name_first() {
-    // Only the old executable names are present: the former name is used, with its notice.
-    for (present, notice) in [
-        (
-            vec![WEBHOOK, LEGACY],
-            Some("executable name sylvode-webhook is deprecated"),
-        ),
-        (vec![LEGACY], Some("executable name openpr-webhook is deprecated")),
-        (vec![CANONICAL, WEBHOOK, LEGACY], None),
-    ] {
-        let sandbox = Sandbox::new(Platform::Linux);
-        std::fs::remove_file(sandbox.binary()).unwrap();
-        for name in &present {
-            sandbox.add_binary(name);
-        }
-        let output = sandbox.install_autodetect();
-        assert!(output.status.success(), "{present:?}: {}", stderr(&output));
-        let unit = std::fs::read_to_string(sandbox.unit(CANONICAL)).unwrap();
-        let first = present.first().copied().expect("at least one binary");
-        // The shell reports its working directory with symbolic links resolved (/var is /private/var on macOS).
-        let expected = std::fs::canonicalize(sandbox.config_dir()).unwrap().join(first);
-        assert!(
-            unit.contains(&format!("ExecStart=\"{}\"", quoted(expected.to_str().unwrap()))),
-            "{present:?}: {unit}"
-        );
-        let err = stderr(&output);
-        match notice {
-            Some(notice) => assert!(err.contains(notice), "{present:?}: {err}"),
-            None => assert!(!err.contains("executable name"), "{present:?}: {err}"),
-        }
-    }
-}
-
-#[test]
-fn a_fresh_macos_install_writes_the_canonical_agent() {
-    let sandbox = Sandbox::new(Platform::MacOs);
+    let unit = sandbox.install_placeholder(NAME);
     let output = sandbox.install();
     assert!(output.status.success(), "{}", stderr(&output));
-    let plist = std::fs::read_to_string(sandbox.plist(CANONICAL_LABEL)).expect("canonical agent written");
-    assert!(plist.contains("<string>dev.sylvode.runner</string>"), "{plist}");
-    assert!(plist.contains("sylvode-runner.log"), "{plist}");
-    assert!(!plist.contains("{{"), "unrendered placeholder: {plist}");
-    assert!(!sandbox.plist(WEBHOOK_LABEL).exists() && !sandbox.plist(LEGACY_LABEL).exists());
-    assert_eq!(
-        sandbox.changes(),
-        [format!("launchctl load {}", sandbox.plist(CANONICAL_LABEL).display())]
+    let text = std::fs::read_to_string(&unit).unwrap();
+    assert!(!text.contains("placeholder"), "the unit was rewritten: {text}");
+    assert!(text.contains("journalctl --user -u sylvode-runner"), "{text}");
+}
+
+#[test]
+fn uninstall_removes_the_unit() {
+    let sandbox = Sandbox::new(Platform::Linux);
+    sandbox.install_placeholder(NAME);
+    let output = sandbox.run("uninstall.sh", &[]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!sandbox.unit(NAME).exists());
+    let calls = sandbox.calls();
+    assert!(
+        calls.contains(&"systemctl --user is-active --quiet sylvode-runner".to_string()),
+        "{calls:?}"
     );
 }
 
 #[test]
-fn a_macos_agent_installed_under_a_former_name_is_updated_in_place() {
-    for label in [WEBHOOK_LABEL, LEGACY_LABEL] {
-        let sandbox = Sandbox::new(Platform::MacOs);
-        let old = sandbox.install_placeholder(label);
-        let output = sandbox.install();
-        assert!(output.status.success(), "{label}: {}", stderr(&output));
-        let plist = std::fs::read_to_string(&old).unwrap();
-        assert!(plist.contains(&format!("<string>{label}</string>")), "{label}: {plist}");
-        assert!(!sandbox.plist(CANONICAL_LABEL).exists(), "{label}: no second agent");
-        let err = stderr(&output);
-        assert!(
-            err.contains(&format!("{label} is deprecated, use dev.sylvode.runner instead")),
-            "{label}: {err}"
-        );
-        assert!(err.contains("--migrate"), "{label}: {err}");
-        assert_eq!(
-            sandbox.changes(),
-            [format!("launchctl load {}", old.display())],
-            "{label}"
-        );
-    }
-}
+fn the_binary_is_found_in_the_working_directory_and_a_missing_one_is_refused() {
+    let sandbox = Sandbox::new(Platform::Linux);
+    let output = sandbox.install_autodetect();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let unit = std::fs::read_to_string(sandbox.unit(NAME)).unwrap();
+    // The shell reports its working directory with symbolic links resolved (/var is /private/var on macOS).
+    let expected = std::fs::canonicalize(sandbox.config_dir()).unwrap().join(NAME);
+    assert!(
+        unit.contains(&format!("ExecStart=\"{}\"", quoted(expected.to_str().unwrap()))),
+        "{unit}"
+    );
 
-#[test]
-fn macos_migrate_replaces_a_former_agent_with_the_canonical_one() {
-    for label in [WEBHOOK_LABEL, LEGACY_LABEL] {
-        let sandbox = Sandbox::new(Platform::MacOs);
-        let old = sandbox.install_placeholder(label);
-        let output = sandbox.install_with(&["--migrate"]);
-        assert!(output.status.success(), "{label}: {}", stderr(&output));
-        assert!(!old.exists(), "{label}: the former agent file is removed");
-        assert!(sandbox.plist(CANONICAL_LABEL).exists(), "{label}");
-        assert_eq!(
-            sandbox.changes(),
-            [
-                format!("launchctl unload {}", old.display()),
-                format!("launchctl load {}", sandbox.plist(CANONICAL_LABEL).display()),
-            ],
-            "{label}"
-        );
-
-        sandbox.clear_calls();
-        let again = sandbox.install_with(&["--migrate"]);
-        assert!(again.status.success(), "{label}: {}", stderr(&again));
-        assert!(!sandbox.plist(WEBHOOK_LABEL).exists() && !sandbox.plist(LEGACY_LABEL).exists());
-        assert!(
-            calls_with(&sandbox.changes(), "unload").is_empty(),
-            "{:?}",
-            sandbox.changes()
-        );
-    }
-}
-
-#[test]
-fn macos_two_agents_installed_is_refused_and_uninstall_removes_all_three() {
-    let sandbox = Sandbox::new(Platform::MacOs);
-    sandbox.install_placeholder(WEBHOOK_LABEL);
-    sandbox.install_placeholder(CANONICAL_LABEL);
-    let output = sandbox.install();
+    std::fs::remove_file(sandbox.binary()).unwrap();
+    let refused = Sandbox::new(Platform::Linux);
+    std::fs::remove_file(refused.binary()).unwrap();
+    let output = refused.install_autodetect();
     assert!(!output.status.success());
     assert!(
-        stderr(&output).contains("would bind the same port"),
+        stderr(&output).contains("Could not locate the sylvode-runner binary"),
         "{}",
         stderr(&output)
     );
+}
 
-    sandbox.install_placeholder(LEGACY_LABEL);
+#[test]
+fn a_fresh_macos_install_writes_the_agent() {
+    let sandbox = Sandbox::new(Platform::MacOs);
+    let output = sandbox.install();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let plist = std::fs::read_to_string(sandbox.plist(LABEL)).expect("agent written");
+    assert!(plist.contains("<string>dev.sylvode.runner</string>"), "{plist}");
+    assert!(plist.contains("sylvode-runner.log"), "{plist}");
+    assert!(!plist.contains("{{"), "unrendered placeholder: {plist}");
+    assert_eq!(
+        sandbox.changes(),
+        [format!("launchctl load {}", sandbox.plist(LABEL).display())]
+    );
+}
+
+#[test]
+fn macos_uninstall_removes_the_agent() {
+    let sandbox = Sandbox::new(Platform::MacOs);
+    sandbox.install_placeholder(LABEL);
     let output = sandbox.run("uninstall.sh", &[]);
     assert!(output.status.success(), "{}", stderr(&output));
-    for label in [CANONICAL_LABEL, WEBHOOK_LABEL, LEGACY_LABEL] {
-        assert!(!sandbox.installed(label).exists(), "{label}");
-    }
+    assert!(!sandbox.plist(LABEL).exists());
 }
 
 /// The value every placeholder of the rendering tests is set to: a space, `&`, `%`, `$`, a

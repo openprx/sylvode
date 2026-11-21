@@ -5,7 +5,7 @@ listen = "127.0.0.1:9090"
 
 [security]
 # The secret of your Sylvode webhook. Start-up is refused while the placeholder is in place.
-webhook_secrets = ["replace-with-the-secret-of-your-sylvode-webhook"]
+webhook_secrets = ["replace-with-the-secret-of-your-sylvode-runner"]
 # Never true in production: without signatures anyone who can reach the port triggers agents.
 # On an address other than loopback it is refused unless allow_unsigned_non_loopback = true.
 allow_unsigned = false

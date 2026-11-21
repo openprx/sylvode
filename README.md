@@ -178,7 +178,7 @@ entirely and is only for a closed network you control end to end.
 
 ```toml
 [outbound]
-allowed_hosts = ["webhook:9090", "api:8080", "mcp-server:8090", "frontend:80"]
+allowed_hosts = ["runner:9090", "api:8080", "mcp-server:8090", "frontend:80"]
 allow_private = false
 ```
 

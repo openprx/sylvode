@@ -1,5 +1,5 @@
 use crate::{
-    AppState, ai_task, compat,
+    AppState, ai_task,
     config::{AgentConfig, RouteConfig},
     dispatcher,
     replay::Refusal,
@@ -204,7 +204,7 @@ fn select_agent<'a>(agents: &'a [AgentConfig], target: &BotDispatchTarget) -> Op
 /// The outcome reported for a worker AI task that no configured agent matches.
 fn no_agent_outcome(target: &BotDispatchTarget) -> ai_task::TaskOutcome {
     let summary = format!(
-        "sylvode-webhook has no agent for this AI task (bot {}, agent type {}, trigger kind {}); \
+        "sylvode-runner has no agent for this AI task (bot {}, agent type {}, trigger kind {}); \
          add an [[agents]] entry whose id, name or route matches the bot",
         target.bot_key,
         target.agent_type.as_deref().unwrap_or("unknown"),
@@ -240,10 +240,6 @@ pub async fn handle_webhook(
         if !signature::verify_signature(body.as_bytes(), &sig, &state.config.security.webhook_secrets) {
             tracing::warn!("Invalid webhook signature");
             return Err(StatusCode::UNAUTHORIZED);
-        }
-        // Only a verified request may use up the once-per-process notice.
-        if inbound.used_legacy_header {
-            compat::warn_once(compat::LegacyEntry::SignatureHeader);
         }
     }
 

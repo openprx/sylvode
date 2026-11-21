@@ -238,7 +238,7 @@ treating the missing input as a pass.
 | `SYLVODE_SCRATCH_ROOT` | Scratch trees, mutation copies and separate cargo target directories | `.flow-gate/cache` |
 | `SYLVODE_UF_REPORT_ROOT` | Universal Forms acceptance reports (`docs/`) and screenshots (`artifacts/`) | `.flow-gate/universal-forms` |
 | `SYLVODE_FLOW_PRIOR_EVIDENCE_ROOT` | Earlier release receipts read by `verify-flow-prior-receipts-v1.0.sh` | `.flow-gate/evidence` |
-| `SYLVODE_RUNNER_DIR` (former `SYLVODE_WEBHOOK_DIR`) | A separate Sylvode runner checkout for the runner smokes to build and run instead of the in-repository `apps/runner` | none: `apps/runner`, built with `cargo build -p sylvode-runner` |
+| `SYLVODE_RUNNER_DIR` | A separate Sylvode runner checkout for the runner smokes to build and run instead of the in-repository `apps/runner` | none: `apps/runner`, built with `cargo build -p sylvode-runner` |
 | `SYLVODE_FLOW_V05_CONTRACT_GAPS` | The v0.5 contract-gap register read by `verify-flow-authz-v0.5.sh`, or `none` | none, required |
 | `OPENPR_V10_CAPACITY_RESULT` | The capacity measurement result read by `verify-flow-slo-v1.0.sh` (or `--capacity-result`) | none, required |
 | `OPENPR_FLOW_V1_ORCHESTRATION_CONFIG` | The v1.0 orchestration config (`[flow_gate]` database URLs) read by `report-flow-v1.0-json.sh` (or `--orchestration-config`) | `.flow-gate/cache/v10-flow-gate.toml` |

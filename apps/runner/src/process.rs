@@ -381,7 +381,7 @@ mod tests {
 
     impl Dir {
         fn new() -> Self {
-            let dir = std::env::temp_dir().join(format!("sylvode-webhook-process-{}", uuid::Uuid::new_v4()));
+            let dir = std::env::temp_dir().join(format!("sylvode-runner-process-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).expect("create dir");
             Self(dir)
         }
@@ -681,7 +681,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_program_is_an_error() {
-        let command = tokio::process::Command::new("/nonexistent/sylvode-webhook-test-program");
+        let command = tokio::process::Command::new("/nonexistent/sylvode-runner-test-program");
         assert!(
             run(
                 command,

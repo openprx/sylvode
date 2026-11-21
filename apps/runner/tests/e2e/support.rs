@@ -17,9 +17,7 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
-pub const CANONICAL: &str = env!("CARGO_BIN_EXE_sylvode-runner");
-pub const WEBHOOK_ALIAS: &str = env!("CARGO_BIN_EXE_sylvode-webhook");
-pub const LEGACY: &str = env!("CARGO_BIN_EXE_openpr-webhook");
+pub const RUNNER: &str = env!("CARGO_BIN_EXE_sylvode-runner");
 pub const SECRET: &str = "e2e-webhook-secret";
 
 /// A directory removed when dropped.
@@ -109,8 +107,6 @@ impl Server {
             .arg(&config_path)
             .env_remove("RUST_LOG")
             .env_remove("SYLVODE_RUNNER_SAFE_MODE")
-            .env_remove("SYLVODE_WEBHOOK_SAFE_MODE")
-            .env_remove("OPENPR_WEBHOOK_SAFE_MODE")
             .env("NO_COLOR", "1")
             .env("PATH", SAFE_PATH)
             .stdin(Stdio::null())

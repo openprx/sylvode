@@ -22,7 +22,7 @@
 //! task or fail a completed one.
 
 use crate::background::Background;
-use crate::callback::{LEGACY_MCP_SURFACE_HEADER, MCP_SURFACE_HEADER};
+use crate::callback::MCP_SURFACE_HEADER;
 use crate::config::{AgentConfig, AiTaskCallback, AiTaskCallbackTarget, Config};
 use crate::dispatcher::tail_chars;
 use serde_json::{Value, json};
@@ -34,7 +34,7 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// At most this many characters of an API refusal message are logged.
 const MAX_LOGGED_MESSAGE_CHARS: usize = 200;
 /// The `source` field of every callback body.
-const SOURCE: &str = "sylvode-webhook";
+const SOURCE: &str = "sylvode-runner";
 /// The agent named in the log for a task no agent matched.
 const NO_AGENT: &str = "(none)";
 
@@ -326,9 +326,7 @@ impl Completion {
     fn request(&self, client: &reqwest::Client, url: &str, body: &Value) -> reqwest::RequestBuilder {
         let mut request = client.post(url).bearer_auth(&self.token).json(body);
         if let Some(surface) = &self.surface {
-            request = request
-                .header(MCP_SURFACE_HEADER, surface)
-                .header(LEGACY_MCP_SURFACE_HEADER, surface);
+            request = request.header(MCP_SURFACE_HEADER, surface);
         }
         request
     }
@@ -560,7 +558,7 @@ mod tests {
             hit.headers.get("x-sylvode-mcp-surface").is_none(),
             "rest sends no surface"
         );
-        assert_eq!(hit.body["source"], "sylvode-webhook");
+        assert_eq!(hit.body["source"], "sylvode-runner");
         assert_eq!(hit.body["agent_id"], "fixer");
         assert_eq!(hit.body["status"], "success");
         assert_eq!(hit.body["exit_code"], 0);
@@ -587,10 +585,6 @@ mod tests {
         );
         assert_eq!(
             hit.headers.get("x-sylvode-mcp-surface").and_then(|v| v.to_str().ok()),
-            Some("cli")
-        );
-        assert_eq!(
-            hit.headers.get("x-openpr-mcp-surface").and_then(|v| v.to_str().ok()),
             Some("cli")
         );
         assert_eq!(hit.body["error_message"], "cli execution timeout");

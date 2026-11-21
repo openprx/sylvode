@@ -1,6 +1,6 @@
 //! The `/webhook` endpoint through the real executable.
 
-use crate::support::{CANONICAL, SECRET, Server, bot_task, post_signed, rfc3339};
+use crate::support::{RUNNER, SECRET, Server, bot_task, post_signed, rfc3339};
 
 fn config() -> String {
     format!("[server]\nlisten = \"127.0.0.1:0\"\n\n[security]\nwebhook_secrets = [\"{SECRET}\"]\n")
@@ -9,7 +9,7 @@ fn config() -> String {
 /// A captured signed delivery cannot be sent again: the second copy is refused with 409.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_replayed_delivery_is_refused() {
-    let server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
+    let server = Server::start(RUNNER, &config(), &[]).expect("server starts");
     let body = bot_task("Nobody", "replay me").to_string();
     let (first, answer) = post_signed(&server.url("/webhook"), &body).await;
     assert_eq!(first, 200, "{answer}");
@@ -25,7 +25,7 @@ async fn a_replayed_delivery_is_refused() {
 async fn an_unverified_request_does_not_use_up_the_delivery_id() {
     use crate::support::{post_with, sign};
 
-    let server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
+    let server = Server::start(RUNNER, &config(), &[]).expect("server starts");
     let body = bot_task("Nobody", "verify first").to_string();
     let (status, _) = post_with(&server.url("/webhook"), &body, &[]).await;
     assert_eq!(status, 401, "unsigned");
@@ -42,7 +42,7 @@ async fn an_unverified_request_does_not_use_up_the_delivery_id() {
 /// A signed delivery whose timestamp is older than `max_delivery_age_secs` is refused with 401.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stale_delivery_is_refused() {
-    let server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
+    let server = Server::start(RUNNER, &config(), &[]).expect("server starts");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock after 1970")
@@ -60,7 +60,7 @@ async fn a_stale_delivery_is_refused() {
 /// Text from a delivery cannot forge log lines: a newline inside a logged field is escaped.
 #[tokio::test(flavor = "multi_thread")]
 async fn delivery_text_cannot_forge_a_log_line() {
-    let mut server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
+    let mut server = Server::start(RUNNER, &config(), &[]).expect("server starts");
     let forged = "2026-10-05T00:00:00.000000Z ERROR sylvode_runner::app: FORGED LINE";
     let mut body = bot_task("Nobody\nFORGED BOT", "t");
     body["event"] = serde_json::Value::String(format!("x\n{forged}"));
@@ -96,7 +96,7 @@ fn command_agents_config() -> String {
 /// body of a remote error: the sender stores the answer in its delivery log.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_answer_does_not_echo_command_output() {
-    let server = Server::start(CANONICAL, &command_agents_config(), &[]).expect("server starts");
+    let server = Server::start(RUNNER, &command_agents_config(), &[]).expect("server starts");
     for (bot, expected) in [
         ("Printer", "ok"),
         ("Failer", "error: the command exited with status 3"),
@@ -108,36 +108,6 @@ async fn the_answer_does_not_echo_command_output() {
         assert_eq!(answer["result"], expected, "{bot}: {answer}");
         assert!(!answer.to_string().contains("-detail"), "{bot}: {answer}");
     }
-}
-
-/// The once-per-process notice for the legacy signature header is written only for a request
-/// that passed verification, so an unauthenticated peer cannot use it up.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_legacy_header_notice_needs_a_verified_request() {
-    use crate::support::{post_with, sign};
-
-    let mut server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
-    let body = bot_task("Nobody", "legacy").to_string();
-    let bad = sign(&body, "not-the-secret");
-    let (status, _) = post_with(&server.url("/webhook"), &body, &[("x-openpr-signature", &bad)]).await;
-    assert_eq!(status, 401);
-    server.terminate();
-    let (_, stderr) = server.wait_exit(std::time::Duration::from_secs(10)).expect("exits");
-    assert!(stderr.is_empty(), "an unverified request wrote the notice: {stderr:?}");
-
-    let mut server = Server::start(CANONICAL, &config(), &[]).expect("server starts");
-    let good = sign(&body, SECRET);
-    let (status, _) = post_with(&server.url("/webhook"), &body, &[("x-openpr-signature", &good)]).await;
-    assert_eq!(status, 200);
-    server.terminate();
-    let (_, stderr) = server.wait_exit(std::time::Duration::from_secs(10)).expect("exits");
-    assert_eq!(stderr.len(), 1, "{stderr:?}");
-    assert!(
-        stderr
-            .iter()
-            .all(|line| line.contains("`x-openpr-signature` is deprecated")),
-        "{stderr:?}"
-    );
 }
 
 /// The one-string `command = "openclaw message send"` that earlier documentation showed starts,
@@ -160,7 +130,7 @@ async fn the_documented_one_string_openclaw_command_runs_with_a_notice() {
         config()
     );
     let mut server =
-        Server::start(CANONICAL, &config, &[("PATH", &path_with(bin.path()))]).expect("the legacy form starts");
+        Server::start(RUNNER, &config, &[("PATH", &path_with(bin.path()))]).expect("the legacy form starts");
     assert!(
         server.stdout().iter().any(|line| line.contains(" WARN ")
             && line.contains("deprecated one-string form")
@@ -194,7 +164,7 @@ async fn a_stalled_request_does_not_hold_up_shutdown_beyond_the_bound() {
     use tokio::io::AsyncWriteExt;
 
     let config = config().replace("[security]", "[runtime]\nhttp_timeout_secs = 1\n\n[security]");
-    let mut server = Server::start(CANONICAL, &config, &[]).expect("server starts");
+    let mut server = Server::start(RUNNER, &config, &[]).expect("server starts");
     let mut stalled = tokio::net::TcpStream::connect(server.addr).await.expect("connect");
     stalled
         .write_all(

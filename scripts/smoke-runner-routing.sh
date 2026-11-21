@@ -3,11 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The runner lives in this repository (apps/runner). A separate checkout can still be tested by
-# passing its path as the first argument or setting SYLVODE_RUNNER_DIR (the former
-# SYLVODE_WEBHOOK_DIR is still accepted).
-WEBHOOK_DIR="${1:-${SYLVODE_RUNNER_DIR:-${SYLVODE_WEBHOOK_DIR:-}}}"
-if [[ -n $WEBHOOK_DIR ]]; then
-  [[ -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: runner checkout not found ($WEBHOOK_DIR); pass the checkout path as the first argument or set SYLVODE_RUNNER_DIR, or leave both unset to use apps/runner" >&2; exit 2; }
+# passing its path as the first argument or setting SYLVODE_RUNNER_DIR.
+RUNNER_DIR="${1:-${SYLVODE_RUNNER_DIR:-}}"
+if [[ -n $RUNNER_DIR ]]; then
+  [[ -f $RUNNER_DIR/Cargo.toml ]] || { echo "FAIL: runner checkout not found ($RUNNER_DIR); pass the checkout path as the first argument or set SYLVODE_RUNNER_DIR, or leave both unset to use apps/runner" >&2; exit 2; }
 fi
 TMP_DIR="$(mktemp -d)"
 PORT="$((19000 + $$ % 1000))"
@@ -61,17 +60,14 @@ command = "/bin/echo"
 args = ["maintenance-route"]
 EOF
 
-if [[ -n $WEBHOOK_DIR ]]; then
-  (cd "${WEBHOOK_DIR}" && cargo build --quiet)
-  # A checkout from before the rename builds only a former executable name.
-  WEBHOOK_BIN="${WEBHOOK_DIR}/target/debug/sylvode-runner"
-  [[ -x ${WEBHOOK_BIN} ]] || WEBHOOK_BIN="${WEBHOOK_DIR}/target/debug/sylvode-webhook"
-  [[ -x ${WEBHOOK_BIN} ]] || WEBHOOK_BIN="${WEBHOOK_DIR}/target/debug/openpr-webhook"
+if [[ -n $RUNNER_DIR ]]; then
+  (cd "${RUNNER_DIR}" && cargo build --quiet)
+  RUNNER_BIN="${RUNNER_DIR}/target/debug/sylvode-runner"
 else
   (cd "${ROOT_DIR}" && cargo build --quiet -p sylvode-runner --bin sylvode-runner)
-  WEBHOOK_BIN="${CARGO_TARGET_DIR:-${ROOT_DIR}/target}/debug/sylvode-runner"
+  RUNNER_BIN="${CARGO_TARGET_DIR:-${ROOT_DIR}/target}/debug/sylvode-runner"
 fi
-"${WEBHOOK_BIN}" "${TMP_DIR}/config.toml" > "${TMP_DIR}/webhook.log" 2>&1 &
+"${RUNNER_BIN}" "${TMP_DIR}/config.toml" > "${TMP_DIR}/runner.log" 2>&1 &
 SERVER_PID="$!"
 
 python3 - "${PORT}" <<'PY'
@@ -94,7 +90,7 @@ def wait_health():
                     return
         except (urllib.error.URLError, TimeoutError):
             time.sleep(0.2)
-    raise AssertionError("sylvode-webhook did not become healthy")
+    raise AssertionError("sylvode-runner did not become healthy")
 
 
 def post(payload):
@@ -152,5 +148,5 @@ assert maintenance["status"] == "dispatched", maintenance
 assert maintenance["agent"] == "maintenance-dispatch", maintenance
 assert "maintenance-route" in maintenance["result"], maintenance
 
-print("Sylvode Webhook routing smoke passed")
+print("Sylvode runner routing smoke passed")
 PY
