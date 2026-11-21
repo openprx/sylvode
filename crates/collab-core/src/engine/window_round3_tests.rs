@@ -324,3 +324,85 @@ fn r3_4_an_incremental_window_does_not_read_the_unnamed_nodes_of_the_page() {
     println!("id reads for 500, 2,000 and 4,000 unnamed nodes: {reads:?}");
     assert_eq!(reads, [1, 1, 1], "the window reads the created node only");
 }
+
+// ---------------------------------------------------------------------------------------------
+// R3-3: a write that rewrites the logical id of an existing node
+// ---------------------------------------------------------------------------------------------
+
+/// Two chains: `a0 .. a20` (depth 20) and `b0 .. b30` (depth 30), all navigators.
+fn two_chains() -> Vec<u8> {
+    let mut engine = LoroCollabEngine::new_empty(81);
+    for (name, length) in [("a", 21), ("b", 31)] {
+        for index in 0..length {
+            create_node(
+                &mut engine,
+                &format!("{name}{index}"),
+                (index > 0).then(|| format!("{name}{}", index - 1)).as_deref(),
+            );
+        }
+    }
+    engine.export_snapshot().unwrap()
+}
+
+fn rename_to(base: &[u8], node: &str, value: &str) -> Vec<u8> {
+    let node = super::hand_encoded::tree_id_of(base, node);
+    raw_edit(base, 8_100, |raw| {
+        raw.get_tree("tree")
+            .get_meta(node)
+            .unwrap()
+            .insert("logical_id", value)
+            .unwrap();
+    })
+}
+
+/// Setting `b30`'s id to the id of a shallow node: the worker's stale caches keep the old id and
+/// accept, while the host's fresh load keeps one of the two nodes with the duplicate id and, for
+/// some targets, reads `b30`'s children at the shallow node's depth (`tree_depth`).
+#[test]
+fn r3_3_an_existing_nodes_logical_id_is_never_rewritten_inside_the_window() {
+    let base = two_chains();
+    let mut over_the_limit_for_a_fresh_load = 0;
+    for target in 1..=10 {
+        let update = rename_to(&base, "b30", &format!("a{target}"));
+        // With the switch off (no facts) the window is `next`'s: it accepts.
+        let mut plain = LoroCollabEngine::load(&base).unwrap();
+        plain.prewarm_for_writes();
+        let next = crate::window_check::run_window(&mut plain, None, &update);
+        assert!(next.is_ok(), "a{target}: {next:?}");
+        over_the_limit_for_a_fresh_load += usize::from(plain.fresh_load_decision().is_err());
+        // With facts the write is refused, as a plain refusal and before the host.
+        let mut engine = LoroCollabEngine::load(&base).unwrap();
+        engine.prewarm_for_writes();
+        let facts = BaseFacts::compute(&engine);
+        assert!(facts.is_some());
+        let refused = crate::window_check::run_window(&mut engine, facts.as_ref(), &update);
+        assert_eq!(
+            refused.as_ref().err(),
+            Some(&crate::error::CollabError::OperationFailed {
+                reason: "logical_id_rewritten".into()
+            }),
+            "a{target}: {refused:?}"
+        );
+    }
+    println!("fresh loads over the limit: {over_the_limit_for_a_fresh_load} of 10");
+    assert!(
+        over_the_limit_for_a_fresh_load >= 1,
+        "the hole of `next` exists for at least one target"
+    );
+}
+
+/// A node that the same update creates may be named, and a block map with a key of that name is
+/// not a tree node's metadata.
+#[test]
+fn r3_3_naming_a_node_the_update_creates_is_not_a_rewrite() {
+    let base = two_chains();
+    let update = raw_edit(&base, 8_101, |raw| {
+        let tree = raw.get_tree("tree");
+        tree.enable_fractional_index(0);
+        let n = tree.create(TreeParentId::Root).unwrap();
+        set_node(raw, n, "brand_new", "navigator_node");
+    });
+    let judged = judge(&base, &update);
+    judged.assert_sound("a create with a name");
+    assert!(judged.incremental, "{judged:?}");
+}

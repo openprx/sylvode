@@ -527,6 +527,78 @@ pub(super) fn difference_with(a: &Observed, b: &Observed, snapshot_bytes: bool) 
     }
 }
 
+/// Whether the update writes or deletes the `logical_id` of a tree node that exists in the base,
+/// read from the update's own JSON, independently of the check: a write of the key `logical_id`
+/// into a map whose id is the id of a node of the base's tree.
+pub(super) fn writes_an_existing_nodes_id(case: &Case) -> bool {
+    let doc = loro::LoroDoc::new();
+    doc.import(&case.base).unwrap();
+    let before = doc.oplog_vv();
+    if doc.import(&case.update).is_err() {
+        return false;
+    }
+    let json = serde_json::to_value(
+        doc.export_json_updates_without_peer_compression(&before, &doc.oplog_vv())
+            .unwrap(),
+    )
+    .unwrap();
+    let base = LoroCollabEngine::load(&case.base).unwrap();
+    let created: std::collections::HashSet<String> = json["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|change| change["ops"].as_array().unwrap())
+        .filter(|op| {
+            op["content"]["type"] == "create" && op["container"].as_str().is_some_and(|c| c.ends_with(":Tree"))
+        })
+        .filter_map(|op| op["content"]["target"].as_str().map(str::to_owned))
+        .collect();
+    json["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|change| change["ops"].as_array().unwrap())
+        .filter(|op| op["content"]["key"] == "logical_id")
+        .filter_map(|op| op["container"].as_str())
+        .filter_map(|container| container.strip_prefix("cid:")?.strip_suffix(":Map"))
+        .any(|node| {
+            let Some((counter, peer)) = node.split_once('@') else {
+                return false;
+            };
+            let (Ok(counter), Ok(peer)) = (counter.parse::<i32>(), peer.parse::<u64>()) else {
+                return false;
+            };
+            !created.contains(node) && base.has_tree_node(loro::TreeID::new(peer, counter))
+        })
+}
+
+/// Whether `observed` is the window's refusal of a write of an existing node's logical id, which
+/// `next` does not make (the worker with facts refuses before the check; see
+/// `window_check::ID_REWRITE_REASON`). The refusal must be explained by the update: an independent
+/// read of its ops finds such a write. The only documented difference between the worker with
+/// facts and `next`.
+pub(super) fn is_the_id_rewrite_refusal(case: &Case, observed: &Observed) -> bool {
+    matches!(
+        &observed.decision,
+        Decision::Refuse(CollabError::OperationFailed { reason }) if reason == crate::window_check::ID_REWRITE_REASON
+    ) && writes_an_existing_nodes_id(case)
+}
+
+/// [`difference_with`] of the incremental window against a reference, except for the one documented
+/// refusal ([`is_the_id_rewrite_refusal`]), which is not a difference. A refusal for a reason the
+/// update does not explain is one.
+pub(super) fn difference_for(
+    case: &Case,
+    reference: &Observed,
+    observed: &Observed,
+    snapshot_bytes: bool,
+) -> Option<String> {
+    if is_the_id_rewrite_refusal(case, observed) {
+        return None;
+    }
+    difference_with(reference, observed, snapshot_bytes)
+}
+
 /// Compares two implementations on one case.
 pub(super) fn compare(case: &Case, left: &dyn WindowImpl, right: &dyn WindowImpl) -> Option<String> {
     difference(&observe(left, case), &observe(right, case))
@@ -1140,8 +1212,8 @@ fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
         // Snapshot bytes are not independent of which reads came before the export (see
         // `output_diff_with`), and the incremental window reads far less than the projection: they
         // are compared only where the reads agree. The reloaded document is always compared.
-        let exact = difference_with(&prewarmed_references()[index], &decided.observed, false);
-        let against_plain = difference_with(&references()[index], &decided.observed, false);
+        let exact = difference_for(case, &prewarmed_references()[index], &decided.observed, false);
+        let against_plain = difference_for(case, &references()[index], &decided.observed, false);
         let same_bytes = prewarmed_references()[index].same_snapshot_bytes(&decided.observed);
         (
             decided.fallback,
@@ -1291,13 +1363,24 @@ fn every_refusal_of_the_incremental_window_is_the_full_computations() {
     let cases = all_cases();
     let verdicts = run_parallel(&cases, &|index, case| {
         let decided = decide(&Incremental::WORKER, case);
-        (references()[index].decision.clone(), decided.observed.decision)
+        let explained = is_the_id_rewrite_refusal(case, &decided.observed);
+        (
+            references()[index].decision.clone(),
+            decided.observed.decision,
+            explained,
+        )
     });
     let mut refusals = 0;
-    for (case, (full, incremental)) in cases.iter().zip(&verdicts) {
+    let mut id_rewrites = 0;
+    for (case, (full, incremental, explained)) in cases.iter().zip(&verdicts) {
+        if *explained {
+            id_rewrites += 1;
+            continue;
+        }
         assert_eq!(full, incremental, "{}", case.label);
         refusals += usize::from(matches!(full, Decision::Refuse(_)));
     }
+    assert!(id_rewrites > 0, "no case writes the id of an existing node");
     assert!(refusals > 100, "the corpus has too few refusals: {refusals}");
 }
 
@@ -1566,13 +1649,17 @@ fn the_harness_detects_every_incremental_mutant() {
     // path (it skips a fallback) is caught by the path.
     let worker_paths = run_parallel(&cases, &|_, case| {
         let decided = decide(&Incremental::WORKER, case);
-        (decided.reason, decided.direct_refusal)
+        (decided.reason, decided.direct_refusal, decided.observed.decision.code())
     });
     for mutant in incremental_mutants() {
         let results = run_parallel(&cases, &|index, case| {
             let decided = decide(&mutant, case);
-            let path_differs = (decided.reason.clone(), decided.direct_refusal) != worker_paths[index];
-            let diff = difference_with(&prewarmed_references()[index], &decided.observed, false);
+            let path_differs = (
+                decided.reason.clone(),
+                decided.direct_refusal,
+                decided.observed.decision.code(),
+            ) != worker_paths[index];
+            let diff = difference_for(case, &prewarmed_references()[index], &decided.observed, false);
             (
                 diff.or_else(|| path_differs.then(|| "the path differs from the worker's".to_owned())),
                 matches!(decided.oracle, Some(Err(_))),

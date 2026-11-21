@@ -384,7 +384,7 @@ fn rename_update(base: &[u8], node: TreeID, value: Option<&str>) -> Vec<u8> {
 /// while a fresh load reads the new one. The decision must be the full computation's, and no
 /// report may disagree with the host.
 #[test]
-fn a_rewritten_logical_id_of_an_existing_node_is_decided_by_the_full_computation() {
+fn a_rewritten_logical_id_of_an_existing_node_is_refused_by_the_window() {
     let mut engine = LoroCollabEngine::new_empty(8);
     create(&mut engine, "n", None, NodeKind::NavigatorNode);
     create(&mut engine, "m", None, NodeKind::NavigatorNode);
@@ -397,8 +397,13 @@ fn a_rewritten_logical_id_of_an_existing_node_is_decided_by_the_full_computation
     ] {
         let judged = judge(&base, &rename_update(&base, n, value));
         println!("{label}: {judged:?}");
-        judged.assert_agrees(label);
-        assert_eq!(judged.fallback.as_deref(), Some("IdRewritten"), "{label}: {judged:?}");
+        // `next` decides by the full computation on its stale caches; the window with facts
+        // refuses the write before any decision (round three, R3-3).
+        assert_eq!(
+            judged.window,
+            Err("operation failed: logical_id_rewritten".to_owned()),
+            "{label}: {judged:?}"
+        );
     }
 }
 
