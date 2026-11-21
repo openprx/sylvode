@@ -860,6 +860,39 @@ mod tests {
         Ok(())
     }
 
+    /// A stale attempt makes the owner lookup fail (the API answers 400 for it), and a task that
+    /// is not the bot's makes it fail with 403/404. In neither case does a write follow, and the
+    /// already-ended read-back of `complete` and `fail` is not reached by the lookup's failure.
+    #[tokio::test]
+    async fn a_failed_owner_lookup_stops_every_task_tool_before_any_write() -> Result<(), Box<dyn std::error::Error>> {
+        for refusal in [
+            json!({ "code": 400, "message": "task is not active for attempt 1 (current attempt 2)" }),
+            json!({ "code": 403, "message": "forbidden" }),
+            json!({ "code": 404, "message": "ai task not found" }),
+        ] {
+            let answer: Answer = Arc::new(move |_: &Seen| refusal.clone());
+            let (server, seen) = mock(answer).await?;
+            for (tool, args) in [
+                (TASK_ACK, json!({ "task_id": TASK, "attempt": 1, "plan": "p" })),
+                (TASK_PROGRESS, json!({ "task_id": TASK, "attempt": 1, "note": "n" })),
+                (
+                    TASK_COMPLETE,
+                    json!({ "task_id": TASK, "attempt": 1, "outcome": "done", "summary": "s" }),
+                ),
+                (TASK_FAIL, json!({ "task_id": TASK, "attempt": 1, "reason": "r" })),
+            ] {
+                seen.lock().clear();
+                let result = server.call_tool(tool, args).await;
+                assert_eq!(result.is_error, Some(true), "{tool}");
+                let requests = seen.lock().clone();
+                assert_eq!(requests.len(), 1, "{tool}: {requests:?}");
+                assert_eq!(requests[0].method, "GET", "{tool}");
+                assert!(!text(&result).contains("already_"), "{tool}: {}", text(&result));
+            }
+        }
+        Ok(())
+    }
+
     // ---- argument validation: nothing reaches the API ----
 
     #[tokio::test]

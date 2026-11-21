@@ -474,6 +474,37 @@ impl FormScopeTarget {
 /// of trusting the wider handle. Resolving through the *wider* id was the fragile part
 /// of the previous version — a future tool taking both would have been governed by the
 /// one the caller can pick freely.
+/// Refuses a call that carries an ownership bearing argument the tool's schema does not declare.
+///
+/// The owner of a call is resolved from its arguments, and some resolutions pick the first of
+/// several ids they find (`record_id`, then `form_id`, then `attachment_id`). An undeclared id a
+/// caller adds could therefore redirect which project's agent policy is evaluated: a tool
+/// addressed by `attachment_id` called with a `form_id` of a project the caller may read would be
+/// governed by that project's policy and then act on the attachment. A tool only ever takes the
+/// ids it declares. Tools of the Flow-only surface are not in the registry and are checked by
+/// their own preparation.
+fn reject_undeclared_ownership_arguments(tool_name: &str, args: &Value) -> Result<(), String> {
+    let Some(definition) = tools::entry::registry_definition(tool_name) else {
+        return Ok(());
+    };
+    let declared = definition.input_schema.get("properties").and_then(Value::as_object);
+    for (argument, _) in OWNERSHIP_ARGUMENTS {
+        let present = args.get(argument).is_some_and(|value| !value.is_null());
+        if present && !declared.is_some_and(|properties| properties.contains_key(argument)) {
+            tracing::warn!(
+                tool_name = %tool_name,
+                argument = %argument,
+                "Refusing call: an ownership bearing argument the tool does not declare"
+            );
+            return Err(format!(
+                "Tool '{tool_name}' does not take '{argument}'; refusing because an undeclared id could \
+                 change which project policy applies"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn form_scope_target(args: &Value) -> Result<Option<(FormScopeTarget, Option<String>)>, String> {
     let declared_form_id = uuid_argument(args, "form_id")?;
     if let Some(record_id) = uuid_argument(args, "record_id")? {
@@ -898,6 +929,15 @@ impl McpServer {
         if !self.write_call_allowed && self.is_write_class(name) {
             return CallToolResult::error(tools::entry::writes_disabled_message());
         }
+        // A tool whose schema is closed takes exactly the arguments it declares, by every door:
+        // the wrappers always validated them, and a direct call must not forward more to the API.
+        if !self.client.is_flow_only()
+            && let Some(definition) = tools::entry::registry_definition(name)
+            && definition.input_schema.get("additionalProperties") == Some(&json!(false))
+            && let Err(error) = tools::schema_check::validate(&definition.input_schema, &args)
+        {
+            return CallToolResult::error(format!("Invalid arguments for '{name}': {error}"));
+        }
         let scoped = Self {
             client: self.client.recording_operation(name),
             project_id_cache: if self.client.is_flow_only() {
@@ -1207,7 +1247,12 @@ impl McpServer {
     /// foreign project is itself a bypass attempt. When the owner cannot be resolved the
     /// call is refused as well (fail closed).
     async fn resolve_policy_project_id(&self, tool_name: &str, args: &Value) -> Result<Option<String>, String> {
-        match tool_policy_scope(tool_name) {
+        let scope = tool_policy_scope(tool_name);
+        // Workspace wide tools have their own, stricter guard below.
+        if !matches!(scope, PolicyScope::WorkspaceWide | PolicyScope::WorkspaceWideAdmin) {
+            reject_undeclared_ownership_arguments(tool_name, args)?;
+        }
+        match scope {
             PolicyScope::WorkspaceWide | PolicyScope::WorkspaceWideAdmin => {
                 // Nothing this tool touches belongs to a project, so there is no policy
                 // to evaluate. Refuse anyway if the call somehow carries an ownership

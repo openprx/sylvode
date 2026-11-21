@@ -602,6 +602,20 @@ signing key and no bot registry, so it forwards the token it holds and lets the 
   They are checked against the API on every request, see only the read tools their scopes
   allow, act in their grant's workspace, and are forwarded to the API with an internal
   forwarding credential (deviation D2 of the authorization contract).
+- A tool takes exactly the arguments its schema declares where that matters for authorization:
+  an ownership bearing id (`work_item_id`, `form_id`, `record_id`, ...) the tool does not declare
+  is refused before any request, because it could change which project's agent policy is
+  evaluated, and a tool with a closed schema refuses any undeclared argument on every door.
+- `sylvode_search` and `sylvode_overview` with a `project_id` read the project's agent policy with
+  the caller's own token and filter by the tools it enables. The filtered answer therefore shows
+  which tools that policy enables even when the policy disables `context.get_agent_policy`; the
+  policy itself is not shown, and `tools/list` with a project discloses exactly the same. Without
+  a `project_id` the static catalogue is shown, which is public information.
+- The project resource tools (`project_resources.*`, `code.resources.list`, `code.directory.get`)
+  and the resource template `sylvode://projects/{project_id}/resources` are parked: unreachable on
+  every MCP door. This narrows the MCP surface only. The resources stay readable through
+  `context.get_project` (and `sylvode://projects/{project_id}/context`) and through the API with
+  the bot's token; the API's own authorization decides.
 - For public HTTP exposure, place MCP behind your reverse proxy or tunnel and
   apply deployment-level rate limits.
 

@@ -385,6 +385,110 @@ async fn a_wrapper_call_is_the_direct_call_for_every_tool_under_every_policy() -
     Ok(())
 }
 
+/// An argument the schema does not declare must never redirect a tool: with an undeclared
+/// `project_id`, `workspace_id`, `form_id` or `object_id` naming something foreign, every tool, by
+/// every door, either refuses or makes exactly the requests it makes without it, and no request
+/// body carries the foreign id. The wrapper is checked against the same rule.
+#[tokio::test]
+async fn an_undeclared_foreign_id_never_redirects_a_tool() -> TestResult {
+    const FOREIGN: &str = "99999999-9999-4999-8999-999999999999";
+    let shape = |seen: Vec<Seen>| {
+        seen.into_iter()
+            .map(|mut seen| {
+                if let Some(key) = seen.body.get_mut("idempotency_key") {
+                    *key = json!("<generated>");
+                }
+                (seen.method, seen.path, seen.query, seen.body)
+            })
+            .collect::<Vec<_>>()
+    };
+    let api = Api::spawn(Policy::Permissive).await?;
+    let mut exercised = 0;
+    for tool in non_task_tools() {
+        let declared = tool
+            .input_schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let base = minimal_arguments(&tool);
+        api.clear();
+        // A fresh server per call: the ownership cache would otherwise make the second call cheaper.
+        let baseline = server(&api, McpToolMode::Full)?
+            .call_tool(&tool.name, base.clone())
+            .await;
+        let baseline_requests = shape(api.seen());
+        for key in ["project_id", "workspace_id", "form_id", "object_id"] {
+            if declared.contains_key(key) {
+                continue;
+            }
+            let mut tampered = base.clone();
+            if let Some(object) = tampered.as_object_mut() {
+                object.insert(key.to_string(), json!(FOREIGN));
+            }
+            let doors = [
+                (McpToolMode::Full, tool.name.as_str(), tampered.clone()),
+                (
+                    McpToolMode::Search,
+                    wrapper_for(&tool.name),
+                    json!({ "tool": tool.name, "arguments": tampered }),
+                ),
+            ];
+            for (mode, name, arguments) in doors {
+                api.clear();
+                let result = server(&api, mode)?.call_tool(name, arguments).await;
+                let requests = shape(api.seen());
+                exercised += 1;
+                let refused = result.is_error == Some(true) && text(&result) != text(&baseline);
+                let identical = requests == baseline_requests;
+                assert!(
+                    refused || identical,
+                    "{} with an undeclared {key}: {requests:?} against {baseline_requests:?}",
+                    tool.name
+                );
+                assert!(
+                    !serde_json::to_string(&requests)?.contains(FOREIGN) || refused,
+                    "{} forwarded the undeclared {key}",
+                    tool.name
+                );
+            }
+        }
+    }
+    assert!(exercised > 500, "only {exercised} calls were exercised");
+    Ok(())
+}
+
+/// The case that made the rule above necessary: a tool addressed by `attachment_id` called with a
+/// `form_id` of a form the caller can read used to be governed by that form's project policy while
+/// it acted on the attachment. The undeclared id is refused before any request, by every door.
+#[tokio::test]
+async fn an_undeclared_form_id_cannot_redirect_the_policy_of_an_attachment_call() -> TestResult {
+    let api = Api::spawn(Policy::Permissive).await?;
+    for (mode, name, arguments) in [
+        (
+            McpToolMode::Full,
+            "form_attachments.archive",
+            json!({ "attachment_id": UUID, "form_id": "99999999-9999-4999-8999-999999999999" }),
+        ),
+        (
+            McpToolMode::Search,
+            entry::WRITE,
+            json!({ "tool": "form_attachments.restore", "arguments": {
+                "attachment_id": UUID, "record_id": "99999999-9999-4999-8999-999999999999" } }),
+        ),
+    ] {
+        let result = server(&api, mode)?.call_tool(name, arguments).await;
+        assert_eq!(result.is_error, Some(true), "{name}");
+        assert!(
+            text(&result).contains("does not take") || text(&result).contains("Invalid arguments"),
+            "{}",
+            text(&result)
+        );
+    }
+    assert!(api.seen().is_empty(), "{:?}", api.seen());
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_project_policy_that_disables_a_tool_stops_it_through_the_wrapper_too() -> TestResult {
     let api = Api::spawn(Policy::DenyAll).await?;
