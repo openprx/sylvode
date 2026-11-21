@@ -100,16 +100,23 @@ suite.check('viewConfigString, viewConfigBoolean and viewConfigRecord read typed
 	assertEqual(m.viewConfigRecord(null, 'r'), null, 'null view');
 });
 
-suite.check('isIsoDate checks the YYYY-MM-DD shape only', () => {
+suite.check('isIsoDate checks the YYYY-MM-DD shape and that the day exists', () => {
 	assertEqual(m.isIsoDate('2026-01-31'), true, 'valid');
 	assertEqual(m.isIsoDate('2028-02-29'), true, 'leap day');
 	assertEqual(m.isIsoDate('2026-1-1'), false, 'unpadded');
 	assertEqual(m.isIsoDate(' 2026-01-01'), false, 'padded');
 	assertEqual(m.isIsoDate('2026-01-01T00:00'), false, 'time part');
 	assertEqual(m.isIsoDate(''), false, 'empty');
-	// CURRENT BEHAVIOUR: only the shape is checked, so impossible calendar dates pass.
-	assertEqual(m.isIsoDate('2026-02-30'), true, 'impossible date');
-	assertEqual(m.isIsoDate('2026-13-45'), true, 'impossible month');
+	assertEqual(m.isIsoDate('2026-02-30'), false, 'impossible date');
+	assertEqual(m.isIsoDate('2026-02-31'), false, 'impossible date');
+	assertEqual(m.isIsoDate('2026-02-29'), false, 'leap day in a common year');
+	assertEqual(m.isIsoDate('2026-04-31'), false, 'day 31 of a 30-day month');
+	assertEqual(m.isIsoDate('2026-13-01'), false, 'impossible month');
+	assertEqual(m.isIsoDate('2026-13-45'), false, 'impossible month and day');
+	assertEqual(m.isIsoDate('2026-00-10'), false, 'month zero');
+	assertEqual(m.isIsoDate('2026-01-00'), false, 'day zero');
+	assertEqual(m.isIsoDate('2100-02-29'), false, 'century non-leap year');
+	assertEqual(m.isIsoDate('2000-02-29'), true, 'century leap year');
 });
 
 suite.check('calendarExceptionDateMap normalises, de-duplicates and sorts dates', () => {
