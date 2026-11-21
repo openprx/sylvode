@@ -2149,6 +2149,18 @@ pub(crate) fn map_write_rejection(rejected: &write::Rejected) -> ApiError {
                 Some("contention") => {
                     ApiError::server_draining(ServerDrainingReason::Contention, retry_after_ms, "server_draining")
                 }
+                // The isolated write window could not decide the write for a load reason. A REST
+                // caller always sees `resend`: the server rebuilds a content command on a resend,
+                // so a REST caller never re-encodes anything (a `rebase` answer is followed inside
+                // `execute_content_command` and never leaves it).
+                Some("apply_busy") => ApiError::server_busy(
+                    details
+                        .and_then(|details| details.get("cause"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    "resend",
+                    retry_after_ms,
+                ),
                 // `error-mapping-v1.md`: "缺失/未知 reason 是 producer contract violation... 不得
                 // 猜测为维护或竞争、不得用 message 补判" -- the write path never producing a
                 // recognized reason here is a bug in that path, not something to paper over with a
@@ -2247,104 +2259,42 @@ async fn execute_content_command(
     // `write::replay_stable_update_id`.
     let update_id = write::replay_stable_update_id(document_id, &input.idempotency_key);
 
-    // The build runs outside any lock and without the document's coordinator permit, exactly as
-    // before the warm cache existed: concurrent REST writers of one page build in parallel and the
-    // CRDT merges their updates; only the accept below is serialised per document. The base is a
-    // private fork of the warm cache entry when its entry has exactly the head the database
-    // reports (sequence, frontier, format), else it is loaded from the database and seeds the
-    // cache.
-    let build_base_step = write::WriteStep::start("rest_build_base");
-    let mut engine = match write::prepare_build_engine(
-        &state.db,
-        &collab.cache,
-        document_id,
-        update_id,
-        expected_frontier.as_deref(),
-    )
-    .await?
-    {
-        Ok(engine) => engine,
-        Err(write::AcceptOutcome::Rejected(rejected)) => return Err(map_write_rejection(&rejected)),
-        Err(write::AcceptOutcome::Accepted(_)) => return Err(ApiError::internal()),
-    };
-    build_base_step.finish();
-    let build_apply_step = write::WriteStep::start("rest_apply_command");
-    let base_frontier = engine.frontier();
-    if is_page && kind != ContentCommandType::SetTitle {
-        engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
-    }
-    if let Err(err) = apply_content_command(&mut engine, kind, &normalized_payload) {
-        // The concurrent same-key double submit `rest-api-v1.md` registers as a known residual
-        // window: this request's `find_idempotent_event` guard (in `execute_command_authorized`)
-        // ran *before* the other request committed and so missed, while the base read
-        // above ran *after* it and already sees that request's effect — so `insert_block` fails
-        // `DuplicateNode` here, before `update_id` deduplication in `write::accept_update` is ever
-        // reached, and the caller is told `invalid_update` for a command that in fact succeeded.
-        //
-        // Asking the guard's question again, now, closes it: the effect that made the apply fail
-        // was read out of committed state, and `write::stage_locked_writes` writes the
-        // `flow.content.accepted` event in the very same transaction as the `collab_updates` row
-        // that carries it, so if that effect is visible its event under this key is visible too.
-        // The recovery is therefore decided by committed rows, not by timing. It only fires when
-        // an event already exists under *this* caller's key on *this* document; a `DuplicateNode`
-        // caused by anything else (a block some other key created, a malformed payload) finds no
-        // such event and still fails, unchanged.
-        if let Some(replay) = replay_content_command(
+    // A write the isolated window refused because it was not sequential (`apply_busy` with
+    // `retry_mode = rebase`) is built again from the current head and submitted again, under the
+    // same `update_id` and idempotency key, at most `REST_REBUILD_ATTEMPTS` times: every refused
+    // attempt is `not_applied` and `find_prior_update` runs first on each, so a rebuild can never
+    // apply the command twice. A REST caller is never asked to rebase.
+    let mut rebuilds = 0;
+    let outcome = loop {
+        let submission = build_and_submit_content_update(
             state,
+            input,
             workspace_id,
             document_id,
-            input.object_id,
-            &input.idempotency_key,
-        )
-        .await?
-        {
-            return Ok(replay);
-        }
-        return Err(err);
-    }
-    build_apply_step.finish();
-    let export_update_step = write::WriteStep::start("rest_export_update");
-    let update_bytes = engine
-        .export_from(&base_frontier)
-        .map_err(|err| map_collab_error(&err))?;
-    export_update_step.finish();
-
-    let outcome = write::accept_update(
-        &state.db,
-        &collab.cache,
-        &collab.coordinator,
-        &collab.registry,
-        &collab.snapshot,
-        crate::config::runtime().flow.dispatch_max_attempts,
-        None,
-        write::UpdateRequest {
-            document_id,
-            update_id,
-            bytes: update_bytes,
-            idempotency_key: Some(input.idempotency_key.clone()),
-            // Records this command's `flow.content.accepted` event under the caller's key, so the
-            // `find_idempotent_event` replay guard in `execute_command_authorized` covers content
-            // commands the way it already covers create/feature/lifecycle. Content commands were
-            // the one family that wrote `None` here, which made that guard unreachable for all six
-            // of them (`write::UpdateRequest::event_idempotency_key`).
-            event_idempotency_key: Some(input.idempotency_key.clone()),
-            origin_client_id: Some(input.origin_client_id.clone()),
-            message: input.message.clone(),
-            actor_id: input.actor_id,
-            actor_is_bot: input.actor_is_bot(),
-            workspace_id,
             checked_epoch,
-            expected_frontier,
-            // A content command's `flow.content.accepted` **is** this command's primary event —
-            // there is no other event for it to be derived from — so the command's own origin
-            // goes through unchanged. Before this existed, `write::stage_locked_writes` stamped
-            // the literal `"web"` on every caller of `accept_update`, which meant a REST content
-            // command was recorded in `business_events.source` and in
-            // `collab_updates.origin_surface` as a WebSocket write.
-            origin: input.origin.clone(),
-        },
-    )
-    .await?;
+            kind,
+            is_page,
+            &normalized_payload,
+            update_id,
+            expected_frontier.clone(),
+        )
+        .await?;
+        let outcome = match submission {
+            ContentSubmission::Replayed(change) => return Ok(*change),
+            ContentSubmission::Outcome(outcome) => outcome,
+        };
+        if rebuilds < REST_REBUILD_ATTEMPTS && asks_for_rebase(&outcome) {
+            rebuilds += 1;
+            tracing::info!(
+                %document_id,
+                %update_id,
+                rebuilds,
+                "flow content command: the write was not sequential for the isolated window; rebuilding it from the head"
+            );
+            continue;
+        }
+        break outcome;
+    };
 
     let accepted = match outcome {
         write::AcceptOutcome::Accepted(accepted) => accepted,
@@ -2372,6 +2322,152 @@ async fn execute_content_command(
         command_result: None,
         object,
     })
+}
+
+/// What one build-and-submit of a content command came to.
+enum ContentSubmission {
+    /// The command's effect was already committed under its idempotency key (a concurrent double
+    /// submit): the replayed result.
+    Replayed(Box<AcceptedChange>),
+    /// The write path's outcome for the rebuilt update.
+    Outcome(write::AcceptOutcome),
+}
+
+/// How many times a content command is built again from the head after the write path answers
+/// `apply_busy` with `retry_mode = rebase`, before the caller gets the busy answer (`resend`).
+const REST_REBUILD_ATTEMPTS: u32 = 2;
+
+/// Whether `outcome` is the write path asking for the update to be rebuilt from the head.
+fn asks_for_rebase(outcome: &write::AcceptOutcome) -> bool {
+    let write::AcceptOutcome::Rejected(rejected) = outcome else {
+        return false;
+    };
+    rejected.code == super::collab::frame::RejectedCode::ServerDraining
+        && rejected.details.as_ref().is_some_and(|details| {
+            details.get("reason").and_then(Value::as_str) == Some("apply_busy")
+                && details.get("retry_mode").and_then(Value::as_str) == Some("rebase")
+        })
+}
+
+/// Builds the update for one content command on a private fork of the head and submits it through
+/// [`write::accept_update`]; the body of one attempt of [`execute_content_command`].
+#[allow(clippy::too_many_arguments)]
+async fn build_and_submit_content_update(
+    state: &AppState,
+    input: &ExecuteCommandInput,
+    workspace_id: Uuid,
+    document_id: Uuid,
+    checked_epoch: i64,
+    kind: ContentCommandType,
+    is_page: bool,
+    normalized_payload: &Value,
+    update_id: Uuid,
+    expected_frontier: Option<Vec<u8>>,
+) -> Result<ContentSubmission, ApiError> {
+    let collab = runtime::runtime();
+    // The build runs outside any lock and without the document's coordinator permit, exactly as
+    // before the warm cache existed: concurrent REST writers of one page build in parallel and the
+    // CRDT merges their updates; only the accept below is serialised per document. The base is a
+    // private fork of the warm cache entry when its entry has exactly the head the database
+    // reports (sequence, frontier, format), else it is loaded from the database and seeds the
+    // cache.
+    let build_base_step = write::WriteStep::start("rest_build_base");
+    let mut engine = match write::prepare_build_engine(
+        &state.db,
+        &collab.cache,
+        document_id,
+        update_id,
+        expected_frontier.as_deref(),
+    )
+    .await?
+    {
+        Ok(engine) => engine,
+        Err(write::AcceptOutcome::Rejected(rejected)) => {
+            return Ok(ContentSubmission::Outcome(write::AcceptOutcome::Rejected(rejected)));
+        }
+        Err(write::AcceptOutcome::Accepted(_)) => return Err(ApiError::internal()),
+    };
+    build_base_step.finish();
+    let build_apply_step = write::WriteStep::start("rest_apply_command");
+    let base_frontier = engine.frontier();
+    if is_page && kind != ContentCommandType::SetTitle {
+        engine.initialize_page_editor().map_err(|e| map_collab_error(&e))?;
+    }
+    if let Err(err) = apply_content_command(&mut engine, kind, normalized_payload) {
+        // The concurrent same-key double submit `rest-api-v1.md` registers as a known residual
+        // window: this request's `find_idempotent_event` guard (in `execute_command_authorized`)
+        // ran *before* the other request committed and so missed, while the base read
+        // above ran *after* it and already sees that request's effect — so `insert_block` fails
+        // `DuplicateNode` here, before `update_id` deduplication in `write::accept_update` is ever
+        // reached, and the caller is told `invalid_update` for a command that in fact succeeded.
+        //
+        // Asking the guard's question again, now, closes it: the effect that made the apply fail
+        // was read out of committed state, and `write::stage_locked_writes` writes the
+        // `flow.content.accepted` event in the very same transaction as the `collab_updates` row
+        // that carries it, so if that effect is visible its event under this key is visible too.
+        // The recovery is therefore decided by committed rows, not by timing. It only fires when
+        // an event already exists under *this* caller's key on *this* document; a `DuplicateNode`
+        // caused by anything else (a block some other key created, a malformed payload) finds no
+        // such event and still fails, unchanged.
+        if let Some(replay) = replay_content_command(
+            state,
+            workspace_id,
+            document_id,
+            input.object_id,
+            &input.idempotency_key,
+        )
+        .await?
+        {
+            return Ok(ContentSubmission::Replayed(Box::new(replay)));
+        }
+        return Err(err);
+    }
+    build_apply_step.finish();
+    let export_update_step = write::WriteStep::start("rest_export_update");
+    let update_bytes = engine
+        .export_from(&base_frontier)
+        .map_err(|err| map_collab_error(&err))?;
+    export_update_step.finish();
+
+    let outcome = write::accept_update(
+        &state.db,
+        &collab.cache,
+        &collab.coordinator,
+        &collab.registry,
+        &collab.snapshot,
+        crate::config::runtime().flow.dispatch_max_attempts,
+        None,
+        write::UpdateRequest {
+            // A `rebase` answer is followed here: the next attempt is rebuilt from the head.
+            rebase_policy: write::RebasePolicy::ServerRebuilds,
+            document_id,
+            update_id,
+            bytes: update_bytes,
+            idempotency_key: Some(input.idempotency_key.clone()),
+            // Records this command's `flow.content.accepted` event under the caller's key, so the
+            // `find_idempotent_event` replay guard in `execute_command_authorized` covers content
+            // commands the way it already covers create/feature/lifecycle. Content commands were
+            // the one family that wrote `None` here, which made that guard unreachable for all six
+            // of them (`write::UpdateRequest::event_idempotency_key`).
+            event_idempotency_key: Some(input.idempotency_key.clone()),
+            origin_client_id: Some(input.origin_client_id.clone()),
+            message: input.message.clone(),
+            actor_id: input.actor_id,
+            actor_is_bot: input.actor_is_bot(),
+            workspace_id,
+            checked_epoch,
+            expected_frontier,
+            // A content command's `flow.content.accepted` **is** this command's primary event —
+            // there is no other event for it to be derived from — so the command's own origin
+            // goes through unchanged. Before this existed, `write::stage_locked_writes` stamped
+            // the literal `"web"` on every caller of `accept_update`, which meant a REST content
+            // command was recorded in `business_events.source` and in
+            // `collab_updates.origin_surface` as a WebSocket write.
+            origin: input.origin.clone(),
+        },
+    )
+    .await?;
+    Ok(ContentSubmission::Outcome(outcome))
 }
 
 async fn lifecycle_plan<C: ConnectionTrait>(

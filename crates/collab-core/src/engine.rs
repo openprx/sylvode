@@ -289,6 +289,17 @@ fn read_string_value(value_or_container: &ValueOrContainer) -> Option<String> {
     }
 }
 
+/// The result of counting the items of a page's projection (see `LoroCollabEngine::projection_items`).
+#[derive(Debug)]
+pub(crate) enum ProjectionCount {
+    /// The count finished: the items of the page and the mark items of every block that has any.
+    Within { items: u64, marks: HashMap<NodeId, u64> },
+    /// The items passed the ceiling.
+    OverCeiling,
+    /// A setup guard fired (`crate::setup_guard`).
+    GuardFired(crate::setup_guard::Fired),
+}
+
 impl LoroCollabEngine {
     fn attach_tree(doc: &LoroDoc) -> LoroTree {
         let tree = doc.get_tree(TREE_CONTAINER);
@@ -1290,23 +1301,45 @@ impl LoroCollabEngine {
     ///
     /// # Errors
     /// A failed read of a node's metadata, which fails the projection as well.
+    #[cfg(test)]
     pub(crate) fn projection_items(&self, ceiling: u64) -> Result<Option<u64>, CollabError> {
+        Ok(match self.count_projection(crate::work::ItemCount::new(ceiling))? {
+            ProjectionCount::Within { items, .. } => Some(items),
+            ProjectionCount::OverCeiling | ProjectionCount::GuardFired(_) => None,
+        })
+    }
+
+    /// [`Self::projection_items`] for the setup: it also yields the mark items of every block, and
+    /// stops with [`ProjectionCount::GuardFired`] once `guard` has passed a limit.
+    pub(crate) fn projection_count_guarded(
+        &self,
+        ceiling: u64,
+        guard: crate::setup_guard::SetupGuard,
+    ) -> Result<ProjectionCount, CollabError> {
+        self.count_projection(crate::work::ItemCount::guarded(ceiling, guard))
+    }
+
+    fn count_projection(&self, mut items: crate::work::ItemCount) -> Result<ProjectionCount, CollabError> {
         use crate::reserved_roots::{ALIASES, DOC, ORDER};
-        let mut items = crate::work::ItemCount::new(ceiling);
+        let stopped = |items: &crate::work::ItemCount| {
+            items
+                .stopped_by_guard()
+                .map_or(ProjectionCount::OverCeiling, ProjectionCount::GuardFired)
+        };
         for name in [ORDER, ALIASES] {
             // Entries, keys and the payload of the values: the full projection clones all of them
             // (`navigator_order`), and a client update writes the map without the server's bounds.
             if let Some(map) = crate::editor_structure::root_map(&self.doc, name)?
                 && !items.add_container(&Container::Map(map), 0)
             {
-                return Ok(None);
+                return Ok(stopped(&items));
             }
         }
         if let Some(root) = crate::editor_structure::root_map(&self.doc, DOC)?
             && let Some(ValueOrContainer::Container(Container::List(list))) = root.get("children")
         {
             if !items.add(u64::try_from(list.len()).unwrap_or(u64::MAX)) {
-                return Ok(None);
+                return Ok(stopped(&items));
             }
             let mut within = true;
             list.for_each(|element| {
@@ -1319,23 +1352,30 @@ impl LoroCollabEngine {
                 }
             });
             if !within {
-                return Ok(None);
+                return Ok(stopped(&items));
             }
         }
         // The projection reads a legacy node's text as a plain string, so its marks cost nothing.
         for tree_id in self.tree.nodes() {
             let meta = self.tree.get_meta(tree_id).map_err(|e| map_loro_error(&e, "<work>"))?;
             if !items.add(1) || !items.add_container(&Container::Map(meta), 0) {
-                return Ok(None);
+                return Ok(stopped(&items));
             }
         }
-        Ok(Some(items.total()))
+        let total = items.total();
+        Ok(ProjectionCount::Within {
+            items: total,
+            marks: items.into_marks(),
+        })
     }
 
     /// The mark items (see [`crate::work::block_mark_items`]) of every editor block that has any, by
     /// the block's key. Only the inline texts the block reader converts count: the projection reads
     /// no other text's marks (a legacy node's text is a plain string), so nothing else is converted
-    /// here, in setup or anywhere. Call it after `projection_items` accepted the page.
+    /// here, in setup or anywhere. The setup does not call it: the count of the page's items already
+    /// holds these figures (`ProjectionCount::Within`), and a second pass would convert every
+    /// marked text once more. It stays as the reference the tests compare that count with.
+    #[cfg(test)]
     pub(crate) fn unit_mark_items(&self) -> Option<HashMap<NodeId, u64>> {
         let mut found = HashMap::new();
         for id in self.root_block_ids().ok()?.unwrap_or_default() {
@@ -1371,8 +1411,12 @@ impl LoroCollabEngine {
             };
             let key = id.to_string();
             let before = facts.marks.get(key.as_str()).copied().unwrap_or(0);
-            // A text gains marks only from a mark op, so a block that the projection read with none
-            // before and none in the update has none now. A block the projection did not read (no
+            // A block that the projection read with no mark items and whose update carries no mark op
+            // has none now: with `before == 0` every text is one segment with at most two attributes
+            // the reader skips, an insert op adds at most two pieces (108 bytes, 1.7 items) and is
+            // charged two items at least (`work::op_work`), so its pieces cannot reach an item.
+            // The constants that this depends on are pinned by
+            // `work::tests::the_pieces_an_insert_can_add_to_an_unmarked_text_cost_less_than_the_insert_is_charged`. A block the projection did not read (no
             // unit) may have become readable through this update, and is counted.
             if before == 0 && !marked && facts.units.contains_key(key.as_str()) {
                 continue;
@@ -2088,6 +2132,8 @@ mod window_check_pins_tests;
 #[cfg(test)]
 mod window_class_fixtures;
 #[cfg(test)]
+mod window_decision_tests;
+#[cfg(test)]
 mod window_differential_tests;
 #[cfg(test)]
 mod window_fixtures;
@@ -2101,6 +2147,8 @@ mod window_round3_tests;
 mod window_round4_tests;
 #[cfg(test)]
 mod window_round6_tests;
+#[cfg(test)]
+mod window_setup_guard_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

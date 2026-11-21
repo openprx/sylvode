@@ -853,6 +853,7 @@ async fn plan_document(
     // (`write::replay_stable_update_id`).
     let update_id = write::replay_stable_update_id(document_id, &input.idempotency_key);
     let request = write::UpdateRequest {
+        rebase_policy: crate::flow::collab::write::RebasePolicy::None,
         document_id,
         update_id,
         bytes,

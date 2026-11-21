@@ -247,10 +247,20 @@ fn write_error_rejection(err: &ApiError) -> WriteErrorRejection {
         };
     }
     if err.kind() == ApiErrorKind::ServerRejected || err.is_deterministic_database_failure() {
+        // A typed `server_rejected` names its own reason (`window_divergence`,
+        // `isolated_apply_failed`, ...); a deterministic database failure is the database one.
+        let details = match err {
+            ApiError::Typed {
+                kind: ApiErrorKind::ServerRejected,
+                details: Some(details),
+                ..
+            } => details.clone(),
+            _ => serde_json::json!({"reason": SERVER_REJECTED_REASON_DATABASE}),
+        };
         return WriteErrorRejection {
             code: RejectedCode::ServerRejected,
             recoverable: ApiErrorKind::ServerRejected.recoverable(),
-            details: serde_json::json!({"reason": SERVER_REJECTED_REASON_DATABASE}),
+            details,
             action: ws_rejection_action(ApiErrorKind::ServerRejected),
         };
     }
@@ -1821,6 +1831,8 @@ async fn handle_client_frame(
                     crate::config::runtime().flow.dispatch_max_attempts,
                     Some(session_id),
                     UpdateRequest {
+                        // The client re-encodes its unsent edits on a `rebase` answer.
+                        rebase_policy: write::RebasePolicy::ClientRebases,
                         document_id,
                         update_id,
                         bytes: raw_bytes,
@@ -2374,7 +2386,9 @@ mod tests {
     /// real socket by `live_ws::a_deterministic_refusal_arrives_as_server_rejected_and_the_session_survives`.
     #[test]
     fn an_unclassified_write_failure_stays_contention_and_a_classified_one_does_not() {
-        let rejection = write_error_rejection(&ApiError::server_rejected("x"));
+        let rejection = write_error_rejection(&ApiError::server_rejected(
+            crate::flow::collab::frame::SERVER_REJECTED_REASON_DATABASE,
+        ));
         assert_eq!(rejection.code, RejectedCode::ServerRejected);
         assert!(
             !rejection.recoverable,
@@ -2382,6 +2396,16 @@ mod tests {
         );
         assert_eq!(rejection.details["reason"], "deterministic_database_refusal");
         assert_eq!(rejection.action, WsRejectionAction::RejectKeepOpen);
+
+        // A typed `server_rejected` names its own reason: the isolated-apply defects reach the
+        // client as themselves, not as the database refusal and not as contention.
+        for reason in ["window_divergence", "isolated_apply_failed", "isolated_setup_exhausted"] {
+            let rejection = write_error_rejection(&ApiError::server_rejected(reason));
+            assert_eq!(rejection.code, RejectedCode::ServerRejected, "{reason}");
+            assert!(!rejection.recoverable, "{reason}");
+            assert_eq!(rejection.details, serde_json::json!({ "reason": reason }));
+            assert_eq!(rejection.action, WsRejectionAction::RejectKeepOpen);
+        }
 
         for unclassified in [
             ApiError::Internal,
@@ -4283,6 +4307,7 @@ mod tests {
                     10,
                     None,
                     crate::flow::collab::write::UpdateRequest {
+                        rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                         origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                             crate::flow::event_origin::EventSurface::Rest,
                         ),
@@ -6067,6 +6092,254 @@ mod tests {
         }
 
         // -------------------------------------------------------------------------------------
+        // `apply_busy`: a load refusal of the isolated window, retryable, with its retry mode
+        // -------------------------------------------------------------------------------------
+
+        fn observed_worker(
+            cpu_us: Option<u64>,
+            decision: Option<collab_core::isolation::wire::WindowDecision>,
+        ) -> collab_core::isolation::WorkerObservation {
+            collab_core::isolation::WorkerObservation {
+                metered_wall_us: Some(100_000),
+                metered_cpu_us: cpu_us,
+                setup_cpu_us: None,
+                decision,
+            }
+        }
+
+        /// A CPU kill after the check decided the update was not sequential (answered `rebase`).
+        fn scripted_needs_sequential() -> crate::flow::collab::write::scripted_attempts::Scripted {
+            use collab_core::isolation::wire::WindowDecision;
+            use collab_core::window_check::FallbackReason;
+            crate::flow::collab::write::scripted_attempts::Scripted::Refuse(
+                collab_core::isolation::IsolatedApplyError::CpuCeiling,
+                observed_worker(
+                    Some(52_000),
+                    Some(WindowDecision::Fallback(FallbackReason::NotSequential)),
+                ),
+            )
+        }
+
+        /// A wall kill of a worker that had barely any CPU (answered `resend`).
+        fn scripted_starved() -> crate::flow::collab::write::scripted_attempts::Scripted {
+            crate::flow::collab::write::scripted_attempts::Scripted::Refuse(
+                collab_core::isolation::IsolatedApplyError::WallCeiling,
+                observed_worker(Some(3_000), None),
+            )
+        }
+
+        /// **Both retry modes reach a WebSocket client in the shape it was built against, and
+        /// neither ends the session.**
+        ///
+        /// `rejected{server_draining, recoverable, not_applied, update_id, details{reason:
+        /// "apply_busy", retry_after_ms, retry_mode, cause}}`: the frame is serialised and read back
+        /// as JSON, field by field. Four of them in a row (more than the `server_rejected` streak
+        /// that closes a connection) leave the socket open, and a real write on it is accepted
+        /// afterwards.
+        #[tokio::test]
+        async fn apply_busy_reaches_a_websocket_client_in_both_retry_modes_and_the_session_survives() {
+            use crate::flow::collab::write::scripted_attempts::{self, Scripted};
+
+            let scratch = scratch_or_skip!("apply-busy-modes");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let token = jwt_for(owner_id);
+            let addr = spawn_server(state.clone()).await;
+            let client_id = "apply-busy-modes-client";
+            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
+
+            scripted_attempts::enable(
+                document_id,
+                vec![
+                    scripted_needs_sequential(),
+                    scripted_starved(),
+                    scripted_needs_sequential(),
+                    scripted_starved(),
+                    Scripted::InProcess,
+                ],
+            );
+            let expected = [
+                ("rebase", 0, "needs_sequential"),
+                ("resend", 250, "cpu_starved"),
+                ("rebase", 0, "needs_sequential"),
+                ("resend", 250, "cpu_starved"),
+            ];
+            for (mode, after, cause) in expected {
+                let update = next_update_frame(&state, document_id).await;
+                let sent_update_id = update_id_of(&update);
+                send_frame(&mut ws, &update).await;
+                let Received::Frame(frame) = recv_frame_or_close(&mut ws).await else {
+                    panic!("a busy answer keeps the connection open ({cause})");
+                };
+                let wire = serde_json::to_value(&*frame).expect("the frame serialises");
+                assert_eq!(wire["type"], "rejected");
+                assert_eq!(wire["protocol_version"], 1);
+                assert_eq!(wire["document_id"], document_id.to_string());
+                assert_eq!(wire["update_id"], sent_update_id.to_string());
+                assert_eq!(wire["code"], "server_draining");
+                assert_eq!(wire["recoverable"], true);
+                assert_eq!(wire["write_state"], "not_applied");
+                assert_eq!(
+                    wire["details"],
+                    serde_json::json!({
+                        "reason": "apply_busy",
+                        "retry_after_ms": after,
+                        "retry_mode": mode,
+                        "cause": cause,
+                    })
+                );
+            }
+            assert_eq!(read_head_seq(&state, document_id).await, head_seq_before);
+
+            let update = next_update_frame(&state, document_id).await;
+            send_frame(&mut ws, &update).await;
+            let Received::Frame(frame) = recv_frame_or_close(&mut ws).await else {
+                panic!("the session survives four busy answers");
+            };
+            let Frame::Accepted { head_seq, .. } = *frame else {
+                panic!("a write after the busy answers is accepted, got {frame:?}");
+            };
+            assert_eq!(head_seq, head_seq_before + 1);
+            scratch.drop_self().await;
+        }
+
+        /// A busy update sent again under the same `update_id` is committed once; sent yet again it
+        /// answers the original receipt.
+        #[tokio::test]
+        async fn a_busy_update_resent_under_the_same_update_id_commits_once_over_the_socket() {
+            use crate::flow::collab::write::scripted_attempts;
+
+            let scratch = scratch_or_skip!("apply-busy-resend");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let token = jwt_for(owner_id);
+            let addr = spawn_server(state.clone()).await;
+            let client_id = "apply-busy-resend-client";
+            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
+
+            scripted_attempts::enable(document_id, vec![scripted_starved()]);
+            let update = next_update_frame(&state, document_id).await;
+            let sent_update_id = update_id_of(&update);
+            send_frame(&mut ws, &update).await;
+            let busy = expect_rejection(recv_frame_or_close(&mut ws).await);
+            assert_eq!(busy.update_id, Some(sent_update_id));
+            assert_eq!(busy.details.expect("details")["retry_mode"], "resend");
+
+            for resend in 1..=2 {
+                send_frame(&mut ws, &update).await;
+                let Received::Frame(frame) = recv_frame_or_close(&mut ws).await else {
+                    panic!("the resend {resend} is answered");
+                };
+                let Frame::Accepted {
+                    head_seq, update_id, ..
+                } = *frame
+                else {
+                    panic!("the resend {resend} is accepted, got {frame:?}");
+                };
+                assert_eq!(update_id, sent_update_id);
+                assert_eq!(head_seq, head_seq_before + 1, "resend {resend}");
+            }
+            assert_eq!(read_head_seq(&state, document_id).await, head_seq_before + 1);
+            scratch.drop_self().await;
+        }
+
+        /// The content limit and the defects keep their permanent answers on the socket, and a
+        /// divergence is `server_rejected{window_divergence}` (it used to reach the client as the
+        /// retryable `contention`).
+        #[tokio::test]
+        async fn content_limits_and_defects_stay_permanent_on_the_socket() {
+            use crate::flow::collab::write::scripted_attempts::{self, Scripted};
+            use collab_core::isolation::wire::WindowDecision;
+            use collab_core::isolation::{HostFailure, HostFailureKind, IsolatedApplyError};
+            use collab_core::window_check::{FallbackReason, WindowReport};
+
+            let scratch = scratch_or_skip!("apply-busy-permanent");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let token = jwt_for(owner_id);
+            let addr = spawn_server(state.clone()).await;
+            let client_id = "apply-busy-permanent-client";
+            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
+
+            let bad_report = || WindowReport {
+                blocks: 9_999,
+                navigators: 0,
+                chars: 0,
+                depth_bound: 1,
+                longest_bound: 0,
+            };
+            let cases = [
+                (
+                    vec![Scripted::Refuse(
+                        IsolatedApplyError::CpuCeiling,
+                        observed_worker(
+                            Some(52_000),
+                            Some(WindowDecision::Fallback(FallbackReason::FactsAbsent)),
+                        ),
+                    )],
+                    RejectedCode::LimitExceeded,
+                    "limit_kind",
+                    "decode_apply_cpu_ms",
+                ),
+                (
+                    vec![Scripted::Refuse(
+                        IsolatedApplyError::WallCeiling,
+                        observed_worker(Some(60_000), None),
+                    )],
+                    RejectedCode::LimitExceeded,
+                    "limit_kind",
+                    "decode_apply_wall_ms",
+                ),
+                (
+                    vec![Scripted::Refuse(
+                        IsolatedApplyError::HostFailure(HostFailure::new(HostFailureKind::Crash, "scripted")),
+                        collab_core::isolation::WorkerObservation::default(),
+                    )],
+                    RejectedCode::ServerRejected,
+                    "reason",
+                    "isolated_apply_failed",
+                ),
+                (
+                    vec![
+                        Scripted::InProcessReporting(bad_report()),
+                        Scripted::InProcessReporting(bad_report()),
+                    ],
+                    RejectedCode::ServerRejected,
+                    "reason",
+                    "window_divergence",
+                ),
+            ];
+            // Fewer than the streak of `server_rejected` answers that closes the connection: the
+            // permanent ones are separated by the limit answers, and the streak is checked below.
+            for (script, expected_code, key, expected) in cases {
+                scripted_attempts::enable(document_id, script);
+                let update = next_update_frame(&state, document_id).await;
+                let sent_update_id = update_id_of(&update);
+                send_frame(&mut ws, &update).await;
+                let Rejection {
+                    update_id,
+                    code,
+                    recoverable,
+                    write_state,
+                    details,
+                } = expect_rejection(recv_frame_or_close(&mut ws).await);
+                assert_eq!(code, expected_code, "{expected}");
+                assert_eq!(update_id, Some(sent_update_id), "{expected}");
+                assert!(!recoverable, "{expected} is not retryable");
+                assert_eq!(write_state, crate::flow::collab::frame::WriteState::NotApplied);
+                assert_eq!(details.expect("details")[key], expected);
+            }
+            assert_eq!(read_head_seq(&state, document_id).await, head_seq_before);
+            scratch.drop_self().await;
+        }
+
+        // -------------------------------------------------------------------------------------
         // Epoch re-sourcing, replay answers, update_id on refusals, causal completeness
         // -------------------------------------------------------------------------------------
 
@@ -6921,6 +7194,7 @@ mod database_tests {
                 10,
                 None,
                 UpdateRequest {
+                    rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                     origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                         crate::flow::event_origin::EventSurface::Rest,
                     ),

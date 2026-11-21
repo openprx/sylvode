@@ -315,7 +315,7 @@ fn r3_4_an_incremental_window_does_not_read_the_unnamed_nodes_of_the_page() {
         let facts = BaseFacts::compute(&engine);
         assert!(facts.is_some());
         crate::walk_counter::reset();
-        let accepted = crate::window_check::run_window(&mut engine, facts.as_ref(), &update).unwrap();
+        let accepted = crate::window_check::run_window(&mut engine, facts.as_ref(), &update, &mut |_| {}).unwrap();
         assert!(accepted.report.is_some(), "{accepted:?}");
         reads.push(crate::walk_counter::id_reads());
         judge(&base, &update).assert_sound("one create on a page of unnamed nodes");
@@ -366,7 +366,7 @@ fn r3_3_an_existing_nodes_logical_id_is_never_rewritten_inside_the_window() {
         // With the switch off (no facts) the window is `next`'s: it accepts.
         let mut plain = LoroCollabEngine::load(&base).unwrap();
         plain.prewarm_for_writes();
-        let next = crate::window_check::run_window(&mut plain, None, &update);
+        let next = crate::window_check::run_window(&mut plain, None, &update, &mut |_| {});
         assert!(next.is_ok(), "a{target}: {next:?}");
         over_the_limit_for_a_fresh_load += usize::from(plain.fresh_load_decision().is_err());
         // With facts the write is refused, as a plain refusal and before the host.
@@ -374,7 +374,7 @@ fn r3_3_an_existing_nodes_logical_id_is_never_rewritten_inside_the_window() {
         engine.prewarm_for_writes();
         let facts = BaseFacts::compute(&engine);
         assert!(facts.is_some());
-        let refused = crate::window_check::run_window(&mut engine, facts.as_ref(), &update);
+        let refused = crate::window_check::run_window(&mut engine, facts.as_ref(), &update, &mut |_| {});
         assert_eq!(
             refused.as_ref().err(),
             Some(&crate::error::CollabError::OperationFailed {
@@ -975,7 +975,7 @@ fn r3_8_the_tree_check_does_not_read_the_document() {
         engine.prewarm_for_writes();
         let facts = BaseFacts::compute(&engine);
         crate::walk_counter::reset();
-        crate::window_check::run_window(&mut engine, facts.as_ref(), &update).unwrap();
+        crate::window_check::run_window(&mut engine, facts.as_ref(), &update, &mut |_| {}).unwrap();
         crate::walk_counter::tree_ref_counts()
     };
     let small = measure(20);

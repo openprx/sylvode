@@ -752,15 +752,16 @@ pub async fn get_object_diff(
         package_updates_base64: None,
     };
     let base_snapshot = rows.snapshot;
-    let isolated = tokio::task::spawn_blocking(move || collab_core::isolation::isolated_diff(&base_snapshot, &request))
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "diff replay isolation task failed");
-            ApiError::internal()
-        })?;
+    let (isolated, observation) =
+        tokio::task::spawn_blocking(move || collab_core::isolation::isolated_diff_observed(&base_snapshot, &request))
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "diff replay isolation task failed");
+                ApiError::internal()
+            })?;
     let result = match isolated {
         Ok(result) => result,
-        Err(error) => return Err(isolated_diff_error(error, object_id, history_invalid)),
+        Err(error) => return Err(isolated_diff_error(error, &observation, object_id, history_invalid)),
     };
     let from_title = result.from_title;
     let to_title = result.to_title;
@@ -799,49 +800,69 @@ pub async fn get_object_diff(
 }
 
 /// Maps an [`isolated_diff`](collab_core::isolation::isolated_diff) refusal to the REST error the
-/// object diff endpoint returns. The three resource ceilings are `limit_exceeded` with their frozen
-/// `limit_kind`; a corrupt retained history is `resync_required` (via `history_invalid`); a broken
-/// isolation host is `Internal`. `UnsupportedPlatform` (a non-Linux build, `ADR-0014`'s platform
-/// matrix) is `server_rejected` carrying only the safe classification
+/// object diff endpoint returns, classified like a write's refusal
+/// (`flow::collab::write::refusal`, a full-window attempt that cannot rebase). The three resource
+/// ceilings are `limit_exceeded` with their frozen `limit_kind`, except a wall kill of a worker that
+/// the host did not give the CPU, which is `server_draining{apply_busy}` with `retry_mode = resend`;
+/// a corrupt retained history is `resync_required` (via `history_invalid`); a host short of
+/// resources is `apply_busy` too, and a broken isolation host is `server_rejected` with a named
+/// reason. `UnsupportedPlatform` (a non-Linux build, `ADR-0014`'s platform matrix) is
+/// `server_rejected` carrying only the safe classification
 /// [`SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM`]: it is deterministic and permanent for this
 /// process, so it must not read as retryable.
 pub(crate) fn isolated_diff_error(
     error: IsolatedApplyError,
+    observation: &collab_core::isolation::WorkerObservation,
     object_id: Uuid,
     history_invalid: impl FnOnce() -> ApiError,
 ) -> ApiError {
-    match error {
-        IsolatedApplyError::CpuCeiling => ApiError::limit_exceeded(
-            "diff replay exceeded the isolated CPU budget",
-            "decode_apply_cpu_ms",
-            Some(json!(collab_core::isolation::DECODE_APPLY_CPU_MS_MAX)),
-            Some(json!(collab_core::isolation::DECODE_APPLY_CPU_MS_MAX.saturating_add(1))),
-            None,
-        ),
-        IsolatedApplyError::WallCeiling => ApiError::limit_exceeded(
-            "diff replay exceeded the isolated wall-clock budget",
-            "decode_apply_wall_ms",
-            Some(json!(collab_core::isolation::DECODE_APPLY_WALL_MS_MAX)),
-            Some(json!(
-                collab_core::isolation::DECODE_APPLY_WALL_MS_MAX.saturating_add(1)
-            )),
-            None,
-        ),
-        IsolatedApplyError::MemoryCeiling => ApiError::limit_exceeded(
-            "diff replay exceeded the isolated memory budget",
-            "isolated_apply_memory_bytes",
-            Some(json!(collab_core::isolation::ISOLATED_APPLY_MEMORY_BYTES_MAX)),
-            Some(json!(
-                collab_core::isolation::ISOLATED_APPLY_MEMORY_BYTES_MAX.saturating_add(1)
-            )),
-            None,
-        ),
-        IsolatedApplyError::Collab(_) => history_invalid(),
-        IsolatedApplyError::HostFailure(error) => {
-            tracing::error!(%error, %object_id, "diff replay isolation host failed");
-            ApiError::internal()
+    use super::collab::write::refusal::{AttemptLog, RebasePolicy, Refusal, Stopped, classify, record};
+
+    let stopped = Stopped::of(&error);
+    if let IsolatedApplyError::HostFailure(failure) = &error {
+        tracing::warn!(detail = failure.detail.as_str(), %object_id, "diff replay isolation host failed");
+    }
+    let refusal = classify(
+        error,
+        observation,
+        collab_core::isolation::WindowMode::Full,
+        RebasePolicy::None,
+    );
+    record(
+        &AttemptLog {
+            document_id: object_id,
+            update_id: None,
+            base_head_seq: None,
+            requested: collab_core::isolation::WindowMode::Full,
+            cooling: false,
+            observation,
+        },
+        stopped,
+        &refusal,
+    );
+    match refusal {
+        Refusal::Content { limit_kind, limit } => {
+            let message = match limit_kind {
+                "decode_apply_cpu_ms" => "diff replay exceeded the isolated CPU budget",
+                "decode_apply_wall_ms" => "diff replay exceeded the isolated wall-clock budget",
+                _ => "diff replay exceeded the isolated memory budget",
+            };
+            ApiError::limit_exceeded(
+                message,
+                limit_kind,
+                Some(json!(limit)),
+                Some(json!(limit.saturating_add(1))),
+                None,
+            )
         }
-        IsolatedApplyError::UnsupportedPlatform { os } => {
+        Refusal::Busy {
+            cause,
+            mode,
+            retry_after_ms,
+        } => ApiError::server_busy(cause.wire_value(), mode.wire_value(), retry_after_ms),
+        Refusal::Defect { reason } => ApiError::server_rejected(reason),
+        Refusal::Collab(_) => history_invalid(),
+        Refusal::Unsupported { os } => {
             tracing::error!(
                 os,
                 %object_id,
@@ -1002,6 +1023,7 @@ mod tests {
     fn isolated_diff_unsupported_platform_maps_to_server_rejected_with_its_reason() {
         let mapped = isolated_diff_error(
             IsolatedApplyError::UnsupportedPlatform { os: "macos" },
+            &collab_core::isolation::WorkerObservation::default(),
             Uuid::new_v4(),
             || ApiError::resync_required("requested history cannot be reconstructed", None),
         );
@@ -1013,6 +1035,109 @@ mod tests {
         let object = details.as_object().expect("details is an object");
         assert_eq!(object.keys().collect::<Vec<_>>(), vec!["reason"]);
         assert_eq!(object["reason"], "isolated_apply_unsupported_platform");
+    }
+
+    fn diff_error(error: IsolatedApplyError, observation: collab_core::isolation::WorkerObservation) -> ApiError {
+        isolated_diff_error(error, &observation, Uuid::new_v4(), || {
+            ApiError::resync_required("requested history cannot be reconstructed", None)
+        })
+    }
+
+    fn typed_details(error: &ApiError) -> serde_json::Value {
+        let ApiError::Typed { details, .. } = error else {
+            panic!("a typed error, got {error:?}");
+        };
+        details.clone().expect("the error carries details")
+    }
+
+    /// A wall kill of a diff replay whose worker had barely any CPU is the starvation answer:
+    /// `apply_busy` with `resend`, HTTP envelope 409.
+    #[tokio::test]
+    async fn a_starved_diff_replay_is_apply_busy_with_resend() {
+        use axum::response::IntoResponse;
+        let error = diff_error(
+            IsolatedApplyError::WallCeiling,
+            collab_core::isolation::WorkerObservation {
+                metered_cpu_us: Some(3_000),
+                ..collab_core::isolation::WorkerObservation::default()
+            },
+        );
+        assert_eq!(
+            error.kind(),
+            ApiErrorKind::ServerDraining(crate::error::ServerDrainingReason::ApplyBusy)
+        );
+        assert_eq!(
+            typed_details(&error),
+            serde_json::json!({"retry_after_ms": 250, "retry_mode": "resend", "cause": "cpu_starved"})
+        );
+        let response = error.into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], 409);
+        assert_eq!(body["error_code"], "server_draining");
+        assert_eq!(body["details"]["reason"], "apply_busy");
+        assert_eq!(body["details"]["retry_mode"], "resend");
+    }
+
+    /// The diff replay is never asked to rebase, and the content limits are unchanged.
+    #[test]
+    fn a_diff_replay_keeps_its_content_limits_and_never_rebases() {
+        use collab_core::isolation::wire::WindowDecision;
+        use collab_core::window_check::FallbackReason;
+        let heavy = collab_core::isolation::WorkerObservation {
+            metered_cpu_us: Some(60_000),
+            decision: Some(WindowDecision::Fallback(FallbackReason::NotSequential)),
+            ..collab_core::isolation::WorkerObservation::default()
+        };
+        for (error, kind) in [
+            (IsolatedApplyError::CpuCeiling, "decode_apply_cpu_ms"),
+            (IsolatedApplyError::WallCeiling, "decode_apply_wall_ms"),
+            (IsolatedApplyError::MemoryCeiling, "isolated_apply_memory_bytes"),
+        ] {
+            let mapped = diff_error(error, heavy);
+            assert_eq!(mapped.kind(), ApiErrorKind::LimitExceeded, "{kind}");
+            assert_eq!(typed_details(&mapped)["limit_kind"], kind);
+        }
+    }
+
+    /// Host failures follow rows 6-10 of the classification.
+    #[test]
+    fn a_diff_replay_host_failure_is_busy_or_a_named_defect() {
+        use collab_core::isolation::{HostFailure, HostFailureKind, WorkerObservation};
+        let failure = |kind| IsolatedApplyError::HostFailure(HostFailure::new(kind, "test"));
+        let busy = diff_error(failure(HostFailureKind::SpawnResources), WorkerObservation::default());
+        assert_eq!(
+            typed_details(&busy),
+            serde_json::json!({"retry_after_ms": 500, "retry_mode": "resend", "cause": "worker_resources"})
+        );
+        let busy = diff_error(failure(HostFailureKind::ForeignKill), WorkerObservation::default());
+        assert_eq!(typed_details(&busy)["retry_after_ms"], 1_000);
+        let starved_setup = diff_error(
+            failure(HostFailureKind::SetupTimeout),
+            WorkerObservation {
+                setup_cpu_us: Some(100_000),
+                ..WorkerObservation::default()
+            },
+        );
+        assert_eq!(typed_details(&starved_setup)["cause"], "setup_starved");
+        let exhausted = diff_error(failure(HostFailureKind::SetupTimeout), WorkerObservation::default());
+        assert_eq!(exhausted.kind(), ApiErrorKind::ServerRejected);
+        assert_eq!(
+            typed_details(&exhausted),
+            serde_json::json!({"reason": "isolated_setup_exhausted"})
+        );
+        for kind in [
+            HostFailureKind::Crash,
+            HostFailureKind::Protocol,
+            HostFailureKind::Spawn,
+        ] {
+            let defect = diff_error(failure(kind), WorkerObservation::default());
+            assert_eq!(defect.kind(), ApiErrorKind::ServerRejected);
+            assert_eq!(
+                typed_details(&defect),
+                serde_json::json!({"reason": "isolated_apply_failed"})
+            );
+        }
     }
 
     /// `limits-v1.md`'s `authorized_scan_rows_max` (1,000) exact boundary: a scan that examines
