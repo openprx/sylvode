@@ -512,12 +512,49 @@ async fn working_directories_are_checked_against_the_roots() {
 #[tokio::test]
 async fn channel_and_cli_prerequisites() {
     let fx = Fixture::new();
-    // The tmux channel answers the interim refusal.
+    // The tmux channel needs tmux (at the minimum version) and the MCP server on this runner.
     let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
     let (addr, _server) = serve(m.clone()).await;
-    let (code, reason) = refused(&fx.run(&fx.config(addr), m, addr, &delivery()).await);
-    assert_eq!(code, "tmux_unavailable");
-    assert_eq!(reason, "the tmux channel arrives with the session manager");
+    let fake = |name: &str, body: &str| {
+        let path = fx.base.path().join(name);
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("script");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
+        path
+    };
+    let mut config = fx.config(addr);
+    config.runner.tmux.binary = fx.base.path().join("no-such-tmux").to_string_lossy().into_owned();
+    assert_eq!(
+        refused(&fx.run(&config, m.clone(), addr, &delivery()).await).0,
+        "tmux_unavailable"
+    );
+    config.runner.tmux.binary = fake("old-tmux", "echo 'tmux 3.1'").to_string_lossy().into_owned();
+    let (code, reason) = refused(&fx.run(&config, m.clone(), addr, &delivery()).await);
+    assert_eq!(
+        (code, reason.as_str()),
+        ("tmux_unavailable", "tmux 3.1 is older than 3.2")
+    );
+    config.runner.tmux.binary = fake("junk-tmux", "echo 'not tmux'").to_string_lossy().into_owned();
+    assert_eq!(
+        refused(&fx.run(&config, m.clone(), addr, &delivery()).await).0,
+        "tmux_unavailable"
+    );
+    config.runner.tmux.binary = fake("tmux", "echo 'tmux 3.7b'").to_string_lossy().into_owned();
+    config.runner.mcp.server_binary = fx.base.path().join("no-such-mcp").to_string_lossy().into_owned();
+    let (code, reason) = refused(&fx.run(&config, m.clone(), addr, &delivery()).await);
+    assert_eq!(code, "cli_unavailable");
+    assert!(reason.contains("MCP server"), "{reason}");
+    config.runner.mcp.server_binary = fake("mcp-server", "exit 0").to_string_lossy().into_owned();
+    let verdict = fx.run(&config, m.clone(), addr, &delivery()).await;
+    let Verdict::Run(accepted) = verdict else {
+        panic!("{verdict:?}")
+    };
+    assert_eq!(accepted.channel, Channel::Tmux);
+    assert!(
+        accepted.message.starts_with("[Sylvode task] id="),
+        "{}",
+        accepted.message
+    );
+    assert_eq!(accepted.project_id, PROJECT);
     // codex and opencode are off by default.
     for cli in ["codex", "opencode"] {
         let m = ok_mock(task_view(&fx.project_dir, "headless", cli));

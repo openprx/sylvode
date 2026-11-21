@@ -49,9 +49,11 @@ pub struct Accepted {
     pub attempt: i64,
     pub max_attempts: i64,
     pub project_key: String,
+    pub project_id: String,
+    /// The task message of design section 4.9, built from the task view.
+    pub message: String,
     /// The canonical working directory; the only form of the path used from here on.
     pub dir: PathBuf,
-    #[allow(dead_code, reason = "the session manager reads it")]
     pub channel: Channel,
     /// `claude`, `codex` or `opencode`.
     pub cli: String,
@@ -276,9 +278,10 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         }
     };
     let cli = str_at(execution, &["cli"]).unwrap_or_default().to_string();
-    if channel == Channel::Tmux {
-        // The only interim branch: the session manager replaces it.
-        return refuse("tmux_unavailable", "the tmux channel arrives with the session manager");
+    if channel == Channel::Tmux
+        && let Some(refusal) = tmux_prerequisites(runner).await
+    {
+        return Verdict::Refused(refusal);
     }
     let (enabled, binary) = match cli.as_str() {
         "claude" => (true, &runner.cli.claude.binary),
@@ -289,8 +292,21 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     if !enabled {
         return refuse("cli_disabled", format!("the {cli} CLI is not enabled on this runner"));
     }
-    let Some(program) = Checker::new(InstallKind::RunnerHeadless).locate(binary) else {
+    let finder = Checker::new(InstallKind::RunnerHeadless);
+    let Some(program) = finder.locate(binary) else {
         return refuse("cli_unavailable", format!("the {cli} CLI was not found on this runner"));
+    };
+    if channel == Channel::Tmux && finder.locate(&runner.mcp.server_binary).is_none() {
+        return refuse(
+            "cli_unavailable",
+            "the MCP server (mcp-server) was not found on this runner",
+        );
+    }
+    let Some(message) = task_message(&view, task_id, attempt, max_attempts) else {
+        return refuse(
+            "delivery_mismatch",
+            "the task view cannot be turned into a task message",
+        );
     };
     Verdict::Run(Box::new(Accepted {
         client: ctx.client,
@@ -298,6 +314,8 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         attempt,
         max_attempts,
         project_key: project_key.to_string(),
+        project_id: project_id.to_string(),
+        message,
         dir,
         channel,
         cli,
@@ -308,4 +326,66 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
 
 fn refuse(code: &'static str, reason: impl Into<String>) -> Verdict {
     Verdict::Refused(Refusal::new(code, reason))
+}
+
+/// tmux must be on this runner and at least the configured minimum (never below 3.2).
+async fn tmux_prerequisites(runner: &super::config::RunnerConfig) -> Option<Refusal> {
+    use sylvode_prereq::probe::parse_tmux_version;
+    let Some(program) = Checker::new(InstallKind::RunnerTmux).locate(&runner.tmux.binary) else {
+        return Some(Refusal::new("tmux_unavailable", "tmux was not found on this runner"));
+    };
+    let socket = super::tmux::SocketName::new(&runner.tmux.socket_name).ok()?;
+    let tmux = super::tmux::Tmux::new(socket).with_program(program);
+    let version = tokio::task::spawn_blocking(move || tmux.version()).await.ok()?.ok();
+    let Some(parsed) = version.as_deref().and_then(parse_tmux_version) else {
+        return Some(Refusal::new("tmux_unavailable", "the tmux version could not be read"));
+    };
+    let min = {
+        let (major, minor) = runner.tmux.min_version.split_once('.')?;
+        (major.parse().ok()?, minor.parse().ok()?)
+    };
+    if !parsed.meets(min) {
+        return Some(Refusal::new(
+            "tmux_unavailable",
+            format!("tmux {} is older than {}", parsed.display, runner.tmux.min_version),
+        ));
+    }
+    None
+}
+
+/// The task message of design section 4.9 for the view of a task: the issue or proposal it is
+/// about, the title (sanitised by the builder), the attempt. `None` when the view holds a value the
+/// builder refuses.
+pub fn task_message(view: &Value, task_id: &str, attempt: i64, max_attempts: i64) -> Option<String> {
+    use super::message::{Identifier, Source, TaskMessage};
+    let issue_identifier = || str_at(view, &["source", "issue", "identifier"]).map(Identifier::parse);
+    let title = str_at(view, &["source", "issue", "title"])
+        .or_else(|| str_at(view, &["source", "proposal", "title"]))
+        .unwrap_or_default();
+    let source = match str_at(view, &["source", "kind"]) {
+        Some("proposal_vote") => Source::ProposalVote {
+            proposal_id: str_at(view, &["source", "proposal", "id"])
+                .unwrap_or_default()
+                .to_string(),
+        },
+        kind => {
+            let identifier = issue_identifier().transpose().ok()?;
+            match (kind, identifier) {
+                (Some("comment_mention"), Some(id)) => Source::CommentMention(id),
+                (Some("review_request"), Some(id)) => Source::ReviewRequest(id),
+                (Some("issue_assignment"), Some(id)) => Source::Assignment(id),
+                (_, identifier) => Source::Manual(identifier),
+            }
+        }
+    };
+    TaskMessage {
+        id: uuid::Uuid::parse_str(task_id).ok()?,
+        attempt: u32::try_from(attempt).ok()?,
+        max_attempts: u32::try_from(max_attempts).ok()?,
+        source,
+        title,
+        earlier_attempt: None,
+    }
+    .render()
+    .ok()
 }

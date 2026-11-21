@@ -10,7 +10,7 @@ use std::time::Duration;
 use super::checks::Accepted;
 use super::config::RunnerConfig;
 use crate::config::{CliAgentConfig, Config};
-use crate::dispatcher::{DEFAULT_MCP_INSTRUCTIONS, render_template, run_cli_executor};
+use crate::dispatcher::run_cli_executor;
 
 /// How long one headless run may take.
 pub const RUN_TIMEOUT_SECS: u64 = 3600;
@@ -59,16 +59,9 @@ pub fn settings_for(runner: &RunnerConfig, cli: &str, dir: &str) -> CliAgentConf
     cfg
 }
 
-/// The prompt: the first line of the D4.9 task message, then the procedure text.
+/// The prompt: the task message of design section 4.9, as the tmux channel types it.
 pub fn prompt(accepted: &Accepted) -> String {
-    let instructions = render_template(
-        DEFAULT_MCP_INSTRUCTIONS,
-        &[("issue_id", accepted.issue_id.as_deref().unwrap_or("unknown"))],
-    );
-    format!(
-        "[Sylvode task] id={} attempt={}/{}\n\n{instructions}",
-        accepted.task_id, accepted.attempt, accepted.max_attempts
-    )
+    accepted.message.clone()
 }
 
 /// Starts the run in the background: a slot of `cli_max_concurrency`, a progress report, the CLI,

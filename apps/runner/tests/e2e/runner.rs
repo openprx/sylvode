@@ -127,10 +127,6 @@ async fn a_headless_task_runs_in_the_canonical_directory_and_is_failed_when_left
         "{lines:?}"
     );
     assert!(lines.iter().any(|l| l.contains("sylvode_task_complete")), "{lines:?}");
-    assert!(
-        lines.iter().any(|l| l.contains("33333333-3333-4333-8333-333333333333")),
-        "{lines:?}"
-    );
 
     // The runner told Sylvode it started, then failed the task the agent left open.
     let progress = fx.api.wait_for("POST", "/progress", 1, Duration::from_secs(10)).await;

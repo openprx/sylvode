@@ -17,12 +17,20 @@ use crate::config::{AgentConfig, AiTaskCallback, Config};
 
 pub mod checks;
 pub mod config;
+#[allow(dead_code, reason = "used by the session worker")]
+pub mod detect;
 #[allow(dead_code, reason = "used by the session manager, which is the next package")]
 pub mod files;
 pub mod headless;
+#[allow(dead_code, reason = "used by the session worker")]
+pub mod hooks;
 #[allow(dead_code, reason = "used by the session manager, which is the next package")]
 pub mod launch;
+#[allow(dead_code, reason = "used by the session worker")]
+pub mod machine;
 pub mod paths;
+#[allow(dead_code, reason = "used by the session worker")]
+pub mod queue;
 pub mod sv_client;
 
 #[allow(dead_code, reason = "used by the session manager, which is a later package")]
@@ -42,6 +50,8 @@ mod files_tests;
 mod guide_tests;
 #[cfg(test)]
 mod launch_tests;
+#[cfg(test)]
+mod machine_tests;
 #[cfg(test)]
 mod message_tests;
 #[cfg(test)]
