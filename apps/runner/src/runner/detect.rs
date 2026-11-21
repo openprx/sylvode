@@ -108,17 +108,65 @@ pub fn input_text(cli: &str, screen: &str) -> Option<String> {
         })
 }
 
-/// Whether the screen shows the CLI at work: claude and codex both print "esc to interrupt" while
-/// a turn runs. An input line that looks empty says nothing about this (it is empty while the CLI
-/// works), so a push needs this independent signal as well.
-pub fn looks_busy(_cli: &str, screen: &str) -> bool {
-    screen.to_lowercase().contains("esc to interrupt")
+/// The last `n` lines that are not blank: the part of the screen the CLI itself draws at the bottom.
+/// Text that the task or the agent put on the screen sits above it, in the transcript.
+fn bottom_lines(screen: &str, n: usize) -> Vec<&str> {
+    let lines: Vec<&str> = screen.lines().filter(|l| !l.trim().is_empty()).collect();
+    lines[lines.len().saturating_sub(n)..].to_vec()
+}
+
+/// The bottom of the screen as text, for the classifications that must not be fooled by text higher
+/// up (a task title, the agent's reply).
+pub fn bottom(screen: &str, n: usize) -> String {
+    bottom_lines(screen, n).join("\n")
+}
+
+/// [`classify_dialog`] on the CLI's own chrome at the bottom only: a dialog is drawn there, and a
+/// phrase in the transcript does not count.
+pub fn classify_bottom(cli: &str, screen: &str) -> Option<Dialog> {
+    let lines = bottom_lines(screen, usize::MAX);
+    classify_dialog(cli, &chrome(cli, &lines).join("\n"))
+}
+
+/// The CLI's own chrome: the lines from three above the last prompt line (where the spinner is
+/// drawn) down to the bottom; without a prompt line, the last twelve lines.
+fn chrome<'a>(cli: &str, lines: &'a [&'a str]) -> &'a [&'a str] {
+    let last_prompt = lines.iter().rposition(|line| prompt_rest(cli, line).is_some());
+    let from = last_prompt.map_or(lines.len().saturating_sub(12), |at| at.saturating_sub(3));
+    &lines[from..]
+}
+
+/// Whether a line is the spinner of a working CLI: a glyph, some text, then a parenthesised part
+/// that holds "esc to interrupt" and ends the line.
+fn is_spinner_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    let Some(first) = trimmed.chars().next() else {
+        return false;
+    };
+    if first.is_ascii_alphanumeric() || matches!(first, '>' | '(' | '|' | '-' | '"' | '\'' | '[') {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    lower.ends_with(')')
+        && lower
+            .rfind('(')
+            .is_some_and(|open| lower[open..].contains("esc to interrupt") && open > first.len_utf8())
+}
+
+/// Whether the screen shows the CLI at work: its spinner line, in the CLI's own chrome at the
+/// bottom. An empty input line says nothing (it is empty while the CLI works), so a push needs this
+/// as well; text elsewhere on the screen never counts.
+pub fn looks_busy(cli: &str, screen: &str) -> bool {
+    let lines = bottom_lines(screen, usize::MAX);
+    chrome(cli, &lines).iter().any(|line| is_spinner_line(line))
 }
 
 /// Whether the screen shows a choice the CLI waits for (a permission or elicitation dialog): a
-/// numbered option with the selection marker, or the usual footer. Nothing is typed into it.
-pub fn awaits_choice(_cli: &str, screen: &str) -> bool {
-    let selected_option = screen.lines().any(|line| {
+/// numbered option with the selection marker in the chrome, or the usual footer in the last lines.
+/// Nothing is typed into it.
+pub fn awaits_choice(cli: &str, screen: &str) -> bool {
+    let lines = bottom_lines(screen, usize::MAX);
+    let selected_option = chrome(cli, &lines).iter().any(|line| {
         let rest = line
             .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '\u{2502}' | '\u{2503}' | '|'))
             .trim_start_matches(['\u{276f}', '>', '\u{203a}'])
@@ -126,8 +174,8 @@ pub fn awaits_choice(_cli: &str, screen: &str) -> bool {
         let digits = rest.chars().take_while(char::is_ascii_digit).count();
         digits > 0 && rest[digits..].starts_with(". ") && line.contains(['\u{276f}', '\u{203a}'])
     });
-    let lower = screen.to_lowercase();
-    selected_option || lower.contains("enter to select") || lower.contains("esc to cancel")
+    let footer = lines[lines.len().saturating_sub(3)..].join("\n").to_lowercase();
+    selected_option || footer.contains("enter to select") || footer.contains("esc to cancel")
 }
 
 /// Whether two captures show the same screen (trailing blanks ignored): the stability signal of

@@ -33,6 +33,7 @@ fn timers() -> Timers {
         poll: Duration::from_secs(10),
         liveness: Duration::from_secs(10),
         push_retry: Duration::from_secs(1),
+        screen_hold: Duration::from_mins(10),
     }
 }
 
@@ -841,4 +842,62 @@ fn a_turn_without_a_stop_is_closed_by_calm_samples_only() {
     // An event starts over.
     watch.event(at(100));
     assert!(!watch.sample(at(105), false, true));
+}
+
+/// A screen that says busy while the hooks say idle holds the queue back only for a bounded time:
+/// then the waiting tasks fail as retryable with the reason, and the session is not stalled for good.
+#[test]
+fn a_screen_hold_is_bounded_and_then_fails_the_waiting_tasks_retryably() {
+    let mut h = H::idle();
+    h.enqueue(T("a", 1));
+    h.enqueue(T("b", 1));
+    // Held for a while: nothing fails, the push is tried again each second.
+    for _ in 0..9 {
+        h.advance(60);
+        assert!(fails(&h.push(PushOutcome::Held)).is_empty());
+    }
+    assert_eq!(h.m.queue.len(), 2);
+    h.advance(121);
+    let failed = fails(&h.push(PushOutcome::Held));
+    assert_eq!(failed.len(), 2, "{failed:?}");
+    assert!(
+        failed
+            .iter()
+            .all(|(_, reason, retryable)| *retryable && reason.contains("10 minutes"))
+    );
+    assert!(h.m.queue.is_empty());
+    // A new task starts the clock afresh; a push that went through clears it.
+    h.enqueue(T("c", 1));
+    h.advance(60);
+    assert!(fails(&h.push(PushOutcome::Held)).is_empty());
+    h.push(PushOutcome::Pushed);
+}
+
+/// A lost `UserPromptSubmit`: the agent's acknowledgement is proof that the turn started, so a task
+/// that is `Pushing` or `Blocked` becomes `Busy` and is not failed as a permission wait.
+#[test]
+fn an_acknowledged_task_is_busy_whatever_the_hooks_said() {
+    let mut h = H::idle();
+    h.enqueue(T("a", 1));
+    h.push(PushOutcome::Pushed);
+    assert!(matches!(h.m.state, State::Pushing { .. }));
+    h.view(ACKED);
+    assert_eq!(h.m.state, State::Busy);
+    // The same from Blocked (the Enter gate refused and reported the session blocked).
+    let mut h = H::idle();
+    h.enqueue(T("a", 1));
+    h.push(PushOutcome::Pushed);
+    h.m.on_enter_refused(h.now);
+    assert!(matches!(h.m.state, State::Blocked { .. }));
+    h.view(ACKED);
+    assert_eq!(h.m.state, State::Busy);
+    // Five minutes later the task has not been failed.
+    assert!(fails(&h.tick(301)).is_empty());
+    // Not acknowledged: still blocked, and it is failed as before after five minutes.
+    let mut h = H::idle();
+    h.enqueue(T("a", 1));
+    h.push(PushOutcome::Pushed);
+    h.m.on_enter_refused(h.now);
+    h.view(ACTIVE);
+    assert!(matches!(h.m.state, State::Blocked { .. }));
 }

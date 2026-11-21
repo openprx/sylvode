@@ -1,4 +1,7 @@
-use super::detect::{Dialog, classify_dialog, cut_for_log, input_is_empty, input_text, screens_equal};
+use super::detect::{
+    Dialog, awaits_choice, bottom, classify_bottom, classify_dialog, cut_for_log, input_is_empty, input_text,
+    looks_busy, screens_equal,
+};
 
 #[test]
 fn dialogs_are_recognised_by_the_verified_texts() {
@@ -101,4 +104,65 @@ fn the_input_text_is_what_follows_the_last_prompt_glyph() {
     assert_eq!(input_text("claude", "> ").as_deref(), Some(""));
     assert_eq!(input_text("claude", "no prompt"), None);
     assert_eq!(input_text("codex", "\u{203a} run tests").as_deref(), Some("run tests"));
+}
+
+const MARKERS: [&str; 6] = [
+    "esc to interrupt",
+    "Esc to cancel",
+    "Enter to select",
+    "\u{276f} 1. Yes",
+    "Please run /login",
+    "Yes, I trust this folder",
+];
+
+/// Text a task or the agent put on the screen (a title echoed in the pasted message, a reply) never
+/// counts as the CLI's busy marker, choice or dialog: those are read from the CLI's own chrome at
+/// the bottom only. An idle screen whose transcript holds every marker is idle.
+#[test]
+fn markers_in_the_transcript_do_not_count() {
+    for marker in MARKERS {
+        let screen = format!(
+            "> [Sylvode task] id=1 attempt=1/3\nIssue: SVWL-7, title (untrusted, quoted from the work item): \"Build hangs; {marker} does nothing\"\n\
+             Reason: assigned to you\n\u{25cf} Done. The build was stuck; {marker} was shown.\n(esc to interrupt)\n\
+             \n  a line of the reply\n  another\n  and another\n\u{256d}----\u{256e}\n\u{2502} > \u{2502}\n\u{2570}----\u{256f}\n  ? for shortcuts"
+        );
+        assert!(!looks_busy("claude", &screen), "busy from: {marker}");
+        assert!(!awaits_choice("claude", &screen), "choice from: {marker}");
+        assert_eq!(classify_bottom("claude", &screen), None, "dialog from: {marker}");
+        assert_eq!(input_is_empty("claude", &screen), Some(true));
+    }
+}
+
+/// What the CLI itself draws at the bottom still counts.
+#[test]
+fn the_clis_own_chrome_counts() {
+    let busy = "some transcript\n\u{273b} Thinking\u{2026} (12s \u{b7} esc to interrupt)\n\u{256d}----\u{256e}\n\u{2502} > \u{2502}\n\u{2570}----\u{256f}";
+    assert!(looks_busy("claude", busy));
+    assert_eq!(
+        input_is_empty("claude", busy),
+        Some(true),
+        "an empty box says nothing about work"
+    );
+    let dialog = "transcript\nDo you want to proceed?\n \u{276f} 1. Yes\n   2. No\n Esc to cancel";
+    assert!(awaits_choice("claude", dialog));
+    let elicitation = "Which option?\n \u{276f} 1. Alpha\n   2. Beta\n Enter to select \u{b7} Esc to cancel";
+    assert!(awaits_choice("claude", elicitation));
+    let trust = "old lines\nIs this a project you created or one you trust?\n  Yes, I trust this folder";
+    assert_eq!(classify_bottom("claude", trust), Some(Dialog::Untrusted));
+    // A spinner needs the glyph, the text and the parenthesised part, ending the line.
+    for not_spinner in [
+        "esc to interrupt",
+        "(esc to interrupt)",
+        "- working (esc to interrupt) now",
+        "> (esc to interrupt)",
+    ] {
+        let screen = format!("{not_spinner}\n> ");
+        assert!(!looks_busy("claude", &screen), "{not_spinner}");
+    }
+}
+
+#[test]
+fn the_bottom_is_the_last_non_blank_lines() {
+    assert_eq!(bottom("a\n\nb\n\n\nc\n\n", 2), "b\nc");
+    assert_eq!(bottom("", 3), "");
 }

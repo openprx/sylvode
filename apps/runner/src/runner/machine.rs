@@ -49,6 +49,8 @@ pub struct Timers {
     pub liveness: Duration,
     /// Minimum time between two push attempts of a task that could not be pushed yet.
     pub push_retry: Duration,
+    /// How long the screen may hold pushes back before the waiting tasks are failed.
+    pub screen_hold: Duration,
 }
 
 impl Timers {
@@ -66,6 +68,7 @@ impl Timers {
             poll: Duration::from_secs(10),
             liveness: Duration::from_secs(10),
             push_retry: Duration::from_secs(1),
+            screen_hold: Duration::from_secs(tmux.screen_hold_secs.max(30)),
         }
     }
 }
@@ -158,6 +161,9 @@ pub enum PushOutcome {
     /// A precondition does not hold yet (input not empty, a person is typing, no prompt seen, the
     /// pane is not ready for a bracketed paste).
     NotReady,
+    /// The screen shows the CLI busy or waiting for a choice, though the hooks say idle: nothing
+    /// is typed. Bounded by [`Timers::screen_hold`].
+    Held,
     /// The session is gone.
     SessionGone,
     /// tmux failed in another way.
@@ -202,6 +208,8 @@ pub struct Machine<T> {
     ensuring: bool,
     push_in_flight: bool,
     next_push_at: Instant,
+    /// Since when pushes have been held back by the screen (see [`PushOutcome::Held`]).
+    held_since: Option<Instant>,
     next_ensure_at: Instant,
     consecutive_push_failures: u32,
     last_queue_beat: Instant,
@@ -223,6 +231,7 @@ impl<T: Task> Machine<T> {
             ensuring: false,
             push_in_flight: false,
             next_push_at: now,
+            held_since: None,
             next_ensure_at: now,
             consecutive_push_failures: 0,
             last_queue_beat: now,
@@ -522,6 +531,9 @@ impl<T: Task> Machine<T> {
     /// The outcome of [`Action::TryPush`].
     #[allow(clippy::needless_pass_by_value, reason = "an outcome is consumed by the call")]
     pub fn on_push(&mut self, outcome: PushOutcome, now: Instant) -> Vec<Action<T>> {
+        if !matches!(outcome, PushOutcome::Held | PushOutcome::NotReady) {
+            self.held_since = None;
+        }
         self.push_in_flight = false;
         let mut actions = Vec::new();
         match outcome {
@@ -564,7 +576,29 @@ impl<T: Task> Machine<T> {
                 }
             }
             PushOutcome::NotReady => self.next_push_at = now + self.timers.push_retry,
+            PushOutcome::Held => {
+                self.next_push_at = now + self.timers.push_retry;
+                let since = *self.held_since.get_or_insert(now);
+                if now.duration_since(since) >= self.timers.screen_hold {
+                    // A false reading of the screen must not stall the session for good: the
+                    // waiting tasks fail as retryable, with the reason, and the clock starts over.
+                    self.held_since = None;
+                    let minutes = self.timers.screen_hold.as_secs() / 60;
+                    let reason = self.fail_text(&format!(
+                        "the screen of tmux session KEY showed the CLI busy or waiting for a choice for more \
+                         than {minutes} minutes while its hooks said idle; attach to tmux session KEY and look"
+                    ));
+                    for entry in self.queue.drain_all() {
+                        actions.push(Action::Fail {
+                            task: entry.item,
+                            reason: reason.clone(),
+                            retryable: true,
+                        });
+                    }
+                }
+            }
             PushOutcome::Inactive => {
+                self.held_since = None;
                 self.queue.pop_front();
                 self.next_push_at = now;
                 actions.extend(self.drive(now));
@@ -625,6 +659,15 @@ impl<T: Task> Machine<T> {
             return self.drive(now);
         }
         current.acked |= facts.acknowledged;
+        // The agent acknowledged the task, so the turn has started, whatever the hooks said (a lost
+        // `UserPromptSubmit` must not leave a working task `Pushing` or `Blocked`).
+        if current.acked && matches!(self.state, State::Pushing { .. } | State::Blocked { .. }) {
+            current.cli_idle = false;
+            current.idle_since = None;
+            current.blocked_reported = false;
+            self.cli_working = true;
+            self.state = State::Busy;
+        }
         self.rules(now)
     }
 
