@@ -48,10 +48,15 @@ pub enum OutputFormat {
 /// Sylvode MCP server and CLI tool. The `mcp-server` executable remains a compatibility shim.
 #[derive(Debug, Parser)]
 #[command(name = "mcp-server", about = "Sylvode MCP server and CLI tool", long_about = None, version)]
-#[command(arg_required_else_help = true)]
+#[command(arg_required_else_help = true, subcommand_required = false)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
+
+    /// Print this binary's one-row `sylvode.doctor.v1` report (version, task protocol, tool mode)
+    /// and exit. Reads no secrets and probes nothing; installers and `sylvode-runner doctor` use it.
+    #[arg(long)]
+    pub check: bool,
 
     #[command(flatten)]
     pub global: GlobalArgs,
@@ -108,6 +113,8 @@ pub struct GlobalArgs {
 pub enum Commands {
     /// Run the MCP server (default mode)
     Serve(ServeArgs),
+    /// Check the prerequisites of this MCP server: configuration, tmux, agent CLIs, runner, API
+    Doctor(DoctorArgs),
     #[command(flatten)]
     Business(BusinessCommands),
 }
@@ -271,6 +278,37 @@ pub struct ServeArgs {
     /// Tools to list (overrides `mcp.tool_mode`) [default: search]. Not valid with --flow-only.
     #[arg(long, value_enum)]
     pub tools: Option<ToolsMode>,
+}
+
+/// The agent CLIs `doctor --cli` accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DoctorCli {
+    Claude,
+    Codex,
+    Opencode,
+}
+
+impl From<DoctorCli> for sylvode_prereq::Cli {
+    fn from(cli: DoctorCli) -> Self {
+        match cli {
+            DoctorCli::Claude => Self::Claude,
+            DoctorCli::Codex => Self::Codex,
+            DoctorCli::Opencode => Self::Opencode,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// Print the report as JSON instead of a table
+    #[arg(long)]
+    pub json: bool,
+    /// Agent CLIs to check, including whether the MCP server is registered in them
+    #[arg(long = "cli", value_enum, num_args = 1.., value_name = "CLI")]
+    pub clis: Vec<DoctorCli>,
+    /// Evaluate programs on the PATH a service unit would have, not the shell's
+    #[arg(long)]
+    pub as_service: bool,
 }
 
 // ---- Projects ----
@@ -736,7 +774,11 @@ pub fn build_client(mcp: &McpRuntime, credential: Option<Secret>) -> anyhow::Res
 /// validation, so it is checked here — against the same rules, reported against the flag
 /// that carried it. Values that came from the file are left alone: they are already
 /// validated, and checking them twice is how one bad value grows two different messages.
-fn apply_cli_overrides(mcp: &mut McpConfig, global: &GlobalArgs, serve: Option<&ServeArgs>) -> anyhow::Result<()> {
+pub(crate) fn apply_cli_overrides(
+    mcp: &mut McpConfig,
+    global: &GlobalArgs,
+    serve: Option<&ServeArgs>,
+) -> anyhow::Result<()> {
     if let Some(api_url) = global.api_url.as_deref() {
         mcp.api_url = Some(checked_api_url(api_url)?);
     }
@@ -1092,7 +1134,7 @@ mod tests {
             let mut line = vec!["mcp-server", "work-items", "create", "--project", "p", "--title", "t"];
             line.extend_from_slice(extra);
             let cli = Cli::try_parse_from(line).unwrap_or_else(|error| panic!("{error}"));
-            let Commands::Business(command) = cli.command else {
+            let Commands::Business(command) = cli.command.expect("a subcommand") else {
                 panic!("not a workspace command");
             };
             tool_invocation(&command).unwrap_or_else(|error| panic!("{error}")).1
@@ -1116,7 +1158,7 @@ mod tests {
         ])
         .expect("generic tools call command should parse");
 
-        match cli.command {
+        match cli.command.expect("a subcommand") {
             Commands::Business(BusinessCommands::Tools(cmd)) => match cmd.action {
                 ToolsAction::Call { name, args_json } => {
                     assert_eq!(name, "forms.list");
@@ -1145,7 +1187,7 @@ mod tests {
         ])
         .expect("operation log command should parse");
 
-        match cli.command {
+        match cli.command.expect("a subcommand") {
             Commands::Business(BusinessCommands::OperationLogs(command)) => match command.action {
                 OperationLogsAction::List {
                     tool_name,
@@ -1311,9 +1353,13 @@ mod tests {
         let serve = |extra: &[&str]| {
             let mut args = vec!["mcp-server", "serve"];
             args.extend(extra);
-            match Cli::try_parse_from(args).expect("serve should parse").command {
+            match Cli::try_parse_from(args)
+                .expect("serve should parse")
+                .command
+                .expect("a subcommand")
+            {
                 Commands::Serve(args) => args,
-                Commands::Business(_) => panic!("expected serve command"),
+                Commands::Business(_) | Commands::Doctor(_) => panic!("expected serve command"),
             }
         };
         assert_eq!(serve(&[]).tools, None);
@@ -1348,21 +1394,21 @@ mod tests {
         let cli = Cli::try_parse_from(["mcp-server", "serve", "--transport", "http"])
             .expect("serve http command should parse");
 
-        match cli.command {
+        match cli.command.expect("a subcommand") {
             Commands::Serve(args) => {
                 assert!(matches!(args.transport, Some(Transport::Http)));
                 assert_eq!(args.bind_addr, None);
             }
-            Commands::Business(_) => panic!("expected serve command"),
+            Commands::Business(_) | Commands::Doctor(_) => panic!("expected serve command"),
         }
 
         let bare = Cli::try_parse_from(["mcp-server", "serve"]).expect("bare serve should parse");
-        match bare.command {
+        match bare.command.expect("a subcommand") {
             Commands::Serve(args) => {
                 assert!(args.transport.is_none());
                 assert!(args.bind_addr.is_none());
             }
-            Commands::Business(_) => panic!("expected serve command"),
+            Commands::Business(_) | Commands::Doctor(_) => panic!("expected serve command"),
         }
     }
 
@@ -1411,13 +1457,13 @@ mod tests {
     }
 
     /// `BUSINESS_GROUPS` is what `sylvode` routes on, so it has to name exactly the groups the
-    /// shared enum defines, in both parsers, and `serve` must stay `mcp-server`'s alone.
+    /// shared enum defines, in both parsers, and `serve` and `doctor` must stay `mcp-server`'s alone.
     #[test]
     fn the_business_group_list_matches_both_parsers() {
         let legacy: Vec<String> = Cli::command()
             .get_subcommands()
             .map(|command| command.get_name().to_string())
-            .filter(|name| name != "serve")
+            .filter(|name| !matches!(name.as_str(), "serve" | "doctor"))
             .collect();
         let sylvode: Vec<String> = BusinessCli::command()
             .get_subcommands()
@@ -1425,8 +1471,10 @@ mod tests {
             .collect();
         assert_eq!(legacy, BUSINESS_GROUPS);
         assert_eq!(sylvode, BUSINESS_GROUPS);
-        assert!(Cli::command().find_subcommand("serve").is_some());
-        assert!(BusinessCli::command().find_subcommand("serve").is_none());
+        for own in ["serve", "doctor"] {
+            assert!(Cli::command().find_subcommand(own).is_some(), "{own}");
+            assert!(BusinessCli::command().find_subcommand(own).is_none(), "{own}");
+        }
     }
 
     /// The `sylvode` parser renames the program in help prose and never mentions `serve`, which

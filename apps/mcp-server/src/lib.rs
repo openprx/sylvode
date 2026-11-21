@@ -7,6 +7,7 @@ pub mod skillgen;
 pub mod cli;
 pub mod cli_app;
 pub mod client;
+pub mod doctor;
 pub mod oauth;
 pub mod oauth_scopes;
 pub mod tools;

@@ -55,7 +55,43 @@ async fn run() -> anyhow::Result<()> {
         .map_err(|error| error.format(&mut Cli::command()))
         .unwrap_or_else(|error| error.exit());
 
-    match &cli.command {
+    if cli.check {
+        if cli.command.is_some() {
+            Cli::command()
+                .error(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "--check cannot be combined with a subcommand",
+                )
+                .exit();
+        }
+        print_report(&mcp_server::doctor::check_report(&cli.global), true)?;
+        return Ok(());
+    }
+    let Some(command) = &cli.command else {
+        Cli::command()
+            .error(
+                clap::error::ErrorKind::MissingSubcommand,
+                "a subcommand or --check is required",
+            )
+            .exit();
+    };
+
+    match command {
+        Commands::Doctor(args) => {
+            let options = mcp_server::doctor::DoctorOptions {
+                clis: args.clis.iter().copied().map(Into::into).collect(),
+                as_service: args.as_service,
+            };
+            let report = mcp_server::doctor::doctor_report(&cli.global, &options).await;
+            print_report(&report, args.json)?;
+            // Exit 0: no fail; 2: at least one fail. A checker that could not run returned an
+            // error above, which exits 1.
+            let code = report.exit_code();
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
         // The executable name is the stable service label of a deployment, so `serve` on any
         // transport stays silent (ADR-0020 D2).
         Commands::Serve(args) if args.flow_only => {
@@ -112,6 +148,16 @@ async fn run() -> anyhow::Result<()> {
             cli::run_business(&cli.global, command).await
         }
     }
+}
+
+/// Prints a doctor report, as JSON or as the text table, and flushes it.
+fn print_report(report: &sylvode_prereq::Report, json: bool) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    let text = if json { report.to_json()? } else { report.to_table() };
+    let mut out = std::io::stdout().lock();
+    writeln!(out, "{}", text.trim_end())?;
+    out.flush()?;
+    Ok(())
 }
 
 /// Starts the transport `[mcp]` selected.
