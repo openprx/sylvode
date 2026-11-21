@@ -2,8 +2,7 @@
 //! envelope goes through the production verification and gating in the tunnel loop.
 
 use crate::support::{
-    CANONICAL, ControlPlane, Envelope, SECRET, Server, StubApi, TempDir, TunnelPeer, path_with, wait_lines,
-    write_script,
+    ControlPlane, Envelope, RUNNER, SECRET, Server, StubApi, TempDir, TunnelPeer, path_with, wait_lines, write_script,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -81,7 +80,7 @@ async fn start(options: Options<'_>, fast: bool) -> Harness {
     let api = StubApi::start().await;
     let plane = ControlPlane::bind().await;
     let server = Server::start(
-        CANONICAL,
+        RUNNER,
         &config(&plane, &api, &options),
         &[("PATH", &path_with(bin.path()))],
     )
@@ -281,7 +280,7 @@ async fn sigterm_reports_a_running_tunnel_task_as_cancelled() {
     let mut api = StubApi::start().await;
     let plane = ControlPlane::bind().await;
     let mut server = Server::start(
-        CANONICAL,
+        RUNNER,
         &config(&plane, &api, &Options::default()),
         &[("PATH", &path_with(bin.path()))],
     )

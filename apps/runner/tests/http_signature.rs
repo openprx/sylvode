@@ -1,9 +1,7 @@
-//! Runs the real executables and checks inbound signature handling over HTTP.
+//! Runs the real executable and checks inbound signature handling over HTTP.
 //!
-//! Every accepted header verifies a good signature (200) and refuses a bad one (401); headers
-//! that disagree are refused (401) even when one of them is valid; both executable names answer
-//! identically; and only the legacy `x-openpr-signature` header (and the legacy executable name)
-//! write a deprecation line to stderr.
+//! Every accepted header verifies a good signature (200) and refuses a bad one (401), and headers
+//! that disagree are refused (401) even when one of them is valid. Nothing is written to stderr.
 
 #![cfg(unix)]
 // Test helpers outside `#[test]` functions may fail loudly; this is test code only.
@@ -15,16 +13,9 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-const CANONICAL: &str = env!("CARGO_BIN_EXE_sylvode-runner");
-const WEBHOOK_ALIAS: &str = env!("CARGO_BIN_EXE_sylvode-webhook");
-const LEGACY: &str = env!("CARGO_BIN_EXE_openpr-webhook");
+const RUNNER: &str = env!("CARGO_BIN_EXE_sylvode-runner");
 const SECRET: &str = "integration-secret";
 const BODY: &str = r#"{"event":"issue.created","data":{"title":"signature test"}}"#;
-const EXECUTABLE_NOTICE: &str = "warning: the executable name `openpr-webhook` is deprecated, use `sylvode-runner` \
-                                 instead; `openpr-webhook` is not removed before Sylvode v2.0";
-const ALIAS_NOTICE: &str = "sylvode-webhook is now sylvode-runner; the old name is kept until Sylvode v2.0";
-const HEADER_NOTICE: &str = "warning: the inbound signature header `x-openpr-signature` is deprecated, use \
-                             `x-sylvode-signature` instead; `x-openpr-signature` is not removed before Sylvode v2.0";
 
 fn sign(secret: &str) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
@@ -81,8 +72,6 @@ fn start(binary: &str) -> Server {
         .arg(&config)
         .env_remove("RUST_LOG")
         .env_remove("SYLVODE_RUNNER_SAFE_MODE")
-        .env_remove("SYLVODE_WEBHOOK_SAFE_MODE")
-        .env_remove("OPENPR_WEBHOOK_SAFE_MODE")
         .env("NO_COLOR", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -144,23 +133,20 @@ fn cases(good: &str, bad: &str) -> Vec<Case> {
         ("sylvode bad", vec![("x-sylvode-signature", bad.to_owned())], 401),
         ("webhook good", vec![("x-webhook-signature", good.to_owned())], 200),
         ("webhook bad", vec![("x-webhook-signature", bad.to_owned())], 401),
-        ("openpr good", vec![("x-openpr-signature", good.to_owned())], 200),
-        ("openpr bad", vec![("x-openpr-signature", bad.to_owned())], 401),
         ("no signature", vec![], 401),
         (
             "all agree",
             vec![
                 ("x-sylvode-signature", good.to_owned()),
                 ("x-webhook-signature", good.to_owned()),
-                ("x-openpr-signature", good.to_owned()),
             ],
             200,
         ),
         (
-            "good sylvode + bad openpr",
+            "good sylvode + bad webhook",
             vec![
                 ("x-sylvode-signature", good.to_owned()),
-                ("x-openpr-signature", bad.to_owned()),
+                ("x-webhook-signature", bad.to_owned()),
             ],
             401,
         ),
@@ -175,54 +161,24 @@ fn cases(good: &str, bad: &str) -> Vec<Case> {
     ]
 }
 
-async fn answers(binary: &str) -> (Vec<(u16, String)>, Vec<String>) {
+#[tokio::test]
+async fn every_header_case_is_answered_as_expected_and_nothing_is_written_to_stderr() {
     let (good, bad) = (sign(SECRET), sign("not-the-secret"));
     assert_ne!(good, bad);
-    let server = start(binary);
-    let mut results = Vec::new();
+    let server = start(RUNNER);
     for (label, headers, expected) in cases(&good, &bad) {
         let borrowed: Vec<(&str, &str)> = headers.iter().map(|(n, v)| (*n, v.as_str())).collect();
-        let (status, body) = post(&server, &borrowed).await;
-        assert_eq!(status, expected, "{binary}: {label}");
-        results.push((status, body));
+        let (status, _) = post(&server, &borrowed).await;
+        assert_eq!(status, expected, "{label}");
     }
-    (results, stop(server))
-}
-
-#[tokio::test]
-async fn all_names_answer_every_header_case_identically() {
-    let (canonical, canonical_stderr) = answers(CANONICAL).await;
-    let (alias, alias_stderr) = answers(WEBHOOK_ALIAS).await;
-    let (legacy, legacy_stderr) = answers(LEGACY).await;
-    assert_eq!(alias, canonical, "responses must not depend on the executable name");
-    assert_eq!(legacy, canonical, "responses must not depend on the executable name");
-
-    // Both processes saw x-openpr-signature several times: one header notice each, no repeats.
-    assert_eq!(canonical_stderr, vec![HEADER_NOTICE.to_string()]);
-    assert_eq!(alias_stderr, vec![ALIAS_NOTICE.to_string(), HEADER_NOTICE.to_string()]);
-    assert_eq!(
-        legacy_stderr,
-        vec![EXECUTABLE_NOTICE.to_string(), HEADER_NOTICE.to_string()]
-    );
-}
-
-#[tokio::test]
-async fn canonical_name_and_headers_write_no_notice() {
-    let good = sign(SECRET);
-    let server = start(CANONICAL);
-    assert_eq!(post(&server, &[("x-sylvode-signature", &good)]).await.0, 200);
-    assert_eq!(post(&server, &[("x-webhook-signature", &good)]).await.0, 200);
     let stderr = stop(server);
-    assert!(
-        stderr.is_empty(),
-        "canonical name and headers must not warn: {stderr:?}"
-    );
+    assert!(stderr.is_empty(), "nothing may be written to stderr: {stderr:?}");
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn sigterm_stops_the_server_cleanly() {
-    let mut server = start(CANONICAL);
+    let mut server = start(RUNNER);
     let status = Command::new("kill")
         .args(["-TERM", &server.child().id().to_string()])
         .status()

@@ -98,14 +98,14 @@
       "explanation": "The openpr-<target> and openpr-frontend.tar.gz release archive aliases published next to the sylvode-* archives (ADR-0020 D1), and the removed openpr-mcp-server-<target> archives in the release notes."
     },
     {
-      "id": "sylvode-legacy-webhook-release-aliases",
+      "id": "sylvode-legacy-release-aliases",
       "reason": "legacy_alias_documented",
       "repo": "sylvode",
       "paths": [
         ".github/workflows/release.yml"
       ],
-      "pattern": "openpr-(?:webhook|linux-\\*|macos-\\*)",
-      "explanation": "The webhook receiver is published under its legacy name on purpose, as the receiver README promises: the ghcr.io/openprx/openpr-webhook image (same manifest and digest as sylvode-webhook), the openpr-webhook-<platform> archives, the openpr-webhook executable inside the receiver image and archives, and the openpr-linux-*/openpr-macos-* archive globs the release job checks (ADR-0020 D1)."
+      "pattern": "openpr-(?:linux-\\*|macos-\\*)",
+      "explanation": "The openpr-linux-*/openpr-macos-* archive globs the release job checks (ADR-0020 D1)."
     },
     {
       "id": "sylvode-database-names",
@@ -176,26 +176,6 @@
       ],
       "pattern": "github\\.com/openprx/openpr-webhook[\\w./#-]*",
       "explanation": "The Sylvode Webhook repository keeps its URL github.com/openprx/openpr-webhook (ADR-0020 D4 renames only the main repository)."
-    },
-    {
-      "id": "sylvode-webhook-legacy-names",
-      "reason": "legacy_alias_documented",
-      "repo": "sylvode",
-      "paths": [
-        "docker-compose.yml",
-        "CHANGELOG.md",
-        "README.md",
-        "docs/sylvode-v0.9-compatibility.md",
-        "docs/sylvode-v1.0-compatibility.md",
-        "config/sylvode-runner.example.toml",
-        "scripts/smoke-runner-routing.sh",
-        "scripts/smoke-browser-mention-runner.sh",
-        "scripts/audit-universal-forms-production-readiness.sh",
-        ".env.example",
-        "docs/universal-forms-production.md"
-      ],
-      "pattern": "(?:ghcr\\.io/openprx/|/app/|/target/debug/)?openpr-webhook(?:[:\\w<>.-]*)?|OPENPR_WEBHOOK_\\w+",
-      "explanation": "The legacy Sylvode Webhook executable and image names (openpr-webhook, ghcr.io/openprx/openpr-webhook, /app/openpr-webhook) kept through 1.x by ADR-0020 D4."
     },
     {
       "id": "sylvode-browser-storage-key",
@@ -318,7 +298,6 @@
         "CHANGELOG.md",
         "apps/mcp-server/AGENTS.md",
         "docs/universal-forms-production.md",
-        "config/sylvode-runner.example.toml",
         ".github/workflows/release.yml"
       ],
       "pattern": "\\(formerly OpenPR(?: Webhook)?;?\\)?|Formerly OpenPR\\.|published as OpenPR|OpenPR-era|Legacy OpenPR names|legacy OpenPR filenames|OpenPR names \\(|OpenPR compatibility names",
@@ -767,7 +746,7 @@
       "paths": [
         "**"
       ],
-      "pattern": "OPENPR_(?:BIND_HOST|API_PORT|FRONTEND_PORT|MCP_PORT|RUNTIME_BASE|FRONTEND_DOCKERFILE|WEBHOOK_[A-Z0-9_]*)\\b|OPENPR_WEBHOOK_|`OPENPR_\\*`",
+      "pattern": "OPENPR_(?:BIND_HOST|API_PORT|FRONTEND_PORT|MCP_PORT|RUNTIME_BASE|FRONTEND_DOCKERFILE)\\b|`OPENPR_\\*`",
       "explanation": "Legacy compose variables that scripts/start.sh still reads with a deprecation warning (ADR-0020 D2), as listed in the compose row of the v1.0 compatibility matrix."
     },
     {
@@ -849,71 +828,38 @@
       "explanation": "Legacy environment variables that scripts/start.sh, the demo bootstrap and Sylvode Webhook still read with a deprecation notice (ADR-0020 D2), named where the pages document them."
     },
     {
-      "id": "sylvode-apps-webhook-formerly-notes",
+      "id": "sylvode-apps-runner-formerly-notes",
       "reason": "formerly_note",
       "repo": "sylvode",
       "paths": [
-        "apps/runner/Cargo.toml",
-        "apps/runner/Dockerfile",
         "apps/runner/README.md",
-        "apps/runner/SECURITY.md",
-        "apps/runner/CHANGELOG.md",
-        "apps/runner/src/app.rs",
-        "apps/runner/src/lib.rs"
+        "apps/runner/CHANGELOG.md"
       ],
-      "pattern": "[Ff]ormerly (?:`OpenPR`|OpenPR) Webhook|called OpenPR Webhook|Migrating from OpenPR Webhook|from OpenPR Webhook|#migrating-from-openpr-webhook",
-      "explanation": "Notes in the in-repository webhook receiver (apps/webhook, imported from the openpr-webhook repository) that Sylvode Webhook was formerly OpenPR Webhook, and the README anchor of its migration section (ADR-0020 D4)."
+      "pattern": "[Ff]ormerly (?:`OpenPR`|OpenPR) Webhook|called OpenPR Webhook|from OpenPR Webhook",
+      "explanation": "Notes in the runner (apps/runner, imported from the openpr-webhook repository) that its earlier standalone releases were called OpenPR Webhook, in the README upgrade section and the frozen release history (ADR-0020 D4)."
     },
     {
-      "id": "sylvode-apps-webhook-legacy-names",
-      "reason": "legacy_alias_documented",
-      "repo": "sylvode",
-      "paths": [
-        "apps/runner/CHANGELOG.md",
-        "apps/runner/Cargo.toml",
-        "apps/runner/Dockerfile",
-        "apps/runner/README.md",
-        "apps/runner/SECURITY.md",
-        "apps/runner/scripts/install.sh",
-        "apps/runner/scripts/uninstall.sh",
-        "apps/runner/src/app.rs",
-        "apps/runner/src/compat.rs",
-        "apps/runner/src/lib.rs",
-        "apps/runner/src/signature.rs",
-        "apps/runner/src/bin/openpr-webhook.rs",
-        "apps/runner/tests/e2e/main.rs",
-        "apps/runner/tests/e2e/support.rs",
-        "apps/runner/tests/executable_names.rs",
-        "apps/runner/tests/http_signature.rs",
-        "apps/runner/tests/install_scripts.rs",
-        "apps/runner/tests/legacy_environment.rs"
-      ],
-      "pattern": "(?:ghcr\\.io/openprx/|/app/|/old/|target/release/|src/bin/)?openpr-webhook(?:[\\w.<>${}:-]*)?|openpr_webhook[\\w:\\[\\]=]*|dev\\.openpr\\.webhook|legacy_openpr_header\\w*",
-      "explanation": "Compatibility names of apps/webhook kept through the Sylvode 1.x line (ADR-0020 D4): the legacy openpr-webhook executable (its src/bin file and Cargo [[bin]] entry), image, archive, systemd unit and launchd label names, and the openpr_webhook RUST_LOG target. Limited to the files that carry the compatibility layer or document it: packaging, the install scripts, the compat module, the signature code, their tests and the release notes.",
-      "applies_to": [
-        "content",
-        "path"
-      ]
-    },
-    {
-      "id": "sylvode-apps-webhook-legacy-header-tests",
-      "reason": "legacy_behaviour_test",
-      "repo": "sylvode",
-      "paths": [
-        "apps/runner/tests/http_signature.rs"
-      ],
-      "pattern": "\\\"openpr (?:good|bad)\\\"|good sylvode \\+ bad openpr",
-      "explanation": "Test case names of the legacy x-openpr-signature header that apps/webhook still accepts through 1.x."
-    },
-    {
-      "id": "sylvode-apps-webhook-dispatcher-test-environment",
+      "id": "sylvode-apps-runner-dispatcher-test-environment",
       "reason": "legacy_behaviour_test",
       "repo": "sylvode",
       "paths": [
         "apps/runner/src/dispatcher.rs"
       ],
       "pattern": "OPENPR_API_URL = \"http://localhost:3000\"",
-      "explanation": "An environment entry in the apps/webhook dispatcher's test configurations, passed through to an agent unchanged; the test checks pass-through, not the name."
+      "explanation": "An environment entry in the apps/runner dispatcher's test configurations, passed through to an agent unchanged; the test checks pass-through, not the name."
+    },
+    {
+      "id": "sylvode-apps-runner-changelog-history",
+      "reason": "historical_document",
+      "repo": "sylvode",
+      "paths": [
+        "apps/runner/CHANGELOG.md"
+      ],
+      "pattern": "(?:ghcr\\.io/openprx/|/app/)?openpr[-_]webhook[\\w.<>${}:-]*|dev\\.openpr\\.webhook|OPENPR_WEBHOOK_\\w+",
+      "explanation": "The frozen release history of the standalone receiver names its earlier executables, images, archives, units and log targets as they were released.",
+      "applies_to": [
+        "content"
+      ]
     }
   ]
 }

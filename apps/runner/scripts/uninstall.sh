@@ -2,10 +2,8 @@
 # uninstall.sh — Remove the Sylvode runner system service
 #
 # Stops the running service (if any) and removes the service/agent file for
-# both Linux (systemd user service) and macOS (launchd user agent). The
-# canonical names (sylvode-runner.service, dev.sylvode.runner) and both former
-# names (sylvode-webhook.service, dev.sylvode.webhook, openpr-webhook.service,
-# dev.openpr.webhook) are removed.
+# both Linux (systemd user service, sylvode-runner.service) and macOS (launchd
+# user agent, dev.sylvode.runner).
 #
 # Usage:
 #   ./scripts/uninstall.sh
@@ -41,10 +39,7 @@ log "Detected platform: $PLATFORM"
 # ---------------------------------------------------------------------------
 
 uninstall_linux() {
-    local service_name
-    for service_name in sylvode-runner sylvode-webhook openpr-webhook; do
-        uninstall_linux_unit "$service_name"
-    done
+    uninstall_linux_unit "sylvode-runner"
 
     cat <<EOF
 
@@ -106,8 +101,6 @@ uninstall_linux_unit() {
 
 uninstall_macos() {
     uninstall_macos_agent "dev.sylvode.runner" "sylvode-runner"
-    uninstall_macos_agent "dev.sylvode.webhook" "sylvode-webhook"
-    uninstall_macos_agent "dev.openpr.webhook" "openpr-webhook"
 
     cat <<EOF
 

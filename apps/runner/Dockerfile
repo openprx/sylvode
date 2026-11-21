@@ -1,10 +1,7 @@
 # Sylvode runner container image.
 #
-# Published as ghcr.io/openprx/sylvode-runner and, for the whole Sylvode 1.x line, under the former
-# names ghcr.io/openprx/sylvode-webhook and ghcr.io/openprx/openpr-webhook with the same digest. All
-# three executables are installed: the canonical /app/sylvode-runner and the former /app/sylvode-webhook
-# and /app/openpr-webhook, which run the same code and write one deprecation line to stderr. There is
-# no ENTRYPOINT, so a compose `command` that names any executable replaces CMD as a whole.
+# Published as ghcr.io/openprx/sylvode-runner. The executable is /app/sylvode-runner. There is no
+# ENTRYPOINT, so a compose `command` that names the executable replaces CMD as a whole.
 #
 # Build it from the root of the Sylvode repository, which is the build context: the runner is a
 # member of the Sylvode cargo workspace (apps/runner) and shares its lockfile and toolchain.
@@ -35,9 +32,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin sylvode
-COPY --from=builder /src/target/release/sylvode-runner /src/target/release/sylvode-webhook /src/target/release/openpr-webhook /app/
+COPY --from=builder /src/target/release/sylvode-runner /app/
 LABEL org.opencontainers.image.title="Sylvode Runner" \
-      org.opencontainers.image.description="Sylvode runner: receives Sylvode task deliveries and runs agents (formerly Sylvode Webhook)" \
+      org.opencontainers.image.description="Sylvode runner: receives Sylvode task deliveries and runs agents" \
       org.opencontainers.image.source="https://github.com/openprx/sylvode" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 WORKDIR /app

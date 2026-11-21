@@ -87,42 +87,25 @@ sylvode_configured_env_value() {
   fi
 }
 
-# Assigns the resolved value of a compose variable to the variable named by $1, reporting each
-# legacy name that is set. $4 is one legacy name or several separated by commas, in order of
-# preference. An optional sixth argument names the kind of variable in that notice (default
-# "compose variable"); a script reading its own inputs passes "environment variable". Values that
-# are set under different names must agree, otherwise the call is refused.
+# Assigns the resolved value of a compose variable to the variable named by $1, reporting the
+# legacy name when it is set. An optional sixth argument names the kind of variable in that
+# notice (default "compose variable"); a script reading its own inputs passes
+# "environment variable".
 sylvode_resolve_env_into() {
   local -n sylvode_resolved_value="$1"
-  local env_file="$2" canonical_key="$3" legacy_keys="$4" fallback="$5" kind="${6:-compose variable}"
-  local canonical_value legacy_key legacy_value chosen_legacy_key='' chosen_legacy_value=''
-  local -a legacy_key_list=()
+  local env_file="$2" canonical_key="$3" legacy_key="$4" fallback="$5" kind="${6:-compose variable}"
+  local canonical_value legacy_value
   canonical_value=$(sylvode_configured_env_value "$env_file" "$canonical_key")
-  IFS=',' read -r -a legacy_key_list <<<"$legacy_keys"
-  for legacy_key in "${legacy_key_list[@]}"; do
-    legacy_value=$(sylvode_configured_env_value "$env_file" "$legacy_key")
-    [[ -n "$legacy_value" ]] || continue
-    if [[ -n "$canonical_value" && "$canonical_value" != "$legacy_value" ]]; then
-      echo "$canonical_key conflicts with legacy $legacy_key; refusing silent precedence." >&2
-      return 1
-    fi
-    if [[ -n "$chosen_legacy_value" && "$chosen_legacy_value" != "$legacy_value" ]]; then
-      echo "legacy $chosen_legacy_key conflicts with legacy $legacy_key; refusing silent precedence." >&2
-      return 1
-    fi
-    if [[ -z "$chosen_legacy_key" ]]; then
-      chosen_legacy_key=$legacy_key
-      chosen_legacy_value=$legacy_value
-    fi
-  done
-  for legacy_key in "${legacy_key_list[@]}"; do
-    legacy_value=$(sylvode_configured_env_value "$env_file" "$legacy_key")
-    if [[ -n "$legacy_value" ]]; then
-      sylvode_report_legacy "$kind" "$legacy_key" "$canonical_key"
-    fi
-  done
+  legacy_value=$(sylvode_configured_env_value "$env_file" "$legacy_key")
+  if [[ -n "$canonical_value" && -n "$legacy_value" && "$canonical_value" != "$legacy_value" ]]; then
+    echo "$canonical_key conflicts with legacy $legacy_key; refusing silent precedence." >&2
+    return 1
+  fi
+  if [[ -n "$legacy_value" ]]; then
+    sylvode_report_legacy "$kind" "$legacy_key" "$canonical_key"
+  fi
   # shellcheck disable=SC2034 # assigned through the nameref
-  sylvode_resolved_value=${canonical_value:-${chosen_legacy_value:-$fallback}}
+  sylvode_resolved_value=${canonical_value:-${legacy_value:-$fallback}}
 }
 
 sylvode_resolve_env() {

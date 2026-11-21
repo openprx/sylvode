@@ -3,11 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The runner lives in this repository (apps/runner). A separate checkout can still be tested by
-# setting SYLVODE_RUNNER_DIR (the former SYLVODE_WEBHOOK_DIR and OPENPR_WEBHOOK_DIR are still
-# accepted).
-WEBHOOK_DIR="${SYLVODE_RUNNER_DIR:-${SYLVODE_WEBHOOK_DIR:-${OPENPR_WEBHOOK_DIR:-}}}"
-if [[ -n $WEBHOOK_DIR ]]; then
-  [[ -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: runner checkout not found ($WEBHOOK_DIR); set SYLVODE_RUNNER_DIR to the runner checkout, or leave it unset to use apps/runner" >&2; exit 2; }
+# setting SYLVODE_RUNNER_DIR.
+RUNNER_DIR="${SYLVODE_RUNNER_DIR:-}"
+if [[ -n $RUNNER_DIR ]]; then
+  [[ -f $RUNNER_DIR/Cargo.toml ]] || { echo "FAIL: runner checkout not found ($RUNNER_DIR); set SYLVODE_RUNNER_DIR to the runner checkout, or leave it unset to use apps/runner" >&2; exit 2; }
 fi
 POSTGRES_PORT="${OPENPR_SMOKE_PG_PORT:-5366}"
 PG_SUPERUSER="${OPENPR_SMOKE_PG_SUPERUSER:-postgres}"
@@ -15,12 +14,12 @@ DB_NAME="sylvode_mention_smoke_$$_$(date +%s)"
 DB_USER="sylvode_mention_smoke_$$_$(date +%s)"
 DB_PASSWORD="$(openssl rand -hex 12)"
 API_PORT="${OPENPR_SMOKE_API_PORT:-$((18180 + ($$ % 1000)))}"
-WEBHOOK_PORT="${OPENPR_SMOKE_WEBHOOK_PORT:-$((19180 + ($$ % 1000)))}"
+RUNNER_PORT="${OPENPR_SMOKE_RUNNER_PORT:-$((19180 + ($$ % 1000)))}"
 BROWSER_PORT="${OPENPR_SMOKE_BROWSER_PORT:-$((20180 + ($$ % 1000)))}"
 TMP_DIR="$(mktemp -d /tmp/sylvode-browser-mention-smoke.XXXXXX)"
 API_LOG="$TMP_DIR/api.log"
 WORKER_LOG="$TMP_DIR/worker.log"
-WEBHOOK_LOG="$TMP_DIR/webhook.log"
+RUNNER_LOG="$TMP_DIR/runner.log"
 BROWSER_LOG="$TMP_DIR/browser.log"
 BROWSER_DOM="$TMP_DIR/browser.dom"
 SMOKE_JWT_SECRET="sylvode-browser-mention-smoke-secret"
@@ -34,12 +33,12 @@ WEBHOOK_ID="66666666-6666-4666-8666-666666666666"
 
 api_pid=""
 worker_pid=""
-webhook_pid=""
+runner_pid=""
 browser_server_pid=""
 
 cleanup() {
   local exit_code=$?
-  for pid in "$browser_server_pid" "$worker_pid" "$webhook_pid" "$api_pid"; do
+  for pid in "$browser_server_pid" "$worker_pid" "$runner_pid" "$api_pid"; do
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -94,16 +93,13 @@ if [[ ! -x "$CHROMIUM_BIN" ]]; then
   exit 2
 fi
 
-if [[ -n $WEBHOOK_DIR ]]; then
+if [[ -n $RUNNER_DIR ]]; then
   cargo build -q -p api --bin api -p worker --bin worker
-  (cd "$WEBHOOK_DIR" && cargo build -q)
-  # A checkout from before the rename builds only a former executable name.
-  WEBHOOK_BIN="$WEBHOOK_DIR/target/debug/sylvode-runner"
-  [[ -x $WEBHOOK_BIN ]] || WEBHOOK_BIN="$WEBHOOK_DIR/target/debug/sylvode-webhook"
-  [[ -x $WEBHOOK_BIN ]] || WEBHOOK_BIN="$WEBHOOK_DIR/target/debug/openpr-webhook"
+  (cd "$RUNNER_DIR" && cargo build -q)
+  RUNNER_BIN="$RUNNER_DIR/target/debug/sylvode-runner"
 else
   cargo build -q -p api --bin api -p worker --bin worker -p sylvode-runner --bin sylvode-runner
-  WEBHOOK_BIN="${CARGO_TARGET_DIR:-$ROOT_DIR/target}/debug/sylvode-runner"
+  RUNNER_BIN="${CARGO_TARGET_DIR:-$ROOT_DIR/target}/debug/sylvode-runner"
 fi
 
 sudo -n -u "$PG_SUPERUSER" psql -p "$POSTGRES_PORT" -d postgres -v ON_ERROR_STOP=1 -q <<SQL
@@ -185,7 +181,7 @@ VALUES (
   '$WEBHOOK_ID',
   '$WORKSPACE_ID',
   'Document review assistant webhook',
-  'http://127.0.0.1:$WEBHOOK_PORT/webhook',
+  'http://127.0.0.1:$RUNNER_PORT/webhook',
   'smoke-secret',
   '["comment.created"]'::jsonb,
   true,
@@ -218,9 +214,9 @@ console.log(`${header}.${body}.${sig}`);
 NODE
 )"
 
-cat >"$TMP_DIR/sylvode-webhook.toml" <<EOF
+cat >"$TMP_DIR/sylvode-runner.toml" <<EOF
 [server]
-listen = "127.0.0.1:$WEBHOOK_PORT"
+listen = "127.0.0.1:$RUNNER_PORT"
 
 [security]
 allow_unsigned = true
@@ -242,9 +238,9 @@ command = "/bin/echo"
 args = ["browser-mention-route-ok"]
 EOF
 
-"$WEBHOOK_BIN" "$TMP_DIR/sylvode-webhook.toml" >"$WEBHOOK_LOG" 2>&1 &
-webhook_pid=$!
-wait_http "http://127.0.0.1:$WEBHOOK_PORT/health" "sylvode-webhook"
+"$RUNNER_BIN" "$TMP_DIR/sylvode-runner.toml" >"$RUNNER_LOG" 2>&1 &
+runner_pid=$!
+wait_http "http://127.0.0.1:$RUNNER_PORT/health" "sylvode-runner"
 
 "$ROOT_DIR/target/debug/worker" --config "$APP_CONFIG" --concurrency 1 >"$WORKER_LOG" 2>&1 &
 worker_pid=$!
@@ -353,8 +349,8 @@ fi
 for _ in $(seq 1 60); do
   task_count="$(psql_smoke -tAc "SELECT COUNT(*) FROM ai_tasks WHERE ai_participant_id = '$BOT_ID' AND task_type = 'comment_requested' AND payload->>'project_type' = 'contract_review';" | tr -d '[:space:]')"
   processing_count="$(psql_smoke -tAc "SELECT COUNT(*) FROM ai_tasks WHERE ai_participant_id = '$BOT_ID' AND task_type = 'comment_requested' AND status = 'processing';" | tr -d '[:space:]')"
-  if [[ "$task_count" == "1" && "$processing_count" == "1" && -s "$WEBHOOK_LOG" ]]; then
-    echo "Browser mention to Sylvode Webhook smoke passed"
+  if [[ "$task_count" == "1" && "$processing_count" == "1" && -s "$RUNNER_LOG" ]]; then
+    echo "Browser mention to Sylvode runner smoke passed"
     exit 0
   fi
   sleep 1
@@ -364,6 +360,6 @@ echo "Timed out waiting for comment_requested task dispatch" >&2
 psql_smoke -x -c "SELECT id, status, task_type, payload, error_message FROM ai_tasks ORDER BY created_at DESC LIMIT 5;" >&2 || true
 echo "--- worker log ---" >&2
 tail -120 "$WORKER_LOG" >&2 || true
-echo "--- webhook log ---" >&2
-tail -120 "$WEBHOOK_LOG" >&2 || true
+echo "--- runner log ---" >&2
+tail -120 "$RUNNER_LOG" >&2 || true
 exit 1

@@ -9,14 +9,8 @@ type HmacSha256 = Hmac<Sha256>;
 pub const SYLVODE_SIGNATURE_HEADER: &str = "x-sylvode-signature";
 /// Generic signature header; the one the Sylvode API sends today.
 pub const WEBHOOK_SIGNATURE_HEADER: &str = "x-webhook-signature";
-/// Legacy header, accepted with a deprecation notice for the whole Sylvode 1.x line.
-pub const LEGACY_SIGNATURE_HEADER: &str = "x-openpr-signature";
 
-pub const INBOUND_SIGNATURE_HEADERS: [&str; 3] = [
-    SYLVODE_SIGNATURE_HEADER,
-    WEBHOOK_SIGNATURE_HEADER,
-    LEGACY_SIGNATURE_HEADER,
-];
+pub const INBOUND_SIGNATURE_HEADERS: [&str; 2] = [SYLVODE_SIGNATURE_HEADER, WEBHOOK_SIGNATURE_HEADER];
 pub const OUTBOUND_SIGNATURE_HEADER: &str = "x-webhook-signature";
 
 /// The signature a request carries, read from all accepted signature headers.
@@ -24,8 +18,6 @@ pub const OUTBOUND_SIGNATURE_HEADER: &str = "x-webhook-signature";
 pub struct InboundSignature {
     /// The signature hex with any `sha256=` prefix removed; `None` when no header is present.
     pub value: Option<String>,
-    /// Whether the legacy `x-openpr-signature` header was among the headers present.
-    pub used_legacy_header: bool,
 }
 
 /// Why the signature headers of a request were refused before any HMAC was computed.
@@ -64,9 +56,6 @@ pub fn extract_signature_from_headers(headers: &HeaderMap) -> Result<InboundSign
                 Some(existing) if existing != normalized => return Err(SignatureHeaderError::Conflicting),
                 Some(_) => {}
                 None => found.value = Some(normalized.to_string()),
-            }
-            if name == LEGACY_SIGNATURE_HEADER {
-                found.used_legacy_header = true;
             }
         }
     }
@@ -176,27 +165,12 @@ mod tests {
     fn extracts_signature_from_x_webhook_signature() {
         let sig = extract_signature_from_headers(&headers(&[("x-webhook-signature", "sha256=abc123")])).unwrap();
         assert_eq!(sig.value.as_deref(), Some("abc123"));
-        assert!(!sig.used_legacy_header);
     }
 
     #[test]
-    fn canonical_sylvode_header_works_and_is_not_legacy() {
+    fn sylvode_header_works() {
         let sig = extract_signature_from_headers(&headers(&[("x-sylvode-signature", "sha256=fed987")])).unwrap();
         assert_eq!(sig.value.as_deref(), Some("fed987"));
-        assert!(
-            !sig.used_legacy_header,
-            "the canonical header must not trigger the deprecation notice"
-        );
-    }
-
-    #[test]
-    fn legacy_openpr_header_works_and_is_flagged_for_the_notice() {
-        let sig = extract_signature_from_headers(&headers(&[("x-openpr-signature", "sha256=def456")])).unwrap();
-        assert_eq!(sig.value.as_deref(), Some("def456"));
-        assert!(
-            sig.used_legacy_header,
-            "the legacy header must trigger the deprecation notice"
-        );
     }
 
     #[test]
@@ -210,14 +184,9 @@ mod tests {
     #[test]
     fn agreeing_headers_are_accepted_with_or_without_prefix() {
         let hex = good().trim_start_matches("sha256=").to_string();
-        let map = headers(&[
-            (SYLVODE_SIGNATURE_HEADER, &good()),
-            (WEBHOOK_SIGNATURE_HEADER, &hex),
-            (LEGACY_SIGNATURE_HEADER, &good()),
-        ]);
+        let map = headers(&[(SYLVODE_SIGNATURE_HEADER, &good()), (WEBHOOK_SIGNATURE_HEADER, &hex)]);
         let sig = extract_signature_from_headers(&map).unwrap();
         assert_eq!(sig.value.as_deref(), Some(hex.as_str()));
-        assert!(sig.used_legacy_header);
         assert!(accepted(&map));
     }
 
@@ -245,13 +214,13 @@ mod tests {
     fn a_non_ascii_signature_value_is_refused() {
         let mut map = headers(&[(WEBHOOK_SIGNATURE_HEADER, &good())]);
         map.append(
-            LEGACY_SIGNATURE_HEADER,
+            SYLVODE_SIGNATURE_HEADER,
             HeaderValue::from_bytes(b"sha256=\xff").unwrap(),
         );
         assert_eq!(
             extract_signature_from_headers(&map),
             Err(SignatureHeaderError::Malformed {
-                header: LEGACY_SIGNATURE_HEADER
+                header: SYLVODE_SIGNATURE_HEADER
             })
         );
     }

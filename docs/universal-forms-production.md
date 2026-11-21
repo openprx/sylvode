@@ -14,8 +14,8 @@ Minimum production services:
 - Sylvode worker.
 - Sylvode frontend.
 - Sylvode MCP server if AI assistants or external MCP clients are enabled.
-- Optional: the Sylvode runner (`sylvode-runner`, compose profile `connectors`; formerly the
-  webhook receiver) when inbound webhook handling is wanted.
+- Optional: the Sylvode runner (`sylvode-runner`, compose profile `connectors`) when inbound
+  webhook handling is wanted.
 
 Universal forms production features require these subsystems to be running
 together:
@@ -276,7 +276,7 @@ outside compose, set `VITE_API_BASE_URL=http://localhost:8081`.
 
 PostgreSQL is exposed only inside the compose network. Do not publish the
 database port unless an operator has a separate firewall, backup, and access
-control plan. API, MCP, frontend, and optional webhook receiver host ports bind
+control plan. API, MCP, frontend, and optional runner host ports bind
 to `127.0.0.1` by default. Put a deployment-owned reverse proxy or tunnel in
 front of the frontend and any intentional API/MCP endpoint, and terminate TLS
 there. Optional receivers, such as the Sylvode runner (`sylvode-runner`), run under the
@@ -286,21 +286,11 @@ machine-specific `/opt/...` paths.
 The repository includes `config/sylvode-runner.example.toml` so the optional
 runner has a portable starter config. For production, copy
 it to a deployment-owned path, set a concrete `webhook_secrets` value, keep
-`allow_unsigned = false`, and point `SYLVODE_RUNNER_CONFIG` (former `SYLVODE_WEBHOOK_CONFIG` and
-`OPENPR_WEBHOOK_CONFIG`) at that file. The default image is `ghcr.io/openprx/sylvode-runner:latest`,
+`allow_unsigned = false`, and point `SYLVODE_RUNNER_CONFIG` at that file. The default image is `ghcr.io/openprx/sylvode-runner:latest`,
 which mounts the file at `/etc/sylvode-runner/config.toml`; when no image of that name is present,
 compose builds it from `apps/runner` in this repository (`apps/runner/Dockerfile`, repository root
-as the context). The compose service was named `webhook` and is now `runner`; a service name cannot
-be aliased, so scripts that run `docker compose ... logs webhook` must name `runner`.
-The runner follows the Sylvode release version, so a published image is tagged with the
-Sylvode version, under `ghcr.io/openprx/sylvode-runner` and, with the same digest, under the former
-names `ghcr.io/openprx/sylvode-webhook` and `ghcr.io/openprx/openpr-webhook`. The standalone releases
-before the receiver joined this repository (last published tag 0.3.3) exist only as
-`ghcr.io/openprx/openpr-webhook`. To run one of those, or an image published as
-`ghcr.io/openprx/sylvode-webhook` before the rename, set `SYLVODE_RUNNER_IMAGE` to that image and
-tag and override the service command with `["/app/openpr-webhook", "/etc/sylvode-runner/config.toml"]`
-(or `/app/sylvode-webhook`), because those images do not carry `/app/sylvode-runner`. In production,
-pin a version tag instead of `latest`.
+as the context). The runner follows the Sylvode release version, so a published image is tagged
+with the Sylvode version. In production, pin a version tag instead of `latest`.
 
 The compose file intentionally avoids fixed `container_name` values. This lets
 operators run multiple Sylvode deployments on the same host by using different
@@ -490,7 +480,7 @@ Production webhook checks:
 
 - API CRUD persists webhook definitions without mirroring them into another table.
 - Signed delivery is verified by the external webhook consumer.
-- Optional webhook receiver containers are started only when the deployment enables its compose profile.
+- Optional runner containers are started only when the deployment enables its compose profile.
 - Generic webhook delivery is verified independently of bot operation records.
 
 Smoke commands:

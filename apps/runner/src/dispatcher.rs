@@ -1410,7 +1410,7 @@ webhook_secrets = []
     /// read fails the run instead of starting an agent that can use none of its tools.
     #[test]
     fn the_default_allow_list_is_read_from_the_mcp_config_at_run_time() {
-        let dir = std::env::temp_dir().join(format!("sylvode-webhook-mcp-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("sylvode-runner-mcp-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         std::fs::write(
             dir.join("mcp.json"),

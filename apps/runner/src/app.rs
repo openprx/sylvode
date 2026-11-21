@@ -1,4 +1,4 @@
-use crate::{AppState, background::Background, compat, config, handler, process, tunnel};
+use crate::{AppState, background::Background, config, handler, process, tunnel};
 use axum::{
     Router,
     routing::{get, post},
@@ -13,11 +13,15 @@ use tower_http::trace::TraceLayer;
 
 const DEFAULT_CONFIG_PATH: &str = "config.toml";
 const DEFAULT_LOG_FILTER: &str = "sylvode_runner=info";
+/// The executable name, as reported by `--version` and in the log.
+const NAME: &str = "sylvode-runner";
+/// Environment variable that forces the tunnel, CLI and callback paths off.
+const SAFE_MODE_ENV: &str = "SYLVODE_RUNNER_SAFE_MODE";
 
 /// Help text. It names the canonical executable whichever name the process was started under,
 /// so stdout is byte-for-byte identical for both names.
 const HELP: &str = "\
-Sylvode runner (formerly Sylvode Webhook): receives Sylvode task deliveries and runs agents.
+Sylvode runner: receives Sylvode task deliveries and runs agents.
 
 Usage: sylvode-runner [CONFIG]
        sylvode-runner --help | --version
@@ -28,8 +32,6 @@ Arguments:
 Options:
   -h, --help     Print this help and exit
   -V, --version  Print the version and exit
-
-The former executable names sylvode-webhook and openpr-webhook run the same program and are not removed before Sylvode v2.0.
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -61,7 +63,7 @@ fn parse_command(first_arg: Option<OsString>) -> Result<Command, String> {
 }
 
 fn version_line() -> String {
-    format!("{} {}\n", compat::CANONICAL_NAME, env!("CARGO_PKG_VERSION"))
+    format!("{} {}\n", NAME, env!("CARGO_PKG_VERSION"))
 }
 
 fn write_stdout(text: &str) -> ExitCode {
@@ -79,19 +81,8 @@ fn write_stderr_line(text: &str) {
     let _ = writeln!(stderr, "{text}");
 }
 
-/// Runs the service. Every executable calls this; `invocation` only decides whether the
-/// deprecation notice for a former executable name is written.
-pub fn run(invocation: compat::Invocation) -> ExitCode {
-    match invocation {
-        compat::Invocation::Canonical => {}
-        compat::Invocation::WebhookAlias => {
-            compat::warn_once(compat::LegacyEntry::WebhookExecutableName);
-        }
-        compat::Invocation::Legacy => {
-            compat::warn_once(compat::LegacyEntry::ExecutableName);
-        }
-    }
-
+/// Runs the service.
+pub fn run() -> ExitCode {
     let command = match parse_command(std::env::args_os().nth(1)) {
         Ok(command) => command,
         Err(e) => {
@@ -107,47 +98,25 @@ pub fn run(invocation: compat::Invocation) -> ExitCode {
     }
 }
 
-/// Sets up logging from `RUST_LOG`, honouring directives for the former `sylvode_webhook` and `openpr_webhook` targets.
-fn init_tracing() -> Result<(), String> {
-    let resolved = compat::resolve_log_filter(std::env::var("RUST_LOG").ok().as_deref())?;
-    for entry in resolved.used_legacy {
-        compat::warn_once(entry);
-    }
-    let filter = resolved
-        .value
+/// Sets up logging from `RUST_LOG`; an unset or invalid filter falls back to the default.
+fn init_tracing() {
+    let filter = std::env::var("RUST_LOG")
+        .ok()
         .and_then(|directives| tracing_subscriber::EnvFilter::try_new(directives).ok())
         .unwrap_or_else(|| DEFAULT_LOG_FILTER.into());
     if let Err(e) = tracing_subscriber::fmt().with_env_filter(filter).try_init() {
         write_stderr_line(&format!("error: failed to initialise logging: {e}"));
     }
-    Ok(())
 }
 
-fn resolve_safe_mode() -> Result<bool, String> {
-    let canonical = std::env::var(compat::SAFE_MODE_ENV).ok();
-    let webhook = std::env::var(compat::WEBHOOK_SAFE_MODE_ENV).ok();
-    let legacy = std::env::var(compat::LEGACY_SAFE_MODE_ENV).ok();
-    let resolved = compat::resolve_safe_mode(canonical.as_deref(), webhook.as_deref(), legacy.as_deref())?;
-    for entry in resolved.used_legacy {
-        compat::warn_once(entry);
-    }
-    Ok(resolved.value)
+/// Whether the value of [`SAFE_MODE_ENV`] turns safe mode on.
+fn safe_mode_flag(raw: Option<&str>) -> bool {
+    raw.is_some_and(|raw| matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
 }
 
 fn serve_blocking(config_path: &str) -> ExitCode {
-    // Logging is not up yet when its own configuration is refused, so that error goes to stderr.
-    if let Err(e) = init_tracing() {
-        write_stderr_line(&format!("error: {e}"));
-        return ExitCode::FAILURE;
-    }
-
-    let safe_mode = match resolve_safe_mode() {
-        Ok(safe_mode) => safe_mode,
-        Err(e) => {
-            tracing::error!("{e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    init_tracing();
+    let safe_mode = safe_mode_flag(std::env::var(SAFE_MODE_ENV).ok().as_deref());
 
     let mut config = match config::Config::load(config_path) {
         Ok(c) => c,
@@ -242,11 +211,8 @@ async fn serve(config: config::Config) -> ExitCode {
     };
     // The address actually bound: with port 0 the system picks one, and that is the one to report.
     match listener.local_addr() {
-        Ok(bound) => tracing::info!("{} listening on {bound}", compat::CANONICAL_NAME),
-        Err(e) => tracing::info!(
-            "{} listening on {listen} (bound address unknown: {e})",
-            compat::CANONICAL_NAME
-        ),
+        Ok(bound) => tracing::info!("{} listening on {bound}", NAME),
+        Err(e) => tracing::info!("{} listening on {listen} (bound address unknown: {e})", NAME),
     }
     // On a signal, background runs are cancelled at once while the requests in flight finish.
     // From the moment shutdown begins, everything (those requests, then the background runs and
@@ -298,7 +264,7 @@ async fn serve(config: config::Config) -> ExitCode {
         tracing::error!("server error: {e}");
         return ExitCode::FAILURE;
     }
-    tracing::info!("{} stopped", compat::CANONICAL_NAME);
+    tracing::info!("{NAME} stopped");
     ExitCode::SUCCESS
 }
 
@@ -375,6 +341,21 @@ mod tests {
                 config_path: "./-odd.toml".to_string()
             })
         );
+    }
+
+    #[test]
+    fn safe_mode_is_on_for_the_usual_truthy_spellings_only() {
+        for (raw, expected) in [
+            (Some("1"), true),
+            (Some("true"), true),
+            (Some(" ON "), true),
+            (Some("yes"), true),
+            (Some("0"), false),
+            (Some(""), false),
+            (None, false),
+        ] {
+            assert_eq!(safe_mode_flag(raw), expected, "{raw:?}");
+        }
     }
 
     #[test]

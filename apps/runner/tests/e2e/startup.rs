@@ -1,6 +1,6 @@
 //! Start-up: what the service logs and what it refuses to start with.
 
-use crate::support::{CANONICAL, LEGACY, SECRET, Server, WEBHOOK_ALIAS};
+use crate::support::{RUNNER, SECRET, Server};
 
 fn minimal_config() -> String {
     format!("[server]\nlisten = \"127.0.0.1:0\"\n\n[security]\nwebhook_secrets = [\"{SECRET}\"]\n")
@@ -10,16 +10,16 @@ fn minimal_config() -> String {
 /// (`:0`) is reported as the real port.
 #[test]
 fn reports_the_bound_address() {
-    let server = Server::start(CANONICAL, &minimal_config(), &[]).expect("server starts");
+    let server = Server::start(RUNNER, &minimal_config(), &[]).expect("server starts");
     assert_ne!(server.addr.port(), 0, "the real port is logged");
 }
 
-/// A successful start writes the same stdout under both executable names, apart from the
+/// A successful start logs the listening line with the address that was bound, apart from the
 /// timestamp and the port the system chose.
 #[test]
-fn successful_start_writes_the_same_stdout_under_both_names() {
-    fn normalized(binary: &str) -> Vec<String> {
-        let mut server = Server::start(binary, &minimal_config(), &[]).expect("server starts");
+fn successful_start_logs_the_bound_address() {
+    fn normalized() -> Vec<String> {
+        let mut server = Server::start(RUNNER, &minimal_config(), &[]).expect("server starts");
         let port = format!(":{}", server.addr.port());
         let lines = server
             .stdout()
@@ -33,15 +33,13 @@ fn successful_start_writes_the_same_stdout_under_both_names() {
         drop(server);
         lines
     }
-    let canonical = normalized(CANONICAL);
+    let canonical = normalized();
     assert!(
         canonical
             .iter()
             .any(|line| line.contains("listening on 127.0.0.1:PORT")),
         "{canonical:?}"
     );
-    assert_eq!(normalized(WEBHOOK_ALIAS), canonical);
-    assert_eq!(normalized(LEGACY), canonical);
 }
 
 /// The real executable refuses a blank secret instead of accepting requests signed with an
@@ -50,9 +48,7 @@ fn successful_start_writes_the_same_stdout_under_both_names() {
 fn refuses_a_blank_webhook_secret() {
     for secrets in [r#"[""]"#, r#"["real-secret", "  "]"#] {
         let config = format!("[server]\nlisten = \"127.0.0.1:0\"\n\n[security]\nwebhook_secrets = {secrets}\n");
-        let refused = Server::start(CANONICAL, &config, &[])
-            .err()
-            .expect("start-up is refused");
+        let refused = Server::start(RUNNER, &config, &[]).err().expect("start-up is refused");
         assert_eq!(refused.code, Some(1), "{refused:?}");
         assert!(
             refused
@@ -70,9 +66,7 @@ fn refuses_a_blank_webhook_secret() {
 #[test]
 fn the_shipped_example_refuses_until_its_secret_is_set() {
     let example = include_str!("../../config.example.toml").replace("127.0.0.1:9090", "127.0.0.1:0");
-    let refused = Server::start(CANONICAL, &example, &[])
-        .err()
-        .expect("refused as shipped");
+    let refused = Server::start(RUNNER, &example, &[]).err().expect("refused as shipped");
     assert_eq!(refused.code, Some(1));
     assert!(
         refused
@@ -82,11 +76,8 @@ fn the_shipped_example_refuses_until_its_secret_is_set() {
         "{refused:?}"
     );
 
-    let filled = example.replace(
-        "replace-with-the-secret-of-your-sylvode-webhook",
-        "a-real-random-secret",
-    );
-    let server = Server::start(CANONICAL, &filled, &[]).expect("starts with a real secret");
+    let filled = example.replace("replace-with-the-secret-of-your-sylvode-runner", "a-real-random-secret");
+    let server = Server::start(RUNNER, &filled, &[]).expect("starts with a real secret");
     assert!(server.addr.ip().is_loopback());
 }
 
@@ -98,7 +89,7 @@ fn unsigned_config(listen: &str, extra: &str) -> String {
 /// address, and starts there, still warning, only when explicitly acknowledged.
 #[test]
 fn allow_unsigned_warns_and_is_refused_off_loopback_unless_acknowledged() {
-    let mut server = Server::start(CANONICAL, &unsigned_config("127.0.0.1:0", ""), &[]).expect("loopback starts");
+    let mut server = Server::start(RUNNER, &unsigned_config("127.0.0.1:0", ""), &[]).expect("loopback starts");
     assert!(
         server
             .stdout()
@@ -109,7 +100,7 @@ fn allow_unsigned_warns_and_is_refused_off_loopback_unless_acknowledged() {
     );
     drop(server);
 
-    let refused = Server::start(CANONICAL, &unsigned_config("0.0.0.0:0", ""), &[])
+    let refused = Server::start(RUNNER, &unsigned_config("0.0.0.0:0", ""), &[])
         .err()
         .expect("non-loopback unsigned is refused");
     assert_eq!(refused.code, Some(1));
@@ -122,7 +113,7 @@ fn allow_unsigned_warns_and_is_refused_off_loopback_unless_acknowledged() {
     );
 
     let mut acknowledged = Server::start(
-        CANONICAL,
+        RUNNER,
         &unsigned_config("0.0.0.0:0", "allow_unsigned_non_loopback = true"),
         &[],
     )

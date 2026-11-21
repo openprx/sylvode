@@ -20,8 +20,7 @@ pub struct Config {
     /// Terminal callbacks for worker AI tasks (`[ai_task_callback]`).
     #[serde(default)]
     pub ai_task_callback: AiTaskCallbackConfig,
-    /// Safe mode, resolved once at start-up from `SYLVODE_RUNNER_SAFE_MODE` (or the former
-    /// `SYLVODE_WEBHOOK_SAFE_MODE` and `OPENPR_WEBHOOK_SAFE_MODE`). Not read from the file.
+    /// Safe mode, resolved once at start-up from `SYLVODE_RUNNER_SAFE_MODE`. Not read from the file.
     #[serde(skip)]
     pub safe_mode: bool,
     /// Deprecation notices for commands written in the one-string form, logged at start-up.
@@ -391,7 +390,7 @@ const MAX_AI_TASK_ATTEMPTS: u32 = 10;
 const MAX_AI_TASK_RETRY_DELAY_MS: u64 = 60_000;
 
 /// The secret `config.example.toml` ships with. Start-up is refused while it is still in place.
-pub const EXAMPLE_SECRET_PLACEHOLDER: &str = "replace-with-the-secret-of-your-sylvode-webhook";
+pub const EXAMPLE_SECRET_PLACEHOLDER: &str = "replace-with-the-secret-of-your-sylvode-runner";
 
 /// Secrets copied from an example file rather than chosen: the current example's placeholder, the
 /// values earlier examples and the README showed, and the placeholder of the compose example in
@@ -1087,7 +1086,7 @@ enabled = true
 
     /// Writes `content` to a fresh file and loads it the way start-up does.
     fn load_str(content: &str) -> Result<Config, String> {
-        let dir = std::env::temp_dir().join(format!("sylvode-webhook-config-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("sylvode-runner-config-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let path = dir.join("config.toml");
         std::fs::write(&path, content).expect("write config");

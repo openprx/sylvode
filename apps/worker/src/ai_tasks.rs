@@ -34,7 +34,7 @@ use uuid::Uuid;
 const MAX_ANSWER_CHARS: usize = 300;
 
 /// The `status` values with which a receiver answers that it will not run a task:
-/// `sylvode-webhook` answers `no_agent` when no agent matches, `ignored` when the delivery is not
+/// `sylvode-runner` answers `no_agent` when no agent matches, `ignored` when the delivery is not
 /// a bot task, and `refused` when the matched agent cannot run it (safe mode, a disabled feature,
 /// an incomplete agent configuration).
 const DECLINING_ANSWERS: [&str; 3] = ["no_agent", "ignored", "refused"];
@@ -571,7 +571,7 @@ mod tests {
     fn a_no_agent_answer_declines_the_task_and_says_why() {
         let current = classify_delivery_answer(
             200,
-            r#"{"status":"no_agent","bot_key":"bot-b","reason":"sylvode-webhook has no agent for this AI task (bot bot-b)"}"#,
+            r#"{"status":"no_agent","bot_key":"bot-b","reason":"sylvode-runner has no agent for this AI task (bot bot-b)"}"#,
         );
         let reason = declined(&current);
         assert!(reason.contains("`no_agent`"), "{reason}");

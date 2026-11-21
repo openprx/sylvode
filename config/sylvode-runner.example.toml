@@ -1,5 +1,5 @@
-# Example configuration for the Sylvode runner, sylvode-runner (formerly Sylvode Webhook; built from
-# apps/runner in this repository), pointed at this deployment. docker-compose.yml mounts it at
+# Example configuration for the Sylvode runner, sylvode-runner (built from apps/runner in this
+# repository), pointed at this deployment. docker-compose.yml mounts it at
 # /etc/sylvode-runner/config.toml in the optional `runner` service.
 #
 # The `events` a route may match are the ones a webhook subscription can actually request:
