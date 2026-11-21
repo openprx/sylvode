@@ -6,7 +6,6 @@
 use super::{collab::authz::PermissionLevel, package_import as shared, scope};
 use crate::error::ApiError;
 use crate::flow::json_value::FlowJson;
-use base64::{Engine, engine::general_purpose::STANDARD};
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 use serde::Deserialize;
@@ -258,162 +257,6 @@ pub async fn preview(
     tx.commit().await?;
     Ok(result)
 }
-#[cfg(test)]
-tokio::task_local! {
-    // Explicit developer unit-test isolation boundary only. No production environment/request
-    // flag can populate this proof map; production always executes the isolated worker below.
-    static TEST_VERIFIED_REPLAY: BTreeMap<Uuid,collab_core::isolation::wire::ReplayDiffResult>;
-}
-async fn replay_snapshot(
-    snapshot: Vec<u8>,
-    request: collab_core::isolation::wire::ReplayDiffRequest,
-    object: Uuid,
-) -> Result<collab_core::isolation::wire::ReplayDiffResult, ApiError> {
-    #[cfg(test)]
-    if let Ok(Some(result)) = TEST_VERIFIED_REPLAY.try_with(|map| map.get(&object).cloned()) {
-        return Ok(result);
-    }
-    let (result, observation) =
-        tokio::task::spawn_blocking(move || collab_core::isolation::isolated_diff_observed(&snapshot, &request))
-            .await
-            .map_err(|_| ApiError::internal())?;
-    result.map_err(|e| {
-        super::query::isolated_diff_error(e, &observation, object, || {
-            ApiError::checksum_mismatch("package snapshot cannot be reconstructed")
-        })
-    })
-}
-/// The replayed head of an uploaded package document (its snapshot with its whole update tail)
-/// must not carry a root container with a reserved name and the wrong type. The head is what the
-/// worker exported after replaying the package, so its history holds both the uploaded snapshot's
-/// and the uploaded tail's operations. The check reads all of it, outside the isolated window.
-async fn require_head_without_shadow_roots(
-    validated: &collab_core::isolation::wire::ReplayDiffResult,
-) -> Result<(), ApiError> {
-    let head = STANDARD
-        .decode(
-            validated
-                .validated_head_snapshot_base64
-                .as_deref()
-                .ok_or_else(|| ApiError::unsupported_protocol("isolated worker lacks package replay support"))?,
-        )
-        .map_err(|_| ApiError::internal())?;
-    tokio::task::spawn_blocking(move || {
-        let engine = <collab_core::LoroCollabEngine as collab_core::CollabEngine>::load(&head)
-            .map_err(|_| ApiError::checksum_mismatch("package head cannot be decoded"))?;
-        super::package::require_no_shadow_roots(&engine)
-    })
-    .await
-    .map_err(|_| ApiError::internal())?
-}
-struct Validated {
-    source: Uuid,
-    snapshot: Vec<u8>,
-    frontier: Vec<u8>,
-    semantic: collab_core::SemanticSnapshot,
-    title: String,
-}
-async fn validate_snapshots(bytes: &[u8], plan: &shared::PackagePlan) -> Result<Vec<Validated>, ApiError> {
-    let mut result = Vec::new();
-    for object in &plan.objects {
-        let snapshot = shared::member_bytes(bytes, &format!("documents/{}/snapshot.bin", object.source_document_id))?;
-        let frontier = STANDARD
-            .decode(&object.accepted_frontier)
-            .map_err(|_| ApiError::unsupported_format("invalid accepted frontier"))?;
-        let prefix = format!("documents/{}/updates/", object.source_document_id);
-        let mut updates = plan
-            .verified
-            .manifest
-            .members
-            .iter()
-            .filter(|m| m.kind == "update" && m.path.starts_with(&prefix))
-            .map(|m| {
-                let seq = m
-                    .path
-                    .strip_prefix(&prefix)
-                    .and_then(|s| s.strip_suffix(".bin"))
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .ok_or_else(|| ApiError::unsupported_format("invalid package update sequence"))?;
-                Ok((seq, m.path.clone()))
-            })
-            .collect::<Result<Vec<_>, ApiError>>()?;
-        updates.sort_by_key(|v| v.0);
-        let first = object
-            .accepted_seq
-            .saturating_sub(i64::try_from(updates.len()).unwrap_or(i64::MAX))
-            .saturating_add(1);
-        let mut encoded = Vec::new();
-        for (index, (seq, path)) in updates.into_iter().enumerate() {
-            if seq < 1 || seq != first.saturating_add(i64::try_from(index).unwrap_or(i64::MAX)) {
-                return Err(ApiError::checksum_mismatch("package history tail is discontinuous"));
-            }
-            encoded.push(STANDARD.encode(shared::member_bytes(bytes, &path)?));
-        }
-        let request = collab_core::isolation::wire::ReplayDiffRequest {
-            snapshot_frontier: frontier.clone(),
-            updates: Vec::new(),
-            from_frontier: frontier.clone(),
-            to_frontier: frontier.clone(),
-            package_updates_base64: Some(encoded),
-        };
-        let validated = replay_snapshot(snapshot, request, object.source_object_id).await?;
-        require_head_without_shadow_roots(&validated).await?;
-        let hash = match super::package::semantic_model(&plan.verified.manifest)? {
-            super::package::PackageSemanticModel::V1 => {
-                validated.legacy_package_semantic_hash_v1.clone().ok_or_else(|| {
-                    ApiError::unsupported_protocol("isolated worker lacks the v1 package fingerprint reader")
-                })?
-            }
-            super::package::PackageSemanticModel::V2 => {
-                validated.legacy_package_semantic_hash_v2.clone().ok_or_else(|| {
-                    ApiError::unsupported_protocol("isolated worker lacks the v2 package fingerprint reader")
-                })?
-            }
-            super::package::PackageSemanticModel::V3 => {
-                validated.legacy_package_semantic_hash_v3.clone().ok_or_else(|| {
-                    ApiError::unsupported_protocol("isolated worker lacks the v3 package fingerprint reader")
-                })?
-            }
-            super::package::PackageSemanticModel::V4 => {
-                validated.legacy_package_semantic_hash_v4.clone().ok_or_else(|| {
-                    ApiError::unsupported_protocol("isolated worker lacks the v4 compatible package reader")
-                })?
-            }
-            super::package::PackageSemanticModel::V5 => validated.to_snapshot.semantic_hash(),
-        };
-        if hash != object.semantic_hash {
-            return Err(ApiError::checksum_mismatch(
-                "package semantic fingerprint disagrees with its versioned reader",
-            ));
-        }
-        match validated.package_reference_remap_required {
-            Some(false) => {}
-            Some(true) => return Err(super::package::inner_reference_refusal()),
-            None => {
-                return Err(ApiError::unsupported_protocol(
-                    "isolated worker lacks package reference validation",
-                ));
-            }
-        }
-        let snapshot = STANDARD
-            .decode(
-                validated
-                    .validated_head_snapshot_base64
-                    .as_deref()
-                    .ok_or_else(|| ApiError::unsupported_protocol("isolated worker lacks package replay support"))?,
-            )
-            .map_err(|_| ApiError::internal())?;
-        super::collab::bootstrap::check_bootstrap_decoded_bytes(u64::try_from(snapshot.len()).unwrap_or(u64::MAX))?;
-        result.push(Validated {
-            source: object.source_object_id,
-            snapshot,
-            frontier,
-            semantic: validated.to_snapshot,
-            title: validated.to_title,
-        });
-    }
-    Ok(result)
-}
 fn map_ids(mapping: &Value, name: &str) -> Result<BTreeMap<Uuid, Uuid>, ApiError> {
     serde_json::from_value(mapping.field(name).clone())
         .map_err(|_| ApiError::checksum_mismatch("frozen import mapping cannot be decoded"))
@@ -540,7 +383,7 @@ pub async fn commit(
     }
     let plan = shared::parse_plan(&bytes, &hash)?;
     known_plan(&plan)?;
-    let validated = validate_snapshots(&bytes, &plan).await?;
+    let validated = super::import_replay::validate_documents(&bytes, &plan).await?;
     let objects = map_ids(&mapping, "object_map")?;
     let documents = map_ids(&mapping, "document_map")?;
     let relations = map_ids(&mapping, "relation_map")?;
@@ -798,8 +641,10 @@ impl CommitInput {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use super::super::import_replay::TEST_VERIFIED_REPLAY;
     use super::*;
     use crate::routes::context::tenant_fixture::{exec, scratch};
+    use base64::{Engine, engine::general_purpose::STANDARD};
     use collab_core::CollabEngine;
     async fn counts(db: &DatabaseConnection) -> BTreeMap<String, i64> {
         let mut values = BTreeMap::new();
@@ -824,46 +669,6 @@ mod tests {
             values.insert(table.into(), row.try_get("", "n").unwrap());
         }
         values
-    }
-    fn replayed(head: &[u8]) -> collab_core::isolation::wire::ReplayDiffResult {
-        let engine = collab_core::LoroCollabEngine::load(head).unwrap();
-        collab_core::isolation::wire::ReplayDiffResult {
-            semantic_diff: collab_core::SemanticDiff::default(),
-            to_snapshot: engine.semantic_snapshot().unwrap(),
-            legacy_package_semantic_hash_v4: None,
-            legacy_package_semantic_hash_v3: None,
-            from_title: String::new(),
-            to_title: String::new(),
-            package_reference_remap_required: Some(false),
-            legacy_package_semantic_hash_v2: None,
-            legacy_package_semantic_hash_v1: None,
-            validated_head_snapshot_base64: Some(STANDARD.encode(head)),
-        }
-    }
-    /// The replayed head of an uploaded document is refused when it carries a reserved root of the
-    /// wrong type, and accepted when it does not.
-    #[tokio::test]
-    async fn a_replayed_package_head_with_a_shadow_root_is_refused() {
-        let clean = include_bytes!("../../../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot").to_vec();
-        require_head_without_shadow_roots(&replayed(&clean)).await.unwrap();
-        let doc = loro::LoroDoc::new();
-        doc.import(&clean).unwrap();
-        doc.set_peer_id(9_200_001).unwrap();
-        doc.get_text("flow_editor_structure_meta").insert(0, "x").unwrap();
-        doc.commit();
-        let shadowed = doc.export(loro::ExportMode::Snapshot).unwrap();
-        let error = require_head_without_shadow_roots(&replayed(&shadowed))
-            .await
-            .expect_err("a shadow root must be refused");
-        assert_eq!(error.kind(), crate::error::ApiErrorKind::InvalidUpdate);
-        assert!(
-            format!("{error:?}").contains("reserved_root_container_type"),
-            "{error:?}"
-        );
-        // A head the worker did not export has nothing to check.
-        let mut missing = replayed(&clean);
-        missing.validated_head_snapshot_base64 = None;
-        assert!(require_head_without_shadow_roots(&missing).await.is_err());
     }
     #[tokio::test]
     async fn mocked_verified_replay_scope_import_uses_real_pg_and_rolls_back_every_promotion_row() {

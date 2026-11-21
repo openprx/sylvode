@@ -2506,9 +2506,17 @@ async fn new_legacy_page_is_editor_ready_while_existing_conversion_cutover_is_of
 }
 
 #[tokio::test]
+#[allow(
+    clippy::print_stderr,
+    reason = "report the platform skip without a tracing subscriber"
+)]
 async fn pre_change_v1_browser_package_promotes_with_old_fingerprint_and_current_projection() {
     use api::flow::package_import::*;
     use serde_json::json;
+    if !cfg!(target_os = "linux") {
+        eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+        return;
+    }
     let scratch = Scratch::new().await;
     let db = &scratch.db;
     let owner = user(db).await;

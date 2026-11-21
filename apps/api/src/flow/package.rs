@@ -57,6 +57,18 @@ impl PackageSemanticModel {
         }
     }
 
+    /// The name of the versioned reader in the import window's request
+    /// (`ReplayDiffRequest::package_semantic_model`).
+    pub(crate) const fn wire_reader(self) -> &'static str {
+        match self {
+            Self::V1 => "v1",
+            Self::V2 => "v2",
+            Self::V3 => "v3",
+            Self::V4 => "v4",
+            Self::V5 => "v5",
+        }
+    }
+
     pub(crate) fn semantic_hash(self, engine: &collab_core::LoroCollabEngine) -> Result<String, ApiError> {
         let semantic = match self {
             Self::V1 => engine.legacy_package_semantic_snapshot_v1(),
