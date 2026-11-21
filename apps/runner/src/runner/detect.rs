@@ -108,6 +108,28 @@ pub fn input_text(cli: &str, screen: &str) -> Option<String> {
         })
 }
 
+/// Whether the screen shows the CLI at work: claude and codex both print "esc to interrupt" while
+/// a turn runs. An input line that looks empty says nothing about this (it is empty while the CLI
+/// works), so a push needs this independent signal as well.
+pub fn looks_busy(_cli: &str, screen: &str) -> bool {
+    screen.to_lowercase().contains("esc to interrupt")
+}
+
+/// Whether the screen shows a choice the CLI waits for (a permission or elicitation dialog): a
+/// numbered option with the selection marker, or the usual footer. Nothing is typed into it.
+pub fn awaits_choice(_cli: &str, screen: &str) -> bool {
+    let selected_option = screen.lines().any(|line| {
+        let rest = line
+            .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '\u{2502}' | '\u{2503}' | '|'))
+            .trim_start_matches(['\u{276f}', '>', '\u{203a}'])
+            .trim_start();
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        digits > 0 && rest[digits..].starts_with(". ") && line.contains(['\u{276f}', '\u{203a}'])
+    });
+    let lower = screen.to_lowercase();
+    selected_option || lower.contains("enter to select") || lower.contains("esc to cancel")
+}
+
 /// Whether two captures show the same screen (trailing blanks ignored): the stability signal of
 /// the readiness fallback.
 pub fn screens_equal(a: &str, b: &str) -> bool {

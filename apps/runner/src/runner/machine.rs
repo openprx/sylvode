@@ -162,6 +162,9 @@ pub enum PushOutcome {
     SessionGone,
     /// tmux failed in another way.
     Failed,
+    /// Sylvode no longer shows the task active (swept, cancelled, answered): it is dropped from
+    /// the queue and never typed.
+    Inactive,
 }
 
 /// The task the runner pushed and supervises.
@@ -276,6 +279,15 @@ impl<T: Task> Machine<T> {
             });
             return actions;
         }
+        // A re-delivery of the task being supervised, at its attempt or an older one, changes
+        // nothing: it is neither queued nor pushed again.
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|c| c.task.id() == task.id() && c.task.attempt() >= task.attempt())
+        {
+            return actions;
+        }
         // A new attempt of the task being supervised: the old attempt is over.
         if self
             .current
@@ -380,6 +392,12 @@ impl<T: Task> Machine<T> {
         self.cli_working = false;
         self.state = State::Starting { since: now };
         self.starting_dialog = None;
+    }
+
+    /// Whether the CLI is mid-turn as far as the hooks said (a `UserPromptSubmit` without its
+    /// `Stop`).
+    pub const fn turn_open(&self) -> bool {
+        self.cli_working
     }
 
     /// The one Enter retry was not allowed to run (the screen or the person did not permit it):
@@ -546,6 +564,11 @@ impl<T: Task> Machine<T> {
                 }
             }
             PushOutcome::NotReady => self.next_push_at = now + self.timers.push_retry,
+            PushOutcome::Inactive => {
+                self.queue.pop_front();
+                self.next_push_at = now;
+                actions.extend(self.drive(now));
+            }
             PushOutcome::SessionGone => actions.extend(self.on_session_gone(now)),
             PushOutcome::Failed => {
                 self.consecutive_push_failures += 1;
@@ -812,5 +835,48 @@ impl<T: Task> Machine<T> {
     /// The task being supervised.
     pub fn current_task(&self) -> Option<&T> {
         self.current.as_ref().map(|c| &c.task)
+    }
+}
+
+/// Decides, from screen samples, that a turn the hooks never closed is over: claude does not run
+/// its `Stop` hook when a person interrupts a turn, so without this the session would stay busy for
+/// good. A turn is called over only when the last hook event is older than `quiet_for`, and
+/// `needed` consecutive samples showed no busy marker and an empty, visible input line.
+#[derive(Debug)]
+pub struct TurnWatch {
+    needed: u32,
+    quiet_for: std::time::Duration,
+    calm_samples: u32,
+    last_event: Instant,
+}
+
+impl TurnWatch {
+    pub const fn new(needed: u32, quiet_for: std::time::Duration, now: Instant) -> Self {
+        Self {
+            needed,
+            quiet_for,
+            calm_samples: 0,
+            last_event: now,
+        }
+    }
+
+    /// A hook event arrived: the turn state is known, start counting afresh.
+    pub const fn event(&mut self, now: Instant) {
+        self.last_event = now;
+        self.calm_samples = 0;
+    }
+
+    /// One screen sample taken while a turn is open. `true` when the turn is over.
+    pub fn sample(&mut self, now: Instant, busy: bool, input_empty: bool) -> bool {
+        if busy || !input_empty {
+            self.calm_samples = 0;
+            return false;
+        }
+        self.calm_samples += 1;
+        if self.calm_samples >= self.needed && now.duration_since(self.last_event) >= self.quiet_for {
+            self.calm_samples = 0;
+            return true;
+        }
+        false
     }
 }

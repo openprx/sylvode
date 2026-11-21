@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use tokio::sync::mpsc;
 
-use super::hooks::{CLIENT_BUDGET, HookEvent, MAX_LINE, Reject, ct_eq, listen, parse_line, send};
+use super::hooks::{
+    CLIENT_BUDGET, HookEvent, MAX_LINE, Reject, SeqGate, ancestry, ct_eq, listen, listen_with_check, parse_line, send,
+};
 
 fn line(value: &serde_json::Value) -> Vec<u8> {
     value.to_string().into_bytes()
@@ -202,4 +204,89 @@ async fn a_peer_of_another_user_is_not_heard() {
         .expect("in time")
         .expect("message");
     assert_eq!(message.nonce, NONCE);
+}
+
+/// Events are applied in the order the senders stamped them: a late one is ignored.
+#[test]
+fn an_event_older_than_the_last_applied_one_is_ignored() {
+    let mut gate = SeqGate::default();
+    assert!(gate.accept(10));
+    assert!(gate.accept(20));
+    assert!(!gate.accept(15), "overtaken");
+    assert!(!gate.accept(20), "repeated");
+    assert!(gate.accept(21));
+    // The stamp is the sender's clock in nanoseconds and travels in the message.
+    let message = parse_line(&line(&good())).expect("valid");
+    assert_eq!(message.seq, 1_700_000_000);
+}
+
+/// A socket that is removed or replaced would silence every hook; the listener notices and binds
+/// again.
+#[tokio::test]
+async fn a_removed_or_replaced_socket_is_bound_again() {
+    let dir = Dir::new();
+    let socket = dir.0.join("hook.sock");
+    let (tx, mut rx) = mpsc::channel(8);
+    let _server = listen_with_check(&socket, tx, Duration::from_millis(100)).expect("listen");
+    for how in ["removed", "replaced"] {
+        if how == "removed" {
+            std::fs::remove_file(&socket).expect("remove");
+        } else {
+            std::fs::remove_file(&socket).ok();
+            std::fs::write(&socket, "not a socket").expect("replace");
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let path = socket.clone();
+        tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
+            .await
+            .expect("sent");
+        let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("{how}: no message after the socket was {how}"))
+            .expect("message");
+        assert_eq!(message.event, HookEvent::Stop, "{how}");
+    }
+}
+
+/// A hook runs below its session's pane process: the sender's parent chain, read at the socket,
+/// must reach the pane PID. A process and its parents are listed innermost first.
+#[test]
+fn the_ancestry_of_a_process_lists_its_parents() {
+    let me = std::process::id();
+    let mut child = std::process::Command::new("/bin/sleep")
+        .arg("5")
+        .spawn()
+        .expect("spawn");
+    let chain = ancestry(child.id());
+    assert_eq!(chain.first(), Some(&child.id()));
+    assert!(chain.contains(&me), "{chain:?}");
+    // A process that is not below this one does not list it.
+    assert!(!ancestry(1).contains(&me));
+    assert_eq!(
+        ancestry(4_000_000),
+        vec![4_000_000],
+        "an unknown process has no parents"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// The listener reads the sender's chain while it is connected: a message from a process below
+/// this one carries a chain that contains this process.
+#[tokio::test]
+async fn the_listener_names_the_senders_ancestry() {
+    let dir = Dir::new();
+    let socket = dir.0.join("hook.sock");
+    let (tx, mut rx) = mpsc::channel(4);
+    let _server = listen(&socket, tx).expect("listen");
+    let path = socket.clone();
+    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
+        .await
+        .expect("sent");
+    let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("in time")
+        .expect("message");
+    let chain = message.peer_chain.expect("the platform names the peer");
+    assert!(chain.contains(&std::process::id()), "{chain:?}");
 }

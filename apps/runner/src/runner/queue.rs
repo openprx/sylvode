@@ -49,7 +49,8 @@ impl<T> TaskQueue<T> {
     pub fn enqueue(&mut self, task_id: &str, attempt: i64, item: T) -> Enqueued {
         if let Some(index) = self.entries.iter().position(|e| e.task_id == task_id) {
             if let Some(entry) = self.entries.get_mut(index) {
-                if entry.attempt == attempt {
+                // The same attempt, or an older one arriving late: the queued one stays.
+                if entry.attempt >= attempt {
                     return Enqueued::Duplicate;
                 }
                 *entry = Entry {

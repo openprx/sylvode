@@ -125,6 +125,10 @@ const ENV_ALLOWED_SYSTEMD: [&str; 2] = ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADD
 
 const ENV_REMOVED: [&str; 3] = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "TMUX"];
 
+/// The user option set on a tmux server the runner started, so a server somebody else started on
+/// the runner's socket (with that person's environment) is recognised and refused.
+pub const OWNER_OPTION: &str = "@sylvode_runner";
+
 /// The name of the pane window the runner owns.
 pub const WINDOW_NAME: &str = "cli";
 
@@ -143,6 +147,9 @@ pub enum Refusal {
     BracketedPasteOff,
     /// This tmux cannot report bracketed paste (before 3.7) and no confirmation was given.
     BracketedPasteUnconfirmed,
+    /// A tmux server runs on the runner's socket that the runner did not start (it carries no
+    /// owner mark), so its environment and options are not the runner's.
+    ForeignServer,
 }
 
 /// Why a tmux call did not work.
@@ -611,6 +618,15 @@ impl Tmux {
         Ok(call)
     }
 
+    /// The owner mark the runner sets on a server it starts.
+    fn owner_mark_call(&self) -> Call {
+        self.call(&["set-option", "-g", OWNER_OPTION, "1"])
+    }
+
+    fn show_owner_call(&self) -> Call {
+        self.call(&["show-option", "-gqv", OWNER_OPTION])
+    }
+
     fn remain_on_exit_call(&self, pane: &PaneId) -> Call {
         self.call(&["set-option", "-w", "-t", pane.as_str(), "remain-on-exit", "on"])
     }
@@ -802,6 +818,25 @@ impl Tmux {
         Ok(self.run(&self.list_sessions_call())?.code == Some(0))
     }
 
+    /// Refuses to use a tmux server on the runner's own socket that the runner did not start: a
+    /// running server without the owner mark was started by something else, with its environment.
+    /// The default server (empty socket name) is the user's own and is not checked.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::ForeignServer`], or a tmux failure.
+    pub fn verify_server(&self) -> Result<(), TmuxError> {
+        if self.socket.as_str().is_empty() || !self.server_running()? {
+            return Ok(());
+        }
+        let output = self.run_ok(&self.show_owner_call())?;
+        if output.stdout.trim() == "1" {
+            Ok(())
+        } else {
+            Err(TmuxError::Refused(Refusal::ForeignServer))
+        }
+    }
+
     /// Creates session `key` with one window running `argv` and returns its pane (the caller
     /// records it). Then sets `remain-on-exit` so a CLI that exits leaves a dead pane. When the
     /// server is not yet running and the process is a systemd service, the server is started in
@@ -819,7 +854,8 @@ impl Tmux {
         argv: &[String],
     ) -> Result<Pane, TmuxError> {
         let call = self.new_session_call(key, dir, width, height, argv)?;
-        let scope = self.under_systemd && !self.server_running()?;
+        let started_server = !self.server_running()?;
+        let scope = self.under_systemd && started_server;
         let output = self.run_command(self.command(scope), &call)?;
         if output.code != Some(0) {
             return Err(failed(&output));
@@ -829,6 +865,9 @@ impl Tmux {
             key: key.clone(),
             id: PaneId::new(id)?,
         };
+        if started_server {
+            self.run_ok(&self.owner_mark_call())?;
+        }
         self.run_ok(&self.remain_on_exit_call(&pane.id))?;
         Ok(pane)
     }

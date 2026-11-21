@@ -4,7 +4,9 @@ use std::time::{Duration, Instant};
 
 use super::detect::Dialog;
 use super::hooks::HookEvent;
-use super::machine::{Action, EnsureOutcome, Machine, PushOutcome, Reminder, State, Task, Timers, ViewFacts};
+use super::machine::{
+    Action, EnsureOutcome, Machine, PushOutcome, Reminder, State, Task, Timers, TurnWatch, ViewFacts,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct T(&'static str, i64);
@@ -789,4 +791,54 @@ fn idle_with_queued_work_always_pushes_and_dead_always_ensures() {
     assert!(kinds(&d.enqueue(T("a", 1))).contains(&"ensure"));
     let mut n = H::new();
     assert!(kinds(&n.enqueue(T("a", 1))).contains(&"ensure"));
+}
+
+/// A re-delivery of the task being supervised, at its attempt or an older one, is neither queued
+/// nor pushed again; a queued task is not replaced by an older attempt.
+#[test]
+fn a_redelivery_of_the_current_task_changes_nothing() {
+    let mut h = H::busy(T("a", 2));
+    assert!(h.enqueue(T("a", 2)).is_empty(), "same attempt");
+    assert!(h.enqueue(T("a", 1)).is_empty(), "older attempt");
+    assert!(h.m.queue.is_empty());
+    assert_eq!(h.m.current_task(), Some(&T("a", 2)));
+    // Even after it ends, nothing of it was left queued to be typed again.
+    h.view(DONE);
+    h.hook(HookEvent::Stop);
+    assert!(h.m.queue.is_empty());
+}
+
+/// A task that Sylvode no longer shows active is dropped before it is typed; the next one goes.
+#[test]
+fn an_inactive_task_is_dropped_and_never_typed() {
+    let mut h = H::idle();
+    h.enqueue(T("a", 1));
+    h.enqueue(T("b", 1));
+    // The worker found `a` inactive just before the push.
+    let actions = h.push(PushOutcome::Inactive);
+    assert_eq!(h.m.queue.len(), 1);
+    assert!(actions.contains(&Action::TryPush(T("b", 1))), "{actions:?}");
+    assert!(h.m.current_task().is_none());
+}
+
+/// A turn the hooks never closed (an interrupt runs no `Stop`) is closed by calm screen samples,
+/// and only when the last event is old enough and the samples were calm.
+#[test]
+fn a_turn_without_a_stop_is_closed_by_calm_samples_only() {
+    let t0 = Instant::now();
+    let mut watch = TurnWatch::new(3, Duration::from_mins(1), t0);
+    let at = |s: u64| t0 + Duration::from_secs(s);
+    // Calm but too early: the last event is recent.
+    for n in 1..=5 {
+        assert!(!watch.sample(at(n), false, true));
+    }
+    // Busy or a draft in the box resets the count; three calm samples after 60 s close the turn.
+    assert!(!watch.sample(at(70), true, true));
+    assert!(!watch.sample(at(75), false, false));
+    assert!(!watch.sample(at(80), false, true));
+    assert!(!watch.sample(at(85), false, true));
+    assert!(watch.sample(at(90), false, true), "three calm samples after 60 s");
+    // An event starts over.
+    watch.event(at(100));
+    assert!(!watch.sample(at(105), false, true));
 }

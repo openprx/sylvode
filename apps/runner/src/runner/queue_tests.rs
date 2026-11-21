@@ -46,3 +46,11 @@ fn entries_can_be_put_back_removed_and_drained() {
     assert!(q.is_empty());
     assert_eq!(q.iter().count(), 0);
 }
+
+#[test]
+fn an_older_attempt_never_replaces_a_newer_one() {
+    let mut q = TaskQueue::default();
+    q.enqueue("a", 3, "A3");
+    assert_eq!(q.enqueue("a", 2, "A2"), Enqueued::Duplicate);
+    assert_eq!(q.front().map(|e| (e.attempt, e.item)), Some((3, "A3")));
+}

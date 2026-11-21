@@ -217,3 +217,33 @@ fn the_start_up_posture_has_one_line_per_cli_and_warns_about_opencode() {
                 .contains("opencode permissions are not controlled by sylvode-runner")
     );
 }
+
+/// The posture line names every extra allowed tool, and warns for any that is not a read rule
+/// confined to the project directory.
+#[test]
+fn the_posture_line_names_the_extra_tools_and_warns_when_they_widen() {
+    let plain = super::posture(&config(""));
+    assert!(plain[0].text.contains("extra allowed tools none") && !plain[0].warn);
+    let confined = super::posture(&config(
+        "[runner.cli.claude]\nallowed_tools = [\"Read({dir}/docs/**)\"]\n",
+    ));
+    assert!(
+        confined[0].text.contains("[Read({dir}/docs/**)]") && !confined[0].warn,
+        "{:?}",
+        confined[0]
+    );
+    for tool in [
+        "Bash(git status)",
+        "Edit({dir}/src/**)",
+        "WebFetch",
+        "mcp__other__thing",
+        "Read(/etc/**)",
+    ] {
+        let wide = super::posture(&config(&format!("[runner.cli.claude]\nallowed_tools = [\"{tool}\"]\n")));
+        assert!(
+            wide[0].warn && wide[0].text.contains(tool) && wide[0].text.contains("WIDEN"),
+            "{tool}: {:?}",
+            wide[0]
+        );
+    }
+}

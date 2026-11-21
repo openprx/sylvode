@@ -83,6 +83,59 @@ pub struct HookMessage {
     /// The per-launch secret of the session; the receiver compares it, in constant time, with the
     /// one it wrote into that launch's hook command.
     pub nonce: String,
+    /// When the hook process sent it, in nanoseconds since the epoch: events of one session are
+    /// applied in this order, and one older than the last applied is ignored.
+    pub seq: u64,
+    /// The sender and its parents, innermost first, read while the sender was still connected
+    /// (where the platform names the peer): the session's pane process must be among them.
+    pub peer_chain: Option<Vec<u32>>,
+}
+
+/// The process `pid` and its parents, innermost first (at most 64), read with `ps`. Ends at the
+/// first process that cannot be read.
+#[must_use]
+pub fn ancestry(pid: u32) -> Vec<u32> {
+    let mut chain = vec![pid];
+    let mut current = pid;
+    for _ in 0..64 {
+        if current <= 1 {
+            break;
+        }
+        let out = std::process::Command::new("/bin/ps")
+            .args(["-o", "ppid=", "-p", &current.to_string()])
+            .output();
+        let Some(parent) = out
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|text| text.trim().parse::<u32>().ok())
+        else {
+            break;
+        };
+        if parent == current || chain.contains(&parent) {
+            break;
+        }
+        chain.push(parent);
+        current = parent;
+    }
+    chain
+}
+
+/// Applies events of one session in the order their senders stamped them: an event not newer than
+/// the last applied one is stale (it was overtaken on its way in) and is ignored.
+#[derive(Debug, Default)]
+pub struct SeqGate {
+    last: u64,
+}
+
+impl SeqGate {
+    /// Whether an event stamped `seq` is to be applied; applying it moves the gate forward.
+    pub const fn accept(&mut self, seq: u64) -> bool {
+        if seq <= self.last {
+            return false;
+        }
+        self.last = seq;
+        true
+    }
 }
 
 /// Compares two secrets without stopping at the first difference.
@@ -115,7 +168,7 @@ pub fn parse_line(line: &[u8]) -> Result<HookMessage, Reject> {
     let object = value.as_object().ok_or(Reject::Shape)?;
     if object.len() != 6
         || object.get("v").and_then(Value::as_u64) != Some(1)
-        || !object.get("ts").is_some_and(Value::is_number)
+        || object.get("ts").and_then(Value::as_u64).is_none()
     {
         return Err(Reject::Shape);
     }
@@ -134,6 +187,8 @@ pub fn parse_line(line: &[u8]) -> Result<HookMessage, Reject> {
         session: session.to_string(),
         event,
         nonce: nonce.to_string(),
+        seq: object.get("ts").and_then(Value::as_u64).unwrap_or(0),
+        peer_chain: None,
     })
 }
 
@@ -147,15 +202,62 @@ pub fn parse_line(line: &[u8]) -> Result<HookMessage, Reject> {
 ///
 /// A message when the socket cannot be bound.
 pub fn listen(path: &Path, tx: mpsc::Sender<HookMessage>) -> Result<tokio::task::JoinHandle<()>, String> {
+    listen_with_check(path, tx, Duration::from_secs(5))
+}
+
+/// The identity of the socket file: device and inode.
+fn identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(path)
+        .ok()
+        .map(|meta| (meta.dev(), meta.ino()))
+}
+
+fn bind(path: &Path) -> Result<UnixListener, String> {
     if std::fs::symlink_metadata(path).is_ok() {
         std::fs::remove_file(path).map_err(|e| format!("could not remove the old hook socket: {}", e.kind()))?;
     }
     let listener = UnixListener::bind(path).map_err(|e| format!("could not bind the hook socket: {}", e.kind()))?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
         .map_err(|e| format!("could not restrict the hook socket: {}", e.kind()))?;
+    Ok(listener)
+}
+
+/// [`listen`], looking every `every` whether the socket file is still the one that was bound: when
+/// it was removed or replaced, every hook would be lost silently, so the listener binds again and
+/// logs it at `error`.
+///
+/// # Errors
+///
+/// A message when the socket cannot be bound.
+pub fn listen_with_check(
+    path: &Path,
+    tx: mpsc::Sender<HookMessage>,
+    every: Duration,
+) -> Result<tokio::task::JoinHandle<()>, String> {
+    let mut listener = bind(path)?;
+    let mut bound = identity(path);
+    let path = path.to_path_buf();
     Ok(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(every);
         loop {
-            let Ok((stream, _)) = listener.accept().await else {
+            let accepted = tokio::select! {
+                accepted = listener.accept() => accepted,
+                _ = ticker.tick() => {
+                    if identity(&path) != bound {
+                        tracing::error!("the hook socket was removed or replaced; binding it again");
+                        match bind(&path) {
+                            Ok(fresh) => {
+                                listener = fresh;
+                                bound = identity(&path);
+                            }
+                            Err(e) => tracing::error!("{e}"),
+                        }
+                    }
+                    continue;
+                }
+            };
+            let Ok((stream, _)) = accepted else {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             };
@@ -169,9 +271,17 @@ pub fn listen(path: &Path, tx: mpsc::Sender<HookMessage>) -> Result<tokio::task:
                 // Only the runner's own user may speak here, whatever the socket's mode says. The
                 // peer is asked after its line is read: the client waits for the acknowledgement
                 // below, so it is still connected (macOS cannot name a peer that has gone).
-                let same_user = stream
-                    .peer_cred()
-                    .is_ok_and(|peer| peer.uid() == nix::unistd::Uid::effective().as_raw());
+                let peer = stream.peer_cred().ok();
+                let same_user = peer
+                    .as_ref()
+                    .is_some_and(|peer| peer.uid() == nix::unistd::Uid::effective().as_raw());
+                let peer_pid = peer.and_then(|peer| peer.pid()).and_then(|pid| u32::try_from(pid).ok());
+                // Who the sender is must be read while it is still connected, so the chain is made
+                // before the acknowledgement lets it go.
+                let peer_chain = match peer_pid {
+                    Some(pid) => tokio::task::spawn_blocking(move || ancestry(pid)).await.ok(),
+                    None => None,
+                };
                 let _ = stream.write_all(b"k").await;
                 if !same_user {
                     tracing::debug!("hook line dropped: the peer is not this user");
@@ -179,7 +289,8 @@ pub fn listen(path: &Path, tx: mpsc::Sender<HookMessage>) -> Result<tokio::task:
                 }
                 match read {
                     Ok(Some(line)) => match parse_line(&line) {
-                        Ok(message) => {
+                        Ok(mut message) => {
+                            message.peer_chain = peer_chain;
                             let _ = tx.send(message).await;
                         }
                         Err(reject) => tracing::debug!(length = line.len(), ?reject, "hook line dropped"),
@@ -208,7 +319,9 @@ async fn read_line(stream: &mut tokio::net::UnixStream) -> Option<Vec<u8>> {
 pub fn send(socket: &Path, cli: &str, session: &str, event: &str, nonce: &str) {
     let line = serde_json::json!({
         "v": 1, "cli": cli, "session": session, "event": event, "nonce": nonce,
-        "ts": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
+        "ts": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)),
     })
     .to_string();
     let socket: PathBuf = socket.to_path_buf();

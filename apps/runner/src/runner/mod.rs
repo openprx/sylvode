@@ -232,7 +232,17 @@ pub fn posture(config: &Config) -> Vec<PostureLine> {
     let runner = &config.runner;
     let mut lines = Vec::new();
     let claude = &runner.cli.claude;
-    let extras = claude.allowed_tools.len();
+    // Every extra allowed tool is named: a task can use all of them. Anything but a read rule
+    // confined to the project directory widens what a task can do, and is a warning.
+    let extras = if claude.allowed_tools.is_empty() {
+        "none".to_string()
+    } else {
+        format!("[{}]", claude.allowed_tools.join(", "))
+    };
+    let widened = claude.allowed_tools.iter().any(|tool| {
+        let confined_read = ["Read(", "Glob(", "Grep("].iter().any(|p| tool.starts_with(p)) && tool.contains("{dir}");
+        !confined_read
+    });
     let write = if claude.allow_write_call {
         " + sylvode_write"
     } else {
@@ -241,15 +251,21 @@ pub fn posture(config: &Config) -> Vec<PostureLine> {
     let settings = headless::settings_for(runner, "claude");
     let bypass = ExecutorPermissions::from_config(&settings).is_ok_and(|p| p.bypasses_permissions());
     lines.push(PostureLine {
-        warn: bypass,
+        warn: bypass || widened,
         text: format!(
             "claude: permission_mode = {}, allowed tools = the {} search-mode Sylvode tools{write} + Read/Glob/Grep in the \
-             project directory + {extras} configured, disallowed = {}, strict MCP config from the runner's own file, project \
-             settings not loaded{}",
+             project directory + extra allowed tools {extras}, extra disallowed tools {:?}, strict MCP config from the \
+             runner's own file, project settings not loaded, the operator's ~/.claude not loaded (CLAUDE_CONFIG_DIR \
+             is the runner's own){}{}",
             claude.permission_mode,
             launch::SEARCH_MODE_TOOLS.len(),
-            claude.disallowed_tools.len(),
-            if bypass { "; PERMISSION CHECKS ARE OFF" } else { "" }
+            claude.disallowed_tools,
+            if bypass { "; PERMISSION CHECKS ARE OFF" } else { "" },
+            if widened {
+                "; THE EXTRA TOOLS WIDEN WHAT A TASK CAN DO"
+            } else {
+                ""
+            }
         ),
     });
     let codex = &runner.cli.codex;

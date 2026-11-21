@@ -412,7 +412,9 @@ fn start_sessions(
         return None;
     }
     let state = runner.state.as_ref().ok()?;
-    let exe = std::env::current_exe().ok()?;
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|raw| crate::runner::session::stable_exe(&raw))?;
     let tmux_program = Checker::new(InstallKind::RunnerTmux).locate(&config.runner.tmux.binary);
     let manager = match crate::runner::session::SessionManager::new(
         Arc::new(config.clone()),

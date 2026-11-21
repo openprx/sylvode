@@ -1,4 +1,4 @@
-use super::session::{EnsureDecision, EnsureFacts, decide_ensure, view_facts};
+use super::session::{EnsureDecision, EnsureFacts, decide_ensure, stable_exe, view_facts};
 
 fn names() -> Vec<String> {
     vec!["claude".to_string(), "claude.exe".to_string()]
@@ -224,4 +224,21 @@ fn a_session_the_runner_did_not_create_is_not_adopted_on_its_own_socket() {
         }),
         EnsureDecision::Running
     );
+}
+
+/// After an in-place upgrade on Linux `current_exe` says `<path> (deleted)`; hooks must name the
+/// path itself, which holds the new binary, and a path that does not exist is not used.
+#[test]
+fn the_executable_path_survives_an_in_place_upgrade() {
+    let dir = std::env::temp_dir().join(format!("sylvode-exe-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let exe = dir.join("sylvode-runner");
+    std::fs::write(&exe, "x").expect("write");
+    assert_eq!(stable_exe(&exe), Some(exe.clone()));
+    let deleted = std::path::PathBuf::from(format!("{} (deleted)", exe.display()));
+    assert_eq!(stable_exe(&deleted), Some(exe.clone()));
+    std::fs::remove_file(&exe).expect("remove");
+    assert_eq!(stable_exe(&deleted), None);
+    assert_eq!(stable_exe(&exe), None);
+    let _ = std::fs::remove_dir_all(&dir);
 }

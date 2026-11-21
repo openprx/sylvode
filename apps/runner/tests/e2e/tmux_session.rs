@@ -261,7 +261,19 @@ async fn a_task_is_typed_into_a_session_the_runner_created_and_the_next_waits_it
 
     // The first task is typed in as one bracketed paste: the whole message, in order.
     let typed = fx.wait_typed(1, 40).await;
-    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert_eq!(
+        typed.len(),
+        1,
+        "{typed:?}\nPANE:\n{}\nLOG:\n{}",
+        String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL:"]).stdout),
+        server
+            .stdout()
+            .iter()
+            .filter(|l| !l.contains("posture"))
+            .map(|l| l.chars().skip(27).take(200).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
     assert!(
         typed[0].contains(&format!("[Sylvode task] id={T1} attempt=1/3")),
         "{typed:?}"
@@ -386,6 +398,14 @@ async fn a_session_name_is_matched_exactly_and_another_projects_session_is_left_
     assert!(
         fx.tmux
             .raw(&["new-session", "-d", "-s", "SVWLX", "-c", "/tmp", "--", "cat"])
+            .status
+            .success()
+    );
+    // The server is marked as the runner's own, as one the runner started earlier would be: this
+    // test is about the exact session name, not about a foreign server (see the next test).
+    assert!(
+        fx.tmux
+            .raw(&["set-option", "-g", "@sylvode_runner", "1"])
             .status
             .success()
     );
@@ -609,4 +629,90 @@ async fn the_operator_commands_list_refuse_and_release() {
     );
     let again = fx.operator(&["release", "SVWL"]);
     assert!(!again.status.success() && String::from_utf8_lossy(&again.stderr).contains("not reserved"));
+}
+
+/// A tmux server on the runner's socket that the runner did not start (no owner mark) is refused:
+/// its environment and options are somebody else's. The task is failed, nothing is typed, and the
+/// foreign session is left alone.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_server_the_runner_did_not_start_is_refused() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    // Started by "somebody else", with a sentinel in its global environment.
+    assert!(
+        fx.tmux
+            .raw(&["new-session", "-d", "-s", "OTHER", "-c", "/tmp", "--", "cat"])
+            .status
+            .success()
+    );
+    assert!(
+        fx.tmux
+            .raw(&["set-environment", "-g", "SV_FOREIGN_SENTINEL", "leak"])
+            .status
+            .success()
+    );
+    fx.set_view(T1, true, false);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
+    assert_eq!(fails.len(), 1, "{fails:?}");
+    assert_eq!(fails[0].body["retryable"], false);
+    assert!(
+        fails[0].body["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("did not start"),
+        "{fails:?}"
+    );
+    assert!(fx.typed().is_empty());
+    let listed = String::from_utf8_lossy(&fx.tmux.raw(&["list-sessions", "-F", "#{session_name}"]).stdout).to_string();
+    assert_eq!(listed.trim(), "OTHER", "{listed}");
+    drop(server);
+}
+
+/// Nothing of `env_passthrough` reaches a tmux pane: the pane gets the tmux server's environment,
+/// which the runner started with its allow-list only.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn env_passthrough_and_other_variables_do_not_reach_a_pane() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.set_view(T1, true, false);
+    let config = fx.config().replace(
+        "[runner.cli.claude]\n",
+        "[runner.cli.claude]\nenv_passthrough = [\"SV_PASS_ME\"]\n",
+    );
+    let server = Server::start(
+        RUNNER,
+        &config,
+        &[
+            ("TMUX_TMPDIR", &fx.tmux.dir.to_string_lossy()),
+            ("SV_PASS_ME", "kept-for-headless"),
+            ("SV_OTHER_SECRET", "leak"),
+            ("GITHUB_TOKEN", "leak"),
+        ],
+    )
+    .expect("starts");
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    let env = std::fs::read_to_string(format!("{}.env", fx.log.display())).expect("env dump");
+    for name in ["SV_PASS_ME", "SV_OTHER_SECRET", "GITHUB_TOKEN"] {
+        assert!(!env.contains(name), "{name} reached the pane");
+    }
+    assert!(!env.contains("leak"), "{env}");
+    assert!(env.contains("CLAUDE_CONFIG_DIR="), "the runner's own variable is set");
+    drop(server);
 }
