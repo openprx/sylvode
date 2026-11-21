@@ -1700,7 +1700,10 @@ async fn token_use_is_stamped_by_the_database_clock() {
         .find(|line| line.contains("UPDATE workspace_bots SET last_used_at"))
         .expect("the last-use update");
     assert!(update.contains("last_used_at = now()"), "{update}");
-    assert!(update.contains("WHERE id = $1"), "the only parameter is the bot id: {update}");
+    assert!(
+        update.contains("WHERE id = $1"),
+        "the only parameter is the bot id: {update}"
+    );
 
     let scratch = scratch_or_skip!("bc_clock");
     let db = &scratch.db;

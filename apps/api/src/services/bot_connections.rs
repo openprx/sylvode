@@ -709,6 +709,20 @@ async fn shared_is_on(tx: &impl ConnectionTrait, runner: &RunnerRow) -> Result<b
     Ok(token_active(tx, runner.bot_id).await? && webhook_active(tx, runner.webhook_id).await?)
 }
 
+/// Re-evaluates what a bot may reach after a commit that changed its credentials.
+///
+/// The permission cache is dropped and the workspace's live sessions are re-evaluated against
+/// `epoch`. `None` means the workspace has no Flow settings, so nothing is cached or open.
+pub async fn settle_epoch(state: &AppState, workspace_id: Uuid, epoch: Option<i64>) {
+    let Some(epoch) = epoch else {
+        return;
+    };
+    crate::flow::collab::permission_cache::invalidate_workspace_after_commit(state, workspace_id);
+    let revalidated =
+        crate::flow::collab::revocation::revalidate_workspace_after_commit(state, workspace_id, epoch).await;
+    tracing::debug!(%workspace_id, ?revalidated, "workspace sessions re-evaluated after a bot's credentials changed");
+}
+
 /// Switches the shared parts of a bot: the token and the managed webhook.
 async fn switch_shared(tx: &impl ConnectionTrait, runner: &RunnerRow, actor: Uuid, on: bool) -> Result<(), ApiError> {
     webhooks::update(
@@ -1257,8 +1271,13 @@ pub async fn set_enabled(
     let others = other_enabled(&tx, locked.runner.bot_id, project.id).await?;
     let shared_on = shared_is_on(&tx, &locked.runner).await?;
     let switch = if enabled { !shared_on } else { others == 0 && shared_on };
+    let mut epoch = None;
     if switch {
         switch_shared(&tx, &locked.runner, actor, enabled).await?;
+        if !enabled {
+            // The token stops working: cached permissions and open sessions of the bot go too.
+            epoch = crate::flow::collab::authz::advance_epoch_if_present(&tx, locked.runner.workspace_id).await?;
+        }
     }
     bump(&tx, &locked, actor, switch).await?;
     emit(
@@ -1278,6 +1297,7 @@ pub async fn set_enabled(
     .await?;
     let view = load_view(&tx, project.id).await?.ok_or(ApiError::Internal)?;
     tx.commit().await?;
+    settle_epoch(state, locked.runner.workspace_id, epoch).await;
     Ok(Outcome::Done(view))
 }
 
@@ -1369,7 +1389,10 @@ pub async fn rotate(
         origin,
     });
     let connection = load_view(&tx, project.id).await?.ok_or(ApiError::Internal)?;
+    // The old token stops working with this commit: its cached permissions and sessions go too.
+    let epoch = crate::flow::collab::authz::advance_epoch_if_present(&tx, locked.runner.workspace_id).await?;
     tx.commit().await?;
+    settle_epoch(state, locked.runner.workspace_id, epoch).await;
     Ok(Outcome::Done(Rotated {
         connection,
         config_block,
@@ -1486,13 +1509,7 @@ pub async fn remove(
     }
     let removal = remove_locked(&tx, project.id, &locked, Some(actor)).await?;
     tx.commit().await?;
-    if let Some(epoch) = removal.epoch {
-        crate::flow::collab::permission_cache::invalidate_workspace_after_commit(state, removal.workspace_id);
-        let revalidated =
-            crate::flow::collab::revocation::revalidate_workspace_after_commit(state, removal.workspace_id, epoch)
-                .await;
-        tracing::debug!(workspace_id = %removal.workspace_id, ?revalidated, "workspace sessions re-evaluated after a bot left");
-    }
+    settle_epoch(state, removal.workspace_id, removal.epoch).await;
     Ok(Outcome::Done(Removed {
         removed: true,
         bot_still_connected_to: removal.remaining,
@@ -1503,13 +1520,16 @@ pub async fn remove(
 ///
 /// A deleted project never leaves an orphaned managed webhook or a live token. A project without a
 /// connection is left alone. The caller owns the transaction.
-pub async fn release_for_project(tx: &impl ConnectionTrait, project_id: Uuid) -> Result<(), ApiError> {
+///
+/// Returns the workspace and the authorization epoch when the bot's seat left (its last project),
+/// for the caller to pass to [`settle_epoch`] after its commit.
+pub async fn release_for_project(tx: &impl ConnectionTrait, project_id: Uuid) -> Result<Option<(Uuid, i64)>, ApiError> {
     if load_link(tx, project_id).await?.is_none() {
-        return Ok(());
+        return Ok(None);
     }
     let locked = lock(tx, project_id).await?;
-    remove_locked(tx, project_id, &locked, None).await?;
-    Ok(())
+    let removal = remove_locked(tx, project_id, &locked, None).await?;
+    Ok(removal.epoch.map(|epoch| (removal.workspace_id, epoch)))
 }
 
 #[cfg(test)]

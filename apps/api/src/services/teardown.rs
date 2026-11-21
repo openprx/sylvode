@@ -105,10 +105,16 @@ pub async fn delete_workspace_content(tx: &DatabaseTransaction, workspace_id: Uu
 }
 
 /// Deletes everything that blocks the removal of `project_id`; the caller then deletes the project.
-pub async fn delete_project_content(tx: &DatabaseTransaction, project_id: Uuid) -> Result<(), ApiError> {
+///
+/// Returns the workspace and authorization epoch when a connected bot's seat left with the project,
+/// for the caller to settle (`bot_connections::settle_epoch`) once its transaction commits.
+pub async fn delete_project_content(
+    tx: &DatabaseTransaction,
+    project_id: Uuid,
+) -> Result<Option<(Uuid, i64)>, ApiError> {
     // A connected bot's token, webhook and seat go with its last project, so a deleted project never
     // leaves a live credential or an orphaned managed webhook behind.
-    crate::services::bot_connections::release_for_project(tx, project_id).await?;
+    let released = crate::services::bot_connections::release_for_project(tx, project_id).await?;
     let pr = || vec![project_id.into()];
     let in_project = "(SELECT id FROM flow_objects WHERE project_id = $1)";
     run(
@@ -164,7 +170,8 @@ pub async fn delete_project_content(tx: &DatabaseTransaction, project_id: Uuid) 
     )
     .await?;
     run(tx, "DELETE FROM form_plugin_bindings WHERE project_id = $1", pr()).await?;
-    run(tx, "DELETE FROM activities WHERE project_id = $1", pr()).await
+    run(tx, "DELETE FROM activities WHERE project_id = $1", pr()).await?;
+    Ok(released)
 }
 
 /// Delivery bookkeeping that references `business_events` without a cascade. `events` is a

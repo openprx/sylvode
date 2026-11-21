@@ -25,6 +25,8 @@ pub mod workflow_service;
 pub(crate) mod bot_connection_tests;
 
 #[cfg(test)]
+mod connection_epoch_tests;
+#[cfg(test)]
 mod connection_gate_tests;
 #[cfg(test)]
 mod connection_teardown_tests;
