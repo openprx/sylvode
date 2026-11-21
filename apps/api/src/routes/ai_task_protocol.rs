@@ -72,16 +72,17 @@ pub struct ProgressRequest {
 }
 
 /// Refuses everything but the task's own bot: a person, a system administrator, another bot, and a
-/// request without a bot context (a connected application never has one).
+/// request without a bot context (a connected application never has one). The refusal is the 404
+/// of a task that does not exist, so a foreign task id cannot be told from an unknown one.
 pub fn ensure_task_bot(task: &AiTaskRow, bot: Option<&BotAuthContext>, claims: &JwtClaims) -> Result<(), ApiError> {
     let own =
         bot.is_some_and(|bot| bot.bot_id == task.ai_participant_id) && claims.sub == task.ai_participant_id.to_string();
     if own {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
-            "task can only be operated by its own bot".to_string(),
-        ))
+        // The same answer as for a task that does not exist: whether a task id exists is not
+        // something a bot that does not own it may learn.
+        Err(ApiError::NotFound("ai task not found".to_string()))
     }
 }
 
@@ -498,8 +499,9 @@ async fn finish_response(
 #[allow(clippy::expect_used, clippy::panic, clippy::too_many_lines, clippy::indexing_slicing)]
 mod tests {
     use super::{
-        AckRequest, ProgressRequest, TaskAttemptQuery, ack_task, ensure_task_bot, get_protocol, get_task,
-        list_active_tasks, report_task_progress,
+        AckRequest, CompleteRequest, FailRequest, ProgressRequest, TaskAttemptQuery, ack_task,
+        complete_task_with_reply, ensure_task_bot, fail_task_with_reply, get_protocol, get_task, list_active_tasks,
+        report_task_progress,
     };
     use crate::error::ApiError;
     use crate::middleware::bot_auth::BotAuthContext;
@@ -537,8 +539,9 @@ mod tests {
         }
     }
 
-    fn forbidden(answer: &Result<Value, ApiError>) -> bool {
-        matches!(answer, Err(ApiError::Forbidden(message)) if message == "task can only be operated by its own bot")
+    /// The one refusal for a task the caller does not own: the same as for a task that does not exist.
+    fn not_found(answer: &Result<Value, ApiError>) -> bool {
+        matches!(answer, Err(ApiError::NotFound(message)) if message == "ai task not found")
     }
 
     /// Who calls: the task's bot, another bot of the workspace, a member, a system administrator.
@@ -664,6 +667,60 @@ mod tests {
         .await
     }
 
+    async fn complete(
+        db: &DatabaseConnection,
+        w: &World,
+        caller: Caller,
+        task: Uuid,
+        n: Option<i32>,
+    ) -> Result<Value, ApiError> {
+        let (claims, bot) = w.identity(caller);
+        json_of(
+            complete_task_with_reply(
+                State(state_for(db.clone())),
+                Extension(claims),
+                bot.map(Extension),
+                Path(task),
+                attempt(n),
+                Json(CompleteRequest {
+                    outcome: "done".to_string(),
+                    summary: "s".to_string(),
+                    artifacts: Vec::new(),
+                    vote: None,
+                    vote_reason: None,
+                }),
+            )
+            .await,
+        )
+        .await
+    }
+
+    async fn fail(
+        db: &DatabaseConnection,
+        w: &World,
+        caller: Caller,
+        task: Uuid,
+        n: Option<i32>,
+    ) -> Result<Value, ApiError> {
+        let (claims, bot) = w.identity(caller);
+        json_of(
+            fail_task_with_reply(
+                State(state_for(db.clone())),
+                Extension(claims),
+                bot.map(Extension),
+                Path(task),
+                attempt(n),
+                Json(FailRequest {
+                    reason: "r".to_string(),
+                    retryable: false,
+                    source: None,
+                }),
+            )
+            .await,
+        )
+        .await
+    }
+
     async fn active(db: &DatabaseConnection, w: &World, caller: Caller) -> Result<Value, ApiError> {
         let (_, bot) = w.identity(caller);
         json_of(list_active_tasks(State(state_for(db.clone())), bot.map(Extension)).await).await
@@ -676,16 +733,32 @@ mod tests {
         let w = World::new(db, "au").await;
         let task = seed_task(db, &w.tenant, w.bot, "processing", 1, 0).await;
 
+        // A task of another bot is indistinguishable from a task that does not exist, on every
+        // endpoint and for every caller that is not the task's bot: one answer, no oracle.
+        let unknown = Uuid::new_v4();
         for caller in [Caller::OtherBot, Caller::Member, Caller::SystemAdmin] {
-            assert!(forbidden(&get(db, &w, caller, task, Some(1)).await), "get {caller:?}");
-            assert!(
-                forbidden(&ack(db, &w, caller, task, Some(1), "plan").await),
-                "ack {caller:?}"
-            );
-            assert!(
-                forbidden(&progress(db, &w, caller, task, Some(1), json!({"note": "x"})).await),
-                "progress {caller:?}"
-            );
+            for id in [task, unknown] {
+                assert!(
+                    not_found(&get(db, &w, caller, id, Some(1)).await),
+                    "get {caller:?} {id}"
+                );
+                assert!(
+                    not_found(&ack(db, &w, caller, id, Some(1), "plan").await),
+                    "ack {caller:?} {id}"
+                );
+                assert!(
+                    not_found(&progress(db, &w, caller, id, Some(1), json!({"note": "x"})).await),
+                    "progress {caller:?} {id}"
+                );
+                assert!(
+                    not_found(&complete(db, &w, caller, id, Some(1)).await),
+                    "complete {caller:?} {id}"
+                );
+                assert!(
+                    not_found(&fail(db, &w, caller, id, Some(1)).await),
+                    "fail {caller:?} {id}"
+                );
+            }
         }
         for caller in [Caller::Member, Caller::SystemAdmin] {
             assert!(active(db, &w, caller).await.is_err(), "active list {caller:?}");
@@ -756,7 +829,7 @@ mod tests {
             ensure_task_bot(&entry.task, None, &claims_for(w.bot))
         })
         .await;
-        assert!(matches!(refused, Err(ApiError::Forbidden(_))));
+        assert!(matches!(refused, Err(ApiError::NotFound(_))));
         assert!(
             ensure_task_bot(
                 &entry.task,

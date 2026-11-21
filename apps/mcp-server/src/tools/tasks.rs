@@ -809,7 +809,7 @@ mod tests {
     async fn errors_other_than_a_400_are_not_turned_into_success() -> Result<(), Box<dyn std::error::Error>> {
         let answer: Answer = Arc::new(|seen: &Seen| {
             if seen.method == "POST" {
-                json!({ "code": 403, "message": "task can only be operated by its own bot" })
+                json!({ "code": 404, "message": "ai task not found" })
             } else {
                 ok(view("completed", 2))
             }
@@ -939,7 +939,7 @@ mod tests {
         const SECRET: &str = "SECRET-TASK-CONTENT";
         let answer: Answer = Arc::new(|_: &Seen| {
             json!({
-                "code": 403, "message": "task can only be operated by its own bot",
+                "code": 404, "message": "ai task not found",
                 "data": { "plan": SECRET, "source": { "issue": { "title": SECRET } } }
             })
         });
@@ -954,24 +954,22 @@ mod tests {
             ),
             (TASK_FAIL, json!({ "task_id": TASK, "attempt": 1, "reason": "r" })),
         ] {
+            // Through the policy chain the refused owner lookup is the only request: no write follows.
+            seen.lock().clear();
             let through_the_chain = server.call_tool(tool, args.clone()).await;
+            let requests = seen.lock().clone();
+            assert_eq!(requests.len(), 1, "{tool}: {requests:?}");
+            assert_eq!(requests[0].method, "GET", "{tool}");
+            assert_eq!(requests[0].path, format!("/api/v1/ai/tasks/{TASK}"), "{tool}");
+            // The tool body alone (no lookup first) is refused by the same API answer.
             let direct = server.execute_tool_for_catalog_witness(tool, args).await;
             for result in [through_the_chain, direct] {
                 assert_eq!(result.is_error, Some(true), "{tool}");
                 let message = text(&result);
-                assert!(
-                    message.contains("task can only be operated by its own bot"),
-                    "{message}"
-                );
+                assert!(message.contains("ai task not found"), "{message}");
                 assert!(!message.contains(SECRET), "{tool} leaked: {message}");
             }
         }
-        assert!(
-            seen.lock()
-                .iter()
-                .all(|request| request.method == "GET" || request.path.starts_with("/api/v1/ai/tasks/")),
-            "no write outside the task endpoints"
-        );
         Ok(())
     }
 
