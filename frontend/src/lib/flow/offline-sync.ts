@@ -26,7 +26,15 @@
 //    re-encoded as ONE new update on top of the head and sent under a new id (at most
 //    `REBASE_MAX` rebases per edit). After a cap the entry takes the permanent-refusal path
 //    below. The old ids may be dropped because the refusal is `not_applied` and the entries
-//    after the head were never sent, so nothing in the queue is on the server.
+//    after the head were never sent, so nothing in the queue is on the server. Every queued
+//    entry ends in exactly one of: re-encoded into the rebased update, or moved into the draft
+//    (an entry the live doc cannot carry because it depends on an intent that is already in the
+//    draft). The swap is one store transaction (old ids out, rebased entry in, those drafts in);
+//    memory and the doc follow only if it succeeds, otherwise the old entries stay everywhere
+//    and the rebase is tried again inside its cap.
+//    `contention` (an unclassified server error) is retried per update at most
+//    `CONTENTION_SENDS_MAX` times; then sending pauses with the queue intact (no draft) until the
+//    next connect or the next local edit.
 // 6. `policy_rejected` / `invalid_update` / `server_rejected` / an unreplayable limit do not change
 //    the accepted head. The refused intent, and every later intent that causally depends on it,
 //    goes to the recovery draft; the live document is then rebuilt from the accepted snapshot so
@@ -67,11 +75,19 @@ export interface OfflineSyncTransport {
 	markUnsaved?(): void;
 }
 
-/** The outcome of `OfflineSyncHost.rebaseUnsent`. */
+/** The outcome of `OfflineSyncHost.prepareRebase`. Nothing has changed yet: the doc is swapped
+ * only by `adopt`. */
 export type RebaseResult =
-	/** `bytes` is the one new update; `null` when the head already holds every unsent edit. */
-	| { readonly ok: true; readonly bytes: Uint8Array | null }
-	/** The rebase could not be built; `error` (when set) is reported instead of the final busy text. */
+	| {
+			readonly ok: true;
+			/** The one new update; `null` when the head already holds every unsent edit. */
+			readonly bytes: Uint8Array | null;
+			/** Queued entries whose operations the live doc does not hold: they cannot be carried. */
+			readonly unreplayable: ReadonlySet<string>;
+			/** Swaps the editor's doc for the rebased one (synchronously) and returns the undo. */
+			readonly adopt: () => () => void;
+	  }
+	/** The rebase could not be built; `error` is reported instead of the final busy text. */
 	| { readonly ok: false; readonly error?: FlowError };
 
 /** What `ObjectRepository` provides around the doc and the REST reads. */
@@ -96,12 +112,20 @@ export interface OfflineSyncHost {
 	rebuildFromSessionSnapshot(): Promise<void>;
 	/** Makes sure the live doc contains `bytes` (an entry persisted by an earlier page load). */
 	importIntoLive(bytes: Uint8Array): void;
+	/** Commits the editor's open transaction (it emits its local update right away). */
+	commitPending(): void;
+	/** Whether the live doc holds edits that are not committed yet. */
+	hasUncommittedEdits(): boolean;
+	/** The head frontier the session already holds (snapshot plus accepted notices; the live doc
+	 * contains exactly what they delivered), or `null` before the first snapshot. */
+	sessionHeadFrontier(): string | null;
 	/**
 	 * Re-encodes the live doc's unsent local changes (everything `entries` carries) as one update
-	 * on top of everything else the live doc holds, under a fresh peer id, and rebinds the editor
-	 * to the resulting doc. Synchronous: no other local edit may interleave.
+	 * on top of everything else the live doc holds, under a fresh peer id, and checks the complete
+	 * state. Synchronous and free of side effects (no commit, no doc swap): no other local edit may
+	 * interleave, and the caller decides whether to adopt the result.
 	 */
-	rebaseUnsent(entries: readonly OutboxEntry[]): RebaseResult;
+	prepareRebase(entries: readonly OutboxEntry[]): RebaseResult;
 	scratchFrom(bootstrap: FlowBootstrap): Promise<ScratchReplica>;
 	/** The user lost write access: the session and editor go read-only. */
 	enterReadOnly(): void;
@@ -128,6 +152,10 @@ const MIN_RETRY_DELAY_MS = 250;
 export const RESEND_SENDS_MAX = 5;
 /** Rebases of one edit before a `rebase` refusal becomes final. */
 export const REBASE_MAX = 3;
+/** Sends of one update (the first included) answered `contention` before sending pauses. The
+ * delays between them are the resend backoff below (250 ms doubling to a 4 s cap), so the budget
+ * is about 20 s of waiting. */
+export const CONTENTION_SENDS_MAX = 8;
 const RESEND_BACKOFF_BASE_MS = 250;
 const RESEND_BACKOFF_CAP_MS = 4000;
 const REBASE_BACKOFF_BASE_MS = 100;
@@ -224,6 +252,10 @@ export class FlowOfflineSync {
 	private readonly busyAnswers = new Map<string, number>();
 	/** Rebases of the current edit lineage; carried over to the rebased entry, reset on accept. */
 	private rebases = 0;
+	/** `contention` answers seen per update id (in memory, like `busyAnswers`). */
+	private readonly contentionAnswers = new Map<string, number>();
+	/** Sending is paused after `CONTENTION_SENDS_MAX` contention answers; the queue is kept. */
+	private paused = false;
 
 	constructor(
 		store: OutboxStore,
@@ -310,7 +342,11 @@ export class FlowOfflineSync {
 				if (persisted) this.queue.push(persisted);
 				this.publishPending();
 			}
-			if (persisted) this.schedulePump();
+			if (persisted) {
+				// A new local edit is a reason to try the server again, with a fresh budget.
+				this.resume();
+				this.schedulePump();
+			}
 		});
 		this.enqueueChain = next.catch(() => undefined);
 		return next;
@@ -355,7 +391,13 @@ export class FlowOfflineSync {
 
 	/** The session reached `snapshot` on a (re)connection. */
 	onConnected(): void {
+		this.resume();
 		if (this.queue.length > 0 || this.needsRebuild) this.scheduleRecovery();
+	}
+
+	private resume(): void {
+		this.paused = false;
+		this.contentionAnswers.clear();
 	}
 
 	/** The session was closed permanently (three consecutive `server_rejected`, close 4500). */
@@ -453,7 +495,7 @@ export class FlowOfflineSync {
 	 * accept or a timed retry over to `recover`. */
 	private async pump(): Promise<void> {
 		while (!this.disposed && this.queue.length > 0) {
-			if (this.readOnly) return;
+			if (this.readOnly || this.paused) return;
 			if (this.transport.isTerminal) return;
 			if (!this.transport.isConnected) return; // `onConnected` resumes with a recovery pass
 			const entry = this.queue[0];
@@ -483,9 +525,28 @@ export class FlowOfflineSync {
 			switch (classified.kind) {
 				case 'transport':
 					return 'stop';
-				case 'retry':
+				case 'retry': {
+					if ((error.details as { reason?: unknown } | undefined)?.reason === 'contention') {
+						const sends = (this.contentionAnswers.get(entry.updateId) ?? 0) + 1;
+						this.contentionAnswers.set(entry.updateId, sends);
+						if (sends >= CONTENTION_SENDS_MAX) {
+							// Park, do not draft: an outage must lose nothing. The session already
+							// shows the contention text; the indicator leaves `saving`.
+							this.paused = true;
+							this.transport.markUnsaved?.();
+							return 'stop';
+						}
+						await this.sleep(
+							Math.max(
+								classified.delayMs,
+								fullJitter(RESEND_BACKOFF_BASE_MS, RESEND_BACKOFF_CAP_MS, sends)
+							)
+						);
+						return 'retried';
+					}
 					await this.sleep(classified.delayMs);
 					return 'retried';
+				}
 				case 'busy_resend': {
 					const sends = (this.busyAnswers.get(entry.updateId) ?? 0) + 1;
 					this.busyAnswers.set(entry.updateId, sends);
@@ -526,8 +587,10 @@ export class FlowOfflineSync {
 		return 'accepted';
 	}
 
-	/** The retry cap of an `apply_busy` refusal is reached: the permanent-refusal path (recovery
-	 * draft, rebuild from the accepted state), reported with the final-failure text. */
+	/** The retry cap of an `apply_busy` refusal is reached, or the rebase could not be built: the
+	 * permanent-refusal path (recovery draft, rebuild from the accepted state). A `failure` of the
+	 * client's own (a limit, a state mismatch) is reported and drafted under its own reason; the
+	 * final busy text is only for the cap. */
 	private async giveUpBusy(
 		entry: OutboxEntry,
 		busy: FlowError,
@@ -542,42 +605,88 @@ export class FlowOfflineSync {
 			failure ?? { code: 'server_draining', recoverable: false, origin: 'server', details }
 		);
 		this.transport.markUnsaved?.();
-		await this.toDraft(entry, { code: 'server_draining', source: 'server', details });
+		await this.toDraft(
+			entry,
+			failure
+				? { code: failure.code, source: 'precheck', details: failure.details }
+				: { code: 'server_draining', source: 'server', details }
+		);
 		this.busyAnswers.delete(entry.updateId);
 		this.rebases = 0;
 		return 'recover';
 	}
 
 	/**
-	 * `retry_mode = rebase`: synchronise to the head, re-encode every unsent local edit as one new
-	 * sequential update, replace the queue (in memory and, in one IndexedDB transaction, on disk)
-	 * by it and let the pump send it under its new id.
+	 * `retry_mode = rebase`: bring the live doc to the head, re-encode every unsent local edit it
+	 * can carry as one new sequential update, replace the queue (in one IndexedDB transaction, then
+	 * in memory) by it and let the pump send it under its new id. Queued edits the doc cannot carry
+	 * (they depend on an intent already in the draft) go to the draft in the same transaction.
 	 */
-	private async rebase(entry: OutboxEntry, busy: FlowError): Promise<'rebased' | 'recover'> {
+	private async rebase(
+		entry: OutboxEntry,
+		busy: FlowError
+	): Promise<'rebased' | 'retried' | 'recover'> {
+		let headFrontier: string;
 		if (this.needsRebuild) {
 			// Drafted intents still have their operations in the live doc; they must leave it
-			// before anything is re-encoded as "unsent".
+			// before anything is re-encoded as "unsent". The rebuild is the freshest head there
+			// is, so nothing is fetched again.
 			const clean = await this.host.bootstrap();
 			if (!clean) return this.dropForPolicy();
 			await this.host.rebuildFromAccepted(clean);
 			this.needsRebuild = false;
 			for (const queued of this.queue) this.host.importIntoLive(queued.bytes);
+			headFrontier = clean.head_frontier;
+		} else {
+			// The first rebase of a lineage trusts the session: its snapshot and accepted notices
+			// are in the live doc, and a REST bootstrap of a large page only widens the window in
+			// which the head moves again. A refused rebase means the session was behind, so the
+			// next one fetches the head.
+			const session =
+				this.rebases <= 1 && this.transport.isConnected ? this.host.sessionHeadFrontier() : null;
+			if (session !== null) {
+				headFrontier = session;
+			} else {
+				const accepted = await this.host.bootstrap();
+				if (!accepted) return this.dropForPolicy();
+				await this.host.replaceWithAccepted(accepted);
+				headFrontier = accepted.head_frontier;
+			}
 		}
-		const accepted = await this.host.bootstrap();
-		if (!accepted) return this.dropForPolicy();
-		await this.host.replaceWithAccepted(accepted);
-		// Every emitted local update has to be in the queue before it is re-encoded.
+		// Every emitted local update has to be in the queue before it is re-encoded, and the
+		// editor's open transaction must be committed (a commit emits its update synchronously, so
+		// it may not happen inside the section below).
 		for (let round = 0; round < REBASE_PERSIST_SETTLE_ROUNDS; round += 1) {
+			this.host.commitPending();
 			await this.enqueueChain;
-			if (this.persisting === 0) break;
+			if (this.persisting === 0 && !this.host.hasUncommittedEdits()) break;
 		}
-		if (this.persisting > 0) return this.giveUpBusy(entry, busy);
-		// No `await` from here to the queue swap: nothing else may touch the doc or the queue.
+		if (this.persisting > 0 || this.host.hasUncommittedEdits()) return this.giveUpBusy(entry, busy);
+		// No `await` from here to the end of the section: nothing else may touch the doc or the queue.
 		const unsent = [...this.queue];
-		const head = unsent[0];
-		const result = this.host.rebaseUnsent(unsent);
+		const result = this.host.prepareRebase(unsent);
 		if (!result.ok) return this.giveUpBusy(entry, busy, result.error);
-		const oldIds = unsent.map((e) => e.updateId);
+		const carried = unsent.filter((e) => !result.unreplayable.has(e.updateId));
+		const dependents = unsent.filter((e) => result.unreplayable.has(e.updateId));
+		const head = carried[0] ?? unsent[0];
+		const rootUpdateId = this.drafts.at(-1)?.updateId;
+		const rejectedAt = this.now();
+		const drafted: RecoveryDraftEntry[] = dependents.map((e) => ({
+			updateId: e.updateId,
+			idempotencyKey: e.idempotencyKey,
+			objectId: e.objectId,
+			order: e.order,
+			bytes: e.bytes,
+			baseFrontier: e.baseFrontier,
+			intent: e.intent,
+			enqueuedAt: e.enqueuedAt,
+			rejectedAt,
+			reason: {
+				code: 'invalid_update',
+				source: 'dependency',
+				...(rootUpdateId ? { rootUpdateId } : {})
+			}
+		}));
 		let replacement: OutboxEntry | null = null;
 		if (result.bytes) {
 			const updateId = this.newId();
@@ -588,26 +697,45 @@ export class FlowOfflineSync {
 				documentId: head.documentId,
 				order: head.order,
 				bytes: result.bytes,
-				baseFrontier: accepted.head_frontier,
+				baseFrontier: headFrontier,
 				intent: head.intent,
 				enqueuedAt: head.enqueuedAt,
 				peerId: this.host.peerId()
 			};
 		}
-		this.queue = replacement ? [replacement] : [];
-		for (const id of oldIds) this.busyAnswers.delete(id);
-		// On the enqueue chain, so later edits (on the rebased doc) persist after the swap.
-		const swap = this.enqueueChain.then(() =>
-			replacement ? this.store.replace(oldIds, replacement) : this.deleteAll(oldIds)
-		);
+		const oldIds = unsent.map((e) => e.updateId);
+		const undo = result.adopt();
+		// On the enqueue chain, so later edits (on the rebased doc) persist after the swap. Memory
+		// follows the store: if the replacement fails nothing changed anywhere but the doc, which is
+		// put back.
+		const swap = this.enqueueChain.then(async () => {
+			try {
+				await this.store.replace(oldIds, replacement, drafted);
+			} catch (error) {
+				undo();
+				throw error;
+			}
+			const gone = new Set(oldIds);
+			this.queue = [
+				...(replacement ? [replacement] : []),
+				...this.queue.filter((e) => !gone.has(e.updateId))
+			];
+			this.drafts = [...this.drafts, ...drafted];
+			for (const id of oldIds) {
+				this.busyAnswers.delete(id);
+				this.contentionAnswers.delete(id);
+			}
+			this.publish();
+		});
 		this.enqueueChain = swap.catch(() => undefined);
-		this.publish();
-		await swap;
+		try {
+			await swap;
+		} catch {
+			// The old entries are still queued and stored; the pump resends the head, which brings
+			// the next rebase, until the cap drafts them.
+			return 'retried';
+		}
 		return 'rebased';
-	}
-
-	private async deleteAll(updateIds: readonly string[]): Promise<void> {
-		for (const id of updateIds) await this.store.delete(id);
 	}
 
 	/** The REST bootstrap refused this user mid-rebase: the existing policy path. */
@@ -742,6 +870,7 @@ export class FlowOfflineSync {
 		await this.store.delete(entry.updateId);
 		this.queue = this.queue.filter((e) => e.updateId !== entry.updateId);
 		this.busyAnswers.delete(entry.updateId);
+		this.contentionAnswers.delete(entry.updateId);
 		this.rebases = 0;
 		this.publish();
 	}
