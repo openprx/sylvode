@@ -129,6 +129,12 @@ pub const SERVER_REJECTED_REASON_SETUP_EXHAUSTED: &str = "isolated_setup_exhaust
 /// spawned for a reason a retry does not clear.
 pub const SERVER_REJECTED_REASON_ISOLATED_APPLY_FAILED: &str = "isolated_apply_failed";
 
+/// The `server_rejected.details.reason` value for a document whose accepted state cannot be read
+/// back for a write: its bootstrap snapshot does not decode, its retained tail does not re-apply, or
+/// the loaded base cannot be exported. Deterministic for the document, so every write of every
+/// client is refused identically until the document is repaired; a retry cannot help.
+pub const SERVER_REJECTED_REASON_BASE_LOAD_FAILED: &str = "document_base_unreadable";
+
 /// `rejected.write_state` — the required "did the server change anything?" discriminant
 /// (`collab-protocol-v1.md`, 2026-08-30: "`recoverable` 只回答「能不能重试」，不回答「服务端状态改了
 /// 没有」，而这两件事必须分开").

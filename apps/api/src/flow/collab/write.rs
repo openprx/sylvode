@@ -82,7 +82,7 @@ use super::bootstrap::{self, content_hash};
 use super::cache::{HeadKey, WarmCache};
 use super::coordinator::DocumentCoordinator;
 use super::frame::{
-    Frame, PROTOCOL_VERSION, RejectedCode, SERVER_REJECTED_REASON_DATABASE,
+    Frame, PROTOCOL_VERSION, RejectedCode, SERVER_REJECTED_REASON_BASE_LOAD_FAILED, SERVER_REJECTED_REASON_DATABASE,
     SERVER_REJECTED_REASON_ISOLATED_APPLY_FAILED, SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM,
     SERVER_REJECTED_REASON_WINDOW_DIVERGENCE, WriteState, encode_bytes,
 };
@@ -609,15 +609,16 @@ pub(crate) struct Prepared {
 /// the API has no metrics endpoint or other exported counters, so the log line is where it shows.
 pub(crate) static WINDOW_CHECK_DIVERGENCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// How many windows the worker decided with the full computation because its setup guard fired
-/// (the base cost more setup work than `collab_core::setup_guard` allows), since the process
-/// started. Exported as the `flow_window_setup_guard_total` field of the log line of
+/// How many attempts the worker decided with the full computation because its setup guard fired
+/// (the base, or one of its texts, cost more setup work than `collab_core::setup_guard` allows),
+/// since the process started. Exported as the `flow_window_setup_guard_total` field of the log line of
 /// [`note_setup_guard`].
 pub(crate) static WINDOW_SETUP_GUARDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Counts and logs a window that the worker's setup guard sent to the full computation. An ordinary
-/// outcome (the write is decided and accepted or refused like any other, nothing counts toward the
-/// document's cooldown), so the line is a warning for the operator, not an error.
+/// Counts and logs a window that the worker's setup guard sent to the full computation, whether the
+/// full window then accepted or refused the write. An ordinary outcome (the write is decided like any
+/// other, nothing counts toward the document's cooldown), so the line is a warning for the operator,
+/// not an error.
 fn note_setup_guard(document_id: Uuid, fired: collab_core::setup_guard::Fired) {
     let total = WINDOW_SETUP_GUARDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     tracing::warn!(
@@ -679,6 +680,9 @@ enum WindowMutant {
     NoHostCheckWithoutReport,
     /// A divergence that survives the full window is accepted.
     AcceptsSecondDivergence,
+    /// A setup that timed out having used its CPU budget is answered as it is (no second attempt
+    /// with the full window, and no cooldown).
+    SetupBackstopSkipped,
 }
 
 #[cfg(test)]
@@ -800,6 +804,21 @@ impl DisagreementTracker {
         false
     }
 
+    /// Puts `document` on the full window directly for [`COOLDOWN_PERIOD`] without waiting for
+    /// [`COOLDOWN_THRESHOLD`] disagreements: the worker's setup for it ran out of its budget
+    /// (the backstop of [`decide_window_with`]). True when it was not cooling already (the caller
+    /// logs that once).
+    fn enter_full(&mut self, document: Uuid, now: std::time::Instant) -> bool {
+        if !self.by_document.contains_key(&document) && self.by_document.len() >= COOLDOWN_MAX_DOCUMENTS {
+            self.make_room(now);
+        }
+        let entry = self.by_document.entry(document).or_default();
+        let already = entry.full_until.is_some_and(|until| now < until);
+        entry.full_until = Some(now + COOLDOWN_PERIOD);
+        entry.recent.clear();
+        !already
+    }
+
     /// Drops what has nothing recent and nothing cooling; if that frees nothing, the entry whose
     /// last activity is oldest.
     fn make_room(&mut self, now: std::time::Instant) {
@@ -874,6 +893,14 @@ fn isolated_apply_defect() -> ApiError {
     ApiError::server_rejected(SERVER_REJECTED_REASON_ISOLATED_APPLY_FAILED)
 }
 
+/// The error of a document whose accepted state cannot be read back for a write (its snapshot does
+/// not decode, its tail does not re-apply, the loaded base cannot be exported): deterministic for the
+/// document, so `server_rejected` with a stable reason on every attempt, never the retryable
+/// `contention` that an unclassified internal error is reported as on the WebSocket.
+fn base_load_defect() -> ApiError {
+    ApiError::server_rejected(SERVER_REJECTED_REASON_BASE_LOAD_FAILED)
+}
+
 /// One attempt: the isolated window in `mode`, then the host's load and projection of the document
 /// it returned, compared with the worker's report. Blocking and CPU heavy (process spawn, pipe I/O,
 /// load, a full projection): run it on a blocking thread, never on an async worker.
@@ -886,6 +913,11 @@ fn window_attempt(
     let isolated_step = WriteStep::start("isolated_apply");
     let (isolated, observation) = apply_isolated(document_id, base_snapshot, update, mode);
     isolated_step.finish();
+    // The guard is reported for every attempt whose worker opened its window, refused or killed
+    // ones included: a refusal that follows a fired guard is the answer of the full window.
+    if let Some(fired) = observation.setup_guard {
+        note_setup_guard(document_id, fired);
+    }
     let success = match isolated {
         Ok(success) => success,
         Err(error) => {
@@ -897,9 +929,6 @@ fn window_attempt(
             }));
         }
     };
-    if let Some(fired) = success.setup_guard {
-        note_setup_guard(document_id, fired);
-    }
     // Reconstructing `LoroCollabEngine` from the isolated worker's already-shape-validated result
     // is cheap and safe: the worker already bounded this document's tree depth/container
     // count/block count/text volume inside the metered window, so this load and the
@@ -975,9 +1004,38 @@ fn decide_window_with(
     mut attempt: impl FnMut(collab_core::isolation::WindowMode) -> Result<WindowAttempt, ApiError>,
 ) -> Result<WindowAttempt, ApiError> {
     use collab_core::isolation::WindowMode;
-    let cooling = tracker.lock().cooling(ids.document_id, std::time::Instant::now());
-    let first_mode = if cooling { WindowMode::Full } else { mode };
-    let first = attempt(first_mode)?;
+    let mut cooling = tracker.lock().cooling(ids.document_id, std::time::Instant::now());
+    let mut first_mode = if cooling { WindowMode::Full } else { mode };
+    let mut first = attempt(first_mode)?;
+    // The backstop of the setup guards: an incremental attempt whose setup timed out having consumed
+    // its CPU budget (the guards could not stop it: one library call of a base that predates the
+    // per-text guard, or any other call they do not interrupt). It is neither starvation nor a
+    // defect to answer on every write: the write is decided once more with the worker told to skip
+    // the facts, which is the full window and meters the decode again, and the document stays on the
+    // full window for the cooldown period, so the next writes pay one window and not a timeout. The
+    // answer is then the full window's: its acceptance, or its content limit.
+    #[cfg(test)]
+    let backstop = !mutant_is(WindowMutant::SetupBackstopSkipped);
+    #[cfg(not(test))]
+    let backstop = true;
+    if backstop
+        && first_mode == WindowMode::Incremental
+        && let WindowAttempt::Rejected(refused) = &first
+        && refusal::is_setup_exhausted(&refused.error, &refused.observation, setup_cpu_budget_ms())
+    {
+        let entered = tracker.lock().enter_full(ids.document_id, std::time::Instant::now());
+        tracing::warn!(
+            document_id = %ids.document_id,
+            update_id = %ids.update_id,
+            setup_cpu_us = refused.observation.setup_cpu_us,
+            newly_cooling = entered,
+            cooldown_seconds = COOLDOWN_PERIOD.as_secs(),
+            "window_setup_backstop: the worker's setup timed out having used its CPU budget; deciding this write with the full window and the document's next writes by the full window directly"
+        );
+        cooling = true;
+        first_mode = WindowMode::Full;
+        first = attempt(WindowMode::Full)?;
+    }
     let WindowAttempt::Diverged {
         divergence,
         from_report,
@@ -1092,6 +1150,22 @@ mod window_oracle_tests {
 
     fn rejected(error: IsolatedApplyError) -> WindowAttempt {
         rejected_in(WindowMode::Incremental, error)
+    }
+
+    /// A setup that timed out by wall clock having consumed `setup_cpu_us` of CPU.
+    fn setup_timed_out(mode: WindowMode, setup_cpu_us: Option<u64>) -> WindowAttempt {
+        WindowAttempt::Rejected(RefusedAttempt {
+            error: IsolatedApplyError::HostFailure(collab_core::isolation::HostFailure::new(
+                collab_core::isolation::HostFailureKind::SetupTimeout,
+                "test",
+            )),
+            observation: collab_core::isolation::WorkerObservation {
+                setup_cpu_us,
+                ..collab_core::isolation::WorkerObservation::default()
+            },
+            mode,
+            cooling: false,
+        })
     }
 
     fn diverged_with(from_report: bool) -> WindowAttempt {
@@ -1334,6 +1408,130 @@ mod window_oracle_tests {
         assert_window_divergence(refused);
     }
 
+    /// A-1, the backstop: a setup that timed out having consumed its CPU budget is not answered as
+    /// it is. The write is decided once more with the full window, the document goes on the full
+    /// window for the cooldown period, and the writes that follow take one attempt, the full one.
+    #[test]
+    fn a_setup_that_timed_out_with_its_cpu_budget_used_is_decided_by_the_full_window_and_cools_the_document() {
+        let ids = ids();
+        let mut modes = Vec::new();
+        let decided = decide_window(ids, WindowMode::Incremental, |mode| {
+            modes.push(mode);
+            Ok(match mode {
+                WindowMode::Incremental => setup_timed_out(mode, Some(4_900_000)),
+                WindowMode::Full => prepared(false),
+            })
+        })
+        .expect("decides");
+        assert!(matches!(decided, WindowAttempt::Prepared(window) if !window.incremental));
+        assert_eq!(modes, [WindowMode::Incremental, WindowMode::Full]);
+        assert!(
+            disagreements()
+                .lock()
+                .cooling(ids.document_id, std::time::Instant::now()),
+            "the document is on the full window"
+        );
+        // The next write takes the full window directly: one attempt, no setup.
+        let mut modes = Vec::new();
+        let decided = decide_window(ids, WindowMode::Incremental, |mode| {
+            modes.push(mode);
+            Ok(prepared(false))
+        })
+        .expect("decides");
+        assert!(matches!(decided, WindowAttempt::Prepared(_)));
+        assert_eq!(modes, [WindowMode::Full]);
+    }
+
+    /// The full window's own refusal is the answer when the retry is refused too: the content
+    /// answer of a ceiling, not the defect of the setup.
+    #[test]
+    fn when_the_full_window_refuses_after_the_backstop_the_write_is_refused_with_its_content_answer() {
+        let decided = decide_window(ids(), WindowMode::Incremental, |mode| {
+            Ok(match mode {
+                WindowMode::Incremental => setup_timed_out(mode, Some(4_900_000)),
+                WindowMode::Full => rejected_in(mode, IsolatedApplyError::CpuCeiling),
+            })
+        })
+        .expect("decides");
+        let WindowAttempt::Rejected(refused) = decided else {
+            panic!("the full window's refusal is the answer");
+        };
+        assert_eq!(refused.mode, WindowMode::Full);
+        assert!(refused.cooling, "the document is cooling");
+        let classified = refusal::classify(
+            refused.error,
+            &refused.observation,
+            refused.mode,
+            RebasePolicy::ClientRebases,
+            2_500,
+        );
+        assert!(
+            matches!(
+                classified,
+                refusal::Refusal::Content {
+                    limit_kind: "decode_apply_cpu_ms",
+                    ..
+                }
+            ),
+            "{classified:?}"
+        );
+    }
+
+    /// A setup that was starved is retried by the client as before: no second attempt here, no
+    /// cooldown. Neither is a setup that timed out in the full mode (it computed no facts, so the
+    /// load alone timed out).
+    #[test]
+    fn a_starved_setup_and_a_setup_timeout_of_the_full_window_get_no_backstop() {
+        for (mode, cpu) in [
+            (WindowMode::Incremental, Some(400_000)),
+            (WindowMode::Incremental, Some(1_999_999)),
+            (WindowMode::Full, Some(4_900_000)),
+        ] {
+            let ids = ids();
+            let mut modes = Vec::new();
+            let decided = decide_window(ids, mode, |asked| {
+                modes.push(asked);
+                Ok(setup_timed_out(asked, cpu))
+            })
+            .expect("decides");
+            assert!(matches!(decided, WindowAttempt::Rejected(_)));
+            assert_eq!(modes, [mode], "{mode:?} after {cpu:?} us");
+            assert!(
+                !disagreements()
+                    .lock()
+                    .cooling(ids.document_id, std::time::Instant::now())
+            );
+        }
+        // The boundary: 80 % of the default budget is exhausted, one microsecond less is starved.
+        let mut modes = Vec::new();
+        let _ = decide_window(ids(), WindowMode::Incremental, |asked| {
+            modes.push(asked);
+            Ok(setup_timed_out(asked, Some(2_000_000)))
+        });
+        assert_eq!(modes, [WindowMode::Incremental, WindowMode::Full]);
+        // An unknown CPU is never starvation.
+        let mut modes = Vec::new();
+        let _ = decide_window(ids(), WindowMode::Incremental, |asked| {
+            modes.push(asked);
+            Ok(setup_timed_out(asked, None))
+        });
+        assert_eq!(modes, [WindowMode::Incremental, WindowMode::Full]);
+    }
+
+    /// The mutant "setup-timeout backstop skipped" is caught by the backstop tests.
+    #[test]
+    fn the_mutant_without_the_setup_timeout_backstop_is_caught() {
+        assert!(caught_by(
+            WindowMutant::SetupBackstopSkipped,
+            a_setup_that_timed_out_with_its_cpu_budget_used_is_decided_by_the_full_window_and_cools_the_document
+        ));
+        assert!(caught_by(
+            WindowMutant::SetupBackstopSkipped,
+            when_the_full_window_refuses_after_the_backstop_the_write_is_refused_with_its_content_answer
+        ));
+        a_setup_that_timed_out_with_its_cpu_budget_used_is_decided_by_the_full_window_and_cools_the_document();
+    }
+
     #[test]
     fn a_full_window_first_attempt_that_is_contradicted_is_refused_without_a_retry() {
         let mut modes = Vec::new();
@@ -1541,7 +1739,7 @@ fn isolated_apply_rejection(ids: WindowIds, refused: RefusedAttempt, policy: Reb
             "collab write: isolated apply host failure"
         );
     }
-    let classified = refusal::classify(error, &observation, mode, policy);
+    let classified = refusal::classify(error, &observation, mode, policy, setup_cpu_budget_ms());
     refusal::record(
         &refusal::AttemptLog {
             document_id: ids.document_id,
@@ -1813,12 +2011,12 @@ async fn resolve_base(
         && boot.head_frontier == observed.head_frontier;
     let mut engine = LoroCollabEngine::load(&boot.snapshot).map_err(|err| {
         tracing::error!(error = %err, "collab write: bootstrap snapshot failed to decode");
-        ApiError::internal()
+        base_load_defect()
     })?;
     for tail in &boot.tail_updates {
         engine.import_update(&tail.bytes).map_err(|err| {
             tracing::error!(error = %err, "collab write: bootstrap tail update failed to re-apply");
-            ApiError::internal()
+            base_load_defect()
         })?;
     }
     base_load_step.finish();
@@ -1869,7 +2067,7 @@ fn export_base_snapshot(engine: &LoroCollabEngine, document_id: Uuid) -> Result<
     let export_base_step = WriteStep::start("export_base_snapshot");
     let bytes = engine.export_snapshot().map_err(|err| {
         tracing::error!(error = %err, "collab write: base engine export_snapshot failed before isolated apply");
-        ApiError::internal()
+        base_load_defect()
     })?;
     export_base_step.finish();
     Ok(bytes)
@@ -1907,6 +2105,11 @@ pub(crate) async fn prepare_build_engine(
     }
 }
 
+/// The configured CPU budget of the worker's setup (`[flow] setup_cpu_budget_ms`), in milliseconds.
+fn setup_cpu_budget_ms() -> u64 {
+    crate::config::runtime().flow.setup_cpu_budget_ms
+}
+
 /// The isolated apply of `update` onto `base`, with the host's observation of the worker.
 /// Production always runs the real worker. Under `cfg(test)` a document a test registered with
 /// [`scripted_attempts::enable`] gets its scripted answers first, and one registered with
@@ -1933,6 +2136,8 @@ fn apply_isolated(
                 in_process_apply::apply(base, update),
                 collab_core::isolation::WorkerObservation::default(),
             ),
+            #[allow(clippy::panic)]
+            scripted_attempts::Scripted::Panic => panic!("scripted panic in the isolated window"),
             scripted_attempts::Scripted::InProcessReporting(report) => (
                 in_process_apply::apply(base, update).map(|success| collab_core::isolation::IsolatedApplySuccess {
                     window_report: Some(report),
@@ -1951,7 +2156,7 @@ fn apply_isolated(
     }
     #[cfg(not(test))]
     let _ = document_id;
-    collab_core::isolation::isolated_apply_with_observed(base, update, mode)
+    collab_core::isolation::isolated_apply_with_observed(base, update, mode, setup_cpu_budget_ms())
 }
 
 /// Scripted answers of the isolated apply for the tests of the write path: each attempt on a
@@ -1972,6 +2177,9 @@ pub(crate) mod scripted_attempts {
         /// This attempt is accepted with this incremental report, which the host's projection of the
         /// document may contradict (a divergence).
         InProcessReporting(collab_core::window_check::WindowReport),
+        /// This attempt panics on the blocking thread that runs the window (a defect of the host
+        /// code around the isolated apply).
+        Panic,
     }
 
     #[derive(Default)]
@@ -2047,7 +2255,6 @@ pub(crate) mod in_process_apply {
             snapshot,
             window_cpu_us: None,
             window_report: None,
-            setup_guard: None,
         })
     }
 }

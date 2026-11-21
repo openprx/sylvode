@@ -9,8 +9,8 @@
 //! | any ceiling on an incremental attempt whose check said `NotSequential` | busy, `rebase` |
 //! | wall kill with the worker having used under 80 % of the CPU ceiling | busy, `resend` |
 //! | wall kill otherwise, CPU kill, memory kill | the content limit, unchanged, not retryable |
-//! | setup timeout after under 2.5 s of CPU | busy, `resend` |
-//! | setup timeout otherwise | defect, `server_rejected` |
+//! | setup timeout after under 80 % of the setup CPU budget | busy, `resend` |
+//! | setup timeout otherwise | defect, `server_rejected` (only reached when the full window was tried and timed out too, see `write::decide_window`) |
 //! | spawn without resources, a SIGKILL the host did not send | busy, `resend` |
 //! | crash, bad frame, other spawn failure | defect, `server_rejected` |
 //!
@@ -41,9 +41,36 @@ use crate::flow::collab::frame::{
 /// big, which is the content answer.
 pub const STARVED_CPU_MAX_US: u64 = DECODE_APPLY_CPU_MS_MAX * 1_000 * 4 / 5;
 
-/// A setup timeout after less CPU than this was a worker the host did not schedule; at or above it
-/// the setup itself was too heavy (half of the 5 s setup timeout).
-pub const SETUP_STARVED_CPU_MAX_US: u64 = 2_500_000;
+/// The share of the setup CPU budget (`[flow] setup_cpu_budget_ms`), in percent, below which a setup
+/// that timed out by wall clock was starved and not heavy.
+///
+/// The threshold is not the budget itself: the setup guard lets a setup run to its budget plus one
+/// text (and the load), so a heavy honest page whose setup reaches the guard consumes the whole
+/// budget, and a worker that was given half a core for it exceeds the wall timeout with CPU a little
+/// over the budget. Only a setup that consumed less than 80 % of the budget at the timeout cannot
+/// have been stopped by the guard, so it was the host that did not schedule it.
+pub const SETUP_STARVED_BUDGET_PERCENT: u64 = 80;
+
+/// The CPU, in microseconds, under which a setup timeout is starvation, for a setup CPU budget of
+/// `setup_cpu_budget_ms`.
+#[must_use]
+pub const fn setup_starved_below_us(setup_cpu_budget_ms: u64) -> u64 {
+    setup_cpu_budget_ms * 1_000 * SETUP_STARVED_BUDGET_PERCENT / 100
+}
+
+/// Whether a refused attempt is a setup that timed out having consumed its CPU budget (or an
+/// unknown amount of CPU, which is never taken for starvation): the setup is unbounded for this
+/// base, which the host answers by deciding the write with the full window (no facts computed) and
+/// putting the document on the full window for a while (`write::decide_window`).
+#[must_use]
+pub fn is_setup_exhausted(err: &IsolatedApplyError, observation: &WorkerObservation, setup_cpu_budget_ms: u64) -> bool {
+    matches!(
+        err,
+        IsolatedApplyError::HostFailure(failure) if failure.kind == HostFailureKind::SetupTimeout
+    ) && observation
+        .setup_cpu_us
+        .is_none_or(|cpu_us| cpu_us >= setup_starved_below_us(setup_cpu_budget_ms))
+}
 
 /// `retry_after_ms` of each busy answer: a lower bound on the next attempt.
 const RETRY_AFTER_NEEDS_SEQUENTIAL_MS: u64 = 0;
@@ -185,11 +212,15 @@ const fn busy(cause: BusyCause, mode: RetryMode, retry_after_ms: u64) -> Refusal
 /// resource ceiling, and the surface can follow a `rebase` (`policy`). A rebased update depends on
 /// the whole head, so unless another writer commits in between it is sequential and its own refusal
 /// cannot be `NotSequential` again.
+///
+/// `setup_cpu_budget_ms` is the configured CPU budget of the worker's setup; a setup timeout below
+/// 80 % of it is starvation ([`setup_starved_below_us`]).
 pub fn classify(
     err: IsolatedApplyError,
     observation: &WorkerObservation,
     requested: WindowMode,
     policy: RebasePolicy,
+    setup_cpu_budget_ms: u64,
 ) -> Refusal {
     let needs_sequential = requested == WindowMode::Incremental
         && policy.can_rebase()
@@ -232,11 +263,12 @@ pub fn classify(
         },
         IsolatedApplyError::HostFailure(failure) => match failure.kind {
             HostFailureKind::SetupTimeout => match observation.setup_cpu_us {
-                Some(cpu_us) if cpu_us < SETUP_STARVED_CPU_MAX_US => {
+                Some(cpu_us) if cpu_us < setup_starved_below_us(setup_cpu_budget_ms) => {
                     busy(BusyCause::SetupStarved, RetryMode::Resend, RETRY_AFTER_SETUP_STARVED_MS)
                 }
-                // A setup that burned its time as CPU is not bounded for this base: a defect. An
-                // unknown figure is never taken for starvation.
+                // A setup that burned its time as CPU is not bounded for this base: a defect once
+                // the full window was tried as well (a setup that timed out without facts is the
+                // load alone). An unknown figure is never taken for starvation.
                 _ => Refusal::Defect {
                     reason: SERVER_REJECTED_REASON_SETUP_EXHAUSTED,
                 },
@@ -393,6 +425,7 @@ pub fn record(attempt: &AttemptLog<'_>, stopped: Stopped, refusal: &Refusal) -> 
         .decision
         .map_or_else(|| "none".to_owned(), WindowDecision::label);
     let host_failure_kind = stopped.host_failure_kind.map(|kind| format!("{kind:?}"));
+    let setup_guard = attempt.observation.setup_guard.map(|fired| fired.name().to_owned());
     let requested_mode = match attempt.requested {
         WindowMode::Incremental => "incremental",
         WindowMode::Full => "full",
@@ -412,6 +445,7 @@ pub fn record(attempt: &AttemptLog<'_>, stopped: Stopped, refusal: &Refusal) -> 
                 metered_cpu_us = attempt.observation.metered_cpu_us,
                 metered_wall_us = attempt.observation.metered_wall_us,
                 setup_cpu_us = attempt.observation.setup_cpu_us,
+                setup_guard = setup_guard.as_deref(),
                 classification,
                 answer = answer.as_str(),
                 total,
@@ -438,7 +472,21 @@ mod tests {
             metered_cpu_us: cpu_us,
             setup_cpu_us: None,
             decision,
+            setup_guard: None,
         }
+    }
+
+    /// The setup CPU budget of the tests: the default.
+    const BUDGET_MS: u64 = 2_500;
+
+    /// [`super::classify`] under the default setup CPU budget.
+    fn classify(
+        err: IsolatedApplyError,
+        observation: &WorkerObservation,
+        requested: WindowMode,
+        policy: RebasePolicy,
+    ) -> Refusal {
+        super::classify(err, observation, requested, policy, BUDGET_MS)
     }
 
     const NOT_SEQUENTIAL: WindowDecision = WindowDecision::Fallback(FallbackReason::NotSequential);
@@ -573,17 +621,72 @@ mod tests {
     // Row 6: a setup timeout after little CPU.
     #[test]
     fn row_6_a_setup_timeout_with_little_setup_cpu_is_starvation_and_is_resent() {
-        for cpu_us in [0, 400_000, SETUP_STARVED_CPU_MAX_US - 1] {
+        for cpu_us in [0, 400_000, setup_starved_below_us(BUDGET_MS) - 1] {
             let (err, observation) = setup_timeout(Some(cpu_us));
             let refusal = classify(err, &observation, INCREMENTAL, REBASES);
             assert_busy(&refusal, BusyCause::SetupStarved, RetryMode::Resend, 1_000);
         }
     }
 
+    // B-1: the starvation threshold is a share of the configured setup budget, not the budget.
+    #[test]
+    fn b_1_the_starved_setup_threshold_is_80_percent_of_the_configured_budget() {
+        assert_eq!(setup_starved_below_us(2_500), 2_000_000);
+        assert_eq!(setup_starved_below_us(500), 400_000);
+        assert_eq!(setup_starved_below_us(4_000), 3_200_000);
+        // The review's case: a setup that consumed 2.6 s of CPU before the 5 s timeout, with the
+        // default budget, is not starvation (it reached the guard) ...
+        let (err, observation) = setup_timeout(Some(2_600_000));
+        assert!(is_setup_exhausted(&err, &observation, 2_500));
+        assert_defect(
+            &classify(err, &observation, INCREMENTAL, REBASES),
+            "isolated_setup_exhausted",
+        );
+        // ... and a setup that consumed 2.0 s of it (80 %) is not starvation either; 1.99 s is.
+        for (cpu_us, starved) in [(1_999_999, true), (2_000_000, false), (2_499_999, false)] {
+            let (err, observation) = setup_timeout(Some(cpu_us));
+            assert_eq!(!is_setup_exhausted(&err, &observation, 2_500), starved, "{cpu_us} us");
+            let refusal = super::classify(err, &observation, INCREMENTAL, REBASES, 2_500);
+            if starved {
+                assert_busy(&refusal, BusyCause::SetupStarved, RetryMode::Resend, 1_000);
+            } else {
+                assert_defect(&refusal, "isolated_setup_exhausted");
+            }
+        }
+        // A raised budget raises the threshold: 3 s of CPU is starvation under a 4 s budget.
+        let (err, observation) = setup_timeout(Some(3_000_000));
+        assert!(!is_setup_exhausted(&err, &observation, 4_000));
+        assert_busy(
+            &super::classify(err, &observation, INCREMENTAL, REBASES, 4_000),
+            BusyCause::SetupStarved,
+            RetryMode::Resend,
+            1_000,
+        );
+        // An unknown CPU is never starvation, and nothing but a setup timeout is a setup that
+        // exhausted its budget.
+        let (err, observation) = setup_timeout(None);
+        assert!(is_setup_exhausted(&err, &observation, 2_500));
+        assert!(!is_setup_exhausted(
+            &host_failure(HostFailureKind::Crash),
+            &observation,
+            2_500
+        ));
+        assert!(!is_setup_exhausted(
+            &IsolatedApplyError::CpuCeiling,
+            &observation,
+            2_500
+        ));
+    }
+
     // Row 7: a setup timeout after a lot of CPU, or an unknown amount.
     #[test]
     fn row_7_a_setup_timeout_with_high_or_unknown_setup_cpu_is_a_defect() {
-        for cpu_us in [Some(SETUP_STARVED_CPU_MAX_US), Some(4_900_000), None] {
+        for cpu_us in [
+            Some(setup_starved_below_us(BUDGET_MS)),
+            Some(2_500_000),
+            Some(4_900_000),
+            None,
+        ] {
             let (err, observation) = setup_timeout(cpu_us);
             let refusal = classify(err, &observation, INCREMENTAL, REBASES);
             assert_defect(&refusal, "isolated_setup_exhausted");

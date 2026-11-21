@@ -153,6 +153,47 @@ nodes) can again exceed the 50 ms window on small runners, exactly as before the
 existed.
 The API reads it at startup: restart it to apply the change.
 
+### The worker's setup, its budgets and its backstop
+
+Before its window opens the worker loads the Page, prewarms it and computes the facts (the setup),
+outside the CPU and memory ceilings of the window. Three guards bound it. Each yields no facts when
+it fires, which sends the write to the full window (an ordinary outcome, not a failure), and the
+worker reports which one fired for every attempt it opened its window in, accepted, refused or
+killed (`setup_guard` on the `flow::apply_refusal` line, and the `window_setup_guard` warning):
+
+- `allocation`: the setup requested more than 2 GiB from the allocator.
+- `cpu`: the setup consumed more CPU time than `[flow] setup_cpu_budget_ms` (default 2500, range
+  500 to 4000), or its CPU clock could not be read. The budget is machine-dependent: it was
+  calibrated on a runner about 3.6 times slower than a development machine, with the largest honest
+  pages needing about half of it. A host slower than that, or one whose CPU time is inflated, may
+  raise it; the setup's wall timeout of 5 seconds does not move.
+- `text`: one text cost the setup more than the window's own CPU ceiling (50 ms of CPU time) or 48 MiB
+  of allocation to decode and convert. Before the incremental window existed every write decoded the
+  Page inside that ceiling, so a text above it could never have been accepted; the largest text the
+  limits allow (100,000 characters, heavily formatted, with a long edit history) costs a quarter of
+  it. It is not configurable.
+
+After a fired guard the full window decodes every text again inside its 50 ms window, so a Page with
+a text that is too expensive is refused with the content limit `decode_apply_cpu_ms`, on every
+surface, and the session stays open. Repairing it means removing the text's formatting (or the text),
+which the full window can accept only if the result decodes inside the ceiling.
+
+Backstop for what the guards cannot interrupt (one library call: a Page that was grown before the
+per-text guard existed can hold a text whose decode alone takes seconds): a setup that times out at
+5 seconds having consumed at least 80 % of the CPU budget is decided again by the same write with the
+worker told to compute no facts (the full window), and the document is decided by the full window
+directly for the next ten minutes. It is logged once at warning level as `window_setup_backstop`.
+Only if that attempt fails too is the write refused, with the answer the full window produces (the
+content limit, or `server_rejected{isolated_setup_exhausted}` when even the load timed out). A setup
+that times out with less than 80 % of the budget consumed was starved, not heavy: the client is told
+`apply_busy` (`setup_starved`, resend), as before.
+
+Residual bands of the busy classification, documented and not changed: a write that needs 40 to
+50 ms of CPU (the worker killed at the 100 ms wall limit with 40 to 50 ms of CPU) on a worker given
+only 40 to 50 % of a core is answered with the wall content limit although it would be accepted on an
+idle host; and the CPU of a starved worker is read when the host sees the marker, so a late read lowers
+the figure and biases toward `apply_busy`. Both are bounded by the client's retry caps.
+
 ### Refused tree updates
 
 A browser's Loro document panics inside its WASM module when it imports an update that continues the
