@@ -70,6 +70,26 @@ pub fn unlisted_refusal(mode: McpToolMode, name: &str) -> Option<String> {
     })
 }
 
+/// The name a tool is attributed to in the operation log.
+///
+/// The API records only dotted lower-case names (`work_items.update`). The task tools and the
+/// search entry tools are named for agents with underscores only, so they are attributed to dotted
+/// names: `tasks.acknowledge` for `sylvode_task_ack`, `entry.search` for `sylvode_search`. Every
+/// other tool is attributed to its own name. `sylvode_read` and `sylvode_write` never appear: a
+/// wrapper call is attributed to its target.
+pub fn attribution_name(name: &str) -> &str {
+    match name {
+        tasks::TASK_GET => "tasks.get",
+        tasks::TASK_ACK => "tasks.acknowledge",
+        tasks::TASK_PROGRESS => "tasks.progress",
+        tasks::TASK_COMPLETE => "tasks.complete",
+        tasks::TASK_FAIL => "tasks.fail",
+        OVERVIEW => "entry.overview",
+        SEARCH => "entry.search",
+        other => other,
+    }
+}
+
 /// A caller supplied name, cut and stripped of control characters for an error text.
 fn printable(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).take(80).collect::<String>()

@@ -376,7 +376,7 @@ impl OpenPrClient {
     #[must_use]
     pub fn recording_operation(&self, tool_name: &str) -> Self {
         let mut scoped = self.clone();
-        scoped.operation_tool_name = Some(tool_name.to_string());
+        scoped.operation_tool_name = Some(crate::tools::entry::attribution_name(tool_name).to_string());
         scoped
     }
 

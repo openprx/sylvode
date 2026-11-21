@@ -899,7 +899,7 @@ mod tests {
             ]
         );
         for request in seen.iter() {
-            assert_eq!(request.tool.as_deref(), Some(TASK_ACK));
+            assert_eq!(request.tool.as_deref(), Some("tasks.acknowledge"));
             assert_eq!(request.surface.as_deref(), Some("mcp_stdio"));
         }
         Ok(())

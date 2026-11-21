@@ -149,7 +149,14 @@ pub(crate) fn forwarded_tool_name(headers: &axum::http::HeaderMap) -> Result<Opt
 }
 
 fn operation_tool_name(attribution: McpAttribution<'_>) -> Option<String> {
-    let value = attribution.tool?.trim();
+    recordable_tool_name(attribution.tool?)
+}
+
+/// The tool name the operation log records for an attribution value, or `None` when the value is
+/// not a dotted lower-case name (`work_items.update`, `tasks.acknowledge`). Public so that the MCP
+/// server's tests can prove every name it sends is recorded.
+pub fn recordable_tool_name(value: &str) -> Option<String> {
+    let value = value.trim();
     let mut segments = value.split('.');
     let valid_segment = |segment: &str| {
         !segment.is_empty()
@@ -848,6 +855,35 @@ mod tests {
             ),
             Err(other) => panic!("{case}: wrong error family {other:?}"),
             Ok(attribution) => panic!("{case}: a conflict must be rejected, resolved to {attribution:?}"),
+        }
+    }
+
+    /// The attribution names the MCP server sends for the task protocol and the search entry tools are
+    /// recorded. They were single words (`sylvode_task_ack`), which the dotted rule dropped, so
+    /// every task write was logged without a tool name.
+    #[test]
+    fn the_task_and_entry_attribution_names_are_recorded() {
+        for name in [
+            "tasks.get",
+            "tasks.acknowledge",
+            "tasks.progress",
+            "tasks.complete",
+            "tasks.fail",
+            "entry.overview",
+            "entry.search",
+        ] {
+            assert_eq!(super::recordable_tool_name(name).as_deref(), Some(name), "{name}");
+        }
+        for name in [
+            "sylvode_task_ack",
+            "",
+            "Tasks.get",
+            "tasks.",
+            ".get",
+            "a b.c",
+            "tasks.get;drop",
+        ] {
+            assert_eq!(super::recordable_tool_name(name), None, "{name:?}");
         }
     }
 

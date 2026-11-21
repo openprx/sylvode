@@ -530,6 +530,76 @@ async fn a_flow_only_server_honours_the_write_switch() -> TestResult {
     Ok(())
 }
 
+/// Every name the client can attribute a request to is one the API records: a tool name the API
+/// drops leaves that call without a tool in the operation log.
+#[test]
+fn every_attribution_name_is_recorded_by_the_api() {
+    let names = registry()
+        .into_iter()
+        .map(|tool| tool.name)
+        // The wrappers are attributed to their target and never named themselves.
+        .chain([entry::OVERVIEW, entry::SEARCH].map(str::to_string))
+        .collect::<Vec<_>>();
+    assert!(names.len() > 150);
+    for name in names {
+        let attribution = entry::attribution_name(&name);
+        assert_eq!(
+            api::middleware::bot_auth::recordable_tool_name(attribution).as_deref(),
+            Some(attribution),
+            "{name} would be logged without a tool name as {attribution}"
+        );
+    }
+    for (name, attribution) in [
+        (tasks::TASK_GET, "tasks.get"),
+        (tasks::TASK_ACK, "tasks.acknowledge"),
+        (tasks::TASK_PROGRESS, "tasks.progress"),
+        (tasks::TASK_COMPLETE, "tasks.complete"),
+        (tasks::TASK_FAIL, "tasks.fail"),
+        (entry::OVERVIEW, "entry.overview"),
+        (entry::SEARCH, "entry.search"),
+        ("work_items.update", "work_items.update"),
+    ] {
+        assert_eq!(entry::attribution_name(name), attribution);
+    }
+}
+
+/// The header the client puts on each of the five task writes is the dotted attribution name, so the
+/// API records a tool name for the whole protocol.
+#[tokio::test]
+async fn each_task_write_carries_its_attribution_name() -> TestResult {
+    let api = Api::spawn(Policy::Permissive).await?;
+    let server = server(&api, McpToolMode::Search)?;
+    for task in tasks::tool_definitions() {
+        api.clear();
+        let _ = server.call_tool(&task.name, minimal_arguments(&task)).await;
+        let seen = api.seen();
+        assert!(!seen.is_empty(), "{}", task.name);
+        for request in seen {
+            assert_eq!(
+                request.tool.as_deref(),
+                Some(entry::attribution_name(&task.name)),
+                "{}",
+                task.name
+            );
+        }
+    }
+    api.clear();
+    let _ = server
+        .call_tool(entry::SEARCH, json!({ "query": "x", "project_id": UUID }))
+        .await;
+    assert_eq!(
+        api.seen().first().and_then(|seen| seen.tool.as_deref()),
+        Some("entry.search")
+    );
+    api.clear();
+    let _ = server.call_tool(entry::OVERVIEW, json!({ "project_id": UUID })).await;
+    assert_eq!(
+        api.seen().first().and_then(|seen| seen.tool.as_deref()),
+        Some("entry.overview")
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn with_writes_allowed_sylvode_write_runs_a_write_tool() -> TestResult {
     let api = Api::spawn(Policy::Permissive).await?;
