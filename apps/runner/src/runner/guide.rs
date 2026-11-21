@@ -899,3 +899,11 @@ pub fn install_for_cli(
         }
     }
 }
+
+/// Whether the project's `.git` is a file (a worktree), in which case the exclude line cannot be
+/// written. Read-only, for `doctor`; `None` when it is not a worktree or cannot be told.
+#[must_use]
+pub fn ensure_git_exclude_check(project_dir: &Path) -> Option<ExcludeOutcome> {
+    let root = open_root(project_dir).ok()?;
+    matches!(classify(&root, ".git"), Ok(Entry::File)).then_some(ExcludeOutcome::Worktree)
+}

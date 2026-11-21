@@ -78,6 +78,7 @@ struct Memory {
 pub struct Handshake {
     status: Arc<Mutex<Status_>>,
     memory: Arc<Mutex<Memory>>,
+    prereq: Arc<crate::doctor::Prereq>,
 }
 
 impl Handshake {
@@ -92,6 +93,7 @@ impl Handshake {
                 api: None,
             })),
             memory: Arc::new(Mutex::new(Memory::default())),
+            prereq: Arc::new(crate::doctor::Prereq::default()),
         }
     }
 
@@ -154,10 +156,32 @@ pub fn targets(config: &Config) -> Vec<Target> {
     out
 }
 
-/// The component rows of the start-up prerequisite snapshot. Only `api_protocol` is built here;
-/// the doctor fills the same function with the `tmux`, `cli.*` and `mcp_server` rows.
-pub const fn prerequisite_rows(_config: &Config) -> Vec<Component> {
-    Vec::new()
+impl Handshake {
+    /// The rows of the doctor's snapshot that Sylvode keeps (`tmux`, `cli.*`, `mcp_server`,
+    /// `runner`), as of at most a minute ago: probing runs programs, so it happens off the async
+    /// threads and at most once a minute.
+    pub async fn prerequisite_rows(&self, config: &Config) -> Vec<Component> {
+        let (prereq, config) = (Arc::clone(&self.prereq), config.clone());
+        let rows = tokio::task::spawn_blocking(move || prereq.rows(&config))
+            .await
+            .unwrap_or_default();
+        rows.into_iter()
+            .filter(|row| {
+                row.component == "tmux"
+                    || row.component == "mcp_server"
+                    || row.component == "runner"
+                    || row.component.starts_with("cli.")
+            })
+            .collect()
+    }
+
+    /// The current prerequisite rows (cached for a minute).
+    pub async fn rows(&self, config: &Config) -> Vec<Component> {
+        let (prereq, config) = (Arc::clone(&self.prereq), config.clone());
+        tokio::task::spawn_blocking(move || prereq.rows(&config))
+            .await
+            .unwrap_or_default()
+    }
 }
 
 /// The report body: the subset Sylvode keeps. Information counts as ok; paths, hints and details
@@ -226,7 +250,7 @@ pub async fn run_once(config: &Config, http: &reqwest::Client, handshake: &Hands
         }
         let version = data.get("api_version").and_then(Value::as_str);
         let mut rows = vec![api_row(api, version)];
-        rows.extend(prerequisite_rows(config));
+        rows.extend(handshake.prerequisite_rows(config).await);
         if handshake.memory.lock().no_runner_row.contains(&target.bot_id) {
             continue;
         }

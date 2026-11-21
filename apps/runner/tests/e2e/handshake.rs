@@ -37,7 +37,7 @@ fn keys(value: &Value, out: &mut Vec<String>) {
     }
 }
 
-async fn health(url: &str) -> Value {
+pub async fn health(url: &str) -> Value {
     reqwest::get(url)
         .await
         .expect("health")
@@ -95,9 +95,28 @@ async fn a_matching_protocol_is_reported_at_start_and_again_after_the_interval()
     let body = &reports[0].body;
     assert_eq!(body["generated_by"]["task_protocol"], 1);
     assert_eq!(body["generated_by"]["version"], env!("CARGO_PKG_VERSION"));
+    // The API row first, then the doctor's rows (tmux, the CLIs, the MCP server, this runner).
+    let names: Vec<&str> = body["components"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter_map(|row| row["component"].as_str())
+        .collect();
     assert_eq!(
-        body["components"],
-        json!([{"component": "api_protocol", "status": "ok", "version": "0.5.0"}])
+        names,
+        [
+            "api_protocol",
+            "tmux",
+            "cli.claude",
+            "cli.codex",
+            "cli.opencode",
+            "mcp_server",
+            "runner"
+        ]
+    );
+    assert_eq!(
+        body["components"][0],
+        json!({"component": "api_protocol", "status": "ok", "version": "0.5.0"})
     );
     // Only the keys Sylvode keeps: no path, hint or detail anywhere.
     let mut all = Vec::new();
@@ -226,7 +245,7 @@ async fn health_answers_exactly_the_documented_keys() {
     let answer = wait_health(&server.url("/health"), "ok").await;
     let mut top: Vec<&String> = answer.as_object().expect("object").keys().collect();
     top.sort();
-    assert_eq!(top, ["protocol", "status"]);
+    assert_eq!(top, ["degraded", "prereq", "protocol", "status"]);
     let mut inner: Vec<&String> = answer["protocol"].as_object().expect("object").keys().collect();
     inner.sort();
     assert_eq!(inner, ["api", "runner", "state"]);

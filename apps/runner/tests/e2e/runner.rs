@@ -61,7 +61,7 @@ impl Fixture {
             bin.path(),
             "claude",
             &format!(
-                "pwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env > '{r}.env'",
+                "[ \"$1\" = --version ] && {{ echo '2.1.330 (Claude Code)'; exit 0; }}\npwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env > '{r}.env'",
                 r = record.display()
             ),
         );
@@ -82,7 +82,7 @@ impl Fixture {
             self.bin.path(),
             "claude",
             &format!(
-                "pwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env > '{r}.env'\n{tail}",
+                "[ \"$1\" = --version ] && {{ echo '2.1.330 (Claude Code)'; exit 0; }}\npwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env > '{r}.env'\n{tail}",
                 r = self.record.display()
             ),
         );
@@ -645,4 +645,35 @@ async fn start_up_logs_the_posture_of_every_cli_and_warns_about_opencode() {
         .iter()
         .any(|l| l.contains(" WARN ") && l.contains("opencode permissions are not controlled"));
     assert!(warned, "{:?}", server.stdout());
+}
+
+/// A missing tmux with the tmux channel switched on degrades the runner (it starts, `/health` says
+/// so and names the row) instead of refusing to start, and a tmux delivery is refused at once with
+/// a reason code, so the task fails in Sylvode instead of hanging.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_tmux_degrades_the_runner_instead_of_refusing_it() {
+    let fx = Fixture::new().await;
+    fx.set_view(vec![(200, view(&fx.project, "tmux", true))]);
+    let empty = TempDir::new("rn-empty-path");
+    let config = fx
+        .config()
+        .replace("[runner.mcp]", "[runner.tmux]\nenabled = true\n[runner.mcp]");
+    let server = Server::start(RUNNER, &config, &[("PATH", &empty.path().to_string_lossy())])
+        .expect("the runner starts although tmux is missing");
+    let mut answer = Value::Null;
+    for _ in 0..100 {
+        answer = crate::handshake::health(&server.url("/health")).await;
+        if answer["prereq"]["tmux"] == "fail" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(answer["prereq"]["tmux"], "fail", "{answer}");
+    assert_eq!(answer["degraded"], true, "{answer}");
+    assert_eq!(answer["status"], "ok");
+    // The delivery is refused at once, naming the missing prerequisite.
+    let (status, refused) = post_signed(&server.url("/webhook"), &delivery()).await;
+    assert_eq!(status, 200, "{refused}");
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert_eq!(refused["reason_code"], "tmux_unavailable", "{refused}");
 }

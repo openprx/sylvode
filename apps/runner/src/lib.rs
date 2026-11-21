@@ -14,6 +14,9 @@ mod app;
 mod background;
 mod config;
 mod dispatcher;
+mod doctor;
+#[cfg(test)]
+mod doctor_tests;
 mod executor_permissions;
 mod handler;
 mod handshake;

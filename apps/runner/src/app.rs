@@ -25,6 +25,10 @@ const HELP: &str = "\
 Sylvode runner: receives Sylvode task deliveries and runs agents.
 
 Usage: sylvode-runner [CONFIG]
+       sylvode-runner doctor [--json] [--config PATH] [--mode tmux|headless|auto] [--as-service]
+                             [--project KEY] [--show-paths]
+       sylvode-runner --check
+       sylvode-runner config check [--json] [--config PATH]
        sylvode-runner sessions [--prune] [--config PATH]
        sylvode-runner trust KEY [--config PATH]
        sylvode-runner release KEY [--config PATH]
@@ -38,6 +42,9 @@ Options:
   -V, --version  Print the version and exit
 
 Commands:
+  doctor         Check tmux, the CLIs and the MCP server; exit 0 ok, 2 a failed row, 1 checker error
+  --check        doctor --json without network or secrets (for installers and the other binary)
+  config check   Say whether the configuration loads, naming the keys that do not
   sessions       List the tmux sessions this runner created; --prune ends the idle ones whose
                  project no longer uses tmux
   trust KEY      Attach to session KEY to answer its trust or login dialog
@@ -50,6 +57,14 @@ enum Command {
     Version,
     Serve {
         config_path: String,
+    },
+    /// `doctor [--json] [--config P] [--mode M] [--as-service] [--project KEY] [--show-paths]`, or
+    /// `--check`.
+    Doctor(Box<crate::doctor::Options>),
+    /// `config check [--json] [--config P]`.
+    ConfigCheck {
+        config_path: String,
+        json: bool,
     },
     /// `sessions [--prune] [--config P]`.
     Sessions {
@@ -122,7 +137,75 @@ fn parse_operator(word: &str, rest: &[OsString]) -> Result<Command, String> {
     }
 }
 
+/// `doctor ...` and `--check`.
+fn parse_doctor(rest: &[OsString], check: bool) -> Result<Command, String> {
+    use sylvode_prereq::Mode;
+    let mut options = crate::doctor::Options {
+        json: check,
+        config_path: DEFAULT_CONFIG_PATH.to_string(),
+        mode: Mode::Auto,
+        as_service: false,
+        project: None,
+        show_paths: false,
+        check_only: check,
+    };
+    let mut items = rest.iter();
+    while let Some(item) = items.next() {
+        let text = item
+            .to_str()
+            .ok_or_else(|| "arguments must be valid UTF-8".to_string())?;
+        let mut value = |what: &str| -> Result<String, String> {
+            items
+                .next()
+                .and_then(|v| v.to_str())
+                .map(str::to_string)
+                .ok_or_else(|| format!("{what} needs a value"))
+        };
+        match text {
+            "--json" => options.json = true,
+            "--as-service" => options.as_service = true,
+            "--show-paths" => options.show_paths = true,
+            "--config" => options.config_path = value("--config")?,
+            "--project" => options.project = Some(value("--project")?),
+            "--mode" => {
+                options.mode = match value("--mode")?.as_str() {
+                    "tmux" => Mode::Tmux,
+                    "headless" => Mode::Headless,
+                    "auto" => Mode::Auto,
+                    other => return Err(format!("unknown mode `{other}`; use tmux, headless or auto")),
+                };
+            }
+            other => return Err(format!("unknown option `{other}` for `doctor`")),
+        }
+    }
+    Ok(Command::Doctor(Box::new(options)))
+}
+
 fn parse_command(args: &[OsString]) -> Result<Command, String> {
+    match args.first().and_then(|first| first.to_str()) {
+        Some("doctor") => return parse_doctor(args.get(1..).unwrap_or_default(), false),
+        Some("--check") => return parse_doctor(args.get(1..).unwrap_or_default(), true),
+        Some("config") if args.get(1).is_some_and(|w| w == "check") => {
+            let mut config_path = DEFAULT_CONFIG_PATH.to_string();
+            let mut json = false;
+            let mut items = args.get(2..).unwrap_or_default().iter();
+            while let Some(item) = items.next() {
+                match item.to_str() {
+                    Some("--json") => json = true,
+                    Some("--config") => {
+                        config_path = items
+                            .next()
+                            .and_then(|v| v.to_str())
+                            .ok_or_else(|| "--config needs a path".to_string())?
+                            .to_string();
+                    }
+                    _ => return Err("usage: config check [--json] [--config PATH]".to_string()),
+                }
+            }
+            return Ok(Command::ConfigCheck { config_path, json });
+        }
+        _ => {}
+    }
     if args.first().is_some_and(|first| first == "hook") {
         let rest = args.get(1..).unwrap_or_default();
         return Ok(Command::Hook {
@@ -194,6 +277,8 @@ pub fn run() -> ExitCode {
         Command::Help => write_stdout(HELP),
         Command::Version => write_stdout(&version_line()),
         Command::Serve { config_path } => serve_blocking(&config_path),
+        Command::Doctor(options) => crate::doctor::run(&options),
+        Command::ConfigCheck { config_path, json } => crate::doctor::config_check(&config_path, json),
         Command::Sessions { config_path, prune } => crate::runner::cli::run_sessions(&config_path, prune),
         Command::Trust { config_path, key } => crate::runner::cli::run_trust(&config_path, &key),
         Command::Release { config_path, key } => crate::runner::cli::run_release(&config_path, &key),
@@ -298,6 +383,25 @@ async fn serve(config: config::Config) -> ExitCode {
     });
 
     if has_runner_agents {
+        // The prerequisites as the service sees them: resolved paths in the log, and a degraded
+        // start (not a refusal) when a required one is missing.
+        let rows = state.handshake.rows(&state.config).await;
+        for row in &rows {
+            if row.status == sylvode_prereq::Status::Fail {
+                tracing::warn!(
+                    component = %row.component,
+                    hint = row.hint.as_deref().unwrap_or(""),
+                    "prerequisite missing: the runner starts degraded"
+                );
+            } else {
+                tracing::info!(
+                    component = %row.component,
+                    path = row.path.as_deref().unwrap_or(""),
+                    version = row.version.as_deref().unwrap_or(""),
+                    "prerequisite"
+                );
+            }
+        }
         // Rebuild the sessions' state from Sylvode (restart recovery, design 7.8).
         tokio::spawn(crate::runner::recovery::recover_all(Arc::clone(&state)));
         for line in crate::runner::posture(&state.config) {
@@ -445,7 +549,14 @@ fn start_sessions(
 
 /// `GET /health`: the service is up; `protocol` is the result of the handshake with Sylvode.
 async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status": "ok", "protocol": state.handshake.health()}))
+    let rows = state.handshake.rows(&state.config).await;
+    let (prereq, degraded) = crate::doctor::health_parts(&state.config, &rows);
+    Json(serde_json::json!({
+        "status": "ok",
+        "protocol": state.handshake.health(),
+        "prereq": prereq,
+        "degraded": degraded,
+    }))
 }
 
 /// Resolves on SIGINT or SIGTERM.
