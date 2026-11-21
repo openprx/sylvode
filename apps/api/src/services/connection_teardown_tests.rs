@@ -6,7 +6,7 @@
 use sea_orm::{ConnectionTrait, TransactionTrait};
 use uuid::Uuid;
 
-use super::bot_connection_tests::{W, existing_bot, expect_connect, new_bot, second_project, world};
+use super::bot_connection_tests::{W, connect, existing_bot, expect_connect, new_bot, second_project, world};
 use crate::routes::context::tenant_fixture::{count, state_for};
 use crate::scratch_or_skip;
 
@@ -124,5 +124,72 @@ async fn a_bot_user_with_connections_is_disabled_by_the_admin_route_and_never_ha
     assert!(hard.is_err(), "the webhook keeps pointing at its bot");
     assert_eq!(rows(db, "bot_runners", "bot_id", bot).await, 1);
     assert_eq!(rows(db, "project_bot_connections", "bot_id", bot).await, 2);
+    scratch.drop_self().await;
+}
+
+/// Connect and project deletion take the project row first, so connecting a bot to a project that is
+/// being deleted waits instead of deadlocking.
+#[tokio::test]
+async fn releasing_a_project_locks_the_project_row_before_the_connection_rows() {
+    let scratch = scratch_or_skip!("teardown_lock");
+    let db = &scratch.db;
+    let (_w, _bot, p1, _p2) = connected(db, "l1").await;
+    let tx = db.begin().await.expect("begin");
+    crate::services::bot_connections::release_for_project(&tx, p1)
+        .await
+        .expect("release");
+    // Another writer cannot take the project row while the release is open.
+    let other = db.begin().await.expect("begin");
+    let attempt = other
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "SELECT id FROM projects WHERE id = $1 FOR NO KEY UPDATE NOWAIT",
+            vec![p1.into()],
+        ))
+        .await;
+    assert!(attempt.is_err(), "the project row is locked by the release");
+    drop(other);
+    tx.commit().await.expect("commit");
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn connecting_while_the_project_is_deleted_does_not_deadlock() {
+    let scratch = scratch_or_skip!("teardown_race");
+    let db = &scratch.db;
+    for round in 0..5 {
+        let w = world(db, &format!("rc{round}")).await;
+        let p1 = w.tenant.project_id;
+        let p2 = second_project(db, &w, &format!("RC{round}")).await;
+        let first = expect_connect(&w, p1, new_bot("Race bot")).await;
+        let bot = first.connection.bot.id;
+        let connect_task = connect(&w, p2, existing_bot(bot));
+        let delete_task = async {
+            let tx = db.begin().await.expect("begin");
+            let released = crate::services::teardown::delete_project_content(&tx, p2).await;
+            let deleted = match released {
+                Ok(_) => tx
+                    .execute(sea_orm::Statement::from_sql_and_values(
+                        sea_orm::DbBackend::Postgres,
+                        "DELETE FROM projects WHERE id = $1",
+                        vec![p2.into()],
+                    ))
+                    .await
+                    .map(|_| ()),
+                Err(err) => return Err(format!("{err:?}")),
+            };
+            deleted.map_err(|err| err.to_string())?;
+            tx.commit().await.map_err(|err| err.to_string())
+        };
+        let (connected, deleted) = tokio::join!(connect_task, delete_task);
+        // Either order is fine; a database deadlock is not.
+        if let Err(err) = &connected {
+            let text = format!("{err:?}");
+            assert!(!text.to_lowercase().contains("deadlock"), "connect: {text}");
+        }
+        if let Err(text) = &deleted {
+            assert!(!text.to_lowercase().contains("deadlock"), "delete: {text}");
+        }
+    }
     scratch.drop_self().await;
 }

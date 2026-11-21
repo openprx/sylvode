@@ -10,8 +10,13 @@
 //! block, and appear in no event, log line or error. Business events carry ids, names, the runner
 //! address and the token prefix.
 //!
-//! Lock order, everywhere: the project row (connect only), then the `bot_runners` row, then the
-//! `project_bot_connections` row, then the rows that hang off them. A write that changes shared
+//! Lock order, everywhere: the project row, then the `bot_runners` row, then the
+//! `project_bot_connections` row, then the rows that hang off them. Connect takes the project row
+//! `FOR UPDATE`; releasing a connection for a project that is being deleted takes it
+//! `FOR NO KEY UPDATE` (the delete route removes the row itself later in its transaction), so a
+//! connect and a project deletion of the same project queue behind each other instead of crossing
+//! locks. The writes that change an existing connection (update, rotate, enable, remove) start at
+//! the `bot_runners` row and never take the project row themselves. A write that changes shared
 //! state increments the version of every connection of the bot.
 
 use platform::{app::AppState, timestamp::Timestamp};
@@ -1524,6 +1529,13 @@ pub async fn remove(
 /// Returns the workspace and the authorization epoch when the bot's seat left (its last project),
 /// for the caller to pass to [`settle_epoch`] after its commit.
 pub async fn release_for_project(tx: &impl ConnectionTrait, project_id: Uuid) -> Result<Option<(Uuid, i64)>, ApiError> {
+    // The project row first, as connect does (see the lock order in the module header).
+    run(
+        tx,
+        "SELECT id FROM projects WHERE id = $1 FOR NO KEY UPDATE",
+        vec![project_id.into()],
+    )
+    .await?;
     if load_link(tx, project_id).await?.is_none() {
         return Ok(None);
     }
