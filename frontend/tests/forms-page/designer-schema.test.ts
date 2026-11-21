@@ -596,12 +596,30 @@ suite.check('parseFormulaArgsText splits and decodes JSON arguments', () => {
 		['qty', 'price'],
 		'object references are written as plain field names'
 	);
-	// CURRENT BEHAVIOUR: arguments are split on commas before JSON is decoded, so a JSON object that
-	// contains a comma is broken into two strings instead of one object.
 	assertDeepEqual(
 		m.parseFormulaArgsText('{"a":1,"b":2}'),
-		['{"a":1', '"b":2}'],
-		'comma inside JSON'
+		[{ a: 1, b: 2 }],
+		'comma inside a JSON object'
+	);
+	assertDeepEqual(
+		m.parseFormulaArgsText('qty, {"field":"a,b","list":[1,2]}, price'),
+		['qty', { field: 'a,b', list: [1, 2] }, 'price'],
+		'commas in nested JSON and in a JSON string, plain arguments still split'
+	);
+	assertDeepEqual(
+		m.parseFormulaArgsText('{"s":"a\\",b"},x'),
+		[{ s: 'a",b' }, 'x'],
+		'escaped quote inside a JSON string'
+	);
+	assertDeepEqual(
+		m.parseFormulaArgsText('{"a":1,\n"b":2}\nz'),
+		['{"a":1', '"b":2}', 'z'],
+		'a newline always ends an argument'
+	);
+	assertDeepEqual(
+		m.parseFormulaArgsText('{bad,x'),
+		['{bad', 'x'],
+		'an unterminated object falls back to a plain comma split'
 	);
 });
 

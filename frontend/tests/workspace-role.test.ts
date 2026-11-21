@@ -19,7 +19,7 @@ import {
 	showWorkspaceAdminLinks,
 	type MembersFetcher
 } from '../src/lib/workspace/role';
-import type { ApiResult, PaginatedData } from '../src/lib/api/client';
+import { authSessionChanged, type ApiResult, type PaginatedData } from '../src/lib/api/client';
 import type { WorkspaceMember } from '../src/lib/api/workspaces';
 import type { WorkspaceRole } from '../src/lib/workspace/home';
 
@@ -173,13 +173,30 @@ await suite.checkAsync('a failed or thrown read leaves the links hidden', async 
 	assertEqual(await signedOut.select(WS_A, null), null, 'no user, no role');
 });
 
+await suite.checkAsync(
+	'a read stopped by an auth session change is read again, not final',
+	async () => {
+		const reported: Array<WorkspaceRole | null> = [];
+		const aborted = authSessionChanged<PaginatedData<WorkspaceMember>>();
+		let calls = 0;
+		const fetcher: MembersFetcher = async () => (++calls === 1 ? aborted : members('admin'));
+		const tracker = new WorkspaceRoleTracker(fetcher, (role) => reported.push(role));
+		assertEqual(await tracker.select(WS_A, ME), null, 'the stopped read decides nothing');
+		// The shell selects the same pair again once the profile check has finished.
+		assertEqual(await tracker.select(WS_A, ME), 'admin', 'the same pair is read again');
+		assertEqual(reported[reported.length - 1], 'admin', 'the links appear');
+		assertEqual(await tracker.select(WS_A, ME), null, 'a decided pair is not read again');
+		assertEqual(calls, 2, 'two reads in all');
+	}
+);
+
 suite.check(
 	'the shell session re-reads the role on workspace change and drops the instance-admin grant',
 	() => {
 		const root = fileURLToPath(new URL('..', import.meta.url));
 		const layout = readFileSync(join(root, 'src/lib/shell/session.svelte.ts'), 'utf8');
 		assert(
-			/\$effect\(\(\) => \{\s*void roleTracker\.select\(session\.workspaceId, session\.userId\);\s*\}\);/.test(
+			/\$effect\(\(\) => \{\s*void session\.ready;\s*void roleTracker\.select\(session\.workspaceId, session\.userId\);\s*\}\);/.test(
 				layout
 			),
 			'an $effect re-selects the role from currentWorkspaceId'

@@ -1,4 +1,5 @@
 import type { FormField, FormRecord } from '#lib/api/forms.js';
+import { csvDownloadBlob } from '#lib/utils/csv.js';
 import * as precedence from '#lib/forms/view-precedence.js';
 import { toast } from '#lib/stores/toast.js';
 import type { PivotTable, ViewFilterDraft, ViewFilterLogic } from '#lib/forms/page-types.js';
@@ -394,7 +395,7 @@ export class ViewPivotController extends FormsController {
 			return;
 
 		const csv = this.fp.filterExpressionExport.recordsCsv(this.s.pivotDrilldownRecords);
-		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+		const blob = csvDownloadBlob(csv);
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement('a');
 
@@ -432,7 +433,7 @@ export class ViewPivotController extends FormsController {
 
 		if (!this.s.selectedForm || !csv) return;
 
-		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+		const blob = csvDownloadBlob(csv);
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement('a');
 
