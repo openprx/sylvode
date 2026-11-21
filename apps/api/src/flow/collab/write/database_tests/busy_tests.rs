@@ -1031,8 +1031,7 @@ fn first_block_text(doc: &loro::LoroDoc) -> (loro::LoroText, String) {
 async fn nested_marks_update(f: &Fixture, existing: usize, count: usize) -> Vec<u8> {
     use loro::ExportMode;
     let doc = head_document(f).await;
-    doc.set_peer_id(u64::from(Uuid::new_v4().as_u128() as u64))
-        .expect("peer id");
+    doc.set_peer_id(Uuid::new_v4().as_u64_pair().0).expect("peer id");
     let before = doc.oplog_vv();
     let (text, _) = first_block_text(&doc);
     for step in existing..existing + count {
