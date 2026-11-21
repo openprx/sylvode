@@ -4,13 +4,14 @@
 //! matches the event's source, kind and severity handles it; exactly one rule handles an event.
 
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
 use super::{envelope::valid_kind, severity::Severity};
 
 /// An alert rule row.
-#[derive(Clone, Debug, FromQueryResult)]
+#[derive(Clone, Debug, FromQueryResult, Serialize)]
 pub struct RuleRow {
     pub id: Uuid,
     pub workspace_id: Uuid,

@@ -1614,6 +1614,8 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
         .merge(api::oauth::router::routes_with(&auth_state, oauth))
         // Alert chain: the inbound event endpoint, authenticated by a source credential only.
         .merge(api::inbound::routes(&auth_state))
+        // Alert chain management: sources and rules, for workspace owners and admins only.
+        .merge(routes::inbound_admin::routes(&auth_state))
         // Label routes (protected)
         .route(
             "/api/v1/workspaces/{workspace_id}/labels",

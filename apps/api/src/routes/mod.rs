@@ -21,6 +21,7 @@ pub mod governance;
 pub mod governance_ext;
 pub mod impact_review;
 pub mod import;
+pub mod inbound_admin;
 pub mod issue;
 pub mod label;
 pub mod member;

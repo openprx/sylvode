@@ -31,6 +31,7 @@ pub mod followup;
 pub mod ingest;
 pub mod notify;
 pub mod response;
+pub mod rule_input;
 pub mod rules;
 pub mod severity;
 
@@ -62,5 +63,7 @@ pub fn routes_with(state: &AppState, config: InboundConfig) -> Router<AppState> 
     )
 }
 
+#[cfg(test)]
+mod admin_tests;
 #[cfg(test)]
 mod db_tests;
