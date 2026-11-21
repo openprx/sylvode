@@ -1637,6 +1637,23 @@ mod tests {
         );
         // The private switch lifts everything.
         assert!(validate_runner_url_with("http://10.0.0.5:9", "", true).await.is_ok());
+        // Every way of spelling a loopback or internal address is refused, as typed or as parsed.
+        for spelled in [
+            "http://2130706433",
+            "http://0x7f.1",
+            "http://017700000001",
+            "http://[::ffff:127.0.0.1]",
+            "http://[64:ff9b::7f00:1]",
+            "http://a\\@127.0.0.1",
+            "http://1.2.3.4\\.x.example",
+            "http://169.254.169.254",
+            "http://[::1]",
+        ] {
+            assert!(
+                validate_runner_url_with(spelled, "", false).await.is_err(),
+                "{spelled} must be refused"
+            );
+        }
         // A plain http:// address is allowed only for a host the operator listed.
         let plain = message(validate_runner_url_with("http://93.184.216.34:9", "", false).await);
         assert_eq!(

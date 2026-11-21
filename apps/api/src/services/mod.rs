@@ -29,6 +29,8 @@ mod connection_epoch_tests;
 #[cfg(test)]
 mod connection_gate_tests;
 #[cfg(test)]
+mod connection_missing_tests;
+#[cfg(test)]
 mod connection_teardown_tests;
 
 #[cfg(test)]

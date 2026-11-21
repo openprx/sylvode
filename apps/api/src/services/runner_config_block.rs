@@ -370,4 +370,100 @@ mod tests {
         let printed = format!("{block:?}");
         assert!(!printed.contains(&token) && !printed.contains(&secret));
     }
+
+    /// For strings full of characters that end or confuse a TOML string, comment or table (quotes,
+    /// backslashes, every kind of line break, DEL, the bidirectional override, `]]`, triple
+    /// quotes) in the bot name, project key, directory and runner address, the block is valid TOML,
+    /// has the same keys as the golden block, and the name and directory read back exactly.
+    #[test]
+    fn hostile_values_keep_the_block_valid_and_its_keys_unchanged() {
+        const PIECES: [&str; 16] = [
+            "\"",
+            "\\",
+            "\r",
+            "\n",
+            "\t",
+            "\u{7f}",
+            "\u{2028}",
+            "\u{202e}",
+            "]]",
+            "'''",
+            "\"\"\"",
+            "#",
+            " ",
+            "a",
+            "\n[agents]\nid = \"x\"\n",
+            "\u{0}",
+        ];
+        fn keys(table: &toml::Table, prefix: &str, out: &mut Vec<String>) {
+            for (key, value) in table {
+                let path = format!("{prefix}{key}");
+                match value {
+                    toml::Value::Table(inner) => keys(inner, &format!("{path}."), out),
+                    toml::Value::Array(rows) if rows.iter().all(toml::Value::is_table) => {
+                        for inner in rows.iter().filter_map(toml::Value::as_table) {
+                            keys(inner, &format!("{path}[]."), out);
+                        }
+                    }
+                    _ => out.push(path),
+                }
+            }
+        }
+        let (token, secret) = (token(), secret());
+        let golden = parse(
+            &build(&input(
+                &token,
+                &secret,
+                "Build bot",
+                "https://runner.example.net:9090",
+                "claude",
+            ))
+            .text,
+        );
+        let mut golden_keys = Vec::new();
+        keys(&golden, "", &mut golden_keys);
+        golden_keys.sort();
+
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let nasty = |next: &mut dyn FnMut() -> u64| {
+            let count = 1 + usize::try_from(next() % 8).expect("small");
+            (0..count)
+                .map(|_| PIECES[usize::try_from(next() % 16).expect("small")])
+                .collect::<String>()
+        };
+        for round in 0..400 {
+            let name = nasty(&mut next);
+            let directory = format!("/home/{}", nasty(&mut next));
+            let project = nasty(&mut next);
+            let url = format!("https://h{}", nasty(&mut next));
+            let mut block_input = input(&token, &secret, &name, "https://runner.example.net:9090", "claude");
+            block_input.working_directory = &directory;
+            block_input.project_key = &project;
+            block_input.runner_url = &url;
+            let text = build(&block_input).text;
+            let table = text.parse::<toml::Table>().unwrap_or_else(|err| {
+                panic!("round {round}: not TOML ({err}) for {name:?} {directory:?} {project:?} {url:?}")
+            });
+            let mut found = Vec::new();
+            keys(&table, "", &mut found);
+            found.sort();
+            assert_eq!(found, golden_keys, "round {round}: the key set changed for {name:?}");
+            assert_eq!(
+                table["agents"][0]["name"].as_str(),
+                Some(name.as_str()),
+                "round {round}"
+            );
+            assert_eq!(
+                table["runner"]["allowed_roots"][0].as_str(),
+                Some(directory.as_str()),
+                "round {round}"
+            );
+        }
+    }
 }

@@ -1678,4 +1678,134 @@ mod database_tests {
         assert_eq!(reason, 1);
         scratch.drop_self().await;
     }
+
+    /// Rotating twice: every rotation restarts the hold, which lasts until the new token is used and
+    /// never more than one hour after the last rotation.
+    #[tokio::test]
+    async fn rotating_twice_holds_until_the_new_token_is_used_and_for_at_most_an_hour() {
+        let scratch = scratch_or_skip!("hold_twice");
+        let db = &scratch.db;
+        let task = seed_pending_task(db).await;
+        connect_the_bot_of(db, task, 3.0, Some(2.5)).await; // issued 3 h ago, used 2.5 h ago: flowing
+        let bot = "(SELECT ai_participant_id FROM ai_tasks WHERE id = $1)";
+        let rotate = |minutes_ago: i32| {
+            let sql = format!(
+                "UPDATE bot_runners SET credentials_issued_at = now() - make_interval(mins => {minutes_ago}) WHERE bot_id = {bot}"
+            );
+            async move { sql }
+        };
+        // First rotation 50 minutes ago, the runner never used the new token; a second rotation a
+        // minute ago restarts the hold from that moment.
+        exec(db, &rotate(50).await, vec![task.into()]).await;
+        exec(db, &rotate(1).await, vec![task.into()]).await;
+        let held = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        assert!(
+            held.is_empty(),
+            "held after the second rotation, though the first is 50 minutes old"
+        );
+        assert_eq!(status_of(db, task).await, "pending");
+
+        // Used with the new token: released.
+        exec(
+            db,
+            &format!("UPDATE workspace_bots SET last_used_at = now() WHERE id = {bot}"),
+            vec![task.into()],
+        )
+        .await;
+        let released = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        assert_eq!(released.len(), 1);
+
+        // Never used: the hold still ends one hour after the last rotation.
+        exec(
+            db,
+            "UPDATE ai_tasks SET status = 'pending', lease_expires_at = NULL, attempts = 0 WHERE id = $1",
+            vec![task.into()],
+        )
+        .await;
+        exec(
+            db,
+            &format!("UPDATE workspace_bots SET last_used_at = now() - interval '3 hours' WHERE id = {bot}"),
+            vec![task.into()],
+        )
+        .await;
+        exec(db, &rotate(59).await, vec![task.into()]).await;
+        assert!(
+            pickup_pending_tasks(db, 10, 3_600)
+                .await
+                .expect("pick-up runs")
+                .is_empty()
+        );
+        exec(db, &rotate(61).await, vec![task.into()]).await;
+        assert_eq!(
+            pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs").len(),
+            1
+        );
+        scratch.drop_self().await;
+    }
+
+    /// The last connection is removed while a task is running: its callbacks stop (the token is
+    /// revoked), the lease runs out, and each later delivery finds no webhook; the task fails after
+    /// its attempts instead of being redelivered for ever.
+    #[tokio::test]
+    async fn a_task_running_when_the_last_connection_is_removed_ends() {
+        let scratch = scratch_or_skip!("removed_running");
+        let db = &scratch.db;
+        let state = state_for(db.clone());
+        let task = seed_pending_task(db).await;
+        connect_the_bot_of(db, task, 3.0, Some(2.0)).await;
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        assert_eq!(picked.len(), 1);
+        // The removal of the last connection, as `bot_connections::remove` leaves it.
+        for sql in [
+            "DELETE FROM project_bot_connections WHERE project_id = (SELECT project_id FROM ai_tasks WHERE id = $1)",
+            "DELETE FROM bot_runners WHERE bot_id = (SELECT ai_participant_id FROM ai_tasks WHERE id = $1)",
+            "DELETE FROM webhooks WHERE bot_user_id = (SELECT ai_participant_id FROM ai_tasks WHERE id = $1)",
+            "UPDATE workspace_bots SET is_active = false WHERE id = (SELECT ai_participant_id FROM ai_tasks WHERE id = $1)",
+        ] {
+            exec(db, sql, vec![task.into()]).await;
+        }
+        let max_attempts = 3;
+        for round in 1..=(max_attempts + 2) {
+            // The lease runs out.
+            exec(
+                db,
+                "UPDATE ai_tasks SET lease_expires_at = now() - interval '1 minute', next_retry_at = NULL WHERE id = $1 AND status = 'processing'",
+                vec![task.into()],
+            )
+            .await;
+            api::services::ai_task_service::end_stalled_attempts(db, 10)
+                .await
+                .expect("stalled attempts end");
+            let status = status_of(db, task).await;
+            if status == "failed" {
+                assert!(round <= max_attempts, "ended within the attempts, not after {round}");
+                scratch.drop_self().await;
+                return;
+            }
+            assert_eq!(status, "pending", "round {round}");
+            exec(
+                db,
+                "UPDATE ai_tasks SET next_retry_at = NULL WHERE id = $1",
+                vec![task.into()],
+            )
+            .await;
+            // Delivery: no webhook is left, so it is not delivered; it burns an attempt.
+            let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+            for picked in picked {
+                super::deliver_task(&state, &picked).await.expect("the attempt settles");
+            }
+            if status_of(db, task).await == "failed" {
+                assert!(round <= max_attempts, "ended within the attempts, not after {round}");
+                scratch.drop_self().await;
+                return;
+            }
+            exec(
+                db,
+                "UPDATE ai_tasks SET next_retry_at = NULL WHERE id = $1",
+                vec![task.into()],
+            )
+            .await;
+        }
+        panic!("the task was still being retried after {} rounds", max_attempts + 2);
+    }
 }
