@@ -32,6 +32,8 @@ futures-util = "0.3"
 # The same major version axum's `ws` feature already resolves in this workspace.
 tokio-tungstenite = "0.29"
 uuid.workspace = true
+# NFC normalisation of titles put into a CLI session.
+unicode-normalization.workspace = true
 # Parses listen addresses and tunnel URLs to compare their host exactly (already used by reqwest).
 url = "2"
 # CancellationToken and TaskTracker: stop running executors on shutdown and wait for their
