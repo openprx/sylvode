@@ -90,7 +90,8 @@ impl Sandbox {
         // `bin` counts, never a tmux of the machine running the tests).
         let body = "#!/bin/sh\n\
             if [ \"$1\" = doctor ]; then\n\
-              mode=''; while [ $# -gt 0 ]; do [ \"$1\" = --mode ] && mode=\"$2\"; shift; done\n\
+              mode=''; cfg=''; while [ $# -gt 0 ]; do [ \"$1\" = --mode ] && mode=\"$2\"; [ \"$1\" = --config ] && cfg=\"$2\"; shift; done\n\
+              if [ \"$mode\" = auto ] && grep -q 'enabled = true' \"$cfg\" 2>/dev/null; then mode=tmux; fi\n\
               here=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n\
               if [ \"$mode\" = tmux ] && [ ! -x \"$here/../bin/tmux\" ]; then\n\
                 echo 'tmux  fail  not found  hint: install tmux >= 3.2: brew install tmux | sudo apt install tmux'\n\
@@ -149,11 +150,20 @@ impl Sandbox {
         self.stub("tmux", "exit 0\n");
     }
 
-    /// A configuration with a `runner` agent (so the mode is `tmux`).
+    /// A configuration with a `runner` agent (the tmux channel is off).
     fn use_runner_config(&self) {
         std::fs::write(
             self.config_dir().join("config.toml"),
             "[[agents]]\nid = \"x\"\nname = \"X\"\nagent_type = \"runner\"\n",
+        )
+        .unwrap();
+    }
+
+    /// A configuration with a `runner` agent and the tmux channel switched on.
+    fn use_tmux_config(&self) {
+        std::fs::write(
+            self.config_dir().join("config.toml"),
+            "[runner.tmux]\nenabled = true\n[[agents]]\nid = \"x\"\nname = \"X\"\nagent_type = \"runner\"\n",
         )
         .unwrap();
     }
@@ -334,6 +344,28 @@ fn a_fresh_macos_install_writes_the_agent() {
         changes.first(),
         Some(&format!("launchctl load {}", sandbox.plist(LABEL).display()))
     );
+    // `launchctl asuser` works for root only: as the user the second check is skipped, said so,
+    // and never attempted.
+    assert!(
+        !changes.iter().any(|c| c.starts_with("launchctl asuser ")),
+        "{changes:?}"
+    );
+    assert!(
+        stderr(&output).contains("skipping the check in the service context"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+/// As root the second check runs through `launchctl asuser`.
+#[test]
+fn a_root_macos_install_checks_in_the_users_context() {
+    let sandbox = Sandbox::new(Platform::MacOs);
+    sandbox.stub("id", "echo 0\n");
+    sandbox.stub("stat", "echo 501\n");
+    let output = sandbox.install();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let changes = sandbox.changes();
     assert!(
         changes
             .iter()
@@ -480,7 +512,7 @@ fn the_renderer_inserts_values_literally_under_a_real_bash_3_2_when_available() 
 fn a_dry_run_without_tmux_prints_the_row_and_the_hint_and_installs_nothing() {
     for platform in [Platform::Linux, Platform::MacOs] {
         let sandbox = Sandbox::new(platform);
-        sandbox.use_runner_config();
+        sandbox.use_tmux_config();
         let output = sandbox.install_with(&["--dry-run"]);
         assert!(!output.status.success());
         let out = String::from_utf8_lossy(&output.stdout);
@@ -491,27 +523,27 @@ fn a_dry_run_without_tmux_prints_the_row_and_the_hint_and_installs_nothing() {
     }
 }
 
-/// Row 11: `--dry-run --headless-only` without tmux: exit 0 and the warning line.
+/// A headless-only install (tmux channel off, the default) needs no flag and no tmux: the mode is
+/// `auto`, and the installer says nothing about tmux.
 #[test]
-fn a_headless_only_dry_run_warns_and_succeeds() {
+fn a_headless_install_needs_neither_tmux_nor_a_flag() {
     let sandbox = Sandbox::new(Platform::Linux);
     sandbox.use_runner_config();
-    let output = sandbox.install_with(&["--dry-run", "--headless-only"]);
+    let output = sandbox.install_with(&["--dry-run"]);
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(
-        stderr(&output).contains("headless-only mode: tmux sessions will not be available"),
-        "{}",
-        stderr(&output)
-    );
+    assert!(!stderr(&output).contains("tmux"), "{}", stderr(&output));
     assert!(!sandbox.unit(NAME).exists());
-    assert!(sandbox.calls().is_empty());
+    // The flag is gone.
+    let refused = sandbox.install_with(&["--dry-run", "--headless-only"]);
+    assert!(!refused.status.success());
 }
 
-/// A failed prerequisite stops a real install before the unit is written.
+/// A failed prerequisite stops a real install before the unit is written (the tmux channel is on,
+/// so tmux is required, and the sandbox has none).
 #[test]
 fn a_failed_prerequisite_stops_the_install_before_the_unit_is_written() {
     let sandbox = Sandbox::new(Platform::Linux);
-    sandbox.use_runner_config();
+    sandbox.use_tmux_config();
     let output = sandbox.install();
     assert!(!output.status.success());
     assert!(!sandbox.unit(NAME).exists());
@@ -522,7 +554,7 @@ fn a_failed_prerequisite_stops_the_install_before_the_unit_is_written() {
 #[test]
 fn an_install_with_tmux_goes_through_and_leaves_the_config_alone() {
     let sandbox = Sandbox::new(Platform::Linux);
-    sandbox.use_runner_config();
+    sandbox.use_tmux_config();
     sandbox.add_tmux();
     let before = std::fs::read(sandbox.config_dir().join("config.toml")).unwrap();
     let output = sandbox.install();
@@ -530,7 +562,7 @@ fn an_install_with_tmux_goes_through_and_leaves_the_config_alone() {
     assert!(sandbox.unit(NAME).exists());
     assert_eq!(std::fs::read(sandbox.config_dir().join("config.toml")).unwrap(), before);
     assert!(
-        sandbox.calls().iter().any(|c| c.contains(" doctor --mode tmux ")),
+        sandbox.calls().iter().any(|c| c.contains(" doctor --mode auto ")),
         "{:?}",
         sandbox.calls()
     );

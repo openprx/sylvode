@@ -245,7 +245,7 @@ async fn health_answers_exactly_the_documented_keys() {
     let answer = wait_health(&server.url("/health"), "ok").await;
     let mut top: Vec<&String> = answer.as_object().expect("object").keys().collect();
     top.sort();
-    assert_eq!(top, ["degraded", "prereq", "protocol", "status"]);
+    assert_eq!(top, ["protocol", "status"]);
     let mut inner: Vec<&String> = answer["protocol"].as_object().expect("object").keys().collect();
     inner.sort();
     assert_eq!(inner, ["api", "runner", "state"]);

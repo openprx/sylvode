@@ -50,7 +50,9 @@ pub fn install_kind(config: Option<&Config>, mode: Mode) -> InstallKind {
     match mode {
         Mode::Tmux => InstallKind::RunnerTmux,
         Mode::Headless => InstallKind::RunnerHeadless,
-        Mode::Auto if runner_agents => InstallKind::RunnerTmux,
+        // `auto` follows what the service will do: tmux only when the channel is switched on.
+        Mode::Auto if runner_agents && config.is_some_and(|c| c.runner.tmux.enabled) => InstallKind::RunnerTmux,
+        Mode::Auto if runner_agents => InstallKind::RunnerHeadless,
         Mode::Auto => InstallKind::RunnerForwardOnly,
     }
 }
@@ -439,21 +441,4 @@ impl Prereq {
             components(Some(config), ConfigState::Found, mode, &checker)
         })
     }
-}
-
-/// `/health`'s `prereq` object and `degraded` flag: every row's status by name, and whether a
-/// required row failed while `runner` agents are configured.
-pub fn health_parts(config: &Config, rows: &[Component]) -> (Value, bool) {
-    let mut map = serde_json::Map::new();
-    for row in rows {
-        let word = match row.status {
-            Status::Ok | Status::Info => "ok",
-            Status::Warn => "warn",
-            Status::Fail => "fail",
-        };
-        map.insert(row.component.clone(), json!(word));
-    }
-    let runner_agents = config.agents.iter().any(|a| a.agent_type == "runner");
-    let degraded = runner_agents && rows.iter().any(|r| r.status == Status::Fail && r.required);
-    (Value::Object(map), degraded)
 }

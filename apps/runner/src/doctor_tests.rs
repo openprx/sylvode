@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use sylvode_prereq::{Component, InstallKind, Mode, Status};
 
-use super::doctor::{CACHE_FOR, Prereq, health_parts, install_kind};
+use super::doctor::{CACHE_FOR, Prereq, install_kind};
 
 fn rows() -> Vec<Component> {
     vec![Component::new("tmux", true, Status::Ok, true)]
@@ -42,24 +42,15 @@ fn the_install_kind_follows_the_mode_and_the_agents() {
     assert_eq!(install_kind(Some(&plain), Mode::Tmux), InstallKind::RunnerTmux);
     assert_eq!(install_kind(Some(&plain), Mode::Headless), InstallKind::RunnerHeadless);
     assert_eq!(install_kind(Some(&plain), Mode::Auto), InstallKind::RunnerForwardOnly);
-    assert_eq!(install_kind(None, Mode::Auto), InstallKind::RunnerForwardOnly);
-}
-
-/// `/health` says `degraded` only when a required row failed while runner agents are configured.
-#[test]
-fn degraded_needs_a_runner_agent_and_a_failed_required_row() {
-    let failed_required = vec![Component::new("tmux", false, Status::Fail, true)];
-    let failed_optional = vec![Component::new("cli.codex", false, Status::Fail, false)];
-    let plain = config("");
-    let (_, degraded) = health_parts(&plain, &failed_required);
-    assert!(!degraded, "no runner agent: nothing to degrade");
-    let runner = crate::config::Config::from_toml(include_str!("../../api/tests/fixtures/runner-config-block.toml"))
+    // `auto` with runner agents follows `[runner.tmux] enabled`.
+    let off = crate::config::Config::from_toml(include_str!("../../api/tests/fixtures/runner-config-block.toml"))
         .expect("block");
-    let (prereq, degraded) = health_parts(&runner, &failed_required);
-    assert!(degraded);
-    assert_eq!(prereq.get("tmux").and_then(|v| v.as_str()), Some("fail"));
-    assert!(!health_parts(&runner, &failed_optional).1);
-    assert!(!health_parts(&runner, &rows()).1);
+    assert!(!off.runner.tmux.enabled);
+    assert_eq!(install_kind(Some(&off), Mode::Auto), InstallKind::RunnerHeadless);
+    let mut on = off.clone();
+    on.runner.tmux.enabled = true;
+    assert_eq!(install_kind(Some(&on), Mode::Auto), InstallKind::RunnerTmux);
+    assert_eq!(install_kind(None, Mode::Auto), InstallKind::RunnerForwardOnly);
 }
 
 /// A project that is a git worktree (`.git` is a file) cannot get its exclude line written; the

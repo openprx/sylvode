@@ -667,17 +667,13 @@ async fn a_missing_tmux_degrades_the_runner_instead_of_refusing_it() {
         .replace("[runner.mcp]", "[runner.tmux]\nenabled = true\n[runner.mcp]");
     let server = Server::start(RUNNER, &config, &[("PATH", &empty.path().to_string_lossy())])
         .expect("the runner starts although tmux is missing");
-    let mut answer = Value::Null;
-    for _ in 0..100 {
-        answer = crate::handshake::health(&server.url("/health")).await;
-        if answer["prereq"]["tmux"] == "fail" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(answer["prereq"]["tmux"], "fail", "{answer}");
-    assert_eq!(answer["degraded"], true, "{answer}");
-    assert_eq!(answer["status"], "ok");
+    // `/health` stays plain: the overall status only, with no prerequisite detail.
+    let answer = crate::handshake::health(&server.url("/health")).await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert!(
+        answer.get("prereq").is_none() && answer.get("degraded").is_none(),
+        "{answer}"
+    );
     // The delivery is refused at once, naming the missing prerequisite.
     let (status, refused) = post_signed(&server.url("/webhook"), &delivery()).await;
     assert_eq!(status, 200, "{refused}");

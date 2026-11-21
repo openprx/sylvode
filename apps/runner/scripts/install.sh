@@ -8,7 +8,7 @@
 # Running it again rewrites the unit or agent in place.
 #
 # Usage:
-#   ./scripts/install.sh [--binary-path <path>] [--config-dir <path>] [--headless-only] [--dry-run]
+#   ./scripts/install.sh [--binary-path <path>] [--config-dir <path>] [--dry-run]
 #
 # Options:
 #   --binary-path PATH   Path to the sylvode-runner binary.
@@ -18,8 +18,6 @@
 #   --config-dir  PATH   Directory that contains config.toml (and will be
 #                        used as the service working directory).
 #                        Default: current working directory
-#   --headless-only      Check for headless runs only: a missing tmux is a
-#                        warning, not a failure.
 #   --dry-run            Run the prerequisite check and stop: nothing is
 #                        installed.
 #
@@ -69,7 +67,6 @@ resolve_path() {
 
 BINARY_PATH=""
 CONFIG_DIR=""
-HEADLESS_ONLY=0
 DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
@@ -83,10 +80,6 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2-}" ]] || die "--config-dir requires an argument"
             CONFIG_DIR="$(resolve_path "$2")"
             shift 2
-            ;;
-        --headless-only)
-            HEADLESS_ONLY=1
-            shift
             ;;
         --dry-run)
             DRY_RUN=1
@@ -210,17 +203,13 @@ log "Embedded PATH: $SERVICE_PATH"
 # ---------------------------------------------------------------------------
 # Prerequisites: doctor, with the PATH the service will have (not the shell's)
 #
-# Mode: tmux, unless --headless-only is given or the config has no runner agent (auto).
+# The mode is `auto`: the runner follows its configuration. tmux is needed only when
+# `[runner.tmux] enabled = true`; headless runs need none, so no flag is involved.
 # Exit 2 means a row failed: its hint is printed and nothing is installed. Nothing is ever
 # installed silently.
 # ---------------------------------------------------------------------------
 
-DOCTOR_MODE="tmux"
-if [[ "$HEADLESS_ONLY" -eq 1 ]]; then
-    DOCTOR_MODE="headless"
-elif ! grep -Eq '^[[:space:]]*agent_type[[:space:]]*=[[:space:]]*"runner"' "$CONFIG_DIR/config.toml"; then
-    DOCTOR_MODE="auto"
-fi
+DOCTOR_MODE="auto"
 
 log "Checking prerequisites (mode: $DOCTOR_MODE, PATH of the service)"
 set +e
@@ -228,9 +217,6 @@ DOCTOR_OUT="$(PATH="$SERVICE_PATH" "$BINARY_PATH" doctor --mode "$DOCTOR_MODE" -
 DOCTOR_RC=$?
 set -e
 printf '%s\n' "$DOCTOR_OUT"
-if [[ "$HEADLESS_ONLY" -eq 1 ]]; then
-    warn "headless-only mode: tmux sessions will not be available"
-fi
 case "$DOCTOR_RC" in
     0) ;;
     2) die "a prerequisite is missing (see the rows above and their hints); nothing was installed" ;;
@@ -264,7 +250,13 @@ doctor_in_service_context() {
             runner=(systemd-run --user --pipe --wait "--setenv=PATH=$SERVICE_PATH")
             ;;
         macos)
-            runner=(launchctl asuser "$(id -u)")
+            # `launchctl asuser` works for root only; as the user, the check in the service's own
+            # context is skipped (the first check above already used the service's PATH).
+            if [[ "$(id -u)" -ne 0 ]]; then
+                warn "skipping the check in the service context: it needs root on macOS (the check above used the service PATH)"
+                return 0
+            fi
+            runner=(launchctl asuser "${SUDO_UID:-$(stat -f %u /dev/console)}")
             ;;
     esac
     log "Checking prerequisites in the service context"

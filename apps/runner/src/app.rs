@@ -554,13 +554,11 @@ fn start_sessions(
 
 /// `GET /health`: the service is up; `protocol` is the result of the handshake with Sylvode.
 async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let rows = state.handshake.rows(&state.config).await;
-    let (prereq, degraded) = crate::doctor::health_parts(&state.config, &rows);
+    // Unauthenticated: the overall status and the protocol state only, never which prerequisite
+    // is missing or where anything is (`doctor` and the log say that).
     Json(serde_json::json!({
         "status": "ok",
         "protocol": state.handshake.health(),
-        "prereq": prereq,
-        "degraded": degraded,
     }))
 }
 
