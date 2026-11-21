@@ -90,10 +90,38 @@
 		}
 	}
 
+	// The alert chain writes `<kind>:<argument>` content built from Sylvode values only.
+	function alertNotificationContent(content: string): string | null {
+		const translate = get(t);
+		const alertOpened = content.match(/^alert_opened:([A-Z]+):([\s\S]*)$/);
+		if (alertOpened) {
+			return translate('notification.alertOpenedContent', {
+				values: { severity: alertOpened[1], title: alertOpened[2] }
+			});
+		}
+		const withArgument: Array<[string, string, string]> = [
+			['alert_task_completed:', 'notification.alertTaskCompletedContent', 'title'],
+			['alert_task_failed:', 'notification.alertTaskFailedContent', 'title'],
+			['alert_suppressed:', 'notification.alertSuppressedContent', 'rule'],
+			['alert_source_throttled:', 'notification.alertSourceThrottledContent', 'source']
+		];
+		for (const [prefix, key, name] of withArgument) {
+			if (content.startsWith(prefix)) {
+				return translate(key, { values: { [name]: content.substring(prefix.length) } });
+			}
+		}
+		return null;
+	}
+
 	function getNotificationContent(notification: Notification): string {
 		if (notification.content.startsWith('issue_assigned:')) {
 			const issue = notification.content.substring('issue_assigned:'.length);
 			return get(t)('notification.issueAssignedContent', { values: { issue } });
+		}
+
+		const alertContent = alertNotificationContent(notification.content);
+		if (alertContent) {
+			return alertContent;
 		}
 
 		if (notification.content.startsWith('mentioned_by:')) {
