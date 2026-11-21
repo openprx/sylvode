@@ -86,6 +86,24 @@ pub async fn load_task_with_protocol<C: ConnectionTrait>(
     .ok_or_else(|| ApiError::NotFound("ai task not found".to_string()))
 }
 
+/// The protocol columns of one task, or 404.
+pub async fn load_protocol_row<C: ConnectionTrait>(db: &C, task_id: Uuid) -> Result<AiTaskProtocolRow, ApiError> {
+    AiTaskProtocolRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id, acknowledged_at, plan, last_progress_at, lease_expires_at, runner_phase \
+         FROM ai_tasks WHERE id = $1",
+        vec![task_id.into()],
+    ))
+    .one(db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("ai task not found".to_string()))
+}
+
+/// The columns of [`AiTaskWithProtocol`], for a query over `ai_tasks`.
+pub const fn task_with_protocol_columns() -> &'static str {
+    TASK_WITH_PROTOCOL_COLUMNS
+}
+
 /// The active tasks of `bot_id`, oldest `started_at` first, at most `limit`.
 pub async fn list_active_tasks_of_bot<C: ConnectionTrait>(
     db: &C,
