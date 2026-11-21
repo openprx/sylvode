@@ -18,7 +18,19 @@ export function safeZipSegment(value: string): string {
 		.replace(/[^a-zA-Z0-9._-]+/g, '-')
 		.replace(/^-+|-+$/g, '');
 
-	return safe || 'attachment.bin';
+	return safe && !/^\.+$/.test(safe) ? safe : 'attachment.bin';
+}
+
+/**
+ * Archive entry names are relative and never climb out of the extraction folder: empty, `.` and
+ * `..` segments are dropped and backslashes count as separators.
+ */
+export function safeZipPath(path: string): string {
+	const segments = path
+		.split(/[\\/]/)
+		.filter((segment) => segment !== '' && segment !== '.' && segment !== '..');
+
+	return segments.join('/') || 'attachment.bin';
 }
 
 export function createStoredZipBlob(files: ZipFileInput[]): Blob {
@@ -28,7 +40,10 @@ export function createStoredZipBlob(files: ZipFileInput[]): Blob {
 	let offset = 0;
 
 	for (const file of files) {
-		const nameBytes = encoder.encode(file.path);
+		const path = safeZipPath(file.path);
+		const nameBytes = encoder.encode(path);
+		// General-purpose bit 11: the entry name is UTF-8.
+		const flags = /^[\x20-\x7e]*$/.test(path) ? 0 : 0x0800;
 		const dataBytes = typeof file.data === 'string' ? encoder.encode(file.data) : file.data;
 		const crc = crc32(dataBytes);
 		const localHeader = new Uint8Array(30 + nameBytes.length);
@@ -36,7 +51,7 @@ export function createStoredZipBlob(files: ZipFileInput[]): Blob {
 
 		localView.setUint32(0, 0x04034b50, true);
 		localView.setUint16(4, 20, true);
-		localView.setUint16(6, 0, true);
+		localView.setUint16(6, flags, true);
 		localView.setUint16(8, 0, true);
 		localView.setUint16(10, 0, true);
 		localView.setUint16(12, 0, true);
@@ -54,7 +69,7 @@ export function createStoredZipBlob(files: ZipFileInput[]): Blob {
 		centralView.setUint32(0, 0x02014b50, true);
 		centralView.setUint16(4, 20, true);
 		centralView.setUint16(6, 20, true);
-		centralView.setUint16(8, 0, true);
+		centralView.setUint16(8, flags, true);
 		centralView.setUint16(10, 0, true);
 		centralView.setUint16(12, 0, true);
 		centralView.setUint16(14, 0, true);
