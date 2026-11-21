@@ -685,7 +685,31 @@ async fn every_field_is_validated_and_a_refusal_writes_nothing() {
     ));
     cases.push((
         with("bot", json!({"name": "a\u{1}b"})),
-        "bot.name: must not contain control characters",
+        "bot.name: must not contain control, bidirectional or zero-width characters",
+    ));
+    for hidden in ["a\u{202e}b", "a\u{200b}b", "a\u{2066}b", "\u{feff}ab"] {
+        cases.push((
+            with("bot", json!({"name": hidden})),
+            "bot.name: must not contain control, bidirectional or zero-width characters",
+        ));
+    }
+    for directory in ["/home/dev/a#b", "/home/dev/a\u{202e}b", "/home/dev/a\u{200b}b"] {
+        cases.push((
+            with("working_directory", json!(directory)),
+            if directory.contains('#') {
+                "working_directory: must not contain #"
+            } else {
+                "working_directory: must not contain control, bidirectional or zero-width characters"
+            },
+        ));
+    }
+    cases.push((
+        with("runner_url", json!("http://93.184.216.34:9090")),
+        "runner_url: must use https unless the host is listed in [outbound] allowed_hosts",
+    ));
+    cases.push((
+        with("runner_url", json!("https://93.184.216.34\\.x.example")),
+        "runner_url: must not contain a backslash",
     ));
     cases.push((with("cli", json!("vim")), "cli: must be claude, codex or opencode"));
     cases.push((with("channel", json!("pigeon")), "channel: must be tmux or headless"));

@@ -113,6 +113,27 @@ pub async fn load<C: ConnectionTrait>(db: &C, project_id: Uuid) -> Result<Option
     .await?)
 }
 
+/// What a name or a path is refused with when it holds a character that hides or reorders text.
+pub const HIDDEN_CHARS_MESSAGE: &str = "must not contain control, bidirectional or zero-width characters";
+
+/// A control character, or one that reorders or hides text: zero-width and invisible format
+/// characters, the bidirectional marks, embeddings, overrides and isolates, and the byte-order mark.
+#[must_use]
+pub const fn is_hidden_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{00ad}'
+                | '\u{061c}'
+                | '\u{180e}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206f}'
+                | '\u{feff}'
+        )
+}
+
 /// Normalises and checks a working directory on the runner machine.
 ///
 /// One trailing `/` is stripped. The result is absolute, 2 to 1024 bytes, free of control
@@ -126,8 +147,11 @@ pub fn normalize_working_directory(raw: &str) -> Result<String, &'static str> {
     if path.len() < 2 || path.len() > MAX_WORKING_DIRECTORY_BYTES {
         return Err("must be 2 to 1024 bytes long");
     }
-    if path.chars().any(char::is_control) {
-        return Err("must not contain control characters");
+    if path.contains('#') {
+        return Err("must not contain #");
+    }
+    if path.chars().any(is_hidden_char) {
+        return Err(HIDDEN_CHARS_MESSAGE);
     }
     if path.contains("//") || path.ends_with('/') {
         return Err("must not contain empty segments or end in a second slash");
@@ -343,6 +367,11 @@ mod tests {
             "/a/.",
             "/a\u{1}b",
             "/a\nb",
+            "/a#b",
+            "/a\u{202e}b",
+            "/a\u{200b}b",
+            "/a\u{feff}b",
+            "/a\u{2066}b",
             "/a//",
             long.as_str(),
         ] {

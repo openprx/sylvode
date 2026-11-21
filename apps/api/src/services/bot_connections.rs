@@ -249,7 +249,8 @@ pub enum Outcome<T> {
 pub fn normalize_runner_url(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     let stored = trimmed.strip_suffix('/').unwrap_or(trimmed);
-    if !(stored.starts_with("http://") || stored.starts_with("https://")) {
+    let scheme_lower = stored.to_ascii_lowercase();
+    if !(scheme_lower.starts_with("http://") || scheme_lower.starts_with("https://")) {
         return Err("must start with http:// or https://".to_string());
     }
     if stored.len() > MAX_RUNNER_URL_BYTES {
@@ -272,14 +273,28 @@ pub fn normalize_runner_url(raw: &str) -> Result<String, String> {
     if authority.contains('@') {
         return Err("must not embed credentials".to_string());
     }
-    Ok(stored.to_string())
+    if stored.contains('\\') {
+        return Err("must not contain a backslash".to_string());
+    }
+    if authority.contains('%') {
+        return Err("must not contain a percent escape in the host".to_string());
+    }
+    // Stored as parsed, the way the outbound check and the worker read it, so the address shown is
+    // the address delivered to (`http://2130706433` is `http://127.0.0.1`, hosts are lowercased and
+    // default ports dropped).
+    let parsed = reqwest::Url::parse(stored).map_err(|_| "must be a valid address".to_string())?;
+    if parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("must name a host and no credentials".to_string());
+    }
+    let normalised = parsed.as_str().trim_end_matches('/');
+    Ok(normalised.to_string())
 }
 
 /// Validates a runner address with the outbound policy (`[outbound] allowed_hosts` and the SSRF
 /// rules, DNS included) against an explicit allowlist, and returns it as stored.
 pub async fn validate_runner_url_with(raw: &str, allowlist: &str, allow_private: bool) -> Result<String, ApiError> {
     let stored = normalize_runner_url(raw).map_err(|why| invalid("runner_url", &why))?;
-    crate::outbound::validate_outbound_url_with(&format!("{stored}/webhook"), allowlist, allow_private)
+    let url = crate::outbound::validate_outbound_url_with(&format!("{stored}/webhook"), allowlist, allow_private)
         .await
         .map_err(|why| {
             if why.contains("blocked address") {
@@ -288,6 +303,17 @@ pub async fn validate_runner_url_with(raw: &str, allowlist: &str, allow_private:
                 invalid("runner_url", &why)
             }
         })?;
+    // Deliveries carry project content and an HMAC signature: plain http is for a host the
+    // operator listed on purpose (or when private targets are switched on).
+    if url.scheme() == "http" {
+        let host = url.host_str().unwrap_or_default();
+        if !allow_private && !crate::outbound::host_is_allowlisted(host, url.port_or_known_default(), allowlist) {
+            return Err(invalid(
+                "runner_url",
+                "must use https unless the host is listed in [outbound] allowed_hosts",
+            ));
+        }
+    }
     Ok(stored)
 }
 
@@ -305,8 +331,8 @@ fn validate_bot_name(raw: &str) -> Result<String, ApiError> {
     if name.chars().count() > MAX_BOT_NAME_CHARS {
         return Err(invalid("bot.name", "at most 100 characters"));
     }
-    if name.chars().any(char::is_control) {
-        return Err(invalid("bot.name", "must not contain control characters"));
+    if name.chars().any(super::execution_settings::is_hidden_char) {
+        return Err(invalid("bot.name", super::execution_settings::HIDDEN_CHARS_MESSAGE));
     }
     Ok(name.to_string())
 }
@@ -1510,11 +1536,26 @@ mod tests {
             Ok("https://r.example.net:9090")
         );
         assert_eq!(normalize_runner_url("http://r/p").as_deref(), Ok("http://r/p"));
+        // The stored address is the parsed one: what is shown is what is delivered to.
+        assert_eq!(
+            normalize_runner_url("HTTPS://Runner.Example.NET:443/").as_deref(),
+            Ok("https://runner.example.net")
+        );
+        assert_eq!(
+            normalize_runner_url("http://2130706433:9").as_deref(),
+            Ok("http://127.0.0.1:9")
+        );
+        for refused in [
+            "http://1.2.3.4\\.x.example",
+            "https://r%41.example",
+            "https://r.example\\evil",
+        ] {
+            assert!(normalize_runner_url(refused).is_err(), "{refused}");
+        }
         for bad in [
             "",
             "r.example.net",
             "ftp://r",
-            "HTTP://r",
             "http://",
             "http:///x",
             "http://u:p@r",
@@ -1564,6 +1605,22 @@ mod tests {
         );
         // The private switch lifts everything.
         assert!(validate_runner_url_with("http://10.0.0.5:9", "", true).await.is_ok());
+        // A plain http:// address is allowed only for a host the operator listed.
+        let plain = message(validate_runner_url_with("http://93.184.216.34:9", "", false).await);
+        assert_eq!(
+            plain,
+            "runner_url: must use https unless the host is listed in [outbound] allowed_hosts"
+        );
+        assert!(
+            validate_runner_url_with("https://93.184.216.34:9", "", false)
+                .await
+                .is_ok()
+        );
+        assert!(
+            validate_runner_url_with("http://93.184.216.34:9", "93.184.216.34:9", false)
+                .await
+                .is_ok()
+        );
         // A public literal needs no resolution.
         assert!(
             validate_runner_url_with("https://93.184.216.34:9090", "", false)
