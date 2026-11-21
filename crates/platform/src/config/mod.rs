@@ -541,7 +541,8 @@ pub struct FlowConfig {
     pub body_asset_max_bytes: u64,
     /// Whether the collab write window may decide the structural limits incrementally. Off makes
     /// every write run the full computation (today's bounded cost, without the incremental
-    /// check), whatever the page.
+    /// check), whatever the page: the worker's decision is then the previous behaviour's for every
+    /// input.
     pub incremental_window: bool,
 }
 

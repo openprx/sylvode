@@ -255,7 +255,7 @@ fn window_payload_calibration() {
     use loro::LoroValue;
     let page = flat_page_of_blocks(400);
     measure("flat 400, no payload", &page, &trivial_update(&page));
-    let ints = |n: usize| -> LoroValue { (0..n as i64).map(|i| i % 7).collect::<Vec<_>>().into() };
+    let ints = |n: usize| -> LoroValue { (0..i64::try_from(n).unwrap()).map(|i| i % 7).collect::<Vec<_>>().into() };
     for writes in [2, 4, 6, 8, 16] {
         let base = flat_with_values(writes, &|_| ints(20_000));
         measure(&format!("{writes} lists of 20,000 ints"), &base, &trivial_update(&base));
@@ -269,7 +269,7 @@ fn window_payload_calibration() {
         (0..n)
             .map(|i| {
                 let mut entry = std::collections::HashMap::new();
-                entry.insert("a".to_owned(), LoroValue::from(i as i64 % 5));
+                entry.insert("a".to_owned(), LoroValue::from(i64::try_from(i).unwrap() % 5));
                 LoroValue::from(entry)
             })
             .collect::<Vec<_>>()
@@ -286,7 +286,7 @@ fn window_payload_calibration() {
     // Lists of lists of one integer each.
     let nested = |n: usize| -> LoroValue {
         (0..n)
-            .map(|i| LoroValue::from(vec![LoroValue::from(i as i64 % 5)]))
+            .map(|i| LoroValue::from(vec![LoroValue::from(i64::try_from(i).unwrap() % 5)]))
             .collect::<Vec<_>>()
             .into()
     };
@@ -300,8 +300,9 @@ fn window_payload_calibration() {
     }
     // Maps with many short keys.
     let wide = |n: usize| -> LoroValue {
-        let entries: std::collections::HashMap<String, LoroValue> =
-            (0..n).map(|i| (format!("k{i}"), LoroValue::from(i as i64))).collect();
+        let entries: std::collections::HashMap<String, LoroValue> = (0..n)
+            .map(|i| (format!("k{i}"), LoroValue::from(i64::try_from(i).unwrap())))
+            .collect();
         entries.into()
     };
     for writes in [2, 4, 8] {

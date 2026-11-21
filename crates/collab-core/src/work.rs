@@ -119,10 +119,11 @@ pub const ITEMS_PER_NODE: u64 = 10;
 /// bounded for hostile input.
 const MAX_DEPTH: usize = 32;
 
-/// The payload of a plain value, in bytes, recursively: eight for every scalar, a container
-/// reference or a collection, plus the length of a string or binary and of every map key, plus the
-/// payload of every element. Iterative, so that a hostile value nested tens of thousands deep
-/// cannot exhaust the stack.
+/// The payload of a plain value, in bytes, recursively.
+///
+/// Eight for every scalar, a container reference or a collection, plus the length of a string or
+/// binary and of every map key, plus the payload of every element. Iterative, so that a hostile
+/// value nested tens of thousands deep cannot exhaust the stack.
 #[must_use]
 pub fn value_bytes(value: &LoroValue) -> u64 {
     let len = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
@@ -173,10 +174,10 @@ pub const fn item_budget_ceiling() -> u64 {
     )
 }
 
-/// An upper bound on what one op can add to a page: its items, and the bytes of plain value
-/// payload it carries (see [`value_bytes`]; a map key counts too).
+/// An upper bound on what one op can add to a page.
 ///
-/// Every item that exists after an import exists because an op of the base or of the update
+/// It is its items and the bytes of plain value payload it carries (see [`value_bytes`]; a map key
+/// counts too). Every item that exists after an import exists because an op of the base or of the update
 /// created it, so for an update that cannot make the library materialise anything its ops do not
 /// name (a strictly sequential one) the sum of this over its ops bounds the growth. Deletes add
 /// nothing. An insert adds an entry or element and, when it inserts a container, the container;
