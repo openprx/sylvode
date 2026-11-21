@@ -858,6 +858,8 @@ enum WindowAttempt {
     Diverged {
         divergence: collab_core::window_check::WindowDivergence,
         from_report: bool,
+        /// The setup guard that fired in the worker of this attempt, if one did.
+        setup_guard: Option<collab_core::setup_guard::Fired>,
     },
     /// The worker accepted, and the host's projection agrees with whatever it reported.
     Prepared(Box<WindowPrepared>),
@@ -884,6 +886,20 @@ struct WindowPrepared {
     minimum_editor_model: u32,
     window_cpu_us: Option<u64>,
     incremental: bool,
+    /// The setup guard that fired in the worker of this attempt, if one did.
+    setup_guard: Option<collab_core::setup_guard::Fired>,
+}
+
+impl WindowAttempt {
+    /// The setup guard that fired in the worker of this attempt, whether the attempt was accepted,
+    /// refused or killed.
+    fn setup_guard(&self) -> Option<collab_core::setup_guard::Fired> {
+        match self {
+            Self::Rejected(refused) => refused.observation.setup_guard,
+            Self::Diverged { setup_guard, .. } => *setup_guard,
+            Self::Prepared(prepared) => prepared.setup_guard,
+        }
+    }
 }
 
 /// The error of a defect of the isolated apply path that is not a refusal of the worker: its result
@@ -963,6 +979,7 @@ fn window_attempt(
         return Ok(WindowAttempt::Diverged {
             divergence,
             from_report: success.window_report.is_some(),
+            setup_guard: observation.setup_guard,
         });
     }
     Ok(WindowAttempt::Prepared(Box::new(WindowPrepared {
@@ -972,6 +989,7 @@ fn window_attempt(
         minimum_editor_model,
         window_cpu_us: success.window_cpu_us,
         incremental: success.window_report.is_some(),
+        setup_guard: observation.setup_guard,
     })))
 }
 
@@ -1007,6 +1025,25 @@ fn decide_window_with(
     let mut cooling = tracker.lock().cooling(ids.document_id, std::time::Instant::now());
     let mut first_mode = if cooling { WindowMode::Full } else { mode };
     let mut first = attempt(first_mode)?;
+    // A setup guard that fired is deterministic for the base (the allocation and the per-text budget)
+    // or for the host (the CPU budget), and the next write would pay the same unmetered setup
+    // again, up to the budget plus one text, before the full window that follows it. The document
+    // goes on the full window for the cooldown period instead, so the next writes pay one metered
+    // window each. This is not a disagreement and is not counted as one: the cooldown ends by
+    // itself after the period, and a later divergence is counted from zero.
+    if first_mode == WindowMode::Incremental
+        && let Some(fired) = first.setup_guard()
+    {
+        let entered = tracker.lock().enter_full(ids.document_id, std::time::Instant::now());
+        tracing::warn!(
+            document_id = %ids.document_id,
+            update_id = %ids.update_id,
+            guard = fired.name(),
+            newly_cooling = entered,
+            cooldown_seconds = COOLDOWN_PERIOD.as_secs(),
+            "window_setup_cooldown: the worker's setup guard fired; deciding the document's next writes by the full window directly"
+        );
+    }
     // The backstop of the setup guards: an incremental attempt whose setup timed out having consumed
     // its CPU budget (the guards could not stop it: one library call of a base that predates the
     // per-text guard, or any other call they do not interrupt). It is neither starvation nor a
@@ -1039,6 +1076,7 @@ fn decide_window_with(
     let WindowAttempt::Diverged {
         divergence,
         from_report,
+        ..
     } = first
     else {
         return Ok(first.cooling(cooling));
@@ -1075,6 +1113,7 @@ fn decide_window_with(
                     minimum_editor_model: 0,
                     window_cpu_us: None,
                     incremental: false,
+                    setup_guard: None,
                 })));
             }
             Err(window_divergence_refusal())
@@ -1136,6 +1175,7 @@ mod window_oracle_tests {
             minimum_editor_model: 0,
             window_cpu_us: None,
             incremental,
+            setup_guard: None,
         }))
     }
 
@@ -1176,6 +1216,7 @@ mod window_oracle_tests {
                 projected: 0,
             },
             from_report,
+            setup_guard: None,
         }
     }
 
@@ -1516,6 +1557,104 @@ mod window_oracle_tests {
             Ok(setup_timed_out(asked, None))
         });
         assert_eq!(modes, [WindowMode::Incremental, WindowMode::Full]);
+    }
+
+    /// An attempt in which the worker's setup guard fired, refused (the full window's CPU kill) or
+    /// accepted.
+    fn after_guard(fired: collab_core::setup_guard::Fired, accepted: bool) -> WindowAttempt {
+        if accepted {
+            let WindowAttempt::Prepared(mut prepared) = prepared(false) else {
+                unreachable!("prepared() is Prepared");
+            };
+            prepared.setup_guard = Some(fired);
+            return WindowAttempt::Prepared(prepared);
+        }
+        WindowAttempt::Rejected(RefusedAttempt {
+            error: IsolatedApplyError::CpuCeiling,
+            observation: collab_core::isolation::WorkerObservation {
+                setup_guard: Some(fired),
+                ..collab_core::isolation::WorkerObservation::default()
+            },
+            mode: WindowMode::Incremental,
+            cooling: false,
+        })
+    }
+
+    /// R9-2: a fired setup guard (any of the three) puts the document on the full window, so the
+    /// writes that follow skip the facts computation; the attempt itself is decided as before, with
+    /// no second attempt.
+    #[test]
+    fn a_fired_setup_guard_puts_the_document_on_the_full_window() {
+        use collab_core::setup_guard::Fired;
+        for fired in [Fired::Text, Fired::Cpu, Fired::Allocation] {
+            for accepted in [false, true] {
+                let ids = ids();
+                let mut modes = Vec::new();
+                let decided = decide_window(ids, WindowMode::Incremental, |mode| {
+                    modes.push(mode);
+                    Ok(after_guard(fired, accepted))
+                })
+                .expect("decides");
+                assert_eq!(matches!(decided, WindowAttempt::Prepared(_)), accepted);
+                assert_eq!(
+                    modes,
+                    [WindowMode::Incremental],
+                    "{fired:?}: the attempt is decided once"
+                );
+                assert!(
+                    disagreements()
+                        .lock()
+                        .cooling(ids.document_id, std::time::Instant::now()),
+                    "{fired:?}, accepted {accepted}: the document is on the full window"
+                );
+                let mut modes = Vec::new();
+                let _ = decide_window(ids, WindowMode::Incremental, |mode| {
+                    modes.push(mode);
+                    Ok(prepared(false))
+                })
+                .expect("decides");
+                assert_eq!(modes, [WindowMode::Full], "{fired:?}: the next write skips the setup");
+            }
+        }
+        // An attempt whose worker fired no guard does not cool the document.
+        let ids = ids();
+        let _ = decide_window(ids, WindowMode::Incremental, |_| Ok(prepared(true))).expect("decides");
+        assert!(
+            !disagreements()
+                .lock()
+                .cooling(ids.document_id, std::time::Instant::now())
+        );
+    }
+
+    /// The cooldown of a fired guard is the existing one on the tests' injectable clock: it ends
+    /// after the period, it is not a disagreement (a later run of divergences is counted from zero),
+    /// and entering it again while it lasts does not extend a log line's worth of state.
+    #[test]
+    fn the_cooldown_of_a_fired_guard_ends_normally_and_is_not_a_divergence() {
+        let mut tracker = DisagreementTracker::default();
+        let document = Uuid::new_v4();
+        let start = 500_000;
+        assert!(tracker.enter_full(document, at(start)), "entered");
+        assert!(!tracker.enter_full(document, at(start + 1)), "already cooling");
+        assert!(tracker.cooling(document, at(start + COOLDOWN_PERIOD.as_secs() - 1)));
+        assert!(!tracker.cooling(document, at(start + 1 + COOLDOWN_PERIOD.as_secs())));
+        // No disagreement was recorded: after the cooldown, `COOLDOWN_THRESHOLD - 1` divergences
+        // do not put the document back on the full window.
+        let later = start + 10 * COOLDOWN_PERIOD.as_secs();
+        for step in 0..(COOLDOWN_THRESHOLD as u64 - 1) {
+            assert!(!tracker.record(document, at(later + step)), "step {step}");
+        }
+        assert!(!tracker.cooling(document, at(later + 10)));
+        // And a cooldown does not count disagreements toward the threshold either.
+        let other = Uuid::new_v4();
+        tracker.enter_full(other, at(later));
+        assert!(
+            tracker
+                .by_document
+                .get(&other)
+                .is_some_and(|entry| entry.recent.is_empty()),
+            "a guard is not a disagreement"
+        );
     }
 
     /// The mutant "setup-timeout backstop skipped" is caught by the backstop tests.
@@ -2367,6 +2506,7 @@ pub(crate) async fn hydrate_and_apply_with_policy(
         minimum_editor_model,
         window_cpu_us,
         incremental,
+        setup_guard: _,
     } = match window {
         WindowAttempt::Prepared(window) => *window,
         WindowAttempt::Rejected(refused) => {

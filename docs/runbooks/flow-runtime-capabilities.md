@@ -180,6 +180,11 @@ killed (`setup_guard` on the `flow::apply_refusal` line, and the `window_setup_g
   limits allow (100,000 characters, heavily formatted, with a long edit history) costs a quarter of
   it. It is not configurable.
 
+A fired guard also puts the document on the full window for the next ten minutes (logged once at
+warning level as `window_setup_cooldown`), so the writes that follow skip the facts computation and
+pay one metered window each, not a setup that can cost seconds. The cooldown is not a divergence and
+ends by itself.
+
 After a fired guard the full window decodes every text again inside its 50 ms window, so a Page with
 a text that is too expensive is refused with the content limit `decode_apply_cpu_ms`, on every
 surface, and the session stays open. Repairing it means removing the text's formatting (or the text),
