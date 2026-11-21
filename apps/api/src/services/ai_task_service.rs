@@ -10,6 +10,18 @@ use crate::{
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
 };
 
+/// Version of the task protocol the API, the MCP server and the runner agree on.
+pub const TASK_PROTOCOL: u32 = 1;
+
+/// The statuses of a task that has been picked up and has not ended: delivered (`processing`) or
+/// acknowledged by its agent. Every compare-and-set that ends an attempt matches this set.
+pub const ACTIVE_TASK_STATUSES_SQL: &str = "('processing','acknowledged')";
+
+/// Whether `status` is in [`ACTIVE_TASK_STATUSES_SQL`].
+pub fn is_active_status(status: &str) -> bool {
+    matches!(status, "processing" | "acknowledged")
+}
+
 #[derive(Debug, Clone, FromQueryResult)]
 pub struct AiTaskRow {
     pub id: Uuid,
@@ -295,7 +307,8 @@ pub enum WorkerEndReason {
     ReceiverDeclined,
     /// The delivery did not reach a receiver that took it (no webhook, transport error, 5xx).
     DeliveryFailed,
-    /// No completion arrived within `[ai_tasks] processing_timeout_secs` of the delivery.
+    /// The task's lease ran out: no completion or progress arrived within `[ai_tasks]
+    /// processing_timeout_secs` of the delivery, or within the lease a later heartbeat granted.
     ProcessingTimeout,
 }
 
@@ -309,14 +322,15 @@ impl WorkerEndReason {
     }
 }
 
-/// Ends attempt `attempt` of a task the worker delivered, if that attempt is still `processing`.
+/// Ends attempt `attempt` of a task the worker delivered, if that attempt is still active.
 ///
-/// The update is a compare-and-set on `status = 'processing' AND attempts = attempt`, so it never
-/// overrides a completion or failure that the receiver reported first, and two workers cannot end
-/// the same attempt twice: `None` means the attempt had already ended and nothing was written.
-/// Otherwise the `retried` or `failed` task event and the matching business event are written,
-/// both carrying `reason` and `error_message`. The caller sends `ai.task_failed` for a failed task
-/// (see [`notify_ai_task_failed`]).
+/// Active means `processing` or `acknowledged` ([`ACTIVE_TASK_STATUSES_SQL`]). The update is a
+/// compare-and-set on `status IN active AND attempts = attempt`, so it never overrides a
+/// completion or failure that the receiver reported first, and two workers cannot end the same
+/// attempt twice: `None` means the attempt had already ended and nothing was written. Otherwise
+/// the `retried` or `failed` task event and the matching business event are written, both
+/// carrying `reason` and `error_message`, and the business event records the status the attempt
+/// really had. The caller sends `ai.task_failed` for a failed task (see [`notify_ai_task_failed`]).
 pub async fn end_processing_attempt<C: ConnectionTrait>(
     db: &C,
     task_id: Uuid,
@@ -326,13 +340,12 @@ pub async fn end_processing_attempt<C: ConnectionTrait>(
     error_message: &str,
 ) -> Result<Option<AiTaskRow>, ApiError> {
     let terminal = end == AttemptEnd::Terminal;
-    let ended = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
+    let sql = format!(
         r"
             WITH decided AS (
-                SELECT id, ($3 OR attempts >= max_attempts) AS fails
+                SELECT id, status AS previous_status, ($3 OR attempts >= max_attempts) AS fails
                 FROM ai_tasks
-                WHERE id = $1 AND status = 'processing' AND attempts = $2
+                WHERE id = $1 AND status IN {ACTIVE_TASK_STATUSES_SQL} AND attempts = $2
                 FOR UPDATE
             )
             UPDATE ai_tasks t
@@ -345,7 +358,7 @@ pub async fn end_processing_attempt<C: ConnectionTrait>(
                 completed_at = CASE WHEN decided.fails THEN now() ELSE t.completed_at END,
                 updated_at = now()
             FROM decided
-            WHERE t.id = decided.id AND t.status = 'processing' AND t.attempts = $2
+            WHERE t.id = decided.id AND t.status IN {ACTIVE_TASK_STATUSES_SQL} AND t.attempts = $2
             RETURNING
                 t.id,
                 t.project_id,
@@ -365,8 +378,13 @@ pub async fn end_processing_attempt<C: ConnectionTrait>(
                 t.started_at,
                 t.completed_at,
                 t.created_at,
-                t.updated_at
-        ",
+                t.updated_at,
+                decided.previous_status
+        "
+    );
+    let ended = EndedAttemptRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        &sql,
         vec![
             task_id.into(),
             attempt.into(),
@@ -377,17 +395,27 @@ pub async fn end_processing_attempt<C: ConnectionTrait>(
     .one(db)
     .await?;
 
-    let Some(task) = ended else {
+    let Some(EndedAttemptRow { task, previous_status }) = ended else {
         return Ok(None);
     };
-    record_worker_attempt_end(db, &task, reason).await?;
+    record_worker_attempt_end(db, &task, reason, &previous_status).await?;
     Ok(Some(task))
 }
 
-/// Ends up to `limit` attempts that have been `processing` for longer than `timeout_secs`.
+/// A task an attempt of which was just ended, with the status that attempt had.
+#[derive(Debug, FromQueryResult)]
+struct EndedAttemptRow {
+    #[sea_orm(nested)]
+    task: AiTaskRow,
+    previous_status: String,
+}
+
+/// Ends up to `limit` active attempts whose lease has run out.
 ///
-/// Each goes back to `pending` while attempts remain and is `failed` after the last one, with an
-/// error message naming the timeout and the attempt.
+/// An attempt is stalled when its `lease_expires_at` has passed. A task without a lease (one that
+/// was picked up before the lease existed) is stalled `timeout_secs` after `started_at`, exactly
+/// as before. Each goes back to `pending` while attempts remain and is `failed` after the last
+/// one, with an error message naming the timeout (no lease) or the lease and the last progress.
 ///
 /// Rows are claimed with `FOR UPDATE SKIP LOCKED` and the update re-checks `status`, so several
 /// workers may sweep at once without ending an attempt twice, and a completion that commits first
@@ -399,26 +427,36 @@ pub async fn end_stalled_attempts<C: ConnectionTrait>(
     limit: i64,
 ) -> Result<Vec<AiTaskRow>, ApiError> {
     let timeout_secs = i64::try_from(timeout_secs).unwrap_or(i64::MAX);
-    let ended = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
+    let sql = format!(
+        r#"
             WITH stalled AS (
-                SELECT id
+                SELECT id, status AS previous_status
                 FROM ai_tasks
-                WHERE status = 'processing'
-                  AND COALESCE(started_at, updated_at) <= now() - make_interval(secs => $1::bigint)
-                ORDER BY COALESCE(started_at, updated_at)
+                WHERE status IN {ACTIVE_TASK_STATUSES_SQL}
+                  AND COALESCE(
+                        lease_expires_at,
+                        COALESCE(started_at, updated_at) + make_interval(secs => $1::bigint)
+                      ) <= now()
+                ORDER BY COALESCE(lease_expires_at, COALESCE(started_at, updated_at))
                 LIMIT $2
                 FOR UPDATE SKIP LOCKED
             )
             UPDATE ai_tasks t
             SET status = CASE WHEN t.attempts >= t.max_attempts THEN 'failed' ELSE 'pending' END,
-                error_message = format(
-                    'no completion was reported within %s seconds of the delivery (attempt %s of %s); '
-                    'the receiver may have stopped, the agent may still be running, or its callback was '
-                    'refused or lost',
-                    $1::bigint, t.attempts, t.max_attempts
-                ),
+                error_message = CASE
+                    WHEN t.last_progress_at IS NULL THEN format(
+                        'no completion was reported within %s seconds of the delivery (attempt %s of %s); '
+                        'the receiver may have stopped, the agent may still be running, or its callback was '
+                        'refused or lost',
+                        $1::bigint, t.attempts, t.max_attempts
+                    )
+                    ELSE format(
+                        'the task lease expired at %s with no progress since %s (attempt %s of %s)',
+                        to_char(t.lease_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                        to_char(t.last_progress_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                        t.attempts, t.max_attempts
+                    )
+                END,
                 next_retry_at = CASE
                     WHEN t.attempts >= t.max_attempts THEN NULL
                     ELSE now() + make_interval(secs => LEAST(GREATEST(t.attempts, 1), 20) * 30)
@@ -426,7 +464,7 @@ pub async fn end_stalled_attempts<C: ConnectionTrait>(
                 completed_at = CASE WHEN t.attempts >= t.max_attempts THEN now() ELSE t.completed_at END,
                 updated_at = now()
             FROM stalled
-            WHERE t.id = stalled.id AND t.status = 'processing'
+            WHERE t.id = stalled.id AND t.status IN {ACTIVE_TASK_STATUSES_SQL}
             RETURNING
                 t.id,
                 t.project_id,
@@ -446,17 +484,24 @@ pub async fn end_stalled_attempts<C: ConnectionTrait>(
                 t.started_at,
                 t.completed_at,
                 t.created_at,
-                t.updated_at
-        ",
+                t.updated_at,
+                stalled.previous_status
+        "#
+    );
+    let ended = EndedAttemptRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        &sql,
         vec![timeout_secs.into(), limit.into()],
     ))
     .all(db)
     .await?;
 
-    for task in &ended {
-        record_worker_attempt_end(db, task, WorkerEndReason::ProcessingTimeout).await?;
+    let mut tasks = Vec::with_capacity(ended.len());
+    for EndedAttemptRow { task, previous_status } in ended {
+        record_worker_attempt_end(db, &task, WorkerEndReason::ProcessingTimeout, &previous_status).await?;
+        tasks.push(task);
     }
-    Ok(ended)
+    Ok(tasks)
 }
 
 /// The `retried` or `failed` task event and business event of an attempt the worker ended.
@@ -464,6 +509,7 @@ async fn record_worker_attempt_end<C: ConnectionTrait>(
     db: &C,
     task: &AiTaskRow,
     reason: WorkerEndReason,
+    previous_status: &str,
 ) -> Result<(), ApiError> {
     let failed = task.status == "failed";
     let event_payload = json!({
@@ -487,7 +533,7 @@ async fn record_worker_attempt_end<C: ConnectionTrait>(
         None,
         json!({ "type": "worker", "reason": reason.as_str() }),
         event_payload,
-        Some("processing"),
+        Some(previous_status),
     )
     .await
 }
@@ -800,5 +846,166 @@ mod worker_attempt_database_tests {
         let second = end_stalled_attempts(db, 3_600, 10).await.expect("the sweep runs");
         assert!(second.is_empty(), "an ended attempt is not swept twice");
         scratch.drop_self().await;
+    }
+
+    async fn set_status(db: &sea_orm::DatabaseConnection, task_id: Uuid, status: &str) {
+        exec(
+            db,
+            "UPDATE ai_tasks SET status = $2 WHERE id = $1",
+            vec![task_id.into(), status.to_string().into()],
+        )
+        .await;
+    }
+
+    async fn previous_status_of_last_business_event(db: &sea_orm::DatabaseConnection, task_id: Uuid) -> String {
+        use sea_orm::FromQueryResult;
+
+        #[derive(Debug, FromQueryResult)]
+        struct Row {
+            previous_status: String,
+        }
+        Row::find_by_statement(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "SELECT payload->>'previous_status' AS previous_status FROM business_events \
+             WHERE aggregate_type = 'ai_task' AND aggregate_id = $1 ORDER BY created_at DESC LIMIT 1",
+            vec![task_id.to_string().into()],
+        ))
+        .one(db)
+        .await
+        .expect("query runs")
+        .expect("a business event exists")
+        .previous_status
+    }
+
+    #[tokio::test]
+    async fn an_acknowledged_attempt_is_ended_with_its_real_previous_status() {
+        let scratch = scratch_or_skip!("ai_task_worker_acknowledged");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "wa").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        let task_id = seed_task(db, &tenant, bot, 1, 0).await;
+        set_status(db, task_id, "acknowledged").await;
+
+        let ended = end_processing_attempt(
+            db,
+            task_id,
+            1,
+            AttemptEnd::Terminal,
+            WorkerEndReason::ReceiverDeclined,
+            "declined",
+        )
+        .await
+        .expect("the update runs")
+        .expect("an acknowledged attempt is active");
+        assert_eq!(ended.status, "failed");
+        assert_eq!(
+            previous_status_of_last_business_event(db, task_id).await,
+            "acknowledged"
+        );
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn the_sweep_honours_the_lease() {
+        let scratch = scratch_or_skip!("ai_task_worker_lease");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "wl").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        // All three started two hours ago, so the timeout alone would sweep every one of them.
+        let leased = seed_task(db, &tenant, bot, 1, 7_200).await;
+        let expired = seed_task(db, &tenant, bot, 1, 7_200).await;
+        let no_lease = seed_task(db, &tenant, bot, 1, 7_200).await;
+        exec(
+            db,
+            "UPDATE ai_tasks SET lease_expires_at = now() + interval '10 minutes', status = 'acknowledged' WHERE id = $1",
+            vec![leased.into()],
+        )
+        .await;
+        exec(
+            db,
+            "UPDATE ai_tasks SET lease_expires_at = now() - interval '1 minute', \
+             last_progress_at = now() - interval '31 minutes', status = 'acknowledged' WHERE id = $1",
+            vec![expired.into()],
+        )
+        .await;
+
+        let ended = end_stalled_attempts(db, 3_600, 10).await.expect("the sweep runs");
+        let find = |id: Uuid| ended.iter().find(|task| task.id == id);
+        assert!(find(leased).is_none(), "a future lease protects an old attempt");
+
+        let expired_row = find(expired).expect("an expired lease is swept");
+        let message = expired_row.error_message.as_deref().unwrap_or_default();
+        assert!(
+            message.contains("the task lease expired at") && message.contains("no progress since"),
+            "{message}"
+        );
+        assert_eq!(
+            previous_status_of_last_business_event(db, expired).await,
+            "acknowledged"
+        );
+
+        let no_lease_row = find(no_lease).expect("a task without a lease is swept by the timeout");
+        let message = no_lease_row.error_message.as_deref().unwrap_or_default();
+        assert!(message.contains("within 3600 seconds of the delivery"), "{message}");
+        assert_eq!(previous_status_of_last_business_event(db, no_lease).await, "processing");
+        scratch.drop_self().await;
+    }
+}
+
+/// Every compare-and-set must match the active set, not `processing` alone: a task the agent has
+/// acknowledged would otherwise be impossible to end.
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod active_status_literal_tests {
+    use std::path::{Path, PathBuf};
+
+    /// Files that may name the `processing` status: the worker's pick-up writes it, and three test
+    /// fixtures put a row into it or count rows in it.
+    const ALLOWED: [&str; 4] = [
+        "apps/worker/src/ai_tasks.rs",
+        "apps/worker/src/oauth_feed/tests.rs",
+        "apps/api/src/oauth/migration_tests.rs",
+        "apps/api/src/services/runner_protocol_migration_tests.rs",
+    ];
+
+    fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("source directory is readable").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn no_status_comparison_names_processing_alone() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let needles = [
+            format!("status = '{}'", "processing"),
+            format!("status='{}'", "processing"),
+        ];
+        let mut files = Vec::new();
+        rust_files(&root.join("apps/api/src"), &mut files);
+        rust_files(&root.join("apps/worker/src"), &mut files);
+        assert!(files.len() > 50, "the source tree was not found");
+
+        let mut offenders = Vec::new();
+        for file in files {
+            let relative = file
+                .strip_prefix(&root)
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            // This file spells the needles out in its own tests only through `format!`.
+            let text = std::fs::read_to_string(&file).expect("source file is readable");
+            if needles.iter().any(|needle| text.contains(needle.as_str())) && !ALLOWED.contains(&relative.as_str()) {
+                offenders.push(relative);
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "use ACTIVE_TASK_STATUSES_SQL instead of a `processing`-only comparison in: {offenders:?}"
+        );
     }
 }

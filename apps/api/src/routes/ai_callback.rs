@@ -18,9 +18,9 @@ use crate::{
     response::{ApiResponse, PaginatedData},
     services::{
         ai_task_service::{
-            AiTaskRow, AttemptEnd, CreateAiTaskInput, DispatchOrigin, create_ai_task, insert_ai_task_business_event,
-            insert_ai_task_event, next_retry_time, notify_ai_task_failed, status_after_failed_attempt,
-            valid_reference_type, valid_task_type,
+            ACTIVE_TASK_STATUSES_SQL, AiTaskRow, AttemptEnd, CreateAiTaskInput, DispatchOrigin, create_ai_task,
+            insert_ai_task_business_event, insert_ai_task_event, is_active_status, next_retry_time,
+            notify_ai_task_failed, status_after_failed_attempt, valid_reference_type, valid_task_type,
         },
         trust_score_service::{is_project_admin_or_owner, is_project_member, is_system_admin},
     },
@@ -58,7 +58,7 @@ pub struct FailTaskRequest {
 /// The optional `?attempt=N` of the complete and fail callbacks.
 ///
 /// `N` is the attempt number (the delivery's `attempts`) the caller ran. With it, the callback is accepted only while that very
-/// attempt is `processing`, so a late callback from an attempt the worker has already timed out
+/// attempt is active (`processing` or `acknowledged`), so a late callback from an attempt the worker has already timed out
 /// and re-queued, or failed, cannot end a later attempt or a re-queued task. Without it the
 /// callback behaves as before.
 #[derive(Debug, Default, Deserialize)]
@@ -68,7 +68,7 @@ pub struct CallbackAttemptQuery {
 
 /// Whether a complete (`allow_pending = false`) or fail (`allow_pending = true`) callback for
 /// `attempt` may end a task in `status` at attempt `attempts`. An attempt-qualified callback needs
-/// that attempt to be `processing`; an unqualified fail also accepts a task already rescheduled to
+/// that attempt to be active; an unqualified fail also accepts a task already rescheduled to
 /// `pending`, as it always has.
 fn check_callback_attempt(
     status: &str,
@@ -76,14 +76,15 @@ fn check_callback_attempt(
     attempt: Option<i32>,
     allow_pending: bool,
 ) -> Result<(), String> {
+    let active = is_active_status(status);
     match attempt {
-        Some(attempt) if status == "processing" && attempt == attempts => Ok(()),
-        Some(attempt) if status == "processing" => Err(format!(
-            "task is not in processing status for attempt {attempt} (current attempt {attempts})"
+        Some(attempt) if active && attempt == attempts => Ok(()),
+        Some(attempt) if active => Err(format!(
+            "task is not active for attempt {attempt} (current attempt {attempts})"
         )),
-        None if status == "processing" || (allow_pending && status == "pending") => Ok(()),
+        None if active || (allow_pending && status == "pending") => Ok(()),
         None if allow_pending => Err("task cannot be failed in current status".to_string()),
-        Some(_) | None => Err("task is not in processing status".to_string()),
+        Some(_) | None => Err("task is not active".to_string()),
     }
 }
 
@@ -156,8 +157,7 @@ pub async fn complete_task(
     let now = Timestamp::now();
     // Compare-and-set on the state checked above: a worker timeout, a fail callback or a second
     // complete that commits in between makes this update match nothing instead of overwriting it.
-    let updated = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
+    let complete_sql = format!(
         r"
             UPDATE ai_tasks
             SET status = 'completed',
@@ -166,7 +166,7 @@ pub async fn complete_task(
                 completed_at = $3,
                 updated_at = $3
             WHERE id = $1
-              AND status = 'processing'
+              AND status IN {ACTIVE_TASK_STATUSES_SQL}
               AND attempts = $4
             RETURNING
                 id,
@@ -188,12 +188,16 @@ pub async fn complete_task(
                 completed_at,
                 created_at,
                 updated_at
-        ",
+        "
+    );
+    let updated = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        &complete_sql,
         vec![task_id.into(), result.clone().into(), now.into(), task.attempts.into()],
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::BadRequest("task is not in processing status".to_string()))?;
+    .ok_or_else(|| ApiError::BadRequest("task is not active".to_string()))?;
 
     task = updated.clone();
     insert_ai_task_event(&state.db, task_id, "completed", json!({ "result": result })).await?;
@@ -398,7 +402,7 @@ pub async fn list_project_ai_tasks(
     if let Some(status) = query.status.as_ref()
         && !matches!(
             status.as_str(),
-            "pending" | "processing" | "completed" | "failed" | "cancelled"
+            "pending" | "processing" | "acknowledged" | "completed" | "failed" | "cancelled"
         )
     {
         return Err(ApiError::BadRequest("invalid status filter".to_string()));
@@ -930,9 +934,16 @@ mod callback_attempt_tests {
     use super::check_callback_attempt;
 
     #[test]
-    fn an_attempt_qualified_callback_needs_that_attempt_to_be_processing() {
+    fn an_attempt_qualified_callback_needs_that_attempt_to_be_active() {
         assert!(check_callback_attempt("processing", 2, Some(2), false).is_ok());
         assert!(check_callback_attempt("processing", 2, Some(2), true).is_ok());
+        assert!(check_callback_attempt("acknowledged", 2, Some(2), false).is_ok());
+        assert!(check_callback_attempt("acknowledged", 2, Some(2), true).is_ok());
+        let wrong = check_callback_attempt("acknowledged", 3, Some(2), true).expect_err("a later attempt runs");
+        assert!(
+            wrong.contains("not active") && wrong.contains("current attempt 3"),
+            "{wrong}"
+        );
         let late = check_callback_attempt("processing", 3, Some(2), false).expect_err("a later attempt runs");
         assert!(
             late.contains("attempt 2") && late.contains("current attempt 3"),
@@ -942,8 +953,8 @@ mod callback_attempt_tests {
             for allow_pending in [false, true] {
                 assert_eq!(
                     check_callback_attempt(status, 2, Some(2), allow_pending),
-                    Err("task is not in processing status".to_string()),
-                    "{status} is not the attempt's processing state"
+                    Err("task is not active".to_string()),
+                    "{status} is not an active state of the attempt"
                 );
             }
         }
@@ -952,6 +963,8 @@ mod callback_attempt_tests {
     #[test]
     fn an_unqualified_callback_keeps_the_previous_rules() {
         assert!(check_callback_attempt("processing", 1, None, false).is_ok());
+        assert!(check_callback_attempt("acknowledged", 1, None, false).is_ok());
+        assert!(check_callback_attempt("acknowledged", 1, None, true).is_ok());
         assert!(check_callback_attempt("pending", 1, None, false).is_err());
         assert!(check_callback_attempt("processing", 1, None, true).is_ok());
         assert!(check_callback_attempt("pending", 1, None, true).is_ok());
@@ -961,7 +974,7 @@ mod callback_attempt_tests {
         );
         assert_eq!(
             check_callback_attempt("completed", 1, None, false),
-            Err("task is not in processing status".to_string())
+            Err("task is not active".to_string())
         );
     }
 }
@@ -1143,6 +1156,95 @@ mod callback_guard_database_tests {
             "the default still retries while attempts remain"
         );
         assert!(task.next_retry_at.is_some());
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn the_legacy_callbacks_end_an_acknowledged_attempt() {
+        let scratch = scratch_or_skip!("ai_callback_acknowledged");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "ak").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        let state = super::reference_scope_database_tests::state_for(db.clone());
+
+        // A wrong attempt is refused with the "not active" message and changes nothing.
+        let task_id = seed_task(db, &tenant, bot, "acknowledged", 2).await;
+        let wrong = complete_task(
+            State(state.clone()),
+            Extension(claims(bot)),
+            Path(task_id),
+            Query(CallbackAttemptQuery { attempt: Some(1) }),
+            Json(json!({"status": "success"})),
+        )
+        .await;
+        let Err(ApiError::BadRequest(message)) = wrong else {
+            panic!("attempt 1 is not the current attempt");
+        };
+        assert!(
+            message.contains("not active") && message.contains("current attempt 2"),
+            "{message}"
+        );
+        assert_eq!(find_task(&state, task_id).await.expect("task").status, "acknowledged");
+
+        for attempt in [Some(2), None] {
+            let task_id = seed_task(db, &tenant, bot, "acknowledged", 2).await;
+            complete_task(
+                State(state.clone()),
+                Extension(claims(bot)),
+                Path(task_id),
+                Query(CallbackAttemptQuery { attempt }),
+                Json(json!({"status": "success"})),
+            )
+            .await
+            .unwrap_or_else(|err| panic!("an acknowledged task completes ({attempt:?}): {err:?}"));
+            assert_eq!(find_task(&state, task_id).await.expect("task").status, "completed");
+
+            let task_id = seed_task(db, &tenant, bot, "acknowledged", 2).await;
+            fail_task(
+                State(state.clone()),
+                Extension(claims(bot)),
+                Path(task_id),
+                Query(CallbackAttemptQuery { attempt }),
+                Json(fail_request(Some(false))),
+            )
+            .await
+            .unwrap_or_else(|err| panic!("an acknowledged task fails ({attempt:?}): {err:?}"));
+            let task = find_task(&state, task_id).await.expect("task");
+            assert_eq!(task.status, "failed");
+        }
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn the_list_filter_accepts_acknowledged() {
+        let scratch = scratch_or_skip!("ai_callback_list_acknowledged");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "la").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        let task_id = seed_task(db, &tenant, bot, "acknowledged", 1).await;
+        let state = super::reference_scope_database_tests::state_for(db.clone());
+
+        let listed = super::list_project_ai_tasks(
+            State(state),
+            Extension(claims(tenant.member_id)),
+            Path(tenant.project_id),
+            Query(super::ListAiTasksQuery {
+                status: Some("acknowledged".to_string()),
+                page: None,
+                per_page: None,
+            }),
+        )
+        .await;
+        assert!(listed.is_ok(), "acknowledged is a valid status filter");
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM ai_tasks WHERE id = $1 AND status = 'acknowledged'",
+                vec![task_id.into()],
+            )
+            .await,
+            1
+        );
         scratch.drop_self().await;
     }
 
