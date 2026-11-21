@@ -12,6 +12,12 @@ name.
 
 ### Added
 
+- **Runner `doctor`, `--check` and `config check`; degraded start-up; installer checks.**
+  `sylvode-runner doctor` prints the shared prerequisite report (exit 0, 2 or 1); a missing
+  prerequisite degrades the service (`/health` `prereq` and `degraded`) instead of refusing it;
+  `scripts/install.sh` runs doctor with the service's `PATH` before installing, takes
+  `--headless-only` and `--dry-run`, warns about missing linger, rewrites an unchanged unit never,
+  and runs doctor again in the service context.
 - **Runner tmux channel.** `sylvode-runner` keeps one tmux session per project key, queues tasks
   first in first out, types each into an idle, empty prompt as a bracketed paste, follows turns
   through CLI hooks (`sylvode-runner hook`), reminds and fails forgotten acknowledgements and

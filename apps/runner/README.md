@@ -675,8 +675,48 @@ What this covers, and what it does not:
 
 The installer creates the user service `sylvode-runner.service` on Linux or the launch agent
 `dev.sylvode.runner` on macOS. When no `--binary-path` is given it looks for `sylvode-runner` in the
-working directory, in `./target/release` and in the workspace `target/release`. Running it again
-rewrites the unit or agent in place, and the uninstaller removes it.
+working directory, in `./target/release` and in the workspace `target/release`. The unit or agent is
+rewritten only when its content differs (an unchanged one is left alone and nothing is reloaded);
+the configuration file is never written. The uninstaller removes the unit or agent.
+
+Before anything is installed the installer runs `sylvode-runner doctor --mode <mode> --as-service`
+with the `PATH` the service will have (not the shell's). A failed row prints its hint and stops the
+installation: nothing is ever installed silently. The mode is `tmux`, unless `--headless-only` is
+given (a missing tmux is then only a warning, with the line `headless-only mode: tmux sessions will
+not be available`) or the configuration has no `runner` agent (`auto`). `--dry-run` stops after the
+check. On Linux a user without linger gets a warning with `loginctl enable-linger <user>` (the
+service and its tmux server stop at logout otherwise). After the unit is installed, doctor runs
+once more in the service's context (`systemd-run --user`, or `launchctl asuser`); a problem there is
+a warning.
+
+### Doctor
+
+```bash
+sylvode-runner doctor [--json] [--config PATH] [--mode tmux|headless|auto] [--as-service] [--project KEY] [--show-paths]
+sylvode-runner --check                      # doctor --json with no network call and no secret
+sylvode-runner config check [--json] [--config PATH]
+```
+
+`doctor` prints the `sylvode.doctor.v1` report of the shared prerequisite checker: tmux (version
+against 3.2, server on the runner's socket), the CLIs, the MCP server (its `--check` version and
+task protocol), this runner (configuration, service, linger), the API protocol, and with `--project
+KEY` the project's row (directory against the allowed roots, trust, the state of the agent guide,
+and the warning that a git worktree cannot get its exclude line). Exit code 0: no row failed; 2: a
+row failed (warnings never change it); 1: the checker could not run. The output is meant for bug
+reports: no token, no URL credentials, no configuration content, and project directories only as
+labels unless `--show-paths` is given. In a container image the `tmux` row fails (`unsupported in
+container image`) whenever a `runner` agent is configured.
+
+`config check` says whether the configuration loads; it names the key (and table, and line) of each
+problem and never prints a value.
+
+A missing prerequisite does not stop the service: it starts degraded. `/health` carries `prereq`
+(each row's status by name) and `degraded` (a required row failed while a `runner` agent is
+configured), the periodic report to Sylvode carries the same rows, every delivery that needs the
+missing program is refused at once with a reason code (`tmux_unavailable`, `cli_unavailable`), and
+start-up logs the resolved path of each program. The snapshot is probed at most once a minute, and
+each delivery checks the program it needs again, so installing tmux takes effect without a restart.
+An invalid `allowed_roots` or a protocol mismatch still refuses the `runner` agents only.
 
 ### Systemd
 
