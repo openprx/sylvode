@@ -32,6 +32,16 @@ fn server(api: &Api, mode: McpToolMode) -> Result<McpServer, String> {
     Ok(McpServer::new(api.client()?, mode))
 }
 
+/// A key the tool generates itself is random; replaces it so two runs can be compared.
+fn hide_generated_key(seen: &mut Seen, caller_key: bool) {
+    if caller_key {
+        return;
+    }
+    if let Some(key) = seen.body.get_mut("idempotency_key") {
+        *key = json!("<generated>");
+    }
+}
+
 fn registry() -> Vec<ToolDefinition> {
     crate::tools::get_all_tool_definitions()
 }
@@ -358,9 +368,7 @@ async fn a_wrapper_call_is_the_direct_call_for_every_tool_under_every_policy() -
             let shape = |seen: Vec<Seen>| {
                 seen.into_iter()
                     .map(|mut seen| {
-                        if !caller_key && let Some(key) = seen.body.get_mut("idempotency_key") {
-                            *key = json!("<generated>");
-                        }
+                        hide_generated_key(&mut seen, caller_key);
                         (seen.method, seen.path, seen.query, seen.body, seen.tool)
                     })
                     .collect::<Vec<_>>()
@@ -634,7 +642,7 @@ async fn a_flow_only_server_honours_the_write_switch() -> TestResult {
     let api = Api::spawn(Policy::Permissive).await?;
     let server = McpServer::new(api.client()?.flow_only(), McpToolMode::Full).with_write_call_allowed(false);
     for definition in crate::tools::flow_scope::definitions() {
-        let writes = catalog::meta(&definition.name).map_or(true, |entry| entry.access == Access::Write);
+        let writes = catalog::meta(&definition.name).is_none_or(|entry| entry.access == Access::Write);
         if !writes {
             continue;
         }

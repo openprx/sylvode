@@ -179,10 +179,8 @@ fn collect_unsupported(schema: &Value, path: &str, found: &mut Vec<String>) {
                     found.push(format!("{path}/{keyword}: must be a non-negative integer"));
                 }
             }
-            "minimum" | "maximum" => {
-                if !value.is_number() {
-                    found.push(format!("{path}/{keyword}: must be a number"));
-                }
+            "minimum" | "maximum" if !value.is_number() => {
+                found.push(format!("{path}/{keyword}: must be a number"));
             }
             _ => {}
         }

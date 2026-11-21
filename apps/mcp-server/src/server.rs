@@ -909,10 +909,10 @@ impl McpServer {
         if tools::tasks::is_task_tool(name) {
             return false;
         }
-        match tools::catalog::meta(name) {
-            Some(entry) => entry.access == tools::catalog::Access::Write,
-            None => self.client.is_flow_only(),
-        }
+        tools::catalog::meta(name).map_or_else(
+            || self.client.is_flow_only(),
+            |entry| entry.access == tools::catalog::Access::Write,
+        )
     }
 
     /// A registry tool through the delegated gate, the scoped client and the policy chain: the

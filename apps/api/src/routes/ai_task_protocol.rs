@@ -71,9 +71,11 @@ pub struct ProgressRequest {
     pub queue_position: Option<i32>,
 }
 
-/// Refuses everything but the task's own bot: a person, a system administrator, another bot, and a
-/// request without a bot context (a connected application never has one). The refusal is the 404
-/// of a task that does not exist, so a foreign task id cannot be told from an unknown one.
+/// Refuses everything but the task's own bot.
+///
+/// That is a person, a system administrator, another bot, and a request without a bot context (a
+/// connected application never has one). The refusal is the 404 of a task that does not exist, so
+/// a foreign task id cannot be told from an unknown one.
 pub fn ensure_task_bot(task: &AiTaskRow, bot: Option<&BotAuthContext>, claims: &JwtClaims) -> Result<(), ApiError> {
     let own =
         bot.is_some_and(|bot| bot.bot_id == task.ai_participant_id) && claims.sub == task.ai_participant_id.to_string();

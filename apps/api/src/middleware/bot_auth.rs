@@ -143,9 +143,11 @@ fn operation_tool_name(attribution: McpAttribution<'_>) -> Option<String> {
     recordable_tool_name(attribution.tool?)
 }
 
-/// The tool name the operation log records for an attribution value, or `None` when the value is
-/// not a dotted lower-case name (`work_items.update`, `tasks.acknowledge`). Public so that the MCP
-/// server's tests can prove every name it sends is recorded.
+/// The tool name the operation log records for an attribution value.
+///
+/// `None` when the value is not a dotted lower-case name (`work_items.update`,
+/// `tasks.acknowledge`). Public so that the MCP server's tests can prove every name it sends is
+/// recorded.
 pub fn recordable_tool_name(value: &str) -> Option<String> {
     let value = value.trim();
     let mut segments = value.split('.');
