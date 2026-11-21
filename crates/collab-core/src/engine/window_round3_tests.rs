@@ -716,7 +716,8 @@ fn r3_8_a_create_under_a_missing_parent_is_refused() {
 }
 
 /// The other shapes of the same family, each of which panics a subscribed client (probed with
-/// `loro-crdt` in `frontend/tests/flow-dangling-parent-import.test.ts`).
+/// `loro-crdt` 1.18 while the check was written; `frontend/tests/flow-dangling-parent.test.ts` keeps
+/// the create under a missing parent as the client's regression).
 #[test]
 fn r3_8_the_related_shapes_are_refused() {
     let (base, anchor) = anchored_base();
