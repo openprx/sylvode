@@ -738,5 +738,30 @@
     "access": "read",
     "category": "flow",
     "name": "legacy_pages.import_status"
+  },
+  {
+    "access": "read",
+    "category": "tasks",
+    "name": "sylvode_task_get"
+  },
+  {
+    "access": "write",
+    "category": "tasks",
+    "name": "sylvode_task_ack"
+  },
+  {
+    "access": "write",
+    "category": "tasks",
+    "name": "sylvode_task_progress"
+  },
+  {
+    "access": "write",
+    "category": "tasks",
+    "name": "sylvode_task_complete"
+  },
+  {
+    "access": "write",
+    "category": "tasks",
+    "name": "sylvode_task_fail"
   }
 ]

@@ -40,7 +40,7 @@ The profile now registers 36 names: 34 actual existing Flow registry tools plus
 read/create/patch/move/link/unlink/diff, grants/inheritance/relations, Collections and
 Records, comments/mentions, page shares/appearance, trash/purge, projection lag and
 Forms references. Success values retain baseline data DTOs; typed business errors
-remain structured. The normal registry is 148 tools.
+remain structured. The normal registry is 153 tools.
 
 `objects.command` additionally requires statically mapped baseline operation policies
 on every affected project (and the outer alias policy). It cannot bypass a denied
@@ -86,7 +86,7 @@ MCP transport acceptance or of backend support for every broader Flow feature.
 
 ## Features
 
-- **148 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
+- **153 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
 - **Three Transport Modes**: stdio (for MCP clients), HTTP JSON-RPC, and SSE
 - **JSON Schema Validation**: All tool parameters are strongly typed
 - **Sylvode API Backend**: Calls the Sylvode API with workspace-scoped bot credentials
@@ -304,6 +304,9 @@ cargo build -p mcp-server --release
 
 ### Search
 - `search.all` - Global search across projects, work items, and comments
+
+### Agent Tasks
+- `sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress`, `sylvode_task_complete`, `sylvode_task_fail` — the task protocol of a bot; the API serves a task only to its own bot, connected (OAuth) applications cannot call them
 
 ### Scenario Tools
 - `code.task_context.get`, `code.change_proposal.create`

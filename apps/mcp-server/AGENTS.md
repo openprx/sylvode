@@ -3,7 +3,7 @@
 ## Project Overview
 
 - Sylvode (formerly OpenPR) is an open-source project management platform with governance and AI integration.
-- The MCP server exposes 148 tools for managing projects, context, project types/templates, operation records, universal forms, WASM plugins, issues, sprints, labels, comments, proposals, check results, release next actions, files, scenario-specific governed work, and Sylvode Flow (v0.9).
+- The MCP server exposes 153 tools for managing projects, context, project types/templates, operation records, universal forms, WASM plugins, issues, sprints, labels, comments, proposals, check results, release next actions, files, scenario-specific governed work, and Sylvode Flow (v0.9).
 - Transports: HTTP (`POST /mcp/rpc`), stdio (stdin/stdout), SSE (`GET /sse` + `POST /messages`).
 
 ## MCP Surface (Quick Reference)
@@ -37,6 +37,7 @@
   - `code.task_context.get`, `code.change_proposal.create`
   - `documents.extract_summary`, `documents.review_risk`, `approval.request`, `inspection.report`, `corrective_action.propose`
   - `members.list`, `search.all`
+  - `sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress`, `sylvode_task_complete`, `sylvode_task_fail`
 - Authentication:
   - `stdio` and the CLI subcommands: `mcp.bot_token` in the configuration file (prefix `opr_`). Not used by `http`/`sse`.
   - `http`/`sse`: no `mcp.bot_token`, no shared secret. Every request must carry its own caller account token as `Authorization: Bearer opr_...`; the server forwards it to the API as-is. Missing/malformed header = `401` (except `/health`). The token's workspace must match this server's `mcp.workspace_id`, or the API returns `403`.
@@ -99,7 +100,7 @@ curl -X POST http://localhost:8090/mcp/rpc \
 
 ## Testing Guidelines
 
-- MCP regression: test all 148 tools across 3 transports (HTTP, stdio, SSE), plus project-aware `tools/list` when a project id is supplied.
+- MCP regression: test all 153 tools across 3 transports (HTTP, stdio, SSE), plus project-aware `tools/list` when a project id is supplied.
 - CLI business-flow coverage: use `sylvode tools call --name <tool> --args-json '{...}'` for universal forms, plugins, operation records, and scenario tools so CLI calls reuse the same MCP tool names and audit path.
 - API: test via `curl` or MCP client against running instance.
 - Frontend: `bun run build` must succeed.

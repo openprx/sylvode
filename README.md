@@ -22,7 +22,7 @@ MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, an
 - **Sylvode Flow** — collaborative pages and objects with live multi-user editing (Loro CRDT over WebSocket), Collections and records, a workspace navigator, search, Forms conversion, and export/import packages. Off by default; enabled per workspace.
 - **WASM plugins** — per-project sandboxed plugins for field validation, formulas, and event handlers.
 - **Events** — transactional business-event ledger and HMAC-signed webhooks.
-- **MCP server** — 148 tools, 4 static resources, 21 resource templates, 3 transports.
+- **MCP server** — 153 tools, 4 static resources, 21 resource templates, 3 transports.
 - **`sylvode` CLI** — fifteen command groups for Flow and workspace operations, with a stable JSON output contract.
 - **Scenario templates** — 6 ready-to-start setups: `code_delivery_default`, `contract_review_default`, `equipment_maintenance_default`, `quality_corrective_action_default`, `customer_delivery_default`, `restaurant_ordering_default`.
 
@@ -424,7 +424,7 @@ curl -X POST "http://localhost:8090/messages?session_id=<uuid>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}'
 ```
 
-### Tools (148)
+### Tools (153)
 
 Per-domain counts; the total and sorted-name hash are pinned in
 `apps/mcp-server/tool-registry-baseline.json` and checked against the live registry.

@@ -289,7 +289,7 @@ async fn the_http_transport_serves_metadata_challenges_and_delegated_calls() -> 
     // A bot token is forwarded as before: the whole registry, no forwarding credential.
     let (status, _, body) = rpc(&server, Some(BOT_TOKEN), list).await?;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(tool_names(&body).len(), 148);
+    assert_eq!(tool_names(&body).len(), 153);
     let (status, _, _) = rpc(
         &server,
         Some(BOT_TOKEN),

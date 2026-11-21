@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 
 const SKILL_GUIDE_MD: &str = r"# Sylvode MCP Skill Guide
 
-## Tools (148)
+## Tools (153)
 
 ### Projects: projects.list, projects.get, projects.create, projects.update, projects.delete
 ### Project Types: project_types.list, project_types.get
@@ -27,6 +27,7 @@ const SKILL_GUIDE_MD: &str = r"# Sylvode MCP Skill Guide
 ### Code Scenarios: code.task_context.get, code.change_proposal.create
 ### Traditional Scenarios: documents.extract_summary, documents.review_risk, approval.request, inspection.report, corrective_action.propose
 ### Other: members.list, search.all, bot_operation_logs.list
+### Agent Tasks: sylvode_task_get, sylvode_task_ack, sylvode_task_progress, sylvode_task_complete, sylvode_task_fail
 ### Flow (v0.8): flow.feature_get, flow.feature_set, objects.get, objects.query, objects.history, objects.create, objects.patch, objects.move, objects.link, objects.unlink, objects.diff, objects.grants_get, objects.grants_set, objects.inheritance_set, objects.relations, objects.search, objects.reference, objects.unreference, objects.convert_preview, objects.convert_commit, objects.convert_status, objects.convert_retry, objects.export, objects.export_workspace, objects.import_artifact, objects.import_preview, objects.import_commit, objects.import_status, objects.integrity, collab.projection_lag, collab.status, collab.compact, collab.rebuild_projection, collab.repair_quarantine, deliveries.replay, collections.describe, collections.query, records.create, legacy_pages.inventory, legacy_pages.import_preview, legacy_pages.import_commit, legacy_pages.import_status, flow.comments.list, flow.comments.create, flow.comments.update, flow.comments.delete, flow.comments.resolve, flow.shares.list, flow.shares.create, flow.shares.revoke, flow.appearance.set, flow.appearance.upload, objects.restore, flow.trash.list, objects.purge, flow.mentions.list
 
 ## Workflow: Bug Report
@@ -196,6 +197,10 @@ enum OwnerLookup {
     FlowObject,
     /// `preview_id` / `job_id` -> the conversion's source Flow object owner endpoint.
     FlowConversion,
+    /// `task_id` (with `attempt`) -> `GET /api/v1/ai/tasks/{id}?attempt=N`, whose view names the
+    /// project. The endpoint answers only the task's own bot, so a task of another bot never
+    /// resolves.
+    AiTask,
 }
 
 impl OwnerLookup {
@@ -211,6 +216,7 @@ impl OwnerLookup {
             Self::Comment => "comment_id",
             Self::FlowObject => "object_id, source_object_id or collection_id",
             Self::FlowConversion => "preview_id or job_id",
+            Self::AiTask => "task_id",
         }
     }
 }
@@ -222,7 +228,7 @@ impl OwnerLookup {
 /// labels carry no project column (`migrations/0012_governance_phase1.sql`,
 /// `migrations/0003_labels.sql`), and `resource_id` only ever appears next to a
 /// `project_id` that already scopes the request path.
-const OWNERSHIP_ARGUMENTS: [(&str, OwnerLookup); 14] = [
+const OWNERSHIP_ARGUMENTS: [(&str, OwnerLookup); 15] = [
     ("record_id", OwnerLookup::FormData),
     ("form_id", OwnerLookup::FormData),
     ("attachment_id", OwnerLookup::FormData),
@@ -237,6 +243,7 @@ const OWNERSHIP_ARGUMENTS: [(&str, OwnerLookup); 14] = [
     ("collection_id", OwnerLookup::FlowObject),
     ("preview_id", OwnerLookup::FlowConversion),
     ("job_id", OwnerLookup::FlowConversion),
+    ("task_id", OwnerLookup::AiTask),
 ];
 
 /// The policy scope of every registered tool.
@@ -475,6 +482,11 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("flow.trash.list", PolicyScope::WorkspaceWide),
     ("objects.purge", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
     ("flow.mentions.list", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
+    (tools::tasks::TASK_GET, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
+    (tools::tasks::TASK_ACK, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
+    (tools::tasks::TASK_PROGRESS, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
+    (tools::tasks::TASK_COMPLETE, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
+    (tools::tasks::TASK_FAIL, PolicyScope::OwnedBy(OwnerLookup::AiTask)),
 ];
 
 /// Scope of one registered tool. Unknown names fail closed as mandatory
@@ -1031,6 +1043,11 @@ impl McpServer {
             "legacy_pages.import_preview" => tools::legacy_pages::legacy_pages_import_preview(&self.client, args).await,
             "legacy_pages.import_commit" => tools::legacy_pages::legacy_pages_import_commit(&self.client, args).await,
             "legacy_pages.import_status" => tools::legacy_pages::legacy_pages_import_status(&self.client, args).await,
+            tools::tasks::TASK_GET => tools::tasks::get(&self.client, args).await,
+            tools::tasks::TASK_ACK => tools::tasks::ack(&self.client, args).await,
+            tools::tasks::TASK_PROGRESS => tools::tasks::progress(&self.client, args).await,
+            tools::tasks::TASK_COMPLETE => tools::tasks::complete(&self.client, args).await,
+            tools::tasks::TASK_FAIL => tools::tasks::fail(&self.client, args).await,
             "flow.comments.list" => tools::flow_social::list_comments(&self.client, args).await,
             "flow.comments.create" => tools::flow_social::create_comment(&self.client, args).await,
             "flow.comments.update" => tools::flow_social::update_comment(&self.client, args).await,
@@ -1181,6 +1198,7 @@ impl McpServer {
             OwnerLookup::FlowConversion => Err(format!(
                 "Tool '{tool_name}' is refused: FlowConversion ownership must be resolved through its source lookup"
             )),
+            OwnerLookup::AiTask => self.resolve_ai_task_owner(tool_name, args).await,
             OwnerLookup::FormData => self.resolve_form_data_owner(tool_name, args).await,
             OwnerLookup::Sprint | OwnerLookup::Comment => {
                 let id = required_owner_argument(tool_name, lookup, args)?;
@@ -1258,6 +1276,34 @@ impl McpServer {
             .get("data")
             .ok_or_else(|| format!("API response for flow object {object_id} carries no data"))?;
         Ok(data.get("project_id").and_then(Value::as_str).map(str::to_string))
+    }
+
+    /// Reads a task's project from the task view. The API serves the view only to the task's own
+    /// bot, so a task of another bot (or any caller that is not a bot) fails here with the API's
+    /// refusal and never reaches the policy check or the tool.
+    async fn resolve_ai_task_owner(&self, tool_name: &str, args: &Value) -> Result<String, String> {
+        let (task_id, attempt) = tools::tasks::task_target(args)
+            .map_err(|error| format!("Tool '{tool_name}' cannot resolve the task's project: {error}"))?;
+        let cache_key = format!("ai_task:{task_id}");
+        if let Some(owner) = self.cached_project_id(&cache_key).await {
+            return Ok(owner.project_id);
+        }
+        let response = self
+            .client
+            .get_ai_task(&task_id, attempt)
+            .await
+            .map_err(|error| format!("Failed to resolve owning project for task {task_id}: {error}"))?;
+        let project_id = response
+            .pointer("/data/project/id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("API response for task {task_id} carries no project id"))?;
+        let owner = ResolvedOwner {
+            project_id,
+            form_id: None,
+        };
+        self.cache_project_id(cache_key, &owner).await;
+        Ok(owner.project_id)
     }
 
     async fn resolve_flow_conversion_owner(&self, tool_name: &str, args: &Value) -> Result<Option<String>, String> {

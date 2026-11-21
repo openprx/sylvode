@@ -546,6 +546,19 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
         groups.insert("resources", tool_set(&["files.upload"]));
     }
 
+    // The task protocol is never a policy choice: a policy that hid it would leave a task the
+    // bot cannot acknowledge, complete or fail.
+    groups.insert(
+        "tasks",
+        tool_set(&[
+            "sylvode_task_get",
+            "sylvode_task_ack",
+            "sylvode_task_progress",
+            "sylvode_task_complete",
+            "sylvode_task_fail",
+        ]),
+    );
+
     let enabled_tools = groups
         .values()
         .flat_map(|tools| tools.iter().copied())
@@ -647,6 +660,43 @@ mod tests {
         assert!(tools.contains(&"form_records.child_restore".to_string()));
         assert!(tools.contains(&"plugins.install".to_string()));
         assert!(tools.contains(&"plugins.invoke".to_string()));
+    }
+
+    /// The `tasks` group is added for every project type, whatever its capabilities.
+    #[test]
+    fn the_tasks_group_is_present_for_every_capability_set() {
+        // Groups are sorted sets.
+        let task_tools = [
+            "sylvode_task_ack",
+            "sylvode_task_complete",
+            "sylvode_task_fail",
+            "sylvode_task_get",
+            "sylvode_task_progress",
+        ];
+        for capabilities in [
+            json!([]),
+            json!(["mcp"]),
+            json!(["issues"]),
+            json!(["code_context"]),
+            json!(["documents", "forms"]),
+            json!(["inspection", "corrective_action"]),
+            json!([
+                "issues",
+                "sprints",
+                "mcp",
+                "governance",
+                "code_context",
+                "forms",
+                "plugins"
+            ]),
+        ] {
+            let registry = build_mcp_tool_registry(&capabilities);
+            assert_eq!(registry["groups"]["tasks"], json!(task_tools), "{capabilities}");
+            let tools = enabled_tools(&registry);
+            for tool in task_tools {
+                assert!(tools.contains(&tool.to_string()), "{tool} for {capabilities}");
+            }
+        }
     }
 
     #[test]

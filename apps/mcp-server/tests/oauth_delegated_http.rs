@@ -600,7 +600,7 @@ async fn a_legacy_caller_still_sees_the_whole_registry() -> TestResult {
     for token in [BOT_TOKEN, JWT_SHAPED_TOKEN] {
         let reply = server.post(Some(token), &list()).await?;
         assert_eq!(reply.status, StatusCode::OK);
-        assert_eq!(listed(&reply)?.len(), 148, "{token}");
+        assert_eq!(listed(&reply)?.len(), 153, "{token}");
     }
     assert_eq!(
         source.calls(),
@@ -712,10 +712,22 @@ async fn a_tool_that_is_not_available_is_refused_whatever_the_scopes_claim() -> 
         "plugins.invoke",
         "proposals.create",
         "projects.create",
+        // The task tools act for a bot; a connected application gets the same refusal.
+        "sylvode_task_get",
+        "sylvode_task_ack",
+        "sylvode_task_progress",
+        "sylvode_task_complete",
+        "sylvode_task_fail",
         "no.such_tool",
     ] {
         let reply = server
-            .post(Some(&token), &call(tool, &json!({"project_id": PROJECT})))
+            .post(
+                Some(&token),
+                &call(
+                    tool,
+                    &json!({"project_id": PROJECT, "task_id": PROJECT, "attempt": 1, "plan": "x", "note": "x"}),
+                ),
+            )
             .await?;
         assert_eq!(reply.status, StatusCode::FORBIDDEN, "{tool}");
         assert!(

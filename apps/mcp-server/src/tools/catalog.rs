@@ -150,10 +150,6 @@ pub static CATEGORIES: &[Category] = &[
     },
 ];
 
-/// Categories that have no catalogue entry yet. The five task tools of the `tasks` category
-/// arrive with the task tools package, which empties this list.
-pub static CATEGORIES_PENDING: &[&str] = &["tasks"];
-
 /// Tools whose name suggests the opposite access class, each with the reason.
 ///
 /// Names ending in a write verb must be `Write`, names ending in a read verb must be `Read`,
@@ -1236,6 +1232,41 @@ pub static CATALOG: &[ToolMeta] = &[
         summary: "Read the status of a legacy page import",
         keywords: &["migration progress"],
     },
+    ToolMeta {
+        name: "sylvode_task_get",
+        category: "tasks",
+        access: Access::Read,
+        summary: "Read a task assigned to the bot with its source, project and status",
+        keywords: &["task", "assignment", "work order", "job"],
+    },
+    ToolMeta {
+        name: "sylvode_task_ack",
+        category: "tasks",
+        access: Access::Write,
+        summary: "Take a task and state a short plan",
+        keywords: &["acknowledge", "accept task", "plan", "start task"],
+    },
+    ToolMeta {
+        name: "sylvode_task_progress",
+        category: "tasks",
+        access: Access::Write,
+        summary: "Report progress of a task and keep it alive",
+        keywords: &["heartbeat", "status update", "milestone", "keepalive"],
+    },
+    ToolMeta {
+        name: "sylvode_task_complete",
+        category: "tasks",
+        access: Access::Write,
+        summary: "Finish a task and let Sylvode post the reply",
+        keywords: &["done", "finish task", "submit result", "vote"],
+    },
+    ToolMeta {
+        name: "sylvode_task_fail",
+        category: "tasks",
+        access: Access::Write,
+        summary: "End a task as failed with the reason",
+        keywords: &["give up", "cannot do", "error", "abort task"],
+    },
 ];
 
 /// The catalogue entry of a registry tool.
@@ -1261,7 +1292,13 @@ pub fn annotate(tools: Vec<ToolDefinition>) -> Vec<ToolDefinition> {
         .into_iter()
         .map(|mut tool| {
             if let Some(entry) = meta(&tool.name) {
-                tool.annotations = Some(json!({ "readOnlyHint": entry.access == Access::Read }));
+                // Keep the hints a definition carries itself (`idempotentHint` of the task tools).
+                let mut annotations = match tool.annotations.take() {
+                    Some(Value::Object(map)) => map,
+                    _ => serde_json::Map::new(),
+                };
+                annotations.insert("readOnlyHint".to_string(), json!(entry.access == Access::Read));
+                tool.annotations = Some(Value::Object(annotations));
             }
             tool
         })
@@ -1280,9 +1317,7 @@ pub fn list_json() -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ACCESS_EXCEPTIONS, Access, CATALOG, CATEGORIES, CATEGORIES_PENDING, POST_READ_ENDPOINTS, WRITE_BY_JOB_SEMANTICS,
-    };
+    use super::{ACCESS_EXCEPTIONS, Access, CATALOG, CATEGORIES, POST_READ_ENDPOINTS, WRITE_BY_JOB_SEMANTICS};
     use crate::client::test_api;
     use crate::server::McpServer;
     use axum::Router;
@@ -1371,14 +1406,7 @@ mod tests {
     fn every_category_is_used() {
         let used = CATALOG.iter().map(|entry| entry.category).collect::<BTreeSet<_>>();
         for category in CATEGORIES {
-            let pending = CATEGORIES_PENDING.contains(&category.name);
-            assert_eq!(
-                used.contains(category.name),
-                !pending,
-                "category {} is {}",
-                category.name,
-                if pending { "pending but already used" } else { "unused" }
-            );
+            assert!(used.contains(category.name), "category {} is unused", category.name);
         }
     }
 

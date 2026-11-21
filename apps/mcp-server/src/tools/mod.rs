@@ -22,6 +22,7 @@ pub mod scenario_templates;
 pub mod scenario_tools;
 pub mod search;
 pub mod sprints;
+pub mod tasks;
 pub mod work_items;
 
 use crate::protocol::ToolDefinition;
@@ -145,6 +146,7 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         legacy_pages::legacy_pages_import_commit_tool(),
         legacy_pages::legacy_pages_import_status_tool(),
     ]);
+    tools.extend(tasks::tool_definitions());
     tools
 }
 
