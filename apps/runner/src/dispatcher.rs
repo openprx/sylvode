@@ -1545,7 +1545,7 @@ mcp_instructions = "Custom: read issue {issue_id} first"
             for name in backticked(text) {
                 let known = ENTRY_AND_TASK_TOOLS.contains(&name)
                     || REGISTRY_TARGETS.contains(&name)
-                    || matches!(name, "tool" | "arguments");
+                    || matches!(name, "tool" | "arguments" | "[Sylvode task]");
                 assert!(known, "`{name}` is not an entry tool, a task tool or a named target");
                 if name.starts_with("sylvode_") {
                     assert!(ENTRY_AND_TASK_TOOLS.contains(&name), "{name}");
