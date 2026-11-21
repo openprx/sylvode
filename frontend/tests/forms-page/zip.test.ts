@@ -250,10 +250,12 @@ await suite.checkAsync(
 		assertEqual(entry.size, encoder.encode(text).length, 'size counts UTF-8 bytes, not characters');
 		assert(entry.size > text.length, 'multi-byte text is longer in bytes');
 		assertEqual(decoder.decode(entry.data), text, 'text decodes back');
-		// CURRENT BEHAVIOUR: names are written as UTF-8 but general-purpose flag bit 11 (the
-		// zip "language encoding" flag) is not set, so a strict reader decodes non-ASCII names as
-		// CP437 and shows them garbled. Setting 0x0800 in both headers would fix it.
-		assertEqual(entry.flags & 0x0800, 0, 'the UTF-8 name flag is not set');
+		assertEqual(entry.flags & 0x0800, 0x0800, 'the UTF-8 name flag is set in the central record');
+		assertEqual(
+			new DataView(bytes.buffer, bytes.byteOffset).getUint16(6, true) & 0x0800,
+			0x0800,
+			'the UTF-8 name flag is set in the local header'
+		);
 		// The name bytes sit right after the 30-byte local header.
 		assertDeepEqual(
 			Array.from(bytes.subarray(30, 30 + encoder.encode(name).length)),
@@ -357,14 +359,51 @@ suite.check('safeZipSegment turns separators into dashes and never returns an em
 	assertEqual(zip.safeZipSegment('文件.pdf'), '.pdf', 'non-ASCII removed, extension kept');
 });
 
-suite.check('safeZipSegment keeps a name made only of dots', () => {
-	// CURRENT BEHAVIOUR: '.' and '..' pass through unchanged because dots are allowed. Used as a
-	// zip path segment, '..' is the classic extraction-path-traversal name. Slashes cannot
-	// survive, so the risk is limited to a segment that is exactly '..'.
-	assertEqual(zip.safeZipSegment('..'), '..', 'two dots');
-	assertEqual(zip.safeZipSegment('.'), '.', 'one dot');
+suite.check('safeZipSegment never returns a name made only of dots', () => {
+	assertEqual(zip.safeZipSegment('..'), 'attachment.bin', 'two dots');
+	assertEqual(zip.safeZipSegment('.'), 'attachment.bin', 'one dot');
+	assertEqual(zip.safeZipSegment('...'), 'attachment.bin', 'three dots');
 	assertEqual(zip.safeZipSegment('../x'), '..-x', 'traversal prefix is neutralised');
+	assertEqual(zip.safeZipSegment('.hidden'), '.hidden', 'a leading dot with a name is kept');
 });
+
+suite.check('safeZipPath drops empty, dot and dot-dot segments', () => {
+	assertEqual(zip.safeZipPath('a/b.txt'), 'a/b.txt', 'plain path');
+	assertEqual(zip.safeZipPath('../../etc/passwd'), 'etc/passwd', 'leading traversal');
+	assertEqual(zip.safeZipPath('a/../../b'), 'a/b', 'embedded traversal');
+	assertEqual(zip.safeZipPath('..\\x'), 'x', 'backslash separator');
+	assertEqual(zip.safeZipPath('/abs//x/./y'), 'abs/x/y', 'absolute, empty and dot segments');
+	assertEqual(zip.safeZipPath('..'), 'attachment.bin', 'nothing left');
+	assertEqual(zip.safeZipPath('..x/a..'), '..x/a..', 'dots inside a name are kept');
+});
+
+await suite.checkAsync(
+	'createStoredZipBlob never writes a traversal segment into an entry name',
+	async () => {
+		const { parsed } = await build([
+			{ path: '../evil.txt', data: 'x' },
+			{ path: 'a/../../b.txt', data: 'y' }
+		]);
+		assertDeepEqual(
+			parsed.entries.map((entry) => entry.name),
+			['evil.txt', 'a/b.txt'],
+			'central names'
+		);
+		assertDeepEqual(
+			parsed.entries.map((entry) => entry.localHeaderName),
+			['evil.txt', 'a/b.txt'],
+			'local names'
+		);
+	}
+);
+
+await suite.checkAsync(
+	'createStoredZipBlob leaves the UTF-8 flag clear for ASCII names',
+	async () => {
+		const { parsed } = await build([{ path: 'plain.txt', data: 'x' }]);
+		assertEqual(parsed.entries[0].flags, 0, 'no flags for an ASCII name');
+	}
+);
 
 suite.check('attachmentManifestUrls collects trimmed URLs from strings, arrays and objects', () => {
 	assertDeepEqual(zip.attachmentManifestUrls('  https://a/x.png  '), ['https://a/x.png'], 'string');

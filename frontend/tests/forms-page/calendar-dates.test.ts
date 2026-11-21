@@ -277,16 +277,26 @@ suite.check('calendarOccurrenceDates: monthly recurrence lists one date per mont
 	);
 });
 
-suite.check('calendarOccurrenceDates: a monthly recurrence on the 31st drifts to the 28th', () => {
-	// CURRENT BEHAVIOUR: each step adds one month to the previous (already clamped) date, so a
-	// series that starts on 31 January stays on the 28th after February instead of returning to
-	// the 31st in March. Computing every date from the base date would give 03-31.
-	assertDeepEqual(
-		dates.calendarOccurrenceDates('2026-01-31', '2026-01-01', '2026-04-30', 'monthly'),
-		['2026-01-31', '2026-02-28', '2026-03-28', '2026-04-28'],
-		'31 January series'
-	);
-});
+suite.check(
+	'calendarOccurrenceDates: a monthly recurrence on the 31st clamps per month only',
+	() => {
+		assertDeepEqual(
+			dates.calendarOccurrenceDates('2026-01-31', '2026-01-01', '2026-06-30', 'monthly'),
+			['2026-01-31', '2026-02-28', '2026-03-31', '2026-04-30', '2026-05-31', '2026-06-30'],
+			'31 January series'
+		);
+		assertDeepEqual(
+			dates.calendarOccurrenceDates('2028-01-30', '2028-01-01', '2028-03-31', 'monthly'),
+			['2028-01-30', '2028-02-29', '2028-03-30'],
+			'30 January series through a leap February'
+		);
+		assertDeepEqual(
+			dates.calendarOccurrenceDates('2026-11-30', '2026-11-01', '2027-03-31', 'monthly'),
+			['2026-11-30', '2026-12-30', '2027-01-30', '2027-02-28', '2027-03-30'],
+			'series across a year boundary'
+		);
+	}
+);
 
 suite.check(
 	'calendarOccurrenceDates falls back to the base date when nothing lands in the grid',

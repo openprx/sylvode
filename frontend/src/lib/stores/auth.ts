@@ -2,6 +2,7 @@
 import { derived, get, writable } from 'svelte/store';
 import type { User } from '#lib/api/auth.js';
 import { apiClient, type ApiResult } from '#lib/api/client.js';
+import { loginUrlForLocation } from '#lib/oauth/return-to.js';
 import { clearFlowLocalData } from '#lib/flow/local-data.js';
 
 interface AuthState {
@@ -51,7 +52,10 @@ export function createAuthStore(client = apiClient) {
 				typeof window !== 'undefined' &&
 				window.location.pathname !== '/auth/login'
 			)
-				window.location.href = '/auth/login';
+				window.location.href = loginUrlForLocation(
+					window.location.pathname,
+					window.location.search
+				);
 		}, 50);
 	});
 

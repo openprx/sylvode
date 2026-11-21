@@ -132,7 +132,10 @@ export function createShellSession(): ShellSession {
 			session.workspaceRole = role;
 		}
 	);
+	// `ready` is read so the role is read again once the profile check has finished: a read that
+	// the check's session change aborted is forgotten by the tracker and picked up here.
 	$effect(() => {
+		void session.ready;
 		void roleTracker.select(session.workspaceId, session.userId);
 	});
 
