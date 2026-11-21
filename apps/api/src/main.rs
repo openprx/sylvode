@@ -1612,6 +1612,10 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
         .merge(routes::flow_surface::seal(flow_surface_routes(&auth_state)))
         // OAuth authorization server: metadata documents and, with later packages, the endpoints.
         .merge(api::oauth::router::routes_with(&auth_state, oauth))
+        // Alert chain: the inbound event endpoint, authenticated by a source credential only.
+        .merge(api::inbound::routes(&auth_state))
+        // Alert chain management: sources and rules, for workspace owners and admins only.
+        .merge(routes::inbound_admin::routes(&auth_state))
         // Label routes (protected)
         .route(
             "/api/v1/workspaces/{workspace_id}/labels",
@@ -3670,6 +3674,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0109_oauth_authorization_server.sql",
         include_str!("../../../migrations/0109_oauth_authorization_server.sql"),
     ),
+    (
+        "0111_alert_chain.sql",
+        include_str!("../../../migrations/0111_alert_chain.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4225,6 +4233,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0109_oauth_authorization_server.sql",
         SchemaProbe::Relation("oauth_grants"),
     ),
+    ("0111_alert_chain.sql", SchemaProbe::Relation("inbound_events")),
 ];
 
 /// One recorded migration outcome.
@@ -4788,6 +4797,7 @@ mod tests {
                 "0107_flow_block_registration_progress.sql",
                 "0108_flow_block_checkpoint_digest.sql",
                 "0109_oauth_authorization_server.sql",
+                "0111_alert_chain.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );

@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use super::inbound::RawInbound;
 use super::oauth::{RawOAuth, UrlRole, validate_forward_secret, validate_url};
 use super::secret::Secret;
 use super::{
@@ -77,6 +78,8 @@ pub(super) struct RawConfig {
     flow: RawFlow,
     #[serde(default)]
     oauth: RawOAuth,
+    #[serde(default)]
+    inbound: RawInbound,
 }
 
 #[derive(Deserialize, Default)]
@@ -240,6 +243,7 @@ impl RawConfig {
         let mcp = self.mcp.validate(&mut issues);
         let flow = self.flow.validate(&mut issues);
         let oauth = self.oauth.validate(&mut issues);
+        let inbound = self.inbound.validate(&mut issues);
         cross_check_oauth_and_mcp(oauth.as_ref(), &mcp, &mut issues);
 
         issues.into_result(origin)?;
@@ -267,6 +271,7 @@ impl RawConfig {
             mcp,
             flow,
             oauth,
+            inbound,
         })
     }
 }

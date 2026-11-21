@@ -1,4 +1,4 @@
-// The twenty cases of the contract's WP8 table, in order.
+// The twenty cases of the contract's WP8 table, in order, and the alert chain case A21 after them.
 
 export interface CaseInfo {
 	id: string;
@@ -66,5 +66,10 @@ export const CATALOG: CaseInfo[] = [
 	{
 		id: 'A20',
 		title: 'the existing bot-token MCP regression script and the JWT UI smoke test still pass'
+	},
+	{
+		id: 'A21',
+		title:
+			'alert chain: a signed inbound event opens an alert work item and a bot task, and the client sees the notifications and task events in order'
 	}
 ];

@@ -9,9 +9,9 @@
 // The placeholders deliberately do not contain a token prefix followed by an underscore, because
 // the artifact self-check searches the output for exactly those strings.
 
-export const TOKEN_PREFIXES = ['sva_', 'svr_', 'svc_', 'sve_', 'opr_'] as const;
+export const TOKEN_PREFIXES = ['sva_', 'svr_', 'svc_', 'sve_', 'svi_', 'svs_', 'opr_'] as const;
 
-const TOKEN_SHAPE = /\b(?:sva|svr|svc|sve|opr)_[A-Za-z0-9_-]{4,}/g;
+const TOKEN_SHAPE = /\b(?:sva|svr|svc|sve|svi|svs|opr)_[A-Za-z0-9_-]{4,}/g;
 const JWT_SHAPE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
 const BEARER_SHAPE = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 
@@ -28,6 +28,7 @@ const SENSITIVE_KEYS = new Set([
 	'consent_token',
 	'client_secret',
 	'secret',
+	'signing_secret',
 	'authorization',
 	'x-sylvode-consent',
 	'x-sylvode-forward-auth'

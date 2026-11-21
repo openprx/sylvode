@@ -8,7 +8,7 @@ test('token shapes, JWTs and bearer values are replaced without leaving a prefix
 	const r = new Redactor();
 	const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl';
 	const text = r.text(
-		`a ${fake('sva_')} b ${fake('svr_')} c ${fake('svc_')} d ${jwt} e Bearer abcdefghijkl12345 f ${fake('opr_')}`
+		`a ${fake('sva_')} b ${fake('svr_')} c ${fake('svc_')} d ${jwt} e Bearer abcdefghijkl12345 f ${fake('opr_')} g ${fake('svi_')} h ${fake('svs_')}`
 	);
 	for (const prefix of TOKEN_PREFIXES)
 		assert.ok(!text.includes(prefix), `${prefix} left in: ${text}`);

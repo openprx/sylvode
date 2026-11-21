@@ -679,6 +679,11 @@ const DENIED_TO_DELEGATED: &[(&str, &str)] = &[
     ("POST", "/api/v1/oauth/authorization-requests"),
     // The consent decision is the signed-in user's own act.
     ("POST", "/api/v1/oauth/authorization-requests/{request_id}/decision"),
+    // The alert chain's inbound endpoint accepts a source credential (`svi_`) and nothing else: a
+    // delegated token is refused as an unknown credential (401), or the endpoint answers 503 while
+    // `[inbound]` is off, which is how it runs in this test's world. The 401 is asserted against
+    // an enabled endpoint in `inbound::db_tests`.
+    ("POST", "/api/v1/inbound/events"),
 ];
 
 fn concrete_unlisted(path: &str) -> String {
@@ -784,7 +789,9 @@ async fn every_route_is_on_the_allow_list_with_a_scope_or_denied() {
 
             let class = if DENIED_TO_DELEGATED.contains(&(method, route.path.as_str())) {
                 assert!(
-                    matches!(delegated.status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+                    matches!(delegated.status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+                        || (route.path == "/api/v1/inbound/events"
+                            && delegated.status == StatusCode::SERVICE_UNAVAILABLE),
                     "{label}: must refuse a delegated token, answered {} {}",
                     delegated.status,
                     delegated.text()

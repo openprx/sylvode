@@ -10,6 +10,7 @@ use platform::{
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 mod ai_tasks;
+mod alert_followup;
 mod flow;
 mod oauth_feed;
 
@@ -71,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
     api::flow::scope_runtime::spawn(db.clone(), "worker").await?;
     api::flow::scope_runtime::spawn(db.clone(), "maintenance").await?;
     tokio::spawn(oauth_feed::run(db.clone(), runtime.oauth.clone()));
+    tokio::spawn(alert_followup::run(db.clone(), runtime.inbound));
     let state = AppState {
         cfg: cfg.clone(),
         db: db.clone(),

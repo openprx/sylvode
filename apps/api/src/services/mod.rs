@@ -7,4 +7,5 @@ pub mod permission_service;
 pub mod teardown;
 pub mod trust_score_service;
 pub mod veto_service;
+pub mod work_item_service;
 pub mod workflow_service;

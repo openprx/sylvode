@@ -27,7 +27,7 @@ const result = (
 	timings: Record<string, number> = {}
 ): CaseResult => ({ id, title: id, status, durationMs: 1000, timings, details: {} });
 
-test('the record lists all twenty cases, marks the missing ones, and carries the three timing figures', () => {
+test('the record lists all twenty-one cases, marks the missing ones, and carries the three timing figures', () => {
 	const record = buildRecord(
 		[
 			result('A07', 'passed', { notification_ms: 321 }),
@@ -37,8 +37,8 @@ test('the record lists all twenty cases, marks the missing ones, and carries the
 		meta
 	);
 	assert.equal(record.cases.length, CATALOG.length);
-	assert.equal(record.cases.length, 20);
-	assert.deepEqual(record.summary, { passed: 2, failed: 1, notRun: 17 });
+	assert.equal(record.cases.length, 21);
+	assert.deepEqual(record.summary, { passed: 2, failed: 1, notRun: 18 });
 	assert.deepEqual(record.timings, {
 		A07_notification_ms: 321,
 		A08_task_created_ms: 100,

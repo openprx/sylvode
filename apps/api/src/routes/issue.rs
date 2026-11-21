@@ -21,6 +21,7 @@ use crate::{
     services::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
         bot_identity::is_bot_user,
+        work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
@@ -309,47 +310,23 @@ pub async fn create_issue(
         None
     };
 
-    let mut values: Vec<sea_orm::Value> = vec![
-        issue_id.into(),
-        project_id.into(),
-        req.title.clone().into(),
-        description.clone().into(),
-        issue_state.clone().into(),
-        issue_priority.clone().into(),
-    ];
-
-    if let Some(aid) = req.assignee_id {
-        values.push(aid.into());
-    } else {
-        values.push(sea_orm::Value::from(None::<Uuid>));
-    }
-    let assignee_param = "$7";
-
-    if let Some(dt) = due_at {
-        values.push(dt.into());
-    } else {
-        values.push(sea_orm::Value::from(None::<platform::timestamp::Timestamp>));
-    }
-    let due_param = "$8";
-
-    values.push(user_id.into());
-    values.push(now.into());
-    values.push(now.into());
-    values.push(
-        req.sprint_id
-            .map_or_else(|| sea_orm::Value::from(None::<Uuid>), sea_orm::Value::from),
-    );
-
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            format!(
-                "INSERT INTO work_items (id, project_id, title, description, state, priority, assignee_id, due_at, created_by, created_at, updated_at, sprint_id) VALUES ($1, $2, $3, $4, $5, $6, {assignee_param}, {due_param}, $9, $10, $11, $12)",
-            ),
-            values,
-        ))
-        .await?;
+    insert_work_item(
+        &state.db,
+        &NewWorkItem {
+            id: issue_id,
+            project_id,
+            title: &req.title,
+            description: &description,
+            state: &issue_state,
+            priority: &issue_priority,
+            assignee_id: req.assignee_id,
+            due_at,
+            created_by: user_id,
+            sprint_id: req.sprint_id,
+            now,
+        },
+    )
+    .await?;
 
     // The assignment is queued as an AI task before any delivery is triggered, so every delivery
     // of this request knows that the bot already has its one task for it.

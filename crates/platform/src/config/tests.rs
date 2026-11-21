@@ -1484,3 +1484,62 @@ fn mcp_and_oauth_sections_must_agree_when_both_are_present() {
         "{reported:?}"
     );
 }
+
+// ---- [inbound] ----
+
+#[test]
+fn the_inbound_endpoint_is_off_by_default_with_the_documented_limits() {
+    let config = parse("").expect("an empty file validates");
+    assert_eq!(config.inbound, super::InboundConfig::default());
+    assert!(!config.inbound.enabled);
+    assert_eq!(config.inbound.max_body_bytes, 65_536);
+    assert_eq!(config.inbound.signature_tolerance_secs, 300);
+    assert_eq!(config.inbound.auth_failures_per_minute_per_ip, 30);
+    assert_eq!(config.inbound.max_active_alert_tasks_per_workspace, 5);
+    assert_eq!(config.inbound.max_alerts_per_rule_per_hour, 60);
+    assert_eq!(config.inbound.event_retention_days, 30);
+    assert_eq!(config.inbound.followup_interval_secs, 2);
+}
+
+#[test]
+fn the_inbound_section_reads_every_key() {
+    let config = parse(
+        "[inbound]\nenabled = true\nmax_body_bytes = 8192\nsignature_tolerance_secs = 60\n\
+         auth_failures_per_minute_per_ip = 5\nmax_active_alert_tasks_per_workspace = 3\n\
+         max_alerts_per_rule_per_hour = 10\nevent_retention_days = 7\nfollowup_interval_secs = 5\n",
+    )
+    .expect("valid");
+    assert!(config.inbound.enabled);
+    assert_eq!(config.inbound.max_body_bytes, 8_192);
+    assert_eq!(config.inbound.signature_tolerance_secs, 60);
+    assert_eq!(config.inbound.auth_failures_per_minute_per_ip, 5);
+    assert_eq!(config.inbound.max_active_alert_tasks_per_workspace, 3);
+    assert_eq!(config.inbound.max_alerts_per_rule_per_hour, 10);
+    assert_eq!(config.inbound.event_retention_days, 7);
+    assert_eq!(config.inbound.followup_interval_secs, 5);
+}
+
+#[test]
+fn every_inbound_limit_has_an_accepted_range() {
+    for (key, bad) in [
+        ("max_body_bytes", [4_095_u32, 262_145]),
+        ("signature_tolerance_secs", [29, 901]),
+        ("auth_failures_per_minute_per_ip", [0, 1_001]),
+        ("max_active_alert_tasks_per_workspace", [0, 101]),
+        ("max_alerts_per_rule_per_hour", [0, 10_001]),
+        ("event_retention_days", [0, 366]),
+        ("followup_interval_secs", [0, 61]),
+    ] {
+        for value in bad {
+            let reported = issues(&format!("[inbound]\n{key} = {value}\n"));
+            assert!(
+                reported.iter().any(|issue| issue.contains(&format!("inbound.{key}"))),
+                "{key} = {value} should have been refused, got {reported:?}"
+            );
+        }
+    }
+    assert!(
+        parse("[inbound]\nbogus = 1\n").is_err(),
+        "an unknown inbound key is refused"
+    );
+}

@@ -56,6 +56,8 @@ const env: Record<string, string> = {
 	OAUTH_E2E_OUT_DIR: outDir,
 	OAUTH_E2E_FLOWS_PER_MINUTE: '1000',
 	OAUTH_E2E_A20_OVERRIDE: resolve(import.meta.dirname, 'fake', 'a20-stub.sh'),
+	// The fake server has no alert chain.
+	OAUTH_E2E_SKIP_A21: '1',
 	OAUTH_E2E_BUILD_COMMIT: 'dry-run-fake'
 };
 const cfg = loadConfig(env, 'run');

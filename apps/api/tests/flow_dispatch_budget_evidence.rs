@@ -396,6 +396,7 @@ fn install_config(receiver_port: u16) -> Result<(), String> {
         mcp: McpConfig::default(),
         flow: FlowConfig::default(),
         oauth: None,
+        inbound: platform::config::InboundConfig::default(),
     })
 }
 

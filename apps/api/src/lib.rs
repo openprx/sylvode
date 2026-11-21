@@ -4,6 +4,7 @@ pub mod error;
 pub mod events;
 pub mod flow;
 pub mod forms;
+pub mod inbound;
 pub mod middleware;
 pub mod oauth;
 pub mod outbound;
