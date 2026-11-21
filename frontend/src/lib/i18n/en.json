@@ -2827,7 +2827,8 @@
 			"authorization_churn": "Permissions changed repeatedly. Retrying…",
 			"server_draining": {
 				"drain": "The service is undergoing maintenance and will reconnect automatically.",
-				"contention": "Retrying, please wait."
+				"contention": "Retrying, please wait.",
+				"apply_busy": "The server is too busy to save this change right now. It has been kept in the recovery draft. Try again in a moment."
 			},
 			"checksum_mismatch": "The package failed its integrity check. Obtain the package again and upload it.",
 			"unsupported_format": "This package format or engine version is not supported. Export it with a compatible version.",

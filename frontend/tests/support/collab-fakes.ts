@@ -19,7 +19,7 @@
  * operations; with the causal check it stays zero, and the suites assert that.
  */
 
-import { LoroDoc } from 'loro-crdt';
+import { LoroDoc, decodeImportBlobMeta } from 'loro-crdt';
 import {
 	DEFAULT_FLOW_LIMITS,
 	FLOW_LIMITS_FIELDS,
@@ -81,6 +81,28 @@ export interface UpdateSeen {
 	readonly baseFrontier: unknown;
 	readonly bytes: Uint8Array;
 	readonly connection: number;
+}
+
+/**
+ * The verdict for a load refusal, exactly as the server sends it
+ * (`FLOW-RETRYABLE-BUSY-DESIGN.md` 7.2): `rejected{code:"server_draining", recoverable:true,
+ * write_state:"not_applied", update_id, details:{reason:"apply_busy", retry_after_ms, retry_mode,
+ * cause}}`. `retry_mode` is `resend` or `rebase`; `cause` is diagnostic only.
+ */
+export function applyBusy(
+	mode: 'resend' | 'rebase',
+	retryAfterMs = mode === 'rebase' ? 0 : 250,
+	cause = mode === 'rebase' ? 'needs_sequential' : 'cpu_starved'
+): PolicyVerdict {
+	return {
+		kind: 'reject',
+		reject: {
+			code: 'server_draining',
+			recoverable: true,
+			writeState: 'not_applied',
+			details: { reason: 'apply_busy', retry_after_ms: retryAfterMs, retry_mode: mode, cause }
+		}
+	};
 }
 
 type Listener = (event: unknown) => void;
@@ -284,6 +306,22 @@ export class FakeCollabServer {
 
 	frontier(): string {
 		return `f${this.headSeq}`;
+	}
+
+	/**
+	 * Whether `bytes` builds directly on the document's current head: the update's start frontiers
+	 * equal the head frontiers, i.e. nothing was committed between the base the author had and now.
+	 * The server's incremental window accepts exactly these without the full computation.
+	 */
+	isSequential(bytes: Uint8Array): boolean {
+		const start = decodeImportBlobMeta(bytes, false).startFrontiers;
+		const head = this.doc.frontiers();
+		const key = (ids: Array<{ peer: string; counter: number }>) =>
+			ids
+				.map((id) => `${id.peer}:${id.counter}`)
+				.sort()
+				.join(',');
+		return key(start as never) === key(head as never);
 	}
 
 	/** A peer (not the client under test) commits `bytes` directly on the server. */

@@ -20,7 +20,7 @@
 
 import type { CollabTicket } from '#lib/api/flow.js';
 import { apiClient, type ApiResult } from '#lib/api/client.js';
-import { writable, type Readable } from 'svelte/store';
+import { get, writable, type Readable } from 'svelte/store';
 import type {
 	EngineUpdate,
 	FlowError,
@@ -40,7 +40,8 @@ import {
 	flowErrorFromCloseCode,
 	flowErrorFromEnvelope,
 	flowErrorFromRejectedFrame,
-	parseRetryAfterMs as retryAfterMs
+	parseRetryAfterMs as retryAfterMs,
+	applyBusyRetryMode
 } from './errors';
 import {
 	PRESENCE_MIN_INTERVAL_MS,
@@ -347,6 +348,12 @@ export class LoroObjectSession implements ObjectSessionContract {
 		this.permissionReadOnly = readOnly;
 		if (readOnly) this.setState('read_only');
 		else if (this.connected) this.setState('local');
+	}
+
+	/** The outbox gave a write up after its retry caps: the indicator leaves `saving` for the
+	 * local-unsaved state, like `contention` does. */
+	markUnsaved(): void {
+		if (get(this.stateStore) === 'saving') this.setState('local');
 	}
 
 	get isPermissionReadOnly(): boolean {
@@ -781,6 +788,13 @@ export class LoroObjectSession implements ObjectSessionContract {
 				if (error.code === 'limit_exceeded' && retryAfterMs(error.details) !== null) {
 					// A rate refusal: the outbox resends the same update after `retry_after_ms`.
 					// Not a sync error and not a banner.
+					break;
+				}
+				if (applyBusyRetryMode(error) !== null) {
+					// A load refusal (`apply_busy`): the outbox resends or rebases under its own
+					// caps. Nothing is shown while it retries; only the outbox's final failure
+					// reports. An `apply_busy` without a usable `retry_mode` is not handled here and
+					// falls through to the report below.
 					break;
 				}
 				this.applyFlowError(error);

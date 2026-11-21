@@ -59,6 +59,10 @@ export interface OutboxStore {
 	list(objectId: string): Promise<OutboxEntry[]>;
 	put(entry: OutboxEntry): Promise<void>;
 	delete(updateId: string): Promise<void>;
+	/** Swaps entries for one new entry in a single transaction: the old ids are deleted and
+	 * `entry` written together, so a crash leaves either the old entries or the new one, never
+	 * both and never neither (the rebase after an `apply_busy` refusal). */
+	replace(oldUpdateIds: readonly string[], entry: OutboxEntry): Promise<void>;
 	listDrafts(objectId: string): Promise<RecoveryDraftEntry[]>;
 	/** Moves an intent into the draft store: one transaction writes the draft and deletes the
 	 * outbox entry, so a crash between the two can neither lose it nor replay it. */
@@ -153,6 +157,23 @@ export class IndexedDbOutboxStore implements OutboxStore {
 		await transactionDone(tx);
 	}
 
+	async replace(oldUpdateIds: readonly string[], entry: OutboxEntry): Promise<void> {
+		const tx = this.db.transaction(OUTBOX_STORE, 'readwrite');
+		const done = transactionDone(tx);
+		try {
+			const store = tx.objectStore(OUTBOX_STORE);
+			for (const updateId of oldUpdateIds) store.delete(updateId);
+			store.put(entry);
+		} catch (error) {
+			// A request that throws does not abort the transaction by itself; without this the
+			// deletes already queued would commit without the new entry.
+			tx.abort();
+			await done.catch(() => undefined);
+			throw error;
+		}
+		await done;
+	}
+
 	async listDrafts(objectId: string): Promise<RecoveryDraftEntry[]> {
 		const tx = this.db.transaction(DRAFT_STORE, 'readonly');
 		const rows = await requestResult(
@@ -205,6 +226,11 @@ export class MemoryOutboxStore implements OutboxStore {
 
 	async delete(updateId: string): Promise<void> {
 		this.outbox.delete(updateId);
+	}
+
+	async replace(oldUpdateIds: readonly string[], entry: OutboxEntry): Promise<void> {
+		for (const updateId of oldUpdateIds) this.outbox.delete(updateId);
+		this.outbox.set(entry.updateId, entry);
 	}
 
 	async listDrafts(objectId: string): Promise<RecoveryDraftEntry[]> {

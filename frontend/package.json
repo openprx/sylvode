@@ -59,6 +59,7 @@
 		"test:flow-slash-bridge": "bun tests/flow-slash-bridge.test.ts",
 		"test:flow-presence": "bun tests/flow-presence.test.ts",
 		"test:flow-outbox": "bun tests/flow-outbox.test.ts",
+		"test:flow-apply-busy": "bun tests/flow-apply-busy.test.ts",
 		"test:flow-local-data-isolation": "bun tests/flow-local-data-isolation.test.ts",
 		"test:flow-server-rejected-streak": "bun tests/flow-server-rejected-streak.test.ts",
 		"test:flow-offline-recovery": "bun tests/flow-offline-recovery.test.ts",
