@@ -30,6 +30,8 @@ export interface Config {
 	allowNonLoopback: boolean;
 	oprBotToken: string | undefined;
 	a20Override: string | undefined;
+	/** Leaves A21 out, for the mocked dry run whose fake server has no alert chain. */
+	skipAlertChain: boolean;
 	repoRoot: string | undefined;
 	buildCommit: string | undefined;
 	limitMs: number;
@@ -169,6 +171,7 @@ export function loadConfig(env: Env, mode: Mode): Config {
 		allowNonLoopback,
 		oprBotToken: get('OAUTH_E2E_OPR_BOT_TOKEN'),
 		a20Override: get('OAUTH_E2E_A20_OVERRIDE'),
+		skipAlertChain: get('OAUTH_E2E_SKIP_A21') === '1',
 		repoRoot: get('OAUTH_E2E_REPO_ROOT'),
 		buildCommit: get('OAUTH_E2E_BUILD_COMMIT'),
 		limitMs: 5000,

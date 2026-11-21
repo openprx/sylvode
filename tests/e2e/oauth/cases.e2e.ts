@@ -1,10 +1,12 @@
-// The WP8 acceptance cases A01 to A20, acting as the client (Ramflux) against a live Sylvode.
+// The WP8 acceptance cases A01 to A20 and the alert chain case A21, acting as the client (Ramflux)
+// against a live Sylvode.
 //
 // Each case is independent: it connects its own grant where the contract says "reconnect", or
 // takes the shared one (reference scopes, projects {P1}) which is replaced whenever it is dead.
 // Assertions throw messages built from redacted data only. See README.md.
 
 import { test as base } from '@playwright/test';
+import { createHmac } from 'node:crypto';
 import { CALLBACK_PATH, parseCallback } from './lib/callback.ts';
 import { bodyErrorCode, challengeOf, challengeParam, expectBearerFailure } from './lib/bearer.ts';
 import { runCase } from './lib/case.ts';
@@ -929,5 +931,212 @@ test('A20 existing regression scripts', async ({ browser, world }) => {
 		);
 		check(missing.length === 0, `regression script missing: ${missing.join('; ')}`);
 		check(failed.length === 0, failed.join('; '));
+	});
+});
+
+// ---- A21: the alert chain ---------------------------------------------------------------------
+
+/** The signature headers of an inbound event: HMAC-SHA256 over "<timestamp>.<body>". */
+function inboundHeaders(secret: string, body: string): Record<string, string> {
+	const timestamp = String(Math.floor(Date.now() / 1000));
+	const mac = createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
+	return { 'x-sylvode-timestamp': timestamp, 'x-sylvode-signature': `v1=${mac}` };
+}
+
+test('A21 alert chain', async ({ browser, world }) => {
+	// The task is run by the receiver of the loop harness for bot A, which can take minutes.
+	test.setTimeout(420_000);
+	test.skip(world.cfg.skipAlertChain, 'OAUTH_E2E_SKIP_A21 is set');
+	await runCase(world, browser, 'A21', async (c) => {
+		const conn = await world.sharedConnection(c);
+		const stream = await c.openStreamOrFail(conn, 'event stream');
+		const suffix = randomHex(3);
+		const sourceName = `qa-p4-a21-${suffix}`;
+
+		// The administrator registers a source and a rule for P1 (the endpoint is closed to
+		// connected applications, so this is the first-party session).
+		const registered = asRecord(
+			await world.admin.data(
+				c.rec,
+				'the administrator registers an inbound source',
+				'POST',
+				`/api/v1/projects/${world.ids.p1Id}/inbound-sources`,
+				{ name: sourceName }
+			)
+		);
+		const token = str(registered?.token);
+		const signingSecret = str(registered?.signing_secret);
+		const sourceId = str(asRecord(registered?.source)?.id);
+		check(
+			token !== undefined && signingSecret !== undefined && sourceId !== undefined,
+			'creating a source returned no token, signing secret or id'
+		);
+		redactor.register(token, 'inbound-token');
+		redactor.register(signingSecret, 'inbound-signing-secret');
+		c.onCleanup('delete the source', async () => {
+			await world.admin.request(
+				new Recorder(),
+				'delete the source',
+				'DELETE',
+				`/api/v1/inbound-sources/${sourceId}`
+			);
+		});
+		const rule = asRecord(
+			await world.admin.data(
+				c.rec,
+				'the administrator creates an alert rule',
+				'POST',
+				`/api/v1/projects/${world.ids.p1Id}/alert-rules`,
+				{
+					name: `qa-p4-a21-rule-${suffix}`,
+					source_id: sourceId,
+					kind_patterns: ['waf.*'],
+					min_severity: 'high',
+					action: 'work_item_and_task',
+					bot_user_id: world.ids.botId,
+					instructions: 'Acceptance run: look at {alert_identifier} and comment briefly.',
+					notify_user_ids: [world.ids.userAId],
+					rearm_after_secs: 0
+				}
+			)
+		);
+		check(str(asRecord(rule?.rule)?.id) !== undefined, 'creating the rule returned no id');
+
+		const dedupKey = `waf.attack_detected:a21-${suffix}.example.com`;
+		const event = {
+			spec: 'sylvode.inbound_event.v1',
+			event_id: `qa-p4-a21-${suffix}`,
+			occurred_at: new Date().toISOString(),
+			kind: 'waf.attack_detected',
+			severity: 'high',
+			dedup_key: dedupKey,
+			title: 'Acceptance run: SQL injection burst',
+			summary: 'Sent by the acceptance suite',
+			subject: { host: `a21-${suffix}.example.com` },
+			payload: { requests: 1240 }
+		};
+		const url = `${world.cfg.apiOrigin}/api/v1/inbound/events`;
+		const post = async (label: string, body: unknown, secret: string) =>
+			call({
+				rec: c.rec,
+				label,
+				method: 'POST',
+				url,
+				bearer: token,
+				json: body,
+				headers: inboundHeaders(secret, JSON.stringify(body))
+			});
+
+		const sent = await post('the product posts a signed high event', event, signingSecret);
+		checkEqual(sent.status, 202, 'status of the signed event');
+		const t0 = sent.doneAt;
+
+		// 1. notification.created (alert_opened), naming the source in its content.
+		const opened = await stream.waitForEvent(
+			(e) =>
+				e.type === 'notification.created' &&
+				str(e.subject.notification_type) === 'alert_opened' &&
+				(str(e.subject.content) ?? '').includes(sourceName),
+			world.cfg.limitMs + 5000
+		);
+		check(opened !== null, 'no alert_opened notification within the limit');
+		const openedEvent = asEvent(opened);
+		const itemId = openedEvent === null ? undefined : relatedIssue(openedEvent);
+		check(itemId !== undefined, 'the alert_opened notification names no work item');
+		c.timing('alert_opened_ms', Math.max(0, opened.t - t0));
+		check(
+			opened.t - t0 <= world.cfg.limitMs,
+			`the alert_opened notification took ${Math.round(opened.t - t0)} ms, over the limit`
+		);
+
+		// 2. task.created for the alert's work item.
+		const seen: { taskId?: string } = {};
+		const created = await stream.waitForEvent((e) => {
+			if (e.type !== 'task.created') return false;
+			const reference = asRecord(e.subject.reference);
+			if (str(reference?.id) !== itemId) return false;
+			seen.taskId = str(e.subject.task_id);
+			return true;
+		}, world.cfg.limitMs + 5000);
+		check(
+			created !== null && seen.taskId !== undefined,
+			'no task.created for the alert within the limit'
+		);
+		c.timing('task_created_ms', Math.max(0, created.t - t0));
+		check(
+			created.t - t0 <= world.cfg.limitMs,
+			`task.created took ${Math.round(created.t - t0)} ms, over the limit`
+		);
+		const id = seen.taskId;
+		c.onCleanup('end the task', async () => {
+			// Stops the worker's retry cycle when the case ended before the task did.
+			await world.admin.request(
+				new Recorder(),
+				'end the task',
+				'POST',
+				`/api/v1/ai/callbacks/task/${id}/fail`,
+				{ error_message: 'qa-p4 cleanup', retry: false }
+			);
+		});
+
+		// 3. task.status_changed to processing, then to completed (the receiver runs the CLI).
+		const processing = await stream.waitForEvent(
+			(e) =>
+				e.type === 'task.status_changed' &&
+				str(e.subject.task_id) === id &&
+				str(e.subject.status) === 'processing',
+			20_000
+		);
+		check(
+			processing !== null,
+			'no task.status_changed to processing within 20 s (is the worker running?)'
+		);
+		const completed = await stream.waitForEvent(
+			(e) =>
+				e.type === 'task.status_changed' &&
+				str(e.subject.task_id) === id &&
+				['completed', 'failed'].includes(str(e.subject.status) ?? ''),
+			360_000
+		);
+		check(
+			completed !== null,
+			'the task did not end within 360 s (is the runner of bot A running?)'
+		);
+		const completedEvent = asEvent(completed);
+		checkEqual(str(completedEvent?.subject.status), 'completed', 'final status of the alert task');
+
+		// 4. notification.created (alert_task_completed) shortly after.
+		const finished = await stream.waitForEvent(
+			(e) =>
+				e.type === 'notification.created' &&
+				str(e.subject.notification_type) === 'alert_task_completed' &&
+				relatedIssue(e) === itemId,
+			world.cfg.limitMs + 5000
+		);
+		check(finished !== null, 'no alert_task_completed notification within the limit');
+		c.timing('task_completed_notification_ms', Math.max(0, finished.t - completed.t));
+		check(
+			finished.t - completed.t <= world.cfg.limitMs,
+			`the completion notification took ${Math.round(finished.t - completed.t)} ms, over the limit`
+		);
+
+		const order = [opened, created, processing, completed, finished].map((timed) =>
+			stream.items.indexOf(timed)
+		);
+		check(
+			order.every((index, position) => index >= 0 && (position === 0 || index > (order[position - 1] ?? -1))),
+			'the five events did not arrive in the documented order'
+		);
+
+		// A repeat of the same body is a duplicate and a different signature is refused.
+		const again = await post('the same body again', event, signingSecret);
+		checkEqual(again.status, 200, 'status of the repeated event');
+		checkEqual(str(dig(again.json, 'data', 'status')), 'duplicate', 'answer to the repeated event');
+		const forged = await post(
+			'a new event with a wrong signing secret',
+			{ ...event, event_id: `${event.event_id}-forged` },
+			'svs_' + 'f'.repeat(64)
+		);
+		checkEqual(forged.status, 401, 'status of an event signed with another secret');
 	});
 });

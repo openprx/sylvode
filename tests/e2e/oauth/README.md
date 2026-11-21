@@ -1,7 +1,7 @@
 # OAuth authorization server: end-to-end acceptance (WP8)
 
 A test client that acts as Ramflux, the one registered client of Sylvode's authorization server,
-and runs the twenty cases A01 to A20 of the P4 contract against a live Sylvode. It needs a running
+and runs the twenty cases A01 to A20 of the P4 contract and the alert chain case A21 against a live Sylvode. It needs a running
 environment (see `DEPLOY-NOTES.md`), so it is **not** part of `.github/workflows/ci.yml` and nothing
 registers it there.
 
