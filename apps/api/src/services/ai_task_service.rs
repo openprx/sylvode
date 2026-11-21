@@ -45,6 +45,321 @@ pub struct AiTaskRow {
     pub updated_at: Timestamp,
 }
 
+/// The protocol columns of a task (`0110`), kept apart from [`AiTaskRow`] so that row and the many
+/// explicit column lists that build it stay as they are.
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct AiTaskProtocolRow {
+    pub id: Uuid,
+    pub acknowledged_at: Option<Timestamp>,
+    pub plan: Option<String>,
+    pub last_progress_at: Option<Timestamp>,
+    pub lease_expires_at: Option<Timestamp>,
+    pub runner_phase: Option<String>,
+}
+
+/// A task together with its protocol columns.
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct AiTaskWithProtocol {
+    #[sea_orm(nested)]
+    pub task: AiTaskRow,
+    #[sea_orm(nested)]
+    pub protocol: AiTaskProtocolRow,
+}
+
+const TASK_WITH_PROTOCOL_COLUMNS: &str = "id, project_id, ai_participant_id, task_type, reference_type, \
+    reference_id, status, priority, payload, result, error_message, idempotency_key, attempts, max_attempts, \
+    next_retry_at, started_at, completed_at, created_at, updated_at, \
+    acknowledged_at, plan, last_progress_at, lease_expires_at, runner_phase";
+
+/// Loads one task with its protocol columns, or answers 404.
+pub async fn load_task_with_protocol<C: ConnectionTrait>(
+    db: &C,
+    task_id: Uuid,
+) -> Result<AiTaskWithProtocol, ApiError> {
+    AiTaskWithProtocol::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!("SELECT {TASK_WITH_PROTOCOL_COLUMNS} FROM ai_tasks WHERE id = $1"),
+        vec![task_id.into()],
+    ))
+    .one(db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("ai task not found".to_string()))
+}
+
+/// The active tasks of `bot_id`, oldest `started_at` first, at most `limit`.
+pub async fn list_active_tasks_of_bot<C: ConnectionTrait>(
+    db: &C,
+    bot_id: Uuid,
+    limit: i64,
+) -> Result<Vec<AiTaskWithProtocol>, ApiError> {
+    Ok(AiTaskWithProtocol::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!(
+            "SELECT {TASK_WITH_PROTOCOL_COLUMNS} FROM ai_tasks \
+             WHERE ai_participant_id = $1 AND status IN {ACTIVE_TASK_STATUSES_SQL} \
+             ORDER BY started_at ASC NULLS LAST, id LIMIT $2"
+        ),
+        vec![bot_id.into(), limit.into()],
+    ))
+    .all(db)
+    .await?)
+}
+
+/// What an agent is told it may do with a task, derived from the task type.
+pub fn trigger_kind_for_task(task_type: &str) -> &'static str {
+    match task_type {
+        "issue_assigned" => "assigned",
+        "vote_requested" => "proposal_vote",
+        "review_requested" | "comment_requested" => "mention",
+        _ => "manual",
+    }
+}
+
+fn not_active_for_attempt(attempt: i32, current: i32) -> ApiError {
+    ApiError::BadRequest(format!(
+        "task is not active for attempt {attempt} (current attempt {current})"
+    ))
+}
+
+/// Progress events of one kind closer together than this are folded into one.
+const PROGRESS_COALESCE_SECS: i64 = 30;
+
+/// What a progress report is, and so what it does to the `runner_phase`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressKind {
+    /// The agent reports on its own work; the phase is left as it is.
+    Agent,
+    RunnerQueued,
+    RunnerPushed,
+    RunnerAlive,
+    RunnerReminded,
+    RunnerBlocked,
+}
+
+impl ProgressKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "agent" => Some(Self::Agent),
+            "runner.queued" => Some(Self::RunnerQueued),
+            "runner.pushed" => Some(Self::RunnerPushed),
+            "runner.alive" => Some(Self::RunnerAlive),
+            "runner.reminded" => Some(Self::RunnerReminded),
+            "runner.blocked" => Some(Self::RunnerBlocked),
+            _ => None,
+        }
+    }
+
+    /// The `ai_task_events.event_type` of a report of this kind.
+    pub const fn event_type(self) -> &'static str {
+        match self {
+            Self::Agent => "progress",
+            Self::RunnerQueued => "runner.queued",
+            Self::RunnerPushed => "runner.pushed",
+            Self::RunnerAlive => "runner.alive",
+            Self::RunnerReminded => "runner.reminded",
+            Self::RunnerBlocked => "runner.blocked",
+        }
+    }
+
+    /// The phase this kind sets; `alive`, `reminded` and the agent's own reports set none.
+    pub const fn runner_phase(self) -> Option<&'static str> {
+        match self {
+            Self::RunnerQueued => Some("queued"),
+            Self::RunnerPushed => Some("pushed"),
+            Self::RunnerBlocked => Some("blocked"),
+            Self::Agent | Self::RunnerAlive | Self::RunnerReminded => None,
+        }
+    }
+}
+
+/// How far a lease may move: `now + extension_secs`, never past `started_at + max_secs`.
+#[derive(Debug, Clone, Copy)]
+pub struct LeaseLimits {
+    pub extension_secs: i64,
+    pub max_secs: i64,
+}
+
+impl LeaseLimits {
+    pub fn from_config(config: &platform::config::AiTasksConfig) -> Self {
+        Self {
+            extension_secs: i64::try_from(config.lease_extension_secs).unwrap_or(i64::MAX),
+            max_secs: i64::try_from(config.max_processing_secs).unwrap_or(i64::MAX),
+        }
+    }
+}
+
+#[derive(FromQueryResult)]
+struct LeaseRow {
+    lease_expires_at: Timestamp,
+}
+
+/// The outcome of [`report_progress`].
+#[derive(Debug, Clone, Copy)]
+pub struct ProgressOutcome {
+    pub lease_expires_at: Timestamp,
+    /// The lease was extended but no event was written: the same kind was reported within the
+    /// last [`PROGRESS_COALESCE_SECS`] seconds.
+    pub coalesced: bool,
+}
+
+/// Extends the lease of attempt `attempt` of an active task and records the report as an event.
+///
+/// The update is a compare-and-set on the active statuses and the attempt, and it never writes
+/// `status`, so a heartbeat produces no outbox row. Reports of one kind less than 30 seconds
+/// apart extend the lease but write a single event.
+pub async fn report_progress(
+    db: &sea_orm::DatabaseConnection,
+    task_id: Uuid,
+    attempt: i32,
+    kind: ProgressKind,
+    event_payload: Value,
+    limits: LeaseLimits,
+) -> Result<ProgressOutcome, ApiError> {
+    use sea_orm::TransactionTrait;
+    let txn = db.begin().await?;
+    let sql = format!(
+        r"
+            UPDATE ai_tasks
+            SET lease_expires_at = LEAST(
+                    now() + make_interval(secs => $3::bigint),
+                    started_at + make_interval(secs => $4::bigint)
+                ),
+                last_progress_at = now(),
+                runner_phase = COALESCE($5, runner_phase),
+                updated_at = now()
+            WHERE id = $1 AND status IN {ACTIVE_TASK_STATUSES_SQL} AND attempts = $2
+            RETURNING lease_expires_at
+        "
+    );
+    let lease = LeaseRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        &sql,
+        vec![
+            task_id.into(),
+            attempt.into(),
+            limits.extension_secs.into(),
+            limits.max_secs.into(),
+            kind.runner_phase().map(str::to_string).into(),
+        ],
+    ))
+    .one(&txn)
+    .await?;
+    let Some(LeaseRow { lease_expires_at }) = lease else {
+        let task = load_task_with_protocol(&txn, task_id).await?.task;
+        return Err(not_active_for_attempt(attempt, task.attempts));
+    };
+
+    let recent = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT 1 FROM ai_task_events WHERE task_id = $1 AND event_type = $2 AND created_at > $3 LIMIT 1",
+            vec![
+                task_id.into(),
+                kind.event_type().to_string().into(),
+                (Timestamp::now() + Duration::seconds(-PROGRESS_COALESCE_SECS)).into(),
+            ],
+        ))
+        .await?
+        .is_some();
+    if !recent {
+        insert_ai_task_event(&txn, task_id, kind.event_type(), event_payload).await?;
+    }
+    txn.commit().await?;
+    Ok(ProgressOutcome {
+        lease_expires_at,
+        coalesced: recent,
+    })
+}
+
+/// The outcome of [`acknowledge_task`].
+#[derive(Debug)]
+pub enum AckOutcome {
+    /// `processing` became `acknowledged` just now.
+    Acknowledged,
+    /// The attempt was already acknowledged; nothing was written and the stored plan stands.
+    AlreadyAcknowledged,
+}
+
+/// `processing` to `acknowledged` for attempt `attempt`, storing the plan and extending the lease.
+///
+/// Repeating the call for an acknowledged attempt changes nothing. Any other state or attempt is a
+/// 400 naming both attempt numbers. The status change is the one that reaches the outbox.
+pub async fn acknowledge_task(
+    db: &sea_orm::DatabaseConnection,
+    task_id: Uuid,
+    attempt: i32,
+    plan: &str,
+    actor_id: Uuid,
+    limits: LeaseLimits,
+) -> Result<AckOutcome, ApiError> {
+    use sea_orm::TransactionTrait;
+    let txn = db.begin().await?;
+    let current = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!("SELECT {TASK_WITH_PROTOCOL_COLUMNS} FROM ai_tasks WHERE id = $1 FOR UPDATE"),
+        vec![task_id.into()],
+    ))
+    .one(&txn)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("ai task not found".to_string()))?;
+    if current.attempts != attempt {
+        return Err(not_active_for_attempt(attempt, current.attempts));
+    }
+    match current.status.as_str() {
+        "acknowledged" => return Ok(AckOutcome::AlreadyAcknowledged),
+        "processing" => {}
+        _ => return Err(not_active_for_attempt(attempt, current.attempts)),
+    }
+
+    // `$6` is the status the compare-and-set expects; `status` is written only here and by the
+    // endings, so no heartbeat ever produces an outbox row.
+    let acknowledged = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!(
+            r"
+                UPDATE ai_tasks
+                SET status = 'acknowledged',
+                    acknowledged_at = now(),
+                    plan = $3,
+                    last_progress_at = now(),
+                    lease_expires_at = LEAST(
+                        now() + make_interval(secs => $4::bigint),
+                        started_at + make_interval(secs => $5::bigint)
+                    ),
+                    updated_at = now()
+                WHERE id = $1 AND attempts = $2 AND status = $6
+                RETURNING {TASK_WITH_PROTOCOL_COLUMNS}
+            "
+        ),
+        vec![
+            task_id.into(),
+            attempt.into(),
+            plan.to_string().into(),
+            limits.extension_secs.into(),
+            limits.max_secs.into(),
+            "processing".into(),
+        ],
+    ))
+    .one(&txn)
+    .await?
+    .ok_or_else(|| not_active_for_attempt(attempt, current.attempts))?;
+
+    let payload = json!({ "plan": plan, "attempt": attempt });
+    insert_ai_task_event(&txn, task_id, "acknowledged", payload.clone()).await?;
+    insert_ai_task_business_event(
+        &txn,
+        &acknowledged,
+        "ai_task.acknowledged",
+        Some(actor_id),
+        json!({ "type": "ai_task_protocol", "actor_id": actor_id }),
+        payload,
+        Some("processing"),
+    )
+    .await?;
+    txn.commit().await?;
+    Ok(AckOutcome::Acknowledged)
+}
+
 /// Who a new AI task is created for. Every caller of [`create_ai_task`] states it, so a caller
 /// added later cannot forget the question "may a connected application cause this?".
 ///

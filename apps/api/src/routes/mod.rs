@@ -2,6 +2,7 @@ pub mod activity;
 pub mod admin;
 pub mod ai_agent;
 pub mod ai_callback;
+pub mod ai_task_protocol;
 pub mod appeal;
 pub mod auth;
 pub mod board;

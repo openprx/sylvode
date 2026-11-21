@@ -1118,6 +1118,43 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                 )),
         )
         .route(
+            "/api/v1/ai/protocol",
+            get(routes::ai_task_protocol::get_protocol).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/active",
+            get(routes::ai_task_protocol::list_active_tasks).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}",
+            get(routes::ai_task_protocol::get_task).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/ack",
+            post(routes::ai_task_protocol::ack_task).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/progress",
+            post(routes::ai_task_protocol::report_task_progress).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
+        .route(
             "/api/v1/ai/callbacks/task/{task_id}/complete",
             post(routes::ai_callback::complete_task).route_layer(
                 axum_middleware::from_fn_with_state(

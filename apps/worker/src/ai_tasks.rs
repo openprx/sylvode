@@ -23,6 +23,7 @@
 use api::outbound::validate_outbound_url;
 use api::services::ai_task_service::{
     AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts, notify_ai_task_failed,
+    trigger_kind_for_task,
 };
 use api::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_USER_AGENT, sign_payload};
 use platform::{app::AppState, timestamp::Timestamp};
@@ -511,15 +512,6 @@ async fn insert_picked_up_business_event(
     .await?;
 
     Ok(())
-}
-
-fn trigger_kind_for_task(task_type: &str) -> &'static str {
-    match task_type {
-        "issue_assigned" => "assigned",
-        "vote_requested" => "proposal_vote",
-        "review_requested" | "comment_requested" => "mention",
-        _ => "manual",
-    }
 }
 
 async fn insert_task_event(
