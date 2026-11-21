@@ -39,3 +39,14 @@ export function loginUrlForRequest(requestId: string): string | null {
 	const target = consentReturnTarget(requestId);
 	return target === null ? null : `/auth/login?return_to=${encodeURIComponent(target)}`;
 }
+
+/**
+ * Where a forced sign-in sends the person: the login page, carrying the consent route as its
+ * `return_to` when the page being left is a stored consent request (`pathname` and `search` as
+ * the browser reports them). Any other page, and any address the validator refuses, gets the bare
+ * login page, so the parameter can never carry anything but the one allowed target.
+ */
+export function loginUrlForLocation(pathname: string, search: string): string {
+	const target = safeReturnTo(`${pathname}${search}`);
+	return target === null ? '/auth/login' : `/auth/login?return_to=${encodeURIComponent(target)}`;
+}

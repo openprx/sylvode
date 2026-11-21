@@ -8,9 +8,11 @@ import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/h
 import {
 	consentReturnTarget,
 	isRequestId,
+	loginUrlForLocation,
 	loginUrlForRequest,
 	safeReturnTo
 } from '../src/lib/oauth/return-to';
+import { apiClient } from '../src/lib/api/client';
 import { MAX_QUERY_LENGTH, parseAuthorizeQuery } from '../src/lib/oauth/consent-request';
 
 const suite = new Suite('oauth-return-to');
@@ -94,6 +96,66 @@ suite.check('a built login URL round-trips through the validator after one decod
 	const url = new URL(loginUrlForRequest(ID) ?? '', 'http://x.test');
 	assertEqual(safeReturnTo(url.searchParams.get('return_to')), GOOD, 'round trip');
 });
+
+suite.check('a forced sign-in from the stored consent request comes back to it', () => {
+	assertEqual(
+		loginUrlForLocation('/oauth/authorize', `?request=${ID}`),
+		`/auth/login?return_to=${encodeURIComponent(GOOD)}`,
+		'consent request'
+	);
+	const hostile: Array<[string, string, string]> = [
+		['another page', '/workspace', ''],
+		['the raw request query', '/oauth/authorize', '?client_id=c&state=s&scope=x'],
+		['an extra parameter', '/oauth/authorize', `?request=${ID}&next=//evil.test`],
+		['a protocol-relative path', '//evil.test/oauth/authorize', `?request=${ID}`],
+		['a backslash', '/oauth/authorize', `?request=${ID}\\evil`],
+		['no query', '/oauth/authorize', '']
+	];
+	for (const [label, pathname, search] of hostile)
+		assertEqual(loginUrlForLocation(pathname, search), '/auth/login', label);
+});
+
+await suite.checkAsync(
+	'an expired session on the consent page signs in again to the same request',
+	async () => {
+		const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+		const fetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
+		const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+		const location = { href: '', pathname: '/oauth/authorize', search: `?request=${ID}` };
+		Object.defineProperty(globalThis, 'window', {
+			value: Object.assign(new EventTarget(), { location }),
+			configurable: true
+		});
+		Object.defineProperty(globalThis, 'localStorage', {
+			value: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+			configurable: true
+		});
+		Object.defineProperty(globalThis, 'fetch', {
+			value: async () =>
+				new Response(JSON.stringify({ code: 401, message: 'expired', data: null }), {
+					status: 401
+				}),
+			configurable: true
+		});
+		try {
+			apiClient.clearAuth();
+			await apiClient.request('POST', '/api/v1/oauth/authorization-requests', {}, false);
+			assertEqual(location.href, `/auth/login?return_to=${encodeURIComponent(GOOD)}`, 'consent');
+			location.href = '';
+			location.pathname = '/workspace';
+			location.search = '';
+			await apiClient.request('GET', '/api/v1/auth/me', undefined, false);
+			assertEqual(location.href, '/auth/login', 'any other page');
+		} finally {
+			if (windowDescriptor) Object.defineProperty(globalThis, 'window', windowDescriptor);
+			else Reflect.deleteProperty(globalThis, 'window');
+			if (fetchDescriptor) Object.defineProperty(globalThis, 'fetch', fetchDescriptor);
+			else Reflect.deleteProperty(globalThis, 'fetch');
+			if (storageDescriptor) Object.defineProperty(globalThis, 'localStorage', storageDescriptor);
+			else Reflect.deleteProperty(globalThis, 'localStorage');
+		}
+	}
+);
 
 // --- address bar parsing ------------------------------------------------------------------------
 
