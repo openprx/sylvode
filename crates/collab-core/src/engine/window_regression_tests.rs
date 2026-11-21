@@ -84,7 +84,7 @@ impl std::fmt::Debug for Judged {
 
 fn full_decision(base: &[u8], update: &[u8]) -> Result<(), String> {
     let mut engine = LoroCollabEngine::load(base).unwrap();
-    engine.import_client_update(update).map_err(|e| e.to_string())?;
+    engine.next_import_client_update(update).map_err(|e| e.to_string())?;
     let semantic = engine.semantic_snapshot().map_err(|e| e.to_string())?;
     check_snapshot(&semantic, &DocumentLimits::default())
         .map_err(|e| crate::error::CollabError::from(e).to_string())?;
@@ -440,37 +440,61 @@ fn list_len(base: &[u8]) -> usize {
     children(&raw).len()
 }
 
-/// The window may take an update to the root list incrementally only while the list stays within
-/// 15,000 elements, whatever the elements are: above that it is the full computation's, which on
-/// the runner runs out of its CPU budget at about 16,000 and so stops a page growing.
+/// The items of a page (`crate::work`) and the budget of its live totals, read from a fresh load.
+fn items_and_budget(base: &[u8]) -> (u64, u64) {
+    let engine = LoroCollabEngine::load(base).unwrap();
+    let items = engine.projection_items(u64::MAX).unwrap().unwrap();
+    let semantic = engine.semantic_snapshot().unwrap();
+    let live = || semantic.nodes.values().filter(|node| !node.deleted);
+    let count = |kind: NodeKind| live().filter(|node| node.kind == kind).count() as u64;
+    let chars: usize = live().map(|node| node.text.chars().count()).sum();
+    (
+        items,
+        crate::work::item_budget(count(NodeKind::Block), count(NodeKind::NavigatorNode), chars as u64),
+    )
+}
+
+/// Block maps no reader supports count toward no limit, so they cannot be allowed to grow a page
+/// through the incremental window: every incremental accept leaves the page within the work budget
+/// (`crate::work`), and once the update could step over it the full computation decides, which is
+/// what stops such a page on `next`.
 #[test]
 fn unsupported_block_maps_cannot_grow_a_page_through_the_incremental_window() {
-    const LIMIT: usize = 15_000;
     let mut base = flat_page(10, 10);
     let mut peer = 20_000;
     let mut incremental_accepts = 0;
-    let mut went_over = false;
-    for _ in 0..8 {
+    let mut first_fallback = None;
+    for step in 0..8 {
         peer += 1;
-        let update = unsupported_maps(&base, peer, 2_500);
+        let update = unsupported_maps(&base, peer, 1_000);
         assert!(update.len() <= 65_536, "update {} bytes", update.len());
         let judged = judge(&base, &update);
         judged.assert_agrees("growing the root list");
         base = accepted(&base, &update).as_ref().clone();
-        let len = list_len(&base);
+        let (items, budget) = items_and_budget(&base);
         if judged.incremental() {
             incremental_accepts += 1;
-            assert!(len <= LIMIT, "the incremental window accepted a list of {len} elements");
-        } else if len > LIMIT {
-            went_over = true;
+            assert!(
+                items <= budget,
+                "the incremental window accepted a page of {items} items over its budget {budget}"
+            );
+        } else if first_fallback.is_none() {
+            first_fallback = Some((step, judged.fallback.clone(), list_len(&base), items, budget));
         }
     }
+    println!("unsupported maps: {incremental_accepts} incremental accepts, first fallback {first_fallback:?}");
     assert!(
-        incremental_accepts >= 4,
+        incremental_accepts >= 3,
         "the early writes are incremental: {incremental_accepts}"
     );
-    assert!(went_over, "the list grew past the limit through the full computation");
-    // A keystroke on the grown page is not decided from facts either.
+    let (_, reason, _, items, budget) = first_fallback.expect("the incremental path stops");
+    assert_eq!(reason.as_deref(), Some("WorkBudget"));
+    assert!(items > budget - 5_000, "it stops near the budget: {items} of {budget}");
+    assert!(
+        BaseFacts::compute(&LoroCollabEngine::load(&base).unwrap()).is_none(),
+        "the grown page has no facts: every window is the full computation"
+    );
+    // A keystroke on the grown page is the full computation's too.
     let key = raw_edit(&base, 99, |raw| {
         let Some(loro::ValueOrContainer::Container(loro::Container::Map(map))) = children(raw).get(0) else {
             panic!("no first block")
@@ -488,37 +512,32 @@ fn unsupported_block_maps_cannot_grow_a_page_through_the_incremental_window() {
     assert!(!judged.incremental(), "{judged:?}");
 }
 
-/// An update that steps over the length is not decided from facts even though the base is below it.
+/// An update that steps over the budget is not decided from facts even though the base is below it.
 #[test]
-fn an_update_that_makes_the_root_list_too_long_takes_the_full_computation() {
-    let base0 = flat_page(10, 10);
-    let base = accepted(&base0, &unsupported_maps(&base0, 20_001, 2_500))
-        .as_ref()
-        .clone();
-    let base = accepted(&base, &unsupported_maps(&base, 20_002, 2_500))
-        .as_ref()
-        .clone();
-    let base = accepted(&base, &unsupported_maps(&base, 20_003, 2_500))
-        .as_ref()
-        .clone();
-    let base = accepted(&base, &unsupported_maps(&base, 20_004, 2_500))
-        .as_ref()
-        .clone();
-    let base = accepted(&base, &unsupported_maps(&base, 20_005, 2_500))
-        .as_ref()
-        .clone();
-    let below = list_len(&base);
-    assert_eq!(below, 12_510);
-    let base = accepted(&base, &unsupported_maps(&base, 20_006, 2_480))
-        .as_ref()
-        .clone();
-    assert_eq!(list_len(&base), 14_990);
-    let stays = judge(&base, &unsupported_maps(&base, 20_007, 10));
-    stays.assert_agrees("up to the limit");
-    assert!(stays.incremental(), "{stays:?}");
-    let steps_over = judge(&base, &unsupported_maps(&base, 20_008, 11));
-    steps_over.assert_agrees("one element over");
-    assert_eq!(steps_over.fallback.as_deref(), Some("OversizedList"), "{steps_over:?}");
+fn an_update_that_steps_over_the_work_budget_takes_the_full_computation() {
+    let mut base = flat_page(10, 10);
+    let mut peer = 20_100;
+    // Grow in steps the incremental window still decides, until the base is within one step of the
+    // budget.
+    loop {
+        let (items, budget) = items_and_budget(&base);
+        if budget.saturating_sub(items) < 3_000 {
+            break;
+        }
+        peer += 1;
+        let update = unsupported_maps(&base, peer, 200);
+        base = accepted(&base, &update).as_ref().clone();
+    }
+    let (items, budget) = items_and_budget(&base);
+    assert!(items <= budget, "the base is within the budget: {items} of {budget}");
+    assert!(BaseFacts::compute(&LoroCollabEngine::load(&base).unwrap()).is_some());
+    let small = judge(&base, &unsupported_maps(&base, 20_900, 1));
+    small.assert_agrees("one element");
+    let big = judge(&base, &unsupported_maps(&base, 20_901, 1_500));
+    big.assert_agrees("1,500 elements");
+    assert!(!big.incremental(), "{big:?}");
+    assert_eq!(big.fallback.as_deref(), Some("WorkBudget"), "{big:?}");
+    let _ = small;
 }
 
 // ---------------------------------------------------------------------------------------------

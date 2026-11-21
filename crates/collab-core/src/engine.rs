@@ -132,6 +132,10 @@ pub struct LoroCollabEngine {
     /// Two live tree nodes have claimed one `logical_id`. Whichever the cache keeps, the full
     /// projection keeps one node under that id; the incremental check does not model that.
     duplicate_logical_ids: bool,
+    /// The last import rebuilt the id caches from its own ops (`rebuild_id_cache_for`) instead of
+    /// in full. Only a strictly sequential import does; [`Self::complete_id_cache`] makes the
+    /// caches exactly the full rebuild's before the full computation reads them.
+    id_cache_incremental: bool,
     /// Memoized [`LoroCollabEngine::minimum_editor_model`] result for the current document state.
     ///
     /// Every method that can change the document takes `&mut self` and clears this cell first
@@ -338,11 +342,31 @@ impl LoroCollabEngine {
         Ok(())
     }
 
-    /// [`Self::rebuild_id_cache`] for an import whose ops are known: `created` holds every tree
-    /// node that the imported ops created, and no other node can be new. The result equals the
-    /// full rebuild's: the nodes the full rebuild would visit are the uncached ones, which a
-    /// previous rebuild left without a `logical_id` and an import can still give one, and the new
-    /// ones. Cost: O(created + uncached) instead of O(tree).
+    /// Makes the id caches what the full rebuild gives, if the last import built them from its own
+    /// ops. The full computation after a fallback reads the caches, and it must see exactly what
+    /// `next`'s full rebuild would have given it: the rebuild skips nodes that are cached, the
+    /// incremental one cached only nodes it read, so the result is the same (duplicate claims go to
+    /// the full rebuild before they are cached), and a node no op of the import named, which the
+    /// incremental rebuild cannot know, is named here.
+    ///
+    /// # Errors
+    /// A failed metadata read, which the full rebuild reports as well.
+    pub(crate) fn complete_id_cache(&mut self) -> Result<(), CollabError> {
+        if self.id_cache_incremental {
+            self.rebuild_id_cache()?;
+            self.id_cache_incremental = false;
+        }
+        Ok(())
+    }
+
+    /// [`Self::rebuild_id_cache`] for a strictly sequential import
+    /// ([`crate::window_check::OpSummary::strictly_sequential`]) whose ops are known: `created`
+    /// holds every tree node that the imported ops created. Such an import adds no node that no op
+    /// of it names (see the module documentation of `window_check`), so the nodes the full rebuild
+    /// would visit are the uncached ones, which a previous rebuild left without a `logical_id` and
+    /// an import can still give one, and the new ones. Cost: O(created + uncached) instead of
+    /// O(tree). Never used for any other import: the library can materialise nodes the base's
+    /// history holds but its state dropped when an update is concurrent with the base.
     ///
     /// Returns whether a node that was not created by this import got its id now (an existing
     /// node that had none), or one of the created targets was a node the tree already held: the id
@@ -475,6 +499,7 @@ impl LoroCollabEngine {
             tree_to_id: HashMap::new(),
             uncached_tree_nodes: HashSet::new(),
             duplicate_logical_ids: false,
+            id_cache_incremental: false,
             editor_model_floor: OnceLock::new(),
             session_index: None,
             session_stamp: None,
@@ -506,6 +531,7 @@ impl LoroCollabEngine {
             tree_to_id: HashMap::new(),
             uncached_tree_nodes: HashSet::new(),
             duplicate_logical_ids: false,
+            id_cache_incremental: false,
             editor_model_floor: OnceLock::new(),
             session_index: None,
             session_stamp: None,
@@ -643,6 +669,7 @@ impl LoroCollabEngine {
             tree_to_id: HashMap::new(),
             uncached_tree_nodes: HashSet::new(),
             duplicate_logical_ids: false,
+            id_cache_incremental: false,
             editor_model_floor: OnceLock::new(),
             session_index: None,
             session_stamp: None,
@@ -1248,8 +1275,51 @@ impl LoroCollabEngine {
             .map(Some)
     }
 
+    /// The items (see [`crate::work`]) of everything the full projection reads: the tree nodes
+    /// with their metadata, the elements of the root block list with everything below them, and
+    /// the entries of the navigator `order` map and of the alias map. `Ok(None)` once the count
+    /// passes `ceiling`, so a page far over any budget costs no more than the ceiling to refuse.
+    ///
+    /// # Errors
+    /// A failed read of a node's metadata, which fails the projection as well.
+    pub(crate) fn projection_items(&self, ceiling: u64) -> Result<Option<u64>, CollabError> {
+        use crate::reserved_roots::{ALIASES, DOC, ORDER};
+        let mut items = crate::work::ItemCount::new(ceiling);
+        for name in [ORDER, ALIASES] {
+            if let Some(map) = crate::editor_structure::root_map(&self.doc, name)?
+                && !items.add(u64::try_from(map.len()).unwrap_or(u64::MAX))
+            {
+                return Ok(None);
+            }
+        }
+        if let Some(root) = crate::editor_structure::root_map(&self.doc, DOC)?
+            && let Some(ValueOrContainer::Container(Container::List(list))) = root.get("children")
+        {
+            if !items.add(u64::try_from(list.len()).unwrap_or(u64::MAX)) {
+                return Ok(None);
+            }
+            let mut within = true;
+            list.for_each(|element| {
+                if within && let ValueOrContainer::Container(container) = element {
+                    within = items.add_container(&container, 0);
+                }
+            });
+            if !within {
+                return Ok(None);
+            }
+        }
+        for tree_id in self.tree.nodes() {
+            let meta = self.tree.get_meta(tree_id).map_err(|e| map_loro_error(&e, "<work>"))?;
+            if !items.add(1) || !items.add_container(&Container::Map(meta), 0) {
+                return Ok(None);
+            }
+        }
+        Ok(Some(items.total()))
+    }
+
     /// The number of elements of the root block list, of any kind: `None` without an editor
     /// document. O(1), and it reads no element.
+    #[cfg(test)]
     pub(crate) fn root_list_len(&self) -> Option<usize> {
         let root = crate::editor_structure::root_map(&self.doc, crate::reserved_roots::DOC)
             .ok()
@@ -1510,6 +1580,8 @@ pub(crate) struct ImportTrace {
     /// An existing tree node got a `logical_id` by this import, or the id caches were rebuilt in
     /// full (so the set of nodes with an id may differ from the base's anywhere).
     pub resolved_existing_id: bool,
+    /// The import was a strict causal extension of the base (`OpSummary::strictly_sequential`).
+    pub sequential: bool,
 }
 
 /// How an import is judged: replay of accepted history, or an update a client offers.
@@ -1635,7 +1707,7 @@ impl LoroCollabEngine {
     /// map, or touches the `doc` map falls back to a
     /// narrow scan of `doc.children` and, if still undecided, a read of the pre-import state.
     fn import_guarded(&mut self, update: &[u8], mode: ImportMode) -> Result<Diff, CollabError> {
-        self.import_guarded_traced(update, mode)
+        self.import_guarded_traced(update, mode, None)
             .map(|trace| Diff { changed: trace.changed })
     }
 
@@ -1645,11 +1717,20 @@ impl LoroCollabEngine {
     ///
     /// # Errors
     /// As [`Self::import_client_update`].
-    pub(crate) fn import_client_update_traced(&mut self, update: &[u8]) -> Result<ImportTrace, CollabError> {
-        self.import_guarded_traced(update, ImportMode::Client)
+    pub(crate) fn import_client_update_traced(
+        &mut self,
+        update: &[u8],
+        base: Option<&crate::facts::BaseVersion>,
+    ) -> Result<ImportTrace, CollabError> {
+        self.import_guarded_traced(update, ImportMode::Client, base)
     }
 
-    fn import_guarded_traced(&mut self, update: &[u8], mode: ImportMode) -> Result<ImportTrace, CollabError> {
+    fn import_guarded_traced(
+        &mut self,
+        update: &[u8],
+        mode: ImportMode,
+        base: Option<&crate::facts::BaseVersion>,
+    ) -> Result<ImportTrace, CollabError> {
         let causal = !matches!(mode, ImportMode::Replay { causal: false });
         InputLimits::default().validate_update(update)?;
         let prior_m5 = model5_marker(&self.doc)?;
@@ -1671,20 +1752,31 @@ impl LoroCollabEngine {
                 &self.doc,
                 &before_ops,
                 true,
-                &mut |peer, op, root_list| summary.visit(peer, op, root_list),
+                &mut |scanned| match scanned {
+                    crate::floor_guard::Scanned::Change(change) => summary.visit_change(change),
+                    crate::floor_guard::Scanned::Op(peer, op, root_list) => summary.visit(peer, op, root_list),
+                },
             )?)
         } else {
             None
         };
-        // The ops of a client update say exactly which tree nodes it created, unless one of them
-        // is a tree op the summary does not model (a move or delete, or a create it cannot match
-        // to its own id): then every node is looked at, as for a replayed update.
-        let resolved_existing_id = if client_scan.is_some() && summary.tree_ids_known() {
+        // The id caches are rebuilt from the update's own ops only for a strictly sequential
+        // import (`OpSummary::strictly_sequential`), the only one that cannot add a node no op of
+        // it names, and only when the ops name every tree node they created (no move or delete,
+        // no create it cannot match to its own id). Everything else rebuilds in full, exactly as
+        // `next` does (`rebuild_id_cache`), and the window then takes the full computation.
+        let sequential = client_scan.is_some()
+            && base.is_some_and(|base| {
+                injected_fault_sequential_gate_removed() || summary.strictly_sequential(base, &before_ops)
+            });
+        let incremental_cache = sequential && summary.tree_ids_known();
+        let resolved_existing_id = if incremental_cache {
             self.rebuild_id_cache_for(&summary.tree_created)?
         } else {
             self.rebuild_id_cache()?;
             true
         };
+        self.id_cache_incremental = incremental_cache;
         self.enforce_floor_ratchet(prior_m5, &before_ops, &before_frontiers, client_scan)?;
         Ok(ImportTrace {
             changed: before != after,
@@ -1692,6 +1784,7 @@ impl LoroCollabEngine {
             status,
             summary,
             resolved_existing_id,
+            sequential,
         })
     }
 
@@ -1767,6 +1860,7 @@ impl CollabEngine for LoroCollabEngine {
             tree_to_id: HashMap::new(),
             uncached_tree_nodes: HashSet::new(),
             duplicate_logical_ids: false,
+            id_cache_incremental: false,
             editor_model_floor: OnceLock::new(),
             session_index: None,
             session_stamp: None,
@@ -1859,10 +1953,26 @@ fn encode_frontier_entries(entries: &BTreeMap<u64, i32>) -> Vec<u8> {
     out
 }
 
+/// Whether the harness removed the sequential gate, for the mutants of the differential harness.
+// Not `const`: under test it reads the thread's injected fault.
+#[allow(clippy::missing_const_for_fn)]
+fn injected_fault_sequential_gate_removed() -> bool {
+    #[cfg(test)]
+    {
+        crate::window_check::fault::active() == Some(crate::window_check::fault::Fault::SequentialGateRemoved)
+    }
+    #[cfg(not(test))]
+    {
+        false
+    }
+}
+
 #[cfg(test)]
 mod floor_equivalence_tests;
 #[cfg(test)]
 mod hand_encoded;
+#[cfg(test)]
+mod next_oracle;
 #[cfg(test)]
 mod placement_session_tests;
 #[cfg(test)]
@@ -1874,6 +1984,8 @@ mod reserved_root_tests;
 #[cfg(test)]
 mod root_read_cost_tests;
 #[cfg(test)]
+mod window_calibration_tests;
+#[cfg(test)]
 mod window_check_pins_tests;
 #[cfg(test)]
 mod window_class_fixtures;
@@ -1883,6 +1995,8 @@ mod window_differential_tests;
 mod window_fixtures;
 #[cfg(test)]
 mod window_regression_tests;
+#[cfg(test)]
+mod window_round2_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

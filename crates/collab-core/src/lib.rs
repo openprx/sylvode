@@ -57,6 +57,7 @@ mod test_alloc;
 #[cfg(test)]
 mod walk_counter;
 pub mod window_check;
+pub mod work;
 
 pub use engine::{CollabEngine, Diff, EngineMetadata, LoroCollabEngine, metadata};
 pub use error::{CollabError, InputLimits};

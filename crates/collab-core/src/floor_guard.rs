@@ -68,6 +68,14 @@ use loro::{
 
 use crate::error::CollabError;
 
+/// What [`scan_imported_ops_visiting`] shows to its visitor.
+pub enum Scanned<'a> {
+    /// A change of the imported span, before its ops (id, lamport and deps as stored).
+    Change(&'a loro::JsonChange),
+    /// An op of the change: its peer, the op, and the id of `doc.children` after the import.
+    Op(u64, &'a JsonOp, Option<&'a ContainerID>),
+}
+
 /// Result of scanning the imported ops for anything that could lower the physical-atom signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemovalScan {
@@ -147,12 +155,14 @@ use crate::reserved_roots::{SCAN_INCOMPLETE_REASON, SHADOW_ROOT_REASON};
 /// # Errors
 /// A failed root read, `reserved_root_container_type`, or `reserved_root_scan_incomplete`.
 pub fn scan_imported_ops(doc: &LoroDoc, before: &VersionVector, check_roots: bool) -> Result<RemovalScan, CollabError> {
-    scan_imported_ops_visiting(doc, before, check_roots, &mut |_, _, _| {})
+    scan_imported_ops_visiting(doc, before, check_roots, &mut |_| {})
 }
 
-/// [`scan_imported_ops`], showing every op it reads to `visit` as `(peer, op, root list)`, where
-/// the root list is the id of `doc.children` after the import. The incremental window check
-/// derives the units an update touched from the same pass, so the ops are decoded once.
+/// [`scan_imported_ops`], showing every change it reads to `visit` ([`Scanned::Change`], before its
+/// ops) and every op ([`Scanned::Op`], as `(peer, op, root list)`, where the root list is the id of
+/// `doc.children` after the import). The incremental window check derives the units an update
+/// touched, and whether the import was a strict causal extension of the base, from the same pass,
+/// so the ops are decoded once.
 ///
 /// With `check_roots` every op of the imported span is visited (a refusal ends the scan early, and
 /// then the caller discards what `visit` saw). Without it the scan stops at the first suspect op.
@@ -163,7 +173,7 @@ pub fn scan_imported_ops_visiting(
     doc: &LoroDoc,
     before: &VersionVector,
     check_roots: bool,
-    visit: &mut dyn FnMut(u64, &JsonOp, Option<&ContainerID>),
+    visit: &mut dyn FnMut(Scanned<'_>),
 ) -> Result<RemovalScan, CollabError> {
     let refuse = |reason: &str| CollabError::OperationFailed { reason: reason.into() };
     let root_list = root_children_id(doc)?;
@@ -177,10 +187,11 @@ pub fn scan_imported_ops_visiting(
         }
         let mut covered: i64 = 0;
         for change in doc.export_json_in_id_span(IdSpan::new(peer, start, end)) {
+            visit(Scanned::Change(&change));
             for op in change.ops {
                 #[cfg(test)]
                 crate::walk_counter::record_scanned_op();
-                visit(peer, &op, root_list.as_ref());
+                visit(Scanned::Op(peer, &op, root_list.as_ref()));
                 if check_roots
                     && matches!(&op.container, ContainerID::Root { name, container_type }
                         if crate::reserved_roots::is_shadow_root(name, *container_type))

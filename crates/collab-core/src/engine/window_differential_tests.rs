@@ -240,7 +240,8 @@ fn refused(error: CollabError) -> WindowResult {
 /// The window exactly as the worker runs it after the base is loaded: import the client update,
 /// project, check the limits. Returns the aggregates of the projection on acceptance.
 fn decode_apply_and_check(engine: &mut LoroCollabEngine, update: &[u8]) -> Result<Aggregates, CollabError> {
-    engine.import_client_update(update)?;
+    // `next`'s import: the id caches rebuilt in full (see `next_oracle`).
+    engine.next_import_client_update(update)?;
     let semantic = engine.semantic_snapshot()?;
     check_snapshot(&semantic, &DocumentLimits::default())?;
     Ok(aggregates(&semantic))
@@ -575,8 +576,13 @@ fn hostile() -> &'static Family {
     family(&CELL, hostile_cases)
 }
 
+fn round2() -> &'static Family {
+    static CELL: OnceLock<Family> = OnceLock::new();
+    family(&CELL, || super::window_round2_tests::round2_cases(scale()))
+}
+
 fn all_cases() -> Vec<&'static Case> {
-    [generated(), boundary(), hostile()]
+    [generated(), boundary(), hostile(), round2()]
         .into_iter()
         .flat_map(|family| family.cases.iter())
         .collect()
@@ -1048,6 +1054,9 @@ struct Decided {
     direct_refusal: bool,
     /// The oracle of the host: the report against the full projection of the accepted document.
     oracle: Option<Result<(), WindowDivergence>>,
+    /// What the host does with an accepted document, whichever path decided: export it, load the
+    /// snapshot into a fresh engine, project and check. Independent of every id cache of the worker.
+    fresh: Option<Result<(), CollabError>>,
 }
 
 fn decide(implementation: &Incremental, case: &Case) -> Decided {
@@ -1074,6 +1083,7 @@ fn decide(implementation: &Incremental, case: &Case) -> Decided {
                     |projection| compare_with_projection(report, &projection),
                 )
             });
+            let fresh = Some(engine.fresh_load_decision());
             let result = WindowResult {
                 decision: Decision::Accept,
                 engine: Some(engine),
@@ -1092,6 +1102,7 @@ fn decide(implementation: &Incremental, case: &Case) -> Decided {
                 reason,
                 direct_refusal,
                 oracle,
+                fresh,
             }
         }
         Err(error) => Decided {
@@ -1106,6 +1117,7 @@ fn decide(implementation: &Incremental, case: &Case) -> Decided {
             reason,
             direct_refusal,
             oracle: None,
+            fresh: None,
         },
     }
 }
@@ -1140,6 +1152,7 @@ fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
             same_bytes,
             decided.reason,
             decided.direct_refusal,
+            decided.fresh,
         )
     });
     let elapsed = started.elapsed();
@@ -1152,9 +1165,15 @@ fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
     let mut every_reason: BTreeMap<String, usize> = BTreeMap::new();
     let mut refused_after_fallback = 0;
     let mut refused_directly = 0;
-    for (case, (fallback, report, oracle, exact, against_plain, same_bytes, reason, direct)) in
+    for (case, (fallback, report, oracle, exact, against_plain, same_bytes, reason, direct, fresh)) in
         cases.iter().zip(&decided)
     {
+        if let Some(Err(error)) = fresh {
+            panic!(
+                "{}: the accepted document is refused by a fresh load: {error}",
+                case.label
+            );
+        }
         if let Some(reason) = reason {
             *every_reason.entry(reason.clone()).or_default() += 1;
         }
@@ -1212,6 +1231,56 @@ fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
             "{model}: only {done} incremental decisions against {fell_back} fallbacks"
         );
     }
+}
+
+/// With the configuration switch off (no facts: the full window), the worker is `next` on every
+/// input: the same decision (the whole error), the same id caches, the same accepted document, the
+/// same projection, and a fresh load of the accepted document agrees. `next` here is
+/// `next_oracle`: its own import with its own full id-cache rebuild, written without the helpers
+/// of the branch.
+#[test]
+fn with_the_switch_off_the_window_is_next_on_every_case() {
+    let cases = all_cases();
+    let results = run_parallel(&cases, &|_, case| {
+        let mut next = LoroCollabEngine::load(&case.base).unwrap();
+        let next_decision = next.next_window(&case.update);
+        let mut worker = LoroCollabEngine::load(&case.base).unwrap();
+        worker.prewarm_for_writes();
+        let worker_decision = run_window(&mut worker, None, &case.update).map(|_| ());
+        if next_decision != worker_decision {
+            return Err(format!(
+                "decision differs: next {next_decision:?}, worker {worker_decision:?}"
+            ));
+        }
+        if next_decision.is_ok() {
+            if worker.id_to_tree != next.id_to_tree || worker.tree_to_id != next.tree_to_id {
+                return Err("the id caches differ from next's".to_owned());
+            }
+            if worker.semantic_snapshot().map(|s| s.semantic_hash())
+                != next.semantic_snapshot().map(|s| s.semantic_hash())
+            {
+                return Err("the projections differ".to_owned());
+            }
+            if digest(&worker.doc.get_deep_value()) != digest(&next.doc.get_deep_value()) {
+                return Err("the documents differ".to_owned());
+            }
+            if worker.frontier() != next.frontier() {
+                return Err("the frontiers differ".to_owned());
+            }
+            worker
+                .fresh_load_decision()
+                .map_err(|e| format!("fresh load refuses: {e}"))?;
+        }
+        Ok(next_decision.is_ok())
+    });
+    let mut accepted = 0;
+    for (case, result) in cases.iter().zip(results) {
+        accepted += usize::from(result.unwrap_or_else(|message| panic!("{}: {message}", case.label)));
+    }
+    println!(
+        "the switched-off window is next in {} cases ({accepted} accepted)",
+        cases.len()
+    );
 }
 
 /// The incremental window with a default prewarm and facts, refused cases included, hands the host
@@ -1418,8 +1487,8 @@ fn a_legacy_cycle_through_concurrent_moves_is_decided_by_the_full_computation() 
     let decided = decide(&Incremental::WORKER, &case);
     assert_eq!(
         decided.fallback,
-        Some(FallbackReason::TreeStructure),
-        "a tree move is not decided incrementally"
+        Some(FallbackReason::NotSequential),
+        "an update concurrent with the base is not decided incrementally"
     );
     let reference = observe(&FullComputation, &case);
     assert_eq!(difference_with(&reference, &decided.observed, false), None);
@@ -1454,12 +1523,20 @@ fn incremental_mutants() -> Vec<Incremental> {
             defect: Defect::Fault(Fault::CreatedTargetChecksSkipped),
         },
         Incremental {
-            name: "mutant: no fallback for a root list over the length limit",
-            defect: Defect::Fault(Fault::ListThresholdSkipped),
+            name: "mutant: no fallback when the page's items are over the budget",
+            defect: Defect::Fault(Fault::WorkBudgetSkipped),
         },
         Incremental {
             name: "mutant: no fallback when an existing node's logical id is rewritten",
             defect: Defect::Fault(Fault::IdRewriteSkipped),
+        },
+        Incremental {
+            name: "mutant: the sequential gate is removed (the id caches are rebuilt from the update's ops whatever it is)",
+            defect: Defect::Fault(Fault::SequentialGateRemoved),
+        },
+        Incremental {
+            name: "mutant: a container without a path is skipped as unreachable",
+            defect: Defect::Fault(Fault::PathlessContainerSkipped),
         },
         Incremental {
             name: "mutant: a refusal by a total reports observed + 1",
@@ -1475,7 +1552,7 @@ fn incremental_mutants() -> Vec<Incremental> {
 fn oracle_expected(mutant: &Incremental) -> bool {
     !matches!(
         mutant.defect,
-        Defect::Fault(Fault::ListThresholdSkipped | Fault::RefusalOffByOne)
+        Defect::Fault(Fault::WorkBudgetSkipped | Fault::RefusalOffByOne)
     )
 }
 
