@@ -1738,3 +1738,36 @@ async fn token_use_is_stamped_by_the_database_clock() {
     assert_eq!(stamped, 1);
     scratch.drop_self().await;
 }
+
+/// Reports are limited per bot (12 a minute), and the route refuses a body over 16 KiB before the
+/// handler reads it.
+#[tokio::test]
+async fn the_report_route_is_rate_limited_and_body_limited() {
+    let scratch = scratch_or_skip!("bc_report_limits");
+    let db = &scratch.db;
+    let w = world(db, "rl").await;
+    let connected = expect_connect(&w, w.tenant.project_id, new_bot("Limited bot")).await;
+    let runner_bot = bot_context_for(connected.connection.bot.id, w.tenant.workspace_id, &["read", "write"]);
+    let body = serde_json::to_vec(&json!({"components": []})).expect("json");
+    for round in 0..12 {
+        let answer = report_as(&w, Some(runner_bot.clone()), &body).await.expect("answers");
+        assert_eq!(answer.status(), axum::http::StatusCode::OK, "report {round}");
+    }
+    let limited = report_as(&w, Some(runner_bot.clone()), &body).await.expect("answers");
+    assert_eq!(limited.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+    assert!(limited.headers().contains_key(header::RETRY_AFTER));
+    let (_, answer) = body_of(limited).await;
+    assert_eq!(answer["code"], 429);
+
+    // The real route's body limit: the body is cut off before the handler.
+    let app = Router::new()
+        .route("/report", crate::routes::ai_task_protocol::runner_report_route())
+        .with_state(w.state.clone());
+    let huge = vec![b'x'; 64 * 1024];
+    let response = app
+        .oneshot(Request::put("/report").body(Body::from(huge)).expect("request"))
+        .await
+        .expect("answer");
+    assert_eq!(response.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+    scratch.drop_self().await;
+}

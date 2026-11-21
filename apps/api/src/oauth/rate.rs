@@ -55,10 +55,12 @@ pub enum RateBucket {
     InboundSourceMinute,
     /// Events accepted from one inbound source per day.
     InboundSourceDay,
+    /// Self-reports of one runner bot.
+    RunnerReport,
 }
 
 impl RateBucket {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Authorize,
         Self::Decision,
         Self::TokenIp,
@@ -69,6 +71,7 @@ impl RateBucket {
         Self::InboundAuthFail,
         Self::InboundSourceMinute,
         Self::InboundSourceDay,
+        Self::RunnerReport,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -83,6 +86,7 @@ impl RateBucket {
             Self::InboundAuthFail => "inbound_auth_fail",
             Self::InboundSourceMinute => "inbound_source_minute",
             Self::InboundSourceDay => "inbound_source_day",
+            Self::RunnerReport => "runner_report",
         }
     }
 
@@ -103,6 +107,7 @@ impl RateBucket {
             Self::TokenGrant => 20,
             Self::InboundSourceMinute => 120,
             Self::InboundSourceDay => 20_000,
+            Self::RunnerReport => 12,
         }
     }
 }
@@ -370,6 +375,7 @@ mod tests {
             (RateBucket::InboundAuthFail, "inbound_auth_fail", 30),
             (RateBucket::InboundSourceMinute, "inbound_source_minute", 120),
             (RateBucket::InboundSourceDay, "inbound_source_day", 20_000),
+            (RateBucket::RunnerReport, "runner_report", 12),
         ];
         assert_eq!(table.len(), RateBucket::ALL.len());
         for (bucket, name, limit) in table {

@@ -27,6 +27,7 @@ pub const MAX_REPORT_BYTES: usize = 16 * 1024;
 const DELIVERY_WINDOW_DAYS: i64 = 30;
 /// How much of a delivery's error text the status shows.
 const DETAIL_CHARS: usize = 200;
+/// A version is `^[0-9A-Za-z.+_-]{1,64}$`.
 const MAX_VERSION_CHARS: usize = 64;
 
 // ---------------------------------------------------------------------------------------------
@@ -45,7 +46,12 @@ fn is_known_component(name: &str) -> bool {
 fn short_version(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
-        .filter(|version| !version.is_empty() && version.chars().count() <= MAX_VERSION_CHARS)
+        .filter(|version| !version.is_empty() && version.len() <= MAX_VERSION_CHARS)
+        .filter(|version| {
+            version
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'_' | b'-'))
+        })
         .map(str::to_string)
 }
 
@@ -638,5 +644,33 @@ mod tests {
             json!({"generated_by": {}, "components": []})
         );
         assert_eq!(MAX_REPORT_BYTES, 16 * 1024);
+    }
+
+    /// A version is `^[0-9A-Za-z.+_-]{1,64}$`: no markup, no whitespace, no hidden characters.
+    #[test]
+    fn a_version_is_kept_only_in_the_plain_shape() {
+        let kept = |version: &str| {
+            sanitize_report(&json!({"generated_by": {"version": version}}))["generated_by"]["version"].clone()
+        };
+        for good in ["0.5.1", "1.2.3-beta.1+build_7", "v3", &"a".repeat(64)] {
+            assert_eq!(kept(good), json!(good), "{good}");
+        }
+        for bad in [
+            "",
+            "<b>1</b>",
+            "1 2",
+            "1.2\n3",
+            "1.2\u{202e}3",
+            "1.2\u{200b}3",
+            "1,2",
+            "1/2",
+            "\u{e9}t\u{e9}",
+            &"a".repeat(65),
+        ] {
+            assert_eq!(kept(bad), json!(null), "{bad:?}");
+        }
+        let component =
+            sanitize_report(&json!({"components": [{"component": "tmux", "status": "ok", "version": "<i>"}]}));
+        assert_eq!(component["components"][0].get("version"), None);
     }
 }

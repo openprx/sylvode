@@ -21,6 +21,7 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     middleware::bot_auth::BotAuthContext,
+    oauth::rate::{RateBucket, RateError, RateKey, enforce},
     response::ApiResponse,
     services::{
         ai_task_reply::{
@@ -122,6 +123,26 @@ pub async fn put_runner_report(
     let Some(Extension(bot)) = bot else {
         return Err(ApiError::Forbidden("only a runner bot can report".to_string()));
     };
+    // Each call is a row update: a runner reports every ten minutes, so a dozen a minute is far
+    // more than it needs.
+    match enforce(&state.db, RateBucket::RunnerReport, &RateKey::from_id(bot.bot_id)).await {
+        Ok(()) => {}
+        Err(RateError::Limited(limited)) => {
+            let mut response = (
+                StatusCode::TOO_MANY_REQUESTS,
+                ApiResponse::<()>::error(429, "too many reports; wait before reporting again"),
+            )
+                .into_response();
+            if let Ok(value) = limited.retry_after_secs.to_string().parse() {
+                response.headers_mut().insert(axum::http::header::RETRY_AFTER, value);
+            }
+            return Ok(response);
+        }
+        Err(RateError::Store(error)) => {
+            tracing::warn!(error = %error, "runner report rate counter unavailable");
+            return Err(ApiError::Internal);
+        }
+    }
     if body.len() > MAX_REPORT_BYTES {
         return Ok((
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -137,6 +158,12 @@ pub async fn put_runner_report(
     bot_connection_status::store_report(&state.db, bot.bot_id, &bot_connection_status::sanitize_report(&report))
         .await?;
     Ok(ApiResponse::success(json!({ "accepted": true, "interval_secs": RUNNER_REPORT_INTERVAL_SECS })).into_response())
+}
+
+/// The report route: the handler with a body limit of [`MAX_REPORT_BYTES`], applied before the body
+/// is read, so a large body is cut off instead of buffered up to the global limit.
+pub fn runner_report_route() -> axum::routing::MethodRouter<AppState> {
+    axum::routing::put(put_runner_report).layer(axum::extract::DefaultBodyLimit::max(MAX_REPORT_BYTES))
 }
 
 /// `GET /api/v1/ai/tasks/active`: the calling bot's own active tasks, oldest first.
