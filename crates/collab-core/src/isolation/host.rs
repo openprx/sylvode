@@ -45,11 +45,12 @@
 use std::io::Read;
 use std::os::fd::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::time::{Duration, Instant};
 
 use super::limits::DECODE_APPLY_WALL_MS_MAX;
 use super::outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode};
+use super::spawn_env::worker_command;
 use super::wire::{self, MAX_RESPONSE_PAYLOAD_BYTES, Outcome};
 
 const RESPONSE_FRAME_HEADER_BYTES: usize = 8;
@@ -172,15 +173,11 @@ fn run_isolated_apply(
 ) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
     let worker_path = worker_binary_path()?;
 
-    let mut command = Command::new(&worker_path);
+    let mut command = worker_command(&worker_path, operation, extra_env);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .env(wire::OPERATION_ENV, operation);
-    for (key, value) in extra_env {
-        command.env(key, value);
-    }
+        .stderr(Stdio::null());
     let mut child = command
         .spawn()
         .map_err(|err| IsolatedApplyError::HostFailure(format!("spawn of isolated-apply worker failed: {err}")))?;

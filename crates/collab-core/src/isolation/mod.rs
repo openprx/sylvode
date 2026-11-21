@@ -43,6 +43,8 @@ pub mod child_runtime;
 pub mod host;
 mod limits;
 mod outcome;
+#[cfg(any(target_os = "linux", test))]
+mod spawn_env;
 #[cfg(not(target_os = "linux"))]
 mod unsupported;
 pub mod wire;
