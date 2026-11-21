@@ -31,8 +31,13 @@
 //!    validated in-memory state (the same reasoning that keeps step 2's `load` outside the window),
 //!    not on the untrusted input step 5 just finished validating, so it is not part of the budget
 //!    that bounds processing that untrusted input.
+//!    As soon as the window check has decided (before the full computation of a fallback runs) the
+//!    worker writes the two-byte decision record `[wire::DECISION_RECORD_TAG, code]`, so a worker
+//!    that a ceiling kills later has still told the host whether it fell back because the update
+//!    was not sequential. A response that did not pass through the check says `Undecided`.
 //! 7. Report the outcome back over stdout as a length/CRC32-framed payload (the marker byte was
-//!    already sent in step 3, so this is just the framed payload itself).
+//!    already sent in step 3 and the decision record in step 5, so this is just the framed payload
+//!    itself).
 //!
 //! If the process is killed by `SIGPROF` (step 4/5 overran the CPU ceiling), aborts itself via the
 //! counting allocator's rejection path (overran the memory ceiling, `SIGABRT`), or is `SIGKILL`ed
