@@ -22,8 +22,9 @@ use super::inbound::RawInbound;
 use super::oauth::{RawOAuth, UrlRole, validate_forward_secret, validate_url};
 use super::secret::Secret;
 use super::{
-    AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS, AiTasksConfig, AuditConfig, AuthConfig, ConfigError,
-    DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
+    AI_TASK_LEASE_EXTENSION_RANGE_SECS, AI_TASK_MAX_PROCESSING_CEILING_SECS, AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS,
+    AiTasksConfig, AuditConfig, AuthConfig, ConfigError, DEFAULT_AI_TASK_LEASE_EXTENSION_SECS,
+    DEFAULT_AI_TASK_MAX_PROCESSING_SECS, DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
     DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS,
     DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
     LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
@@ -146,8 +147,11 @@ struct RawAudit {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_field_names, reason = "the keys are in seconds, as their names say")]
 struct RawAiTasks {
     processing_timeout_secs: Option<u64>,
+    lease_extension_secs: Option<u64>,
+    max_processing_secs: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -546,8 +550,33 @@ impl RawAiTasks {
                         DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS
                     }
                 });
+        let lease_extension_secs = self
+            .lease_extension_secs
+            .map_or(DEFAULT_AI_TASK_LEASE_EXTENSION_SECS, |secs| {
+                if AI_TASK_LEASE_EXTENSION_RANGE_SECS.contains(&secs) {
+                    secs
+                } else {
+                    issues.push("ai_tasks.lease_extension_secs must be between 60 and 86400");
+                    DEFAULT_AI_TASK_LEASE_EXTENSION_SECS
+                }
+            });
+        // The default cap is never below a valid timeout that is itself above it.
+        let max_processing_secs = match self.max_processing_secs {
+            None => DEFAULT_AI_TASK_MAX_PROCESSING_SECS.max(processing_timeout_secs),
+            Some(secs) if secs > AI_TASK_MAX_PROCESSING_CEILING_SECS => {
+                issues.push("ai_tasks.max_processing_secs must be at most 604800");
+                DEFAULT_AI_TASK_MAX_PROCESSING_SECS.max(processing_timeout_secs)
+            }
+            Some(secs) if secs < processing_timeout_secs => {
+                issues.push("ai_tasks.max_processing_secs must be at least ai_tasks.processing_timeout_secs");
+                DEFAULT_AI_TASK_MAX_PROCESSING_SECS.max(processing_timeout_secs)
+            }
+            Some(secs) => secs,
+        };
         AiTasksConfig {
             processing_timeout_secs,
+            lease_extension_secs,
+            max_processing_secs,
         }
     }
 }

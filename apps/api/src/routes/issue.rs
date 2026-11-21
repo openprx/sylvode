@@ -21,6 +21,7 @@ use crate::{
     services::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
         bot_identity::is_bot_user,
+        issues::{IssueRef, insert_activity},
         work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
     },
@@ -1009,35 +1010,13 @@ pub async fn update_issue(
         });
     }
 
+    let issue_ref = IssueRef {
+        id: issue_id,
+        project_id: current_issue.project_id,
+        workspace_id: current_issue.workspace_id,
+    };
     for change in &changes {
-        let detail_text = change.detail.to_string();
-
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"
-                INSERT INTO activities (
-                    id, workspace_id, project_id, issue_id, user_id, action, detail, created_at,
-                    resource_type, resource_id, event_type, actor_id, payload
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb)
-            ",
-            vec![
-                Uuid::new_v4().into(),
-                current_issue.workspace_id.into(),
-                current_issue.project_id.into(),
-                issue_id.into(),
-                user_id.into(),
-                change.action.into(),
-                detail_text.clone().into(),
-                now.into(),
-                "issue".into(),
-                issue_id.into(),
-                change.action.into(),
-                user_id.into(),
-                detail_text.into(),
-            ],
-        ))
-        .await?;
+        insert_activity(&tx, &issue_ref, user_id, change.action, &change.detail, now).await?;
     }
 
     if let Some(new_assignee) = requested_assignee

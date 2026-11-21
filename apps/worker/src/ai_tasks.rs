@@ -12,16 +12,19 @@
 //!   and the receiver's own fail callback may be refused (it may hold no token for this bot).
 //! - The delivery does not reach a receiver that takes it (no webhook, a transport error, HTTP
 //!   5xx, 408, 409, 425, 429): the worker re-queues the task while attempts remain.
-//! - Nothing ends the attempt within `[ai_tasks] processing_timeout_secs`: the sweep re-queues the
-//!   task while attempts remain and fails it otherwise.
+//! - Nothing ends the attempt before its lease runs out (`[ai_tasks] processing_timeout_secs` from
+//!   the pick-up, extended by the runner's acknowledge and progress calls): the sweep re-queues
+//!   the task while attempts remain and fails it otherwise.
 //!
-//! Every transition the worker makes is a compare-and-set on `status = 'processing'` and the
-//! attempt number (`api::services::ai_task_service`), so a callback that commits first wins and
-//! several workers never end the same attempt twice.
+//! Every transition the worker makes is a compare-and-set on the active statuses (`processing`
+//! and `acknowledged`) and the attempt number (`api::services::ai_task_service`), so a callback
+//! that commits first wins and several workers never end the same attempt twice.
 
 use api::outbound::validate_outbound_url;
+use api::services::ai_task_reply::announce_start_refusal;
 use api::services::ai_task_service::{
-    AttemptEnd, WorkerEndReason, end_processing_attempt, end_stalled_attempts, notify_ai_task_failed,
+    AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts, notify_ai_task_failed,
+    trigger_kind_for_task,
 };
 use api::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_USER_AGENT, sign_payload};
 use platform::{app::AppState, timestamp::Timestamp};
@@ -44,6 +47,7 @@ struct AiTaskDispatchRow {
     id: Uuid,
     workspace_id: Uuid,
     project_id: Uuid,
+    project_key: String,
     ai_participant_id: Uuid,
     ai_participant_name: Option<String>,
     ai_participant_agent_type: Option<String>,
@@ -137,14 +141,17 @@ fn excerpt(text: &str) -> String {
 }
 
 /// Picks up due tasks and delivers each to its bot's webhook.
+///
+/// Each picked-up task gets a lease of `processing_timeout_secs` from the pick-up.
 pub async fn process_pending_tasks(
     state: &AppState,
     client: &reqwest::Client,
     concurrency: usize,
+    processing_timeout_secs: u64,
 ) -> anyhow::Result<()> {
     let db = &state.db;
     let limit = i64::try_from(concurrency.max(1)).unwrap_or(i64::MAX) * 10;
-    let tasks = pickup_pending_tasks(db, limit).await?;
+    let tasks = pickup_pending_tasks(db, limit, processing_timeout_secs).await?;
 
     for task in tasks {
         let verdict = match dispatch_task(db, client, &task).await {
@@ -159,54 +166,70 @@ pub async fn process_pending_tasks(
             },
             Err(err) => DeliveryVerdict::Transient(err.to_string()),
         };
-        match verdict {
-            DeliveryVerdict::Accepted => tracing::info!(
-                task_id = %task.id,
-                attempt = task.attempts,
-                "AI task delivered; the receiver ends it, or the processing timeout does"
-            ),
-            DeliveryVerdict::Declined(reason) => {
-                tracing::warn!(task_id = %task.id, attempt = task.attempts, reason = %reason, "AI task declined by the receiver; failing it");
-                end_attempt(
-                    state,
-                    &task,
-                    AttemptEnd::Terminal,
-                    WorkerEndReason::ReceiverDeclined,
-                    &reason,
-                )
-                .await?;
-            }
-            DeliveryVerdict::Transient(reason) => {
-                tracing::warn!(task_id = %task.id, attempt = task.attempts, error = %reason, "dispatch failed");
-                end_attempt(
-                    state,
-                    &task,
-                    AttemptEnd::RetryWhileAttemptsRemain,
-                    WorkerEndReason::DeliveryFailed,
-                    &reason,
-                )
-                .await?;
-            }
-        }
+        settle_delivery(state, &task, verdict).await?;
     }
 
     Ok(())
 }
 
+/// Acts on the receiver's answer to the delivery of `task`: an accepted delivery is recorded as a
+/// `delivered` event; a declined or failed one ends the attempt.
+async fn settle_delivery(state: &AppState, task: &AiTaskDispatchRow, verdict: DeliveryVerdict) -> anyhow::Result<()> {
+    match verdict {
+        DeliveryVerdict::Accepted => {
+            tracing::info!(
+                task_id = %task.id,
+                attempt = task.attempts,
+                "AI task delivered; the receiver ends it, or its lease does"
+            );
+            insert_task_event(&state.db, task.id, "delivered", json!({ "attempts": task.attempts })).await?;
+        }
+        DeliveryVerdict::Declined(reason) => {
+            tracing::warn!(task_id = %task.id, attempt = task.attempts, reason = %reason, "AI task declined by the receiver; failing it");
+            let ended = end_attempt(
+                state,
+                task,
+                AttemptEnd::Terminal,
+                WorkerEndReason::ReceiverDeclined,
+                &reason,
+            )
+            .await?;
+            // The assigner works on the issue, not in the task log: say there why it did not start.
+            if let Some(ended) = ended
+                && let Err(err) = announce_start_refusal(state, &ended, &reason).await
+            {
+                tracing::warn!(task_id = %task.id, error = %err, "the start refusal could not be reported on the issue");
+            }
+        }
+        DeliveryVerdict::Transient(reason) => {
+            tracing::warn!(task_id = %task.id, attempt = task.attempts, error = %reason, "dispatch failed");
+            end_attempt(
+                state,
+                task,
+                AttemptEnd::RetryWhileAttemptsRemain,
+                WorkerEndReason::DeliveryFailed,
+                &reason,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 /// Ends the attempt just delivered, unless a callback already ended it, and sends
-/// `ai.task_failed` when the task is failed.
+/// `ai.task_failed` when the task is failed. Returns the task when this call ended it.
 async fn end_attempt(
     state: &AppState,
     task: &AiTaskDispatchRow,
     end: AttemptEnd,
     reason: WorkerEndReason,
     error_message: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<api::services::ai_task_service::AiTaskRow>> {
     let ended = end_processing_attempt(&state.db, task.id, task.attempts, end, reason, error_message)
         .await
         .map_err(|err| anyhow::anyhow!("ending AI task {} attempt {} failed: {err}", task.id, task.attempts))?;
-    match ended {
-        Some(ended) if ended.status == "failed" => notify_failed(state, &ended).await,
+    match &ended {
+        Some(ended) if ended.status == "failed" => notify_failed(state, ended).await,
         Some(_) => {}
         None => tracing::info!(
             task_id = %task.id,
@@ -214,13 +237,13 @@ async fn end_attempt(
             "AI task attempt was already ended by a callback; left as it is"
         ),
     }
-    Ok(())
+    Ok(ended)
 }
 
-/// Ends every attempt that has been `processing` for longer than `timeout_secs`.
-pub async fn end_stalled_tasks(state: &AppState, timeout_secs: u64, concurrency: usize) -> anyhow::Result<usize> {
+/// Ends every active attempt whose lease has run out.
+pub async fn end_stalled_tasks(state: &AppState, concurrency: usize) -> anyhow::Result<usize> {
     let limit = i64::try_from(concurrency.max(1)).unwrap_or(i64::MAX) * 10;
-    let ended = end_stalled_attempts(&state.db, timeout_secs, limit)
+    let ended = end_stalled_attempts(&state.db, limit)
         .await
         .map_err(|err| anyhow::anyhow!("ending stalled AI tasks failed: {err}"))?;
     for task in &ended {
@@ -229,8 +252,7 @@ pub async fn end_stalled_tasks(state: &AppState, timeout_secs: u64, concurrency:
             attempt = task.attempts,
             max_attempts = task.max_attempts,
             status = %task.status,
-            timeout_secs,
-            "AI task got no completion within the processing timeout"
+            "AI task lease ran out with no completion"
         );
         if task.status == "failed" {
             notify_failed(state, task).await;
@@ -247,7 +269,12 @@ async fn notify_failed(state: &AppState, task: &api::services::ai_task_service::
     }
 }
 
-async fn pickup_pending_tasks(db: &sea_orm::DatabaseConnection, limit: i64) -> anyhow::Result<Vec<AiTaskDispatchRow>> {
+async fn pickup_pending_tasks(
+    db: &sea_orm::DatabaseConnection,
+    limit: i64,
+    processing_timeout_secs: u64,
+) -> anyhow::Result<Vec<AiTaskDispatchRow>> {
+    let processing_timeout_secs = i64::try_from(processing_timeout_secs).unwrap_or(i64::MAX);
     let tasks = AiTaskDispatchRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -264,6 +291,11 @@ async fn pickup_pending_tasks(db: &sea_orm::DatabaseConnection, limit: i64) -> a
             SET status = 'processing',
                 attempts = attempts + 1,
                 started_at = now(),
+                lease_expires_at = now() + make_interval(secs => $2::bigint),
+                runner_phase = NULL,
+                acknowledged_at = NULL,
+                plan = NULL,
+                last_progress_at = NULL,
                 next_retry_at = NULL,
                 updated_at = now()
             FROM picked
@@ -276,6 +308,11 @@ async fn pickup_pending_tasks(db: &sea_orm::DatabaseConnection, limit: i64) -> a
                     WHERE p.id = t.project_id
                 ) AS workspace_id,
                 t.project_id,
+                (
+                    SELECT key
+                    FROM projects p
+                    WHERE p.id = t.project_id
+                ) AS project_key,
                 t.ai_participant_id,
                 (
                     SELECT name
@@ -295,7 +332,7 @@ async fn pickup_pending_tasks(db: &sea_orm::DatabaseConnection, limit: i64) -> a
                 t.max_attempts,
                 t.priority
         ",
-        vec![limit.into()],
+        vec![limit.into(), processing_timeout_secs.into()],
     ))
     .all(db)
     .await?;
@@ -377,20 +414,7 @@ async fn dispatch_task(
         )
     })?;
 
-    let body = json!({
-        "task_id": task.id.to_string(),
-        "project_id": task.project_id.to_string(),
-        "ai_participant_id": task.ai_participant_id.to_string(),
-        "ai_participant_name": task.ai_participant_name.as_deref(),
-        "ai_participant_agent_type": task.ai_participant_agent_type.as_deref(),
-        "task_type": task.task_type,
-        "reference_type": task.reference_type,
-        "reference_id": task.reference_id.map(|v| v.to_string()),
-        "payload": task.payload,
-        "attempts": task.attempts,
-        "max_attempts": task.max_attempts,
-        "trigger_kind": trigger_kind_for_task(&task.task_type),
-    });
+    let body = delivery_body(task);
 
     let target = validate_outbound_url(&webhook.url)
         .await
@@ -418,6 +442,27 @@ async fn dispatch_task(
         webhook_id: webhook.webhook_id,
         status,
         body,
+    })
+}
+
+/// The JSON body of a delivery. Every field a receiver already reads is unchanged; `project_key`
+/// and `protocol` are additions.
+fn delivery_body(task: &AiTaskDispatchRow) -> Value {
+    json!({
+        "task_id": task.id.to_string(),
+        "project_id": task.project_id.to_string(),
+        "ai_participant_id": task.ai_participant_id.to_string(),
+        "ai_participant_name": task.ai_participant_name.as_deref(),
+        "ai_participant_agent_type": task.ai_participant_agent_type.as_deref(),
+        "task_type": task.task_type,
+        "reference_type": task.reference_type,
+        "reference_id": task.reference_id.map(|v| v.to_string()),
+        "payload": task.payload,
+        "attempts": task.attempts,
+        "max_attempts": task.max_attempts,
+        "trigger_kind": trigger_kind_for_task(&task.task_type),
+        "project_key": task.project_key,
+        "protocol": TASK_PROTOCOL,
     })
 }
 
@@ -479,15 +524,6 @@ async fn insert_picked_up_business_event(
     Ok(())
 }
 
-fn trigger_kind_for_task(task_type: &str) -> &'static str {
-    match task_type {
-        "issue_assigned" => "assigned",
-        "vote_requested" => "proposal_vote",
-        "review_requested" | "comment_requested" => "mention",
-        _ => "manual",
-    }
-}
-
 async fn insert_task_event(
     db: &sea_orm::DatabaseConnection,
     task_id: Uuid,
@@ -515,7 +551,56 @@ async fn insert_task_event(
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use super::{DeliveryVerdict, classify_delivery_answer, dispatch_request, excerpt};
+    use super::{
+        AiTaskDispatchRow, DeliveryVerdict, classify_delivery_answer, delivery_body, dispatch_request, excerpt,
+    };
+    use serde_json::json;
+    use uuid::Uuid;
+
+    /// The delivery body is a contract with the receiver: every existing field keeps its name and
+    /// value, and `project_key` and `protocol` are the only additions.
+    #[test]
+    fn the_delivery_body_carries_the_project_key_and_protocol() {
+        let id = Uuid::parse_str("11111111-1111-4111-8111-111111111111").expect("uuid");
+        let project = Uuid::parse_str("22222222-2222-4222-8222-222222222222").expect("uuid");
+        let bot = Uuid::parse_str("33333333-3333-4333-8333-333333333333").expect("uuid");
+        let issue = Uuid::parse_str("44444444-4444-4444-8444-444444444444").expect("uuid");
+        let task = AiTaskDispatchRow {
+            id,
+            workspace_id: Uuid::nil(),
+            project_id: project,
+            project_key: "SVWL".to_string(),
+            ai_participant_id: bot,
+            ai_participant_name: Some("fixer".to_string()),
+            ai_participant_agent_type: Some("cli".to_string()),
+            task_type: "issue_assigned".to_string(),
+            reference_type: Some("work_item".to_string()),
+            reference_id: Some(issue),
+            payload: json!({"issue_id": issue.to_string()}),
+            attempts: 1,
+            max_attempts: 3,
+            priority: 5,
+        };
+        assert_eq!(
+            delivery_body(&task),
+            json!({
+                "task_id": "11111111-1111-4111-8111-111111111111",
+                "project_id": "22222222-2222-4222-8222-222222222222",
+                "ai_participant_id": "33333333-3333-4333-8333-333333333333",
+                "ai_participant_name": "fixer",
+                "ai_participant_agent_type": "cli",
+                "task_type": "issue_assigned",
+                "reference_type": "work_item",
+                "reference_id": "44444444-4444-4444-8444-444444444444",
+                "payload": {"issue_id": "44444444-4444-4444-8444-444444444444"},
+                "attempts": 1,
+                "max_attempts": 3,
+                "trigger_kind": "assigned",
+                "project_key": "SVWL",
+                "protocol": 1
+            })
+        );
+    }
 
     /// The AI-task delivery carries the same `User-Agent` as every other outbound webhook
     /// delivery (ADR-0020 D3), next to its signature.
@@ -623,5 +708,315 @@ mod tests {
         assert!(cut.ends_with("..."));
         let verdict = classify_delivery_answer(400, &long);
         assert!(declined(&verdict).len() < 400);
+    }
+}
+
+/// Pick-up and delivery settlement against a migrated scratch database.
+///
+/// Needs `OPENPR_TEST_DATABASE_URL`; without it every test reports that it was skipped.
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic, clippy::print_stderr)]
+mod database_tests {
+    use super::{DeliveryVerdict, pickup_pending_tasks, settle_delivery};
+    use platform::app::{AppState, FlowPermissionCacheSlot};
+    use platform::config::{AppConfig, Secret};
+    use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement};
+    use uuid::Uuid;
+
+    struct Scratch {
+        db: DatabaseConnection,
+        name: String,
+        admin_url: String,
+    }
+
+    impl Scratch {
+        async fn drop_self(self) {
+            let Self { db, name, admin_url } = self;
+            drop(db);
+            if let Ok(admin) = Database::connect(&admin_url).await {
+                let _ = admin
+                    .execute_unprepared(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
+                    .await;
+            }
+        }
+    }
+
+    async fn scratch(label: &str) -> Option<Scratch> {
+        let admin_url = std::env::var("OPENPR_TEST_DATABASE_URL").ok()?;
+        let admin = Database::connect(&admin_url)
+            .await
+            .unwrap_or_else(|err| panic!("OPENPR_TEST_DATABASE_URL is set but unusable: {err}"));
+        let name = format!("sylvode_worker_{label}");
+        admin
+            .execute_unprepared(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
+            .await
+            .expect("scratch database reset");
+        admin
+            .execute_unprepared(&format!("CREATE DATABASE \"{name}\""))
+            .await
+            .expect("scratch database created");
+        let (prefix, _) = admin_url.rsplit_once('/')?;
+        let db = Database::connect(&format!("{prefix}/{name}"))
+            .await
+            .expect("scratch database connects");
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../migrations");
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+            .expect("migrations directory is readable")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
+            .collect();
+        files.sort();
+        for path in files {
+            let sql = std::fs::read_to_string(&path).expect("a migration file is readable");
+            db.execute_unprepared(&sql)
+                .await
+                .unwrap_or_else(|err| panic!("applying {} failed: {err}", path.display()));
+        }
+        Some(Scratch { db, name, admin_url })
+    }
+
+    macro_rules! scratch_or_skip {
+        ($label:expr) => {
+            match scratch($label).await {
+                Some(scratch) => scratch,
+                None => {
+                    eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
+                    return;
+                }
+            }
+        };
+    }
+
+    fn state_for(db: DatabaseConnection) -> AppState {
+        AppState {
+            cfg: AppConfig {
+                app_name: "worker-ai-task-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("worker-ai-task-test-secret"),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db,
+            flow_permission_cache: FlowPermissionCacheSlot::default(),
+        }
+    }
+
+    async fn exec(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
+        db.execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+            .await
+            .unwrap_or_else(|err| panic!("setup statement failed: {err}"));
+    }
+
+    /// A project with the key `WKR` and one pending `issue_assigned` task for a bot user.
+    async fn seed_pending_task(db: &DatabaseConnection) -> Uuid {
+        let user = Uuid::new_v4();
+        let bot = Uuid::new_v4();
+        let workspace = Uuid::new_v4();
+        let project = Uuid::new_v4();
+        let task = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) VALUES ($1, $2, '!', 'owner', 'user', true)",
+            vec![user.into(), format!("{user}@worker.test").into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type) \
+             VALUES ($1, $2, '!', 'bot', 'user', true, 'bot')",
+            vec![bot.into(), format!("{bot}@worker.test").into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO workspaces (id, slug, name, created_by) VALUES ($1, $2, 'worker', $3)",
+            vec![workspace.into(), format!("ws-{workspace}").into(), user.into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO projects (id, workspace_id, key, name, created_by) VALUES ($1, $2, 'WKR', 'worker', $3)",
+            vec![project.into(), workspace.into(), user.into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status, max_attempts) \
+             VALUES ($1, $2, $3, 'issue_assigned', 'pending', 3)",
+            vec![task.into(), project.into(), bot.into()],
+        )
+        .await;
+        task
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct Count {
+        n: i64,
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct Body {
+        body: String,
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct PickedTask {
+        lease_secs: f64,
+        phase_is_null: bool,
+        attempt_fields_are_null: bool,
+    }
+
+    async fn events(db: &DatabaseConnection, task: Uuid, event_type: &str) -> i64 {
+        Count::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT COUNT(*)::bigint AS n FROM ai_task_events WHERE task_id = $1 AND event_type = $2",
+            vec![task.into(), event_type.to_string().into()],
+        ))
+        .one(db)
+        .await
+        .expect("count query runs")
+        .map_or(0, |row| row.n)
+    }
+
+    #[tokio::test]
+    async fn pick_up_starts_the_lease_clears_the_phase_and_returns_the_key() {
+        let scratch = scratch_or_skip!("pickup_lease");
+        let db = &scratch.db;
+        let task_id = seed_pending_task(db).await;
+        // A re-queued task carries what its earlier attempt acknowledged and reported.
+        exec(
+            db,
+            "UPDATE ai_tasks SET runner_phase = 'pushed', plan = 'old plan', acknowledged_at = now(), \
+             last_progress_at = now() WHERE id = $1",
+            vec![task_id.into()],
+        )
+        .await;
+
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let [first] = picked.as_slice() else {
+            panic!("exactly one task is picked up, got {}", picked.len());
+        };
+        assert_eq!(first.project_key, "WKR");
+        assert_eq!(first.attempts, 1);
+
+        let lease = PickedTask::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT EXTRACT(EPOCH FROM (lease_expires_at - started_at))::float8 AS lease_secs, \
+                    (runner_phase IS NULL) AS phase_is_null, \
+                    (plan IS NULL AND acknowledged_at IS NULL AND last_progress_at IS NULL) AS attempt_fields_are_null \
+             FROM ai_tasks WHERE id = $1",
+            vec![task_id.into()],
+        ))
+        .one(db)
+        .await
+        .expect("lease query runs")
+        .expect("task exists");
+        assert!((lease.lease_secs - 3_600.0).abs() < 1.0, "lease {}", lease.lease_secs);
+        assert!(lease.phase_is_null);
+        assert!(
+            lease.attempt_fields_are_null,
+            "a new attempt starts without the previous attempt's plan and progress"
+        );
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn delivered_is_written_only_for_an_accepting_answer() {
+        let scratch = scratch_or_skip!("delivered_event");
+        let db = &scratch.db;
+        let state = state_for(db.clone());
+
+        let accepted = seed_pending_task(db).await;
+        let declined = seed_pending_task(db).await;
+        let transient = seed_pending_task(db).await;
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        assert_eq!(picked.len(), 3);
+        let row = |id: Uuid| picked.iter().find(|task| task.id == id).expect("picked");
+
+        settle_delivery(&state, row(accepted), DeliveryVerdict::Accepted)
+            .await
+            .expect("accepted settles");
+        settle_delivery(&state, row(declined), DeliveryVerdict::Declined("no agent".to_string()))
+            .await
+            .expect("declined settles");
+        settle_delivery(&state, row(transient), DeliveryVerdict::Transient("503".to_string()))
+            .await
+            .expect("transient settles");
+
+        assert_eq!(events(db, accepted, "delivered").await, 1);
+        assert_eq!(events(db, declined, "delivered").await, 0);
+        assert_eq!(events(db, transient, "delivered").await, 0);
+        scratch.drop_self().await;
+    }
+
+    /// A runner that refuses a task at delivery leaves a comment where the assigner works, for a
+    /// project whose execution settings are enabled.
+    #[tokio::test]
+    async fn a_declined_delivery_is_reported_on_the_issue_of_an_enabled_project() {
+        let scratch = scratch_or_skip!("declined_comment");
+        let db = &scratch.db;
+        let state = state_for(db.clone());
+        let enabled = seed_pending_task(db).await;
+        let plain = seed_pending_task(db).await;
+        for (task, with_settings) in [(enabled, true), (plain, false)] {
+            let issue = Uuid::new_v4();
+            exec(
+                db,
+                "INSERT INTO work_items (id, project_id, title, state, sequence_number, created_by) \
+                 SELECT $1, t.project_id, 'Issue', 'todo', 1, p.created_by FROM ai_tasks t \
+                 INNER JOIN projects p ON p.id = t.project_id WHERE t.id = $2",
+                vec![issue.into(), task.into()],
+            )
+            .await;
+            exec(
+                db,
+                "UPDATE ai_tasks SET task_type = 'issue_assigned', reference_type = 'work_item', reference_id = $2, \
+                 payload = jsonb_build_object('issue_id', $2::text) WHERE id = $1",
+                vec![task.into(), issue.into()],
+            )
+            .await;
+            if with_settings {
+                exec(
+                    db,
+                    "INSERT INTO project_execution_settings (project_id, working_directory, enabled) \
+                     SELECT project_id, '/work/a', true FROM ai_tasks WHERE id = $1",
+                    vec![task.into()],
+                )
+                .await;
+            }
+        }
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        for task in [enabled, plain] {
+            let row = picked.iter().find(|row| row.id == task).expect("picked");
+            settle_delivery(
+                &state,
+                row,
+                DeliveryVerdict::Declined("the working directory is outside the allowed roots".to_string()),
+            )
+            .await
+            .expect("declined settles");
+        }
+
+        let comments = |task: Uuid| {
+            Body::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT c.body FROM comments c INNER JOIN ai_tasks t ON t.reference_id = c.work_item_id WHERE t.id = $1",
+                vec![task.into()],
+            ))
+            .all(db)
+        };
+        let enabled_comments = comments(enabled).await.expect("comments load");
+        assert_eq!(enabled_comments.len(), 1);
+        assert_eq!(
+            enabled_comments.first().map(|row| row.body.as_str()),
+            Some("Could not start: the working directory is outside the allowed roots")
+        );
+        assert!(comments(plain).await.expect("comments load").is_empty());
+        scratch.drop_self().await;
     }
 }

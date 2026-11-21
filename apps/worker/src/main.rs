@@ -118,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
         // Attempts nobody ended within the processing timeout are taken back first: re-queued
         // tasks are picked up again once their retry delay has passed, exhausted ones are failed.
         // `FOR UPDATE SKIP LOCKED` makes this safe to run from several worker replicas at once.
-        match ai_tasks::end_stalled_tasks(&state, ai_task_processing_timeout_secs, args.concurrency).await {
+        match ai_tasks::end_stalled_tasks(&state, args.concurrency).await {
             Ok(0) => {}
             Ok(ended) => tracing::info!(ended, "stalled AI task attempts ended"),
             Err(err) => tracing::warn!(error = %err, "stalled AI task sweep failed"),
@@ -129,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("worker shutting down");
                 break;
             }
-            result = ai_tasks::process_pending_tasks(&state, &client, args.concurrency) => {
+            result = ai_tasks::process_pending_tasks(&state, &client, args.concurrency, ai_task_processing_timeout_secs) => {
                 if let Err(err) = result {
                     tracing::warn!(error = %err, "task polling failed");
                 }

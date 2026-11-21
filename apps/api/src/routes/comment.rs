@@ -20,7 +20,10 @@ use crate::{
     error::{ApiError, localize_error, request_lang},
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
     response::{ApiResponse, PaginatedData},
-    services::ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
+    services::{
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
+        comments::insert_comment,
+    },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
 };
 
@@ -235,24 +238,11 @@ pub async fn create_comment(
     // the comment is written.
     crate::oauth::delegated::refuse_agent_dispatch(&state.db, &mention_user_ids).await?;
 
-    let comment_id = Uuid::new_v4();
-    let now = platform::timestamp::Timestamp::now();
-
     let tx = state.db.begin().await?;
 
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO comments (id, work_item_id, author_id, body, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
-        vec![
-            comment_id.into(),
-            issue_id.into(),
-            user_id.into(),
-            content.clone().into(),
-            now.into(),
-            now.into(),
-        ],
-    ))
-    .await?;
+    let inserted = insert_comment(&tx, issue_id, user_id, &content).await?;
+    let comment_id = inserted.id;
+    let now = inserted.created_at;
 
     create_mention_notifications(
         &tx,

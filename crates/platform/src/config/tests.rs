@@ -230,6 +230,60 @@ fn ai_task_processing_timeout_is_bounded() {
     }
 }
 
+#[test]
+fn ai_task_lease_settings_default_and_are_bounded() {
+    let config = parse("").expect("an empty file is valid");
+    assert_eq!(config.ai_tasks.lease_extension_secs, 1_800);
+    assert_eq!(config.ai_tasks.max_processing_secs, 86_400);
+
+    for secs in [0, 59, 86_401] {
+        let reported = issues(&format!("[ai_tasks]\nlease_extension_secs = {secs}\n"));
+        assert!(
+            reported
+                .iter()
+                .any(|issue| issue.contains("ai_tasks.lease_extension_secs")),
+            "invalid lease extension {secs} was not rejected: {reported:?}"
+        );
+    }
+    for secs in [60, 86_400] {
+        let config = parse(&format!("[ai_tasks]\nlease_extension_secs = {secs}\n"))
+            .unwrap_or_else(|error| panic!("valid lease extension {secs} was rejected: {error}"));
+        assert_eq!(config.ai_tasks.lease_extension_secs, secs);
+    }
+
+    let reported = issues("[ai_tasks]\nmax_processing_secs = 604801\n");
+    assert!(
+        reported
+            .iter()
+            .any(|issue| issue.contains("ai_tasks.max_processing_secs")),
+        "{reported:?}"
+    );
+    for secs in [3_600, 604_800] {
+        let config = parse(&format!("[ai_tasks]\nmax_processing_secs = {secs}\n"))
+            .unwrap_or_else(|error| panic!("valid cap {secs} was rejected: {error}"));
+        assert_eq!(config.ai_tasks.max_processing_secs, secs);
+    }
+}
+
+#[test]
+fn ai_task_cap_below_the_timeout_names_both_keys() {
+    let reported = issues("[ai_tasks]\nprocessing_timeout_secs = 7200\nmax_processing_secs = 3600\n");
+    assert!(
+        reported.iter().any(|issue| {
+            issue.contains("ai_tasks.max_processing_secs") && issue.contains("ai_tasks.processing_timeout_secs")
+        }),
+        "{reported:?}"
+    );
+    let config = parse("[ai_tasks]\nprocessing_timeout_secs = 7200\nmax_processing_secs = 7200\n")
+        .expect("a cap equal to the timeout is valid");
+    assert_eq!(config.ai_tasks.max_processing_secs, 7_200);
+}
+
+#[test]
+fn an_unknown_ai_tasks_key_is_still_refused() {
+    assert!(parse("[ai_tasks]\nlease_extension = 60\n").is_err());
+}
+
 // ---- one error report for every problem ----
 
 #[test]

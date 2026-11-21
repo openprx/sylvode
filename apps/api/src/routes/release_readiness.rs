@@ -255,7 +255,7 @@ async fn count_pending_ai_tasks(state: &AppState, project_id: Uuid) -> Result<i6
             SELECT COUNT(*)::bigint AS count
             FROM ai_tasks
             WHERE project_id = $1
-              AND status IN ('pending', 'processing', 'retried')
+              AND status IN ('pending', 'processing', 'acknowledged', 'retried')
         ",
         vec![project_id.into()],
     )

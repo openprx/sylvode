@@ -93,13 +93,30 @@ pub const DEFAULT_OPERATION_LOG_RETENTION_DAYS: u32 = 30;
 
 /// Seconds an AI task may stay `processing` before the worker ends that attempt.
 ///
-/// Applies unless `[ai_tasks]` overrides it. Four times the receiver's default agent run limit
-/// (`sylvode-webhook` `cli.timeout_secs = 900`), so a run that is merely slow, or waits for a free
+/// Applies unless `[ai_tasks]` overrides it. Four times the runner's default agent run limit
+/// (`sylvode-runner` `cli.timeout_secs = 900`), so a run that is merely slow, or waits for a free
 /// executor slot, is not delivered a second time.
 pub const DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS: u64 = 3_600;
 
 /// Accepted range of `ai_tasks.processing_timeout_secs`: one minute to seven days.
 pub const AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS: std::ops::RangeInclusive<u64> = 60..=604_800;
+
+/// Seconds each acknowledge, progress report or runner heartbeat extends an active task's lease.
+///
+/// Applies unless `[ai_tasks]` overrides it.
+pub const DEFAULT_AI_TASK_LEASE_EXTENSION_SECS: u64 = 1_800;
+
+/// Accepted range of `ai_tasks.lease_extension_secs`: one minute to one day.
+pub const AI_TASK_LEASE_EXTENSION_RANGE_SECS: std::ops::RangeInclusive<u64> = 60..=86_400;
+
+/// Hard cap, in seconds from `started_at`, beyond which no heartbeat extends a task's lease.
+///
+/// Applies unless `[ai_tasks]` overrides it.
+pub const DEFAULT_AI_TASK_MAX_PROCESSING_SECS: u64 = 86_400;
+
+/// Largest accepted `ai_tasks.max_processing_secs`: seven days. The smallest accepted value is the
+/// configured `processing_timeout_secs`.
+pub const AI_TASK_MAX_PROCESSING_CEILING_SECS: u64 = 604_800;
 
 /// `event_dispatch` expansion-failure retry ceiling assumed unless `[flow]` overrides it.
 ///
@@ -514,15 +531,23 @@ impl Default for AuditConfig {
 /// `processing_timeout_secs` bounds how long a delivered task may stay `processing` without the
 /// receiver completing or failing it. After that the worker ends the attempt: the task goes back
 /// to `pending` while attempts remain and is failed otherwise.
+///
+/// `lease_extension_secs` is how far an acknowledge, a progress report or a runner heartbeat moves
+/// the lease of an active task; `max_processing_secs` is the hard cap from `started_at` that no
+/// extension passes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AiTasksConfig {
     pub processing_timeout_secs: u64,
+    pub lease_extension_secs: u64,
+    pub max_processing_secs: u64,
 }
 
 impl Default for AiTasksConfig {
     fn default() -> Self {
         Self {
             processing_timeout_secs: DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS,
+            lease_extension_secs: DEFAULT_AI_TASK_LEASE_EXTENSION_SECS,
+            max_processing_secs: DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
         }
     }
 }

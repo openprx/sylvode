@@ -1027,6 +1027,15 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
             ),
         )
         .route(
+            "/api/v1/projects/{project_id}/execution-settings",
+            get(routes::project_execution::get_execution_settings)
+                .put(routes::project_execution::put_execution_settings)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
             "/api/v1/projects/{project_id}/release-readiness",
             get(routes::release_readiness::get_project_release_readiness).route_layer(
                 axum_middleware::from_fn_with_state(
@@ -1107,6 +1116,68 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                     auth_state.clone(),
                     middleware::bot_auth::bot_or_user_auth_middleware,
                 )),
+        )
+        .route(
+            "/api/v1/ai/protocol",
+            get(routes::ai_task_protocol::get_protocol).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/active",
+            get(routes::ai_task_protocol::list_active_tasks).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}",
+            get(routes::ai_task_protocol::get_task).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/ack",
+            post(routes::ai_task_protocol::ack_task).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/progress",
+            post(routes::ai_task_protocol::report_task_progress).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
+        .route(
+            "/api/v1/issues/{issue_id}/ai-tasks",
+            get(routes::ai_callback::list_issue_ai_tasks).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/complete",
+            post(routes::ai_task_protocol::complete_task_with_reply).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/fail",
+            post(routes::ai_task_protocol::fail_task_with_reply).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
         )
         .route(
             "/api/v1/ai/callbacks/task/{task_id}/complete",
@@ -3675,6 +3746,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../../../migrations/0109_oauth_authorization_server.sql"),
     ),
     (
+        "0110_runner_task_protocol.sql",
+        include_str!("../../../migrations/0110_runner_task_protocol.sql"),
+    ),
+    (
         "0111_alert_chain.sql",
         include_str!("../../../migrations/0111_alert_chain.sql"),
     ),
@@ -4232,6 +4307,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0109_oauth_authorization_server.sql",
         SchemaProbe::Relation("oauth_grants"),
+    ),
+    (
+        "0110_runner_task_protocol.sql",
+        SchemaProbe::Relation("project_execution_settings"),
     ),
     ("0111_alert_chain.sql", SchemaProbe::Relation("inbound_events")),
 ];
@@ -4797,6 +4876,7 @@ mod tests {
                 "0107_flow_block_registration_progress.sql",
                 "0108_flow_block_checkpoint_digest.sql",
                 "0109_oauth_authorization_server.sql",
+                "0110_runner_task_protocol.sql",
                 "0111_alert_chain.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"

@@ -23,6 +23,7 @@ use crate::{
     services::governance_audit_service::{GovernanceAuditLogInput, write_governance_audit_log},
     services::impact_review_service::ImpactReviewService,
     services::permission_service::PermissionService,
+    services::proposals::{VoteActor, cast_vote},
     services::trust_score_service::{
         TrustScoreService, is_project_member, normalize_domain_key, parse_domains, parse_participant_type,
     },
@@ -284,7 +285,7 @@ fn validate_cycle_template(value: &str) -> bool {
     matches!(value, "rapid" | "fast" | "standard" | "critical")
 }
 
-fn validate_vote_choice(value: &str) -> bool {
+pub(crate) fn validate_vote_choice(value: &str) -> bool {
     matches!(value, "yes" | "no" | "abstain")
 }
 
@@ -549,7 +550,7 @@ async fn resolve_new_proposal_workspace(
 
 /// Loads a proposal without considering who is asking. Only for callers that are not a request:
 /// the worker settlement tick and the internal helpers it drives.
-async fn find_proposal(state: &AppState, proposal_id: &str) -> Result<ProposalRow, ApiError> {
+pub(crate) async fn find_proposal(state: &AppState, proposal_id: &str) -> Result<ProposalRow, ApiError> {
     for lookup_id in proposal_lookup_candidates(proposal_id) {
         if let Some(proposal) = ProposalRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -584,6 +585,13 @@ async fn find_proposal_for_caller(
 }
 
 async fn proposal_tally(state: &AppState, proposal_id: &str) -> Result<VoteTally, ApiError> {
+    proposal_tally_with_conn(&state.db, proposal_id).await
+}
+
+pub(crate) async fn proposal_tally_with_conn<C: ConnectionTrait>(
+    db: &C,
+    proposal_id: &str,
+) -> Result<VoteTally, ApiError> {
     let tally = TallyRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -596,7 +604,7 @@ async fn proposal_tally(state: &AppState, proposal_id: &str) -> Result<VoteTally
         ",
         vec![proposal_id.into()],
     ))
-    .one(&state.db)
+    .one(db)
     .await?
     .unwrap_or(TallyRow {
         yes: Some(0),
@@ -667,7 +675,7 @@ fn voting_window_elapsed(proposal: &ProposalRow) -> bool {
 ///
 /// Without this the removal of the read-path finalization would open a window between the
 /// deadline and the next worker tick in which votes could still be cast or withdrawn.
-fn ensure_voting_window_open(proposal: &ProposalRow) -> Result<(), ApiError> {
+pub(crate) fn ensure_voting_window_open(proposal: &ProposalRow) -> Result<(), ApiError> {
     if voting_window_elapsed(proposal) {
         return Err(ApiError::BadRequest(
             "voting period has ended and the result is being finalized".to_string(),
@@ -941,7 +949,7 @@ pub async fn governance_tick(state: &AppState) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn resolve_project_id_for_proposal(
+pub(crate) async fn resolve_project_id_for_proposal(
     state: &AppState,
     proposal_id: &str,
     author_id: &str,
@@ -949,7 +957,10 @@ async fn resolve_project_id_for_proposal(
     resolve_project_id_for_proposal_with_conn(&state.db, proposal_id, author_id).await
 }
 
-async fn resolve_workspace_id_for_project(state: &AppState, project_id: Uuid) -> Result<Option<Uuid>, ApiError> {
+pub(crate) async fn resolve_workspace_id_for_project(
+    state: &AppState,
+    project_id: Uuid,
+) -> Result<Option<Uuid>, ApiError> {
     #[derive(Debug, FromQueryResult)]
     struct WorkspaceRow {
         workspace_id: Uuid,
@@ -966,7 +977,7 @@ async fn resolve_workspace_id_for_project(state: &AppState, project_id: Uuid) ->
     Ok(row.map(|v| v.workspace_id))
 }
 
-async fn resolve_project_id_for_proposal_with_conn<C: ConnectionTrait>(
+pub(crate) async fn resolve_project_id_for_proposal_with_conn<C: ConnectionTrait>(
     db: &C,
     proposal_id: &str,
     author_id: &str,
@@ -1053,7 +1064,7 @@ async fn resolve_project_id_for_proposal_with_conn<C: ConnectionTrait>(
     }
 }
 
-async fn resolve_vote_weight_for_proposal(
+pub(crate) async fn resolve_vote_weight_for_proposal(
     state: &AppState,
     proposal_id: &str,
     voter_id: &str,
@@ -1108,7 +1119,7 @@ fn normalize_proposal_domains(domains: &[String]) -> Vec<String> {
     out
 }
 
-fn primary_domain_for_proposal(proposal: &ProposalRow) -> String {
+pub(crate) fn primary_domain_for_proposal(proposal: &ProposalRow) -> String {
     parse_domains(&proposal.domains)
         .into_iter()
         .map(|d| normalize_domain_key(&d))
@@ -1303,13 +1314,39 @@ async fn write_proposal_audit_log(
     new_value: Option<Value>,
     metadata: Option<Value>,
 ) -> Result<(), ApiError> {
-    let project_id = resolve_project_id_for_proposal(state, &proposal.id, &proposal.author_id).await?;
+    write_proposal_audit_log_with_conn(
+        &state.db,
+        proposal,
+        actor_id,
+        action,
+        resource_type,
+        resource_id,
+        old_value,
+        new_value,
+        metadata,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn write_proposal_audit_log_with_conn<C: ConnectionTrait>(
+    db: &C,
+    proposal: &ProposalRow,
+    actor_id: Uuid,
+    action: &str,
+    resource_type: &str,
+    resource_id: Option<String>,
+    old_value: Option<Value>,
+    new_value: Option<Value>,
+    metadata: Option<Value>,
+) -> Result<(), ApiError> {
+    let project_id = resolve_project_id_for_proposal_with_conn(db, &proposal.id, &proposal.author_id).await?;
     let Some(project_id) = project_id else {
         return Ok(());
     };
 
     write_governance_audit_log(
-        &state.db,
+        db,
         GovernanceAuditLogInput {
             project_id,
             actor_id: Some(actor_id),
@@ -2150,158 +2187,29 @@ pub async fn create_vote(
     let actor = build_actor_context(&state, &claims).await?;
     let proposal = find_proposal_for_caller(&state, &claims, &id).await?;
 
-    if proposal.status != "voting" {
-        return Err(ApiError::BadRequest("proposal is not in voting status".to_string()));
-    }
-    ensure_voting_window_open(&proposal)?;
-
-    let choice = req.choice.trim().to_lowercase();
-    if !validate_vote_choice(&choice) {
-        return Err(ApiError::BadRequest("invalid vote choice".to_string()));
-    }
-
-    if actor.author_type == "ai" {
-        let project_id = resolve_project_id_for_proposal(&state, &id, &proposal.author_id).await?;
-        let Some(project_id) = project_id else {
-            return Err(ApiError::Forbidden("ai voting requires project context".to_string()));
-        };
-
-        let domain = primary_domain_for_proposal(&proposal);
-        let permission = PermissionService::new(state.db.clone());
-        let can_vote = permission
-            .can_vote(actor.user_id, project_id, &domain, ParticipantType::Ai)
-            .await?;
-        if !can_vote {
-            return Err(ApiError::Forbidden(
-                "ai participant has no voting permission in this domain".to_string(),
-            ));
-        }
-
-        let min_reason = permission
-            .ai_reason_min_length(actor.user_id, project_id)
-            .await?
-            .unwrap_or(50)
-            .max(0);
-        let min_reason = usize::try_from(min_reason).map_err(|_| ApiError::Internal)?;
-
-        let reason_len = req
-            .reason
-            .as_deref()
-            .map(str::trim)
-            .map(str::chars)
-            .map_or(0, Iterator::count);
-        if reason_len < min_reason {
-            return Err(ApiError::BadRequest(format!(
-                "reason is required for AI vote and must be at least {min_reason} characters"
-            )));
-        }
-    }
-
-    let now = Timestamp::now();
-    let reason = req.reason.map(|value| value.trim().to_string());
-    let weight = resolve_vote_weight_for_proposal(&state, &id, &actor.user_id_str, actor.author_type).await?;
-
-    let res = state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"
-                INSERT INTO votes (proposal_id, voter_id, voter_type, choice, weight, reason, voted_at)
-                VALUES ($1, $2, $3::author_type, $4::vote_choice, $5, $6, $7)
-            ",
-            vec![
-                id.clone().into(),
-                actor.user_id_str.clone().into(),
-                actor.author_type.into(),
-                choice.clone().into(),
-                weight.into(),
-                reason.into(),
-                now.into(),
-            ],
-        ))
-        .await;
-
-    if let Err(err) = res {
-        let message = err.to_string();
-        if message.contains("uq_votes_proposal_voter") {
-            return Err(ApiError::Conflict(
-                "you have already voted on this proposal".to_string(),
-            ));
-        }
-        return Err(ApiError::Database(err));
-    }
-
-    let vote_row = VoteRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            SELECT id, proposal_id, voter_id, voter_type::text AS voter_type,
-                   choice::text AS choice, weight, reason, voted_at
-            FROM votes
-            WHERE proposal_id = $1 AND voter_id = $2
-        ",
-        vec![id.clone().into(), actor.user_id_str.into()],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::Internal)?;
-
-    let tally = proposal_tally(&state, &id).await?;
-
-    write_proposal_audit_log(
+    let txn = state.db.begin().await?;
+    let cast = cast_vote(
         &state,
+        &txn,
+        &VoteActor {
+            user_id: actor.user_id,
+            author_type: actor.author_type,
+        },
         &proposal,
-        actor.user_id,
-        "vote.created",
-        "vote",
-        Some(vote_row.id.to_string()),
-        None,
-        Some(json!({
-            "proposal_id": id,
-            "voter_id": vote_row.voter_id,
-            "choice": choice,
-            "weight": vote_row.weight,
-        })),
-        None,
+        &req.choice,
+        req.reason.as_deref(),
     )
     .await?;
-
-    if let Some(project_id) = resolve_project_id_for_proposal(&state, &proposal.id, &proposal.author_id).await?
-        && let Some(workspace_id) = resolve_workspace_id_for_project(&state, project_id).await?
-    {
-        trigger_webhooks(
-            state.clone(),
-            TriggerContext {
-                event: WebhookEvent::ProposalVoteCast,
-                workspace_id,
-                project_id,
-                actor_id: actor.user_id,
-                issue_id: None,
-                comment_id: None,
-                label_id: None,
-                sprint_id: None,
-                changes: None,
-                mentions: Vec::new(),
-                extra_data: Some(json!({
-                    "proposal_id": vote_row.proposal_id,
-                    "vote": {
-                        "id": vote_row.id,
-                        "voter_id": vote_row.voter_id,
-                        "choice": vote_row.choice,
-                        "weight": vote_row.weight,
-                        "reason": vote_row.reason,
-                        "voted_at": vote_row.voted_at.to_rfc3339(),
-                    },
-                    "tally": tally,
-                })),
-            },
-        );
+    txn.commit().await?;
+    if let Some(trigger) = cast.trigger {
+        trigger_webhooks(state.clone(), trigger);
     }
 
     Ok(ApiResponse::success(json!({
-        "vote_id": vote_row.id,
-        "weight": vote_row.weight,
-        "voted_at": vote_row.voted_at.to_rfc3339(),
-        "current_tally": tally
+        "vote_id": cast.vote.id,
+        "weight": cast.vote.weight,
+        "voted_at": cast.vote.voted_at.to_rfc3339(),
+        "current_tally": cast.tally
     })))
 }
 
