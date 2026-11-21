@@ -13,6 +13,22 @@
 //! that head disagrees with the worker's report. Both the workspace import
 //! ([`super::package_import`]) and the personal-scope import ([`super::scope_import`]) validate
 //! through this module, outside of any database transaction.
+//!
+//! # Every way content enters a Flow document
+//!
+//! Metered by the isolated worker before it becomes a base: collab updates (write window), REST
+//! content commands, plugin and bot writes (the same write window), page transfers between
+//! workspaces (built from the server's own documents, applied through `hydrate_and_apply`), restore
+//! (the inverse of accepted history, applied through `hydrate_and_apply`), scope import and
+//! workspace package import (the import window of this module). Not decoded from client bytes at
+//! all: the portable page package (the server rebuilds the page from validated JSON blocks), the
+//! portable graph package (it rebuilds each version from JSON blocks; its replay is bounded by
+//! `portable_graph_package::MAX_REPLAY_MARK_EDITS`), server-built documents (records, collections,
+//! scopes, page creation), snapshot and compaction (re-export of accepted heads), export (reads this
+//! server's own storage), the projection rebuild and the other maintenance reads (this server's
+//! own storage), and the legacy page import (`flow_import_jobs.kind = 'legacy_pages'`: the kind
+//! exists in the schema but no code path writes it). The bytes of the last group only ever come
+//! from this server's own storage, so nothing there is metered by the import window.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use collab_core::isolation::wire::{ReplayDiffRequest, ReplayDiffResult};
