@@ -114,7 +114,7 @@ reached **directly**, not through the UI proxy: the proxy forwards only the one 
 document and not the JSON-RPC posts.
 
 For A20's bot-token script: create a workspace bot in W as the administrator
-(`POST /api/v1/workspaces/<W>/bots` returns its `opr_` token once) and export it as
+(`POST /api/v1/workspaces/<W>/bots` with `"transport_surface": "mcp_http"` returns its `opr_` token once; a token bound to the default REST transport is refused by the API with "bot credential is not valid for the presented transport" when it arrives through the MCP server) and export it as
 `OAUTH_E2E_OPR_BOT_TOKEN`. The script also needs `python3` (3.11 or later) and `curl`.
 
 ## 5. The local web proxy (`scripts/lib/e2e-web-proxy.ts`, run with Bun)
