@@ -3670,6 +3670,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0109_oauth_authorization_server.sql",
         include_str!("../../../migrations/0109_oauth_authorization_server.sql"),
     ),
+    (
+        "0110_runner_task_protocol.sql",
+        include_str!("../../../migrations/0110_runner_task_protocol.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4224,6 +4228,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0109_oauth_authorization_server.sql",
         SchemaProbe::Relation("oauth_grants"),
+    ),
+    (
+        "0110_runner_task_protocol.sql",
+        SchemaProbe::Relation("project_execution_settings"),
     ),
 ];
 
@@ -4788,6 +4796,7 @@ mod tests {
                 "0107_flow_block_registration_progress.sql",
                 "0108_flow_block_checkpoint_digest.sql",
                 "0109_oauth_authorization_server.sql",
+                "0110_runner_task_protocol.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );

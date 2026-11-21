@@ -1,0 +1,73 @@
+# Runner task protocol
+
+Operating notes for migration `0110_runner_task_protocol.sql` and the settings that go with it.
+
+## What migration 0110 adds
+
+- Table `project_execution_settings`: one optional row per project (enabled flag, channel, CLI,
+  working directory on the runner machine, what happens to the issue on completion, an optional
+  failure label, approval gate, a version for compare-and-set writes). Its checks mirror the API
+  validation: absolute path of 2 to 1024 bytes without control characters, `.` or `..` segments or
+  `//`; channel `tmux` or `headless`; CLI `claude`, `codex` or `opencode`; approval gate `none`.
+- Five nullable columns on `ai_tasks`: `acknowledged_at`, `plan`, `last_progress_at`,
+  `lease_expires_at`, `runner_phase`. No defaults, so no rewrite.
+- Two checks on `ai_tasks`, added `NOT VALID` so a historical value cannot fail the migration:
+  `ai_tasks_status_check` (`pending`, `processing`, `acknowledged`, `completed`, `failed`,
+  `cancelled`, `retried`) and `ai_tasks_runner_phase_check` (`queued`, `pushed`, `blocked`). They
+  apply to every new or updated row.
+- Two partial indexes over the active statuses: `idx_ai_tasks_active_lease` and
+  `idx_ai_tasks_participant_active`.
+
+Existing `processing` rows are not touched. A task with no lease behaves exactly as before: the
+worker sweep falls back to `started_at` plus `[ai_tasks] processing_timeout_secs`.
+
+## Locks
+
+The file runs in one transaction under `SET LOCAL lock_timeout = '10s'`. `ALTER TABLE ai_tasks`
+takes `ACCESS EXCLUSIVE` for catalogue work only (nullable columns, `NOT VALID` checks), so it is
+a few milliseconds when the table is idle. Behind a long transaction that already holds the table
+the migration fails after ten seconds without any effect, and the next start retries it. Index
+creation is not concurrent; the table is small. Running the file again changes nothing.
+
+## Configuration
+
+`[ai_tasks]` gains two keys:
+
+| Key | Default | Range |
+|---|---|---|
+| `lease_extension_secs` | 1800 | 60..=86400 |
+| `max_processing_secs` | 86400 | `processing_timeout_secs`..=604800 |
+
+`max_processing_secs` must not be below `processing_timeout_secs`; the error names both keys.
+Both the API and the worker read them from the same file.
+
+## Rolling back
+
+Rolling back is manual and never run by the server. Stop the runner and the worker first, then run
+the statements in this order:
+
+```sql
+DROP INDEX IF EXISTS idx_ai_tasks_participant_active;
+DROP INDEX IF EXISTS idx_ai_tasks_active_lease;
+ALTER TABLE ai_tasks DROP CONSTRAINT IF EXISTS ai_tasks_status_check;
+ALTER TABLE ai_tasks DROP CONSTRAINT IF EXISTS ai_tasks_runner_phase_check;
+UPDATE ai_tasks SET status = 'processing' WHERE status = 'acknowledged';
+ALTER TABLE ai_tasks DROP COLUMN IF EXISTS runner_phase, DROP COLUMN IF EXISTS lease_expires_at,
+  DROP COLUMN IF EXISTS last_progress_at, DROP COLUMN IF EXISTS plan, DROP COLUMN IF EXISTS acknowledged_at;
+DROP TABLE IF EXISTS project_execution_settings;
+```
+
+Then remove the migration's row from `schema_migrations` (name
+`0110_runner_task_protocol.sql`); otherwise the migration runner reports the missing objects at the
+next start. Execution settings are lost with the table: export them first if they are needed
+(`SELECT * FROM project_execution_settings`).
+
+## Renumbering the migration
+
+If another migration takes `0110` first, rename the file to the next free number and change the
+three places that name it in `apps/api/src/main.rs`: the embedded list (`include_str!` path and
+name), the schema probe table (`SchemaProbe::Relation("project_execution_settings")`), and the
+list in the replay-safety test. Keep the numeric order in all three lists. A database that already
+recorded the old name has the objects but no row under the new one: the probe finds the table, the
+runner adopts it, and because the file is idempotent re-running it is harmless. Do not edit an
+applied file for any other reason: the ledger stores a checksum.

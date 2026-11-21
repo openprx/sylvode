@@ -21,7 +21,7 @@
     "storage": ["backend", "dir", "s3"],
     "storage.s3": ["endpoint", "bucket", "region", "access_key_id", "secret_access_key", "session_token"],
     "audit": ["operation_log_retention_days"],
-    "ai_tasks": ["processing_timeout_secs"],
+    "ai_tasks": ["processing_timeout_secs", "lease_extension_secs", "max_processing_secs"],
     "migrations": ["replay", "continue_on_error"],
     "outbound": ["allowed_hosts", "allow_private"],
     "mcp": [

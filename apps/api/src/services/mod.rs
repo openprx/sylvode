@@ -8,3 +8,6 @@ pub mod teardown;
 pub mod trust_score_service;
 pub mod veto_service;
 pub mod workflow_service;
+
+#[cfg(test)]
+mod runner_protocol_migration_tests;
