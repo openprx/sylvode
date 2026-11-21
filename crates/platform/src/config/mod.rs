@@ -133,9 +133,10 @@ pub const DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS: u64 = 60;
 pub const DEFAULT_FLOW_BODY_ASSET_MAX_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_FLOW_BODY_ASSET_BYTES: u64 = DEFAULT_FLOW_BODY_ASSET_MAX_BYTES;
 
-/// CPU milliseconds the isolated worker's unmetered setup may consume before it yields no base
-/// facts (`[flow] setup_cpu_budget_ms`), assumed unless `[flow]` overrides it. The setup's own wall
-/// timeout is 5 s, so the budget leaves room for the load and for one text over it.
+/// CPU milliseconds the isolated worker's unmetered setup may consume before it yields no base facts.
+///
+/// Assumed unless `[flow] setup_cpu_budget_ms` overrides it. The setup's own wall timeout is 5 s, so
+/// the budget leaves room for the load and for one text over it.
 pub const DEFAULT_FLOW_SETUP_CPU_BUDGET_MS: u64 = 2_500;
 
 /// Lower bound accepted for `flow.setup_cpu_budget_ms`: below it even honest pages would lose the
@@ -602,8 +603,8 @@ pub struct FlowConfig {
     /// input, except that an update whose tree ops name a parent that does not exist is refused
     /// with either setting (`collab_core::tree_refs`).
     pub incremental_window: bool,
-    /// CPU budget of the worker's setup, in milliseconds; validated to
-    /// [`MIN_FLOW_SETUP_CPU_BUDGET_MS`]`..=`[`MAX_FLOW_SETUP_CPU_BUDGET_MS`].
+    /// CPU budget of the worker's setup, in milliseconds; validated to the range from
+    /// [`MIN_FLOW_SETUP_CPU_BUDGET_MS`] to [`MAX_FLOW_SETUP_CPU_BUDGET_MS`], both included.
     pub setup_cpu_budget_ms: u64,
 }
 
