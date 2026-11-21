@@ -362,17 +362,14 @@ impl LoroCollabEngine {
     /// [`Self::rebuild_id_cache`] for a strictly sequential import
     /// ([`crate::window_check::OpSummary::strictly_sequential`]) whose ops are known: `created`
     /// holds every tree node that the imported ops created. Such an import adds no node that no op
-    /// of it names (see the module documentation of `window_check`), so the nodes the full rebuild
-    /// would visit are the uncached ones, which a previous rebuild left without a `logical_id` and
-    /// an import can still give one, and the new ones. Cost: O(created + uncached) instead of
-    /// O(tree). Never used for any other import: the library can materialise nodes the base's
+    /// of it names (see the module documentation of `window_check`), and gives no existing node an
+    /// id without a write of its `logical_id` (which the check turns into a fallback), so the only
+    /// nodes to read are the new ones. Cost: O(created) instead of O(tree). Never used for any other import: the library can materialise nodes the base's
     /// history holds but its state dropped when an update is concurrent with the base.
     ///
-    /// Returns whether a node that was not created by this import got its id now (an existing
-    /// node that had none), or one of the created targets was a node the tree already held: the id
-    /// of an existing node is part of what its children and the projection key on, and an
-    /// existing node that a create "creates" again keeps its subtree, so the incremental check
-    /// does not model either.
+    /// Returns whether one of the created targets was a node the tree already held (or the full
+    /// rebuild decided instead, because two nodes claim one id): an existing node that a create
+    /// "creates" again keeps its subtree, which the incremental check does not model.
     ///
     /// The two caches together hold every node of the tree before the import, live or deleted,
     /// named or not: the load-time rebuild visits all of `LoroTree::nodes()`, which includes the
@@ -395,11 +392,14 @@ impl LoroCollabEngine {
             self.rebuild_id_cache()?;
             return Ok(true);
         }
-        let candidates: HashSet<TreeID> = self.uncached_tree_nodes.iter().chain(created).copied().collect();
+        // Only the created nodes are read. An uncached node (one a previous rebuild found without
+        // a `logical_id`) can gain an id only through a write of the `logical_id` key on its
+        // metadata map, and the window falls back on every such write (`IdRewritten`), after which
+        // `complete_id_cache` names it. Reading them here would make the window O(page).
         // Read first, change nothing: if two nodes would claim one id, the full rebuild decides,
         // since which of them the cache keeps depends on the order they are read in (tree order).
-        let mut reads: Vec<(TreeID, Option<NodeId>)> = Vec::with_capacity(candidates.len());
-        for tree_id in candidates {
+        let mut reads: Vec<(TreeID, Option<NodeId>)> = Vec::with_capacity(created_now.len());
+        for tree_id in created_now {
             if self.tree_to_id.contains_key(&tree_id) || !self.tree.contains(tree_id) {
                 continue;
             }
@@ -414,12 +414,10 @@ impl LoroCollabEngine {
             self.rebuild_id_cache()?;
             return Ok(true);
         }
-        let mut resolved_existing = false;
         for (tree_id, logical) in reads {
-            resolved_existing |= logical.is_some() && !created_now.contains(&tree_id);
             self.store_logical_id(tree_id, logical);
         }
-        Ok(resolved_existing)
+        Ok(false)
     }
 
     /// Reads one tree node's `logical_id` into the caches, or remembers that it has none yet.
@@ -431,6 +429,8 @@ impl LoroCollabEngine {
 
     /// A tree node's `logical_id`, if it has a readable one.
     fn read_logical_id(&self, tree_id: TreeID) -> Result<Option<NodeId>, CollabError> {
+        #[cfg(test)]
+        crate::walk_counter::record_id_read();
         let meta = self
             .tree
             .get_meta(tree_id)
@@ -1997,6 +1997,8 @@ mod window_fixtures;
 mod window_regression_tests;
 #[cfg(test)]
 mod window_round2_tests;
+#[cfg(test)]
+mod window_round3_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

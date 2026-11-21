@@ -225,10 +225,13 @@
 //! 16,000 items, which costs the full window at most about 6 ms there, 21 ms at 3.6 times that, well
 //! under 50 ms. See `crate::work` for the unit, the budget and the table.
 //!
-//! One exception to "one window does not grow with the page" remains and is the same on either path:
-//! tree nodes without a logical id are re-read by every id-cache rebuild that can still name them.
+//! The incremental window is O(the update): its id-cache rebuild reads the created nodes only (a
+//! node without a logical id gains one only through a write of the key, which falls back). The
+//! work-budget allowances are fungible across kinds of content, so the budget bounds the uncounted
+//! content at about `WORK_UNCOUNTED_ITEMS` plus whatever the live totals leave unspent, which is
+//! what the full path (setup, host projection) pays for, not the incremental window.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use loro::{
     Container, ContainerID, ContainerType, Index, JsonListOp, JsonMapOp, JsonOp, JsonOpContent, JsonTreeOp, TreeID,
@@ -557,27 +560,34 @@ impl OpSummary {
         }
         let mut order: Vec<&ChangeSpan> = self.changes.iter().collect();
         order.sort_by_key(|change| change.lamport);
-        // `(start, end, depends on the whole base)` of the changes seen so far, by peer.
-        let mut seen: HashMap<u64, Vec<(i32, i32, bool)>> = HashMap::new();
+        // The counter ranges `start -> end` of the changes seen so far, by peer. Every change seen
+        // depends on the whole base (the loop returns at the first one that does not), and the
+        // ranges of one peer do not overlap: a lookup is the last range that starts at or before the
+        // counter. A hostile overlap can only make the lookup miss, which is not sequential.
+        let mut seen: HashMap<u64, BTreeMap<i32, i32>> = HashMap::new();
         for change in order {
             if base.max_lamport.is_some_and(|highest| change.lamport <= highest) {
                 return false;
             }
-            let covers_frontier = base.frontier.iter().all(|head| change.deps.contains(head));
-            let through_import = change.deps.iter().any(|dep| {
-                dep.counter >= before_ops.get(&dep.peer).copied().unwrap_or(0)
-                    && seen
-                        .get(&dep.peer)
-                        .into_iter()
-                        .flatten()
-                        .any(|(start, end, full)| *full && (*start..*end).contains(&dep.counter))
-            });
+            let deps: HashSet<loro::ID> = change.deps.iter().copied().collect();
+            let covers_frontier = base.frontier.iter().all(|head| deps.contains(head));
+            let through_import = !covers_frontier
+                && change.deps.iter().any(|dep| {
+                    dep.counter >= before_ops.get(&dep.peer).copied().unwrap_or(0)
+                        && seen
+                            .get(&dep.peer)
+                            .and_then(|ranges| ranges.range(..=dep.counter).next_back())
+                            .is_some_and(|(_, end)| dep.counter < *end)
+                });
             if !covers_frontier && !through_import {
                 return false;
             }
-            seen.entry(change.peer)
+            let end = seen
+                .entry(change.peer)
                 .or_default()
-                .push((change.start, change.end, true));
+                .entry(change.start)
+                .or_insert(change.end);
+            *end = (*end).max(change.end);
         }
         true
     }
@@ -595,6 +605,12 @@ impl OpSummary {
             }
             ContainerID::Root { name, container_type } => self.visit_root(peer, op, name, *container_type),
             ContainerID::Normal { .. } if Some(&op.container) == root_list => self.visit_root_list(peer, op),
+            // An op on a tree that is not a root container: no part of the window's model needs
+            // it, and it can register a node's metadata map under it.
+            ContainerID::Normal {
+                container_type: ContainerType::Tree,
+                ..
+            } => self.seen.set(Seen::TREE_OTHER),
             ContainerID::Normal { .. } => {
                 if let JsonOpContent::Map(JsonMapOp::Insert { key, .. } | JsonMapOp::Delete { key }) = &op.content
                     && key == LOGICAL_ID_KEY
@@ -895,8 +911,14 @@ fn touched_units(engine: &LoroCollabEngine, summary: &OpSummary) -> Result<Touch
                 // legitimate path; anything else under `doc` is not modelled.
                 _ => return Err(FallbackReason::GlobalStructure),
             },
+            // Exactly one tree node on the path, and it is the engine node at position 1. A deeper
+            // `Index::Node` means the container belongs to a node whose metadata map is registered
+            // under a tree nested in another node's metadata: attributing it to the outer node
+            // would miss the node the projection reads it through.
             ENGINE_TREE => match path.get(1) {
-                Some((_, Index::Node(node))) => {
+                Some((_, Index::Node(node)))
+                    if !path.iter().skip(2).any(|(_, index)| matches!(index, Index::Node(_))) =>
+                {
                     touched.tree_nodes.insert(*node);
                 }
                 _ => return Err(FallbackReason::Unclassified),
@@ -1208,4 +1230,91 @@ pub fn compare_with_projection(report: &WindowReport, projection: &SemanticSnaps
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod gate_tests {
+    use std::time::{Duration, Instant};
+
+    use loro::{ID, VersionVector};
+
+    use super::{ChangeSpan, OpSummary};
+    use crate::facts::BaseVersion;
+
+    fn base(heads: i32) -> (BaseVersion, VersionVector) {
+        let mut vv = VersionVector::new();
+        let frontier: Vec<ID> = (0..i64::from(heads))
+            .map(|peer| {
+                vv.insert(peer as u64, 1);
+                ID::new(peer as u64, 0)
+            })
+            .collect();
+        (
+            BaseVersion {
+                oplog_vv: vv.clone(),
+                frontier,
+                max_lamport: Some(10),
+            },
+            vv,
+        )
+    }
+
+    fn summary(changes: Vec<ChangeSpan>) -> OpSummary {
+        OpSummary {
+            changes,
+            ..OpSummary::default()
+        }
+    }
+
+    /// R3-5: a change that depends on every one of 100,000 heads is decided in linear time (the
+    /// quadratic scan compared about 10^10 ids).
+    #[test]
+    fn a_change_that_depends_on_every_head_of_a_base_with_many_heads_is_cheap() {
+        let (version, vv) = base(100_000);
+        let deps = version.frontier.clone();
+        let sequential = summary(vec![ChangeSpan {
+            peer: 1_000_000,
+            start: 0,
+            end: 1,
+            lamport: 11,
+            deps,
+        }]);
+        let started = Instant::now();
+        assert!(sequential.strictly_sequential(&version, &vv));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    /// R3-5: 100,000 one-op changes of one peer, each depending on the previous one, are decided in
+    /// time that does not grow with the square of the changes.
+    #[test]
+    fn a_long_chain_of_changes_of_one_peer_is_cheap() {
+        let (version, vv) = base(1);
+        let first_dep = version.frontier.clone();
+        let changes: Vec<ChangeSpan> = (0..100_000)
+            .map(|counter| ChangeSpan {
+                peer: 1_000_000,
+                start: counter,
+                end: counter + 1,
+                lamport: 11 + counter as u32,
+                deps: if counter == 0 {
+                    first_dep.clone()
+                } else {
+                    vec![ID::new(1_000_000, counter - 1)]
+                },
+            })
+            .collect();
+        let chain = summary(changes);
+        let started = Instant::now();
+        assert!(chain.strictly_sequential(&version, &vv));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "{:?}",
+            started.elapsed()
+        );
+    }
 }

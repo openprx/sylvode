@@ -904,6 +904,7 @@ pub(super) fn round2_cases(scale: u64) -> Vec<Case> {
     cases.extend(deleted_metadata_cases(scale));
     cases.extend(cross_tree_cases(scale));
     cases.extend(growth_cases(scale));
+    cases.extend(super::window_round3_tests::round3_cases(scale));
     cases
 }
 
