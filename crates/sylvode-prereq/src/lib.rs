@@ -9,6 +9,19 @@
 //! only as labels unless the caller asks for them, and nothing a probed program prints is copied
 //! into it except a parsed version and protocol number.
 
+//!
+//! # Decisions where the design leaves a choice
+//!
+//! 1. `--headless-only` follows the severity table of section 7.11 (a missing selected CLI is
+//!    `fail`), not the installer text of section 7.10 that reads `warn`.
+//! 2. Cells the design does not give: a CLI nobody selected is never worse than `info`; a project
+//!    row is `fail` when its directory is missing or outside the allow-list and `warn` when it is
+//!    untrusted or its guide is stale or in conflict; an API probe that gets no answer is judged
+//!    like a protocol mismatch, with the reason in `detail.state`; `info` is a fourth status value
+//!    in the JSON and counts as `ok` in the summary.
+//! 3. A program that was written a moment ago can be reported busy by the operating system while
+//!    another thread forks; spawning is retried a few times in that case.
+
 pub mod component;
 pub mod probe;
 pub mod report;
