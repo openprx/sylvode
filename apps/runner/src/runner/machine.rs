@@ -382,6 +382,15 @@ impl<T: Task> Machine<T> {
         self.starting_dialog = None;
     }
 
+    /// The one Enter retry was not allowed to run (the screen or the person did not permit it):
+    /// nothing was pressed, and the session is reported blocked.
+    pub fn on_enter_refused(&mut self, now: Instant) -> Vec<Action<T>> {
+        if matches!(self.state, State::Pushing { .. }) {
+            return self.block(now);
+        }
+        Vec::new()
+    }
+
     /// A blocking dialog is on the screen.
     pub fn on_dialog(&mut self, dialog: Dialog, now: Instant) -> Vec<Action<T>> {
         let mut actions = Vec::new();

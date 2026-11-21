@@ -79,6 +79,17 @@ pub struct SessionRecord {
     /// The per-launch secret the session's hooks present (see `LaunchFiles::nonce`).
     #[serde(default)]
     pub nonce: String,
+    /// The task whose text was typed (or was about to be) into this session. Written and synced
+    /// BEFORE the paste, consulted by restart recovery only to prevent a second paste.
+    #[serde(default)]
+    pub pushed: Option<PushedTask>,
+}
+
+/// A task typed into a session.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PushedTask {
+    pub task_id: String,
+    pub attempt: i64,
 }
 
 /// What was written.
@@ -293,6 +304,22 @@ impl StateDir {
             Read_::Data { bytes, .. } => serde_json::from_slice(&bytes).ok(),
             _ => None,
         }
+    }
+
+    /// Records, durably, that `task_id` at `attempt` is about to be typed into session `key`.
+    ///
+    /// # Errors
+    ///
+    /// A message when there is no `session.json` or it cannot be written; the caller must then not
+    /// paste.
+    pub fn mark_pushed(&self, key: &SessionKey, pushed: Option<PushedTask>) -> Result<(), String> {
+        let record = self
+            .read_session_record(key)
+            .ok_or_else(|| "the session has no session.json".to_string())?;
+        if record.pushed == pushed {
+            return Ok(());
+        }
+        self.write_session_record(&SessionRecord { pushed, ..record })
     }
 
     /// Sets or clears the `headless` flag of an existing `session.json`.

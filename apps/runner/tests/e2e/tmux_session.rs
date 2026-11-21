@@ -506,8 +506,9 @@ async fn after_a_runner_restart_a_pushed_task_is_supervised_again_and_the_next_o
     assert!(first.wait_exit(Duration::from_secs(20)).is_some());
     // The session outlives the runner.
     assert!(fx.tmux.raw(&["has-session", "-t", "=SVWL"]).status.success());
-    // Sylvode still shows T1 as pushed and acknowledged; T2 is delivered after the restart.
-    let listed = fx.active_view(T1, Some("pushed"), true);
+    // Sylvode shows T1 acknowledged with a STALE phase (`queued`: the pushed report was lost or
+    // overtaken); T2 is delivered after the restart. T1 must not be typed a second time.
+    let listed = fx.active_view(T1, Some("queued"), true);
     fx.api.script(|s| s.active = vec![listed]);
     let second = fx.serve();
     // The restarted runner must not push anything while T1 is open.

@@ -1,4 +1,4 @@
-use super::detect::{Dialog, classify_dialog, cut_for_log, input_is_empty, screens_equal};
+use super::detect::{Dialog, classify_dialog, cut_for_log, input_is_empty, input_text, screens_equal};
 
 #[test]
 fn dialogs_are_recognised_by_the_verified_texts() {
@@ -86,4 +86,19 @@ fn logged_screens_are_cut() {
     assert_eq!(cut_for_log(&"x".repeat(1000)).len(), 400);
     assert_eq!(cut_for_log("short"), "short");
     assert_eq!(cut_for_log(&"é".repeat(500)).chars().count(), 400);
+}
+
+#[test]
+fn the_input_text_is_what_follows_the_last_prompt_glyph() {
+    assert_eq!(
+        input_text("claude", "out\n> [Sylvode task] id=1 attempt=1/3\nIssue: x\n").as_deref(),
+        Some("[Sylvode task] id=1 attempt=1/3")
+    );
+    assert_eq!(
+        input_text("claude", "\u{2502} > half typed \u{2502}").as_deref(),
+        Some("half typed")
+    );
+    assert_eq!(input_text("claude", "> ").as_deref(), Some(""));
+    assert_eq!(input_text("claude", "no prompt"), None);
+    assert_eq!(input_text("codex", "\u{203a} run tests").as_deref(), Some("run tests"));
 }

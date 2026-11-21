@@ -14,6 +14,7 @@ fn facts(names: &[String]) -> EnsureFacts<'_> {
         changed: false,
         idle: true,
         other_project: false,
+        socket_dedicated: false,
     }
 }
 
@@ -179,4 +180,48 @@ fn view_facts_read_the_active_and_acknowledged_fields() {
     assert!(!v(serde_json::json!({"active": true, "acknowledged_at": null})).acknowledged);
     assert!(v(serde_json::json!({"active": true, "acknowledged_at": "2026-11-22T10:00:00Z"})).acknowledged);
     assert!(v(serde_json::json!({"active": true, "status": "acknowledged"})).acknowledged);
+}
+
+/// On a socket of the runner's own, a session the runner did not create (no `session.json` for
+/// it) is never adopted, whatever runs in it, and a dead pane of it is not respawned.
+#[test]
+fn a_session_the_runner_did_not_create_is_not_adopted_on_its_own_socket() {
+    let n = names();
+    for foreground in ["claude", "sh", "vim"] {
+        for pane_dead in [false, true] {
+            let f = EnsureFacts {
+                runner_owned: false,
+                socket_dedicated: true,
+                foreground,
+                pane_dead,
+                has_children: false,
+                ..facts(&n)
+            };
+            let EnsureDecision::Decline(text) = decide(&f) else {
+                panic!("{foreground} {pane_dead}")
+            };
+            assert!(
+                text.contains("not created by sylvode-runner") && text.contains("release SVWL"),
+                "{text}"
+            );
+        }
+    }
+    // The runner's own session on that socket is kept, and adoption stays possible on the user's
+    // default server.
+    assert_eq!(
+        decide(&EnsureFacts {
+            socket_dedicated: true,
+            ..facts(&n)
+        }),
+        EnsureDecision::Running
+    );
+    assert_eq!(
+        decide(&EnsureFacts {
+            runner_owned: false,
+            socket_dedicated: false,
+            foreground: "claude",
+            ..facts(&n)
+        }),
+        EnsureDecision::Running
+    );
 }

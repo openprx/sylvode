@@ -278,6 +278,7 @@ fn the_headless_mark_is_set_cleared_and_ignored_without_a_record() {
         started_at: 1,
         headless: false,
         nonce: String::new(),
+        pushed: None,
     };
     state.write_session_record(&record).expect("write");
     state.set_headless(&key, true).expect("set");

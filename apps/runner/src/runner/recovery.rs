@@ -33,6 +33,7 @@ pub enum Step {
 
 /// What Sylvode says about the task and what the runner finds in tmux.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools, reason = "independent facts about one task")]
 pub struct Facts<'a> {
     pub phase: Option<&'a str>,
     pub status: &'a str,
@@ -40,32 +41,31 @@ pub struct Facts<'a> {
     pub session_alive: bool,
     /// The scrollback of the pane contains `id=<task_id>`.
     pub scrollback_hit: bool,
+    /// The runner's own `session.json` says this task (at this attempt) was typed in.
+    pub recorded_pushed: bool,
 }
 
-/// Design 7.8, step 2.
+/// Design 7.8, step 2, with one rule above the others: a task that may have been typed into a
+/// session is never typed again. It counts as pushed when Sylvode shows it acknowledged (whatever
+/// the phase says: the phase is reported fire-and-forget and may be stale), when the runner's own
+/// record of the session says so, or when its message is in the scrollback.
 pub fn plan_task(facts: &Facts<'_>) -> Step {
     let acknowledged = facts.acknowledged || facts.status == "acknowledged";
+    let pushed = acknowledged
+        || facts.recorded_pushed
+        || facts.phase == Some("pushed")
+        || (facts.session_alive && facts.scrollback_hit);
     match facts.phase {
         Some("blocked") if facts.session_alive => Step::Blocked,
         Some("blocked") => Step::FailGone,
-        Some("pushed") => {
+        Some("queued" | "pushed") | None if pushed => {
             if facts.session_alive {
                 Step::Adopt { acknowledged }
             } else {
                 Step::FailGone
             }
         }
-        // The agent acknowledged it, so it was pushed whatever the phase says.
-        None if acknowledged => {
-            if facts.session_alive {
-                Step::Adopt { acknowledged }
-            } else {
-                Step::FailGone
-            }
-        }
-        // The delivery was accepted but the phase is unknown: the scrollback decides.
-        None if facts.session_alive && facts.scrollback_hit => Step::Adopt { acknowledged },
-        // Queued, or unknown and not in the scrollback: it was never pushed.
+        // Never pushed, as far as anything shows: it is safe to queue it again.
         Some("queued") | None => Step::Requeue,
         Some(_) => Step::Skip,
     }
@@ -130,13 +130,14 @@ async fn recover_bot(
         }
         let Ok(key) = SessionKey::new(key_text) else { continue };
         let attempt = view.get("attempt").and_then(Value::as_i64).unwrap_or(0);
-        let probe: Probe = sessions.probe(&key, task_id).await;
+        let probe: Probe = sessions.probe(&key, task_id, attempt).await;
         let step = plan_task(&Facts {
             phase: view.get("runner_phase").and_then(Value::as_str),
             status: str_at(&view, &["status"]).unwrap_or_default(),
             acknowledged: view.get("acknowledged_at").is_some_and(|v| !v.is_null()),
             session_alive: probe.alive,
             scrollback_hit: probe.scrollback_hit,
+            recorded_pushed: probe.recorded_pushed,
         });
         if step == Step::FailGone {
             let reason = format!("runner restarted and session {key_text} was gone");
@@ -171,7 +172,14 @@ async fn recover_bot(
                     blocked: true,
                 });
             }
-            // A second pushed task in one session cannot be supervised: it is queued again.
+            // A session has one open task: a second one that may have been typed in is failed,
+            // never typed again.
+            Step::Adopt { .. } | Step::Blocked => {
+                let reason = format!("runner restarted with two open tasks in session {key_text}");
+                if let Err(e) = client.fail(task_id, attempt, &reason, false, timeout).await {
+                    tracing::warn!("restart recovery: could not fail a task: {e}");
+                }
+            }
             _ => entry.requeue.push(task),
         }
     }

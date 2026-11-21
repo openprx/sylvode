@@ -94,6 +94,20 @@ pub fn input_is_empty(cli: &str, screen: &str) -> Option<bool> {
     )
 }
 
+/// The text on the input line: what follows the prompt glyph on the last prompt line.
+///
+/// `None` when no prompt line is on the screen.
+pub fn input_text(cli: &str, screen: &str) -> Option<String> {
+    screen
+        .lines()
+        .rev()
+        .find_map(|line| prompt_rest(cli, line))
+        .map(|rest| {
+            rest.trim_matches(|c: char| c.is_whitespace() || matches!(c, '\u{2502}' | '\u{2503}' | '|'))
+                .to_string()
+        })
+}
+
 /// Whether two captures show the same screen (trailing blanks ignored): the stability signal of
 /// the readiness fallback.
 pub fn screens_equal(a: &str, b: &str) -> bool {

@@ -28,8 +28,8 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use super::checks::{Accepted, BotCreds};
-use super::detect::{Dialog, classify_dialog, cut_for_log, input_is_empty, screens_equal};
-use super::files::{BotFiles, SessionRecord, StateDir};
+use super::detect::{Dialog, classify_dialog, cut_for_log, input_is_empty, input_text, screens_equal};
+use super::files::{BotFiles, PushedTask, SessionRecord, StateDir};
 use super::hooks::{HookEvent, HookMessage};
 use super::launch::{self, LaunchFiles};
 use super::machine::{Action, EnsureOutcome, Machine, PushOutcome, Reminder, Task, Timers, ViewFacts};
@@ -109,6 +109,9 @@ pub struct EnsureFacts<'a> {
     pub idle: bool,
     /// The session's recorded project is another project.
     pub other_project: bool,
+    /// The runner has a socket of its own: a session on it that the runner did not create is
+    /// somebody else's and is never adopted.
+    pub socket_dedicated: bool,
 }
 
 /// What to do with an existing session.
@@ -145,6 +148,12 @@ pub fn decide_ensure(key: &str, cli: &str, facts: &EnsureFacts<'_>) -> EnsureDec
     if facts.other_project {
         return EnsureDecision::Decline(format!("tmux session {key} belongs to another project on this runner"));
     }
+    if !facts.runner_owned && facts.socket_dedicated {
+        return EnsureDecision::Decline(format!(
+            "tmux session {key} is on the runner's socket but was not created by sylvode-runner; \
+             end it, or run `sylvode-runner release {key}` once it is gone"
+        ));
+    }
     if facts.pane_dead {
         return EnsureDecision::Respawn;
     }
@@ -180,6 +189,8 @@ pub struct Adopt {
 pub struct Probe {
     pub alive: bool,
     pub scrollback_hit: bool,
+    /// `session.json` records this task and attempt as typed in.
+    pub recorded_pushed: bool,
 }
 
 enum Cmd {
@@ -290,7 +301,7 @@ impl SessionManager {
 
     /// Whether the session of `key` has a live CLI pane and shows `id=<task_id>` in its last 200
     /// lines. Reads tmux only.
-    pub async fn probe(&self, key: &SessionKey, task_id: &str) -> Probe {
+    pub async fn probe(&self, key: &SessionKey, task_id: &str, attempt: i64) -> Probe {
         let tmux = {
             let mut tmux = Tmux::new(self.shared.socket.clone());
             if let Some(program) = &self.shared.tmux_program {
@@ -298,17 +309,26 @@ impl SessionManager {
             }
             tmux
         };
+        let recorded_pushed = self.shared.state.read_session_record(key).is_some_and(|record| {
+            record
+                .pushed
+                .is_some_and(|pushed| pushed.task_id == task_id && pushed.attempt == attempt)
+        });
         let key = key.clone();
         let needle = format!("id={task_id}");
         tokio::task::spawn_blocking(move || {
+            let gone = Probe {
+                recorded_pushed,
+                ..Probe::default()
+            };
             if !tmux.has_session(&key).unwrap_or(false) {
-                return Probe::default();
+                return gone;
             }
             let Ok(pane) = tmux.adopt_pane(&key) else {
-                return Probe::default();
+                return gone;
             };
             if tmux.pane_state(&pane).map_or(true, |state| state.dead) {
-                return Probe::default();
+                return gone;
             }
             let hit = tmux
                 .capture_pane(&pane, Some(200))
@@ -316,6 +336,7 @@ impl SessionManager {
             Probe {
                 alive: true,
                 scrollback_hit: hit,
+                recorded_pushed,
             }
         })
         .await
@@ -345,6 +366,12 @@ struct Worker {
     last_screen: Option<String>,
     still_ticks: u32,
     screen_working: bool,
+}
+
+/// The directory accepted at delivery is still the same canonical path (no link was swapped in
+/// meanwhile). A session is created or restarted long after the delivery was checked.
+fn dir_unchanged(dir: &Path) -> bool {
+    std::fs::canonicalize(dir).is_ok_and(|now| now == dir)
 }
 
 /// A random secret of 32 hex characters (the 128 random bits of a version 4 UUID).
@@ -429,7 +456,11 @@ impl Worker {
                     let tmux = self.tmux();
                     let key = self.key.clone();
                     let pane = tokio::task::spawn_blocking(move || tmux.adopt_pane(&key)).await;
-                    if let Ok(Ok(pane)) = pane {
+                    let owned = match &pane {
+                        Ok(Ok(pane)) => self.owns(pane, &adopt.task.project_id).await,
+                        _ => false,
+                    };
+                    if let (Ok(Ok(pane)), true) = (pane, owned) {
                         self.pane = Some(pane);
                         // A session without session.json was not started by this runner: no hooks.
                         self.screen_mode = self.shared.state.read_session_record(&self.key).is_none();
@@ -514,14 +545,34 @@ impl Worker {
                 self.machine.on_push(outcome.into_outcome(), now)
             }
             Action::EnterRetry => {
-                if let Some(pane) = self.pane.clone() {
-                    let tmux = self.tmux();
-                    let result = tokio::task::spawn_blocking(move || tmux.retry_enter(&pane)).await;
-                    if !matches!(result, Ok(Ok(()))) {
-                        tracing::warn!("could not press Enter again in tmux session {}", self.key.as_str());
+                let Some(pane) = self.pane.clone() else {
+                    return Vec::new();
+                };
+                let tmux = self.tmux();
+                let cli = self
+                    .machine
+                    .current_task()
+                    .map(|t| t.cli.clone())
+                    .or_else(|| self.recorded_cli());
+                let names = cli
+                    .as_deref()
+                    .map(|cli| process_names(&self.shared.config, cli))
+                    .unwrap_or_default();
+                let user_idle = self.shared.config.runner.tmux.user_idle_secs;
+                let result = tokio::task::spawn_blocking(move || {
+                    if !enter_retry_allowed(&tmux, &pane, cli.as_deref().unwrap_or("claude"), &names, user_idle) {
+                        return false;
                     }
+                    tmux.retry_enter(&pane).is_ok()
+                })
+                .await;
+                if result.is_ok_and(|pressed| pressed) {
+                    return Vec::new();
                 }
-                Vec::new()
+                // Nothing was pressed: the state of the input line is unknown, so the session is
+                // reported blocked rather than guessed at.
+                tracing::warn!(session = self.key.as_str(), "no second Enter: the gate did not pass");
+                self.machine.on_enter_refused(now)
             }
             Action::SendReminder(kind) => {
                 let sent = self.send_reminder(kind).await;
@@ -586,6 +637,24 @@ impl Worker {
     }
 
     // ----- liveness -----
+
+    /// Whether `pane` is the session this runner created for `project_id`: `session.json` names
+    /// this pane id, this pane PID and this project. On a socket of the runner's own nothing else
+    /// is adopted.
+    async fn owns(&self, pane: &Pane, project_id: &str) -> bool {
+        if self.shared.config.runner.tmux.socket_name.is_empty() {
+            return true;
+        }
+        let Some(record) = self.shared.state.read_session_record(&self.key) else {
+            return false;
+        };
+        let tmux = self.tmux();
+        let pane_clone = pane.clone();
+        let pid = tokio::task::spawn_blocking(move || tmux.pane_state(&pane_clone).map(|state| state.pid)).await;
+        record.project_id == project_id
+            && record.pane_id == pane.id.as_str()
+            && matches!(pid, Ok(Ok(pid)) if pid == record.pane_pid)
+    }
 
     async fn alive(&self) -> bool {
         let Some(pane) = self.pane.clone() else {
@@ -745,6 +814,9 @@ impl Worker {
             reason: reason.to_string(),
             retryable: false,
         };
+        if !dir_unchanged(&task.dir) {
+            return declined("the working directory changed since the task was accepted");
+        }
         let files = match self.files_for(task) {
             Ok(files) => files,
             Err(reason) => return declined(&reason),
@@ -835,14 +907,37 @@ impl Worker {
         let settle = Duration::from_millis(self.shared.config.runner.tmux.push_settle_ms);
         let task_id = Uuid::parse_str(&task.task_id).unwrap_or_else(|_| Uuid::new_v4());
         let message = task.message.clone();
+        // Durable before the paste: restart recovery must never type this task a second time.
+        let pushed = PushedTask {
+            task_id: task.task_id.clone(),
+            attempt: task.attempt,
+        };
+        if let Err(e) = self.shared.state.mark_pushed(&self.key, Some(pushed)) {
+            tracing::warn!(
+                session = self.key.as_str(),
+                "nothing is typed: the push could not be recorded: {e}"
+            );
+            return PushTry::Failed;
+        }
         let result = tokio::task::spawn_blocking(move || {
             push_blocking(&tmux, &pane, &cli, &names, user_idle, settle, &task_id, &message)
         })
-        .await;
-        result.unwrap_or(PushTry::Failed)
+        .await
+        .unwrap_or(PushTry::Failed);
+        if matches!(
+            result,
+            PushTry::NotReady | PushTry::Dialog(_) | PushTry::SessionGone | PushTry::Failed | PushTry::Restarted
+        ) && let Err(e) = self.shared.state.mark_pushed(&self.key, None)
+        {
+            tracing::warn!(session = self.key.as_str(), "could not clear the push record: {e}");
+        }
+        result
     }
 
     async fn respawn_for(&mut self, task: &TmuxTask, pane: &Pane) -> Result<(), ()> {
+        if !dir_unchanged(&task.dir) {
+            return Err(());
+        }
         // A new launch gets a new secret; the old one stops authenticating anything.
         self.nonce = fresh_nonce();
         let files = self.files_for(task).map_err(|_| ())?;
@@ -871,6 +966,7 @@ impl Worker {
             started_at: unix_now(),
             headless: false,
             nonce: self.nonce.clone(),
+            pushed: None,
         };
         self.shared.state.write_session_record(&record).map_err(|_| ())
     }
@@ -961,6 +1057,7 @@ fn ensure_blocking(
 ) -> Result<EnsureResult, TmuxError> {
     let new_record = |pane: &Pane, pid: u32| SessionRecord {
         nonce: nonce.to_string(),
+        pushed: None,
         key: key.as_str().to_string(),
         project_id: task.project_id.clone(),
         pane_id: pane.id.as_str().to_string(),
@@ -1009,6 +1106,7 @@ fn ensure_blocking(
         changed,
         idle: true,
         other_project,
+        socket_dedicated: !cfg.socket_name.is_empty(),
     };
     match decide_ensure(key.as_str(), &task.cli, &facts) {
         EnsureDecision::Respawn => {
@@ -1035,6 +1133,32 @@ fn ensure_blocking(
             record: None,
         }),
     }
+}
+
+/// The gate of the one Enter retry: the same preconditions as a push, plus the pasted text still
+/// being the last thing on the input line. Pressing Enter blind could submit a person's draft or
+/// confirm a dialog's default.
+fn enter_retry_allowed(tmux: &Tmux, pane: &Pane, cli: &str, process_names: &[String], user_idle_secs: u64) -> bool {
+    let Ok(screen) = tmux.capture_pane(pane, None) else {
+        return false;
+    };
+    if classify_dialog(cli, &screen).is_some() {
+        return false;
+    }
+    if !input_text(cli, &screen).is_some_and(|text| text.starts_with("[Sylvode")) {
+        return false;
+    }
+    let now = unix_now();
+    if tmux
+        .client_activity(&pane.key)
+        .unwrap_or_default()
+        .iter()
+        .any(|activity| now.saturating_sub(*activity) < user_idle_secs)
+    {
+        return false;
+    }
+    tmux.pane_info(pane)
+        .is_ok_and(|info| !info.dead && process_names.contains(&info.current_command))
 }
 
 /// How a push attempt ended.
