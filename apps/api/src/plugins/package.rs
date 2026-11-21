@@ -1,7 +1,6 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -17,51 +16,9 @@ pub const MAX_AMOUNT_CENTS: u64 = 1_000_000_000_000;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct Manifest {
-    pub schema_version: String,
-    pub key: String,
-    pub name: String,
-    pub version: String,
-    pub publisher: String,
-    pub host_protocol: Protocol,
-    pub wasm_abi: String,
-    pub wasm: Asset,
-    pub ui: Ui,
-    pub capabilities: Vec<Capability>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Protocol {
     pub min: u32,
     pub max: u32,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Asset {
-    pub path: String,
-    pub size: usize,
-    pub sha256: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Ui {
-    pub entry: Asset,
-    pub slot: String,
-    pub bridge_version: u32,
-    pub form_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub contributions: Option<Vec<Contribution>>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Contribution {
-    pub id: String,
-    pub slot: String,
-    pub label: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -69,14 +26,6 @@ pub struct Contribution {
 pub struct Placement {
     pub id: String,
     pub enabled: bool,
-    pub position: u8,
-}
-
-#[derive(Serialize)]
-pub struct EnabledContribution {
-    pub id: String,
-    pub slot: String,
-    pub label: String,
     pub position: u8,
 }
 
@@ -89,120 +38,8 @@ pub struct Capability {
     pub output_schema: Value,
 }
 
-impl Manifest {
-    pub fn validate(&self) -> Result<(), ApiError> {
-        let required_host_protocol = if self.ui.contributions.is_some() { 2 } else { 1 };
-        if self.schema_version != "openpr.plugin.v2"
-            || self.wasm_abi != "openpr.plugin.v1"
-            || self.host_protocol.min != required_host_protocol
-            || self.host_protocol.max != required_host_protocol
-            || self.ui.bridge_version != 1
-            || self.ui.slot != "form.record.detail"
-        {
-            return Err(bad("unsupported plugin package protocol, ABI, or slot"));
-        }
-        validate_key(&self.key)?;
-        validate_key(&self.ui.form_key)?;
-        if let Some(contributions) = &self.ui.contributions {
-            if !matches!(contributions.as_slice(), [first, second] if first.id != second.id) {
-                return Err(bad("layout packages require two distinct contribution IDs"));
-            }
-            for slot in ["form.record.detail", "form.record.actions"] {
-                let contribution = contributions
-                    .iter()
-                    .find(|contribution| contribution.slot == slot)
-                    .ok_or_else(|| bad("layout packages must declare one detail and one action contribution"))?;
-                validate_key(&contribution.id)?;
-                if !valid_label(&contribution.label) {
-                    return Err(bad("invalid plugin contribution label"));
-                }
-            }
-        }
-
-        if self.version.len() > 64 || semver::Version::parse(&self.version).is_err() {
-            return Err(bad("plugin version must be a SemVer release identifier"));
-        }
-        for value in [&self.name, &self.publisher] {
-            if !valid_label(value) {
-                return Err(bad("plugin name and publisher must be nonempty display labels"));
-            }
-        }
-        if self.capabilities.len() != 2 {
-            return Err(bad("the order amount profile requires preview and apply capabilities"));
-        }
-        for (name, permission) in [(PREVIEW, "record.read"), (APPLY, "record.update")] {
-            let capability = self
-                .capabilities
-                .iter()
-                .find(|item| item.name == name)
-                .ok_or_else(|| bad("the order amount profile requires preview and apply capabilities"))?;
-            if capability.permission != permission
-                || capability.input_schema != json!({"type":"object","additionalProperties":false})
-                || capability.output_schema
-                    != json!({
-                        "type":"object","additionalProperties":false,"required":["amount_cents"],
-                        "properties":{"amount_cents":{"type":"integer","minimum":0,"maximum":MAX_AMOUNT_CENTS}}
-                    })
-            {
-                return Err(bad(
-                    "capability schema or permission is incompatible with the order amount profile",
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
 pub(crate) fn valid_label(label: &str) -> bool {
     !label.is_empty() && label.len() <= 120 && label.trim() == label && !label.chars().any(char::is_control)
-}
-
-pub fn normalize_placements(contributions: &[Contribution], placements: &mut [Placement]) -> Result<(), ApiError> {
-    placements.sort_unstable_by(|left, right| left.id.cmp(&right.id));
-    if placements.len() != contributions.len()
-        || !contributions.iter().all(|contribution| {
-            placements
-                .iter()
-                .any(|placement| placement.id == contribution.id && placement.position <= 99)
-        })
-    {
-        return Err(bad(
-            "layout must configure each declared contribution exactly once with position between 0 and 99",
-        ));
-    }
-    Ok(())
-}
-
-pub fn default_placements(contributions: &[Contribution]) -> Vec<Placement> {
-    let mut placements: Vec<_> = contributions
-        .iter()
-        .map(|contribution| Placement {
-            id: contribution.id.clone(),
-            enabled: true,
-            position: 50,
-        })
-        .collect();
-    placements.sort_unstable_by(|left, right| left.id.cmp(&right.id));
-    placements
-}
-
-pub fn enabled_contributions(contributions: Vec<Contribution>, placements: &[Placement]) -> Vec<EnabledContribution> {
-    let mut enabled: Vec<_> = contributions
-        .into_iter()
-        .filter_map(|contribution| {
-            let placement = placements
-                .iter()
-                .find(|placement| placement.id == contribution.id && placement.enabled)?;
-            Some(EnabledContribution {
-                id: contribution.id,
-                slot: contribution.slot,
-                label: contribution.label,
-                position: placement.position,
-            })
-        })
-        .collect();
-    enabled.sort_unstable_by(|left, right| left.position.cmp(&right.position).then(left.id.cmp(&right.id)));
-    enabled
 }
 
 pub fn validate_key(key: &str) -> Result<(), ApiError> {
@@ -212,19 +49,6 @@ pub fn validate_key(key: &str) -> Result<(), ApiError> {
         ));
     }
     Ok(())
-}
-
-pub fn decode_asset(asset: &Asset, path: &str, encoded: &str, limit: usize) -> Result<Vec<u8>, ApiError> {
-    if asset.path != path || asset.size == 0 || asset.size > limit || encoded.len() > limit.div_ceil(3) * 4 {
-        return Err(bad("invalid plugin asset path or size"));
-    }
-    let bytes = STANDARD
-        .decode(encoded)
-        .map_err(|_| bad("invalid plugin asset base64"))?;
-    if bytes.len() != asset.size || sha256(&bytes) != asset.sha256 {
-        return Err(bad("plugin asset size or SHA-256 does not match the manifest"));
-    }
-    Ok(bytes)
 }
 
 pub fn sha256(bytes: &[u8]) -> String {

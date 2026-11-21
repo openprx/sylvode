@@ -51,7 +51,6 @@ services:
     command: ["/app/api", "--config", "/app/config/sylvode.toml"]
     environment:
       SV_FORM_PLUGIN_PACKAGES_ENABLED: "${SV_FORM_PLUGIN_PACKAGES_ENABLED:-0}"
-      SV_FORM_PLUGIN_LAYOUTS_ENABLED: "${SV_FORM_PLUGIN_LAYOUTS_ENABLED:-0}"
     ports:
       - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_API_PORT:-8081}:8080"
     volumes:
