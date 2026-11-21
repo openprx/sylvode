@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use axum::{
     Extension, Json, Router,
-    body::Body,
+    body::{Body, Bytes},
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, Request, header},
     response::{IntoResponse, Response},
@@ -1286,6 +1286,273 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
     let (_, removed) = body_of(removed).await;
     assert_eq!(removed["data"]["removed"], true);
     assert_eq!(removed["data"]["bot_still_connected_to"], json!([]));
+    scratch.drop_self().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Status, report and protocol
+// ---------------------------------------------------------------------------------------------
+
+async fn report_as(
+    w: &W,
+    bot: Option<crate::middleware::bot_auth::BotAuthContext>,
+    body: &[u8],
+) -> Result<Response, ApiError> {
+    crate::routes::ai_task_protocol::put_runner_report(
+        State(w.state.clone()),
+        bot.map(Extension),
+        Bytes::copy_from_slice(body),
+    )
+    .await
+}
+
+async fn status_json(w: &W, project: Uuid) -> Value {
+    let read = route::get_bot_connection(
+        State(w.state.clone()),
+        Extension(claims_for(w.owner)),
+        None,
+        Path(project),
+    )
+    .await
+    .expect("read");
+    body_of(read).await.1["data"]["status"].clone()
+}
+
+#[tokio::test]
+async fn the_protocol_lists_the_report_feature_and_interval() {
+    let answer = crate::routes::ai_task_protocol::get_protocol().await.into_response();
+    let (_, body) = body_of(answer).await;
+    assert!(
+        body["data"]["features"]
+            .as_array()
+            .expect("features")
+            .contains(&json!("runner_report")),
+        "{body}"
+    );
+    assert_eq!(body["data"]["runner_report_interval_secs"], 600);
+}
+
+#[tokio::test]
+async fn the_runner_report_is_limited_sanitised_and_for_runner_bots_only() {
+    let scratch = scratch_or_skip!("bc_report");
+    let db = &scratch.db;
+    let w = world(db, "q1").await;
+    let connected = expect_connect(&w, w.tenant.project_id, new_bot("Reporting bot")).await;
+    let bot = connected.connection.bot.id;
+    let runner_bot = bot_context_for(bot, w.tenant.workspace_id, &["read", "write"]);
+    let good = serde_json::to_vec(&json!({
+        "schema": "sylvode.doctor.v1",
+        "generated_by": {"binary": "sylvode-runner", "version": "0.5.1", "task_protocol": 1},
+        "components": [
+            {"component": "tmux", "status": "ok", "version": "3.4", "detail": "/usr/bin/tmux"},
+            {"component": "cli.claude", "status": "ok", "version": "2.1.0", "hint": "/home/dev/.claude"}
+        ],
+        "projects": [{"working_directory": "/home/dev/work"}]
+    }))
+    .expect("json");
+
+    // A person is refused; so is a bot that no connection made.
+    match report_as(&w, None, &good).await {
+        Err(ApiError::Forbidden(message)) => assert_eq!(message, "only a runner bot can report"),
+        other => panic!("expected a 403, got {:?}", other.map(|_| ())),
+    }
+    let bots_page_bot = seed_bot_user(db, &w.tenant).await;
+    let unconnected = bot_context_for(bots_page_bot, w.tenant.workspace_id, &["read", "write"]);
+    assert!(matches!(
+        report_as(&w, Some(unconnected), &good).await,
+        Err(ApiError::NotFound(_))
+    ));
+    assert_eq!(
+        n(db, "SELECT 1 FROM bot_runners WHERE report IS NOT NULL", vec![]).await,
+        0
+    );
+
+    // The runner's own report is stored, reduced to names, states and versions.
+    let accepted = report_as(&w, Some(runner_bot.clone()), &good).await.expect("accepted");
+    let (_, answer) = body_of(accepted).await;
+    assert_eq!(answer["data"], json!({"accepted": true, "interval_secs": 600}));
+    let stored = text_of(
+        db,
+        "SELECT report::text AS v FROM bot_runners WHERE bot_id = $1",
+        vec![bot.into()],
+    )
+    .await;
+    assert!(!stored.contains('/'), "no path reaches the database: {stored}");
+    assert!(
+        !stored.contains("detail") && !stored.contains("hint") && !stored.contains("projects"),
+        "{stored}"
+    );
+    let stored: Value = serde_json::from_str(&stored).expect("json");
+    assert_eq!(stored["generated_by"], json!({"version": "0.5.1", "task_protocol": 1}));
+    assert_eq!(stored["components"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        n(
+            db,
+            "SELECT 1 FROM bot_runners WHERE bot_id = $1 AND reported_at IS NOT NULL",
+            vec![bot.into()]
+        )
+        .await,
+        1
+    );
+
+    // Over 16 KiB is a 413 and replaces nothing.
+    let huge = serde_json::to_vec(&json!({"components": [], "padding": "x".repeat(17 * 1024)})).expect("json");
+    let refused = report_as(&w, Some(runner_bot.clone()), &huge).await.expect("answers");
+    assert_eq!(refused.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+    let exactly = serde_json::to_vec(&json!({"components": [], "padding": "x".repeat(16 * 1024 - 40)})).expect("json");
+    assert!(exactly.len() <= 16 * 1024);
+    assert!(report_as(&w, Some(runner_bot.clone()), &exactly).await.is_ok());
+    // Not a JSON object is a 400.
+    for body in [&b"not json"[..], b"[]", b"3"] {
+        assert!(matches!(
+            report_as(&w, Some(runner_bot.clone()), body).await,
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn the_status_follows_token_use_reports_and_deliveries() {
+    let scratch = scratch_or_skip!("bc_status");
+    let db = &scratch.db;
+    let w = world(db, "u1").await;
+    let project = w.tenant.project_id;
+    let connected = expect_connect(&w, project, new_bot("Status bot")).await;
+    let bot = connected.connection.bot.id;
+    let runner_bot = bot_context_for(bot, w.tenant.workspace_id, &["read", "write"]);
+
+    // Right after connecting nothing has used the new credentials.
+    let status = status_json(&w, project).await;
+    assert_eq!(status["runner"]["state"], "waiting");
+    assert_eq!(status["cli"]["state"], "unknown");
+    assert_eq!(status["tmux"]["state"], "unknown");
+    assert_eq!(status["last_delivery"]["state"], "none");
+    // The connect answer carries it too.
+    let answered = route::connect_bot(
+        State(w.state.clone()),
+        Extension(claims_for(w.owner)),
+        None,
+        Path(second_project(db, &w, "PU2").await),
+        HeaderMap::new(),
+        Json(request(existing_bot(bot))),
+    )
+    .await
+    .expect("connect");
+    assert_eq!(
+        body_of(answered).await.1["data"]["status"]["runner"]["state"],
+        "waiting"
+    );
+
+    // The runner uses its token: used, but not reporting.
+    exec(
+        db,
+        "UPDATE workspace_bots SET last_used_at = now() + interval '1 second' WHERE id = $1",
+        vec![bot.into()],
+    )
+    .await;
+    assert_eq!(status_json(&w, project).await["runner"]["state"], "not_reporting");
+    // A report makes it online and names the CLI and tmux.
+    let report = serde_json::to_vec(&json!({
+        "generated_by": {"version": "0.5.1", "task_protocol": 1},
+        "components": [
+            {"component": "tmux", "status": "ok", "version": "3.4"},
+            {"component": "cli.claude", "status": "warn", "version": "2.1.0"}
+        ]
+    }))
+    .expect("json");
+    report_as(&w, Some(runner_bot), &report).await.expect("report");
+    let online = status_json(&w, project).await;
+    assert_eq!(online["runner"]["state"], "online");
+    assert_eq!(online["runner"]["version"], "0.5.1");
+    assert_eq!(online["runner"]["task_protocol"], 1);
+    assert_eq!(
+        online["cli"],
+        json!({"state": "warning", "source": "report", "version": "2.1.0"})
+    );
+    assert_eq!(
+        online["tmux"],
+        json!({"state": "ready", "source": "report", "version": "3.4"})
+    );
+    // A stale report stops counting.
+    exec(
+        db,
+        "UPDATE bot_runners SET reported_at = now() - interval '2 hours' WHERE bot_id = $1",
+        vec![bot.into()],
+    )
+    .await;
+    let stale = status_json(&w, project).await;
+    assert_eq!(stale["runner"]["state"], "not_reporting");
+    assert_eq!(stale["cli"]["state"], "unknown");
+
+    // Deliveries: a refusal with its code, then a failed delivery.
+    let task = Uuid::new_v4();
+    exec(
+        db,
+        "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status, attempts, max_attempts) \
+         VALUES ($1, $2, $3, 'issue_assigned', 'failed', 1, 3)",
+        vec![task.into(), project.into(), bot.into()],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO ai_task_events (task_id, event_type, payload, created_at) VALUES \
+         ($1, 'failed', $2, now() - interval '10 minutes')",
+        vec![
+            task.into(),
+            json!({"reason": "runner_declined", "reason_code": "cli_unavailable",
+                   "error_message": "the runner refused the task (cli_unavailable): ".to_string() + &"d".repeat(300)})
+            .into(),
+        ],
+    )
+    .await;
+    let refused = status_json(&w, project).await;
+    assert_eq!(refused["last_delivery"]["state"], "refused");
+    assert_eq!(refused["last_delivery"]["reason_code"], "cli_unavailable");
+    assert_eq!(refused["last_delivery"]["task_id"], json!(task));
+    assert_eq!(refused["last_delivery"]["project_key"], "Pu1");
+    assert_eq!(
+        refused["last_delivery"]["detail"]
+            .as_str()
+            .map(|detail| detail.chars().count()),
+        Some(200),
+        "the first 200 characters of the text"
+    );
+    assert_eq!(
+        refused["cli"],
+        json!({"state": "missing", "source": "delivery", "version": null})
+    );
+    exec(
+        db,
+        "INSERT INTO ai_task_events (task_id, event_type, payload) VALUES ($1, 'retried', $2)",
+        vec![
+            task.into(),
+            json!({"reason": "delivery_failed", "error_message": "the runner could not be reached: x"}).into(),
+        ],
+    )
+    .await;
+    let failed = status_json(&w, project).await;
+    assert_eq!(failed["last_delivery"]["state"], "failed");
+    assert_eq!(failed["runner"]["state"], "unreachable");
+    // An accepted delivery makes the CLI ready again.
+    exec(
+        db,
+        "INSERT INTO ai_task_events (task_id, event_type, payload) VALUES ($1, 'delivered', '{}'::jsonb)",
+        vec![task.into()],
+    )
+    .await;
+    let delivered = status_json(&w, project).await;
+    assert_eq!(delivered["last_delivery"]["state"], "delivered");
+    assert_eq!(delivered["cli"]["state"], "ready");
+    assert_eq!(delivered["runner"]["state"], "not_reporting");
+    // Events older than 30 days are not evidence.
+    exec(
+        db,
+        "UPDATE ai_task_events SET created_at = now() - interval '31 days' WHERE task_id = $1",
+        vec![task.into()],
+    )
+    .await;
+    assert_eq!(status_json(&w, project).await["last_delivery"]["state"], "none");
     scratch.drop_self().await;
 }
 

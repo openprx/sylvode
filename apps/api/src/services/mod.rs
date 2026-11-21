@@ -1,6 +1,7 @@
 pub mod ai_task_reply;
 pub mod ai_task_service;
 pub mod ai_task_view;
+pub mod bot_connection_status;
 pub mod bot_connections;
 pub mod bot_identity;
 pub mod bots;

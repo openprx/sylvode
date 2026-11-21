@@ -1,16 +1,16 @@
 //! Worker AI tasks: pick-up, delivery to the bot's webhook, and the end of every attempt that the
-//! receiver does not end itself.
+//! runner does not end itself.
 //!
 //! An attempt starts when a pending task is picked up (`processing`, `attempts + 1`) and is
 //! delivered to the bot's webhook. It ends in one of four ways:
 //!
-//! - The receiver takes the task (`dispatched`, or any other 2xx answer it does not decline) and
+//! - The runner takes the task (`dispatched`, or any other 2xx answer it does not decline) and
 //!   later reports the outcome through the API's complete or fail callback.
-//! - The receiver answers the delivery that it will not run the task (`no_agent`, `ignored`,
+//! - The runner answers the delivery that it will not run the task (`no_agent`, `ignored`,
 //!   `refused`, or an HTTP 4xx a repeat cannot change): the worker fails the task at once. The
-//!   answer depends on the receiver's configuration, which a retry seconds later does not change,
-//!   and the receiver's own fail callback may be refused (it may hold no token for this bot).
-//! - The delivery does not reach a receiver that takes it (no webhook, a transport error, HTTP
+//!   answer depends on the runner's configuration, which a retry seconds later does not change,
+//!   and the runner's own fail callback may be refused (it may hold no token for this bot).
+//! - The delivery does not reach a runner that takes it (no webhook, a transport error, HTTP
 //!   5xx, 408, 409, 425, 429): the worker re-queues the task while attempts remain.
 //! - Nothing ends the attempt before its lease runs out (`[ai_tasks] processing_timeout_secs` from
 //!   the pick-up, extended by the runner's acknowledge and progress calls): the sweep re-queues
@@ -23,8 +23,8 @@
 use api::outbound::validate_outbound_url;
 use api::services::ai_task_reply::announce_start_refusal;
 use api::services::ai_task_service::{
-    AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts, notify_ai_task_failed,
-    trigger_kind_for_task,
+    AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts, is_reason_code,
+    notify_ai_task_failed, trigger_kind_for_task,
 };
 use api::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_USER_AGENT, sign_payload};
 use platform::{app::AppState, timestamp::Timestamp};
@@ -33,10 +33,10 @@ use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-/// At most this many characters of a receiver's answer go into a task's error message.
+/// At most this many characters of a runner's answer go into a task's error message.
 const MAX_ANSWER_CHARS: usize = 300;
 
-/// The `status` values with which a receiver answers that it will not run a task:
+/// The `status` values with which a runner answers that it will not run a task:
 /// `sylvode-runner` answers `no_agent` when no agent matches, `ignored` when the delivery is not
 /// a bot task, and `refused` when the matched agent cannot run it (safe mode, a disabled feature,
 /// an incomplete agent configuration).
@@ -67,7 +67,7 @@ struct BotWebhookRow {
     secret: String,
 }
 
-/// The receiver's HTTP answer to a delivery.
+/// The runner's HTTP answer to a delivery.
 #[derive(Debug)]
 struct DeliveryAnswer {
     webhook_id: Uuid,
@@ -78,22 +78,27 @@ struct DeliveryAnswer {
 /// What a delivery's answer means for the attempt.
 #[derive(Debug, PartialEq, Eq)]
 enum DeliveryVerdict {
-    /// The receiver took the task; it ends the attempt through a callback, or the timeout does.
+    /// The runner took the task; it ends the attempt through a callback, or the timeout does.
     Accepted,
-    /// The receiver will not run the task; a repeat would get the same answer.
-    Declined(String),
+    /// The runner will not run the task; a repeat would get the same answer. `code` is the
+    /// runner's own refusal code, when it sent one of the right shape.
+    Declined { reason: String, code: Option<String> },
     /// The delivery may succeed when repeated.
     Transient(String),
 }
 
-/// Reads a receiver's answer to a delivery.
+/// Reads a runner's answer to a delivery.
 ///
 /// A 2xx answer takes the task unless its JSON `status` is one of [`DECLINING_ANSWERS`]; an
-/// answer that is not JSON, or has another status, takes it as before. HTTP 408, 409, 425, 429 and
-/// 5xx are transient, and so are redirects (which this client does not follow, so the URL needs
-/// fixing, but an operator may fix it without touching the task). Any other 4xx (a signature
-/// mismatch, a malformed body) declines the task.
-fn classify_delivery_answer(status: u16, body: &str) -> DeliveryVerdict {
+/// answer that is not JSON, or has another status, takes it as before. A declining answer carries
+/// the runner's refusal code in its own `reason_code` field, which is kept only when it has the
+/// shape of a code; the code is never read out of the text. HTTP 408, 409, 425, 429 and 5xx are
+/// transient, and so are redirects (which this client does not follow, so the URL needs fixing,
+/// but an operator may fix it without touching the task). Any other 4xx (a signature mismatch, a
+/// malformed body) declines the task.
+///
+/// The texts are what the task's error message and the issue's `Could not start:` comment say.
+fn classify_delivery_answer(status: u16, body: &str, bot_name: &str) -> DeliveryVerdict {
     if (200..300).contains(&status) {
         let answer = serde_json::from_str::<Value>(body).ok();
         let declined = answer
@@ -102,31 +107,46 @@ fn classify_delivery_answer(status: u16, body: &str) -> DeliveryVerdict {
             .and_then(Value::as_str)
             .filter(|kind| DECLINING_ANSWERS.contains(kind));
         return match (declined, answer.as_ref()) {
-            (Some(kind), Some(answer)) => DeliveryVerdict::Declined(format!(
-                "the receiver answered `{kind}` and will not run the task: {}",
-                declined_detail(answer, body)
-            )),
+            (Some("no_agent"), _) => DeliveryVerdict::Declined {
+                reason: format!("the runner has no agent for bot {bot_name}"),
+                code: None,
+            },
+            (Some(_), Some(answer)) => {
+                let code = answer
+                    .get("reason_code")
+                    .and_then(Value::as_str)
+                    .filter(|code| is_reason_code(code))
+                    .map(str::to_string);
+                let detail = declined_detail(answer, body);
+                DeliveryVerdict::Declined {
+                    reason: code.as_ref().map_or_else(
+                        || format!("the runner refused the task: {detail}"),
+                        |code| format!("the runner refused the task ({code}): {detail}"),
+                    ),
+                    code,
+                }
+            }
             _ => DeliveryVerdict::Accepted,
         };
     }
     let detail = excerpt(body);
     if (400..500).contains(&status) && !matches!(status, 408 | 409 | 425 | 429) {
-        DeliveryVerdict::Declined(format!(
-            "the receiver answered HTTP {status} and will not run the task: {detail}"
-        ))
+        DeliveryVerdict::Declined {
+            reason: format!("the runner answered HTTP {status}: {detail}"),
+            code: None,
+        }
     } else {
-        DeliveryVerdict::Transient(format!("the receiver answered HTTP {status}: {detail}"))
+        DeliveryVerdict::Transient(format!("the runner could not be reached: HTTP {status}: {detail}"))
     }
 }
 
-/// What a declining answer says about why: its `reason`, else the bot it found no agent for,
-/// else the answer itself.
+/// What a declining answer says about why: its `reason`, else the answer itself.
 fn declined_detail(answer: &Value, body: &str) -> String {
-    let field = |key: &str| answer.get(key).and_then(Value::as_str).filter(|v| !v.is_empty());
-    field("reason").map_or_else(
-        || field("bot_key").map_or_else(|| excerpt(body), |bot| format!("no agent matches bot {}", excerpt(bot))),
-        excerpt,
-    )
+    answer
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.is_empty())
+        .map_or_else(|| excerpt(body), excerpt)
 }
 
 /// The first [`MAX_ANSWER_CHARS`] characters of `text`, marked when cut.
@@ -155,16 +175,20 @@ pub async fn process_pending_tasks(
 
     for task in tasks {
         let verdict = match dispatch_task(db, client, &task).await {
-            Ok(answer) => match classify_delivery_answer(answer.status, &answer.body) {
-                DeliveryVerdict::Accepted => DeliveryVerdict::Accepted,
-                DeliveryVerdict::Declined(reason) => {
-                    DeliveryVerdict::Declined(format!("webhook {}: {reason}", answer.webhook_id))
-                }
-                DeliveryVerdict::Transient(reason) => {
-                    DeliveryVerdict::Transient(format!("webhook {}: {reason}", answer.webhook_id))
-                }
-            },
-            Err(err) => DeliveryVerdict::Transient(err.to_string()),
+            Ok(answer) => {
+                tracing::debug!(
+                    task_id = %task.id,
+                    webhook_id = %answer.webhook_id,
+                    status = answer.status,
+                    "the runner answered the delivery"
+                );
+                classify_delivery_answer(
+                    answer.status,
+                    &answer.body,
+                    task.ai_participant_name.as_deref().unwrap_or("this task's bot"),
+                )
+            }
+            Err(err) => DeliveryVerdict::Transient(format!("the runner could not be reached: {err}")),
         };
         settle_delivery(state, &task, verdict).await?;
     }
@@ -172,7 +196,7 @@ pub async fn process_pending_tasks(
     Ok(())
 }
 
-/// Acts on the receiver's answer to the delivery of `task`: an accepted delivery is recorded as a
+/// Acts on the runner's answer to the delivery of `task`: an accepted delivery is recorded as a
 /// `delivered` event; a declined or failed one ends the attempt.
 async fn settle_delivery(state: &AppState, task: &AiTaskDispatchRow, verdict: DeliveryVerdict) -> anyhow::Result<()> {
     match verdict {
@@ -180,17 +204,18 @@ async fn settle_delivery(state: &AppState, task: &AiTaskDispatchRow, verdict: De
             tracing::info!(
                 task_id = %task.id,
                 attempt = task.attempts,
-                "AI task delivered; the receiver ends it, or its lease does"
+                "AI task delivered; the runner ends it, or its lease does"
             );
             insert_task_event(&state.db, task.id, "delivered", json!({ "attempts": task.attempts })).await?;
         }
-        DeliveryVerdict::Declined(reason) => {
-            tracing::warn!(task_id = %task.id, attempt = task.attempts, reason = %reason, "AI task declined by the receiver; failing it");
+        DeliveryVerdict::Declined { reason, code } => {
+            tracing::warn!(task_id = %task.id, attempt = task.attempts, reason = %reason, "AI task declined by the runner; failing it");
             let ended = end_attempt(
                 state,
                 task,
                 AttemptEnd::Terminal,
-                WorkerEndReason::ReceiverDeclined,
+                WorkerEndReason::RunnerDeclined,
+                code.as_deref(),
                 &reason,
             )
             .await?;
@@ -208,6 +233,7 @@ async fn settle_delivery(state: &AppState, task: &AiTaskDispatchRow, verdict: De
                 task,
                 AttemptEnd::RetryWhileAttemptsRemain,
                 WorkerEndReason::DeliveryFailed,
+                None,
                 &reason,
             )
             .await?;
@@ -223,11 +249,20 @@ async fn end_attempt(
     task: &AiTaskDispatchRow,
     end: AttemptEnd,
     reason: WorkerEndReason,
+    reason_code: Option<&str>,
     error_message: &str,
 ) -> anyhow::Result<Option<api::services::ai_task_service::AiTaskRow>> {
-    let ended = end_processing_attempt(&state.db, task.id, task.attempts, end, reason, error_message)
-        .await
-        .map_err(|err| anyhow::anyhow!("ending AI task {} attempt {} failed: {err}", task.id, task.attempts))?;
+    let ended = end_processing_attempt(
+        &state.db,
+        task.id,
+        task.attempts,
+        end,
+        reason,
+        reason_code,
+        error_message,
+    )
+    .await
+    .map_err(|err| anyhow::anyhow!("ending AI task {} attempt {} failed: {err}", task.id, task.attempts))?;
     match &ended {
         Some(ended) if ended.status == "failed" => notify_failed(state, ended).await,
         Some(_) => {}
@@ -283,6 +318,17 @@ async fn pickup_pending_tasks(
                 FROM ai_tasks
                 WHERE status = 'pending'
                   AND (next_retry_at IS NULL OR next_retry_at <= now())
+                  -- Delivery hold: after a connection or a credential rotation, the bot's tasks stay
+                  -- pending until the runner has used the new token, for at most one hour. A runner
+                  -- still on the old secret would answer 401, which fails the task at once.
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM bot_runners r
+                      INNER JOIN workspace_bots b ON b.id = r.bot_id
+                      WHERE r.bot_id = ai_tasks.ai_participant_id
+                        AND r.credentials_issued_at > COALESCE(b.last_used_at, '-infinity'::timestamptz)
+                        AND r.credentials_issued_at > now() - interval '1 hour'
+                  )
                 ORDER BY priority DESC, created_at
                 LIMIT $1
                 FOR UPDATE SKIP LOCKED
@@ -379,7 +425,7 @@ fn dispatch_request(
         .body(raw_body)
 }
 
-/// Delivers `task` and returns the receiver's answer. An error means it was not delivered: no
+/// Delivers `task` and returns the runner's answer. An error means it was not delivered: no
 /// active webhook, a rejected URL, a signing or transport failure.
 async fn dispatch_task(
     db: &sea_orm::DatabaseConnection,
@@ -421,7 +467,7 @@ async fn dispatch_task(
         .map_err(|err| anyhow::anyhow!("webhook {} url rejected: {err}", webhook.webhook_id))?;
 
     // Signed over the exact bytes that are sent, the same way the API's own webhook deliveries
-    // are, so a receiver can refuse unsigned traffic instead of having to trust this path.
+    // are, so a runner can refuse unsigned traffic instead of having to trust this path.
     let raw_body = serde_json::to_string(&body)?;
     let signature = sign_payload(&webhook.secret, &raw_body)
         .map_err(|err| anyhow::anyhow!("webhook {} signing failed: {err}", webhook.webhook_id))?;
@@ -434,7 +480,7 @@ async fn dispatch_task(
     let body = match response.text().await {
         Ok(body) => body,
         Err(err) => {
-            tracing::warn!(task_id = %task.id, webhook_id = %webhook.webhook_id, error = %err.without_url(), "reading the receiver's answer failed; treating it as empty");
+            tracing::warn!(task_id = %task.id, webhook_id = %webhook.webhook_id, error = %err.without_url(), "reading the runner's answer failed; treating it as empty");
             String::new()
         }
     };
@@ -445,7 +491,7 @@ async fn dispatch_task(
     })
 }
 
-/// The JSON body of a delivery. Every field a receiver already reads is unchanged; `project_key`
+/// The JSON body of a delivery. Every field a runner already reads is unchanged; `project_key`
 /// and `protocol` are additions.
 fn delivery_body(task: &AiTaskDispatchRow) -> Value {
     json!({
@@ -557,7 +603,7 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    /// The delivery body is a contract with the receiver: every existing field keeps its name and
+    /// The delivery body is a contract with the runner: every existing field keeps its name and
     /// value, and `project_key` and `protocol` are the only additions.
     #[test]
     fn the_delivery_body_carries_the_project_key_and_protocol() {
@@ -607,7 +653,7 @@ mod tests {
     #[test]
     fn the_ai_task_delivery_carries_the_webhook_user_agent() {
         let client = reqwest::Client::new();
-        let target = reqwest::Url::parse("https://receiver.example/hook").expect("valid url");
+        let target = reqwest::Url::parse("https://runner.example/hook").expect("valid url");
         let request = dispatch_request(&client, target, "abc", "{}".to_string())
             .build()
             .expect("the request builds");
@@ -628,11 +674,15 @@ mod tests {
         );
     }
 
-    fn declined(verdict: &DeliveryVerdict) -> &str {
+    fn declined(verdict: &DeliveryVerdict) -> (&str, Option<&str>) {
         match verdict {
-            DeliveryVerdict::Declined(reason) => reason,
+            DeliveryVerdict::Declined { reason, code } => (reason, code.as_deref()),
             other => panic!("expected a declined delivery, got {other:?}"),
         }
+    }
+
+    fn classify(status: u16, body: &str) -> DeliveryVerdict {
+        classify_delivery_answer(status, body, "Build bot")
     }
 
     #[test]
@@ -643,49 +693,69 @@ mod tests {
             "",
             "accepted",
         ] {
-            assert_eq!(classify_delivery_answer(200, body), DeliveryVerdict::Accepted, "{body}");
+            assert_eq!(classify(200, body), DeliveryVerdict::Accepted, "{body}");
         }
+        assert_eq!(classify(202, r#"{"status":"dispatched"}"#), DeliveryVerdict::Accepted);
+    }
+
+    #[test]
+    fn a_no_agent_answer_declines_the_task_and_names_the_bot() {
+        let verdict = classify(200, r#"{"status":"no_agent","bot_key":"bot-b","reason":"anything"}"#);
+        assert_eq!(declined(&verdict), ("the runner has no agent for bot Build bot", None));
+    }
+
+    /// The refusal code is the runner's own field, never parsed out of the text.
+    #[test]
+    fn a_refusal_carries_the_code_the_runner_sent() {
+        let refused = classify(
+            200,
+            r#"{"status":"refused","reason_code":"path_outside_allowlist","reason":"the directory is outside the allowed roots","agent":"fixer"}"#,
+        );
         assert_eq!(
-            classify_delivery_answer(202, r#"{"status":"dispatched"}"#),
-            DeliveryVerdict::Accepted
+            declined(&refused),
+            (
+                "the runner refused the task (path_outside_allowlist): the directory is outside the allowed roots",
+                Some("path_outside_allowlist")
+            )
         );
-    }
-
-    /// The receiver's answer is named in the reason the task is failed with.
-    #[test]
-    fn a_no_agent_answer_declines_the_task_and_says_why() {
-        let current = classify_delivery_answer(
+        // A code that is not a code is dropped, and the text does not mention it.
+        for bad in ["Bad Code", "ab", "tmux_unavailable (tmux 3.0 < 3.2)", ""] {
+            let body = format!(r#"{{"status":"refused","reason_code":"{bad}","reason":"no tmux"}}"#);
+            let verdict = classify(200, &body);
+            assert_eq!(
+                declined(&verdict),
+                ("the runner refused the task: no tmux", None),
+                "{bad}"
+            );
+        }
+        // A code in the text only is not a code.
+        let in_text = classify(
             200,
-            r#"{"status":"no_agent","bot_key":"bot-b","reason":"sylvode-runner has no agent for this AI task (bot bot-b)"}"#,
+            r#"{"status":"refused","reason":"tmux_unavailable (tmux 3.0 < 3.2)"}"#,
         );
-        let reason = declined(&current);
-        assert!(reason.contains("`no_agent`"), "{reason}");
-        assert!(reason.contains("has no agent for this AI task (bot bot-b)"), "{reason}");
-
-        // An older receiver answers without `reason`.
-        let older = classify_delivery_answer(200, r#"{"status":"no_agent","bot_key":"bot-b","route":{}}"#);
-        assert!(declined(&older).contains("no agent matches bot bot-b"));
-    }
-
-    #[test]
-    fn ignored_and_refused_answers_decline_the_task() {
-        let ignored = classify_delivery_answer(200, r#"{"status":"ignored","reason":"not_bot_task"}"#);
-        assert!(declined(&ignored).contains("`ignored`"));
-        assert!(declined(&ignored).contains("not_bot_task"));
-        let refused = classify_delivery_answer(
-            200,
-            r#"{"status":"refused","agent":"fixer","reason":"cli disabled by feature flag or safe mode"}"#,
+        assert_eq!(
+            declined(&in_text),
+            ("the runner refused the task: tmux_unavailable (tmux 3.0 < 3.2)", None)
         );
-        assert!(declined(&refused).contains("safe mode"));
+        // `ignored` reads the same way.
+        let ignored = classify(200, r#"{"status":"ignored","reason":"not_bot_task"}"#);
+        assert_eq!(declined(&ignored), ("the runner refused the task: not_bot_task", None));
+        // Without a reason the answer itself is the detail.
+        let bare = classify(200, r#"{"status":"refused"}"#);
+        assert!(declined(&bare).0.starts_with("the runner refused the task: "));
     }
 
     #[test]
     fn a_client_error_declines_the_task() {
         for status in [400, 401, 403, 404, 413, 422] {
-            let verdict = classify_delivery_answer(status, "Unauthorized");
-            assert!(
-                declined(&verdict).contains(&format!("HTTP {status}")),
-                "{status}: {verdict:?}"
+            let verdict = classify(status, "Unauthorized");
+            assert_eq!(
+                declined(&verdict),
+                (
+                    format!("the runner answered HTTP {status}: Unauthorized").as_str(),
+                    None
+                ),
+                "{status}"
             );
         }
     }
@@ -694,10 +764,23 @@ mod tests {
     fn server_errors_throttling_and_conflicts_are_retried() {
         for status in [500, 502, 503, 504, 408, 409, 425, 429, 301, 302, 307] {
             assert!(
-                matches!(classify_delivery_answer(status, ""), DeliveryVerdict::Transient(ref reason) if reason.contains(&format!("HTTP {status}"))),
+                matches!(classify(status, ""), DeliveryVerdict::Transient(ref reason)
+                    if reason.starts_with("the runner could not be reached: ") && reason.contains(&format!("HTTP {status}"))),
                 "{status} must be retried"
             );
         }
+    }
+
+    /// No message the worker writes calls the runner anything else.
+    #[test]
+    fn the_worker_never_says_receiver() {
+        let source = include_str!("ai_tasks.rs");
+        let mut parts = source.splitn(2, "#[cfg(test)]");
+        let production = parts.next().unwrap_or_default();
+        assert!(
+            !production.to_lowercase().contains("receiver"),
+            "a message says receiver"
+        );
     }
 
     #[test]
@@ -706,8 +789,8 @@ mod tests {
         let cut = excerpt(&long);
         assert_eq!(cut.chars().count(), 303);
         assert!(cut.ends_with("..."));
-        let verdict = classify_delivery_answer(400, &long);
-        assert!(declined(&verdict).len() < 400);
+        let verdict = classify(400, &long);
+        assert!(declined(&verdict).0.len() < 400);
     }
 }
 
@@ -941,9 +1024,16 @@ mod database_tests {
         settle_delivery(&state, row(accepted), DeliveryVerdict::Accepted)
             .await
             .expect("accepted settles");
-        settle_delivery(&state, row(declined), DeliveryVerdict::Declined("no agent".to_string()))
-            .await
-            .expect("declined settles");
+        settle_delivery(
+            &state,
+            row(declined),
+            DeliveryVerdict::Declined {
+                reason: "no agent".to_string(),
+                code: None,
+            },
+        )
+        .await
+        .expect("declined settles");
         settle_delivery(&state, row(transient), DeliveryVerdict::Transient("503".to_string()))
             .await
             .expect("transient settles");
@@ -955,15 +1045,17 @@ mod database_tests {
     }
 
     /// A runner that refuses a task at delivery leaves a comment where the assigner works, for a
-    /// project whose execution settings are enabled.
+    /// project that has execution settings, enabled or not: a project the person has configured
+    /// wants to know why a task did not start.
     #[tokio::test]
-    async fn a_declined_delivery_is_reported_on_the_issue_of_an_enabled_project() {
+    async fn a_declined_delivery_is_reported_on_the_issue_of_a_configured_project() {
         let scratch = scratch_or_skip!("declined_comment");
         let db = &scratch.db;
         let state = state_for(db.clone());
         let enabled = seed_pending_task(db).await;
+        let disabled = seed_pending_task(db).await;
         let plain = seed_pending_task(db).await;
-        for (task, with_settings) in [(enabled, true), (plain, false)] {
+        for (task, settings) in [(enabled, Some(true)), (disabled, Some(false)), (plain, None)] {
             let issue = Uuid::new_v4();
             exec(
                 db,
@@ -980,23 +1072,27 @@ mod database_tests {
                 vec![task.into(), issue.into()],
             )
             .await;
-            if with_settings {
+            if let Some(on) = settings {
                 exec(
                     db,
                     "INSERT INTO project_execution_settings (project_id, working_directory, enabled) \
-                     SELECT project_id, '/work/a', true FROM ai_tasks WHERE id = $1",
-                    vec![task.into()],
+                     SELECT project_id, '/work/a', $2 FROM ai_tasks WHERE id = $1",
+                    vec![task.into(), on.into()],
                 )
                 .await;
             }
         }
         let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
-        for task in [enabled, plain] {
+        for task in [enabled, disabled, plain] {
             let row = picked.iter().find(|row| row.id == task).expect("picked");
             settle_delivery(
                 &state,
                 row,
-                DeliveryVerdict::Declined("the working directory is outside the allowed roots".to_string()),
+                DeliveryVerdict::Declined {
+                    reason: "the runner refused the task (path_outside_allowlist): the working directory is outside the allowed roots"
+                        .to_string(),
+                    code: Some("path_outside_allowlist".to_string()),
+                },
             )
             .await
             .expect("declined settles");
@@ -1010,13 +1106,138 @@ mod database_tests {
             ))
             .all(db)
         };
-        let enabled_comments = comments(enabled).await.expect("comments load");
-        assert_eq!(enabled_comments.len(), 1);
-        assert_eq!(
-            enabled_comments.first().map(|row| row.body.as_str()),
-            Some("Could not start: the working directory is outside the allowed roots")
-        );
+        for task in [enabled, disabled] {
+            let found = comments(task).await.expect("comments load");
+            assert_eq!(found.len(), 1);
+            assert_eq!(
+                found.first().map(|row| row.body.as_str()),
+                Some(
+                    "Could not start: the runner refused the task (path_outside_allowlist): \
+                     the working directory is outside the allowed roots"
+                ),
+                "a configured project gets the comment whether or not its connection is enabled"
+            );
+        }
         assert!(comments(plain).await.expect("comments load").is_empty());
+        // The runner's code is stored from its own field.
+        let code = Count::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT COUNT(*)::bigint AS n FROM ai_task_events WHERE task_id = $1 AND event_type = 'failed' \
+             AND payload->>'reason' = 'runner_declined' AND payload->>'reason_code' = 'path_outside_allowlist'",
+            vec![enabled.into()],
+        ))
+        .one(db)
+        .await
+        .expect("count runs")
+        .map_or(0, |row| row.n);
+        assert_eq!(code, 1);
+        scratch.drop_self().await;
+    }
+
+    /// Connects the bot of `task`: credentials issued `hours_ago` hours ago, and its token last used
+    /// `used_after` hours ago, if ever.
+    async fn connect_the_bot_of(db: &DatabaseConnection, task: Uuid, hours_ago: f64, used_after: Option<f64>) {
+        exec(
+            db,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, permissions, transport_surface, \
+                                         is_active, last_used_at) \
+             SELECT t.ai_participant_id, p.workspace_id, 'runner bot', md5(t.id::text), 'opr_test', '[\"read\"]'::jsonb, \
+                    'mcp_stdio', true, \
+                    CASE WHEN $2::float8 IS NULL THEN NULL ELSE now() - make_interval(secs => $2::float8 * 3600) END \
+             FROM ai_tasks t INNER JOIN projects p ON p.id = t.project_id WHERE t.id = $1",
+            vec![task.into(), used_after.into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, active, bot_user_id, created_by) \
+             SELECT gen_random_uuid(), p.workspace_id, 'hook', 'https://runner.example.net/webhook', 's', '[]'::jsonb, true, \
+                    t.ai_participant_id, p.created_by \
+             FROM ai_tasks t INNER JOIN projects p ON p.id = t.project_id WHERE t.id = $1",
+            vec![task.into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO bot_runners (bot_id, workspace_id, webhook_id, runner_url, credentials_issued_at) \
+             SELECT t.ai_participant_id, p.workspace_id, \
+                    (SELECT id FROM webhooks WHERE bot_user_id = t.ai_participant_id), \
+                    'https://runner.example.net', now() - make_interval(secs => $2::float8 * 3600) \
+             FROM ai_tasks t INNER JOIN projects p ON p.id = t.project_id WHERE t.id = $1",
+            vec![task.into(), hours_ago.into()],
+        )
+        .await;
+    }
+
+    async fn status_of(db: &DatabaseConnection, task: Uuid) -> String {
+        #[derive(Debug, FromQueryResult)]
+        struct Status {
+            status: String,
+        }
+        Status::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM ai_tasks WHERE id = $1",
+            vec![task.into()],
+        ))
+        .one(db)
+        .await
+        .expect("status query runs")
+        .expect("task exists")
+        .status
+    }
+
+    /// After a connection or a rotation the bot's tasks stay `pending` (never `processing` without
+    /// a lease) until the runner has used the new token, for at most one hour; other bots are
+    /// not held.
+    #[tokio::test]
+    async fn the_delivery_hold_keeps_a_new_connections_tasks_pending() {
+        let scratch = scratch_or_skip!("delivery_hold");
+        let db = &scratch.db;
+        let fresh = seed_pending_task(db).await; // issued a minute ago, never used
+        let used = seed_pending_task(db).await; // issued a minute ago, used since
+        let old = seed_pending_task(db).await; // issued two hours ago, never used
+        let other = seed_pending_task(db).await; // a bot with no connection at all
+        connect_the_bot_of(db, fresh, 1.0 / 60.0, None).await;
+        connect_the_bot_of(db, used, 1.0 / 60.0, Some(1.0 / 120.0)).await;
+        connect_the_bot_of(db, old, 2.0, None).await;
+
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let ids: Vec<Uuid> = picked.iter().map(|task| task.id).collect();
+        assert!(
+            !ids.contains(&fresh),
+            "a runner that has not used its new token yet is waited for"
+        );
+        assert_eq!(status_of(db, fresh).await, "pending", "held tasks stay pending");
+        assert_eq!(events(db, fresh, "picked_up").await, 0);
+        assert!(
+            ids.contains(&used),
+            "tasks flow once the token was used after it was issued"
+        );
+        assert!(
+            ids.contains(&old),
+            "the hold ends after one hour whether or not the runner showed up"
+        );
+        assert!(ids.contains(&other), "other bots are unaffected");
+
+        // The runner uses its token: the held task is taken on the next pick-up.
+        exec(
+            db,
+            "UPDATE workspace_bots SET last_used_at = now() WHERE id = (SELECT ai_participant_id FROM ai_tasks WHERE id = $1)",
+            vec![fresh.into()],
+        )
+        .await;
+        let later = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        assert_eq!(later.iter().map(|task| task.id).collect::<Vec<_>>(), vec![fresh]);
+        let lease = Count::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT COUNT(*)::bigint AS n FROM ai_tasks WHERE id = $1 AND status = 'processing' AND lease_expires_at IS NOT NULL",
+            vec![fresh.into()],
+        ))
+        .one(db)
+        .await
+        .expect("count runs")
+        .map_or(0, |row| row.n);
+        assert_eq!(lease, 1, "a picked-up task always has its lease");
         scratch.drop_self().await;
     }
 }

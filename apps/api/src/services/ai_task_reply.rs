@@ -423,13 +423,12 @@ pub async fn route_failure<C: ConnectionTrait>(
 
 /// The reply to a task the runner refused at delivery.
 ///
-/// For a project whose execution settings are enabled it is a comment `Could not start: {reason}`
-/// where the task came from, written in its own transaction after the worker failed the task.
+/// For a project that has execution settings, enabled or not, it is a comment
+/// `Could not start: {reason}` where the task came from, written in its own transaction after the
+/// worker failed the task. A project whose connection is disabled still wants to know why its
+/// task did not start; a project without settings was never configured and gets no comment.
 pub async fn announce_start_refusal(state: &AppState, task: &AiTaskRow, reason: &str) -> Result<(), ApiError> {
-    let enabled = execution_settings::load(&state.db, task.project_id)
-        .await?
-        .is_some_and(|settings| settings.enabled);
-    if !enabled {
+    if execution_settings::load(&state.db, task.project_id).await?.is_none() {
         return Ok(());
     }
     let txn = state.db.begin().await?;
@@ -1061,7 +1060,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_start_refusal_is_reported_on_the_issue_for_enabled_projects_only() {
+    async fn a_start_refusal_is_reported_on_the_issue_for_configured_projects() {
         let scratch = scratch_or_skip!("reply_start_refusal");
         let env = Env::new(&scratch.db, "sr").await;
         let state = state_for(env.db.clone());
@@ -1083,8 +1082,25 @@ mod tests {
             vec![env.tenant.project_id.into()],
         )
         .await;
-        announce_start_refusal(&state, &task, "x").await.expect("disabled");
-        assert!(env.comments().await.is_empty(), "a disabled project gets no comment");
+        announce_start_refusal(
+            &state,
+            &task,
+            "the runner refused the task (path_outside_allowlist): the directory is outside the allowed roots",
+        )
+        .await
+        .expect("disabled");
+        let comments = env.comments().await;
+        assert_eq!(
+            comments.len(),
+            1,
+            "a configured project gets the comment even when disabled"
+        );
+        assert_eq!(comments[0].0, env.bot);
+        assert_eq!(
+            comments[0].1,
+            "Could not start: the runner refused the task (path_outside_allowlist): \
+             the directory is outside the allowed roots"
+        );
 
         exec(
             &env.db,
@@ -1092,13 +1108,10 @@ mod tests {
             vec![env.tenant.project_id.into()],
         )
         .await;
-        announce_start_refusal(&state, &task, "directory is outside the allowed roots")
+        announce_start_refusal(&state, &task, "the runner has no agent for bot Build bot")
             .await
             .expect("enabled");
-        let comments = env.comments().await;
-        assert_eq!(comments.len(), 1);
-        assert_eq!(comments[0].0, env.bot);
-        assert_eq!(comments[0].1, "Could not start: directory is outside the allowed roots");
+        assert_eq!(env.comments().await.len(), 2);
         scratch.drop_self().await;
     }
 

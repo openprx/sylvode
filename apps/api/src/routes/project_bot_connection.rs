@@ -24,6 +24,7 @@ use crate::{
     middleware::bot_auth::BotAuthContext,
     response::ApiResponse,
     services::{
+        bot_connection_status::{self, ConnectionStatus},
         bot_connections::{self, ConnectRequest, ConnectionView, MemberView, Outcome, UpdateRequest, VERSION_CONFLICT},
         execution_settings::{self, ProjectRef},
         runner_config_block::ConfigBlock,
@@ -87,15 +88,35 @@ fn version_conflict(current: &ConnectionView) -> Response {
     .into_response()
 }
 
+/// The connection and its status, computed on read.
 #[derive(Serialize)]
 struct ConnectionAnswer<'a> {
     connection: &'a ConnectionView,
+    status: ConnectionStatus,
 }
 
 #[derive(Serialize)]
 struct BlockAnswer<'a> {
     connection: &'a ConnectionView,
+    status: ConnectionStatus,
     config_block: Option<&'a ConfigBlock>,
+}
+
+async fn status_of(state: &AppState, connection: &ConnectionView) -> Result<ConnectionStatus, ApiError> {
+    bot_connection_status::compute(
+        &state.db,
+        connection.bot.id,
+        &connection.execution.cli,
+        &connection.execution.channel,
+    )
+    .await
+}
+
+async fn answer<'a>(state: &AppState, connection: &'a ConnectionView) -> Result<ConnectionAnswer<'a>, ApiError> {
+    Ok(ConnectionAnswer {
+        status: status_of(state, connection).await?,
+        connection,
+    })
 }
 
 /// `GET /api/v1/projects/{project_id}/bot-connection`
@@ -109,8 +130,10 @@ pub async fn get_bot_connection(
     let actor = user_id(&claims)?;
     execution_settings::project_ref(&state.db, project_id).await?;
     if is_project_admin_or_owner(&state.db, project_id, actor).await? {
-        let connection = bot_connections::load_view(&state.db, project_id).await?;
-        return Ok(ApiResponse::success(json!({ "connection": connection })).into_response());
+        let Some(connection) = bot_connections::load_view(&state.db, project_id).await? else {
+            return Ok(ApiResponse::success(json!({ "connection": null, "status": null })).into_response());
+        };
+        return Ok(ApiResponse::success(answer(&state, &connection).await?).into_response());
     }
     if !is_project_member(&state.db, project_id, actor).await? {
         return Err(ApiError::Forbidden("project access denied".to_string()));
@@ -131,6 +154,7 @@ pub async fn connect_bot(
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
     let connected = bot_connections::connect(&state, &project, actor, req, origin_of(&headers)).await?;
     Ok(no_store(ApiResponse::success(BlockAnswer {
+        status: status_of(&state, &connected.connection).await?,
         connection: &connected.connection,
         config_block: connected.config_block.as_ref(),
     })))
@@ -146,10 +170,7 @@ pub async fn update_bot_connection(
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
     match bot_connections::update(&state, &project, actor, req).await? {
-        Outcome::Done(connection) => Ok(ApiResponse::success(ConnectionAnswer {
-            connection: &connection,
-        })
-        .into_response()),
+        Outcome::Done(connection) => Ok(ApiResponse::success(answer(&state, &connection).await?).into_response()),
         Outcome::Conflict { current } => Ok(version_conflict(&current)),
     }
 }
@@ -193,10 +214,7 @@ async fn set_enabled(
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
     match bot_connections::set_enabled(&state, &project, actor, body.expected_version, enabled).await? {
-        Outcome::Done(connection) => Ok(ApiResponse::success(ConnectionAnswer {
-            connection: &connection,
-        })
-        .into_response()),
+        Outcome::Done(connection) => Ok(ApiResponse::success(answer(&state, &connection).await?).into_response()),
         Outcome::Conflict { current } => Ok(version_conflict(&current)),
     }
 }
@@ -213,6 +231,7 @@ pub async fn rotate_bot_connection(
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
     match bot_connections::rotate(&state, &project, actor, body.expected_version, origin_of(&headers)).await? {
         Outcome::Done(rotated) => Ok(no_store(ApiResponse::success(BlockAnswer {
+            status: status_of(&state, &rotated.connection).await?,
             connection: &rotated.connection,
             config_block: Some(&rotated.config_block),
         }))),

@@ -664,10 +664,10 @@ pub const fn status_after_failed_attempt(attempts: i32, max_attempts: i32, end: 
 /// Why the worker ended an attempt, recorded in the task and business events as `reason`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerEndReason {
-    /// The receiver answered the delivery that it will not run the task (`no_agent`, `ignored`,
+    /// The runner answered the delivery that it will not run the task (`no_agent`, `ignored`,
     /// `refused`, or an HTTP 4xx that a repeat cannot change).
-    ReceiverDeclined,
-    /// The delivery did not reach a receiver that took it (no webhook, transport error, 5xx).
+    RunnerDeclined,
+    /// The delivery did not reach a runner that took it (no webhook, transport error, 5xx).
     DeliveryFailed,
     /// The task's lease ran out: no completion or progress arrived within `[ai_tasks]
     /// processing_timeout_secs` of the delivery, or within the lease a later heartbeat granted.
@@ -677,11 +677,16 @@ pub enum WorkerEndReason {
 impl WorkerEndReason {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ReceiverDeclined => "receiver_declined",
+            Self::RunnerDeclined => "runner_declined",
             Self::DeliveryFailed => "delivery_failed",
             Self::ProcessingTimeout => "processing_timeout",
         }
     }
+}
+
+/// Whether `code` is a refusal code a runner may report: 3 to 40 characters of `a-z` and `_`.
+pub fn is_reason_code(code: &str) -> bool {
+    (3..=40).contains(&code.len()) && code.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_')
 }
 
 /// Ends attempt `attempt` of a task the worker delivered, if that attempt is still active.
@@ -692,13 +697,16 @@ impl WorkerEndReason {
 /// attempt twice: `None` means the attempt had already ended and nothing was written. Otherwise
 /// the `retried` or `failed` task event and the matching business event are written, both
 /// carrying `reason` and `error_message`, and the business event records the status the attempt
-/// really had. The caller sends `ai.task_failed` for a failed task (see [`notify_ai_task_failed`]).
+/// really had. `reason_code` is the runner's own refusal code (see [`is_reason_code`]); it is
+/// stored next to `error_message` when it has that shape, and dropped otherwise. The caller sends
+/// `ai.task_failed` for a failed task (see [`notify_ai_task_failed`]).
 pub async fn end_processing_attempt<C: ConnectionTrait>(
     db: &C,
     task_id: Uuid,
     attempt: i32,
     end: AttemptEnd,
     reason: WorkerEndReason,
+    reason_code: Option<&str>,
     error_message: &str,
 ) -> Result<Option<AiTaskRow>, ApiError> {
     let Some(EndedAttemptRow { task, previous_status }) =
@@ -706,7 +714,7 @@ pub async fn end_processing_attempt<C: ConnectionTrait>(
     else {
         return Ok(None);
     };
-    record_worker_attempt_end(db, &task, reason, &previous_status).await?;
+    record_worker_attempt_end(db, &task, reason, reason_code, &previous_status).await?;
     Ok(Some(task))
 }
 
@@ -867,7 +875,7 @@ pub async fn end_stalled_attempts<C: ConnectionTrait>(db: &C, limit: i64) -> Res
 
     let mut tasks = Vec::with_capacity(ended.len());
     for EndedAttemptRow { task, previous_status } in ended {
-        record_worker_attempt_end(db, &task, WorkerEndReason::ProcessingTimeout, &previous_status).await?;
+        record_worker_attempt_end(db, &task, WorkerEndReason::ProcessingTimeout, None, &previous_status).await?;
         tasks.push(task);
     }
     Ok(tasks)
@@ -878,16 +886,23 @@ async fn record_worker_attempt_end<C: ConnectionTrait>(
     db: &C,
     task: &AiTaskRow,
     reason: WorkerEndReason,
+    reason_code: Option<&str>,
     previous_status: &str,
 ) -> Result<(), ApiError> {
     let failed = task.status == "failed";
-    let event_payload = json!({
+    let mut event_payload = json!({
         "reason": reason.as_str(),
         "error_message": task.error_message,
         "attempts": task.attempts,
         "max_attempts": task.max_attempts,
         "next_retry_at": task.next_retry_at.map(Timestamp::to_rfc3339),
     });
+    if let (Some(code), Some(object)) = (
+        reason_code.filter(|code| is_reason_code(code)),
+        event_payload.as_object_mut(),
+    ) {
+        object.insert("reason_code".to_string(), json!(code));
+    }
     insert_ai_task_event(
         db,
         task.id,
@@ -1124,7 +1139,7 @@ mod attempt_end_tests {
 
     #[test]
     fn reasons_have_stable_names() {
-        assert_eq!(WorkerEndReason::ReceiverDeclined.as_str(), "receiver_declined");
+        assert_eq!(WorkerEndReason::RunnerDeclined.as_str(), "runner_declined");
         assert_eq!(WorkerEndReason::DeliveryFailed.as_str(), "delivery_failed");
         assert_eq!(WorkerEndReason::ProcessingTimeout.as_str(), "processing_timeout");
     }
@@ -1185,6 +1200,48 @@ mod worker_attempt_database_tests {
         .await
     }
 
+    /// The runner's refusal code is stored from the field the runner sent, in the failed event's
+    /// payload, and only when it has the shape of a code.
+    #[tokio::test]
+    async fn the_refusal_code_is_stored_only_when_it_is_a_code() {
+        let scratch = scratch_or_skip!("ai_task_worker_reason_code");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "rc").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        for (code, stored) in [
+            (Some("path_outside_allowlist"), Some("path_outside_allowlist")),
+            (Some("tmux_unavailable"), Some("tmux_unavailable")),
+            (Some("Bad Code"), None),
+            (Some("ab"), None),
+            (Some("tmux_unavailable (tmux 3.0 < 3.2)"), None),
+            (None, None),
+        ] {
+            let task_id = seed_task(db, &tenant, bot, 1, 0).await;
+            end_processing_attempt(
+                db,
+                task_id,
+                1,
+                AttemptEnd::Terminal,
+                WorkerEndReason::RunnerDeclined,
+                code,
+                "the runner refused the task",
+            )
+            .await
+            .expect("the update runs")
+            .expect("the attempt was processing");
+            let payload = count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM ai_task_events \
+                 WHERE task_id = $1 AND event_type = 'failed' AND payload->>'reason' = 'runner_declined' \
+                   AND payload->>'reason_code' IS NOT DISTINCT FROM $2",
+                vec![task_id.into(), stored.map(str::to_string).into()],
+            )
+            .await;
+            assert_eq!(payload, 1, "{code:?} should store {stored:?}");
+        }
+        scratch.drop_self().await;
+    }
+
     #[tokio::test]
     async fn a_declined_delivery_fails_the_attempt_once() {
         let scratch = scratch_or_skip!("ai_task_worker_declined");
@@ -1198,14 +1255,18 @@ mod worker_attempt_database_tests {
             task_id,
             1,
             AttemptEnd::Terminal,
-            WorkerEndReason::ReceiverDeclined,
-            "receiver answered no_agent",
+            WorkerEndReason::RunnerDeclined,
+            None,
+            "the runner has no agent for bot Build bot",
         )
         .await
         .expect("the update runs")
         .expect("attempt 1 was processing");
         assert_eq!(ended.status, "failed");
-        assert_eq!(ended.error_message.as_deref(), Some("receiver answered no_agent"));
+        assert_eq!(
+            ended.error_message.as_deref(),
+            Some("the runner has no agent for bot Build bot")
+        );
         assert!(ended.completed_at.is_some());
         assert_eq!(events(db, task_id, "failed").await, 1);
         assert_eq!(business_events(db, task_id, "ai_task.failed").await, 1);
@@ -1215,7 +1276,8 @@ mod worker_attempt_database_tests {
             task_id,
             1,
             AttemptEnd::Terminal,
-            WorkerEndReason::ReceiverDeclined,
+            WorkerEndReason::RunnerDeclined,
+            None,
             "again",
         )
         .await
@@ -1239,6 +1301,7 @@ mod worker_attempt_database_tests {
             1,
             AttemptEnd::RetryWhileAttemptsRemain,
             WorkerEndReason::DeliveryFailed,
+            None,
             "late",
         )
         .await
@@ -1251,6 +1314,7 @@ mod worker_attempt_database_tests {
             2,
             AttemptEnd::RetryWhileAttemptsRemain,
             WorkerEndReason::DeliveryFailed,
+            None,
             "HTTP 503",
         )
         .await
@@ -1339,7 +1403,8 @@ mod worker_attempt_database_tests {
             task_id,
             1,
             AttemptEnd::Terminal,
-            WorkerEndReason::ReceiverDeclined,
+            WorkerEndReason::RunnerDeclined,
+            None,
             "declined",
         )
         .await
