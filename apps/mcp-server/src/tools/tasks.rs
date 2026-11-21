@@ -826,6 +826,40 @@ mod tests {
         Ok(())
     }
 
+    /// A repeat that says something else than the stored result is a conflict at the API (409). It
+    /// is reported as the error it is, never as `already_completed` / `already_failed`, and the
+    /// stored task is not read back to dress it up.
+    #[tokio::test]
+    async fn a_conflicting_repeat_is_an_error_not_an_already_ended_success() -> Result<(), Box<dyn std::error::Error>> {
+        for (tool, args, message) in [
+            (
+                TASK_COMPLETE,
+                json!({ "task_id": TASK, "attempt": 2, "outcome": "done", "summary": "another" }),
+                "the task was already completed with a different result",
+            ),
+            (
+                TASK_FAIL,
+                json!({ "task_id": TASK, "attempt": 2, "reason": "another" }),
+                "the task already failed with a different reason",
+            ),
+        ] {
+            let answer: Answer = Arc::new(move |seen: &Seen| {
+                if seen.method == "POST" {
+                    json!({ "code": 409, "message": message })
+                } else {
+                    ok(view("completed", 2))
+                }
+            });
+            let (server, seen) = mock(answer).await?;
+            let result = server.execute_tool_for_catalog_witness(tool, args).await;
+            assert_eq!(result.is_error, Some(true), "{tool}");
+            assert!(text(&result).contains(message), "{}", text(&result));
+            assert!(!text(&result).contains("already_"), "{}", text(&result));
+            assert_eq!(seen.lock().len(), 1, "{tool}: the stored task must not be read back");
+        }
+        Ok(())
+    }
+
     // ---- argument validation: nothing reaches the API ----
 
     #[tokio::test]

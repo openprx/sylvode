@@ -367,6 +367,13 @@ pub async fn complete_task_with_reply(
     let txn = state.db.begin().await?;
     let Some(ended) = complete_active_attempt(&txn, task_id, attempt, &result).await? else {
         let current = load_task_with_protocol(&txn, task_id).await?.task;
+        // The attempt already completed: saying the same thing again is the harmless "not active",
+        // saying something else is a conflict with the stored result, which the first call decided.
+        if current.status == "completed" && current.attempts == attempt && current.result.as_ref() != Some(&result) {
+            return Err(ApiError::Conflict(
+                "the task was already completed with a different result".to_string(),
+            ));
+        }
         return Err(not_active_for_attempt(attempt, current.attempts));
     };
     let (task, previous_status) = (ended.task, ended.previous_status);
@@ -427,6 +434,13 @@ pub async fn fail_task_with_reply(
     let txn = state.db.begin().await?;
     let Some(ended) = cas_end_attempt(&txn, task_id, attempt, end, reason).await? else {
         let current = load_task_with_protocol(&txn, task_id).await?.task;
+        // As for a completion: the same reason again is "not active", another reason is a conflict.
+        if current.status == "failed" && current.attempts == attempt && current.error_message.as_deref() != Some(reason)
+        {
+            return Err(ApiError::Conflict(
+                "the task already failed with a different reason".to_string(),
+            ));
+        }
         return Err(not_active_for_attempt(attempt, current.attempts));
     };
     let (task, previous_status) = (ended.task, ended.previous_status);
@@ -674,6 +688,17 @@ mod tests {
         task: Uuid,
         n: Option<i32>,
     ) -> Result<Value, ApiError> {
+        complete_with(db, w, caller, task, n, "s").await
+    }
+
+    async fn complete_with(
+        db: &DatabaseConnection,
+        w: &World,
+        caller: Caller,
+        task: Uuid,
+        n: Option<i32>,
+        summary: &str,
+    ) -> Result<Value, ApiError> {
         let (claims, bot) = w.identity(caller);
         json_of(
             complete_task_with_reply(
@@ -684,7 +709,7 @@ mod tests {
                 attempt(n),
                 Json(CompleteRequest {
                     outcome: "done".to_string(),
-                    summary: "s".to_string(),
+                    summary: summary.to_string(),
                     artifacts: Vec::new(),
                     vote: None,
                     vote_reason: None,
@@ -702,6 +727,17 @@ mod tests {
         task: Uuid,
         n: Option<i32>,
     ) -> Result<Value, ApiError> {
+        fail_with(db, w, caller, task, n, "r").await
+    }
+
+    async fn fail_with(
+        db: &DatabaseConnection,
+        w: &World,
+        caller: Caller,
+        task: Uuid,
+        n: Option<i32>,
+        reason: &str,
+    ) -> Result<Value, ApiError> {
         let (claims, bot) = w.identity(caller);
         json_of(
             fail_task_with_reply(
@@ -711,7 +747,7 @@ mod tests {
                 Path(task),
                 attempt(n),
                 Json(FailRequest {
-                    reason: "r".to_string(),
+                    reason: reason.to_string(),
                     retryable: false,
                     source: None,
                 }),
@@ -838,6 +874,51 @@ mod tests {
             )
             .is_ok()
         );
+        scratch.drop_self().await;
+    }
+
+    /// A repeat of an end the task already has is the harmless "not active" answer when it says the
+    /// same thing, and a conflict when it says something else: the stored result is the first one.
+    #[tokio::test]
+    async fn a_repeated_end_with_other_content_is_a_conflict() {
+        let scratch = scratch_or_skip!("aitp_repeat_conflict");
+        let db = &scratch.db;
+        let w = World::new(db, "rc").await;
+        let completed = seed_task(db, &w.tenant, w.bot, "processing", 1, 0).await;
+        complete_with(db, &w, Caller::TaskBot, completed, Some(1), "first summary")
+            .await
+            .expect("the first completion");
+        let same = complete_with(db, &w, Caller::TaskBot, completed, Some(1), "first summary").await;
+        assert!(
+            matches!(&same, Err(ApiError::BadRequest(message)) if message.contains("not active")),
+            "{same:?}"
+        );
+        let other = complete_with(db, &w, Caller::TaskBot, completed, Some(1), "another summary").await;
+        assert!(
+            matches!(&other, Err(ApiError::Conflict(message)) if message.contains("different result")),
+            "{other:?}"
+        );
+        // A repeat for another attempt is just not active.
+        let stale = complete_with(db, &w, Caller::TaskBot, completed, Some(2), "another summary").await;
+        assert!(matches!(&stale, Err(ApiError::BadRequest(_))), "{stale:?}");
+
+        let failed = seed_task(db, &w.tenant, w.bot, "processing", 1, 0).await;
+        fail_with(db, &w, Caller::TaskBot, failed, Some(1), "first reason")
+            .await
+            .expect("the first failure");
+        let same = fail_with(db, &w, Caller::TaskBot, failed, Some(1), "first reason").await;
+        assert!(
+            matches!(&same, Err(ApiError::BadRequest(message)) if message.contains("not active")),
+            "{same:?}"
+        );
+        let other = fail_with(db, &w, Caller::TaskBot, failed, Some(1), "another reason").await;
+        assert!(
+            matches!(&other, Err(ApiError::Conflict(message)) if message.contains("different reason")),
+            "{other:?}"
+        );
+        // Completing a failed task (or failing a completed one) stays a plain "not active".
+        let crossed = complete_with(db, &w, Caller::TaskBot, failed, Some(1), "s").await;
+        assert!(matches!(&crossed, Err(ApiError::BadRequest(_))), "{crossed:?}");
         scratch.drop_self().await;
     }
 

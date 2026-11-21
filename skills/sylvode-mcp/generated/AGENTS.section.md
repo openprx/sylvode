@@ -12,7 +12,7 @@ A task message looks like `[Sylvode task] id=<uuid> attempt=<n>/<max>`. Every me
    - `sylvode_task_complete` with `outcome` (`done`, `needs_review` or `no_change`) and a Markdown `summary`: what you did and how to verify it. Add `artifacts` for commits, branches, pull requests, files or links. For a proposal vote, set `vote` (`yes`, `no` or `abstain`) and `vote_reason`.
    - `sylvode_task_fail` with a `reason` a human can act on. Set `retryable: true` only when the cause is temporary.
 
-Every task tool takes the same `task_id` and `attempt`. If a call answers `already_completed` or `already_failed`, the task has ended as you asked: do not repeat it.
+Every task tool takes the same `task_id` and `attempt`. If a call answers `already_completed` or `already_failed`, the task has ended as you asked: do not repeat it. If it answers that the task was already completed (or failed) with a different result, the first answer stands: do not try to change it.
 
 A `[Sylvode reminder]` means a step is missing. Do the step it names now.
 
