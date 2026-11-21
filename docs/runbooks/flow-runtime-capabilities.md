@@ -95,7 +95,9 @@ the full computation, as it always did. The limits are the same either way, and 
 worker accepts or refuses on its own the decision is the full computation's, with two exceptions
 that are deliberate. With the incremental window on, the worker refuses (reason
 `logical_id_rewritten`) an update that writes or deletes the logical id of a tree node that existed
-before it; no client does that, and the full computation accepts it on stale id caches.
+before it; no client does that, and the full computation accepts it on stale id caches. With either
+setting of the window, the worker refuses an update whose tree ops name a parent that does not exist
+when the op runs (see "Refused tree updates" below).
 And the API, not the worker, has the last word on every accepted write (next paragraph). On a
 Page too large for the full computation to fit the 50 ms window (more than about 3,000 flat
 blocks on the reference runner), an update that takes the full computation is refused by the CPU
@@ -142,9 +144,38 @@ incremental_window = false
 
 The default is `true`. With `false` the worker computes no facts and every window is the full
 computation, which is what the worker did before the incremental window existed: its decision and
-the document it accepts are the same for every input. The API is stricter than before with either
+the document it accepts are the same for every input except an update whose tree ops name a parent
+that does not exist when the op runs, which is refused with either setting (see "Refused tree
+updates" below). The API is stricter than before with either
 setting: it refuses, with an internal error, a document whose projection is over a limit, which was
 committed before. With `false`, a Page above roughly 3,000 flat blocks (or the equivalent in legacy
 nodes) can again exceed the 50 ms window on small runners, exactly as before the incremental window
 existed.
 The API reads it at startup: restart it to apply the change.
+
+### Refused tree updates
+
+A browser's Loro document panics inside its WASM module when it imports an update that continues the
+document's head and has a tree `create` or `move` under a parent that does not exist when the op
+runs; the document object is unusable afterwards. The server refuses such an update before it is
+stored or relayed, as `invalid_update` (not retryable) with `details.reason` set to one of:
+
+- `tree_parent_missing`: the parent was never created, is a node of another tree, is the node itself,
+  or is created by a later op of the same update. A parent that exists and is deleted (including one a
+  concurrent update deleted) is not refused.
+- `tree_parent_cycle`: a move puts a node below one of its own descendants (only for a change made on
+  the head; a conflict between concurrent moves is resolved by the library and is not refused).
+
+The refusal is logged at warning level as `collab write: refused, the update names a tree parent that
+does not exist when the op runs or moves a node below itself` with `document_id`, `update_id` and
+`reason` (never content). It holds with `incremental_window = false`, for every tree in the document
+and for uploaded packages (the package's whole history is read; the refusal is returned with the
+same reasons). The API also applies the rule to the document the worker returned, so a worker that
+accepted such an update is not trusted.
+
+Documents stored before this check may hold such an update. No scanner is provided. A document whose
+history holds one makes every browser that opens it recover through the editor's reload state, and can
+be found by exporting the page as a package and importing it into a scratch instance, which reads the
+whole history and refuses it with one of the reasons above. The frontend no longer lets such a
+document stay dead: a failed import of server bytes discards the document and rebuilds it from the
+REST bootstrap, at most twice within a minute, after which the editor shows its load error.

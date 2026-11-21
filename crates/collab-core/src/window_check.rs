@@ -57,9 +57,10 @@
 //! event-recording path. `ImportGreaterUpdates` checks the parent of a move and drops an op whose
 //! parent check fails. `Linear` does not check (`need_check` is false) and leaves a node whose
 //! parent the document never had in the state with a dangling parent, which the projection refuses
-//! when the node is named and ignores otherwise; `next` does the same. Nothing panics in the worker
-//! in either mode, and `next` and the window agree
-//! (`r3_8_a_create_under_a_missing_parent_is_decided_as_next_does`). The argument below does not
+//! when the node is named and ignores otherwise. Nothing panics in the worker in either mode, but a
+//! subscribed client does panic on such an op, so `crate::tree_refs` refuses every tree op that
+//! names a parent that does not exist when it runs, before this check, with or without facts
+//! (`r3_8_a_create_under_a_missing_parent_is_refused`); `next` accepted it. The argument below does not
 //! depend on the mode: it needs only that an imported op acts on the node it names, and that
 //! nothing else is added or moved, which `created_nodes_adopt_nothing` checks on the document after
 //! the import. A worker panic is a refusal, so a panic in some shape would be `next`'s behaviour as
@@ -206,7 +207,8 @@
 //! id is refused instead); an update that could take the page over the work budget; a touched
 //! container without a path (the metadata of a deleted node, nodes created under a deleted
 //! parent); and every shape condition 7 names. With the configuration switch off (no facts) every
-//! window is this path, and the **worker** is `next`'s computation for every input: the same import,
+//! window is this path, and the **worker** is `next`'s computation for every input but one (the tree
+//! reference refusal of `crate::tree_refs`, which holds with the switch off too): the same import,
 //! the same full id-cache rebuild, the same projection and limits (the differential test
 //! `with_the_switch_off_the_window_is_next_on_every_case` keeps a copy of `next`'s import as its
 //! oracle, and compares the worker only). The **host** is not `next`: after every accepted window,
@@ -535,6 +537,8 @@ pub(crate) struct OpSummary {
     /// An op of the import put a style mark on a text (or ended one): the only way a text gains
     /// marks, so without it a text that had none has none.
     mark_ops: bool,
+    /// The `create` and `move` ops of every tree the import names (`crate::tree_refs`).
+    tree_refs: crate::tree_refs::TreeRefs,
 }
 
 /// One change of an import, reduced to what the sequential gate reads.
@@ -575,6 +579,16 @@ impl Seen {
 }
 
 impl OpSummary {
+    /// Refuses an import whose tree ops name a parent that does not exist when the op runs, or
+    /// move a node below itself (`crate::tree_refs`).
+    pub(crate) fn refuse_unresolved_tree_parents(
+        &self,
+        doc: &loro::LoroDoc,
+        before: &loro::VersionVector,
+    ) -> Result<(), CollabError> {
+        self.tree_refs.verdict(doc, before)
+    }
+
     /// Whether `tree_created` is every node the import added to the legacy tree.
     pub(crate) const fn tree_ids_known(&self) -> bool {
         !self.seen.has(Seen::TREE_OTHER)
@@ -608,6 +622,7 @@ impl OpSummary {
 
     /// Reads one imported change, before its ops.
     pub(crate) fn visit_change(&mut self, change: &loro::JsonChange) {
+        self.tree_refs.visit_change(change);
         let Some(len) = change.checked_op_len().and_then(|len| i32::try_from(len).ok()) else {
             self.unreadable_change = true;
             return;
@@ -700,6 +715,7 @@ impl OpSummary {
     /// Reads one imported op. `peer` is the peer of the change that carries it and `root_list` the
     /// id of `doc.children` after the import.
     pub(crate) fn visit(&mut self, peer: u64, op: &JsonOp, root_list: Option<&ContainerID>) {
+        self.tree_refs.visit(peer, op);
         self.work_added = self.work_added.plus(crate::work::op_work(&op.content));
         if matches!(
             op.content,

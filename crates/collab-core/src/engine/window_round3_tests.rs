@@ -20,7 +20,7 @@ use loro::{
 
 use super::hand_encoded::{accepted, frontier_strings, raw_edit, rewrite_deps, set_node};
 use super::window_fixtures::{Case, FactsFrom};
-use super::window_round2_tests::{flat_page_of, grow_by, judge, next_decision};
+use super::window_round2_tests::{flat_page_of, grow_by, judge};
 use super::{CollabEngine, LoroCollabEngine};
 use crate::facts::BaseFacts;
 
@@ -560,86 +560,6 @@ fn r3_2_the_bound_on_the_items_an_update_adds_holds() {
 // R3-8: a create under a parent the document never had
 // ---------------------------------------------------------------------------------------------
 
-/// A single-head base and one change, depending exactly on that head, that creates a node under a
-/// parent id the base never had (hand-encoded: the library's API refuses to author it). Records
-/// what the library does with it, for a change of a new peer and for one that continues the head's
-/// own peer (the shape the library applies without a parent check), and that the window and `next`
-/// do the same.
-#[test]
-fn r3_8_a_create_under_a_missing_parent_is_decided_as_next_does() {
-    for (label, peer) in [("new peer", 9_100), ("the head's own peer", 91)] {
-        let mut engine = LoroCollabEngine::new_empty(91);
-        create_node(&mut engine, "anchor", None);
-        let base = engine.export_snapshot().unwrap();
-        let anchor = *engine.id_to_tree.get("anchor").unwrap();
-        let author = LoroDoc::new();
-        author.import(&base).unwrap();
-        author.set_peer_id(peer).unwrap();
-        let from = author.oplog_vv();
-        let tree = author.get_tree("tree");
-        tree.enable_fractional_index(0);
-        let n = tree.create(TreeParentId::Node(anchor)).unwrap();
-        set_node(&author, n, "orphan", "navigator_node");
-        author.commit();
-        let mut json = json_of(&author, &from);
-        let missing = format!("{}@{}", 5, 9_999);
-        let mut rewritten = 0;
-        for change in json["changes"].as_array_mut().unwrap() {
-            for op in change["ops"].as_array_mut().unwrap() {
-                if op["content"]["type"] == "create" {
-                    op["content"]["parent"] = serde_json::Value::String(missing.clone());
-                    rewritten += 1;
-                }
-            }
-        }
-        assert_eq!(rewritten, 1);
-        let doc = LoroDoc::new();
-        doc.import(&base).unwrap();
-        let before = doc.oplog_vv();
-        doc.import_json_updates(serde_json::to_string(&json).unwrap()).unwrap();
-        let update = doc.export(loro::ExportMode::updates(&before)).unwrap();
-
-        // What the library does: does the import panic, and is the node in the state?
-        let library = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut probe = LoroCollabEngine::load(&base).unwrap();
-            probe.prewarm_for_writes();
-            probe.import_update(&update).unwrap();
-            probe.doc().get_tree("tree").nodes().len()
-        }))
-        .map_err(|_| "panic");
-        let outcome = |facts: bool| {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut engine = LoroCollabEngine::load(&base).unwrap();
-                engine.prewarm_for_writes();
-                let facts = if facts { BaseFacts::compute(&engine) } else { None };
-                crate::walk_counter::reset();
-                crate::window_check::run_window(&mut engine, facts.as_ref(), &update)
-                    .map(|accepted| (accepted.report.is_some(), crate::walk_counter::fallback_reasons()))
-                    .map_err(|e| e.to_string())
-            }))
-            .map_err(|_| "panic")
-        };
-        let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| next_decision(&base, &update)))
-            .map_err(|_| "panic");
-        let with_facts = outcome(true);
-        let without = outcome(false);
-        println!(
-            "{label}: library {library:?} | next {next:?} | window with facts {with_facts:?} | without {without:?}"
-        );
-        // All three agree: they all panic or they all decide the same way, since the behaviour is
-        // the library's.
-        assert_eq!(
-            next.is_ok(),
-            with_facts.is_ok(),
-            "{label}: next {next:?} vs window {with_facts:?}"
-        );
-        assert_eq!(next.is_ok(), without.is_ok(), "{label}");
-        if let (Ok(next), Ok(with_facts)) = (&next, &with_facts) {
-            assert_eq!(next.is_ok(), with_facts.is_ok(), "{label}");
-        }
-    }
-}
-
 /// The rewrite of an existing node's logical id to the id of a shallow node of another chain: `next`
 /// accepts it on stale caches, the host's fresh load refuses it for some targets. The worker with
 /// facts refuses it; the switch-off test records the host's refusal for the rest.
@@ -673,57 +593,393 @@ pub(super) fn round3_cases(scale: u64) -> Vec<Case> {
     cases
 }
 
-/// The same-peer continuation of the head, creating a node under a parent the base never had,
-/// with and without a logical id. Records what the real decision paths do.
-#[test]
-fn r3_8_dangling_parent_named_and_unnamed_through_the_decision_paths() {
-    for named in [true, false] {
-        let mut engine = LoroCollabEngine::new_empty(91);
-        create_node(&mut engine, "anchor", None);
-        let base = engine.export_snapshot().unwrap();
-        let anchor = *engine.id_to_tree.get("anchor").unwrap();
-        let author = LoroDoc::new();
-        author.import(&base).unwrap();
-        author.set_peer_id(91).unwrap();
-        let from = author.oplog_vv();
-        let tree = author.get_tree("tree");
-        tree.enable_fractional_index(0);
-        let n = tree.create(TreeParentId::Node(anchor)).unwrap();
-        if named {
-            set_node(&author, n, "orphan", "navigator_node");
-        }
-        author.commit();
-        let mut json = json_of(&author, &from);
-        let missing = format!("{}@{}", 5, 9_999);
-        for change in json["changes"].as_array_mut().unwrap() {
-            for op in change["ops"].as_array_mut().unwrap() {
-                if op["content"]["type"] == "create" {
-                    op["content"]["parent"] = serde_json::Value::String(missing.clone());
-                }
+/// A page with one node `anchor`, and the peer id of its head.
+fn anchored_base() -> (Vec<u8>, TreeID) {
+    let mut engine = LoroCollabEngine::new_empty(91);
+    create_node(&mut engine, "anchor", None);
+    let anchor = *engine.id_to_tree.get("anchor").unwrap();
+    (engine.export_snapshot().unwrap(), anchor)
+}
+
+/// The update of `peer` on top of `base`: `build` authors it with the API, `mutate` rewrites its
+/// ops (hand-encoding what the API refuses to author).
+fn hostile_update(
+    base: &[u8],
+    peer: u64,
+    build: impl FnOnce(&LoroDoc),
+    mutate: impl FnOnce(&mut serde_json::Value),
+) -> Vec<u8> {
+    let author = LoroDoc::new();
+    author.import(base).unwrap();
+    author.set_peer_id(peer).unwrap();
+    let from = author.oplog_vv();
+    author.get_tree("tree").enable_fractional_index(0);
+    build(&author);
+    author.commit();
+    let mut json = json_of(&author, &from);
+    mutate(&mut json);
+    let doc = LoroDoc::new();
+    doc.import(base).unwrap();
+    let before = doc.oplog_vv();
+    doc.import_json_updates(serde_json::to_string(&json).unwrap()).unwrap();
+    doc.export(loro::ExportMode::updates(&before)).unwrap()
+}
+
+/// Rewrites the parent of every op of `kind` ("create" or "move").
+fn set_parent(json: &mut serde_json::Value, kind: &str, parent: &str) {
+    let mut rewritten = 0;
+    for change in json["changes"].as_array_mut().unwrap() {
+        for op in change["ops"].as_array_mut().unwrap() {
+            if op["content"]["type"] == kind {
+                op["content"]["parent"] = serde_json::Value::String(parent.to_owned());
+                rewritten += 1;
             }
         }
-        let doc = LoroDoc::new();
-        doc.import(&base).unwrap();
-        let before = doc.oplog_vv();
-        doc.import_json_updates(serde_json::to_string(&json).unwrap()).unwrap();
-        let update = doc.export(loro::ExportMode::updates(&before)).unwrap();
-        let judged = judge(&base, &update);
-        println!("named={named}: {judged:#?}");
-        // What a client that loads the stored history would get: snapshot of the accepted doc.
-        let mut accepted = LoroCollabEngine::load(&base).unwrap();
-        let import = accepted.import_client_update(&update);
-        println!(
-            "named={named}: import_client_update -> {:?}",
-            import.as_ref().map(|_| ()).map_err(|e| e.to_string())
-        );
-        if import.is_ok() {
-            let stored = accepted.export_snapshot().unwrap();
-            let seen = LoroDoc::new();
-            seen.import(&stored).unwrap();
-            println!(
-                "named={named}: stored doc tree nodes {}",
-                seen.get_tree("tree").nodes().len()
+    }
+    assert!(rewritten > 0, "no {kind} op to rewrite");
+}
+
+/// What every path says about `update`: `next` and the library accept it, the window refuses it
+/// with `reason` whatever the switch and the facts, the host's check over a document that took it
+/// anyway refuses it, and a refusal leaves the base untouched.
+fn assert_refused_everywhere(label: &str, base: &[u8], update: &[u8], reason: &str) {
+    let refusal = Err(format!("operation failed: {reason}"));
+    let judged = judge(base, update);
+    assert_eq!(
+        judged.tree_reference,
+        Some(reason),
+        "{label}: the independent read: {judged:?}"
+    );
+    assert_eq!(judged.window.clone().map(|_| ()), refusal, "{label}: {judged:?}");
+    assert_eq!(judged.full_window, refusal, "{label}: switched off: {judged:?}");
+    assert!(judged.next.is_ok(), "{label}: next accepted it: {judged:?}");
+    // A wrong worker that committed it: the host reads the document it returned.
+    let mut wrong = LoroCollabEngine::load(base).unwrap();
+    wrong.import_update(update).unwrap();
+    let host = LoroCollabEngine::load(&wrong.export_snapshot().unwrap()).unwrap();
+    assert_eq!(
+        host.refuse_unresolved_tree_parents_over(base)
+            .map_err(|e| e.to_string()),
+        refusal,
+        "{label}: the host's check"
+    );
+    // The same refusal on the client import entry that every other caller uses.
+    let mut engine = LoroCollabEngine::load(base).unwrap();
+    assert_eq!(
+        engine
+            .import_client_update(update)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        refusal,
+        "{label}: import_client_update"
+    );
+}
+
+fn assert_accepted_everywhere(label: &str, base: &[u8], update: &[u8]) {
+    let judged = judge(base, update);
+    assert_eq!(judged.tree_reference, None, "{label}: {judged:?}");
+    judged.assert_sound(label);
+    assert!(judged.window.is_ok(), "{label}: {judged:?}");
+    let mut engine = LoroCollabEngine::load(base).unwrap();
+    let before = engine.doc().oplog_vv();
+    engine.import_update(update).unwrap();
+    crate::tree_refs::refuse_unresolved_tree_parents(engine.doc(), &before).expect(label);
+}
+
+/// The create of a node under a parent the base never had, by the head's own peer and by a new
+/// peer, with and without a logical id: the update the report verified crashes a subscribed
+/// client. Refused as `tree_parent_missing` by every path.
+#[test]
+fn r3_8_a_create_under_a_missing_parent_is_refused() {
+    for named in [true, false] {
+        for peer in [91, 9_100] {
+            let (base, anchor) = anchored_base();
+            let update = hostile_update(
+                &base,
+                peer,
+                |author| {
+                    let n = author.get_tree("tree").create(TreeParentId::Node(anchor)).unwrap();
+                    if named {
+                        set_node(author, n, "orphan", "navigator_node");
+                    }
+                },
+                |json| set_parent(json, "create", "5@9999"),
+            );
+            assert_refused_everywhere(
+                &format!("named={named} peer={peer}"),
+                &base,
+                &update,
+                "tree_parent_missing",
             );
         }
     }
+}
+
+/// The other shapes of the same family, each of which panics a subscribed client (probed with
+/// `loro-crdt` in `frontend/tests/flow-dangling-parent-import.test.ts`).
+#[test]
+fn r3_8_the_related_shapes_are_refused() {
+    let (base, anchor) = anchored_base();
+    // A forward reference: the parent is created by a later op of the same change.
+    let update = hostile_update(
+        &base,
+        91,
+        |author| {
+            let tree = author.get_tree("tree");
+            tree.create(TreeParentId::Node(anchor)).unwrap();
+            tree.create(TreeParentId::Node(anchor)).unwrap();
+        },
+        |json| {
+            let ops = json["changes"][0]["ops"].as_array_mut().unwrap();
+            let later = ops[1]["content"]["target"].clone();
+            ops[0]["content"]["parent"] = later;
+        },
+    );
+    assert_refused_everywhere("forward reference", &base, &update, "tree_parent_missing");
+    // A node that is its own parent.
+    let update = hostile_update(
+        &base,
+        91,
+        |author| {
+            author.get_tree("tree").create(TreeParentId::Node(anchor)).unwrap();
+        },
+        |json| {
+            let op = &mut json["changes"][0]["ops"][0];
+            op["content"]["parent"] = op["content"]["target"].clone();
+        },
+    );
+    assert_refused_everywhere("self parent", &base, &update, "tree_parent_missing");
+    // A move of an existing node to a missing parent, and of a new node.
+    let update = hostile_update(
+        &base,
+        91,
+        |author| {
+            let tree = author.get_tree("tree");
+            let n = tree.create(TreeParentId::Node(anchor)).unwrap();
+            author.commit();
+            let m = tree.create(TreeParentId::Node(anchor)).unwrap();
+            author.commit();
+            tree.mov(m, TreeParentId::Node(n)).unwrap();
+        },
+        |json| set_parent(json, "move", "7@9999"),
+    );
+    assert_refused_everywhere("move to a missing parent", &base, &update, "tree_parent_missing");
+    // A parent in another tree of the same document: a node created in a second root tree, named
+    // as the parent of a node of the engine tree.
+    let update = hostile_update(
+        &base,
+        91,
+        |author| {
+            let other = author.get_tree("other_tree");
+            other.enable_fractional_index(0);
+            other.create(TreeParentId::Root).unwrap();
+            author.commit();
+            author.get_tree("tree").create(TreeParentId::Node(anchor)).unwrap();
+        },
+        |json| {
+            let mut creates = Vec::new();
+            for change in json["changes"].as_array().unwrap() {
+                for op in change["ops"].as_array().unwrap() {
+                    if op["content"]["type"] == "create" {
+                        creates.push(op["content"]["target"].clone());
+                    }
+                }
+            }
+            let mut seen = 0;
+            for change in json["changes"].as_array_mut().unwrap() {
+                for op in change["ops"].as_array_mut().unwrap() {
+                    if op["content"]["type"] == "create" {
+                        if seen == 1 {
+                            op["content"]["parent"] = creates[0].clone();
+                        }
+                        seen += 1;
+                    }
+                }
+            }
+        },
+    );
+    assert_refused_everywhere("parent in another tree", &base, &update, "tree_parent_missing");
+    // A dangling node in a tree the engine does not read at all.
+    let update = hostile_update(
+        &base,
+        91,
+        |author| {
+            let fresh = author.get_tree("fresh_tree");
+            fresh.enable_fractional_index(0);
+            let x = fresh.create(TreeParentId::Root).unwrap();
+            fresh.create(TreeParentId::Node(x)).unwrap();
+        },
+        |json| {
+            let mut first = true;
+            for change in json["changes"].as_array_mut().unwrap() {
+                for op in change["ops"].as_array_mut().unwrap() {
+                    if op["content"]["type"] == "create" && op["content"]["parent"].is_string() {
+                        if first {
+                            op["content"]["parent"] = serde_json::Value::String("3@9999".into());
+                        }
+                        first = false;
+                    }
+                }
+            }
+        },
+    );
+    assert_refused_everywhere("dangling node in an unread tree", &base, &update, "tree_parent_missing");
+    // A move below the node's own descendant.
+    let update = hostile_update(
+        &base,
+        91,
+        |author| {
+            let tree = author.get_tree("tree");
+            let x = tree.create(TreeParentId::Node(anchor)).unwrap();
+            let y = tree.create(TreeParentId::Node(x)).unwrap();
+            let q = tree.create(TreeParentId::Node(anchor)).unwrap();
+            author.commit();
+            tree.mov(q, TreeParentId::Node(y)).unwrap();
+            tree.mov(q, TreeParentId::Node(x)).unwrap();
+        },
+        |json| {
+            let ops = json["changes"].as_array().unwrap().last().unwrap()["ops"].clone();
+            let creates: Vec<_> = json["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|c| c["ops"].as_array().unwrap().clone())
+                .filter(|op| op["content"]["type"] == "create")
+                .map(|op| op["content"]["target"].clone())
+                .collect();
+            let _ = ops;
+            // The last move becomes: x under y (y is a child of x).
+            let last = json["changes"].as_array_mut().unwrap().last_mut().unwrap();
+            let moves = last["ops"].as_array_mut().unwrap();
+            let target = moves.len() - 1;
+            moves[target]["content"]["target"] = creates[0].clone();
+            moves[target]["content"]["parent"] = creates[1].clone();
+        },
+    );
+    assert_refused_everywhere("move below a descendant", &base, &update, "tree_parent_cycle");
+}
+
+/// A parent that exists is never refused: a deleted one (a child of a deleted parent is deleted
+/// with it, which is not dangling), a parent a concurrent update deleted, a parent created earlier
+/// in the same change, and a parent moved into the tree by an earlier op of the update.
+#[test]
+fn r3_8_deleted_and_concurrently_deleted_parents_are_not_dangling() {
+    let (base, anchor) = anchored_base();
+    // A deleted parent: delete a node in one update, create under it in the next.
+    let first = hostile_update(
+        &base,
+        91,
+        |author| {
+            let tree = author.get_tree("tree");
+            let n = tree.create(TreeParentId::Node(anchor)).unwrap();
+            author.commit();
+            tree.delete(n).unwrap();
+        },
+        |_| {},
+    );
+    assert_accepted_everywhere("delete", &base, &first);
+    let deleted_base = accepted(&base, &first);
+    let deleted = {
+        let doc = LoroDoc::new();
+        doc.import(&deleted_base).unwrap();
+        let tree = doc.get_tree("tree");
+        tree.nodes()
+            .into_iter()
+            .find(|n| tree.is_node_deleted(n).unwrap())
+            .unwrap()
+    };
+    let under_deleted = hostile_update(
+        &deleted_base,
+        91,
+        |author| {
+            author.get_tree("tree").create(TreeParentId::Node(deleted)).unwrap();
+        },
+        |_| {},
+    );
+    assert_accepted_everywhere("create under a deleted parent", &deleted_base, &under_deleted);
+    // The same on the state: the node is held by the tree and is deleted, not missing.
+    let mut after = LoroCollabEngine::load(&deleted_base).unwrap();
+    after.import_client_update(&under_deleted).unwrap();
+    let tree = after.doc().get_tree("tree");
+    let child = tree
+        .nodes()
+        .into_iter()
+        .find(|n| n.peer == 91 && !tree.is_node_deleted(n).unwrap_or(false));
+    assert!(child.is_none(), "a child of a deleted parent is deleted with it");
+    assert!(tree.contains(deleted));
+    // A concurrent delete: the client creates under a node on the version before the server
+    // accepted the delete of that node.
+    let mut engine = LoroCollabEngine::new_empty(91);
+    create_node(&mut engine, "anchor", None);
+    create_node(&mut engine, "victim", Some("anchor"));
+    let base0 = engine.export_snapshot().unwrap();
+    let victim = *engine.id_to_tree.get("victim").unwrap();
+    let client = hostile_update(
+        &base0,
+        7_001,
+        |author| {
+            author.get_tree("tree").create(TreeParentId::Node(victim)).unwrap();
+        },
+        |_| {},
+    );
+    let server_delete = hostile_update(
+        &base0,
+        7_002,
+        |author| {
+            author.get_tree("tree").delete(victim).unwrap();
+        },
+        |_| {},
+    );
+    let base1 = accepted(&base0, &server_delete);
+    assert_accepted_everywhere("concurrent delete of the parent", &base1, &client);
+    // A parent created earlier in the same change, and a child created after a move that brought
+    // its parent into the tree.
+    let update = hostile_update(
+        &base,
+        91,
+        |author| {
+            let tree = author.get_tree("tree");
+            let x = tree.create(TreeParentId::Node(anchor)).unwrap();
+            tree.create(TreeParentId::Node(x)).unwrap();
+        },
+        |_| {},
+    );
+    assert_accepted_everywhere("parent created earlier", &base, &update);
+}
+
+/// The incremental check reads only what the update names: the number of tree ops and state
+/// lookups of the check is the same on a page of 20 nodes and one of 2,000.
+#[test]
+fn r3_8_the_tree_check_does_not_read_the_document() {
+    let measure = |nodes: usize| {
+        let mut engine = LoroCollabEngine::new_empty(91);
+        create_node(&mut engine, "anchor", None);
+        for i in 0..nodes {
+            create_node(&mut engine, &format!("n{i}"), Some("anchor"));
+        }
+        let anchor = *engine.id_to_tree.get("anchor").unwrap();
+        let base = engine.export_snapshot().unwrap();
+        let update = hostile_update(
+            &base,
+            91,
+            |author| {
+                let tree = author.get_tree("tree");
+                let x = tree.create(TreeParentId::Node(anchor)).unwrap();
+                tree.create(TreeParentId::Node(x)).unwrap();
+                tree.create(TreeParentId::Node(anchor)).unwrap();
+            },
+            |_| {},
+        );
+        let mut engine = LoroCollabEngine::load(&base).unwrap();
+        engine.prewarm_for_writes();
+        let facts = BaseFacts::compute(&engine);
+        crate::walk_counter::reset();
+        crate::window_check::run_window(&mut engine, facts.as_ref(), &update).unwrap();
+        crate::walk_counter::tree_ref_counts()
+    };
+    let small = measure(20);
+    let large = measure(2_000);
+    assert_eq!(small, large, "the check's reads depend on the page");
+    assert_eq!(small.0, 3, "three tree ops");
+    assert!(small.1 <= 3, "at most one state lookup per op: {small:?}");
 }

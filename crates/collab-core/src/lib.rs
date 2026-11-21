@@ -54,6 +54,7 @@ pub mod reserved_roots;
 pub mod semantic;
 #[cfg(test)]
 mod test_alloc;
+pub mod tree_refs;
 #[cfg(test)]
 mod walk_counter;
 pub mod window_check;

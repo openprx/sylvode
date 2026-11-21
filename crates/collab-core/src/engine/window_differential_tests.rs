@@ -25,7 +25,9 @@
     clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing,
-    clippy::print_stdout
+    clippy::print_stdout,
+    clippy::option_if_let_else,
+    clippy::type_complexity
 )]
 
 use std::collections::BTreeMap;
@@ -584,16 +586,155 @@ pub(super) fn is_the_id_rewrite_refusal(case: &Case, observed: &Observed) -> boo
     ) && writes_an_existing_nodes_id(case)
 }
 
-/// [`difference_with`] of the incremental window against a reference, except for the one documented
-/// refusal ([`is_the_id_rewrite_refusal`]), which is not a difference. A refusal for a reason the
-/// update does not explain is one.
+/// The reason `tree_refs` must refuse `update` with, read from the update's own JSON and the
+/// document after the import, independently of the check: a create or move whose parent is the
+/// target itself, is created by the update at or after the op, or is not a node of the base held
+/// by the tree it is named in (`tree_parent_missing`), or the last move of a node that leaves it
+/// among its own ancestors, in a change that depends on the whole base (`tree_parent_cycle`).
+pub(super) fn unresolved_tree_reference(base: &[u8], update: &[u8]) -> Option<&'static str> {
+    use std::collections::HashMap;
+    let doc = loro::LoroDoc::new();
+    doc.import(base).unwrap();
+    let before = doc.oplog_vv();
+    let head = doc.oplog_frontiers();
+    if doc.import(update).is_err() {
+        return None;
+    }
+    let json = serde_json::to_value(
+        doc.export_json_updates_without_peer_compression(&before, &doc.oplog_vv())
+            .unwrap(),
+    )
+    .unwrap();
+    let parse = |text: &str| -> Option<loro::TreeID> {
+        let (counter, peer) = text.split_once('@')?;
+        Some(loro::TreeID::new(peer.parse().ok()?, counter.parse().ok()?))
+    };
+    // (container, target) -> (position, parent, kind, on head)
+    let mut ops = Vec::new();
+    for change in json["changes"].as_array().unwrap() {
+        let peer: u64 = change["id"]
+            .as_str()
+            .unwrap()
+            .split_once('@')
+            .unwrap()
+            .1
+            .parse()
+            .unwrap();
+        let start = change["id"]
+            .as_str()
+            .unwrap()
+            .split_once('@')
+            .unwrap()
+            .0
+            .parse::<i64>()
+            .unwrap();
+        let lamport = change["lamport"].as_i64().unwrap();
+        let on_head = head.iter().all(|id| {
+            change["deps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|dep| parse(dep.as_str().unwrap()) == Some(loro::TreeID::new(id.peer, id.counter)))
+        });
+        for op in change["ops"].as_array().unwrap() {
+            let kind = op["content"]["type"].as_str().unwrap();
+            if kind != "create" && kind != "move" {
+                continue;
+            }
+            let position = (lamport + op["counter"].as_i64().unwrap() - start, peer);
+            let target = parse(op["content"]["target"].as_str().unwrap()).unwrap();
+            let parent = op["content"]["parent"].as_str().and_then(parse);
+            ops.push((
+                op["container"].as_str().unwrap().to_owned(),
+                target,
+                parent,
+                kind == "create",
+                position,
+                on_head,
+            ));
+        }
+    }
+    let tree_of = |container: &str| match doc.get_container(loro::ContainerID::try_from(container).ok()?) {
+        Some(loro::Container::Tree(tree)) => Some(tree),
+        _ => None,
+    };
+    for (container, target, parent, _, position, _) in &ops {
+        let Some(parent) = parent else { continue };
+        if parent.is_deleted_root() {
+            continue;
+        }
+        if parent == target {
+            return Some("tree_parent_missing");
+        }
+        let creation: Option<(i64, u64)> = ops
+            .iter()
+            .filter(|(c, t, _, create, _, _)| c == container && t == parent && *create)
+            .map(|(_, _, _, _, position, _)| *position)
+            .min();
+        let unresolved = if let Some(created) = creation {
+            created >= *position
+        } else {
+            let moved_in = ops
+                .iter()
+                .any(|(c, t, _, create, at, _)| c == container && t == parent && !*create && at < position);
+            !(moved_in || before.includes_id(loro::ID::new(parent.peer, parent.counter)))
+                || tree_of(container).is_some_and(|tree| !tree.contains(*parent))
+        };
+        if unresolved {
+            return Some("tree_parent_missing");
+        }
+    }
+    let mut last: HashMap<(&str, loro::TreeID), &(String, loro::TreeID, Option<loro::TreeID>, bool, (i64, u64), bool)> =
+        HashMap::new();
+    for op in ops.iter().filter(|op| !op.3) {
+        let slot = last.entry((op.0.as_str(), op.1)).or_insert(op);
+        if slot.4 < op.4 {
+            *slot = op;
+        }
+    }
+    for (container, target, parent, _, _, on_head) in last.values().map(|op| &**op) {
+        let (Some(mut at), true, Some(tree)) = (parent.filter(|p| !p.is_deleted_root()), *on_head, tree_of(container))
+        else {
+            continue;
+        };
+        for _ in 0..1_000_000 {
+            if at == *target {
+                return Some("tree_parent_cycle");
+            }
+            match tree.parent(at) {
+                Some(loro::TreeParentId::Node(next)) => at = next,
+                _ => break,
+            }
+        }
+    }
+    None
+}
+
+/// Whether `observed` is a refusal by `tree_refs`, which `next` does not make (it accepts the
+/// update and a subscribed client then panics). The refusal must be explained by the update: an
+/// independent read of its ops finds the shape ([`unresolved_tree_reference`]). The worker's
+/// second documented difference from `next`, with or without facts.
+pub(super) fn is_the_tree_reference_refusal(case: &Case, observed: &Observed) -> bool {
+    match &observed.decision {
+        Decision::Refuse(CollabError::OperationFailed { reason })
+            if crate::tree_refs::is_tree_reference_reason(reason) =>
+        {
+            unresolved_tree_reference(&case.base, &case.update) == Some(reason.as_str())
+        }
+        _ => false,
+    }
+}
+
+/// [`difference_with`] of the incremental window against a reference, except for the documented
+/// refusals ([`is_the_id_rewrite_refusal`], [`is_the_tree_reference_refusal`]), which are not
+/// differences. A refusal for a reason the update does not explain is one.
 pub(super) fn difference_for(
     case: &Case,
     reference: &Observed,
     observed: &Observed,
     snapshot_bytes: bool,
 ) -> Option<String> {
-    if is_the_id_rewrite_refusal(case, observed) {
+    if is_the_id_rewrite_refusal(case, observed) || is_the_tree_reference_refusal(case, observed) {
         return None;
     }
     difference_with(reference, observed, snapshot_bytes)
@@ -1327,6 +1468,21 @@ fn with_the_switch_off_the_window_is_next_on_every_case() {
         let mut worker = LoroCollabEngine::load(&case.base).unwrap();
         worker.prewarm_for_writes();
         let worker_decision = run_window(&mut worker, None, &case.update).map(|_| ());
+        // The one input `next` accepts and the worker refuses with the switch off: a tree op that
+        // names a parent that does not exist when it runs (`tree_refs`), found by an independent
+        // read of the update.
+        let worker_refusal = Observed {
+            name: "worker",
+            decision: worker_decision
+                .clone()
+                .map_or_else(Decision::Refuse, |()| Decision::Accept),
+            facts: None,
+            report: None,
+            outputs: None,
+        };
+        if next_decision.is_ok() && is_the_tree_reference_refusal(case, &worker_refusal) {
+            return Ok(Outcome::Refused);
+        }
         if next_decision != worker_decision {
             return Err(format!(
                 "decision differs: next {next_decision:?}, worker {worker_decision:?}"

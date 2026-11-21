@@ -21,6 +21,8 @@ thread_local! {
     static FALLBACK_REASONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static PLACEMENT_WALKS: Cell<usize> = const { Cell::new(0) };
     static ID_READS: Cell<usize> = const { Cell::new(0) };
+    static TREE_OPS: Cell<usize> = const { Cell::new(0) };
+    static TREE_LOOKUPS: Cell<usize> = const { Cell::new(0) };
     static DELTA_READS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -120,6 +122,21 @@ pub fn id_reads() -> usize {
     ID_READS.with(Cell::get)
 }
 
+/// One tree op read by the tree reference check.
+pub fn record_tree_op() {
+    TREE_OPS.with(|count| count.set(count.get() + 1));
+}
+
+/// One state read (`contains` or `parent`) by the tree reference check.
+pub fn record_tree_lookup() {
+    TREE_LOOKUPS.with(|count| count.set(count.get() + 1));
+}
+
+/// `(tree ops, state lookups)` of the tree reference check since the last [`reset`].
+pub fn tree_ref_counts() -> (usize, usize) {
+    (TREE_OPS.with(Cell::get), TREE_LOOKUPS.with(Cell::get))
+}
+
 /// Root probes recorded since the last [`reset`], in order: `(root name, bytes allocated)`.
 pub fn root_probes() -> Vec<(String, usize)> {
     ROOT_PROBE_LOG.with(|log| log.borrow().clone())
@@ -186,6 +203,8 @@ pub fn reset() {
     FALLBACK_REASONS.with(|log| log.borrow_mut().clear());
     PLACEMENT_WALKS.with(|count| count.set(0));
     ID_READS.with(|count| count.set(0));
+    TREE_OPS.with(|count| count.set(0));
+    TREE_LOOKUPS.with(|count| count.set(0));
 }
 
 #[cfg(test)]
