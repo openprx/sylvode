@@ -71,6 +71,7 @@ fn observed(cpu_us: Option<u64>, decision: Option<WindowDecision>) -> WorkerObse
         metered_wall_us: Some(100_000),
         metered_cpu_us: cpu_us,
         setup_cpu_us: None,
+        setup_wall_us: None,
         decision,
         setup_guard: None,
     }

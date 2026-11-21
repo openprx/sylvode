@@ -82,7 +82,8 @@ use super::bootstrap::{self, content_hash};
 use super::cache::{HeadKey, WarmCache};
 use super::coordinator::DocumentCoordinator;
 use super::frame::{
-    Frame, PROTOCOL_VERSION, RejectedCode, SERVER_REJECTED_REASON_BASE_LOAD_FAILED, SERVER_REJECTED_REASON_DATABASE,
+    Frame, PROTOCOL_VERSION, RejectedCode, SERVER_REJECTED_REASON_BASE_LOAD_FAILED,
+    SERVER_REJECTED_REASON_CANDIDATE_DERIVATION_FAILED, SERVER_REJECTED_REASON_DATABASE,
     SERVER_REJECTED_REASON_ISOLATED_APPLY_FAILED, SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM,
     SERVER_REJECTED_REASON_WINDOW_DIVERGENCE, WriteState, encode_bytes,
 };
@@ -917,6 +918,13 @@ fn base_load_defect() -> ApiError {
     ApiError::server_rejected(SERVER_REJECTED_REASON_BASE_LOAD_FAILED)
 }
 
+/// The error of an accepted window whose result the API cannot derive its stored fields from (the
+/// title, the projection to JSON): deterministic for the base and the update, so `server_rejected`
+/// with a stable reason on every attempt, never the retryable `contention`.
+fn candidate_derivation_defect() -> ApiError {
+    ApiError::server_rejected(SERVER_REJECTED_REASON_CANDIDATE_DERIVATION_FAILED)
+}
+
 /// One attempt: the isolated window in `mode`, then the host's load and projection of the document
 /// it returned, compared with the worker's report. Blocking and CPU heavy (process spawn, pipe I/O,
 /// load, a full projection): run it on a blocking thread, never on an async worker.
@@ -1557,6 +1565,28 @@ mod window_oracle_tests {
             Ok(setup_timed_out(asked, None))
         });
         assert_eq!(modes, [WindowMode::Incremental, WindowMode::Full]);
+    }
+
+    /// R9-11 and B-6: the host-side defects of an accepted window are `server_rejected` with a stable
+    /// reason each, never an internal error that the WebSocket answers as `contention`.
+    #[test]
+    fn the_host_side_defects_of_a_window_are_server_rejected_with_stable_reasons() {
+        for (error, reason) in [
+            (candidate_derivation_defect(), "candidate_derivation_failed"),
+            (base_load_defect(), "document_base_unreadable"),
+            (isolated_apply_defect(), "isolated_apply_failed"),
+            (window_divergence_refusal(), "window_divergence"),
+        ] {
+            assert_eq!(error.kind(), ApiErrorKind::ServerRejected, "{reason}");
+            assert!(!error.is_internal_failure(), "{reason}");
+            let ApiError::Typed {
+                details: Some(details), ..
+            } = &error
+            else {
+                panic!("{reason}: a typed error with details, got {error:?}");
+            };
+            assert_eq!(details, &serde_json::json!({ "reason": reason }));
+        }
     }
 
     /// An attempt in which the worker's setup guard fired, refused (the full window's CPU kill) or
@@ -2530,7 +2560,7 @@ pub(crate) async fn hydrate_and_apply_with_policy(
 
     let title = candidate.title().map_err(|err| {
         tracing::error!(error = %err, "collab write: title read failed after a successful isolated apply");
-        ApiError::internal()
+        candidate_derivation_defect()
     })?;
     let registry_prepare_step = WriteStep::start("registry_prepare");
     let logical_blocks = crate::flow::block_registry::prepare(&semantic)?;
@@ -2540,7 +2570,10 @@ pub(crate) async fn hydrate_and_apply_with_policy(
     let child_references = crate::flow::child_pages::typed_references(&semantic)?;
     references_step.finish();
     let projection_step = WriteStep::start("projection_json_and_text");
-    let state_json = projection::state_json(&semantic).map_err(|_| ApiError::internal())?;
+    let state_json = projection::state_json(&semantic).map_err(|err| {
+        tracing::error!(error = %err, "collab write: state_json failed after a successful isolated apply");
+        candidate_derivation_defect()
+    })?;
     let plain_text = projection::plain_text(&semantic);
     projection_step.finish();
     let content_hash_hex = content_hash(bytes);

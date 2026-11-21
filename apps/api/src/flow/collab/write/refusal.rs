@@ -9,7 +9,7 @@
 //! | any ceiling on an incremental attempt whose check said `NotSequential` | busy, `rebase` |
 //! | wall kill with the worker having used under 80 % of the CPU ceiling | busy, `resend` |
 //! | wall kill otherwise, CPU kill, memory kill | the content limit, unchanged, not retryable |
-//! | setup timeout after under 80 % of the setup CPU budget | busy, `resend` |
+//! | setup timeout after under 80 % of the setup CPU budget, or with CPU under 70 % of the wall time | busy, `resend` |
 //! | setup timeout otherwise | defect, `server_rejected` (only reached when the full window was tried and timed out too, see `write::decide_window`) |
 //! | spawn without resources, a SIGKILL the host did not send | busy, `resend` |
 //! | crash, bad frame, other spawn failure | defect, `server_rejected` |
@@ -58,18 +58,36 @@ pub const fn setup_starved_below_us(setup_cpu_budget_ms: u64) -> u64 {
     setup_cpu_budget_ms * 1_000 * SETUP_STARVED_BUDGET_PERCENT / 100
 }
 
-/// Whether a refused attempt is a setup that timed out having consumed its CPU budget (or an
-/// unknown amount of CPU, which is never taken for starvation): the setup is unbounded for this
-/// base, which the host answers by deciding the write with the full window (no facts computed) and
-/// putting the document on the full window for a while (`write::decide_window`).
+/// The share of the wall time of a setup, in percent, that its CPU must reach for the setup not to
+/// have been starved: a worker that had a core for less than this share of the time it was given was
+/// not scheduled, whatever it consumed.
+pub const SETUP_STARVED_WALL_PERCENT: u64 = 70;
+
+/// Whether a setup that timed out was starved: it consumed less than 80 % of its CPU budget, or its
+/// CPU is well below its wall time (under 70 %), so the host did not schedule it. A heavy honest
+/// setup that a loaded host slowed down is the second case at any CPU figure, and it must not
+/// become a refusal for ten minutes. An unknown CPU is never taken for starvation; an unknown wall
+/// time leaves the budget share alone.
+fn setup_was_starved(observation: &WorkerObservation, setup_cpu_budget_ms: u64) -> bool {
+    let Some(cpu_us) = observation.setup_cpu_us else {
+        return false;
+    };
+    cpu_us < setup_starved_below_us(setup_cpu_budget_ms)
+        || observation
+            .setup_wall_us
+            .is_some_and(|wall_us| cpu_us.saturating_mul(100) < wall_us.saturating_mul(SETUP_STARVED_WALL_PERCENT))
+}
+
+/// Whether a refused attempt is a setup that timed out without having been starved (see
+/// [`setup_was_starved`]; an unknown CPU counts): the setup used its time as CPU and is unbounded for
+/// this base, which the host answers by deciding the write with the full window (no facts computed)
+/// and putting the document on the full window for a while (`write::decide_window`).
 #[must_use]
 pub fn is_setup_exhausted(err: &IsolatedApplyError, observation: &WorkerObservation, setup_cpu_budget_ms: u64) -> bool {
     matches!(
         err,
         IsolatedApplyError::HostFailure(failure) if failure.kind == HostFailureKind::SetupTimeout
-    ) && observation
-        .setup_cpu_us
-        .is_none_or(|cpu_us| cpu_us >= setup_starved_below_us(setup_cpu_budget_ms))
+    ) && !setup_was_starved(observation, setup_cpu_budget_ms)
 }
 
 /// `retry_after_ms` of each busy answer: a lower bound on the next attempt.
@@ -262,17 +280,18 @@ pub fn classify(
             limit: ISOLATED_APPLY_MEMORY_BYTES_MAX,
         },
         IsolatedApplyError::HostFailure(failure) => match failure.kind {
-            HostFailureKind::SetupTimeout => match observation.setup_cpu_us {
-                Some(cpu_us) if cpu_us < setup_starved_below_us(setup_cpu_budget_ms) => {
+            HostFailureKind::SetupTimeout => {
+                if setup_was_starved(observation, setup_cpu_budget_ms) {
                     busy(BusyCause::SetupStarved, RetryMode::Resend, RETRY_AFTER_SETUP_STARVED_MS)
+                } else {
+                    // A setup that burned its time as CPU is not bounded for this base: a defect
+                    // once the full window was tried as well (a setup that timed out without facts
+                    // is the load alone). An unknown figure is never taken for starvation.
+                    Refusal::Defect {
+                        reason: SERVER_REJECTED_REASON_SETUP_EXHAUSTED,
+                    }
                 }
-                // A setup that burned its time as CPU is not bounded for this base: a defect once
-                // the full window was tried as well (a setup that timed out without facts is the
-                // load alone). An unknown figure is never taken for starvation.
-                _ => Refusal::Defect {
-                    reason: SERVER_REJECTED_REASON_SETUP_EXHAUSTED,
-                },
-            },
+            }
             HostFailureKind::SpawnResources => busy(
                 BusyCause::WorkerResources,
                 RetryMode::Resend,
@@ -471,6 +490,7 @@ mod tests {
             metered_wall_us: Some(100_000),
             metered_cpu_us: cpu_us,
             setup_cpu_us: None,
+            setup_wall_us: None,
             decision,
             setup_guard: None,
         }
@@ -653,6 +673,49 @@ mod tests {
                 assert_defect(&refusal, "isolated_setup_exhausted");
             }
         }
+        // R9-10: a setup that consumed 80 to 100 % of its budget but had a core for less than 70 % of
+        // the wall time was starved, whatever the budget share says.
+        #[test]
+        fn r9_10_a_setup_with_its_cpu_well_below_its_wall_time_was_starved() {
+            let timed_out = |cpu_us: u64, wall_us: Option<u64>| {
+                let (err, observation) = setup_timeout(Some(cpu_us));
+                (
+                    err,
+                    WorkerObservation {
+                        setup_wall_us: wall_us,
+                        ..observation
+                    },
+                )
+            };
+            // The default budget: 2.4 s of CPU is 96 % of it and 48 % of the 5 s wall time.
+            let (err, observation) = timed_out(2_400_000, Some(5_000_000));
+            assert!(!is_setup_exhausted(&err, &observation, 2_500));
+            assert_busy(
+                &classify(err, &observation, INCREMENTAL, REBASES),
+                BusyCause::SetupStarved,
+                RetryMode::Resend,
+                1_000,
+            );
+            // The same CPU with no wall time known keeps the budget share's answer.
+            let (err, observation) = timed_out(2_400_000, None);
+            assert!(is_setup_exhausted(&err, &observation, 2_500));
+            // A worker that burned its time (4.9 s of 5 s) is exhausted.
+            let (err, observation) = timed_out(4_900_000, Some(5_000_000));
+            assert!(is_setup_exhausted(&err, &observation, 2_500));
+            assert_defect(
+                &classify(err, &observation, INCREMENTAL, REBASES),
+                "isolated_setup_exhausted",
+            );
+            // The boundary: 70 % of the wall time is not starved, one microsecond less is.
+            for (cpu_us, starved) in [(3_499_999, true), (3_500_000, false)] {
+                let (err, observation) = timed_out(cpu_us, Some(5_000_000));
+                assert_eq!(!is_setup_exhausted(&err, &observation, 2_500), starved, "{cpu_us}");
+            }
+            // A raised budget does not change the wall rule: 3.3 s is 82 % of 4 s and 66 % of the wall.
+            let (err, observation) = timed_out(3_300_000, Some(5_000_000));
+            assert!(!is_setup_exhausted(&err, &observation, 4_000));
+        }
+
         // A raised budget raises the threshold: 3 s of CPU is starvation under a 4 s budget.
         let (err, observation) = setup_timeout(Some(3_000_000));
         assert!(!is_setup_exhausted(&err, &observation, 4_000));

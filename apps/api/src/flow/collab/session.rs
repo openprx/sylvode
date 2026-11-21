@@ -2404,6 +2404,7 @@ mod tests {
             "isolated_apply_failed",
             "isolated_setup_exhausted",
             "document_base_unreadable",
+            "candidate_derivation_failed",
         ] {
             let rejection = write_error_rejection(&ApiError::server_rejected(reason));
             assert_eq!(rejection.code, RejectedCode::ServerRejected, "{reason}");
@@ -6108,6 +6109,7 @@ mod tests {
                 metered_wall_us: Some(100_000),
                 metered_cpu_us: cpu_us,
                 setup_cpu_us: None,
+                setup_wall_us: None,
                 decision,
                 setup_guard: None,
             }
