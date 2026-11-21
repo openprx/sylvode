@@ -394,8 +394,11 @@ impl LoroCollabEngine {
         }
         // Only the created nodes are read. An uncached node (one a previous rebuild found without
         // a `logical_id`) can gain an id only through a write of the `logical_id` key on its
-        // metadata map, and the window falls back on every such write (`IdRewritten`), after which
-        // `complete_id_cache` names it. Reading them here would make the window O(page).
+        // metadata map. With base facts the window refuses that write before any decision
+        // (`ID_REWRITE_REASON`); without facts the import is not sequential and the full rebuild
+        // runs; any other map's `logical_id` falls back (`IdRewritten`), after which
+        // `complete_id_cache` names the node. Reading uncached nodes here would make the window
+        // O(page).
         // Read first, change nothing: if two nodes would claim one id, the full rebuild decides,
         // since which of them the cache keeps depends on the order they are read in (tree order).
         let mut reads: Vec<(TreeID, Option<NodeId>)> = Vec::with_capacity(created_now.len());
@@ -1282,7 +1285,7 @@ impl LoroCollabEngine {
 
     /// The items (see [`crate::work`]) of everything the full projection reads: the tree nodes
     /// with their metadata, the elements of the root block list with everything below them, and
-    /// the entries of the navigator `order` map and of the alias map. `Ok(None)` once the count
+    /// the entries, keys and value payload of the navigator `order` map and of the alias map. `Ok(None)` once the count
     /// passes `ceiling`, so a page far over any budget costs no more than the ceiling to refuse.
     ///
     /// # Errors
@@ -1291,8 +1294,10 @@ impl LoroCollabEngine {
         use crate::reserved_roots::{ALIASES, DOC, ORDER};
         let mut items = crate::work::ItemCount::new(ceiling);
         for name in [ORDER, ALIASES] {
+            // Entries, keys and the payload of the values: the full projection clones all of them
+            // (`navigator_order`), and a client update writes the map without the server's bounds.
             if let Some(map) = crate::editor_structure::root_map(&self.doc, name)?
-                && !items.add(u64::try_from(map.len()).unwrap_or(u64::MAX))
+                && !items.add_container(&Container::Map(map), 0)
             {
                 return Ok(None);
             }
@@ -2004,6 +2009,8 @@ mod window_regression_tests;
 mod window_round2_tests;
 #[cfg(test)]
 mod window_round3_tests;
+#[cfg(test)]
+mod window_round4_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

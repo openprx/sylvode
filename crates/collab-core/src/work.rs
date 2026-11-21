@@ -16,8 +16,11 @@
 //! * a container reached from one of those (the node's metadata map, a block map, an attribute map,
 //!   an inline text, ...), counted once when it is entered;
 //! * a map entry or a list element of such a container;
-//! * an entry of the navigator `order` map or of the alias map;
+//! * an entry of the navigator `order` map or of the alias map, with its key and the payload of its
+//!   value charged like those of any other map (the server bounds the keys it writes itself, a client
+//!   update does not);
 //! * [`CHARS_PER_ITEM`] characters of a text container (rounded up per container);
+//!   The values of its style marks are not counted (open, see below);
 //! * [`BYTES_PER_ITEM`] bytes of the payload of the plain values of a map or list (rounded down per
 //!   container): [`value_bytes`] counts eight bytes for every scalar, collection or container
 //!   reference in a value, nested to any depth, plus the length of every string, binary and map key.
@@ -78,6 +81,18 @@
 //! within the budget and stays on the incremental path. The first term is what nothing else
 //! bounds. A page above the budget gets no base facts, so its windows are the full computation
 //! (`next`'s behaviour: accepted while the window fits its CPU limit, refused by it beyond).
+//!
+//! # Known gap: text mark values
+//!
+//! The reader converts every attribute of every delta segment of a text (`page_inline::spans`), so
+//! a large mark value costs once per segment, and an update that splits a text adds segments that
+//! carry the values of marks it does not mention. The base's count cannot see a mark value (a text
+//! counts its characters only) and the update's bound cannot know the segments it adds, so neither
+//! side bounds this carrier by payload. Closing it takes either a bound on the mark values the
+//! reader accepts (a refusal of content accepted today) or a per-segment count on the base side with
+//! a per-unit mark payload in the facts for the touched texts of an update.
+//! `window_round4_tests::r4_2_a_large_mark_value_over_many_segments_cannot_grow_a_page_without_a_bound`
+//! reproduces it and is ignored until then.
 //!
 //! The window keeps the measure without reading the page again: the items of the base plus an
 //! upper bound on the items the update added (the sum of [`op_work`] over its ops), compared with
