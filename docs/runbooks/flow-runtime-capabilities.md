@@ -83,6 +83,13 @@ block registry, block shares and transfers relies on reader-5 processes.
 
 ## The incremental write window
 
+**Experimental, off by default (`[flow] incremental_window = false`).** The default is the behaviour
+before the feature existed: every write runs the full computation inside the worker's 50 ms window.
+It is off because, with it on, one crafted update can push a text past the setup's per-text budget
+and leave a page whose later writes are all refused by the content limit, which the full
+computation never does. The rest of this section describes the incremental window for an operator
+who turns it on.
+
 Every Page write is decided inside the isolated worker's 50 ms CPU window. For flat (model 1) and
 legacy tree Pages the window works from facts about the accepted Page that the worker computes
 before the window opens, and evaluates only the units the update touched, but only for an update
@@ -135,14 +142,14 @@ a log field; the API exports no other counters.
 The worker is started with an empty environment (it inherits nothing from the API process); the
 only variables it sees are the ones the API sets for it.
 
-To make every write run the full computation, set in the API's configuration file:
+To let writes use the incremental window (experimental), set in the API's configuration file:
 
 ```toml
 [flow]
-incremental_window = false
+incremental_window = true
 ```
 
-The default is `true`. With `false` the worker computes no facts and every window is the full
+The default is `false`. With `false` the worker computes no facts and every window is the full
 computation, which is what the worker did before the incremental window existed: its decision and
 the document it accepts are the same for every input except an update whose tree ops name a parent
 that does not exist when the op runs, which is refused with either setting (see "Refused tree

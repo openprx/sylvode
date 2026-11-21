@@ -104,6 +104,41 @@ pub fn runtime() -> &'static RuntimeConfig {
     RUNTIME.get_or_init(RuntimeConfig::fallback)
 }
 
+/// Whether the collab write window may decide incrementally (`[flow] incremental_window`, off
+/// unless the file turns it on). Unit tests turn it on for their own thread with
+/// [`test_support::enable_incremental_window`], so a test that exercises the incremental path says so.
+pub fn incremental_window() -> bool {
+    #[cfg(test)]
+    if let Some(forced) = test_support::OVERRIDE.with(std::cell::Cell::get) {
+        return forced;
+    }
+    runtime().flow.incremental_window
+}
+
+/// Per-thread overrides of settings for unit tests (every `#[tokio::test]` runs on one thread).
+#[cfg(test)]
+pub mod test_support {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(super) static OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    /// Holds `[flow] incremental_window = true` on this thread until it is dropped.
+    pub struct IncrementalWindowOn;
+
+    pub fn enable_incremental_window() -> IncrementalWindowOn {
+        OVERRIDE.with(|forced| forced.set(Some(true)));
+        IncrementalWindowOn
+    }
+
+    impl Drop for IncrementalWindowOn {
+        fn drop(&mut self) {
+            OVERRIDE.with(|forced| forced.set(None));
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {

@@ -582,9 +582,9 @@ impl Default for AiTasksConfig {
 /// `conversion_reap_interval_secs` is the period of the API's sweep that fails conversion jobs
 /// left `started` past the stale threshold (`rest-api-v1.md` v0.7).
 ///
-/// `incremental_window` (default on) lets the collab write window decide the structural limits
-/// from the facts of the page and the units an update touched; off, every write runs the full
-/// computation.
+/// `incremental_window` (experimental, default off) lets the collab write window decide the
+/// structural limits from the facts of the page and the units an update touched; off, every write
+/// runs the full computation, which is what the worker did before the incremental window existed.
 ///
 /// `setup_cpu_budget_ms` is the CPU time the worker's unmetered setup (load, prewarm, base facts)
 /// may consume before it yields no facts and the page takes the full window. A slower host than the
@@ -597,9 +597,9 @@ pub struct FlowConfig {
     pub collab_allowed_origins: Vec<String>,
     pub conversion_reap_interval_secs: u64,
     pub body_asset_max_bytes: u64,
-    /// Whether the collab write window may decide the structural limits incrementally. Off makes
-    /// every write run the full computation (today's bounded cost, without the incremental
-    /// check), whatever the page: the worker's decision is then the full computation's for every
+    /// Whether the collab write window may decide the structural limits incrementally
+    /// (experimental, off by default). Off makes every write run the full computation (the bounded
+    /// cost the worker had before the incremental window), whatever the page: the worker's decision is then the full computation's for every
     /// input, except that an update whose tree ops name a parent that does not exist is refused
     /// with either setting (`collab_core::tree_refs`).
     pub incremental_window: bool,
@@ -615,7 +615,7 @@ impl Default for FlowConfig {
             collab_allowed_origins: Vec::new(),
             conversion_reap_interval_secs: DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
             body_asset_max_bytes: DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
-            incremental_window: true,
+            incremental_window: false,
             setup_cpu_budget_ms: DEFAULT_FLOW_SETUP_CPU_BUDGET_MS,
         }
     }

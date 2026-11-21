@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import bench
@@ -39,6 +40,23 @@ def scripted(outcomes: list):
 
     send.calls = calls
     return send
+
+
+class SummaryConfigurationTests(unittest.TestCase):
+    def test_the_summary_says_the_incremental_window_was_on(self) -> None:
+        line = bench.incremental_window_line({"incremental_window": "true"})
+        self.assertEqual(line, "measured with incremental_window = true (experimental, off by default)")
+
+    def test_the_summary_does_not_claim_it_when_the_benchmark_did_not_set_it(self) -> None:
+        line = bench.incremental_window_line({"incremental_window": ""})
+        self.assertNotIn("measured with incremental_window = true", line)
+
+    def test_the_benchmark_servers_turn_the_incremental_window_on_explicitly(self) -> None:
+        root = Path(__file__).resolve().parent
+        run = (root / "run.sh").read_text(encoding="utf-8")
+        self.assertIn("incremental_window = true", run)
+        self.assertIn("FLOW_BENCH_INCREMENTAL_WINDOW=true", run)
+        self.assertIn("incremental_window = true", (root / "window-attribution.sh").read_text(encoding="utf-8"))
 
 
 class RetryTests(unittest.TestCase):

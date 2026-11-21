@@ -2105,6 +2105,17 @@ pub(crate) async fn prepare_build_engine(
     }
 }
 
+/// The window mode the configuration asks for: `[flow] incremental_window` (experimental, off by
+/// default) makes it [`WindowMode::Incremental`]; otherwise every window is the full computation,
+/// which is what the worker did before the incremental window existed.
+fn configured_window_mode() -> collab_core::isolation::WindowMode {
+    if crate::config::incremental_window() {
+        collab_core::isolation::WindowMode::Incremental
+    } else {
+        collab_core::isolation::WindowMode::Full
+    }
+}
+
 /// The configured CPU budget of the worker's setup (`[flow] setup_cpu_budget_ms`), in milliseconds.
 fn setup_cpu_budget_ms() -> u64 {
     crate::config::runtime().flow.setup_cpu_budget_ms
@@ -2334,12 +2345,7 @@ pub(crate) async fn hydrate_and_apply_with_policy(
         update_id,
         base_head_seq: observed.head_seq,
     };
-    // `[flow] incremental_window = false` makes every window the full computation.
-    let mode = if crate::config::runtime().flow.incremental_window {
-        collab_core::isolation::WindowMode::Incremental
-    } else {
-        collab_core::isolation::WindowMode::Full
-    };
+    let mode = configured_window_mode();
     // The whole decision runs on one blocking thread: the isolated window, the load and projection
     // of the document it returns, the comparison with the worker's report and, if they disagree,
     // the second decision by the full window (see `decide_window`).

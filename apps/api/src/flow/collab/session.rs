@@ -6144,6 +6144,7 @@ mod tests {
         /// afterwards.
         #[tokio::test]
         async fn apply_busy_reaches_a_websocket_client_in_both_retry_modes_and_the_session_survives() {
+            let _incremental = crate::config::test_support::enable_incremental_window();
             use crate::flow::collab::write::scripted_attempts::{self, Scripted};
 
             let scratch = scratch_or_skip!("apply-busy-modes");
@@ -6215,6 +6216,7 @@ mod tests {
         /// answers the original receipt.
         #[tokio::test]
         async fn a_busy_update_resent_under_the_same_update_id_commits_once_over_the_socket() {
+            let _incremental = crate::config::test_support::enable_incremental_window();
             use crate::flow::collab::write::scripted_attempts;
 
             let scratch = scratch_or_skip!("apply-busy-resend");
@@ -6258,6 +6260,7 @@ mod tests {
         /// retryable `contention`).
         #[tokio::test]
         async fn content_limits_and_defects_stay_permanent_on_the_socket() {
+            let _incremental = crate::config::test_support::enable_incremental_window();
             use crate::flow::collab::write::scripted_attempts::{self, Scripted};
             use collab_core::isolation::wire::WindowDecision;
             use collab_core::isolation::{HostFailure, HostFailureKind, IsolatedApplyError};
@@ -6353,6 +6356,7 @@ mod tests {
         /// socket open, and a write the full window accepts is accepted on it.
         #[tokio::test]
         async fn a_setup_that_used_its_cpu_budget_answers_the_content_limit_and_the_session_stays_open() {
+            let _incremental = crate::config::test_support::enable_incremental_window();
             use crate::flow::collab::write::scripted_attempts::{self, Scripted};
             use collab_core::isolation::wire::WindowDecision;
             use collab_core::isolation::{HostFailure, HostFailureKind, IsolatedApplyError};

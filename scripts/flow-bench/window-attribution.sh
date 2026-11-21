@@ -211,6 +211,8 @@ dir = "$STATE/uploads"
 
 [flow]
 collab_allowed_origins = ["http://127.0.0.1:18080"]
+# Attributes the incremental write window (experimental, off by default): turn it on explicitly.
+incremental_window = true
 TOML
     chmod 600 "$STATE/api.toml"
     (cd "$STATE" && exec /work/target/release/api --config "$STATE/api.toml") >"$STATE/api.log" 2>&1 &

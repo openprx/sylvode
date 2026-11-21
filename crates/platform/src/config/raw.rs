@@ -635,7 +635,7 @@ impl RawFlow {
             collab_allowed_origins,
             conversion_reap_interval_secs,
             body_asset_max_bytes,
-            incremental_window: self.incremental_window.unwrap_or(true),
+            incremental_window: self.incremental_window.unwrap_or(false),
             setup_cpu_budget_ms,
         }
     }

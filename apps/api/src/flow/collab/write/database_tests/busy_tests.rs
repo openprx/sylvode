@@ -30,6 +30,9 @@ use crate::flow::collab::write::{AcceptOutcome, RebasePolicy, UpdateRequest, acc
 use crate::flow::command::execute_command;
 
 struct Fixture {
+    /// These tests exercise the incremental window (experimental, off by default), so the thread
+    /// that runs them has `[flow] incremental_window = true`.
+    _incremental: Option<crate::config::test_support::IncrementalWindowOn>,
     state: AppState,
     workspace_id: Uuid,
     owner_id: Uuid,
@@ -38,10 +41,23 @@ struct Fixture {
 }
 
 async fn fixture(scratch: &super::Scratch) -> Fixture {
+    fixture_with(scratch, Some(crate::config::test_support::enable_incremental_window())).await
+}
+
+/// A fixture on the default configuration (the incremental window off).
+async fn default_fixture(scratch: &super::Scratch) -> Fixture {
+    fixture_with(scratch, None).await
+}
+
+async fn fixture_with(
+    scratch: &super::Scratch,
+    incremental: Option<crate::config::test_support::IncrementalWindowOn>,
+) -> Fixture {
     let state = state_for(scratch.db.clone());
     let (workspace_id, owner_id) = seed_workspace(&state).await;
     let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
     Fixture {
+        _incremental: incremental,
         state,
         workspace_id,
         owner_id,
@@ -916,5 +932,47 @@ async fn a_panic_in_the_window_task_is_server_rejected_and_not_contention() {
         .expect("a panic of the window task is an error of the write");
     assert_eq!(error.kind(), ApiErrorKind::ServerRejected);
     assert_eq!(details_of(&error), &json!({ "reason": "isolated_apply_failed" }));
+    scratch.drop_self().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The default configuration: the incremental window is off
+// ---------------------------------------------------------------------------------------------
+
+/// With the default configuration (`[flow] incremental_window` unset) the write takes the full
+/// window only, which is what the worker did before the incremental window existed: one attempt in
+/// `WindowMode::Full`, no facts, so a refusal that needs a sequential update is the content answer
+/// and nothing is ever asked to rebase.
+#[tokio::test]
+async fn with_the_default_configuration_every_write_takes_the_full_window() {
+    assert!(!crate::config::incremental_window(), "the default configuration");
+    assert_eq!(super::super::configured_window_mode(), WindowMode::Full);
+    let scratch = scratch_or_skip!("default-full-window");
+    let f = default_fixture(&scratch).await;
+    scripted_attempts::enable(f.document_id, vec![Scripted::InProcess, needs_sequential()]);
+    let outcome = submit(
+        &f,
+        Uuid::new_v4(),
+        a_title_update(&f, "default").await,
+        RebasePolicy::ClientRebases,
+    )
+    .await;
+    assert!(matches!(outcome, AcceptOutcome::Accepted(_)));
+    // A CPU kill whose decision record says "not sequential" cannot happen in the full mode, and
+    // if it did the answer would be the content limit, never a rebase.
+    let rejected = rejection(
+        submit(
+            &f,
+            Uuid::new_v4(),
+            a_title_update(&f, "default two").await,
+            RebasePolicy::ClientRebases,
+        )
+        .await,
+    );
+    assert_eq!(rejected.code, RejectedCode::LimitExceeded);
+    assert_eq!(
+        scripted_attempts::modes(f.document_id),
+        [WindowMode::Full, WindowMode::Full]
+    );
     scratch.drop_self().await;
 }

@@ -221,13 +221,15 @@ allow_private = false
 # startup. Default: 60. Must be between 1 and 86400.
 # conversion_reap_interval_secs = 60
 #
-# Whether the collab write window may decide a write's structural limits incrementally, from the
-# facts of the page and the units the update touched. Set false to make every write run the full
-# computation (the incremental check is then never used). The limits enforced are the same. With it
-# on, the worker also refuses an update that rewrites the logical id of an existing tree node. An
-# update whose tree ops name a parent that does not exist is refused with either setting.
-# Default: true.
-# incremental_window = true
+# EXPERIMENTAL, off by default. Whether the collab write window may decide a write's structural
+# limits incrementally, from the facts of the page and the units the update touched, instead of
+# running the full computation for every write. The limits enforced are the same. With it on, the
+# worker also refuses an update that rewrites the logical id of an existing tree node. An update
+# whose tree ops name a parent that does not exist is refused with either setting. It is off by
+# default because a crafted update can make one text so costly that the page's later writes are all
+# refused, which the full computation never allows; the hardening is not finished.
+# Default: false.
+# incremental_window = false
 #
 # CPU time, in milliseconds, that the worker's unmetered setup (load of the page, prewarm and the
 # facts of the page that the incremental window starts from) may consume before it gives up on the
