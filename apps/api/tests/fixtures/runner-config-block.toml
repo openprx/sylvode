@@ -10,7 +10,7 @@
 listen = "127.0.0.1:9090"
 
 [security]
-webhook_secrets = ["S3cretS3cretS3cretS3cretS3cretS3cretS3cretS3cretS3cretS3cretS3cr"]
+webhook_secrets = ["golden-fixture-signing-secret"]
 
 [ai_task_callback]
 enabled = true
@@ -18,7 +18,7 @@ api_url = "https://sylvode.example.net"
 
 [[ai_task_callback.bots]]
 bot_id = "00000000-0000-0000-0000-000000000000"
-token = "opr_abababababababababababababababababababababababababababababababab"
+token = "opr_golden_fixture_token"
 surface = "mcp_stdio"
 
 [runner]

@@ -199,6 +199,8 @@ mod tests {
     use uuid::Uuid;
 
     const BOT: &str = "00000000-0000-0000-0000-000000000000";
+    const GOLDEN_TOKEN: &str = "opr_golden_fixture_token";
+    const GOLDEN_SECRET: &str = "golden-fixture-signing-secret";
 
     fn token() -> String {
         format!("opr_{}", "ab".repeat(32))
@@ -233,10 +235,12 @@ mod tests {
     /// `UPDATE_RUNNER_BLOCK_GOLDEN=1` to rewrite it after an intended change.
     #[test]
     fn the_block_text_matches_the_golden_file() {
-        let (token, secret) = (token(), secret());
+        // Fixed placeholders that are plainly not credentials: a committed `opr_` followed by 20 or
+        // more letters and digits is refused by `scripts/test-no-instance-literals.sh`, and the
+        // runner's loader accepts these as usable (they carry none of its placeholder markers).
         let block = build(&input(
-            &token,
-            &secret,
+            GOLDEN_TOKEN,
+            GOLDEN_SECRET,
             "Build bot",
             "https://runner.example.net:9090",
             "claude",
