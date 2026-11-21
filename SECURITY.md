@@ -85,8 +85,8 @@ These areas carry the highest impact, and reports about them are especially welc
   unless listed in `[outbound] allowed_hosts`, and redirects are not followed. A forged or
   unverifiable signature, a way past the outbound address filter (SSRF), or a secret
   leaking into logs or stored delivery records is in scope. The inbound side, the Sylvode
-  Webhook receiver, lives in [`apps/webhook`](apps/webhook) and its own
-  [security notes](apps/webhook/SECURITY.md) describe what it verifies.
+  runner (formerly the webhook receiver), lives in [`apps/runner`](apps/runner) and its own
+  [security notes](apps/runner/SECURITY.md) describe what it verifies.
 - **Collaboration sessions.** Live editing uses short-lived tickets bound to an origin in
   `[flow] collab_allowed_origins`. Joining, reading or writing a document without the
   corresponding Flow permission, or keeping access after it is revoked, is in scope.

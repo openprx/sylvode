@@ -6,7 +6,7 @@
 # and /app/openpr-webhook, which run the same code and write one deprecation line to stderr. There is
 # no ENTRYPOINT, so a compose `command` that names any executable replaces CMD as a whole.
 #
-# Build it from the root of the Sylvode repository, which is the build context: the receiver is a
+# Build it from the root of the Sylvode repository, which is the build context: the runner is a
 # member of the Sylvode cargo workspace (apps/runner) and shares its lockfile and toolchain.
 #
 #   docker build -f apps/runner/Dockerfile -t sylvode-runner .
@@ -36,11 +36,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin sylvode
 COPY --from=builder /src/target/release/sylvode-runner /src/target/release/sylvode-webhook /src/target/release/openpr-webhook /app/
-LABEL org.opencontainers.image.title="Sylvode Webhook" \
-      org.opencontainers.image.description="Webhook receiver and agent dispatcher for Sylvode (formerly OpenPR Webhook)" \
+LABEL org.opencontainers.image.title="Sylvode Runner" \
+      org.opencontainers.image.description="Sylvode runner: receives Sylvode task deliveries and runs agents (formerly Sylvode Webhook)" \
       org.opencontainers.image.source="https://github.com/openprx/sylvode" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 WORKDIR /app
 USER sylvode
 EXPOSE 9090
-CMD ["/app/sylvode-webhook", "/etc/sylvode-webhook/config.toml"]
+CMD ["/app/sylvode-runner", "/etc/sylvode-runner/config.toml"]

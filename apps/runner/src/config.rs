@@ -395,7 +395,7 @@ pub const EXAMPLE_SECRET_PLACEHOLDER: &str = "replace-with-the-secret-of-your-sy
 
 /// Secrets copied from an example file rather than chosen: the current example's placeholder, the
 /// values earlier examples and the README showed, and the placeholder of the compose example in
-/// the Sylvode repository (`config/sylvode-webhook.example.toml`).
+/// the Sylvode repository (`config/sylvode-runner.example.toml`).
 pub const PLACEHOLDER_SECRETS: [&str; 5] = [
     EXAMPLE_SECRET_PLACEHOLDER,
     "your-secret-here",
@@ -1550,7 +1550,7 @@ url = "http://127.0.0.1:9000/hook"
                 super::EXAMPLE_SECRET_PLACEHOLDER,
             ),
             (
-                include_str!("../../../config/sylvode-webhook.example.toml"),
+                include_str!("../../../config/sylvode-runner.example.toml"),
                 "replace_with_webhook_secret",
             ),
         ];

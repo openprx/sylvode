@@ -2,11 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# The webhook receiver lives in this repository (apps/runner). A separate checkout can still be
-# tested by setting SYLVODE_WEBHOOK_DIR (or the legacy OPENPR_WEBHOOK_DIR).
-WEBHOOK_DIR="${SYLVODE_WEBHOOK_DIR:-${OPENPR_WEBHOOK_DIR:-}}"
+# The runner lives in this repository (apps/runner). A separate checkout can still be tested by
+# setting SYLVODE_RUNNER_DIR (the former SYLVODE_WEBHOOK_DIR and OPENPR_WEBHOOK_DIR are still
+# accepted).
+WEBHOOK_DIR="${SYLVODE_RUNNER_DIR:-${SYLVODE_WEBHOOK_DIR:-${OPENPR_WEBHOOK_DIR:-}}}"
 if [[ -n $WEBHOOK_DIR ]]; then
-  [[ -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: webhook checkout not found ($WEBHOOK_DIR); set SYLVODE_WEBHOOK_DIR to the webhook checkout, or leave it unset to use apps/runner" >&2; exit 2; }
+  [[ -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: runner checkout not found ($WEBHOOK_DIR); set SYLVODE_RUNNER_DIR to the runner checkout, or leave it unset to use apps/runner" >&2; exit 2; }
 fi
 POSTGRES_PORT="${OPENPR_SMOKE_PG_PORT:-5366}"
 PG_SUPERUSER="${OPENPR_SMOKE_PG_SUPERUSER:-postgres}"

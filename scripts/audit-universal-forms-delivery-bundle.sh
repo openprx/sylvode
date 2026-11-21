@@ -579,7 +579,7 @@ verify_manifest_checksum "prebuilt runtime Dockerfile" "$ROOT_DIR/Dockerfile.pre
 verify_manifest_checksum "frontend Dockerfile" "$ROOT_DIR/frontend/Dockerfile"
 verify_manifest_checksum "frontend nginx config" "$ROOT_DIR/frontend/nginx.conf"
 verify_manifest_checksum "env example" "$ROOT_DIR/.env.example"
-verify_manifest_checksum "webhook example config" "$ROOT_DIR/config/sylvode-webhook.example.toml"
+verify_manifest_checksum "webhook example config" "$ROOT_DIR/config/sylvode-runner.example.toml"
 verify_manifest_checksum "start script" "$ROOT_DIR/scripts/start.sh"
 verify_manifest_checksum "verify script" "$ROOT_DIR/scripts/verify.sh"
 verify_manifest_checksum "e2e test script" "$ROOT_DIR/scripts/e2e-test.sh"

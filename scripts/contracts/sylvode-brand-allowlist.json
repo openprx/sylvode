@@ -187,9 +187,9 @@
         "README.md",
         "docs/sylvode-v0.9-compatibility.md",
         "docs/sylvode-v1.0-compatibility.md",
-        "config/sylvode-webhook.example.toml",
-        "scripts/smoke-sylvode-webhook-routing.sh",
-        "scripts/smoke-browser-mention-sylvode-webhook.sh",
+        "config/sylvode-runner.example.toml",
+        "scripts/smoke-runner-routing.sh",
+        "scripts/smoke-browser-mention-runner.sh",
         "scripts/audit-universal-forms-production-readiness.sh",
         ".env.example",
         "docs/universal-forms-production.md"
@@ -318,7 +318,7 @@
         "CHANGELOG.md",
         "apps/mcp-server/AGENTS.md",
         "docs/universal-forms-production.md",
-        "config/sylvode-webhook.example.toml",
+        "config/sylvode-runner.example.toml",
         ".github/workflows/release.yml"
       ],
       "pattern": "\\(formerly OpenPR(?: Webhook)?;?\\)?|Formerly OpenPR\\.|published as OpenPR|OpenPR-era|Legacy OpenPR names|legacy OpenPR filenames|OpenPR names \\(|OpenPR compatibility names",

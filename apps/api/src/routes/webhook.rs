@@ -314,7 +314,7 @@ pub async fn create_webhook(
 /// POST /`api/v1/workspaces/:workspace_id/webhooks/:webhook_id/rotate-secret`
 ///
 /// Replaces the signing secret with a newly generated one and returns it, once. Deliveries signed
-/// from now on use the new secret, so the receiver has to be given it (`sylvode-webhook` accepts
+/// from now on use the new secret, so the receiver has to be given it (`sylvode-runner` accepts
 /// several `webhook_secrets` at once, which allows a rotation without dropping deliveries).
 pub async fn rotate_webhook_secret(
     State(state): State<AppState>,

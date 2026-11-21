@@ -9,7 +9,7 @@ FRONTEND_NGINX="$ROOT_DIR/frontend/nginx.conf"
 SOURCE_DOCKERFILE="$ROOT_DIR/Dockerfile"
 PREBUILT_DOCKERFILE="$ROOT_DIR/Dockerfile.prebuilt"
 FRONTEND_DOCKERFILE="$ROOT_DIR/frontend/Dockerfile"
-WEBHOOK_EXAMPLE_CONFIG="$ROOT_DIR/config/sylvode-webhook.example.toml"
+WEBHOOK_EXAMPLE_CONFIG="$ROOT_DIR/config/sylvode-runner.example.toml"
 START_SCRIPT="$ROOT_DIR/scripts/start.sh"
 VERIFY_SCRIPT="$ROOT_DIR/scripts/verify.sh"
 E2E_SCRIPT="$ROOT_DIR/scripts/e2e-test.sh"
@@ -194,7 +194,7 @@ contains "compose defines API service" "$COMPOSE_FILE" "api:"
 contains "compose defines worker service" "$COMPOSE_FILE" "worker:"
 contains "compose defines MCP service" "$COMPOSE_FILE" "mcp-server:"
 contains "compose defines frontend service" "$COMPOSE_FILE" "frontend:"
-contains "compose defines optional webhook receiver" "$COMPOSE_FILE" "webhook:"
+contains "compose defines optional runner" "$COMPOSE_FILE" "runner:"
 contains "compose uses PostgreSQL 18 image" "$COMPOSE_FILE" "image: postgres:18"
 contains "compose mounts migrations into postgres" "$COMPOSE_FILE" "./migrations:/docker-entrypoint-initdb.d"
 contains "compose keeps pgdata volume" "$COMPOSE_FILE" "pgdata:"
@@ -226,12 +226,12 @@ not_contains "env example does not enable default database URL password" "$ROOT_
 
 printf '\nOptional connector receiver coverage:\n'
 contains "webhook receiver uses connectors profile" "$COMPOSE_FILE" "profiles:"
-contains "webhook receiver image is configurable" "$COMPOSE_FILE" 'image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/sylvode-webhook:latest}'
-contains "webhook receiver config path is configurable" "$COMPOSE_FILE" '${SYLVODE_WEBHOOK_CONFIG:-./config/sylvode-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro'
-contains "webhook receiver runs the canonical executable on the mounted config" "$COMPOSE_FILE" 'command: ["/app/sylvode-webhook", "/etc/sylvode-webhook/config.toml"]'
-contains "webhook receiver binds localhost by default" "$COMPOSE_FILE" '"${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_WEBHOOK_PORT:-9090}:9090"'
-contains "env example documents webhook receiver image" "$ROOT_DIR/.env.example" "SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/sylvode-webhook:latest"
-contains "env example documents webhook receiver config" "$ROOT_DIR/.env.example" "SYLVODE_WEBHOOK_CONFIG=./config/sylvode-webhook.example.toml"
+contains "webhook receiver image is configurable" "$COMPOSE_FILE" 'image: ${SYLVODE_RUNNER_IMAGE:-ghcr.io/openprx/sylvode-runner:latest}'
+contains "runner config path is configurable" "$COMPOSE_FILE" '${SYLVODE_RUNNER_CONFIG:-./config/sylvode-runner.example.toml}:/etc/sylvode-runner/config.toml:ro'
+contains "webhook receiver runs the canonical executable on the mounted config" "$COMPOSE_FILE" 'command: ["/app/sylvode-runner", "/etc/sylvode-runner/config.toml"]'
+contains "webhook receiver binds localhost by default" "$COMPOSE_FILE" '"${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_RUNNER_PORT:-9090}:9090"'
+contains "env example documents webhook receiver image" "$ROOT_DIR/.env.example" "SYLVODE_RUNNER_IMAGE=ghcr.io/openprx/sylvode-runner:latest"
+contains "env example documents webhook receiver config" "$ROOT_DIR/.env.example" "SYLVODE_RUNNER_CONFIG=./config/sylvode-runner.example.toml"
 contains "webhook example listens on compose service port" "$WEBHOOK_EXAMPLE_CONFIG" 'listen = "0.0.0.0:9090"'
 contains "webhook example keeps unsigned webhooks disabled" "$WEBHOOK_EXAMPLE_CONFIG" "allow_unsigned = false"
 contains "webhook example documents secret placeholder" "$WEBHOOK_EXAMPLE_CONFIG" "replace_with_webhook_secret"
@@ -466,7 +466,7 @@ contains "runbook states PostgreSQL is internal-only" "$PRODUCTION_DOC" "Postgre
 contains "runbook states app ports bind localhost by default" "$PRODUCTION_DOC" "host ports bind"
 contains "runbook states reverse proxy or tunnel requirement" "$PRODUCTION_DOC" "reverse proxy or tunnel"
 contains "runbook states compose avoids fixed container names" "$PRODUCTION_DOC" 'avoids fixed `container_name` values'
-contains "runbook states webhook example config" "$PRODUCTION_DOC" "config/sylvode-webhook.example.toml"
+contains "runbook states webhook example config" "$PRODUCTION_DOC" "config/sylvode-runner.example.toml"
 contains "runbook states webhook production secret replacement" "$PRODUCTION_DOC" 'set a concrete `webhook_secrets` value'
 contains "runbook states local compose bootstrap script" "$PRODUCTION_DOC" "bash scripts/start.sh"
 contains "runbook states local restaurant demo bootstrap" "$PRODUCTION_DOC" "scripts/bootstrap-restaurant-demo.sh"

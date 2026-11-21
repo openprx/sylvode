@@ -1,6 +1,6 @@
-# Example configuration for the Sylvode Webhook receiver, sylvode-webhook (formerly OpenPR Webhook;
-# built from apps/webhook in this repository), pointed at this deployment. docker-compose.yml mounts
-# it at /etc/sylvode-webhook/config.toml in the optional `webhook` service.
+# Example configuration for the Sylvode runner, sylvode-runner (formerly Sylvode Webhook; built from
+# apps/runner in this repository), pointed at this deployment. docker-compose.yml mounts it at
+# /etc/sylvode-runner/config.toml in the optional `runner` service.
 #
 # The `events` a route may match are the ones a webhook subscription can actually request:
 # see WEBHOOK_EVENTS in apps/api/src/entities/webhook.rs.
@@ -29,10 +29,10 @@ tunnel_reconnect_backoff_max_secs = 60
 # enabled the agent that ran the task calls one of them (and a task no agent matches is failed).
 # A token works only for the tasks of the bot that owns it: set `bot_id` to that bot and add a
 # [[ai_task_callback.bots]] entry (bot_id, token, surface) for every other bot this receiver serves.
-# Off by default. See apps/webhook/README.md, "AI task callbacks".
+# Off by default. See apps/runner/README.md, "AI task callbacks".
 [ai_task_callback]
 enabled = false
-# The API as the webhook container reaches it (the `api` service in docker-compose.yml).
+# The API as the runner container reaches it (the `api` service in docker-compose.yml).
 api_url = "http://api:8080"
 # Bearer token of the bot that is the tasks' AI participant.
 token = "replace-with-the-bot-token-of-the-ai-participant"

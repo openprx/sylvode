@@ -104,7 +104,7 @@ jobs:
           [ "$EVENT_NAME" = "push" ] && base="$PUSH_BEFORE"
           if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
             changed=true
-          elif git diff --name-only "$base" HEAD -- apps/runner config/sylvode-webhook.example.toml \
+          elif git diff --name-only "$base" HEAD -- apps/runner config/sylvode-runner.example.toml \
               Cargo.toml Cargo.lock rust-toolchain.toml .github/workflows/ci.yml | grep -q .; then
             changed=true
           else

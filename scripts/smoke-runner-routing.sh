@@ -2,11 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# The webhook receiver lives in this repository (apps/runner). A separate checkout can still be
-# tested by passing its path as the first argument or setting SYLVODE_WEBHOOK_DIR.
-WEBHOOK_DIR="${1:-${SYLVODE_WEBHOOK_DIR:-}}"
+# The runner lives in this repository (apps/runner). A separate checkout can still be tested by
+# passing its path as the first argument or setting SYLVODE_RUNNER_DIR (the former
+# SYLVODE_WEBHOOK_DIR is still accepted).
+WEBHOOK_DIR="${1:-${SYLVODE_RUNNER_DIR:-${SYLVODE_WEBHOOK_DIR:-}}}"
 if [[ -n $WEBHOOK_DIR ]]; then
-  [[ -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: webhook checkout not found ($WEBHOOK_DIR); pass the checkout path as the first argument or set SYLVODE_WEBHOOK_DIR, or leave both unset to use apps/runner" >&2; exit 2; }
+  [[ -f $WEBHOOK_DIR/Cargo.toml ]] || { echo "FAIL: runner checkout not found ($WEBHOOK_DIR); pass the checkout path as the first argument or set SYLVODE_RUNNER_DIR, or leave both unset to use apps/runner" >&2; exit 2; }
 fi
 TMP_DIR="$(mktemp -d)"
 PORT="$((19000 + $$ % 1000))"
