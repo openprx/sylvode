@@ -8,6 +8,9 @@
 
 mod ai_task;
 mod cli;
+mod handshake;
+mod mock_sv;
+mod runner;
 mod startup;
 mod support;
 mod tunnel;

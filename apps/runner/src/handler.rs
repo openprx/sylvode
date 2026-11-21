@@ -293,6 +293,16 @@ pub async fn handle_webhook(
 
     if let Some(a) = select_agent(&state.config.agents, &target) {
         tracing::info!(agent = ?a.id, agent_type = ?a.agent_type, "Dispatching to agent");
+        if a.agent_type == "runner" {
+            // A `runner` agent runs on the project's channel, after the synchronous checks; no
+            // legacy callback is involved.
+            let mut answer = crate::runner::accept(&state, a, &payload).await?;
+            if let Some(map) = answer.as_object_mut() {
+                map.insert("route".to_string(), route);
+                map.insert("ai_task_callback".to_string(), json!(callback(Some(a))));
+            }
+            return Ok(Json(answer));
+        }
         let result = dispatcher::dispatch(&state.config, &state.background, a, &payload).await;
         tracing::info!(agent = ?a.id, detail = ?result.detail, "Dispatch result");
         if result.outcome == dispatcher::Outcome::Refused {

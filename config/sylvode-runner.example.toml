@@ -75,3 +75,22 @@ args = ["{message}"]
 # agents), `token` and `surface`.
 # [agents.ai_task_callback]
 # token = "replace-with-the-bot-token-of-this-agents-bot"
+
+# A `runner` agent executes the tasks of a bot that is connected to a project in Sylvode; the
+# connection issues this block. It needs [ai_task_callback] enabled with a token for the bot
+# registered for mcp_stdio, and at least one allowed root.
+#
+# [runner]
+# allowed_roots = ["~/work"]
+#
+# [[ai_task_callback.bots]]
+# bot_id = "00000000-0000-0000-0000-000000000000"
+# token = "replace-with-the-bot-token"
+# surface = "mcp_stdio"
+#
+# [[agents]]
+# id = "00000000-0000-0000-0000-000000000000"
+# name = "Build bot"
+# agent_type = "runner"
+# [agents.route]
+# bot_ids = ["00000000-0000-0000-0000-000000000000"]

@@ -430,6 +430,79 @@ is enough, `docker stop` needs `--time 45` (its default is 10 s).
 
 Logs are written to stdout.
 
+## `runner` agents: project execution
+
+Connecting a bot to a project in Sylvode issues a configuration block (`[security]`,
+`[ai_task_callback]` with the bot's token, `[runner]`, and an `[[agents]]` entry with
+`agent_type = "runner"`). A `runner` agent executes the task according to the project's execution
+settings in Sylvode (channel and CLI), in the project's working directory; it takes no `[agents.cli]`
+table, because the permissions come from `[runner.cli.*]` and the directory from Sylvode. Every
+`[runner]` table refuses unknown keys, so a block written for a newer runner is refused naming the
+key.
+
+```toml
+[runner]
+state_dir = "~/.local/state/sylvode-runner"   # macOS default: ~/Library/Application Support/sylvode-runner
+allowed_roots = ["~/work"]                    # required: project directories must lie below one of these
+delivery_check_timeout_secs = 5               # task fetch and checks before the answer; slower is HTTP 503
+heartbeat_secs = 600
+# report_interval_secs = 600                  # overrides the interval Sylvode advertises
+
+[runner.cli.claude]                           # claude is always enabled
+binary = "claude"
+permission_mode = "dontAsk"
+allow_write_call = false
+[runner.cli.codex]
+enabled = false
+[runner.cli.opencode]
+enabled = false
+[runner.mcp]
+tool_mode = "search"
+# mcp_config_path = "/path/to/mcp.json"       # the MCP config of a headless run
+```
+
+A `runner` agent is refused at start-up (the other agents still start) unless
+`[ai_task_callback] enabled = true`, `allowed_roots` is not empty, and every bot of its route has a
+token registered for the `mcp_stdio` transport (`surface = "mcp_stdio"`): `bot <id>: runner bots
+need a token registered for mcp_stdio`.
+
+**Allowed roots.** Each entry is checked once at start-up: only a leading `~/` is expanded; the path
+must be absolute, exist and be a directory, and is canonicalised. `/`, the home directory (or a
+directory that contains it), system directories (`/etc`, `/usr`, `/System`, `/Library`,
+`/opt/homebrew`, `/private/etc` and the like) and any path containing `#` (tmux reads a directory as
+a format) are refused. A world-writable root is warned about. One invalid entry makes every `runner`
+agent refuse its tasks with `reason_code = "runner_agent_disabled"`, and the log says why.
+
+**Per delivery**, before the answer, in this order: the `protocol` field (`protocol_mismatch` when
+missing or different); the task view, fetched with the bot's token (a timeout or a 5xx is HTTP
+`503` so the worker re-queues; a task that is no longer active is answered `ignored`); the cross-check
+of project id and key (`delivery_mismatch`); `execution.enabled` (`execution_disabled`); the project
+key `^[A-Z0-9]{1,32}$` (`invalid_project_key`) and that no other project on this runner uses it
+(`session_name_collision`); the working directory (`path_missing`, `path_unreadable`,
+`path_not_directory`, `path_outside_allowlist`); the channel (`tmux_unavailable`, the tmux channel
+arrives with the session manager) and the CLI (`cli_disabled`, `cli_unavailable`). The directory is
+canonicalised (every symbolic link resolved) and must lie below an allowed root, compared by path
+components (`/work/svwl-evil` is not under `/work/svwl`); only that canonical path is used from then
+on. A refusal is `{"status":"refused","reason_code":"...","reason":"...","agent":"..."}`; the reason
+never contains a path (the path is in the runner log at `info`). A directory replaced by a link
+between the check and the use is out of scope: only a process that can write inside an allowed root
+(the same OS user) can do that.
+
+**Headless channel.** The CLI runs once in the canonical directory with the permissions of
+`[runner.cli.*]`. Its prompt is `[Sylvode task] id=... attempt=n/max` followed by the task procedure
+(get, ack, progress, complete or fail). The runner reports `runner.pushed` and, while the CLI runs,
+`runner.alive` every `heartbeat_secs`. When the process ends and Sylvode still shows the task
+active, the runner fails it (`source: "runner"`, not retryable): `agent ended without completing or
+failing the task`.
+
+**Handshake and report.** At start-up and every report interval the runner calls
+`GET /api/v1/ai/protocol` with each bot's token and compares `task_protocol` with its own (1), then
+sends `PUT /api/v1/ai/runner/report`: component names, statuses and versions only. A mismatch shows in
+`/health` and refuses every `runner` agent with `protocol_mismatch`; other agents keep working. A bot
+without a runner connection in Sylvode (404) is logged once and not reported again until restart; a
+refused token is logged as `bot <id>: token refused by Sylvode (revoked, rotated or wrong surface)`.
+Tokens are never logged, never part of an error, and never follow a redirect.
+
 ## MCP Closed-Loop Automation
 
 When a CLI agent has Sylvode MCP tools available (via global config or `mcp_config_path`), it can autonomously:
@@ -716,7 +789,7 @@ A value that is missing renders as an empty string in `message_template` (`unkno
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/webhook` | POST | Receive a webhook delivery or worker AI task |
-| `/health` | GET | Health check; answers `ok` |
+| `/health` | GET | Health check; answers `{"status":"ok","protocol":{"runner":1,"api":1,"state":"ok"}}`. `state` is `ok`, `mismatch`, `unreachable`, `pending` (not checked yet) or `unchecked` (no `runner` agent) |
 
 `/webhook` answers `401` for a missing, invalid or conflicting signature or a stale delivery, `409`
 for a replayed one, and `400` for a body that is not JSON. Otherwise it answers `200` with a JSON status: `ignored` (not a bot task), `no_agent`

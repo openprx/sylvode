@@ -1,6 +1,7 @@
 use crate::{AppState, background::Background, config, handler, process, tunnel};
 use axum::{
-    Router,
+    Json, Router,
+    extract::State,
     routing::{get, post},
 };
 use std::ffi::OsString;
@@ -180,11 +181,26 @@ async fn serve(config: config::Config) -> ExitCode {
 
     let background = Background::new(config.runtime.cli_max_concurrency);
     let replay = tokio::sync::Mutex::new(crate::replay::ReplayGuard::new(config.security.max_delivery_age_secs));
+    let has_runner_agents = config.agents.iter().any(|agent| agent.agent_type == "runner");
+    let runner = crate::runner::RunnerRuntime::new(&config);
+    let handshake = crate::handshake::Handshake::new(has_runner_agents);
     let state = Arc::new(AppState {
         config,
         background: background.clone(),
         replay,
+        runner,
+        handshake,
     });
+
+    if has_runner_agents {
+        let loop_config = Arc::new(state.config.clone());
+        let http = state.runner.http.clone();
+        let loop_handshake = state.handshake.clone();
+        let loop_background = background.clone();
+        background.spawn(async move {
+            crate::handshake::run_loop(loop_config, http, loop_handshake, loop_background).await;
+        });
+    }
 
     let tunnel_state = Arc::new(state.config.clone());
     if tunnel_state.tunnel_enabled() {
@@ -198,7 +214,7 @@ async fn serve(config: config::Config) -> ExitCode {
 
     let app = Router::new()
         .route("/webhook", post(handler::handle_webhook))
-        .route("/health", get(|| async { "ok" }))
+        .route("/health", get(health))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -266,6 +282,11 @@ async fn serve(config: config::Config) -> ExitCode {
     }
     tracing::info!("{NAME} stopped");
     ExitCode::SUCCESS
+}
+
+/// `GET /health`: the service is up; `protocol` is the result of the handshake with Sylvode.
+async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status": "ok", "protocol": state.handshake.health()}))
 }
 
 /// Resolves on SIGINT or SIGTERM.

@@ -17,6 +17,7 @@ mod config;
 mod dispatcher;
 mod executor_permissions;
 mod handler;
+mod handshake;
 mod process;
 mod replay;
 mod runner;
@@ -31,4 +32,6 @@ pub(crate) struct AppState {
     pub config: config::Config,
     pub background: background::Background,
     pub replay: tokio::sync::Mutex<replay::ReplayGuard>,
+    pub runner: runner::RunnerRuntime,
+    pub handshake: handshake::Handshake,
 }

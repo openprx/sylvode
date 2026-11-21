@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const DEFAULT_SUBPROCESS_TIMEOUT_SECS: u64 = 60;
 
 #[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
-const DEFAULT_MCP_INSTRUCTIONS: &str = r#"## Sylvode tools
+pub const DEFAULT_MCP_INSTRUCTIONS: &str = r"## Sylvode tools
 
 You have the Sylvode MCP tools in search mode. Find a tool with `sylvode_search`, call a tool that only reads with `sylvode_read` and one that changes data with `sylvode_write` (both take `tool` and `arguments`; `sylvode_overview` lists what exists).
 Work on issue {issue_id}: read it and its comments with `sylvode_read` (`work_items.get`, `comments.list`), then post a summary comment with `sylvode_write` (`comments.create`).
@@ -19,7 +19,7 @@ If this run came from a delivered task (a line starting `[Sylvode task]` with an
 1. Call `sylvode_task_get` with the id and attempt.
 2. Call `sylvode_task_ack` with a short plan, then start work at once.
 3. Call `sylvode_task_progress` at each milestone.
-4. End with `sylvode_task_complete`, or `sylvode_task_fail` with the reason."#;
+4. End with `sylvode_task_complete`, or `sylvode_task_fail` with the reason.";
 
 #[allow(clippy::doc_markdown, clippy::literal_string_with_formatting_args)]
 const DEFAULT_FORM_MCP_INSTRUCTIONS: &str = r#"## Sylvode tools
@@ -213,7 +213,7 @@ fn dispatch_cli(
                     CliRunResult::cancelled_before_start()
                 } else {
                     tracing::info!(executor = %bg_executor, "CLI agent spawned");
-                    run_cli_executor(&bg_cfg, &prompt, task_background.cancelled()).await
+                    run_cli_executor(&bg_cfg, &prompt, None, task_background.cancelled()).await
                 };
                 drop(permit);
                 run
@@ -363,7 +363,7 @@ pub async fn execute_cli_task(
             tracing::warn!(error = ?e, "start callback failed");
         }
     }
-    let run = run_cli_executor(cfg, &prompt, cancelled).await;
+    let run = run_cli_executor(cfg, &prompt, None, cancelled).await;
 
     tracing::info!(
         executor = %cfg.executor,
@@ -412,12 +412,12 @@ pub async fn execute_cli_task(
 }
 
 #[derive(Debug)]
-struct CliRunResult {
-    status: String,
-    exit_code: Option<i32>,
-    duration_ms: u128,
-    stdout_tail: String,
-    stderr_tail: String,
+pub struct CliRunResult {
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u128,
+    pub stdout_tail: String,
+    pub stderr_tail: String,
 }
 
 impl CliRunResult {
@@ -433,7 +433,14 @@ impl CliRunResult {
     }
 }
 
-async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str, cancelled: impl Future<Output = ()>) -> CliRunResult {
+/// Runs the executor of `cfg` once. `program_override` replaces the executor's default program name
+/// (a configured `binary`).
+pub async fn run_cli_executor(
+    cfg: &CliAgentConfig,
+    prompt: &str,
+    program_override: Option<&str>,
+    cancelled: impl Future<Output = ()>,
+) -> CliRunResult {
     let (program, args) = match executor_command_for(cfg, prompt) {
         Ok(v) => v,
         Err(err) => {
@@ -447,7 +454,7 @@ async fn run_cli_executor(cfg: &CliAgentConfig, prompt: &str, cancelled: impl Fu
         }
     };
 
-    let mut cmd = tokio::process::Command::new(program);
+    let mut cmd = tokio::process::Command::new(program_override.unwrap_or(program));
     cmd.args(args)
         .env_remove("CLAUDECODE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT");
@@ -1200,7 +1207,7 @@ fn format_message_tracked(agent: &AgentConfig, payload: &Value) -> Rendered {
 /// Renders `template` in a single pass. Each `{name}` that has an entry in `values` is replaced by
 /// that value; any other text, including an unknown `{name}`, is copied unchanged. An inserted
 /// value is never scanned again, so a placeholder inside payload text stays literal.
-fn render_template(template: &str, values: &[(&str, &str)]) -> String {
+pub fn render_template(template: &str, values: &[(&str, &str)]) -> String {
     render_template_tracked(template, values).text
 }
 

@@ -37,6 +37,8 @@ unicode-normalization.workspace = true
 # General categories (format, private-use and unassigned characters) for the title sanitiser and the
 # paste guard.
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+# The prerequisite checker: the report rows and the API protocol probe types.
+sylvode-prereq = { path = "../../crates/sylvode-prereq", features = ["http"] }
 # Concurrency-safe locks (std's Mutex is disallowed in this workspace).
 parking_lot.workspace = true
 # Parses listen addresses and tunnel URLs to compare their host exactly (already used by reqwest).

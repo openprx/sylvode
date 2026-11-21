@@ -6,6 +6,7 @@ use crate::executor_permissions::ExecutorPermissions;
 pub const KNOWN_EXECUTORS: [&str; 3] = ["codex", "claude-code", "opencode"];
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub server: ServerConfig,
     pub security: SecurityConfig,
@@ -20,12 +21,16 @@ pub struct Config {
     /// Terminal callbacks for worker AI tasks (`[ai_task_callback]`).
     #[serde(default)]
     pub ai_task_callback: AiTaskCallbackConfig,
+    /// The `runner` agents' settings (`[runner]`).
+    #[serde(default)]
+    pub runner: crate::runner::config::RunnerConfig,
     /// Safe mode, resolved once at start-up from `SYLVODE_RUNNER_SAFE_MODE`. Not read from the file.
     #[serde(skip)]
     pub safe_mode: bool,
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FeatureConfig {
     #[serde(default)]
     pub tunnel_enabled: bool,
@@ -36,6 +41,7 @@ pub struct FeatureConfig {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     #[serde(default = "default_cli_max_concurrency")]
     pub cli_max_concurrency: usize,
@@ -56,11 +62,13 @@ impl Default for RuntimeConfig {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     pub listen: String,
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct SecurityConfig {
     #[serde(default)]
     pub webhook_secrets: Vec<String>,
@@ -77,6 +85,7 @@ pub struct SecurityConfig {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     pub id: String,
     pub name: String,
@@ -94,13 +103,24 @@ pub struct AgentConfig {
     pub ai_task_callback: Option<AgentAiTaskCallbackConfig>,
 }
 
+impl AgentConfig {
+    /// The bots a `runner` agent serves: `route.bot_ids`, else the agent id.
+    pub fn runner_bot_ids(&self) -> Vec<String> {
+        self.route
+            .as_ref()
+            .filter(|route| !route.bot_ids.is_empty())
+            .map_or_else(|| vec![self.id.clone()], |route| route.bot_ids.clone())
+    }
+}
+
 /// Reports the outcome of a worker AI task back to the Sylvode API.
 ///
 /// The Sylvode worker marks an AI task `processing` when it delivers it, and only
 /// `POST /api/v1/ai/callbacks/task/{task_id}/complete` or `.../fail` ends that state. With this
 /// enabled, an agent that ran such a task (a delivery carrying `task_id` and `ai_participant_id`)
 /// calls the matching endpoint once the run ends.
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct AiTaskCallbackConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -151,7 +171,8 @@ impl Default for AiTaskCallbackConfig {
 }
 
 /// The callback token of one bot (`[[ai_task_callback.bots]]`).
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct AiTaskCallbackBotConfig {
     /// The bot's user id in Sylvode (a UUID), as the worker sends it in `ai_participant_id`.
     pub bot_id: String,
@@ -162,13 +183,58 @@ pub struct AiTaskCallbackBotConfig {
 }
 
 /// Per-agent overrides of [`AiTaskCallbackConfig`].
-#[derive(Deserialize, Clone, Debug, Default)]
+#[derive(Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AgentAiTaskCallbackConfig {
     /// Whether this agent reports AI task outcomes. Defaults to true for every agent type except
     /// `webhook`, which forwards the delivery to another receiver that owns the task.
     pub enabled: Option<bool>,
     pub token: Option<String>,
     pub surface: Option<String>,
+}
+
+/// Shows that a token is set without showing it.
+const fn redacted(token: Option<&str>) -> &'static str {
+    match token {
+        Some(_) => "<redacted>",
+        None => "<none>",
+    }
+}
+
+impl std::fmt::Debug for AiTaskCallbackConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiTaskCallbackConfig")
+            .field("enabled", &self.enabled)
+            .field("api_url", &self.api_url)
+            .field("token", &redacted(self.token.as_deref()))
+            .field("bot_id", &self.bot_id)
+            .field("bots", &self.bots)
+            .field("surface", &self.surface)
+            .field("max_attempts", &self.max_attempts)
+            .field("retry_delay_ms", &self.retry_delay_ms)
+            .field("max_output_chars", &self.max_output_chars)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for AiTaskCallbackBotConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiTaskCallbackBotConfig")
+            .field("bot_id", &self.bot_id)
+            .field("token", &"<redacted>")
+            .field("surface", &self.surface)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for AgentAiTaskCallbackConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentAiTaskCallbackConfig")
+            .field("enabled", &self.enabled)
+            .field("token", &redacted(self.token.as_deref()))
+            .field("surface", &self.surface)
+            .finish()
+    }
 }
 
 /// The transports a Sylvode bot token can be registered with (`EventSurface::BOT_CREDENTIAL_SURFACES`
@@ -207,6 +273,7 @@ impl AiTaskCallback<'_> {
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
+#[serde(deny_unknown_fields)]
 pub struct RouteConfig {
     #[serde(default)]
     pub bot_names: Vec<String>,
@@ -225,6 +292,7 @@ pub struct RouteConfig {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
     pub command: String,
     /// Fixed arguments placed between `command` and `--channel`.
@@ -235,12 +303,14 @@ pub struct OpenClawConfig {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct WebhookAgentConfig {
     pub url: String,
     pub secret: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct OpenPRXConfig {
     /// Signal daemon HTTP API base URL (e.g. `<http://127.0.0.1:8686>`)
     pub signal_api: Option<String>,
@@ -263,12 +333,14 @@ fn default_channel() -> String {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct CustomConfig {
     pub command: String,
     pub args: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct CliAgentConfig {
     pub executor: String,
     pub workdir: Option<String>,
@@ -313,7 +385,39 @@ pub struct CliAgentConfig {
     pub dangerously_bypass_permissions: bool,
 }
 
+impl CliAgentConfig {
+    /// The settings of one headless run of a `runner` agent: `executor` in `workdir` (the
+    /// canonical directory), with the permissions of `[runner.cli.*]`. There is no callback and no
+    /// state change: the agent ends the task through the task tools.
+    pub fn headless(executor: &str, workdir: &str, timeout_secs: u64) -> Self {
+        Self {
+            executor: executor.to_string(),
+            workdir: Some(workdir.to_string()),
+            timeout_secs,
+            max_output_chars: default_max_output_chars(),
+            prompt_template: None,
+            callback: None,
+            callback_url: None,
+            callback_token: None,
+            update_state_on_start: None,
+            update_state_on_success: None,
+            update_state_on_fail: None,
+            mcp_instructions: None,
+            skip_callback_state: true,
+            mcp_config_path: None,
+            env_vars: std::collections::HashMap::new(),
+            permission_mode: None,
+            allowed_tools: None,
+            disallowed_tools: None,
+            strict_mcp_config: None,
+            sandbox: None,
+            dangerously_bypass_permissions: false,
+        }
+    }
+}
+
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct TunnelConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -543,7 +647,74 @@ impl Config {
         let config: Self = toml::from_str(content).map_err(|e| format!("failed to parse config: {e}"))?;
         config.validate_commands()?;
         config.validate()?;
+        config.validate_runner_agents()?;
         Ok(config)
+    }
+
+    /// Refuses a `runner` agent that cannot work, and an invalid `[runner]` block.
+    ///
+    /// A `runner` agent needs `[ai_task_callback] enabled = true`, `[runner] allowed_roots`, and for
+    /// every bot of its route a token registered for `mcp_stdio` (design C17), and takes no agent
+    /// type table: its permissions come from `[runner.cli.*]` and its directory from Sylvode.
+    fn validate_runner_agents(&self) -> Result<(), String> {
+        self.runner.validate()?;
+        let runners: Vec<&AgentConfig> = self.agents.iter().filter(|a| a.agent_type == "runner").collect();
+        if runners.is_empty() {
+            return Ok(());
+        }
+        let cfg = &self.ai_task_callback;
+        for agent in runners {
+            let id = &agent.id;
+            if agent.openclaw.is_some()
+                || agent.openprx.is_some()
+                || agent.webhook.is_some()
+                || agent.custom.is_some()
+                || agent.cli.is_some()
+            {
+                return Err(format!(
+                    "agent `{id}`: a runner agent takes no [agents.cli], [agents.custom] or other agent type \
+                     table; its permissions come from [runner.cli.*]"
+                ));
+            }
+            if !cfg.enabled {
+                return Err(format!(
+                    "agent `{id}`: a runner agent needs [ai_task_callback] enabled = true: it reads and \
+                     reports tasks with the bot's token"
+                ));
+            }
+            if self.runner.allowed_roots.is_empty() {
+                return Err(format!(
+                    "agent `{id}`: a runner agent needs runner.allowed_roots: without a root every project \
+                     is declined"
+                ));
+            }
+            for bot in agent.runner_bot_ids() {
+                if uuid::Uuid::parse_str(bot.trim()).is_err() {
+                    return Err(format!(
+                        "agent `{id}`: a runner agent serves bots by id; set route.bot_ids (or make the agent id \
+                         the bot's UUID)"
+                    ));
+                }
+                let surface = if let Some(entry) = cfg.bots.iter().find(|b| same_bot(&b.bot_id, &bot)) {
+                    entry.surface.as_deref().unwrap_or(cfg.surface.as_str())
+                } else if cfg.token.is_some() && cfg.bot_id.as_deref().is_none_or(|owner| same_bot(owner, &bot)) {
+                    agent
+                        .ai_task_callback
+                        .as_ref()
+                        .and_then(|o| o.surface.as_deref())
+                        .unwrap_or(cfg.surface.as_str())
+                } else {
+                    return Err(format!(
+                        "agent `{id}`: bot {bot} has no token in [ai_task_callback]; add a \
+                         [[ai_task_callback.bots]] entry with surface = \"mcp_stdio\""
+                    ));
+                };
+                if surface != "mcp_stdio" {
+                    return Err(format!("bot {bot}: runner bots need a token registered for mcp_stdio"));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Refuses a `command` that is more than one program name; see [`check_single_program`].
@@ -1678,5 +1849,167 @@ url = "http://127.0.0.1:9000/hook"
                 .first()
                 .is_some_and(|(_, p)| p.describe().contains("permission_mode = dontAsk"))
         );
+    }
+
+    /// The configuration block Sylvode hands out when a bot is connected to a project, byte for
+    /// byte as the API's contract test fixture holds it.
+    const GOLDEN_BLOCK: &str = include_str!("../../api/tests/fixtures/runner-config-block.toml");
+
+    const GOLDEN_BOT: &str = "00000000-0000-0000-0000-000000000000";
+
+    #[test]
+    fn the_golden_configuration_block_loads_as_one_runner_agent() {
+        let cfg = Config::from_toml(GOLDEN_BLOCK).expect("the block Sylvode issues is accepted");
+        assert_eq!(cfg.agents.len(), 1);
+        let agent = cfg.agents.first().expect("agent");
+        assert_eq!(agent.agent_type, "runner");
+        assert_eq!(agent.id, GOLDEN_BOT);
+        assert_eq!(agent.name, "Build bot");
+        assert_eq!(
+            agent.route.as_ref().map(|r| r.bot_ids.clone()),
+            Some(vec![GOLDEN_BOT.to_string()])
+        );
+        assert_eq!(cfg.runner.allowed_roots, vec!["/home/dev/work/svwl".to_string()]);
+        assert!(cfg.ai_task_callback.enabled);
+        let bot = cfg.ai_task_callback.bots.first().expect("bot");
+        assert_eq!(
+            (bot.bot_id.as_str(), bot.surface.as_deref()),
+            (GOLDEN_BOT, Some("mcp_stdio"))
+        );
+        // Every other runner setting has its default.
+        assert_eq!(cfg.runner.delivery_check_timeout_secs, 5);
+        assert_eq!(cfg.runner.mcp.tool_mode, "search");
+        assert!(!cfg.runner.cli.codex.enabled && !cfg.runner.cli.opencode.enabled);
+        assert_eq!(cfg.runner.tmux.socket_name, "sylvode");
+        // The agent resolves a token for its bot, with the surface the block registered.
+        match cfg.ai_task_callback_for(Some(agent), GOLDEN_BOT) {
+            super::AiTaskCallback::Report(target) => {
+                assert_eq!(target.surface, "mcp_stdio");
+                assert_eq!(target.api_url, "https://sylvode.example.net");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A key a newer Sylvode might add is refused naming it, in every section the block uses.
+    #[test]
+    fn an_unknown_key_in_the_block_is_refused_naming_it() {
+        for (anchor, extra, key) in [
+            ("[server]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[security]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[ai_task_callback]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[runner]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[[ai_task_callback.bots]]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[[agents]]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[agents.route]\n", "mystery_key = 1\n", "mystery_key"),
+        ] {
+            let block = GOLDEN_BLOCK.replacen(anchor, &format!("{anchor}{extra}"), 1);
+            assert_ne!(block, GOLDEN_BLOCK, "{anchor}");
+            let error = Config::from_toml(&block).expect_err(anchor);
+            assert!(error.contains(key), "{anchor}: {error}");
+        }
+        let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.tmux]\nmystery_key = 1\n")).expect_err("tmux");
+        assert!(error.contains("mystery_key"), "{error}");
+        let error =
+            Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.cli.claude]\nenabled = true\n")).expect_err("claude");
+        assert!(error.contains("enabled"), "claude has no enabled key: {error}");
+        let error = Config::from_toml(
+            "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n[nonsense]\nx = 1\n",
+        )
+        .expect_err("top");
+        assert!(error.contains("nonsense"), "{error}");
+    }
+
+    #[test]
+    fn a_runner_agent_needs_the_callback_roots_and_an_mcp_stdio_token() {
+        let swap = |from: &str, to: &str| GOLDEN_BLOCK.replacen(from, to, 1);
+        let error =
+            Config::from_toml(&swap("enabled = true\napi_url", "enabled = false\napi_url")).expect_err("callback off");
+        assert!(
+            error.contains("ai_task_callback") && error.contains("enabled"),
+            "{error}"
+        );
+        let error = Config::from_toml(&swap("allowed_roots = [\"/home/dev/work/svwl\"]", "allowed_roots = []"))
+            .expect_err("no roots");
+        assert!(error.contains("allowed_roots"), "{error}");
+        for surface in ["rest", "mcp_http", "cli"] {
+            let error = Config::from_toml(&swap("surface = \"mcp_stdio\"", &format!("surface = \"{surface}\"")))
+                .expect_err(surface);
+            assert_eq!(
+                error,
+                format!("bot {GOLDEN_BOT}: runner bots need a token registered for mcp_stdio")
+            );
+        }
+        // A bot of the route without any token.
+        let other = "11111111-1111-4111-8111-111111111111";
+        let error = Config::from_toml(&swap(
+            &format!("bot_ids = [\"{GOLDEN_BOT}\"]"),
+            &format!("bot_ids = [\"{GOLDEN_BOT}\", \"{other}\"]"),
+        ))
+        .expect_err("second bot");
+        assert!(error.contains(other) && error.contains("no token"), "{error}");
+        // The route must name bots by UUID.
+        let error = Config::from_toml(
+            &swap(&format!("bot_ids = [\"{GOLDEN_BOT}\"]"), "bot_names = [\"Build bot\"]").replacen(
+                &format!("[[agents]]\nid = \"{GOLDEN_BOT}\""),
+                "[[agents]]\nid = \"build\"",
+                1,
+            ),
+        )
+        .expect_err("by name");
+        assert!(error.contains("route.bot_ids"), "{error}");
+        // No agent type table next to a runner agent.
+        let error =
+            Config::from_toml(&format!("{GOLDEN_BLOCK}\n[agents.cli]\nexecutor = \"codex\"\n")).expect_err("cli table");
+        assert!(error.contains("[runner.cli.*]"), "{error}");
+    }
+
+    #[test]
+    fn runner_settings_are_validated() {
+        for (extra, key) in [
+            ("[runner.tmux]\nmin_version = \"3.1\"\n", "min_version"),
+            ("[runner.tmux]\nmin_version = \"three\"\n", "min_version"),
+            ("[runner.tmux]\nsocket_name = \"a b\"\n", "socket_name"),
+            ("[runner.tmux]\nwindow_width = 5\n", "window_width"),
+            ("[runner.mcp]\ntool_mode = \"both\"\n", "tool_mode"),
+            ("[runner.cli.codex]\napproval = \"on-request\"\n", "approval"),
+            ("[runner.cli.codex]\nsandbox = \"none\"\n", "sandbox"),
+            ("[runner.cli.claude]\nbinary = \"\"\n", "claude.binary"),
+        ] {
+            // These sections go after `[runner]` in the block; a table header may appear once, so
+            // the block's own `[runner]` stays and the sub-table is appended.
+            let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n{extra}")).expect_err(key);
+            assert!(error.contains(key), "{key}: {error}");
+        }
+        let ok = format!(
+            "{GOLDEN_BLOCK}\n[runner.tmux]\nmin_version = \"3.2\"\nsocket_name = \"\"\n[runner.mcp]\ntool_mode = \"full\"\n"
+        );
+        assert!(Config::from_toml(&ok).is_ok());
+    }
+
+    /// A deployment without a `runner` agent is unaffected by the `[runner]` block.
+    #[test]
+    fn without_a_runner_agent_the_runner_block_asks_for_nothing() {
+        let cfg = Config::from_toml("[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n")
+            .expect("loads");
+        assert!(cfg.runner.allowed_roots.is_empty());
+    }
+
+    /// Bot tokens never appear in a debug rendering of the configuration.
+    #[test]
+    fn debug_output_of_the_configuration_hides_every_bot_token() {
+        let cfg = Config::from_toml(GOLDEN_BLOCK).expect("loads");
+        let shown = format!("{cfg:?}");
+        assert!(!shown.contains("opr_"), "{shown}");
+        assert!(shown.contains("<redacted>"));
+        let with_global = Config::from_toml(
+            "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n\
+             [ai_task_callback]\nenabled = true\napi_url = \"http://127.0.0.1:2\"\ntoken = \"opr_zzzzzzzzzzzz\"\n\
+             [[agents]]\nid = \"a\"\nname = \"a\"\nagent_type = \"custom\"\n[agents.custom]\ncommand = \"echo\"\n\
+             [agents.ai_task_callback]\ntoken = \"opr_yyyyyyyyyyyy\"\n",
+        )
+        .expect("loads");
+        let shown = format!("{with_global:?}");
+        assert!(!shown.contains("opr_zzz") && !shown.contains("opr_yyy"), "{shown}");
     }
 }
