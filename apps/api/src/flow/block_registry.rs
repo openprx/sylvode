@@ -5,7 +5,7 @@ use crate::error::ApiError;
 use collab_core::block_identity::{Alias, AliasState, reconcile_alias};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -513,7 +513,28 @@ const BASELINE_CIDS_MAX: usize = 200_000;
 /// next write fall back to the full reconcile.
 const BASELINE_ENTRIES_PER_PAGE: usize = 2;
 
-static BASELINES: LazyLock<parking_lot::Mutex<BaselineCache>> = LazyLock::new(Default::default);
+#[cfg(not(test))]
+static BASELINES: std::sync::LazyLock<parking_lot::Mutex<BaselineCache>> = std::sync::LazyLock::new(Default::default);
+
+#[cfg(test)]
+thread_local! {
+    /// Tests run one per thread on a current-thread runtime, so a per-thread memory gives every
+    /// test the cache of its own Pages: a test running in parallel can neither evict its entries
+    /// (the page and CID bounds are process-wide) nor see them.
+    static TEST_BASELINES: std::cell::RefCell<BaselineCache> = std::cell::RefCell::new(BaselineCache::default());
+}
+
+/// Run `f` on the remembered registry states of this process (of this test thread under `cfg(test)`).
+fn with_baselines<R>(f: impl FnOnce(&mut BaselineCache) -> R) -> R {
+    #[cfg(not(test))]
+    {
+        f(&mut BASELINES.lock())
+    }
+    #[cfg(test)]
+    {
+        TEST_BASELINES.with(|cache| f(&mut cache.borrow_mut()))
+    }
+}
 
 impl BaselineCache {
     fn find(&mut self, page: Uuid, head: i64, digest: &[u8]) -> Option<Arc<HashMap<String, [u8; 32]>>> {
@@ -837,16 +858,17 @@ pub(crate) async fn reconcile_in_mode(
         let trust_stale = mutation::current() == Some(mutation::Mutation::TrustStaleCheckpoint);
         #[cfg(not(test))]
         let trust_stale = false;
-        let mut cache = BASELINES.lock();
-        if trust_stale {
-            cache
-                .pages
-                .get(&page_id)
-                .and_then(|(_, entries)| entries.first())
-                .map(|entry| Arc::clone(&entry.blocks))
-        } else {
-            witness.and_then(|witness| cache.find(page_id, checkpoint_head, &witness))
-        }
+        with_baselines(|cache| {
+            if trust_stale {
+                cache
+                    .pages
+                    .get(&page_id)
+                    .and_then(|(_, entries)| entries.first())
+                    .map(|entry| Arc::clone(&entry.blocks))
+            } else {
+                witness.and_then(|witness| cache.find(page_id, checkpoint_head, &witness))
+            }
+        })
     } else {
         None
     };
@@ -1055,21 +1077,19 @@ pub(crate) async fn reconcile_in_mode(
         super::block_anchors::sync_legacy(tx, page_id, blocks).await?;
         // Remembered before the caller commits. If the transaction rolls back the checkpoint keeps
         // the older head and digest, and the guard refuses this entry.
-        BASELINES.lock().store(
-            page_id,
-            BaselineEntry {
-                head: accepted_head,
-                digest,
-                blocks: Arc::new(
-                    blocks
-                        .iter()
-                        .map(|block| (block.physical_cid.clone(), block.content_hash))
-                        .collect(),
-                ),
-            },
-        );
+        let remembered = BaselineEntry {
+            head: accepted_head,
+            digest,
+            blocks: Arc::new(
+                blocks
+                    .iter()
+                    .map(|block| (block.physical_cid.clone(), block.content_hash))
+                    .collect(),
+            ),
+        };
+        with_baselines(|cache| cache.store(page_id, remembered));
     } else {
-        BASELINES.lock().forget(page_id);
+        with_baselines(|cache| cache.forget(page_id));
     }
     Ok(ReconcileOutcome {
         #[cfg(test)]
