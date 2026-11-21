@@ -55,9 +55,12 @@
 //! It does **not** interrupt a single library call. One call can overshoot a limit by what it costs
 //! by itself:
 //!
-//! * the decode of the snapshot in `LoroCollabEngine::load`, bounded by the snapshot size limit
-//!   (`InputLimits::snapshot_bytes_max`, 64 MiB), which no page that was accepted through a window
-//!   can approach: every update was 64 KiB at most;
+//! * the decode of the snapshot in `LoroCollabEngine::load` and the prewarm that follows it, linear
+//!   in the snapshot and bounded by the snapshot size limit (`InputLimits::snapshot_bytes_max`,
+//!   64 MiB). A Loro snapshot carries the whole history of the page, so a long-lived page comes
+//!   near that limit after about a thousand updates of the maximal size; nothing in the setup
+//!   interrupts the load of it, and the time it takes is not measured here. The 5 s setup timeout
+//!   and the host's backstop bound it;
 //! * the decode and conversion of one text: bounded by the per-text budget, see below;
 //! * the projection that follows the count, which converts the texts the count has just measured.
 //!
@@ -177,8 +180,11 @@
 //! it has no facts from then on, the full window meters its decode, and a decode over the ceiling is
 //! killed there (no write can grow the text further, the full window being CPU-killed before it
 //! accepts). The text is therefore never more than about twice the budget in any base this product
-//! produces, and that is the most one uninterruptible call can cost the setup: 90 ms by the
-//! reference runner's clock, not seconds. `window_text_guard_worst_setup` measures the page of
+//! produces, and that is the most one uninterruptible call can cost the setup: about 1.8 times the
+//! budget, which is 90 ms for a budget of 50 ms, not seconds. The ratio is what carries to another
+//! host: the figures above were measured on the development machine against its own 50 ms (the
+//! budget and the window's ceiling are the same host's clock), and the ratio has not been measured
+//! on the reference runner. `window_text_guard_worst_setup` measures the page of
 //! many texts each just under the budget (250 texts of 500 nested marks, 43 ms each on the
 //! reference runner): the CPU budget cuts the setup at 2.51 s, the budget plus one text, where the
 //! setup without a guard would take 10.7 s; that is half of the 5 s timeout. The worst total, a page that spent

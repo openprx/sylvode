@@ -187,18 +187,26 @@ ends by itself.
 
 After a fired guard the full window decodes every text again inside its 50 ms window, so a Page with
 a text that is too expensive is refused with the content limit `decode_apply_cpu_ms`, on every
-surface, and the session stays open. Repairing it means removing the text's formatting (or the text),
-which the full window can accept only if the result decodes inside the ceiling.
+surface, and the session stays open. Removing the text's formatting does not repair it: that update
+touches the text, so the full window decodes it and the CPU limit kills the window again. Deleting
+the whole block may be accepted (the document's later state no longer holds the text), but that has
+not been verified; there is no operator restore that replaces the document state yet.
 
 Backstop for what the guards cannot interrupt (one library call: a Page that was grown before the
 per-text guard existed can hold a text whose decode alone takes seconds): a setup that times out at
-5 seconds having consumed at least 80 % of the CPU budget is decided again by the same write with the
-worker told to compute no facts (the full window), and the document is decided by the full window
-directly for the next ten minutes. It is logged once at warning level as `window_setup_backstop`.
-Only if that attempt fails too is the write refused, with the answer the full window produces (the
-content limit, or `server_rejected{isolated_setup_exhausted}` when even the load timed out). A setup
-that times out with less than 80 % of the budget consumed was starved, not heavy: the client is told
-`apply_busy` (`setup_starved`, resend), as before.
+5 seconds without having been starved is decided again by the same write with the worker told to
+compute no facts (the full window), and the document is decided by the full window directly for the
+next ten minutes. It is logged once at warning level as `window_setup_backstop`. Only if that
+attempt fails too is the write refused, with the answer the full window produces (the content limit,
+or `server_rejected{isolated_setup_exhausted}` when even the load timed out). A setup was starved,
+not heavy, when it consumed less than 80 % of the CPU budget or when its CPU was under 70 % of the
+wall time it was given (a host that did not schedule it, whatever it had consumed): the client is
+told `apply_busy` (`setup_starved`, resend), as before, and nothing is cooled.
+
+A setup that ends without facts for another reason than a guard (a Page over the item budget) has
+also decoded its texts on the engine it holds, so the worker starts the full window from a freshly
+loaded engine in that case too, and the full window meters every decode, as it did before the
+incremental window existed.
 
 Residual bands of the busy classification, documented and not changed: a write that needs 40 to
 50 ms of CPU (the worker killed at the 100 ms wall limit with 40 to 50 ms of CPU) on a worker given
