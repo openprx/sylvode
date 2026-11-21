@@ -9202,8 +9202,8 @@ mod flow_database_tests {
                     .uri(format!("/api/v1/flow/workspaces/{workspace_id}/objects"))
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .header(axum::http::header::AUTHORIZATION, format!("Bearer {raw_token}"))
-                    .header("x-openpr-mcp-surface", "mcp_stdio")
-                    .header("x-openpr-mcp-tool", "flow.object_create")
+                    .header("x-sylvode-mcp-surface", "mcp_stdio")
+                    .header("x-sylvode-mcp-tool", "flow.object_create")
                     .body(axum::body::Body::from(
                         json!({
                             "object_type": "page",
@@ -9283,16 +9283,15 @@ mod flow_database_tests {
     }
 
     /// ADR-0020 D3 through the production `bot_or_user_auth_middleware` and a real
-    /// `workspace_bots` row: the canonical `X-Sylvode-MCP-*` headers, the legacy
-    /// `X-OpenPR-MCP-*` headers (a pre-1.0 `mcp-server` against this API), and both together with
-    /// equal values all reach `business_events.source` with the same attribution; any
-    /// disagreement — across spellings or between repeated occurrences — is refused with the
-    /// envelope's `401` and writes nothing.
+    /// `workspace_bots` row: the `X-Sylvode-MCP-*` headers reach `business_events.source`; the
+    /// retired `X-OpenPR-MCP-*` spelling is not read at all (neither alone nor next to the
+    /// canonical one); a disagreement between repeated occurrences of one header is refused with
+    /// the envelope's `401` and writes nothing.
     // The axum route pattern below contains `{workspace_id}`, which is axum's path-parameter
     // syntax and not a format argument, but is indistinguishable from one to the lint.
     #[allow(clippy::literal_string_with_formatting_args)]
     #[tokio::test]
-    async fn mcp_attribution_headers_accept_either_spelling_and_refuse_disagreement() {
+    async fn mcp_attribution_headers_use_one_spelling_and_refuse_disagreement() {
         #[derive(FromQueryResult)]
         struct SourceRow {
             source: Value,
@@ -9368,7 +9367,7 @@ mod flow_database_tests {
             }
         };
 
-        let accepted: [(&str, &'static [(&'static str, &'static str)]); 3] = [
+        let accepted: [(&str, &'static [(&'static str, &'static str)]); 2] = [
             (
                 "canonical only",
                 &[
@@ -9377,19 +9376,12 @@ mod flow_database_tests {
                 ],
             ),
             (
-                "legacy only",
-                &[
-                    ("X-OpenPR-MCP-Surface", "mcp_stdio"),
-                    ("X-OpenPR-MCP-Tool", "flow.object_create"),
-                ],
-            ),
-            (
-                "both equal",
+                "the retired spelling next to the canonical one is ignored, even when it disagrees",
                 &[
                     ("X-Sylvode-MCP-Surface", "mcp_stdio"),
-                    ("X-OpenPR-MCP-Surface", "mcp_stdio"),
+                    ("X-OpenPR-MCP-Surface", "mcp_http"),
                     ("X-Sylvode-MCP-Tool", "flow.object_create"),
-                    ("X-OpenPR-MCP-Tool", "flow.object_create"),
+                    ("X-OpenPR-MCP-Tool", "flow.object_delete"),
                 ],
             ),
         ];
@@ -9424,23 +9416,7 @@ mod flow_database_tests {
         .expect("business_events query runs")
         .len();
 
-        let refused: [(&str, &'static [(&'static str, &'static str)]); 4] = [
-            (
-                "surface spellings disagree",
-                &[
-                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
-                    ("X-OpenPR-MCP-Surface", "mcp_http"),
-                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
-                ],
-            ),
-            (
-                "tool spellings disagree",
-                &[
-                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
-                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
-                    ("X-OpenPR-MCP-Tool", "flow.object_delete"),
-                ],
-            ),
+        let refused: [(&str, &'static [(&'static str, &'static str)]); 2] = [
             (
                 "repeated canonical tool disagrees",
                 &[
@@ -9450,10 +9426,10 @@ mod flow_database_tests {
                 ],
             ),
             (
-                "repeated legacy surface disagrees",
+                "repeated canonical surface disagrees",
                 &[
-                    ("X-OpenPR-MCP-Surface", "mcp_stdio"),
-                    ("X-OpenPR-MCP-Surface", "mcp_http"),
+                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
+                    ("X-Sylvode-MCP-Surface", "mcp_http"),
                 ],
             ),
         ];
@@ -9467,6 +9443,21 @@ mod flow_database_tests {
                 "{case}: {body}"
             );
         }
+
+        // The retired spelling alone attributes nothing: the credential is registered for a
+        // transport, and no `X-Sylvode-MCP-Surface` declares it.
+        let legacy_only = create(&[
+            ("X-OpenPR-MCP-Surface", "mcp_stdio"),
+            ("X-OpenPR-MCP-Tool", "flow.object_create"),
+        ])
+        .await;
+        assert_eq!(legacy_only["code"], 401, "{legacy_only}");
+        assert!(
+            legacy_only["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("not valid for the presented transport")),
+            "{legacy_only}"
+        );
 
         let events_after = SourceRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,

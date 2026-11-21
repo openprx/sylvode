@@ -7,7 +7,7 @@ MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, an
 
 > **Formerly OpenPR.** Releases up to 0.2.21 were published as OpenPR. Existing
 > OpenPR names (the `mcp-server` CLI commands, `config/openpr.toml`, `OPENPR_*`
-> compose variables, `openpr://` resources, `openpr-*` release archives) keep
+> compose variables, `openpr-*` release archives) keep
 > working with a deprecation warning and are not removed before Sylvode v2.0;
 > stable identifiers such as the REST API, MCP tool names, database names and the
 > plugin ABI are not renamed at all. See the

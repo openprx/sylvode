@@ -16,7 +16,7 @@ fix.
 | Any earlier release | No, upgrade to the latest release |
 
 The legacy names that the compatibility matrix keeps (the `mcp-server` CLI subcommands,
-`config/openpr.toml`, `OPENPR_*` compose variables, `openpr://` resource URIs and
+`config/openpr.toml`, `OPENPR_*` compose variables and
 `openpr-<target>` release archives) are part of the same build and receive the same fixes. See
 [the compatibility matrix](docs/sylvode-v1.0-compatibility.md).
 
@@ -77,8 +77,8 @@ These areas carry the highest impact, and reports about them are especially welc
   `sse` transports each request is made with the caller's own bearer token, which the MCP
   server forwards to the API; only `/health` is reachable without one. Acting without a
   valid token, acting beyond a token's permissions or workspace, the MCP project policy
-  gate admitting a call it should refuse, or forging the `X-Sylvode-MCP-*` /
-  `X-OpenPR-MCP-*` attribution recorded in the audit trail is in scope.
+  gate admitting a call it should refuse, or forging the `X-Sylvode-MCP-*`
+  attribution recorded in the audit trail is in scope.
 - **Webhooks and outbound requests.** Outbound webhook deliveries are signed with
   HMAC-SHA256 over the raw body in `X-Webhook-Signature: sha256=<hex>`. Delivery targets
   that resolve to loopback, private, link-local or other internal addresses are refused

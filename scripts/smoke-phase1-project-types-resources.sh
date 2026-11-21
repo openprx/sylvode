@@ -335,7 +335,7 @@ for (const name of ['project_resources.list', 'project_resources.create', 'proje
   assert(!toolNames.includes(name), `MCP tools/list must not contain parked tool ${name}`);
 }
 
-const mcpType = mcpCall(botAToken, workspaceId, 'resources/read', { uri: `openpr://projects/${projectId}/type` });
+const mcpType = mcpCall(botAToken, workspaceId, 'resources/read', { uri: `sylvode://projects/${projectId}/type` });
 assert(JSON.stringify(mcpType).includes('contract_review'), 'MCP type resource should include project type');
 
 const mcpTemplates = mcpCall(botAToken, workspaceId, 'resources/templates/list', {});

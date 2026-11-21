@@ -330,8 +330,8 @@ The Flow tools carry the Flow contracts (`objects.*`, `collections.*`, `records.
 
 The registry exposes five static resources (the skill `sylvode://skills/sylvode-mcp`, its tool reference `sylvode://skills/sylvode-mcp/tools`, `sylvode://guides/agents`, `sylvode://guides/workflows`, `sylvode://scenario-templates`) and 21 templates under the canonical
 `sylvode://` scheme, including all five frozen Flow resource templates. The matching
-`openpr://` identity remains a read alias for every registry row and resolves to the same
-payload and policy subject; aliases are not duplicated in list results. The native `sylvode`
+identity of every registry row is the `sylvode://` one; the retired `openpr://` spelling is not
+served. The native `sylvode`
 CLI (a second `[[bin]]` in this package) shares the same client and command contracts.
 
 ## Usage Examples

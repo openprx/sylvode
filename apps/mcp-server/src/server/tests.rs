@@ -93,7 +93,7 @@ async fn initialize_uses_sylvode_display_identity() -> TestResult {
 /// Equality of the sets and counts prevents a representative sample from masquerading as
 /// all-resources coverage. Every observed identity is then read through both schemes.
 #[tokio::test]
-async fn every_registered_resource_has_a_byte_identical_openpr_alias() -> TestResult {
+async fn every_registered_resource_is_served_by_its_sylvode_identity_only() -> TestResult {
     let router = Router::new().fallback(get(|| async {
         Json(json!({
             "code":0,
@@ -165,55 +165,38 @@ async fn every_registered_resource_has_a_byte_identical_openpr_alias() -> TestRe
     );
     assert_eq!(observed, expected, "resource registry identities or order drifted");
 
+    // Every resource answers by its own `sylvode://` identity; the retired `openpr://` spelling of
+    // the same identity is unknown, carries no migration metadata and reaches no backend.
     for (index, registered) in observed.into_iter().enumerate() {
         let index = i64::try_from(index)?;
         let canonical = expand_resource_template(registered);
-        let alias = canonical.replacen("sylvode://", "openpr://", 1);
+        let retired = canonical.replacen("sylvode://", "openpr://", 1);
         let canonical_response = server
             .handle_request(request(100 + index, "resources/read", Some(json!({"uri":canonical}))))
             .await
             .ok_or("canonical resources/read returned no response")?;
-        let alias_response = server
-            .handle_request(request(200 + index, "resources/read", Some(json!({"uri":alias}))))
-            .await
-            .ok_or("alias resources/read returned no response")?;
         assert!(
             canonical_response.error.is_none(),
             "canonical read failed: {canonical_response:?}"
         );
-        assert!(alias_response.error.is_none(), "alias read failed: {alias_response:?}");
         let result = canonical_response.result.ok_or("resource read had no result")?;
-        let mut alias_result = alias_response.result.ok_or("alias read had no result")?;
-        let contents = alias_result
-            .get_mut("contents")
-            .and_then(Value::as_array_mut)
-            .ok_or("alias read had no contents")?;
-        assert!(!contents.is_empty(), "alias read of {registered} returned no contents");
-        for content in contents {
-            let deprecation = content
-                .get_mut("_meta")
-                .and_then(Value::as_object_mut)
-                .and_then(|meta| meta.remove("deprecation"));
-            assert_eq!(
-                deprecation,
-                Some(json!({"replaced_by": canonical, "earliest_removal": "2.0"})),
-                "alias read of {registered} lacks the deprecation metadata"
-            );
-        }
-        assert_eq!(
-            result, alias_result,
-            "alias bytes differ for {registered} beyond _meta.deprecation"
-        );
-        assert_eq!(
-            result
-                .pointer("/contents/0/_meta/canonical_uri")
-                .and_then(Value::as_str),
-            Some(canonical.as_str()),
-            "canonical metadata missing for {registered}"
-        );
         assert!(
-            result.pointer("/contents/0/_meta/deprecation").is_none(),
-            "canonical read of {registered} carries deprecation metadata"
+            result.pointer("/contents/0/_meta").is_none(),
+            "{registered} carries migration metadata"
+        );
+        let retired_response = server
+            .handle_request(request(200 + index, "resources/read", Some(json!({"uri":retired}))))
+            .await
+            .ok_or("retired resources/read returned no response")?;
+        let body = serde_json::to_string(&retired_response)?;
+        assert!(
+            body.contains("Unknown resource URI"),
+            "the retired spelling of {registered} is still served: {body}"
+        );
+        assert_eq!(
+            resource_policy_subject(&retired)?,
+            ResourceSubject::Ungoverned,
+            "the retired spelling of {registered} is mapped to a policy subject"
         );
     }
     Ok(())
@@ -1545,27 +1528,27 @@ fn tool_call_audit_summary_uses_text_content() {
 fn every_readable_resource_uri_is_governed_like_its_tool() -> TestResult {
     let governed = [
         // Project addressed reads.
-        (format!("openpr://projects/{PROJECT}/issues"), "work_items.list"),
-        (format!("openpr://projects/{PROJECT}/forms"), "forms.list"),
-        (format!("openpr://projects/{PROJECT}/context"), "context.get_project"),
+        (format!("sylvode://projects/{PROJECT}/issues"), "work_items.list"),
+        (format!("sylvode://projects/{PROJECT}/forms"), "forms.list"),
+        (format!("sylvode://projects/{PROJECT}/context"), "context.get_project"),
         (
-            format!("openpr://projects/{PROJECT}/governance"),
+            format!("sylvode://projects/{PROJECT}/governance"),
             "context.get_governance",
         ),
         (
-            format!("openpr://projects/{PROJECT}/agent-policy"),
+            format!("sylvode://projects/{PROJECT}/agent-policy"),
             "context.get_agent_policy",
         ),
         (
-            format!("openpr://projects/{PROJECT}/release-readiness"),
+            format!("sylvode://projects/{PROJECT}/release-readiness"),
             "release.readiness.get",
         ),
-        (format!("openpr://projects/{PROJECT}/type"), "projects.get"),
+        (format!("sylvode://projects/{PROJECT}/type"), "projects.get"),
         (
-            format!("openpr://projects/{PROJECT}/recent-decisions"),
+            format!("sylvode://projects/{PROJECT}/recent-decisions"),
             "context.get_governance",
         ),
-        (format!("openpr://projects/{PROJECT}/sprints"), "sprints.list"),
+        (format!("sylvode://projects/{PROJECT}/sprints"), "sprints.list"),
     ];
     for (uri, expected_tool) in governed {
         assert_eq!(
@@ -1580,9 +1563,9 @@ fn every_readable_resource_uri_is_governed_like_its_tool() -> TestResult {
 
     // Form addressed reads resolve their owner from the form, exactly like the tools.
     for (uri, expected_tool) in [
-        (format!("openpr://forms/{FORM}"), "forms.get"),
-        (format!("openpr://forms/{FORM}/records"), "form_records.list"),
-        (format!("openpr://forms/{FORM}/events"), "events.tail"),
+        (format!("sylvode://forms/{FORM}"), "forms.get"),
+        (format!("sylvode://forms/{FORM}/records"), "form_records.list"),
+        (format!("sylvode://forms/{FORM}/events"), "events.tail"),
     ] {
         assert_eq!(
             resource_policy_subject(&uri)?,
@@ -1595,8 +1578,8 @@ fn every_readable_resource_uri_is_governed_like_its_tool() -> TestResult {
     }
 
     for (uri, expected_tool) in [
-        (format!("openpr://form-records/{RECORD}"), "form_records.get"),
-        (format!("openpr://form-records/{RECORD}/events"), "events.tail"),
+        (format!("sylvode://form-records/{RECORD}"), "form_records.get"),
+        (format!("sylvode://form-records/{RECORD}/events"), "events.tail"),
     ] {
         assert_eq!(
             resource_policy_subject(&uri)?,
@@ -1609,7 +1592,7 @@ fn every_readable_resource_uri_is_governed_like_its_tool() -> TestResult {
     }
 
     assert_eq!(
-        resource_policy_subject("openpr://issues/PRX-42")?,
+        resource_policy_subject("sylvode://issues/PRX-42")?,
         ResourceSubject::Tool {
             tool: ISSUE_IDENTIFIER_POLICY_TOOL,
             args: json!({ "identifier": "PRX-42" }),
@@ -1661,12 +1644,12 @@ fn every_resource_policy_tool_is_registered_in_the_policy_table() {
 #[test]
 fn resource_uris_carrying_an_unparsable_id_are_refused() {
     for uri in [
-        "openpr://projects/not-a-uuid/sprints",
-        &format!("openpr://projects/{PROJECT}%2Fpad/agent-policy"),
-        &format!("openpr://projects/{PROJECT}?pad=/sprints"),
-        "openpr://forms/not-a-uuid/records",
-        "openpr://form-records/not-a-uuid/events",
-        "openpr://issues/PRX 42",
+        "sylvode://projects/not-a-uuid/sprints",
+        &format!("sylvode://projects/{PROJECT}%2Fpad/agent-policy"),
+        &format!("sylvode://projects/{PROJECT}?pad=/sprints"),
+        "sylvode://forms/not-a-uuid/records",
+        "sylvode://form-records/not-a-uuid/events",
+        "sylvode://issues/PRX 42",
     ] {
         assert!(
             resource_policy_subject(uri).is_err(),
@@ -1706,9 +1689,9 @@ async fn traversal_shaped_resource_uris_reach_no_backend() -> TestResult {
     // Any API call would fail outright: nothing listens on this port.
     let server = server("http://127.0.0.1:1".to_string())?;
     for uri in [
-        "openpr://projects/../../admin/resources",
-        "openpr://forms/../../workspaces/records",
-        "openpr://form-records/a/b/events",
+        "sylvode://projects/../../admin/resources",
+        "sylvode://forms/../../workspaces/records",
+        "sylvode://form-records/a/b/events",
     ] {
         assert_eq!(
             resource_policy_subject(uri)?,
@@ -1732,7 +1715,7 @@ async fn static_guides_are_served_without_consulting_any_policy() -> TestResult 
     // Base URL points at a port nothing listens on: any API call would fail the read.
     let server = server("http://127.0.0.1:1".to_string())?;
     let response = server
-        .handle_resources_read(Some(json!(1)), Some(json!({ "uri": "openpr://guides/agents" })))
+        .handle_resources_read(Some(json!(1)), Some(json!({ "uri": "sylvode://guides/agents" })))
         .await;
     let body = serde_json::to_string(&response)?;
     assert!(body.contains("Sylvode Agent Guide"), "{body}");

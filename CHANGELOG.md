@@ -19,6 +19,16 @@ name.
   mode (`[mcp] tool_mode = "full"`, `serve --tools full`, `?tools=full` or the
   `X-Sylvode-Tool-Mode: full` header). `[mcp] allow_write_call = false` disables every write tool except the five task lifecycle tools, in every mode and in the command line.
   Connected (OAuth) applications are not affected: they keep the scoped read tools.
+- **The retired `X-OpenPR-MCP-*` attribution headers and the `openpr://` resource URIs are gone.**
+  `mcp-server` sends only `X-Sylvode-MCP-Surface` and `X-Sylvode-MCP-Tool`, the API reads only
+  those, and a resource is read by its `sylvode://` identity only (`resources/read` of an
+  `openpr://` URI answers unknown resource, with no `_meta.deprecation`).
+- **MCP security fixes.** `[mcp] allow_write_call = false` now refuses every write tool in every
+  mode and in the command line; an ownership bearing id a tool does not declare is refused before
+  any request; a tool with a closed schema is validated on every door; repeated or conflicting tool
+  mode parameters are a 400; the task and entry tools are attributed to dotted names so the
+  operation log records them; a bot asking for another bot's task gets the answer for a missing
+  one; a repeated task end with other content is a 409.
 - **The MCP skill is `sylvode-mcp`.** `skills/openpr-mcp` is renamed to `skills/sylvode-mcp` and
   rewritten for an agent that receives a task message: the task procedure (get, acknowledge with a
   plan, progress, complete or fail), what Sylvode does on completion (`reply_policy`), search mode

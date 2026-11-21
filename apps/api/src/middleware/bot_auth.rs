@@ -40,37 +40,28 @@ use crate::{
 /// Canonical MCP attribution headers (ADR-0020 D3).
 const MCP_TOOL_HEADER: &str = "x-sylvode-mcp-tool";
 const MCP_SURFACE_HEADER: &str = "x-sylvode-mcp-surface";
-/// Legacy spellings, still sent by every 1.x `mcp-server` next to the canonical ones and by any
-/// pre-1.0 client on its own. Accepted for the whole 1.x line.
-const LEGACY_MCP_TOOL_HEADER: &str = "x-openpr-mcp-tool";
-const LEGACY_MCP_SURFACE_HEADER: &str = "x-openpr-mcp-surface";
 
-/// The MCP attribution a request presented, after the canonical and legacy spellings have been
-/// reconciled. Values that are not visible ASCII are treated as absent, as before.
+/// The MCP attribution a request presented. Values that are not visible ASCII are treated as
+/// absent, as before.
 #[derive(Debug, Clone, Copy, Default)]
 struct McpAttribution<'a> {
     surface: Option<&'a str>,
     tool: Option<&'a str>,
 }
 
-/// Reconciles every occurrence of one attribution field across its canonical and legacy header
-/// names.
+/// Reads one attribution header, which may be repeated.
 ///
 /// Fail-closed (ADR-0020 D3): every occurrence must carry byte-identical values, otherwise the
-/// request is rejected. These headers become audit evidence, so silently preferring one spelling
-/// over the other would let a caller record an attribution the other header contradicts.
-fn reconcile_attribution_header<'a>(
-    headers: &'a axum::http::HeaderMap,
-    canonical: &str,
-    legacy: &str,
-) -> Result<Option<&'a str>, ApiError> {
-    let mut values = headers.get_all(canonical).iter().chain(headers.get_all(legacy).iter());
+/// request is rejected. These headers become audit evidence, so silently preferring one line over
+/// another would let a caller record an attribution another line contradicts.
+fn attribution_header<'a>(headers: &'a axum::http::HeaderMap, name: &str) -> Result<Option<&'a str>, ApiError> {
+    let mut values = headers.get_all(name).iter();
     let Some(first) = values.next() else {
         return Ok(None);
     };
     if values.any(|other| other.as_bytes() != first.as_bytes()) {
         return Err(ApiError::Unauthorized(format!(
-            "conflicting MCP attribution headers: every `{canonical}` / `{legacy}` value must be identical"
+            "conflicting MCP attribution headers: every `{name}` value must be identical"
         )));
     }
     Ok(first.to_str().ok())
@@ -79,8 +70,8 @@ fn reconcile_attribution_header<'a>(
 /// The single reader of the MCP attribution headers; every consumer goes through it.
 fn mcp_attribution(headers: &axum::http::HeaderMap) -> Result<McpAttribution<'_>, ApiError> {
     Ok(McpAttribution {
-        surface: reconcile_attribution_header(headers, MCP_SURFACE_HEADER, LEGACY_MCP_SURFACE_HEADER)?,
-        tool: reconcile_attribution_header(headers, MCP_TOOL_HEADER, LEGACY_MCP_TOOL_HEADER)?,
+        surface: attribution_header(headers, MCP_SURFACE_HEADER)?,
+        tool: attribution_header(headers, MCP_TOOL_HEADER)?,
     })
 }
 
@@ -887,32 +878,17 @@ mod tests {
         }
     }
 
-    /// ADR-0020 D3: canonical `X-Sylvode-MCP-*`, legacy `X-OpenPR-MCP-*`, either alone or both
-    /// with equal values is accepted; any disagreement is refused rather than resolved.
+    /// ADR-0020 D3: only the canonical `X-Sylvode-MCP-*` headers are read. The retired
+    /// `X-OpenPR-MCP-*` spelling is ignored, alone or next to the canonical one; repeated lines of
+    /// one canonical header must agree.
     #[test]
-    fn attribution_accepts_either_spelling_and_refuses_disagreement() {
+    fn attribution_reads_one_spelling_and_refuses_disagreement() {
         for (case, pairs) in [
             (
-                "canonical only",
+                "canonical",
                 &[
                     ("x-sylvode-mcp-surface", "mcp_http"),
                     ("x-sylvode-mcp-tool", "projects.list"),
-                ][..],
-            ),
-            (
-                "legacy only",
-                &[
-                    ("x-openpr-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-tool", "projects.list"),
-                ][..],
-            ),
-            (
-                "both equal",
-                &[
-                    ("x-sylvode-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-surface", "mcp_http"),
-                    ("x-sylvode-mcp-tool", "projects.list"),
-                    ("x-openpr-mcp-tool", "projects.list"),
                 ][..],
             ),
             (
@@ -920,7 +896,16 @@ mod tests {
                 &[
                     ("x-sylvode-mcp-surface", "mcp_http"),
                     ("x-sylvode-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-tool", "projects.list"),
+                    ("x-sylvode-mcp-tool", "projects.list"),
+                ][..],
+            ),
+            (
+                "the retired spelling next to it is ignored",
+                &[
+                    ("x-sylvode-mcp-surface", "mcp_http"),
+                    ("x-openpr-mcp-surface", "mcp_sse"),
+                    ("x-sylvode-mcp-tool", "projects.list"),
+                    ("x-openpr-mcp-tool", "projects.delete"),
                 ][..],
             ),
         ] {
@@ -930,40 +915,33 @@ mod tests {
             assert_eq!(attribution.tool, Some("projects.list"), "{case}");
         }
 
+        let retired = headers_of(&[
+            ("x-openpr-mcp-surface", "mcp_http"),
+            ("x-openpr-mcp-tool", "projects.list"),
+        ]);
+        let attribution = mcp_attribution(&retired).expect("the retired spelling is not read, so it cannot conflict");
+        assert_eq!((attribution.surface, attribution.tool), (None, None));
+
         for (case, pairs) in [
             (
-                "surface canonical vs legacy",
-                &[
-                    ("x-sylvode-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-surface", "mcp_sse"),
-                ][..],
-            ),
-            (
-                "tool canonical vs legacy",
-                &[
-                    ("x-sylvode-mcp-tool", "projects.list"),
-                    ("x-openpr-mcp-tool", "projects.delete"),
-                ][..],
-            ),
-            (
-                "duplicate canonical surface",
+                "duplicate surface",
                 &[
                     ("x-sylvode-mcp-surface", "mcp_http"),
                     ("x-sylvode-mcp-surface", "mcp_sse"),
                 ][..],
             ),
             (
-                "duplicate legacy tool",
+                "duplicate tool",
                 &[
-                    ("x-openpr-mcp-tool", "projects.list"),
-                    ("x-openpr-mcp-tool", "projects.delete"),
+                    ("x-sylvode-mcp-tool", "projects.list"),
+                    ("x-sylvode-mcp-tool", "projects.delete"),
                 ][..],
             ),
             (
-                "case differs",
+                "case differs between lines",
                 &[
                     ("x-sylvode-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-surface", "MCP_HTTP"),
+                    ("x-sylvode-mcp-surface", "MCP_HTTP"),
                 ][..],
             ),
         ] {

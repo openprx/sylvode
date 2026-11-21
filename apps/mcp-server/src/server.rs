@@ -710,10 +710,7 @@ impl McpServer {
             "tools/call" => self.handle_call_tool(req.id, req.params).await,
             "resources/list" => self.handle_resources_list(req.id),
             "resources/templates/list" => self.handle_resources_templates_list(req.id),
-            "resources/read" => {
-                let legacy_alias = requested_through_legacy_alias(req.params.as_ref());
-                attach_canonical_resource_metadata(self.handle_resources_read(req.id, req.params).await, legacy_alias)
-            }
+            "resources/read" => self.handle_resources_read(req.id, req.params).await,
             _ => JsonRpcResponse::error(
                 req.id,
                 JsonRpcError::method_not_found(format!("Unknown method: {}", req.method)),
@@ -1732,7 +1729,7 @@ impl McpServer {
     /// The resource is mapped to the tool whose policy already governs the same payload
     /// and handed to `enforce_project_tool_policy`. Ownership resolution, foreign project
     /// rejection and the ownership cache are therefore the tool path's, not a second
-    /// implementation that could drift away from it: `openpr://forms/{id}/records` is
+    /// implementation that could drift away from it: `sylvode://forms/{id}/records` is
     /// authorized by exactly the decision `form_records.list` would have made.
     async fn enforce_resource_read_policy(&self, uri: &str) -> Result<(), String> {
         match resource_policy_subject(uri)? {
@@ -2001,7 +1998,7 @@ impl McpServer {
                 return JsonRpcResponse::error(id, JsonRpcError::invalid_params("Missing required field: uri"));
             }
         };
-        let uri = canonical_resource_uri(&requested_uri).unwrap_or(requested_uri);
+        let uri = requested_uri;
 
         if self.delegated.is_some() && !is_static_guide_resource(&uri) {
             tracing::warn!(
@@ -2467,55 +2464,7 @@ fn resource_read_success(id: Option<Value>, uri: &str, mime_type: &str, text: &s
     JsonRpcResponse::success(id, json!({"contents":[{"uri":uri,"mimeType":mime_type,"text":text}]}))
 }
 
-/// Whether a `resources/read` addressed its resource through the legacy `openpr://` scheme.
-fn requested_through_legacy_alias(params: Option<&Value>) -> bool {
-    params
-        .and_then(|params| params.get("uri"))
-        .and_then(Value::as_str)
-        .is_some_and(|uri| uri.starts_with(LEGACY_RESOURCE_SCHEME))
-}
-
-/// The scheme of the deprecated resource URI alias.
-const LEGACY_RESOURCE_SCHEME: &str = "openpr://";
-
-/// Every successful resource payload names the canonical identity, including reads addressed
-/// through the legacy `openpr://` alias. Keeping this at the one JSON-RPC dispatch boundary makes
-/// it impossible for a newly registered read branch to forget the migration metadata.
-///
-/// A read through the alias additionally carries `_meta.deprecation` (ADR-0020 D2): the
-/// canonical URI that replaces it and the earliest release that may remove the alias. A read
-/// through the canonical URI carries no deprecation, and the resource body is never touched.
-fn attach_canonical_resource_metadata(mut response: JsonRpcResponse, legacy_alias: bool) -> JsonRpcResponse {
-    if let Some(contents) = response
-        .result
-        .as_mut()
-        .and_then(|result| result.get_mut("contents"))
-        .and_then(Value::as_array_mut)
-    {
-        for content in contents {
-            let Some(uri) = content.get("uri").and_then(Value::as_str).map(str::to_string) else {
-                continue;
-            };
-            let meta = if legacy_alias {
-                json!({
-                    "canonical_uri": uri,
-                    "deprecation": {
-                        "replaced_by": uri,
-                        "earliest_removal": platform::deprecation::EARLIEST_REMOVAL,
-                    },
-                })
-            } else {
-                json!({"canonical_uri": uri})
-            };
-            if let Some(object) = content.as_object_mut() {
-                object.insert("_meta".to_string(), meta);
-            }
-        }
-    }
-    response
-}
-
-/// `openpr://projects/{project_id}/<suffix>` -> the tool whose project agent policy
+/// `sylvode://projects/{project_id}/<suffix>` -> the tool whose project agent policy
 /// governs the very same payload.
 ///
 /// `/recent-decisions` maps to `context.get_governance` because that is the call it is
@@ -2535,7 +2484,7 @@ const PROJECT_RESOURCE_POLICY_TOOLS: [(&str, &str); 9] = [
     ("/sprints", "sprints.list"),
 ];
 
-/// `openpr://forms/{form_id}<suffix>` -> the governing tool. The empty suffix is last
+/// `sylvode://forms/{form_id}<suffix>` -> the governing tool. The empty suffix is last
 /// because it matches the bare form URI only (`parse_form_resource_uri` refuses a
 /// remainder containing `/`), and reading it last keeps that intent obvious.
 const FORM_RESOURCE_POLICY_TOOLS: [(&str, &str); 3] = [
@@ -2544,10 +2493,10 @@ const FORM_RESOURCE_POLICY_TOOLS: [(&str, &str); 3] = [
     ("", "forms.get"),
 ];
 
-/// `openpr://form-records/{record_id}<suffix>` -> the governing tool.
+/// `sylvode://form-records/{record_id}<suffix>` -> the governing tool.
 const FORM_RECORD_RESOURCE_POLICY_TOOLS: [(&str, &str); 2] = [("/events", "events.tail"), ("", "form_records.get")];
 
-/// The tool that governs `openpr://issues/{identifier}`.
+/// The tool that governs `sylvode://issues/{identifier}`.
 const ISSUE_IDENTIFIER_POLICY_TOOL: &str = "work_items.get_by_identifier";
 
 /// What decides whether one `resources/read` is allowed.
@@ -2572,8 +2521,6 @@ enum ResourceSubject {
 /// value is interpolated into the API URL that both the policy lookup and the read
 /// itself address, so a value that could reshape that URL must never reach either.
 fn resource_policy_subject(uri: &str) -> Result<ResourceSubject, String> {
-    let canonical = canonical_resource_uri(uri);
-    let uri = canonical.as_deref().unwrap_or(uri);
     // The three guides are compile time constants and the scenario catalogue is a global
     // catalogue served by `scenario_templates.list`/`get`, both `WorkspaceWide`.
     if matches!(
@@ -2686,15 +2633,6 @@ fn canonical_resource_id(raw: &str, field: &str) -> Result<String, String> {
             sanitize_for_error(raw)
         )
     })
-}
-
-fn canonical_resource_uri(uri: &str) -> Option<String> {
-    if uri.starts_with("sylvode://") {
-        Some(uri.to_string())
-    } else {
-        uri.strip_prefix(LEGACY_RESOURCE_SCHEME)
-            .map(|rest| format!("sylvode://{rest}"))
-    }
 }
 
 fn split_resource_query(uri: &str) -> (&str, &str) {
