@@ -7,7 +7,7 @@ import type {
 } from '#lib/forms/page-types.js';
 import { fieldLabel, fieldType } from '#lib/forms/field-options.js';
 import { translate } from '#lib/forms/i18n.js';
-import { NUMERIC_FIELD_TYPES, csvExportCell } from '#lib/utils/csv.js';
+import { NUMERIC_FIELD_TYPES, csvDownloadBlob, csvExportCell } from '#lib/utils/csv.js';
 import { displayValue, recordMatchesViewFilter } from '#lib/forms/record-format.js';
 import { FormsController } from '#lib/forms/state/controller.js';
 import {
@@ -306,7 +306,7 @@ export class FilterExpressionExportController extends FormsController {
 		if (!this.s.selectedForm || !records || records.length === 0) return;
 
 		const csv = this.viewDraftFilterExpressionCsv(records);
-		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+		const blob = csvDownloadBlob(csv);
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement('a');
 

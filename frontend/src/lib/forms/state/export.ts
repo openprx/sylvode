@@ -1,4 +1,5 @@
 import { formsApi } from '#lib/api/forms.js';
+import { csvDownloadBlob } from '#lib/utils/csv.js';
 import { toast } from '#lib/stores/toast.js';
 import type { AttachmentBundleEntry, AttachmentBundleExport } from '#lib/forms/page-types.js';
 import { attachmentContentType, attachmentFileName } from '#lib/forms/attachment-files.js';
@@ -27,7 +28,7 @@ export class ExportController extends FormsController {
 			return;
 		}
 
-		const blob = new Blob([response.data.csv], { type: 'text/csv;charset=utf-8' });
+		const blob = csvDownloadBlob(response.data.csv);
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement('a');
 

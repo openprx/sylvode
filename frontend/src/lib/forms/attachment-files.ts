@@ -97,12 +97,17 @@ export function recordValueUrl(value: unknown): string {
 	return '';
 }
 
+/** SVG can carry scripts, so an SVG data URL is never a signature image. */
+export function isSvgDataUrl(value: string): boolean {
+	return /^\s*data:\s*image\/svg/i.test(value);
+}
+
 export function signatureImageValue(draft: Record<string, unknown>, fieldKey: string): string {
 	const value = draft[fieldKey];
 
 	if (typeof value !== 'string') return '';
 
-	return value.startsWith('data:image/') ||
+	return (value.startsWith('data:image/') && !isSvgDataUrl(value)) ||
 		value.startsWith('/api/v1/uploads/signatures/') ||
 		value.startsWith('/uploads/signatures/')
 		? value

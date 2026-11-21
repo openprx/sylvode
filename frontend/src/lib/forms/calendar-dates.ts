@@ -149,6 +149,7 @@ export function calendarOccurrenceDates(
 
 	const dates: string[] = [];
 	let cursor = baseDate;
+	let step = 0;
 
 	while (cursor <= gridEndDate) {
 		if (cursor >= gridStartDate) dates.push(cursor);
@@ -158,7 +159,9 @@ export function calendarOccurrenceDates(
 		} else if (recurrence === 'weekly') {
 			cursor = addIsoDays(cursor, 7);
 		} else {
-			cursor = addIsoMonths(cursor, 1);
+			// Counted from the base date so a clamped month end (28 February) does not stick.
+			step += 1;
+			cursor = addIsoMonths(baseDate, step);
 		}
 	}
 

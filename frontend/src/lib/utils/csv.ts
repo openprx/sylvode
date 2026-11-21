@@ -36,3 +36,15 @@ export function neutralizeCsvFormula(value: string, numeric = false): string {
 export function csvExportCell(value: string, numeric = false): string {
 	return `"${neutralizeCsvFormula(value, numeric).replaceAll('"', '""')}"`;
 }
+
+const UTF8_BOM = '\uFEFF';
+
+/**
+ * Blob for a downloadable CSV file. A leading UTF-8 byte-order mark makes Excel read the file as
+ * UTF-8. Only file downloads use it: clipboard and in-page text stay without the mark.
+ */
+export function csvDownloadBlob(csv: string): Blob {
+	const text = csv.startsWith(UTF8_BOM) ? csv : `${UTF8_BOM}${csv}`;
+
+	return new Blob([text], { type: 'text/csv;charset=utf-8' });
+}
