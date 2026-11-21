@@ -684,6 +684,12 @@ export class FlowObjectRepository {
 					}
 				};
 			},
+			clearPausedNotice: () =>
+				flowErrorStore.update((shown) =>
+					(shown?.details as { reason?: string } | undefined)?.reason === 'sending_paused'
+						? null
+						: shown
+				),
 			scratchFrom: (bootstrap) => scratchReplicaFrom(bootstrap),
 			enterReadOnly: () => {
 				session.setPermissionReadOnly(true);

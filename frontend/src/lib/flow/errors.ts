@@ -86,8 +86,9 @@ export const INVALID_UPDATE_REASONS = [
 ] as const;
 /** Reasons only this client mints (never on the wire, so not part of the approved server table):
  * `rebase_state_mismatch` -- the re-encoded unsent edits did not reproduce the document the editor
- * shows, so they stay in the recovery draft instead of being sent. */
-export const CLIENT_INVALID_UPDATE_REASONS = ['rebase_state_mismatch'] as const;
+ * shows, so they stay in the recovery draft instead of being sent. `sending_paused` -- the server
+ * kept answering `contention`, so sending is parked and the changes are kept on this device. */
+export const CLIENT_INVALID_UPDATE_REASONS = ['rebase_state_mismatch', 'sending_paused'] as const;
 export type InvalidUpdateReason =
 	| (typeof INVALID_UPDATE_REASONS)[number]
 	| (typeof CLIENT_INVALID_UPDATE_REASONS)[number];
@@ -129,7 +130,8 @@ const INVALID_UPDATE_ACTIONS: Readonly<Record<InvalidUpdateReason, InvalidUpdate
 	// now: a create/move target outside the workspace answers `not_found`, like a missing one
 	// (`error-mapping-v1.md` `cross_workspace_relation` row, narrowed 2026-10-10).
 	cross_workspace_relation: 'integrity_repair',
-	rebase_state_mismatch: 'keep_in_recovery_draft'
+	rebase_state_mismatch: 'keep_in_recovery_draft',
+	sending_paused: 'surface_error'
 };
 
 /**

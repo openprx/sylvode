@@ -2841,7 +2841,8 @@
 				"invalid_field_value": "A field value does not fit the field's type. Correct it and try again.",
 				"causal_dependency_missing": "This change depends on an earlier change that was refused, so it cannot be committed on its own. It is kept in the recovery draft with the changes after it.",
 				"cross_workspace_relation": "A stored relation of this object points into another workspace. It was recorded as an integrity issue; a workspace administrator has to review it on the operations page.",
-				"rebase_state_mismatch": "The unsent changes could not be re-checked against the document, so they were not sent. They are kept in the recovery draft. Download or copy the draft before reloading."
+				"rebase_state_mismatch": "The unsent changes could not be re-checked against the document, so they were not sent. They are kept in the recovery draft. Download or copy the draft before reloading.",
+				"sending_paused": "Not saved: the server keeps failing to save right now. Your changes are kept on this device and sending resumes on its own after you edit or reconnect. Download a copy to be safe."
 			},
 			"integrityRepairLink": "Open workspace operations",
 			"network_error": "Could not reach the server (network failure or gateway error). The result is unknown: the change may or may not have been applied. Retrying the same change is safe.",

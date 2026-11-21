@@ -48,7 +48,7 @@
 import { writable, type Readable } from 'svelte/store';
 import type { FlowBootstrap } from '#lib/api/flow.js';
 import type { OutboxEntry, OutboxStore, RecoveryDraftEntry, RecoveryDraftReason } from './outbox';
-import { applyBusyRetryMode, type RetryMode } from './errors';
+import { applyBusyRetryMode, clientError, type RetryMode } from './errors';
 import type { EngineUpdate, FlowError, SemanticIntent } from './types';
 
 /** What a scratch replica says about one update relative to the accepted state it was built
@@ -130,6 +130,8 @@ export interface OfflineSyncHost {
 	 */
 	prepareRebase(entries: readonly OutboxEntry[]): RebaseResult;
 	scratchFrom(bootstrap: FlowBootstrap): Promise<ScratchReplica>;
+	/** Removes the paused-sending notice (saving works again). */
+	clearPausedNotice(): void;
 	/** The user lost write access: the session and editor go read-only. */
 	enterReadOnly(): void;
 	reportError(error: FlowError): void;
@@ -261,6 +263,8 @@ export class FlowOfflineSync {
 	private readonly contentionAnswers = new Map<string, number>();
 	/** Sending is paused after `CONTENTION_SENDS_MAX` contention answers; the queue is kept. */
 	private paused = false;
+	/** The paused-sending notice is on screen and must go once an update is accepted. */
+	private pausedNotice = false;
 	/** A rebase swap the store refused: memory already holds the rebased entry, the store still
 	 * holds the old ones. Nothing is sent until the transaction succeeds. */
 	private pendingSwap: {
@@ -546,7 +550,11 @@ export class FlowOfflineSync {
 							// Park, do not draft: an outage must lose nothing. The session already
 							// shows the contention text; the indicator leaves `saving`.
 							this.paused = true;
+							this.pausedNotice = true;
+							this.host.reportError(clientError('invalid_update', { reason: 'sending_paused' }));
 							this.transport.markUnsaved?.();
+							// The pass that was running is over; nothing is replaying any more.
+							this.recoveryStore.set(false);
 							return 'stop';
 						}
 						await this.sleep(
@@ -921,6 +929,10 @@ export class FlowOfflineSync {
 		this.queue = this.queue.filter((e) => e.updateId !== entry.updateId);
 		this.busyAnswers.delete(entry.updateId);
 		this.contentionAnswers.delete(entry.updateId);
+		if (this.pausedNotice) {
+			this.pausedNotice = false;
+			this.host.clearPausedNotice();
+		}
 		this.rebases = 0;
 		this.publish();
 	}

@@ -1175,12 +1175,15 @@ await suite.checkAsync(
 			assertEqual((await rawOutbox(ctx.idb)).length, 1, 'and in the store');
 			assert(ctx.states.at(-1) !== 'saving', 'the indicator left saving');
 			const shown = ctx.lastError();
-			assert(shown !== null, 'the existing retry text is shown');
+			assert(shown !== null, 'a notice is shown');
 			assertEqual(
-				flowErrorI18nKey(shown),
-				'flow.error.server_draining.contention',
-				'contention text'
+				flowErrorDetailKey(shown),
+				'flow.error.invalid_update_reason.sending_paused',
+				'the paused text, not "Retrying, please wait."'
 			);
+			let recovering = true;
+			ctx.entry.offline.recovering.subscribe((v) => (recovering = v))();
+			assertEqual(recovering, false, 'the recovery indicator is off');
 			// A later successful sync resumes sending the same entry.
 			server.policy = () => ACCEPT;
 			ctx.connectivity.goOffline();
@@ -1188,6 +1191,7 @@ await suite.checkAsync(
 			ctx.connectivity.goOnline();
 			await waitFor(() => server.accepted.length === 1, 'resumed after the reconnect');
 			await ctx.entry.offline.idle();
+			assertEqual(ctx.lastError(), null, 'the paused notice is gone once saving works again');
 			assertEqual(occurrences(serverText(server), 'parked'), 1, 'saved once');
 			assertEqual(ctx.entry.offline.pendingEntries.length, 0, 'queue drained');
 		} finally {
