@@ -233,7 +233,7 @@ async function api(route) {
 		// Plugin discovery: nothing installed. Record-level discovery is what mounting the
 		// record plugin panels triggers, so it is counted.
 		if (path.includes('/form-records/gal-')) state.pluginRequests.push(path);
-		return reply(path.endsWith('plugin-panels') ? [] : { items: [], projects: [] });
+		return reply({ items: [], projects: [] });
 	}
 	// Endpoints the shared mock does not answer, unrelated to this check.
 	if (path === '/api/v1/scenario-templates') return reply(page_([]));

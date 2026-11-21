@@ -1,12 +1,8 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
-	import type {
-		PluginContribution,
-		PluginContributionV3,
-		PluginPlacement
-	} from '#lib/api/plugin-packages.js';
+	import type { PluginContributionV3, PluginPlacement } from '#lib/api/plugin-packages.js';
 	import { slotLabelKey } from '#lib/plugins/layout-v3.js';
-	import { validPlacementPositions } from '#lib/plugins/placements.js';
+	import { validPlacementPositions } from '#lib/plugins/record-entries.js';
 
 	let {
 		contributions,
@@ -14,7 +10,7 @@
 		disabled,
 		onChange
 	}: {
-		contributions: (PluginContribution | PluginContributionV3)[];
+		contributions: PluginContributionV3[];
 		placements: PluginPlacement[];
 		disabled: boolean;
 		onChange: (id: string, change: Partial<Pick<PluginPlacement, 'enabled' | 'position'>>) => void;

@@ -235,6 +235,23 @@ test('upload accepts v3 ui and wasm packages and rejects a v3 manifest carrying 
 		)
 	);
 	await assert.rejects(readPluginUpload(file({ ...wasm.upload, wasm_base64: undefined })));
+	await assert.rejects(
+		readPluginUpload(
+			file({
+				manifest: {
+					schema_version: 'openpr.plugin.v2',
+					key: 'order_amount',
+					name: 'Legacy',
+					version: '1.0.0',
+					publisher: 'Legacy',
+					ui: { form_key: 'order_line', bridge_version: 1 },
+					capabilities: []
+				},
+				wasm_base64: 'AAAA',
+				web_base64: 'AAAA'
+			})
+		)
+	);
 });
 
 test('layout-v3 merges stored rows with defaults and never submits undeclared rows', async () => {
@@ -270,11 +287,8 @@ test('layout-v3 merges stored rows with defaults and never submits undeclared ro
 	} as unknown as InstalledPluginPackage;
 	assert.equal(installedLayoutDraftV3(item)?.find((row) => row.id === 'list_toolbar')?.position, 3);
 	assert.equal(
-		installedLayoutDraftV3({
-			...item,
-			manifest: { key: 'a' }
-		} as unknown as InstalledPluginPackage),
-		undefined
+		installedLayoutDraftV3(item, { key: 'p', package_id: 'p', generation: 1, grants: [] })?.length,
+		4
 	);
 });
 

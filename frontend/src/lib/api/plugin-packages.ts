@@ -3,35 +3,10 @@ import { apiClient } from './client';
 export const pluginCapabilities = ['amount.preview', 'amount.apply'] as const;
 export type PluginCapability = (typeof pluginCapabilities)[number];
 
-export type PluginSlot = 'form.record.detail' | 'form.record.actions';
-
-export interface PluginContribution {
-	id: string;
-	slot: PluginSlot;
-	label: string;
-}
-
 export interface PluginPlacement {
 	id: string;
 	enabled: boolean;
 	position: number;
-}
-
-export interface PluginManifest {
-	schema_version?: 'openpr.plugin.v2';
-	key: string;
-	name: string;
-	version: string;
-	publisher: string;
-	host_protocol: { min: number; max: number };
-	wasm_abi: string;
-	ui: {
-		bridge_version: number;
-		slot: string;
-		form_key: string;
-		contributions?: PluginContribution[];
-	};
-	capabilities: { name: PluginCapability; permission: string }[];
 }
 
 export type PluginSlotV3 =
@@ -85,16 +60,6 @@ export interface PluginManifestV3 {
 	}[];
 }
 
-export type AnyPluginManifest = PluginManifest | PluginManifestV3;
-export const isV3 = (m: AnyPluginManifest): m is PluginManifestV3 =>
-	m.schema_version === 'openpr.plugin.v3';
-
-export interface PluginUpload {
-	manifest: PluginManifest;
-	wasm_base64: string;
-	web_base64: string;
-}
-
 export interface PluginUploadV3 {
 	manifest: PluginManifestV3;
 	web_base64: string;
@@ -103,7 +68,7 @@ export interface PluginUploadV3 {
 
 export interface InstalledPluginPackage {
 	id: string;
-	manifest: AnyPluginManifest;
+	manifest: PluginManifestV3;
 	package_sha256: string;
 	installed_by: string;
 	installed_at?: string;
@@ -146,19 +111,6 @@ export interface PluginInvocationEvent {
 	version?: string;
 }
 
-export interface PluginPanel {
-	package_id: string;
-	key: string;
-	version: string;
-	name: string;
-	generation: number;
-	grants: PluginCapability[];
-	html: string;
-	web_sha256: string;
-	package_sha256: string;
-	contributions?: (PluginContribution & { position: number })[];
-}
-
 export interface PluginInvocation {
 	request_id: string;
 	package_id: string;
@@ -169,8 +121,6 @@ export interface PluginInvocation {
 
 const packages = (projectId: string) =>
 	`/api/v1/projects/${encodeURIComponent(projectId)}/plugin-packages`;
-const panels = (recordId: string) =>
-	`/api/v1/form-records/${encodeURIComponent(recordId)}/plugin-panels`;
 
 export const pluginPackagesApi = {
 	list: (projectId: string) =>
@@ -178,12 +128,11 @@ export const pluginPackagesApi = {
 			items: InstalledPluginPackage[];
 			bindings: PluginBinding[];
 			binding_history?: PluginBindingEvent[];
-			layout_supported?: boolean;
 			extension_supported?: boolean;
 		}>(packages(projectId)),
 	invocations: (projectId: string) =>
 		apiClient.get<PluginInvocationEvent[]>(`${packages(projectId)}/invocations`),
-	install: (projectId: string, upload: PluginUpload | PluginUploadV3) =>
+	install: (projectId: string, upload: PluginUploadV3) =>
 		apiClient.post<InstalledPluginPackage>(packages(projectId), upload),
 	setBinding: (
 		projectId: string,
@@ -196,24 +145,6 @@ export const pluginPackagesApi = {
 		apiClient.post<PluginBinding>(
 			`${packages(projectId)}/${encodeURIComponent(key)}/binding`,
 			binding
-		),
-	discover: (recordId: string) => apiClient.get<PluginPanel[]>(panels(recordId)),
-	invoke: (
-		recordId: string,
-		panel: PluginPanel,
-		method: PluginCapability,
-		requestId: string,
-		previewRequestId?: string
-	) =>
-		apiClient.post<PluginInvocation>(
-			`${panels(recordId)}/${encodeURIComponent(panel.package_id)}/invoke`,
-			{
-				generation: panel.generation,
-				request_id: requestId,
-				capability: method,
-				...(previewRequestId ? { preview_request_id: previewRequestId } : {}),
-				input: {}
-			}
 		)
 };
 
@@ -239,7 +170,7 @@ export interface PersonalPluginPackage extends InstalledPluginPackage {
 export interface ProjectPluginRequest {
 	source_id: string;
 	owner_id: string;
-	manifest: AnyPluginManifest;
+	manifest: PluginManifestV3;
 	package_sha256: string;
 	submitted_at: string;
 }
@@ -253,11 +184,10 @@ export const pluginLibraryApi = {
 	list: () =>
 		apiClient.get<{ items: PersonalPluginPackage[]; projects: LibraryProject[] }>(library),
 	panel: (packageId: string) =>
-		apiClient.get<Pick<PluginPanel, 'html' | 'web_sha256'>>(
+		apiClient.get<{ html: string; web_sha256: string }>(
 			`${library}/${encodeURIComponent(packageId)}/panel`
 		),
-	save: (upload: PluginUpload | PluginUploadV3) =>
-		apiClient.post<PersonalPluginPackage>(library, upload),
+	save: (upload: PluginUploadV3) => apiClient.post<PersonalPluginPackage>(library, upload),
 	preview: (packageId: string, quantity: number, unitPriceCents: number) =>
 		apiClient.post<{ amount_cents: number }>(
 			`${library}/${encodeURIComponent(packageId)}/preview`,

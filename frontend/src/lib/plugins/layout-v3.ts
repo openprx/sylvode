@@ -1,5 +1,4 @@
 import {
-	isV3,
 	type InstalledPluginPackage,
 	type PluginBinding,
 	type PluginGrant,
@@ -34,12 +33,11 @@ export function layoutDraftV3(
 		.sort(byId);
 }
 
-/** Layout draft for any installed package, or undefined for protocols that have no v3 layout. */
+/** Layout draft for an installed package, from the active binding's rows when it is the bound one. */
 export function installedLayoutDraftV3(
 	item: InstalledPluginPackage,
 	binding?: PluginBinding
-): PluginPlacement[] | undefined {
-	if (!isV3(item.manifest)) return undefined;
+): PluginPlacement[] {
 	return layoutDraftV3(
 		item.manifest,
 		binding?.package_id === item.id && binding.placements ? binding.placements : item.placements
@@ -103,7 +101,7 @@ export function toggleGrantV3(
 	return normalizeGrantsV3(manifest, [...next]);
 }
 
-/** i18n key for a slot name. The two record slots keep the keys the v2 screens already use. */
+/** i18n key for a slot name. The two record slots keep their original keys. */
 export function slotLabelKey(slot: string): string {
 	return slot === 'form.record.detail' || slot === 'form.record.actions'
 		? `plugins.slot.${slot}`

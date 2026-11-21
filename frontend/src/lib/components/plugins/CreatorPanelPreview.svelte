@@ -99,7 +99,6 @@
 				<PluginFrameHost
 					{html}
 					webSha256={spec.webSha256}
-					bridge={2}
 					{grants}
 					context={previewContext}
 					transport={previewTransport}

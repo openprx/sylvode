@@ -2,12 +2,10 @@
 	import { onMount, untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import {
-		bridgeProtocol,
 		bridgeProtocolV2,
 		clampFrameHeight,
-		isBridgeSignal,
+		isShellSignal,
 		parseBridgeV2,
-		pluginRequest,
 		shellInitMessage,
 		verifyPanelHtml,
 		type BridgeErrorCode,
@@ -23,10 +21,8 @@
 	let {
 		html,
 		webSha256,
-		bridge,
 		grants,
 		context,
-		placement,
 		transport,
 		title,
 		minHeight,
@@ -37,10 +33,8 @@
 	}: {
 		html: string;
 		webSha256: string;
-		bridge: 1 | 2;
 		grants: string[];
-		context?: Context;
-		placement?: { id: string; slot: string };
+		context: Context;
 		transport: (
 			method: string,
 			params: Record<string, unknown>,
@@ -62,34 +56,19 @@
 	// Everything that defines what runs in the frame is fixed when the host opens. A later
 	// change to any of it (new version, new grants, new digest) suspends and closes the frame;
 	// callers mount a fresh host for the new state.
-	const identity = (values: { html: string; webSha256: string; bridge: 1 | 2; grants: string[] }) =>
-		JSON.stringify([values.html, values.webSha256, values.bridge, [...values.grants].sort()]);
-	const opened = untrack(() => ({
-		html,
-		webSha256,
-		bridge,
-		grants: [...grants],
-		placement: placement ? { id: placement.id, slot: placement.slot } : undefined
-	}));
+	const identity = (values: { html: string; webSha256: string; grants: string[] }) =>
+		JSON.stringify([values.html, values.webSha256, [...values.grants].sort()]);
+	const opened = untrack(() => ({ html, webSha256, grants: [...grants] }));
 	const openedIdentity = identity(opened);
-	const legacy = opened.bridge === 1;
-	const reasons = legacy
-		? {
-				integrity: 'plugins.integrityFailed',
-				load: 'plugins.loadFailed',
-				suspended: 'plugins.accessChanged',
-				changed: 'plugins.versionChanged',
-				timeout: 'plugins.actionTimedOut'
-			}
-		: {
-				integrity: 'plugins.host.integrityFailed',
-				load: 'plugins.host.loadFailed',
-				suspended: 'plugins.host.suspended',
-				changed: 'plugins.host.suspended',
-				timeout: 'plugins.actionTimedOut'
-			};
+	const reasons = {
+		integrity: 'plugins.host.integrityFailed',
+		load: 'plugins.host.loadFailed',
+		suspended: 'plugins.host.suspended',
+		changed: 'plugins.host.suspended',
+		timeout: 'plugins.actionTimedOut'
+	};
 	const messages: Record<BridgeErrorCode, string> = {
-		method_unavailable: legacy ? 'plugins.actionUnavailable' : 'plugins.host.methodUnavailable',
+		method_unavailable: 'plugins.host.methodUnavailable',
 		invalid_params: 'plugins.host.invalidParams',
 		busy: 'plugins.actionBusy',
 		denied: 'plugins.accessChanged',
@@ -121,19 +100,18 @@
 	const retired = untrack(() => onRetired);
 
 	const dispatcher = createHostDispatcher({
-		bridge: opened.bridge,
 		grants: () => opened.grants,
 		context: () => currentContext(),
 		transport: (method, params, requestId) => transport(method, params, requestId),
 		confirmApply: () => (onConfirmApply ? onConfirmApply() : Promise.resolve(false))
 	});
 
-	function currentContext(): Context | undefined {
-		return context ? ($state.snapshot(context) as Context) : undefined;
+	function currentContext(): Context {
+		return $state.snapshot(context) as Context;
 	}
 
 	/**
-	 * Stops serving the frame and retires its port. With a reason on a protocol 2 frame whose port
+	 * Stops serving the frame and retires its port. With a reason on a frame whose port
 	 * is open, the plugin first gets `suspended` and a short grace period (see frame-lifecycle.ts):
 	 * serving stops immediately, only the removal is delayed. `notify` is false when the caller
 	 * unmounted us.
@@ -143,7 +121,7 @@
 		finished = true;
 		dispatcher.dispose();
 		clearTimeout(loadTimer);
-		if (!legacy && reason !== '' && stage !== 'verifying')
+		if (reason !== '' && stage !== 'verifying')
 			lifecycle?.suspend({
 				protocol: bridgeProtocolV2,
 				type: 'event',
@@ -173,10 +151,6 @@
 	onMount(() => {
 		let active = true;
 		void (async () => {
-			if (!legacy && !currentContext()) {
-				finish(reasons.load);
-				return;
-			}
 			let verified = false;
 			try {
 				verified = await verifyPanelHtml({ html: opened.html, web_sha256: opened.webSha256 });
@@ -210,12 +184,11 @@
 	});
 
 	$effect(() => {
-		const next = identity({ html, webSha256, bridge, grants });
+		const next = identity({ html, webSha256, grants });
 		if (next !== openedIdentity) untrack(() => finish(reasons.changed));
 	});
 
 	$effect(() => {
-		if (legacy || !context) return;
 		const snapshot = JSON.stringify($state.snapshot(context));
 		untrack(() => {
 			if (stage !== 'ready' || !port || snapshot === sentContext) return;
@@ -232,41 +205,28 @@
 	function onWindowMessage(event: MessageEvent) {
 		if (finished || !frame || event.source !== frame.contentWindow || event.origin !== 'null')
 			return;
-		if (isBridgeSignal(event.data, 'sylvode-plugin-shell-invalidated')) {
+		if (isShellSignal(event.data, 'sylvode-plugin-shell-invalidated')) {
 			finish(reasons.load);
 			return;
 		}
-		if (stage !== 'opening' || port || !isBridgeSignal(event.data, 'sylvode-plugin-shell-ready'))
+		if (stage !== 'opening' || port || !isShellSignal(event.data, 'sylvode-plugin-shell-ready'))
 			return;
 		const initContext = currentContext();
-		if (!legacy && !initContext) {
-			finish(reasons.load);
-			return;
-		}
 		const channel = new MessageChannel();
 		port = channel.port1;
-		port.onmessage = ({ data }) => (legacy ? receiveLegacy(data) : receive(data));
+		port.onmessage = ({ data }) => receive(data);
 		const node = frame;
 		lifecycle = createFrameLifecycle({
 			port,
 			dispose: () => dispatcher.dispose(),
 			removeFrame: () => node.remove()
 		});
-		if (initContext) sentContext = JSON.stringify(initContext);
-		const init =
-			legacy || !initContext
-				? shellInitMessage({
-						bridge: 1,
-						html: opened.html,
-						grants: [...opened.grants],
-						...(opened.placement ? { placement: { ...opened.placement } } : {})
-					})
-				: shellInitMessage({
-						bridge: 2,
-						html: opened.html,
-						grants: [...opened.grants],
-						context: initContext
-					});
+		sentContext = JSON.stringify(initContext);
+		const init = shellInitMessage({
+			html: opened.html,
+			grants: [...opened.grants],
+			context: initContext
+		});
 		frame.contentWindow?.postMessage(init, '*', [channel.port2]);
 	}
 
@@ -275,28 +235,10 @@
 		stage = 'ready';
 		// A context change that arrived during the handshake is delivered once the plugin is ready.
 		const latest = currentContext();
-		const snapshot = latest ? JSON.stringify(latest) : '';
-		if (legacy || !port || !latest || snapshot === sentContext) return;
+		const snapshot = JSON.stringify(latest);
+		if (!port || snapshot === sentContext) return;
 		sentContext = snapshot;
 		port.postMessage({ protocol: bridgeProtocolV2, type: 'event', name: 'context', data: latest });
-	}
-
-	function receiveLegacy(data: unknown) {
-		if (finished) return;
-		if (stage === 'opening' && isBridgeSignal(data, 'ready')) {
-			markReady();
-			return;
-		}
-		if (stage !== 'ready') return;
-		if (isBridgeSignal(data, 'close')) {
-			finish('');
-			return;
-		}
-		const request = pluginRequest(data);
-		if (!request) return;
-		void dispatcher
-			.handle(request.requestId, request.method, {})
-			.then((outcome) => answer(request.requestId, outcome));
 	}
 
 	function receive(data: unknown) {
@@ -319,28 +261,14 @@
 
 	function answer(requestId: string, outcome: HostOutcome) {
 		if (finished || !port) return;
-		if (!outcome.ok && outcome.close === 'timeout' && legacy) {
-			finish(reasons.timeout);
-			return;
-		}
-		if (legacy)
-			port.postMessage({
-				protocol: bridgeProtocol,
-				type: 'result',
-				request_id: requestId,
-				...(outcome.ok
-					? { ok: true, result: outcome.result }
-					: { ok: false, message: $t(messages[outcome.code]) })
-			});
-		else
-			port.postMessage({
-				protocol: bridgeProtocolV2,
-				type: 'result',
-				request_id: requestId,
-				...(outcome.ok
-					? { ok: true, result: outcome.result }
-					: { ok: false, error: { code: outcome.code, message: $t(messages[outcome.code]) } })
-			});
+		port.postMessage({
+			protocol: bridgeProtocolV2,
+			type: 'result',
+			request_id: requestId,
+			...(outcome.ok
+				? { ok: true, result: outcome.result }
+				: { ok: false, error: { code: outcome.code, message: $t(messages[outcome.code]) } })
+		});
 		if (!outcome.ok && outcome.close === 'suspend') finish(reasons.suspended);
 		else if (!outcome.ok && outcome.close === 'timeout') finish(reasons.timeout);
 	}
@@ -361,7 +289,7 @@
 
 {#if stage === 'verifying' || stage === 'opening'}
 	<p class="px-3 pb-2 text-sm text-fg-muted" role="status">
-		{$t(legacy ? 'plugins.loadingPanel' : 'plugins.host.loading')}
+		{$t('plugins.host.loading')}
 	</p>
 {/if}
 {#if stage === 'opening' || stage === 'ready'}

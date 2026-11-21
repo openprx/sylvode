@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import type { PluginContributionItem, PluginPanel } from '../src/lib/api/plugin-packages';
+import type { PluginContributionItem } from '../src/lib/api/plugin-packages';
 import type { DiscoveryState, EntryOutcome } from '../src/lib/plugins/contributions';
 import {
 	closeSlot,
@@ -13,7 +13,7 @@ import {
 	type SlotDeps,
 	type SlotState
 } from '../src/lib/plugins/frame-slot';
-import type { RecordEntry } from '../src/lib/plugins/placements';
+import type { RecordEntry } from '../src/lib/plugins/record-entries';
 
 function item(overrides: Partial<PluginContributionItem> = {}): PluginContributionItem {
 	return {
@@ -50,13 +50,6 @@ const contributionEntry = (value = item()): RecordEntry => ({
 	slot: 'form.record.detail',
 	position: 50
 });
-const legacyEntry = (): RecordEntry => ({
-	panel: { package_id: 'old', key: 'legacy', version: '1', name: 'Legacy' } as PluginPanel,
-	id: 'detail',
-	label: 'Legacy',
-	slot: 'form.record.detail',
-	position: 50
-});
 
 /** Drives the machine the way RecordPluginPanels and FormPluginToolbar do. */
 function area(
@@ -73,7 +66,7 @@ function area(
 		hide: () => calls.hidden++
 	});
 	const deps: SlotDeps<RecordEntry> = {
-		itemOf: (e) => ('item' in e ? e.item : null),
+		itemOf: (e) => e.item,
 		loadEntry: async (target) => {
 			calls.entries++;
 			return entry(target);
@@ -230,7 +223,7 @@ describe('frame slot: retire and reopen', () => {
 		let first = true;
 		const state: SlotState<RecordEntry> = initialSlot();
 		const deps: SlotDeps<RecordEntry> = {
-			itemOf: (e) => ('item' in e ? e.item : null),
+			itemOf: (e) => e.item,
 			loadEntry: () =>
 				first
 					? ((first = false), Promise.resolve({ ok: true, item: item(), html: '' }))
@@ -272,18 +265,6 @@ describe('frame slot: retire and reopen', () => {
 		closeSlot(a.state, a.deps);
 		tokens.add(await a.open(contributionEntry()));
 		assert.equal(tokens.size, 5);
-	});
-
-	test('a legacy frame is shown at once, keyed by its own token, and never reopens silently', async () => {
-		const a = area();
-		const token = await a.open(legacyEntry());
-		assert.equal(a.calls.entries, 0, 'a legacy panel has no entry');
-		assert.equal(a.state.frame!.item, null);
-		assert.equal(await a.retire(token), 'closed');
-		assert.equal(a.state.frame, null);
-		assert.notEqual(a.state.notice, '', 'visible notice, not an empty area');
-		const next = await a.open(legacyEntry());
-		assert.notEqual(next, token);
 	});
 });
 
