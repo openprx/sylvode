@@ -108,14 +108,20 @@ pub fn shadow_root_refusal(reason: &str) -> ApiError {
         serde_json::json!({ "reason": reason }),
     )
 }
-/// Refuses a package document that carries a shadow root (see [`shadow_root_refusal`]). The
-/// check reads the whole history of the document, so it belongs to package ingestion only.
+/// Refuses a package document that carries a shadow root (see [`shadow_root_refusal`]) or a tree
+/// op that names a parent that does not exist when it runs (`collab_core::tree_refs`: it would
+/// panic every subscribed client). The check reads the whole history of the document, so it
+/// belongs to package ingestion only.
 pub(crate) fn require_no_shadow_roots(engine: &collab_core::LoroCollabEngine) -> Result<(), ApiError> {
-    match engine.refuse_shadow_roots() {
+    match engine
+        .refuse_shadow_roots()
+        .and_then(|()| engine.refuse_unresolved_tree_parents_in_history())
+    {
         Ok(()) => Ok(()),
         Err(collab_core::CollabError::OperationFailed { reason })
             if reason == collab_core::reserved_roots::SHADOW_ROOT_REASON
-                || reason == collab_core::reserved_roots::SCAN_INCOMPLETE_REASON =>
+                || reason == collab_core::reserved_roots::SCAN_INCOMPLETE_REASON
+                || collab_core::tree_refs::is_tree_reference_reason(&reason) =>
         {
             Err(shadow_root_refusal(&reason))
         }
