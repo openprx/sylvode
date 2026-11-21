@@ -20,7 +20,7 @@
 //! and `acknowledged`) and the attempt number (`api::services::ai_task_service`), so a callback
 //! that commits first wins and several workers never end the same attempt twice.
 
-use api::outbound::validate_outbound_url;
+use api::outbound::resolve_outbound_target;
 use api::services::ai_task_reply::announce_start_refusal;
 use api::services::ai_task_service::{
     AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts,
@@ -33,8 +33,15 @@ use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-/// At most this many characters of a runner's answer go into a task's error message.
-const MAX_ANSWER_CHARS: usize = 300;
+/// At most this many bytes of a runner's answer are read; the rest is dropped unread.
+const MAX_ANSWER_BYTES: usize = 16 * 1024;
+
+/// At most this many characters of the runner's structured `reason` go into a task's error message.
+const MAX_REASON_CHARS: usize = 200;
+
+/// How long a whole delivery may take, and how long its connection may take to open.
+pub const DELIVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub const DELIVERY_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The `status` values with which a runner answers that it will not run a task:
 /// `sylvode-runner` answers `no_agent` when no agent matches, `ignored` when the delivery is not
@@ -117,47 +124,91 @@ fn classify_delivery_answer(status: u16, body: &str, bot_name: &str) -> Delivery
                     .and_then(Value::as_str)
                     .filter(|code| is_reason_code(code))
                     .map(str::to_string);
-                let detail = declined_detail(answer, body);
+                let head = code.as_ref().map_or_else(
+                    || "the runner refused the task".to_string(),
+                    |code| format!("the runner refused the task ({code})"),
+                );
                 DeliveryVerdict::Declined {
-                    reason: code.as_ref().map_or_else(
-                        || format!("the runner refused the task: {detail}"),
-                        |code| format!("the runner refused the task ({code}): {detail}"),
-                    ),
+                    reason: declined_detail(answer).map_or_else(|| head.clone(), |detail| format!("{head}: {detail}")),
                     code,
                 }
             }
             _ => DeliveryVerdict::Accepted,
         };
     }
-    let detail = excerpt(body);
+    // The body of a failure answer is never copied: what an HTTP server returns for an error can be
+    // anything, and the message is shown to every member of the project.
     if (400..500).contains(&status) && !matches!(status, 408 | 409 | 425 | 429) {
         DeliveryVerdict::Declined {
-            reason: format!("the runner answered HTTP {status}: {detail}"),
+            reason: format!("the runner answered HTTP {status}"),
             code: None,
         }
     } else {
-        DeliveryVerdict::Transient(format!("the runner could not be reached: HTTP {status}: {detail}"))
+        DeliveryVerdict::Transient(format!("the runner could not be reached: HTTP {status}"))
     }
 }
 
-/// What a declining answer says about why: its `reason`, else the answer itself.
-fn declined_detail(answer: &Value, body: &str) -> String {
-    answer
-        .get("reason")
-        .and_then(Value::as_str)
-        .filter(|reason| !reason.is_empty())
-        .map_or_else(|| excerpt(body), excerpt)
-}
-
-/// The first [`MAX_ANSWER_CHARS`] characters of `text`, marked when cut.
-fn excerpt(text: &str) -> String {
-    let text = text.trim();
-    if text.chars().count() <= MAX_ANSWER_CHARS {
-        return text.to_string();
+/// What a declining answer says about why: its structured `reason` when that is text, cleaned and
+/// cut. Nothing else of the answer is shown.
+fn declined_detail(answer: &Value) -> Option<String> {
+    let reason = answer.get("reason").and_then(Value::as_str)?;
+    let cleaned = reason
+        .chars()
+        .filter(|c| !is_invisible(*c))
+        .map(|c| if c.is_whitespace() || c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if cleaned.is_empty() {
+        return None;
     }
-    let mut cut: String = text.chars().take(MAX_ANSWER_CHARS).collect();
+    if cleaned.chars().count() <= MAX_REASON_CHARS {
+        return Some(cleaned);
+    }
+    let mut cut: String = cleaned.chars().take(MAX_REASON_CHARS).collect();
     cut.push_str("...");
-    cut
+    Some(cut)
+}
+
+/// Zero-width, bidirectional-control and similar format characters, which can reorder or hide text.
+const fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{00ad}'
+    ) || (c.is_control() && !c.is_whitespace())
+}
+
+/// Reads at most [`MAX_ANSWER_BYTES`] of the answer, as text; the rest is not read.
+async fn read_capped(mut response: reqwest::Response) -> String {
+    let mut buffer: Vec<u8> = Vec::new();
+    while buffer.len() < MAX_ANSWER_BYTES {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                let room = MAX_ANSWER_BYTES - buffer.len();
+                buffer.extend_from_slice(chunk.get(..room.min(chunk.len())).unwrap_or_default());
+            }
+            Ok(None) => break,
+            Err(err) => {
+                tracing::warn!(error = %err.without_url(), "reading the runner's answer failed; using what was read");
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&buffer).into_owned()
+}
+
+/// The client for one delivery: no redirects, the delivery timeouts, and, for a host name that was
+/// resolved and checked, connecting only to the addresses the check saw.
+fn pinned_client(pin: Option<&(String, Vec<std::net::SocketAddr>)>) -> anyhow::Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(DELIVERY_TIMEOUT)
+        .connect_timeout(DELIVERY_CONNECT_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some((host, addresses)) = pin {
+        builder = builder.resolve_to_addrs(host, addresses);
+    }
+    Ok(builder.build()?)
 }
 
 /// Picks up due tasks and delivers each to its bot's webhook.
@@ -165,7 +216,6 @@ fn excerpt(text: &str) -> String {
 /// Each picked-up task gets a lease of `processing_timeout_secs` from the pick-up.
 pub async fn process_pending_tasks(
     state: &AppState,
-    client: &reqwest::Client,
     concurrency: usize,
     processing_timeout_secs: u64,
 ) -> anyhow::Result<()> {
@@ -175,7 +225,7 @@ pub async fn process_pending_tasks(
     let tasks = pickup_pending_tasks(db, limit, processing_timeout_secs).await?;
 
     for task in tasks {
-        deliver_task(state, client, &task).await?;
+        deliver_task(state, &task).await?;
     }
 
     Ok(())
@@ -185,7 +235,7 @@ pub async fn process_pending_tasks(
 ///
 /// The connection is checked once more here: one disabled or removed since the pick-up still
 /// stops the task, and the attempt ends like a refusal.
-async fn deliver_task(state: &AppState, client: &reqwest::Client, task: &AiTaskDispatchRow) -> anyhow::Result<()> {
+async fn deliver_task(state: &AppState, task: &AiTaskDispatchRow) -> anyhow::Result<()> {
     let db = &state.db;
     if let Some(block) = runner_bot_block(db, task.project_id, task.ai_participant_id).await? {
         let verdict = DeliveryVerdict::Declined {
@@ -194,7 +244,7 @@ async fn deliver_task(state: &AppState, client: &reqwest::Client, task: &AiTaskD
         };
         return settle_delivery(state, task, verdict).await;
     }
-    let verdict = match dispatch_task(db, client, task).await {
+    let verdict = match dispatch_task(db, task).await {
         Ok(answer) => {
             tracing::debug!(
                 task_id = %task.id,
@@ -475,11 +525,7 @@ fn dispatch_request(
 
 /// Delivers `task` and returns the runner's answer. An error means it was not delivered: no
 /// active webhook, a rejected URL, a signing or transport failure.
-async fn dispatch_task(
-    db: &sea_orm::DatabaseConnection,
-    client: &reqwest::Client,
-    task: &AiTaskDispatchRow,
-) -> anyhow::Result<DeliveryAnswer> {
+async fn dispatch_task(db: &sea_orm::DatabaseConnection, task: &AiTaskDispatchRow) -> anyhow::Result<DeliveryAnswer> {
     let webhook = BotWebhookRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -510,9 +556,11 @@ async fn dispatch_task(
 
     let body = delivery_body(task);
 
-    let target = validate_outbound_url(&webhook.url)
+    let target = resolve_outbound_target(&webhook.url)
         .await
         .map_err(|err| anyhow::anyhow!("webhook {} url rejected: {err}", webhook.webhook_id))?;
+    // The checked addresses are the ones connected to: the name is not resolved a second time.
+    let client = pinned_client(target.pin.as_ref())?;
 
     // Signed over the exact bytes that are sent, the same way the API's own webhook deliveries
     // are, so a runner can refuse unsigned traffic instead of having to trust this path.
@@ -520,18 +568,12 @@ async fn dispatch_task(
     let signature = sign_payload(&webhook.secret, &raw_body)
         .map_err(|err| anyhow::anyhow!("webhook {} signing failed: {err}", webhook.webhook_id))?;
 
-    let response = dispatch_request(client, target, &signature, raw_body)
+    let response = dispatch_request(&client, target.url, &signature, raw_body)
         .send()
         .await
         .map_err(|err| anyhow::anyhow!("webhook {} delivery failed: {}", webhook.webhook_id, err.without_url()))?;
     let status = response.status().as_u16();
-    let body = match response.text().await {
-        Ok(body) => body,
-        Err(err) => {
-            tracing::warn!(task_id = %task.id, webhook_id = %webhook.webhook_id, error = %err.without_url(), "reading the runner's answer failed; treating it as empty");
-            String::new()
-        }
-    };
+    let body = read_capped(response).await;
     Ok(DeliveryAnswer {
         webhook_id: webhook.webhook_id,
         status,
@@ -646,7 +688,8 @@ async fn insert_task_event(
 #[allow(clippy::expect_used)]
 mod tests {
     use super::{
-        AiTaskDispatchRow, DeliveryVerdict, classify_delivery_answer, delivery_body, dispatch_request, excerpt,
+        AiTaskDispatchRow, DeliveryVerdict, MAX_ANSWER_BYTES, MAX_REASON_CHARS, classify_delivery_answer,
+        delivery_body, dispatch_request, pinned_client, read_capped,
     };
     use serde_json::json;
     use uuid::Uuid;
@@ -788,22 +831,19 @@ mod tests {
         // `ignored` reads the same way.
         let ignored = classify(200, r#"{"status":"ignored","reason":"not_bot_task"}"#);
         assert_eq!(declined(&ignored), ("the runner refused the task: not_bot_task", None));
-        // Without a reason the answer itself is the detail.
-        let bare = classify(200, r#"{"status":"refused"}"#);
-        assert!(declined(&bare).0.starts_with("the runner refused the task: "));
+        // Without a reason the answer is not echoed: a fixed sentence says it.
+        let bare = classify(200, r#"{"status":"refused","detail":"<script>alert(1)</script>"}"#);
+        assert_eq!(declined(&bare), ("the runner refused the task", None));
     }
 
     #[test]
     fn a_client_error_declines_the_task() {
         for status in [400, 401, 403, 404, 413, 422] {
-            let verdict = classify(status, "Unauthorized");
+            let verdict = classify(status, "Unauthorized: token abc123 is wrong");
             assert_eq!(
                 declined(&verdict),
-                (
-                    format!("the runner answered HTTP {status}: Unauthorized").as_str(),
-                    None
-                ),
-                "{status}"
+                (format!("the runner answered HTTP {status}").as_str(), None),
+                "{status}: the body is never copied into the message"
             );
         }
     }
@@ -813,7 +853,7 @@ mod tests {
         for status in [500, 502, 503, 504, 408, 409, 425, 429, 301, 302, 307] {
             assert!(
                 matches!(classify(status, ""), DeliveryVerdict::Transient(ref reason)
-                    if reason.starts_with("the runner could not be reached: ") && reason.contains(&format!("HTTP {status}"))),
+                    if reason == &format!("the runner could not be reached: HTTP {status}")),
                 "{status} must be retried"
             );
         }
@@ -831,14 +871,105 @@ mod tests {
         );
     }
 
+    /// The runner's structured `reason` is the only free text that is shown: control, bidi and
+    /// zero-width characters are removed, whitespace is collapsed and the length is limited.
     #[test]
-    fn a_long_answer_is_cut() {
-        let long = "x".repeat(1_000);
-        let cut = excerpt(&long);
-        assert_eq!(cut.chars().count(), 303);
-        assert!(cut.ends_with("..."));
-        let verdict = classify(400, &long);
-        assert!(declined(&verdict).0.len() < 400);
+    fn the_runner_reason_is_sanitised_and_limited() {
+        let body = json!({
+            "status": "refused",
+            "reason": format!("line one\n\u{202e}line\u{200b} two\t{}", "x".repeat(1_000)),
+        })
+        .to_string();
+        let verdict = classify(200, &body);
+        let (text, _) = declined(&verdict);
+        let detail = text.strip_prefix("the runner refused the task: ").expect("prefix");
+        assert!(detail.starts_with("line one line two xxx"), "{detail}");
+        assert!(
+            !detail
+                .chars()
+                .any(|c| c.is_control() || c == '\u{202e}' || c == '\u{200b}')
+        );
+        assert_eq!(detail.chars().count(), MAX_REASON_CHARS + 3);
+        assert!(detail.ends_with("..."));
+        // A reason that is not text at all is not echoed either.
+        let verdict = classify(200, r#"{"status":"refused","reason":{"nested":"object"}}"#);
+        assert_eq!(declined(&verdict), ("the runner refused the task", None));
+    }
+
+    /// An answer is read up to a named cap and no further.
+    #[tokio::test]
+    async fn an_answer_is_read_only_up_to_the_cap() {
+        let body = "y".repeat(MAX_ANSWER_BYTES * 8);
+        let (addr, server) = serve_once(body.clone()).await;
+        let response = reqwest::get(format!("http://{addr}/")).await.expect("answer");
+        let read = read_capped(response).await;
+        assert_eq!(read.len(), MAX_ANSWER_BYTES);
+        server.abort();
+    }
+
+    /// A pinned client connects to the address it was given for the host and never asks DNS: the
+    /// name below does not exist.
+    #[tokio::test]
+    async fn a_pinned_client_connects_to_the_validated_address() {
+        let (addr, server) = serve_once("pinned".to_string()).await;
+        let client = pinned_client(Some(&("pin.sylvode-test.invalid".to_string(), vec![addr]))).expect("client");
+        let response = client
+            .get(format!("http://pin.sylvode-test.invalid:{}/", addr.port()))
+            .send()
+            .await
+            .expect("the pinned address answers");
+        assert_eq!(response.text().await.expect("text"), "pinned");
+        server.abort();
+        // Without the pin the same name does not resolve.
+        let unpinned = pinned_client(None).expect("client");
+        assert!(
+            unpinned
+                .get(format!("http://pin.sylvode-test.invalid:{}/", addr.port()))
+                .send()
+                .await
+                .is_err()
+        );
+    }
+
+    /// Redirects are not followed.
+    #[tokio::test]
+    async fn a_redirect_is_not_followed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = [0_u8; 1024];
+                let _ = socket.read(&mut buffer).await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        let response = pinned_client(None)
+            .expect("client")
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect("answer");
+        assert_eq!(response.status().as_u16(), 302);
+        server.abort();
+    }
+
+    async fn serve_once(body: String) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = [0_u8; 2048];
+                let _ = socket.read(&mut buffer).await;
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(body.as_bytes()).await;
+            }
+        });
+        (addr, handle)
     }
 }
 
@@ -1532,10 +1663,7 @@ mod database_tests {
         )
         .await;
         // The runner address is unreachable by design: a delivery attempt would fail differently.
-        let client = reqwest::Client::new();
-        super::deliver_task(&state, &client, task)
-            .await
-            .expect("the attempt settles");
+        super::deliver_task(&state, task).await.expect("the attempt settles");
         assert_eq!(status_by(db, w.enabled.1).await, "failed");
         let reason = Count::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
