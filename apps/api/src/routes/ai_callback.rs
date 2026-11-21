@@ -812,9 +812,9 @@ async fn ensure_actor_can_operate(state: &AppState, task: &AiTaskRow, actor_id: 
     if is_system_admin(&state.db, actor_id).await? {
         return Ok(());
     }
-    Err(ApiError::Forbidden(
-        "task can only be updated by assigned ai participant".to_string(),
-    ))
+    // The same answer as for a task that does not exist (as `ensure_task_bot` gives on the protocol
+    // routes): whether a task id exists is not something a caller that does not own it may learn.
+    Err(ApiError::NotFound("ai task not found".to_string()))
 }
 
 async fn find_task(state: &AppState, task_id: Uuid) -> Result<AiTaskRow, ApiError> {
@@ -1068,7 +1068,7 @@ mod participant_authority_database_tests {
             assert!(
                 matches!(
                     ensure_actor_can_operate(&state, &task, outsider).await,
-                    Err(ApiError::Forbidden(_))
+                    Err(ApiError::NotFound(_))
                 ),
                 "{outsider} is not the task's participant"
             );
@@ -1416,7 +1416,10 @@ mod callback_guard_database_tests {
             Json(fail_request(Some(false))),
         )
         .await;
-        assert!(matches!(refused, Err(ApiError::Forbidden(_))));
+        assert!(
+            matches!(refused, Err(ApiError::NotFound(_))),
+            "another bot is told the task does not exist"
+        );
         assert_eq!(find_task(&state, task_id).await.expect("task").status, "processing");
         scratch.drop_self().await;
     }

@@ -488,3 +488,116 @@ async fn each_resolver_allows_the_connected_project_only() {
     let _ = (&never.form, &off.flow_object);
     scratch.drop_self().await;
 }
+
+/// A runner bot calling a task that is not its own gets exactly the answer it gets for a task that
+/// does not exist, on the protocol routes and on the callback routes: the scope middleware lets
+/// every task route through and the handlers answer 404 for both, so task ids are no oracle.
+#[tokio::test]
+async fn another_bots_task_and_a_missing_task_get_one_answer() {
+    use crate::routes::{ai_callback as cb, ai_task_protocol as proto};
+    use axum::routing::{get, post};
+    let scratch = scratch_or_skip!("runner_scope_task_oracle");
+    let db = &scratch.db;
+    let c = cast(db, "t4").await;
+    let state = state_for(db.clone());
+    let other_bot = seed_bot_user(db, &c.w.tenant).await;
+    let theirs = crate::services::ai_task_fixture::seed_task(db, &c.w.tenant, other_bot, "processing", 1, 5).await;
+    let own = crate::services::ai_task_fixture::seed_task(db, &c.w.tenant, c.bot, "processing", 1, 5).await;
+    let layer = || from_fn_with_state(state.clone(), bot_or_user_auth_middleware);
+    let app = Router::new()
+        .route("/api/v1/ai/tasks/{task_id}", get(proto::get_task).route_layer(layer()))
+        .route(
+            "/api/v1/ai/tasks/{task_id}/ack",
+            post(proto::ack_task).route_layer(layer()),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/progress",
+            post(proto::report_task_progress).route_layer(layer()),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/complete",
+            post(proto::complete_task_with_reply).route_layer(layer()),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/fail",
+            post(proto::fail_task_with_reply).route_layer(layer()),
+        )
+        .route(
+            "/api/v1/ai/callbacks/task/{task_id}/complete",
+            post(cb::complete_task).route_layer(layer()),
+        )
+        .route(
+            "/api/v1/ai/callbacks/task/{task_id}/fail",
+            post(cb::fail_task).route_layer(layer()),
+        )
+        .route(
+            "/api/v1/ai/callbacks/task/{task_id}/progress",
+            post(cb::report_progress).route_layer(layer()),
+        )
+        .with_state(state.clone());
+    let calls = [
+        ("GET", "/api/v1/ai/tasks/{id}?attempt=1", serde_json::json!({})),
+        (
+            "POST",
+            "/api/v1/ai/tasks/{id}/ack?attempt=1",
+            serde_json::json!({"plan": "p"}),
+        ),
+        (
+            "POST",
+            "/api/v1/ai/tasks/{id}/progress?attempt=1",
+            serde_json::json!({"note": "n"}),
+        ),
+        (
+            "POST",
+            "/api/v1/ai/tasks/{id}/complete?attempt=1",
+            serde_json::json!({"outcome": "done", "summary": "s"}),
+        ),
+        (
+            "POST",
+            "/api/v1/ai/tasks/{id}/fail?attempt=1",
+            serde_json::json!({"reason": "r", "retryable": false}),
+        ),
+        (
+            "POST",
+            "/api/v1/ai/callbacks/task/{id}/complete?attempt=1",
+            serde_json::json!({}),
+        ),
+        (
+            "POST",
+            "/api/v1/ai/callbacks/task/{id}/fail?attempt=1",
+            serde_json::json!({}),
+        ),
+        (
+            "POST",
+            "/api/v1/ai/callbacks/task/{id}/progress?attempt=1",
+            serde_json::json!({}),
+        ),
+    ];
+    for (method, template, body) in calls {
+        let ask = |id: Uuid| {
+            let path = template.replace("{id}", &id.to_string());
+            let app = app.clone();
+            let token = c.token.clone();
+            let body = body.clone();
+            async move { call(&app, method, &path, &token, Some(body)).await }
+        };
+        let missing = ask(Uuid::new_v4()).await;
+        let foreign = ask(theirs).await;
+        assert_eq!(
+            missing, foreign,
+            "{method} {template}: a task of another bot and a missing task differ"
+        );
+        assert!(
+            missing.1.to_string().to_lowercase().contains("not found") || missing.1["code"] == 404,
+            "{method} {template}: both answer 404, got {missing:?}"
+        );
+        // The bot's own task is not refused by the scope or as someone else's.
+        let mine = ask(own).await;
+        assert_ne!(mine.1["code"], 404, "{method} {template}: own task {mine:?}");
+        assert!(
+            !refused(&mine),
+            "{method} {template}: own task refused by scope {mine:?}"
+        );
+    }
+    scratch.drop_self().await;
+}
