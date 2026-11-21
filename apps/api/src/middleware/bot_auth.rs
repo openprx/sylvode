@@ -522,8 +522,8 @@ pub async fn bot_or_user_auth_middleware(
             let _ = db
                 .execute(Statement::from_sql_and_values(
                     DbBackend::Postgres,
-                    "UPDATE workspace_bots SET last_used_at = $1 WHERE id = $2",
-                    vec![Timestamp::now().into(), bot_id.into()],
+                    "UPDATE workspace_bots SET last_used_at = now() WHERE id = $1",
+                    vec![bot_id.into()],
                 ))
                 .await;
         });

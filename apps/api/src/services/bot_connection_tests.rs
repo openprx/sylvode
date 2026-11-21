@@ -1688,3 +1688,50 @@ async fn no_secret_reaches_a_log_an_event_or_an_error() {
     );
     scratch.drop_self().await;
 }
+
+/// The delivery hold compares `credentials_issued_at` with `last_used_at`; both come from the
+/// database's clock, so the API host's clock never decides it. The write is one SQL statement with
+/// `now()`, and a request through the real bot authentication sets it.
+#[tokio::test]
+async fn token_use_is_stamped_by_the_database_clock() {
+    let source = include_str!("../middleware/bot_auth.rs");
+    let update = source
+        .lines()
+        .find(|line| line.contains("UPDATE workspace_bots SET last_used_at"))
+        .expect("the last-use update");
+    assert!(update.contains("last_used_at = now()"), "{update}");
+    assert!(update.contains("WHERE id = $1"), "the only parameter is the bot id: {update}");
+
+    let scratch = scratch_or_skip!("bc_clock");
+    let db = &scratch.db;
+    let w = world(db, "ck").await;
+    let first = expect_connect(&w, w.tenant.project_id, new_bot("Clock bot")).await;
+    let token = block_token(first.config_block.as_ref().expect("block"));
+    let bot = first.connection.bot.id;
+    assert_eq!(
+        n(
+            db,
+            "SELECT 1 FROM workspace_bots WHERE id = $1 AND last_used_at IS NULL",
+            vec![bot.into()]
+        )
+        .await,
+        1
+    );
+    assert!(authenticated(&protocol_with(db, &token, Some("mcp_stdio")).await));
+    // The stamp is written after the request, in the background: wait for it, bounded.
+    let mut stamped = 0;
+    for _ in 0..50 {
+        stamped = n(
+            db,
+            "SELECT 1 FROM workspace_bots WHERE id = $1 AND last_used_at IS NOT NULL AND last_used_at <= now()",
+            vec![bot.into()],
+        )
+        .await;
+        if stamped == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(stamped, 1);
+    scratch.drop_self().await;
+}
