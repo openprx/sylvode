@@ -72,6 +72,14 @@ Each invocation gets its own store with fixed resource limits: one instance, one
 
 Every run is recorded in `plugin_invocations` with `status` set to `completed`, `failed`, or `timeout`. `timeout` means the wall-clock deadline (`runtime.timeout_ms`) expired, and its `error_message` reads `wasm execution timeout after {N}ms`; every other run that produced no output, including fuel exhaustion and guest traps, is `failed`. `duration_ms` is the elapsed wall time of the run for every status, and `fuel_consumed` is recorded whenever the runtime got far enough to know it (including fuel exhaustion, traps, and timeouts); it is null only when it is unknown, for example when the module does not compile. A run is recorded even when the request that started it is cancelled: the run continues to its own deadline instead of stopping with the request.
 
+### Form plugin packages
+
+Form plugin packages (the order amount controls, data views and project apps that the Plugin Creator builds) use one protocol, `openpr.plugin.v3`, in the `ui` or `wasm` profile, and run only while `SV_FORM_PLUGIN_PACKAGES_ENABLED=1` and `SV_FORM_PLUGIN_EXTENSIONS_ENABLED=1`. The earlier protocols 1 and 2 (`openpr.plugin.v2` manifests, the `plugin-panels` routes and the `SV_FORM_PLUGIN_LAYOUTS_ENABLED` switch) were removed; installing such a manifest fails with the typed error `manifest_protocol_unsupported`.
+
+Data that the retired protocols wrote is left in place and is never read or written again: `form_plugin_layouts` (the per-package layout of protocol 2) is unused, and any `form_plugin_packages`, `form_plugin_library`, `form_plugin_bindings`, `form_plugin_library_requests` and `form_plugin_invocations` rows whose manifest is not `openpr.plugin.v3` stay as they are. Every list, bind, library and render query filters to protocol 3 manifests, and a binding that still points at a retired package reads as unbound, so a protocol 3 package can take over its key at the generation the project list reports. Migrations never delete rows, which is why nothing is dropped; the table and the rows can be removed by an operator with a manual statement once nothing needs the history.
+
+The sample packages and their acceptance script are in `docs/plugins/extension-example/` (`build.py`, `verify_extension.py`); `guest.rs` there is the order amount WASM guest shared by the `wasm` profile sample and the Creator's template.
+
 ## Scenario Templates
 
 Creating a project with a scenario template initializes the project as a ready-to-use business workspace.
