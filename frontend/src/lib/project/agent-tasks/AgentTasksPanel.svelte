@@ -42,7 +42,9 @@
 	});
 </script>
 
-<section class="panel" data-testid="agent-tasks-panel" aria-labelledby="agent-tasks-title">
+<!-- Shown only when the work item has agent tasks, or when loading them failed. -->
+{#if tasks.length > 0 || failed}
+	<section class="panel" data-testid="agent-tasks-panel" aria-labelledby="agent-tasks-title">
 	<header class="head">
 		<h2 id="agent-tasks-title" class="title">{$t('agentTasks.title')}</h2>
 		<Button size="sm" loading={loading && tasks.length > 0} onclick={() => load(issueId)}>
@@ -50,16 +52,12 @@
 		</Button>
 	</header>
 
-	{#if loading && tasks.length === 0 && !failed}
-		<StateBlock kind="loading" thing={$t('agentTasks.things')} />
-	{:else if failed}
+	{#if failed}
 		<StateBlock
 			kind="loadFailed"
 			thing={$t('agentTasks.things')}
 			action={{ run: () => load(issueId) }}
 		/>
-	{:else if tasks.length === 0}
-		<StateBlock kind="empty" message={$t('agentTasks.empty')} />
 	{:else}
 		<div class="list">
 			{#each tasks as task (task.id)}
@@ -68,6 +66,7 @@
 		</div>
 	{/if}
 </section>
+{/if}
 
 <style>
 	.panel {

@@ -4,7 +4,6 @@
 		"refresh": "Refresh",
 		"refreshing": "Refreshing",
 		"things": "agent tasks",
-		"empty": "No agent tasks for this work item",
 		"agent": "Agent: {name}",
 		"attempt": "Attempt {attempt} of {max}",
 		"plan": "Plan",

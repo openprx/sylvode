@@ -4,7 +4,6 @@
 		"refresh": "刷新",
 		"refreshing": "正在刷新",
 		"things": "智能体任务",
-		"empty": "此工作项没有智能体任务",
 		"agent": "智能体：{name}",
 		"attempt": "第 {attempt} 次尝试，共 {max} 次",
 		"plan": "计划",
