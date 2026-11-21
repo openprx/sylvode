@@ -626,3 +626,101 @@ fn a_created_node_with_children_it_did_not_create_is_detected() {
     );
     assert!(engine.created_nodes_adopt_nothing(&HashSet::new()));
 }
+
+// ---------------------------------------------------------------------------------------------
+// F5: what "incremental, then fallback" costs against "full only"
+// ---------------------------------------------------------------------------------------------
+
+/// Measurement, not a pass/fail test (timings are local and noisy): the window against the full
+/// computation alone, on a 5,000-block page, for a refusal by a total (produced directly) and for
+/// a refusal by a bound (the check stops at the first unit over it and falls back).
+/// Run: `cargo test --release -p collab-core --lib fallback_cost -- --ignored --nocapture`.
+#[test]
+#[ignore = "timing measurement"]
+fn fallback_cost_against_the_full_computation_alone() {
+    let blocks = 5_000;
+    let touch_all = |base: &[u8], first: &str, rest: &str| {
+        raw_edit(base, 77, |raw| {
+            let list = children(raw);
+            for i in 0..blocks {
+                let Some(loro::ValueOrContainer::Container(loro::Container::Map(map))) = list.get(i) else {
+                    panic!("no block {i}")
+                };
+                let Some(loro::ValueOrContainer::Container(loro::Container::List(inline))) = map.get("children") else {
+                    panic!("no inline list")
+                };
+                let Some(loro::ValueOrContainer::Container(loro::Container::Text(text))) = inline.get(0) else {
+                    panic!("no inline text")
+                };
+                text.insert(0, if i == 0 { first } else { rest }).unwrap();
+            }
+        })
+    };
+    let median = |mut samples: Vec<std::time::Duration>| {
+        samples.sort();
+        samples[samples.len() / 2]
+    };
+    let measure = |label: &str, base: &[u8], update: &[u8]| {
+        let (mut full, mut window) = (Vec::new(), Vec::new());
+        let mut path = String::new();
+        for _ in 0..7 {
+            let mut engine = LoroCollabEngine::load(base).unwrap();
+            engine.prewarm_for_writes();
+            let started = std::time::Instant::now();
+            let _ = engine
+                .import_client_update(update)
+                .and_then(|_| engine.semantic_snapshot())
+                .map(|semantic| check_snapshot(&semantic, &DocumentLimits::default()));
+            full.push(started.elapsed());
+            let mut engine = LoroCollabEngine::load(base).unwrap();
+            engine.prewarm_for_writes();
+            let facts = BaseFacts::compute(&engine);
+            walk_counter::reset();
+            let started = std::time::Instant::now();
+            let outcome = run_window(&mut engine, facts.as_ref(), update);
+            window.push(started.elapsed());
+            let counts = walk_counter::window_counts();
+            path = format!(
+                "{} (fallbacks {}, direct refusals {}, unit evaluations {})",
+                outcome.map_or_else(|e| e.to_string(), |_| "accepted".to_owned()),
+                counts.fallbacks,
+                counts.direct_refusals,
+                counts.unit_evaluations
+            );
+        }
+        println!(
+            "{label}: full only {:?}, window {:?} -> {path}",
+            median(full),
+            median(window)
+        );
+    };
+    // A total over its limit: 5,000 x 199 characters, two more in every block.
+    let base = flat_page(blocks, 199);
+    measure("total over (document_text_chars)", &base, &touch_all(&base, "yy", "yy"));
+    // A bound over its limit: block 0 close to the block limit, every block touched. The first
+    // unit over the bound ends the check, wherever it is evaluated.
+    let engine = {
+        let mut engine = LoroCollabEngine::new_empty(11);
+        let list: Vec<EditorInitialBlock> = (0..blocks)
+            .map(|index| EditorInitialBlock {
+                id: format!("b{index}"),
+                kind: "paragraph".into(),
+                text: "x".repeat(if index == 0 { 99_990 } else { 100 }),
+                indent: 0,
+                level: None,
+            })
+            .collect();
+        initialize_editor_doc(&engine.doc, &list).unwrap();
+        engine.doc.commit();
+        engine.invalidate_editor_model_floor();
+        engine
+    };
+    let base = engine.export_snapshot().unwrap();
+    measure(
+        "bound over (text_block_chars), every block touched",
+        &base,
+        &touch_all(&base, &"z".repeat(20), "y"),
+    );
+    // The same update without the violation: the incremental accept.
+    measure("accepted, every block touched", &base, &touch_all(&base, "z", "y"));
+}
