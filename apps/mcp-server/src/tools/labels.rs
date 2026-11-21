@@ -5,6 +5,7 @@ use serde_json::json;
 
 pub fn create_label_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "labels.create".to_string(),
         description: "Create a label in workspace".to_string(),
         input_schema: json!({
@@ -49,6 +50,7 @@ pub async fn create_label(client: &OpenPrClient, args: serde_json::Value) -> Cal
 
 pub fn list_labels_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "labels.list".to_string(),
         description: "List all labels in workspace".to_string(),
         input_schema: json!({
@@ -70,6 +72,7 @@ pub async fn list_labels(client: &OpenPrClient, _args: serde_json::Value) -> Cal
 
 pub fn list_project_labels_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "labels.list_by_project".to_string(),
         description: "List all labels available for a specific project".to_string(),
         input_schema: json!({
@@ -108,6 +111,7 @@ pub async fn list_project_labels(client: &OpenPrClient, args: serde_json::Value)
 
 pub fn update_label_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "labels.update".to_string(),
         description: "Update label fields".to_string(),
         input_schema: json!({
@@ -175,6 +179,7 @@ pub async fn update_label(client: &OpenPrClient, args: serde_json::Value) -> Cal
 
 pub fn delete_label_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "labels.delete".to_string(),
         description: "Delete a label".to_string(),
         input_schema: json!({

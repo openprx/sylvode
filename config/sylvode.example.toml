@@ -285,6 +285,21 @@ transport = "stdio"
 # oauth_resource = "https://sylvode.example.com/mcp"
 # oauth_forward_secret = "replace_with_at_least_32_random_bytes"
 
+# Which tools the MCP server lists. "search" (default): sylvode_overview, sylvode_search,
+# sylvode_read, sylvode_write and the task tools; every other tool is found with sylvode_search
+# and called through sylvode_read or sylvode_write. "full": the whole registry is listed and
+# callable by name. `serve --tools search|full` overrides this for stdio; on http and sse a
+# connection chooses with `?tools=` or the `X-Sylvode-Tool-Mode` header and falls back to this
+# value. Connected (OAuth) applications ignore it.
+# tool_mode = "search"
+
+# Whether the bot may use write tools. Default: true. false disables every write tool except the
+# task lifecycle tools (sylvode_task_get, _ack, _progress, _complete, _fail), which a runner bot
+# needs: sylvode_write answers that writes are disabled, and in full mode, on every transport
+# and in the command line (`mcp-server tools call`, `projects create`, ...) a tool the catalogue
+# marks as writing is refused before any request. Reads are not affected.
+# allow_write_call = true
+
 
 # ---------------------------------------------------------------------------------------------
 # [oauth] — authorization server for the API and the MCP server. Optional; off by default.

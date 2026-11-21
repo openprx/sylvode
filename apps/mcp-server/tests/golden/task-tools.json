@@ -1,0 +1,221 @@
+[
+  {
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "description": "Read a Sylvode task: source issue, comment or proposal, project, execution settings, status. Call it first.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "attempt"
+      ],
+      "type": "object"
+    },
+    "name": "sylvode_task_get"
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Take the task and state a short plan. Then start work at once unless the answer says proceed=false.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "plan": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "attempt",
+        "plan"
+      ],
+      "type": "object"
+    },
+    "name": "sylvode_task_ack"
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Report progress. Also keeps the task alive: call at each milestone and at least every 10 minutes. The answer says whether the report was coalesced with a recent one.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "note": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "attempt",
+        "note"
+      ],
+      "type": "object"
+    },
+    "name": "sylvode_task_progress"
+  },
+  {
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "description": "Finish the task. Read `reply_policy` in the task: Sylvode posts the reply where the task came from (`comment`, `comment+state:...`, `vote`); do not post it yourself.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "commit",
+                  "branch",
+                  "pull_request",
+                  "file",
+                  "url"
+                ],
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "ref": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "type": "object"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        "attempt": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "needs_review",
+            "no_change"
+          ],
+          "type": "string"
+        },
+        "summary": {
+          "description": "Markdown. What you did and how to verify it.",
+          "maxLength": 20000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "vote": {
+          "description": "Required for proposal_vote tasks.",
+          "enum": [
+            "yes",
+            "no",
+            "abstain"
+          ],
+          "type": "string"
+        },
+        "vote_reason": {
+          "description": "At least 50 characters unless the project sets another minimum.",
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "attempt",
+        "outcome",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "name": "sylvode_task_complete"
+  },
+  {
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "description": "End the task as failed with the reason. Use when you cannot do it; Sylvode reports it where the task came from.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "description": "true only for a temporary cause (service down).",
+          "type": "boolean"
+        },
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "attempt",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "sylvode_task_fail"
+  }
+]

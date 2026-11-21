@@ -33,6 +33,7 @@ const MEMBER_LEVELS: [&str; 4] = ["full_access", "edit", "comment", "view"];
 
 pub fn get_flow_feature_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.feature_get".to_string(),
         description: "Read the Flow rollout flag for a workspace: flow_enabled, \
 default_member_level, authz_epoch, and who last changed it."
@@ -62,6 +63,7 @@ pub async fn get_flow_feature(client: &OpenPrClient, args: Value) -> CallToolRes
 
 pub fn set_flow_feature_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.feature_set".to_string(),
         description: "Change the Flow rollout flag for a workspace: enable/disable Flow, or \
 change default_member_level. Requires a workspace admin principal; at least one of enabled or \

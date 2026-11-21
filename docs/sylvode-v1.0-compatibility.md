@@ -21,8 +21,8 @@ accepted decision record; v1.0 removes nothing.
 | Compose environment | `SYLVODE_BIND_HOST`, `SYLVODE_API_PORT`, `SYLVODE_FRONTEND_PORT`, `SYLVODE_MCP_PORT`, `SYLVODE_RUNTIME_BASE` and `SYLVODE_FRONTEND_DOCKERFILE` | `OPENPR_BIND_HOST`, `OPENPR_API_PORT`, `OPENPR_FRONTEND_PORT`, `MCP_SERVER_PORT`, `OPENPR_RUNTIME_BASE` and `OPENPR_FRONTEND_DOCKERFILE` remain readable | Equal values are accepted; different canonical and legacy values are an error | v1.0: `scripts/start.sh` (through `scripts/lib/sylvode_compat.sh`) writes one stderr line per legacy variable it reads | Not before Sylvode v2.0 and a separately accepted removal decision |
 | REST API and schema IDs | `/api/v1` and the existing schema identifiers | Preserved byte-for-byte; no branded API prefix is introduced | Stable identifiers win; branding is display-only | None | No removal planned |
 | MCP tools | Existing semantic tool names | Tool names and input/output schemas are unchanged | No alternate branded tool registry | None | No removal planned |
-| MCP resources | `sylvode://` for every static resource and template | The corresponding `openpr://` URI reads the exact canonical body and returns `_meta.canonical_uri`; list endpoints emit canonical URIs only | Canonical URI is the identity | v1.0: an `openpr://` read also returns `_meta.deprecation = {"replaced_by": "<canonical sylvode:// URI>", "earliest_removal": "2.0"}` on every transport; a `sylvode://` read carries no `_meta.deprecation` | Not before Sylvode v2.0 and a separately accepted removal decision |
-| MCP attribution headers | `X-Sylvode-MCP-Surface` and `X-Sylvode-MCP-Tool` | `mcp-server` also sends `X-OpenPR-MCP-Surface` and `X-OpenPR-MCP-Tool` with identical values, so a new `mcp-server` attributes correctly against an older API; the API accepts either set alone | The canonical and legacy header of a field, or repeated occurrences of either, carrying different values are refused (envelope code 401); the API never picks one, because the values are audit attribution | None (protocol headers, not a user entry point) | Not before Sylvode v2.0 and a separately accepted removal decision |
+| MCP resources | `sylvode://` for every static resource and template | None: the `openpr://` spelling was retired and is not served | Canonical URI is the identity | None | Removed |
+| MCP attribution headers | `X-Sylvode-MCP-Surface` and `X-Sylvode-MCP-Tool` | None: the `X-OpenPR-MCP-*` spelling was retired; `mcp-server` does not send it and the API does not read it | Repeated occurrences of one header carrying different values are refused (envelope `401`) | None | Removed |
 | Attachment count headers | `X-Sylvode-Attachment-Count` and `X-Sylvode-Attachment-File-Count` on attachment package downloads | `X-OpenPR-Attachment-Count` and `X-OpenPR-Attachment-File-Count` are returned alongside, with identical values, built by the same helper | Not applicable: both are always sent with the same value | None | Not before Sylvode v2.0 and a separately accepted removal decision |
 | Webhook `User-Agent` | Outbound deliveries send `Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)`; the `request_headers` recorded with the delivery carry the same value | The legacy `OpenPR-Webhook/1.0` product token stays in the comment section, so receivers matching it as a **substring** are unaffected | A `User-Agent` cannot be sent twice. Receivers that match the old value **exactly** or as a **prefix** no longer match and must be updated; this is a behaviour change called out in the release notes | None | The legacy token in the comment section: not before Sylvode v2.0 and a separately accepted removal decision |
 | Database and migrations | Existing physical names | Historical OpenPR-named databases, roles, tables, columns, and migrations are not renamed | Existing physical identity is authoritative | None | No removal planned |
@@ -62,7 +62,6 @@ warning that cannot be written does not fail the command.
 | `config/openpr.toml` found by default discovery | one `warn` log line per process | `legacy configuration file config/openpr.toml was discovered by default; rename it to config/sylvode.toml or pass --config explicitly (default discovery of config/openpr.toml is not removed before Sylvode v2.0)` |
 | `OPENPR_API_PORT` (any legacy compose variable) | stderr, once per variable per run | `warning: legacy compose variable OPENPR_API_PORT is deprecated; use SYLVODE_API_PORT instead (OPENPR_API_PORT is not removed before Sylvode v2.0)` |
 | `./config/openpr.compose.toml` selected by `scripts/start.sh` | stderr, once per file per run | `warning: legacy configuration file ./config/openpr.compose.toml is deprecated; use ./config/sylvode.compose.toml instead (./config/openpr.compose.toml is not removed before Sylvode v2.0)` |
-| `openpr://…` resource read | `_meta.deprecation` in the `resources/read` result | `{"replaced_by": "sylvode://…", "earliest_removal": "2.0"}` |
 
 Only subcommand names appear in the CLI warning, never argument values, so a token passed on the
 command line is not echoed. The CLI and resource warnings never reach stdout: for the workspace
@@ -102,9 +101,9 @@ These identifiers keep their OpenPR-era names, with no removal planned:
 - Schema version strings such as `openpr.plugin.v1` and `openpr.event.v1`, and the schema
   identifiers and file names `docs/schemas/openpr-*.schema.json`: documents and stored manifests
   carry them.
-- The MCP skill key `openpr-mcp`: it is part of the resource URI `sylvode://skills/openpr-mcp`
-  and the `provider` value that migration `0029` wrote into scenario templates, as is the
-  `openpr-webhook` provider value.
+- The `provider` values `openpr-mcp` and `openpr-webhook` that migration `0029` wrote into
+  scenario templates. (The MCP skill itself is `sylvode-mcp`: the resource `sylvode://skills/sylvode-mcp`
+  and the directory `skills/sylvode-mcp`; the old name is not served.)
 - The PostgreSQL `LISTEN`/`NOTIFY` channels `openpr_flow_fanout` and `openpr_flow_authz`: every
   API process of a deployment listens on them, and during a rolling upgrade old and new processes
   must keep hearing each other.

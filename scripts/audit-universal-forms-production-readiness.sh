@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED_TOOL_COUNT="$(python3 "$ROOT_DIR/skills/openpr-mcp/scripts/expected-tool-count.py")"
+EXPECTED_TOOL_COUNT="$(python3 "$ROOT_DIR/skills/sylvode-mcp/scripts/expected-tool-count.py")"
 PRODUCTION_DOC="$ROOT_DIR/docs/universal-forms-production.md"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 FRONTEND_NGINX="$ROOT_DIR/frontend/nginx.conf"
@@ -284,11 +284,8 @@ not_contains "MCP compose service does not depend directly on PostgreSQL" "$MCP_
 not_contains "env example carries no application credential" "$ROOT_DIR/.env.example" "OPENPR_BOT_TOKEN="
 contains "README documents the MCP serve subcommand with a configuration file" "$ROOT_DIR/README.md" "mcp-server -- serve --config config/sylvode.toml"
 contains "MCP app README local examples target API host port" "$ROOT_DIR/apps/mcp-server/README.md" 'api_url = "http://localhost:8081"'
-contains "MCP app README documents snapshot-derived tool count" "$ROOT_DIR/apps/mcp-server/README.md" "$EXPECTED_TOOL_COUNT MCP Tools"
 contains "MCP app README documents three transports" "$ROOT_DIR/apps/mcp-server/README.md" "Three Transport Modes"
 contains "MCP app README documents SSE transport" "$ROOT_DIR/apps/mcp-server/README.md" "serve --transport sse"
-contains "MCP app README documents universal forms tools" "$ROOT_DIR/apps/mcp-server/README.md" "Universal Forms and Events"
-contains "MCP app README documents plugin tools" "$ROOT_DIR/apps/mcp-server/README.md" "WASM Plugins"
 contains "MCP app README compose example uses prebuilt Dockerfile" "$ROOT_DIR/apps/mcp-server/README.md" "dockerfile: Dockerfile.prebuilt"
 contains "MCP app README manual test starts API stack" "$ROOT_DIR/apps/mcp-server/README.md" "bash scripts/start.sh"
 contains "MCP app README development guide uses API client helpers" "$ROOT_DIR/apps/mcp-server/README.md" "Sylvode API client helper"
@@ -308,15 +305,11 @@ contains "MCP app README documents bot token hash auth" "$ROOT_DIR/apps/mcp-serv
 contains "MCP app README documents workspace-scoped bot access" "$ROOT_DIR/apps/mcp-server/README.md" "a bot token can only act inside its workspace"
 not_contains "MCP app README does not claim auth is unenforced" "$ROOT_DIR/apps/mcp-server/README.md" "Authentication infrastructure exists but is not enforced"
 not_contains "MCP app README does not list stale JWT TODO" "$ROOT_DIR/apps/mcp-server/README.md" "Implement JWT token validation"
-contains "MCP regression stdio path targets API host port" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" '"SYLVODE_MCP_REGRESSION_API_URL", "http://localhost:8081"'
-contains "MCP regression stdio path uses serve subcommand" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" '[MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG]'
-contains "MCP regression derives the expected registry count" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
-contains "MCP validation derives the expected registry count" "$ROOT_DIR/skills/openpr-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
-contains "MCP skill guide documents snapshot-derived tool count" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "enumerate all $EXPECTED_TOOL_COUNT tools"
-not_contains "MCP skill guide does not retain stale 65-tool count" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "65 tools"
-not_contains "MCP validation does not retain stale 65-tool minimum" "$ROOT_DIR/skills/openpr-mcp/scripts/validate-mcp.sh" "-ge 65"
-contains "docs index documents snapshot-derived MCP server count" "$ROOT_DIR/docs/README.md" "MCP server ($EXPECTED_TOOL_COUNT tools"
-contains "docs index documents snapshot-derived MCP regression count" "$ROOT_DIR/docs/README.md" "$EXPECTED_TOOL_COUNT-tool registry"
+contains "MCP regression stdio path targets API host port" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" '"SYLVODE_MCP_REGRESSION_API_URL", "http://localhost:8081"'
+contains "MCP regression stdio path uses serve subcommand" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" '[MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG]'
+contains "MCP regression derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
+contains "MCP validation derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
+not_contains "MCP validation does not retain stale 65-tool minimum" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "-ge 65"
 contains "docs index links implementation map" "$ROOT_DIR/docs/README.md" "universal-forms-implementation-map.md"
 contains "readiness summary generator links implementation map" "$ROOT_DIR/scripts/report-universal-forms-readiness-summary.sh" "universal-forms-implementation-map.md"
 contains "user acceptance packet generator links implementation map" "$ROOT_DIR/scripts/prepare-universal-forms-user-acceptance-packet.sh" "universal-forms-implementation-map.md"
@@ -328,7 +321,7 @@ contains "README states the binaries take no environment configuration" "$ROOT_R
 contains "MCP integration test uses current JSON-RPC endpoint" "$TEST_MCP_SCRIPT" "/mcp/rpc"
 contains "MCP integration test lists tools through JSON-RPC" "$TEST_MCP_SCRIPT" '"method":"tools/list"'
 contains "MCP integration test invokes tools through JSON-RPC" "$TEST_MCP_SCRIPT" '"method":"tools/call"'
-contains "MCP integration test derives its strict default tool count" "$TEST_MCP_SCRIPT" 'EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/openpr-mcp/scripts/expected-tool-count.py")}"'
+contains "MCP integration test derives its strict default tool count" "$TEST_MCP_SCRIPT" 'EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/sylvode-mcp/scripts/expected-tool-count.py")}"'
 contains "MCP integration test rejects tool count drift" "$TEST_MCP_SCRIPT" 'expected exactly $EXPECTED_TOOL_COUNT'
 contains "MCP integration test checks form template tool" "$TEST_MCP_SCRIPT" "forms.create_from_template"
 contains "MCP integration test checks scenario template install tool" "$TEST_MCP_SCRIPT" "scenario_templates.install"

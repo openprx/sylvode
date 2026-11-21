@@ -1,7 +1,7 @@
 //! Typed outcome and exit codes for `sylvode`, per `error-mapping-v1.md`'s "CLI 退出码全集".
 //!
 //! `apps/api/src/error.rs`'s `ApiErrorKind` is the single source of truth for the stable
-//! nine-way (plus `server_draining`'s two reasons) business taxonomy this module maps onto
+//! nine-way (plus `server_draining`'s three reasons) business taxonomy this module maps onto
 //! process exit codes: [`CliError::from_structured`] reconstructs the server's own
 //! `ApiErrorKind` from the wire `error_code`/`details` a
 //! [`super::api_client::StructuredApiError`] carries, then calls that type's own
@@ -127,7 +127,7 @@ impl CliError {
             // `Self::untyped_server_failure` -- code `server_draining`, `recoverable: true`. The exit
             // code would still be 9 by coincidence, and every other channel a caller reads would
             // be telling it to retry a write that can never succeed.
-            "server_rejected" => Self::from_kind(ApiErrorKind::ServerRejected, message, details),
+            "server_rejected" => Self::from_server_rejected(&message, details),
             "server_draining" => Self::from_server_draining(&message, details),
             "checksum_mismatch" => Self::from_kind(ApiErrorKind::ChecksumMismatch, message, details),
             "unsupported_format" => Self::from_kind(ApiErrorKind::UnsupportedFormat, message, details),
@@ -166,6 +166,23 @@ impl CliError {
                 "{message} (server_draining/drain: this instance is draining connections and will not accept a \
                  retry; reconnect to a different instance)"
             ),
+            Some("apply_busy") => match (retry_after_ms, details.get("retry_mode").and_then(Value::as_str)) {
+                (Some(ms), Some("resend")) => format!(
+                    "{message} (server_draining/apply_busy: the server is busy applying other updates; resend the \
+                     same update after {ms}ms)"
+                ),
+                (Some(ms), Some("rebase")) => format!(
+                    "{message} (server_draining/apply_busy: the server is busy applying other updates; rebase onto \
+                     the current frontier, then resend after {ms}ms)"
+                ),
+                (delay, mode) => format!(
+                    "{message} (server_draining: producer contract violation -- apply_busy needs retry_after_ms and \
+                     a retry_mode of 'resend' or 'rebase', got {} and {}; treating as a temporary failure without \
+                     guessing)",
+                    delay.map_or_else(|| "no delay".to_string(), |ms| format!("{ms}ms")),
+                    mode.map_or_else(|| "no mode".to_string(), |value| format!("'{value}'"))
+                ),
+            },
             Some("contention") => retry_after_ms.map_or_else(
                 || format!("{message} (server_draining/contention: transient contention, retry shortly)"),
                 |ms| format!("{message} (server_draining/contention: transient contention, retry after {ms}ms)"),
@@ -187,6 +204,33 @@ impl CliError {
             details,
             exit: exit::TEMPORARY,
         }
+    }
+
+    /// A `server_rejected` is permanent (exit 11, not recoverable). The isolated apply path adds
+    /// three reasons, and each is named in the message with what it means and what will not help;
+    /// any other reason keeps the server's message as written.
+    fn from_server_rejected(message: &str, details: Option<Value>) -> Self {
+        let explanation = match details
+            .as_ref()
+            .and_then(|details| details.get("reason"))
+            .and_then(Value::as_str)
+        {
+            Some("window_divergence") => Some(
+                "server_rejected/window_divergence: the update's window diverged from the server's copy of the \
+                 document and was refused; read the current document and make the change again",
+            ),
+            Some("isolated_apply_failed") => Some(
+                "server_rejected/isolated_apply_failed: applying the update in isolation failed and it was \
+                 refused; the same update will fail again, so change it before sending it again",
+            ),
+            Some("isolated_setup_exhausted") => Some(
+                "server_rejected/isolated_setup_exhausted: the server could not set up an isolated apply for the \
+                 update and gave up; retrying the same update will not help, report it to the operator",
+            ),
+            _ => None,
+        };
+        let message = explanation.map_or_else(|| message.to_string(), |text| format!("{message} ({text})"));
+        Self::from_kind(ApiErrorKind::ServerRejected, message, details)
     }
 
     /// Builds a [`CliError`] straight from an [`ApiErrorKind`] this binary already resolved,
@@ -461,6 +505,85 @@ mod tests {
         assert!(unknown.message.contains("producer contract violation"));
     }
 
+    /// `apply_busy` is the third `server_draining` reason: the server is busy applying other
+    /// updates. It is recoverable and exits 9 like `contention`, and `retry_mode` says what to do:
+    /// `resend` the same update after `retry_after_ms`, or `rebase` onto the current frontier first.
+    #[test]
+    fn server_draining_apply_busy_says_how_to_retry() {
+        let resend = CliError::from_structured(typed(
+            409,
+            "server_draining",
+            Some(json!({ "reason": "apply_busy", "retry_after_ms": 400, "retry_mode": "resend" })),
+        ));
+        let rebase = CliError::from_structured(typed(
+            409,
+            "server_draining",
+            Some(json!({ "reason": "apply_busy", "retry_after_ms": 400, "retry_mode": "rebase" })),
+        ));
+        for error in [&resend, &rebase] {
+            assert_eq!(error.code, "server_draining");
+            assert_eq!(error.exit, exit::TEMPORARY);
+            assert!(error.recoverable);
+            assert!(
+                error.message.contains("apply_busy") && error.message.contains("400ms"),
+                "{}",
+                error.message
+            );
+            assert_eq!(error.details.get("reason").and_then(|v| v.as_str()), Some("apply_busy"));
+            assert_eq!(
+                error.details.get("retry_after_ms").and_then(serde_json::Value::as_u64),
+                Some(400)
+            );
+            assert!(
+                !error.message.contains("producer contract violation"),
+                "{}",
+                error.message
+            );
+        }
+        assert!(resend.message.contains("resend the same update"), "{}", resend.message);
+        assert!(
+            rebase.message.contains("rebase onto the current frontier"),
+            "{}",
+            rebase.message
+        );
+        assert_ne!(resend.message, rebase.message);
+        assert_eq!(
+            resend.details.get("retry_mode").and_then(|v| v.as_str()),
+            Some("resend")
+        );
+        assert_eq!(
+            rebase.details.get("retry_mode").and_then(|v| v.as_str()),
+            Some("rebase")
+        );
+        // They are the same exit and not the drain or contention message.
+        let contention = CliError::from_structured(typed(
+            409,
+            "server_draining",
+            Some(json!({ "reason": "contention", "retry_after_ms": 400 })),
+        ));
+        assert_eq!(resend.exit, contention.exit);
+        assert_ne!(resend.message, contention.message);
+
+        // A missing or unknown `retry_mode`, or a missing delay, is a producer contract violation:
+        // still temporary, never guessed.
+        for details in [
+            json!({ "reason": "apply_busy", "retry_after_ms": 400 }),
+            json!({ "reason": "apply_busy", "retry_after_ms": 400, "retry_mode": "sometimes" }),
+            json!({ "reason": "apply_busy", "retry_mode": "resend" }),
+        ] {
+            let error = CliError::from_structured(typed(409, "server_draining", Some(details.clone())));
+            assert_eq!(error.exit, exit::TEMPORARY, "{details}");
+            assert!(error.recoverable, "{details}");
+            assert!(
+                error.message.contains("producer contract violation"),
+                "{details}: {}",
+                error.message
+            );
+            assert!(!error.message.contains("resend the same update"), "{details}");
+            assert!(!error.message.contains("rebase onto"), "{details}");
+        }
+    }
+
     #[test]
     fn unrecognised_stable_code_falls_back_to_numeric_mapping() {
         let future_code = typed(404, "some_future_stable_code", None);
@@ -532,6 +655,45 @@ mod server_rejected_tests {
             [9, 10, 11],
             "temporary / verify-mismatch / permanent-refusal must be three distinct exit codes"
         );
+
+        // The three reasons a `server_rejected` can now carry from the isolated apply path: each is
+        // permanent (exit 11, not recoverable), says why, and says what will not help.
+        for (reason, expected) in [
+            ("window_divergence", "diverged from the server's copy"),
+            ("isolated_apply_failed", "the same update will fail again"),
+            ("isolated_setup_exhausted", "retrying the same update will not help"),
+        ] {
+            let refused = CliError::from_structured(StructuredApiError {
+                code: Some(500),
+                message: "the update was refused".to_string(),
+                error_code: Some("server_rejected".to_string()),
+                details: Some(json!({ "reason": reason })),
+                local_input: false,
+            });
+            assert_eq!(refused.code, "server_rejected", "{reason}");
+            assert_eq!(refused.exit, exit::PERMANENT_REFUSAL, "{reason}");
+            assert!(!refused.recoverable, "{reason}");
+            assert!(
+                refused.message.starts_with("the update was refused"),
+                "{reason}: {}",
+                refused.message
+            );
+            assert!(refused.message.contains(reason), "{reason}: {}", refused.message);
+            assert!(refused.message.contains(expected), "{reason}: {}", refused.message);
+            assert_eq!(
+                refused.details.get("reason").and_then(serde_json::Value::as_str),
+                Some(reason)
+            );
+        }
+        // Any other reason keeps the message as the server wrote it.
+        let plain = CliError::from_structured(StructuredApiError {
+            code: Some(500),
+            message: "plain".to_string(),
+            error_code: Some("server_rejected".to_string()),
+            details: Some(json!({ "reason": "deterministic_database_refusal" })),
+            local_input: false,
+        });
+        assert_eq!(plain.message, "plain");
 
         // The shape it used to fall into before the mapping arm existed: the untyped server
         // failure report, exit 9, recoverable.

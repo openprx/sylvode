@@ -11,9 +11,10 @@
 
 use axum::{
     Extension, Json, Router,
-    extract::{Request, State},
+    extract::{RawQuery, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::from_fn_with_state,
+    response::IntoResponse,
     routing::{get, post},
 };
 use mcp_server::client::{ClientConfig, OpenPrClient};
@@ -22,7 +23,8 @@ use mcp_server::oauth::{
     UnavailableReason, handle_rpc, inbound_auth, parse_token_context, well_known_routes,
 };
 use mcp_server::protocol::JsonRpcRequest;
-use platform::config::{McpOAuthRuntime, Secret};
+use mcp_server::server::{ToolSurface, requested_tool_mode};
+use platform::config::{McpOAuthRuntime, McpToolMode, Secret};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::error::Error;
@@ -161,12 +163,27 @@ struct AppState {
     inbound: Arc<InboundAuth>,
 }
 
+/// The production handler's few lines: the connection's `?tools=` / header choice, then
+/// `handle_rpc`. The server's own default is `search`, as in a deployment without `tool_mode`.
 async fn rpc(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> axum::response::Response {
-    handle_rpc(&state.client, &state.inbound, caller, request).await
+    let mode = match requested_tool_mode(query.as_deref(), &headers, McpToolMode::Search) {
+        Ok(mode) => mode,
+        Err(message) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))).into_response(),
+    };
+    handle_rpc(
+        &state.client,
+        &state.inbound,
+        caller,
+        ToolSurface::new(mode, true),
+        request,
+    )
+    .await
 }
 
 async fn sse_stub(Extension(caller): Extension<Caller>) -> StatusCode {
@@ -282,7 +299,16 @@ impl Harness {
     }
 
     async fn post(&self, token: Option<&str>, body: &Value) -> Result<Reply, Box<dyn Error>> {
-        let mut request = self.http.post(format!("{}/mcp/rpc", self.base)).json(body);
+        self.post_to("/mcp/rpc", token, body).await
+    }
+
+    /// `post` with the whole registry listed and callable: `?tools=full`.
+    async fn post_full(&self, token: Option<&str>, body: &Value) -> Result<Reply, Box<dyn Error>> {
+        self.post_to("/mcp/rpc?tools=full", token, body).await
+    }
+
+    async fn post_to(&self, path: &str, token: Option<&str>, body: &Value) -> Result<Reply, Box<dyn Error>> {
+        let mut request = self.http.post(format!("{}{path}", self.base)).json(body);
         if let Some(token) = token {
             request = request.header("Authorization", format!("Bearer {token}"));
         }
@@ -593,14 +619,35 @@ async fn tools_list_contains_exactly_the_tools_the_scopes_allow() -> TestResult 
     Ok(())
 }
 
+/// A plain caller gets search mode unless its connection asks for the registry: nine tools by
+/// default, the whole registry with `?tools=full`. The connection's choice never touches a
+/// delegated caller (see the tests above, which list exactly the scoped tools).
 #[tokio::test]
-async fn a_legacy_caller_still_sees_the_whole_registry() -> TestResult {
+async fn a_legacy_caller_gets_search_mode_and_the_registry_on_request() -> TestResult {
     let source = FakeSource::new([]);
     let server = Harness::delegated(&source).await?;
+    let search_mode = names(&[
+        "sylvode_overview",
+        "sylvode_search",
+        "sylvode_read",
+        "sylvode_write",
+        "sylvode_task_get",
+        "sylvode_task_ack",
+        "sylvode_task_progress",
+        "sylvode_task_complete",
+        "sylvode_task_fail",
+    ]);
     for token in [BOT_TOKEN, JWT_SHAPED_TOKEN] {
         let reply = server.post(Some(token), &list()).await?;
         assert_eq!(reply.status, StatusCode::OK);
-        assert_eq!(listed(&reply)?.len(), 154, "{token}");
+        assert_eq!(listed(&reply)?, search_mode, "{token}");
+        let full = server.post_full(Some(token), &list()).await?;
+        assert_eq!(full.status, StatusCode::OK);
+        assert_eq!(listed(&full)?.len(), 153, "{token}");
+        assert!(
+            !listed(&full)?.contains("sylvode_search"),
+            "entry tools exist in search mode only"
+        );
     }
     assert_eq!(
         source.calls(),
@@ -712,10 +759,22 @@ async fn a_tool_that_is_not_available_is_refused_whatever_the_scopes_claim() -> 
         "plugins.invoke",
         "proposals.create",
         "projects.create",
+        // The task tools act for a bot; a connected application gets the same refusal.
+        "sylvode_task_get",
+        "sylvode_task_ack",
+        "sylvode_task_progress",
+        "sylvode_task_complete",
+        "sylvode_task_fail",
         "no.such_tool",
     ] {
         let reply = server
-            .post(Some(&token), &call(tool, &json!({"project_id": PROJECT})))
+            .post(
+                Some(&token),
+                &call(
+                    tool,
+                    &json!({"project_id": PROJECT, "task_id": PROJECT, "attempt": 1, "plan": "x", "note": "x"}),
+                ),
+            )
             .await?;
         assert_eq!(reply.status, StatusCode::FORBIDDEN, "{tool}");
         assert!(
@@ -1010,7 +1069,7 @@ async fn delegated_callers_read_the_static_guides_and_nothing_else() -> TestResu
 
     for uri in [
         format!("sylvode://forms/{PROJECT}/records"),
-        format!("openpr://projects/{PROJECT}/issues"),
+        format!("sylvode://projects/{PROJECT}/issues"),
         "sylvode://scenario-templates".to_string(),
         format!("sylvode://workspaces/{GRANT_WORKSPACE}/navigator"),
     ] {
@@ -1039,7 +1098,8 @@ async fn delegated_callers_read_the_static_guides_and_nothing_else() -> TestResu
     assert_eq!(
         uris,
         [
-            "sylvode://skills/openpr-mcp",
+            "sylvode://skills/sylvode-mcp",
+            "sylvode://skills/sylvode-mcp/tools",
             "sylvode://guides/agents",
             "sylvode://guides/workflows"
         ]
@@ -1246,7 +1306,9 @@ async fn opr_and_user_tokens_are_forwarded_as_before_with_no_forwarding_credenti
     let server = Harness::delegated(&source).await?;
     for token in [BOT_TOKEN, JWT_SHAPED_TOKEN] {
         let before = server.seen().await.len();
-        let reply = server.post(Some(token), &call("projects.list", &json!({}))).await?;
+        let reply = server
+            .post_full(Some(token), &call("projects.list", &json!({})))
+            .await?;
         assert_eq!(reply.status, StatusCode::OK, "{token}");
         let seen = server.seen().await;
         let request = seen.get(before).ok_or("the call did not reach the API")?;
@@ -1274,7 +1336,7 @@ async fn opr_and_user_tokens_are_forwarded_as_before_with_no_forwarding_credenti
         ("work_items.list", json!({"project_id": PROJECT})),
     ] {
         let before = server.seen().await.len();
-        let reply = server.post(Some(BOT_TOKEN), &call(tool, &arguments)).await?;
+        let reply = server.post_full(Some(BOT_TOKEN), &call(tool, &arguments)).await?;
         assert_eq!(reply.status, StatusCode::OK, "{tool}");
         assert!(reply.json()?.get("error").is_none(), "{tool}: {}", reply.text);
         let seen = server.seen().await;

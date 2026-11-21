@@ -102,6 +102,9 @@ pub struct ToolDefinition {
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    /// MCP tool annotations; the full listing sets `readOnlyHint` from the tool catalogue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Value>,
 }
 
 /// MCP List Tools Response
@@ -215,6 +218,7 @@ mod tests {
     #[test]
     fn tool_definition_serializes_camel_case_input_schema() {
         let value = serde_json::to_value(ToolDefinition {
+            annotations: None,
             name: "forms.get".to_string(),
             description: "desc".to_string(),
             input_schema: json!({ "type": "object" }),

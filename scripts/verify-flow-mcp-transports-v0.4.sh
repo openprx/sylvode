@@ -268,10 +268,10 @@ write_mcp_config "$SSE_CONFIG" sse "127.0.0.1:$SSE_PORT"
 write_mcp_config "$STDIO_CONFIG" stdio ""
 
 echo "=== starting mcp-server (http) on 127.0.0.1:$HTTP_PORT ===" >&2
-"$MCP_BIN" --config "$HTTP_CONFIG" serve --transport http > "$TMP_DIR/mcp-http.log" 2>&1 &
+"$MCP_BIN" --config "$HTTP_CONFIG" serve --transport http --tools full > "$TMP_DIR/mcp-http.log" 2>&1 &
 HTTP_PID=$!
 echo "=== starting mcp-server (sse) on 127.0.0.1:$SSE_PORT ===" >&2
-"$MCP_BIN" --config "$SSE_CONFIG" serve --transport sse > "$TMP_DIR/mcp-sse.log" 2>&1 &
+"$MCP_BIN" --config "$SSE_CONFIG" serve --transport sse --tools full > "$TMP_DIR/mcp-sse.log" 2>&1 &
 SSE_PID=$!
 
 wait_port() {

@@ -5,6 +5,7 @@ use serde_json::json;
 
 pub fn list_projects_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "projects.list".to_string(),
         description: "List all projects in the workspace bound to this MCP server's bot token. The workspace \
 cannot be chosen per call."
@@ -28,6 +29,7 @@ pub async fn list_projects(client: &OpenPrClient, _args: serde_json::Value) -> C
 
 pub fn get_project_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "projects.get".to_string(),
         description: "Get details of a specific project".to_string(),
         input_schema: json!({
@@ -66,6 +68,7 @@ pub async fn get_project(client: &OpenPrClient, args: serde_json::Value) -> Call
 
 pub fn create_project_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "projects.create".to_string(),
         description: "Create a new project in a workspace".to_string(),
         input_schema: json!({
@@ -137,6 +140,7 @@ pub async fn create_project(client: &OpenPrClient, args: serde_json::Value) -> C
 
 pub fn update_project_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "projects.update".to_string(),
         description: "Update an existing project".to_string(),
         input_schema: json!({
@@ -220,6 +224,7 @@ pub async fn update_project(client: &OpenPrClient, args: serde_json::Value) -> C
 
 pub fn delete_project_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "projects.delete".to_string(),
         description: "Delete an existing project".to_string(),
         input_schema: json!({

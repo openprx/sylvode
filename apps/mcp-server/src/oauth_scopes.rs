@@ -72,10 +72,6 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "scenario_templates.list",
     "scenario_templates.get",
     "scenario_templates.install",
-    "project_resources.list",
-    "project_resources.create",
-    "project_resources.update",
-    "project_resources.delete",
     "forms.create",
     "forms.create_from_template",
     "forms.update_schema",
@@ -126,8 +122,6 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "labels.update",
     "labels.delete",
     "search.all",
-    "code.resources.list",
-    "code.directory.get",
     "code.task_context.get",
     "code.change_proposal.create",
     "documents.extract_summary",
@@ -193,6 +187,18 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "flow.mentions.list",
     "flow.home",
     "objects.command",
+    // The task tools act for a bot, and the API refuses anything but the task's own bot.
+    "sylvode_task_get",
+    "sylvode_task_ack",
+    "sylvode_task_progress",
+    "sylvode_task_complete",
+    "sylvode_task_fail",
+    // The search mode entry tools. A delegated server ignores the tool mode, and the wrappers would
+    // only re-expose the eight read tools under another name.
+    "sylvode_overview",
+    "sylvode_search",
+    "sylvode_read",
+    "sylvode_write",
 ];
 
 /// The decision for `tool`. A name with no entry is `NotAvailable`.
@@ -226,6 +232,7 @@ mod tests {
     fn registered() -> BTreeSet<String> {
         crate::tools::get_all_tool_definitions()
             .into_iter()
+            .chain(crate::tools::entry::definitions())
             .chain(crate::tools::flow_scope::definitions())
             .map(|tool| tool.name)
             .collect()
@@ -272,10 +279,61 @@ mod tests {
     #[test]
     fn the_first_release_exposes_exactly_these_totals() {
         assert_eq!(SCOPED_TOOLS.len(), 8);
-        assert_eq!(WITHHELD_TOOLS.len(), 148);
-        // The main registry (154 tools) is fully covered; the two extra names are Flow-only.
-        assert_eq!(crate::tools::get_all_tool_definitions().len(), 154);
-        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 154 + 2);
+        assert_eq!(WITHHELD_TOOLS.len(), 151);
+        // The main registry (153 tools) and the four search mode entry tools are fully covered; the two
+        // extra names are Flow-only.
+        assert_eq!(crate::tools::get_all_tool_definitions().len(), 153);
+        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 153 + 4 + 2);
+    }
+
+    /// The five task tools are closed to every connected application, whatever its scopes, and
+    /// the refusal is the one every other withheld tool gets.
+    #[test]
+    fn the_task_tools_are_closed_to_delegated_callers() {
+        let workspace = Uuid::from_u128(1);
+        let reference = DelegatedGrant {
+            scopes: ScopeSet::all(),
+            workspace_id: workspace,
+            projects: None,
+        };
+        let expected = gate_tool_call(&reference, "work_items.delete", None).err();
+        assert_eq!(expected, Some(crate::oauth::ToolRefusal::NotAvailable));
+        for name in crate::tools::tasks::TASK_TOOL_NAMES {
+            assert_eq!(decision(name), ToolDecision::NotAvailable, "{name}");
+            assert!(WITHHELD_TOOLS.contains(&name), "{name}");
+            for scopes in scope_sets() {
+                assert!(!allowed(scopes, name), "{name} under {}", scopes.to_scope_string());
+                let grant = DelegatedGrant {
+                    scopes,
+                    workspace_id: workspace,
+                    projects: None,
+                };
+                assert_eq!(
+                    gate_tool_call(&grant, name, None).err(),
+                    expected,
+                    "{name} under {}",
+                    scopes.to_scope_string()
+                );
+            }
+        }
+    }
+
+    /// The delegated tool set is exactly the eight read tools, under every grant: nothing else in
+    /// the registry is listed, task tools included.
+    #[test]
+    fn the_delegated_listing_is_exactly_the_eight_read_tools() {
+        let listed = |scopes: ScopeSet| -> BTreeSet<String> {
+            registered().into_iter().filter(|name| allowed(scopes, name)).collect()
+        };
+        let eight = SCOPED_TOOLS
+            .iter()
+            .map(|(name, _)| (*name).to_string())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(eight.len(), 8);
+        assert_eq!(listed(ScopeSet::all()), eight);
+        for scopes in scope_sets() {
+            assert!(listed(scopes).is_subset(&eight), "{}", scopes.to_scope_string());
+        }
     }
 
     #[test]
