@@ -90,6 +90,13 @@ interface SessionHooks {
 	onAuthorizationPending?(actions: readonly string[]): void;
 	onAuthorizationChange?(actions: readonly string[]): Promise<boolean> | boolean;
 	onPermissionState?(readOnly: boolean): void;
+	/**
+	 * A hook that applies server-provided bytes to the document (`onSnapshot`, `onAccepted` with
+	 * `remoteBytes`) threw. The frame was not applied and the applied sequence was not advanced; the
+	 * document may be unusable (a failed `import` can panic the WASM engine for good), so the owner
+	 * rebuilds it and asks for a new snapshot.
+	 */
+	onImportFailure?(error: unknown, frame: 'snapshot' | 'accepted'): void;
 }
 
 /** Test seams. Production uses the defaults. */
@@ -613,13 +620,19 @@ export class LoroObjectSession implements ObjectSessionContract {
 					seq: u.seq as number,
 					bytes: fromBase64(u.bytes as string)
 				}));
-				this.hooks.onSnapshot({
-					snapshotSeq: frame.snapshot_seq as number,
-					headSeq: frame.head_seq as number,
-					snapshotBytes: fromBase64(frame.snapshot as string),
-					tailUpdates,
-					headFrontier: frame.head_frontier as string
-				});
+				try {
+					this.hooks.onSnapshot({
+						snapshotSeq: frame.snapshot_seq as number,
+						headSeq: frame.head_seq as number,
+						snapshotBytes: fromBase64(frame.snapshot as string),
+						tailUpdates,
+						headFrontier: frame.head_frontier as string
+					});
+				} catch (error) {
+					// Not applied: the baseline (`lastAppliedSeq`, `connected`) stays as it was.
+					this.hooks.onImportFailure?.(error, 'snapshot');
+					break;
+				}
 				this.reconnectAttempt = 0;
 				this.lastAppliedSeq = frame.head_seq as number;
 				this.connected = true;
@@ -710,14 +723,20 @@ export class LoroObjectSession implements ObjectSessionContract {
 						void this.reconnect('stale_frontier');
 						break;
 					}
+					try {
+						this.hooks.onAccepted({
+							headSeq,
+							headFrontier: frame.head_frontier as string,
+							projectionSeq: frame.projection_seq as number,
+							eventId: frame.event_id as string,
+							remoteBytes: bytes
+						});
+					} catch (error) {
+						// The import threw: the update is not applied, so the sequence does not move.
+						this.hooks.onImportFailure?.(error, 'accepted');
+						break;
+					}
 					this.lastAppliedSeq = headSeq;
-					this.hooks.onAccepted({
-						headSeq,
-						headFrontier: frame.head_frontier as string,
-						projectionSeq: frame.projection_seq as number,
-						eventId: frame.event_id as string,
-						remoteBytes: bytes
-					});
 				} else {
 					// This `accepted` is for an update THIS connection did not submit -- i.e. another
 					// session committed a change. `apps/api/src/flow/collab/session.rs` broadcasts

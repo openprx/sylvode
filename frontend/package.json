@@ -43,6 +43,7 @@
 		"test:flow-ui-state": "bun tests/flow-ui-state.test.ts",
 		"test:flow-static-build": "bun tests/flow-static-build-deep-route.test.ts",
 		"test:flow-bridge": "bun tests/flow-bridge.test.ts",
+		"test:flow-dangling-parent": "bun tests/flow-dangling-parent.test.ts",
 		"test:flow-package-import": "bun tests/flow-package-import.test.ts",
 		"test:flow-settings": "bun tests/flow-settings.test.ts",
 		"test:flow-package-wizard": "bun tests/flow-package-wizard.test.ts",
