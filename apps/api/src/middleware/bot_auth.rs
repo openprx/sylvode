@@ -488,11 +488,15 @@ pub async fn bot_or_user_auth_middleware(
             transport_surface: String,
             is_active: bool,
             expires_at: Option<platform::timestamp::Timestamp>,
+            /// A project bot connection made this bot: its token is limited to the projects it is
+            /// connected to (`runner_bot_scope`).
+            runner: bool,
         }
 
         let bot = BotRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            r"SELECT id, workspace_id, permissions, transport_surface, is_active, expires_at
+            r"SELECT id, workspace_id, permissions, transport_surface, is_active, expires_at,
+                      EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner
                FROM workspace_bots
                WHERE token_hash = $1",
             vec![token_hash.into()],
@@ -570,6 +574,22 @@ pub async fn bot_or_user_auth_middleware(
                     error = %audit_error,
                     "bot operation log write failed for a refused bot request"
                 );
+            }
+            return Err(error);
+        }
+        // A runner bot reaches only the routes and projects its connections allow.
+        let method = req.method().as_str().to_owned();
+        let (mut parts, body) = req.into_parts();
+        let scope =
+            super::runner_bot_scope::authorize(&state.db, bot.id, bot.workspace_id, bot.runner, &method, &mut parts)
+                .await;
+        req = Request::from_parts(parts, body);
+        if let Err(error) = scope {
+            let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+            if let Err(audit_error) =
+                record_operation(&state.db, authenticated_operation, 403, Some("forbidden"), duration_ms).await
+            {
+                tracing::error!(error = %audit_error, "bot operation log write failed for a refused bot request");
             }
             return Err(error);
         }

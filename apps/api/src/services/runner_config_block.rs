@@ -136,7 +136,8 @@ pub fn build(input: &BlockInput<'_>) -> ConfigBlock {
          # issued {issued} for project {project}. Shown once: it holds the bot's token and the\n\
          # signing secret. Store it with mode 0600. To add this bot to a runner that already serves\n\
          # another bot, add the secret to [security] webhook_secrets and append the [[ai_task_callback.bots]]\n\
-         # and [[agents]] tables; keep the other sections once.\n\n"
+         # and [[agents]] tables; keep the other sections once. The token acts only in projects this\n\
+         # bot is connected to and has enabled, and only on the routes the runner needs.\n\n"
     );
     text.push_str("[server]\n");
     let url = comment_safe(input.runner_url);

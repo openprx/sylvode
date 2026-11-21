@@ -23,6 +23,20 @@ Operating notes for migration `0112_bot_connections.sql`: the schema under "Conn
   issue text, so it is never a workspace admin or owner; the Members API also answers 409 when its
   seat role is changed.
 
+## What a runner bot's token may reach
+
+The token of a bot made by a project bot connection is not a workspace-wide token. In
+`bot_or_user_auth_middleware`, `middleware/runner_bot_scope.rs` allows it only the routes listed in
+`RUNNER_BOT_ROUTES` (the task protocol and callbacks, the project, issue, comment, label and task
+routes), and for a route that names a project or an issue only when that project has an enabled
+connection for the bot. Everything else, such as the Members, Webhooks, Bots and Forms routes, the
+Flow routes and project deletion, answers 403 `this bot may act only in projects it is connected
+to`; the answer never says whether the route, the project or the connection was the reason. The
+task routes (`/ai/tasks/...`, `/ai/callbacks/task/...`) need no project: the handler already
+requires the bot to be the task's participant, and a task that was running when its connection was
+disabled can still report how it ended. A bot without a runner row (a bot made on the Bots page)
+is not affected. To let a runner bot call another route, add it to the table on purpose.
+
 The AI participants API (`/api/v1/projects/{project_id}/ai-participants` and its `{id}` routes) is
 removed. A bot becomes a project's AI participant only through a project bot connection.
 

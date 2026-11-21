@@ -22,7 +22,7 @@ pub mod work_item_service;
 pub mod workflow_service;
 
 #[cfg(test)]
-mod bot_connection_tests;
+pub(crate) mod bot_connection_tests;
 
 #[cfg(test)]
 mod connection_gate_tests;
