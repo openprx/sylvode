@@ -25,6 +25,10 @@ pub struct RunnerConfig {
     pub delivery_check_timeout_secs: u64,
     /// Heartbeat interval for queued and running tasks.
     pub heartbeat_secs: u64,
+    /// Project keys whose directories may hold CLI configuration files the runner cannot switch
+    /// off for codex and opencode (a headless run is refused in a directory that has them, unless
+    /// the operator trusts the project here).
+    pub trust_project_files: Vec<String>,
     /// Overrides the report interval the API advertises (seconds).
     pub report_interval_secs: Option<u64>,
     /// Install the skill or the managed `AGENTS.md` section into the project directory.
@@ -44,6 +48,7 @@ impl Default for RunnerConfig {
             delivery_check_timeout_secs: 5,
             heartbeat_secs: 600,
             report_interval_secs: None,
+            trust_project_files: Vec::new(),
             install_agent_guide: true,
             git_exclude_managed: true,
             tmux: RunnerTmuxConfig::default(),
@@ -110,6 +115,9 @@ pub struct RunnerClaudeConfig {
     pub dangerously_bypass_permissions: bool,
     /// Foreground process names, for adopted sessions.
     pub process_names: Vec<String>,
+    /// Variables of the runner's own environment the CLI is given besides the allow-list (an API
+    /// key, a config directory, a proxy). Nothing else is inherited.
+    pub env_passthrough: Vec<String>,
 }
 
 impl Default for RunnerClaudeConfig {
@@ -122,6 +130,7 @@ impl Default for RunnerClaudeConfig {
             disallowed_tools: Vec::new(),
             dangerously_bypass_permissions: false,
             process_names: vec!["claude".to_string(), "claude.exe".to_string()],
+            env_passthrough: Vec::new(),
         }
     }
 }
@@ -137,6 +146,8 @@ pub struct RunnerCodexConfig {
     pub approval: String,
     pub dangerously_bypass_permissions: bool,
     pub process_names: Vec<String>,
+    /// See `[runner.cli.claude] env_passthrough`.
+    pub env_passthrough: Vec<String>,
 }
 
 impl Default for RunnerCodexConfig {
@@ -148,6 +159,7 @@ impl Default for RunnerCodexConfig {
             approval: "never".to_string(),
             dangerously_bypass_permissions: false,
             process_names: vec!["codex".to_string()],
+            env_passthrough: Vec::new(),
         }
     }
 }
@@ -159,6 +171,8 @@ pub struct RunnerOpencodeConfig {
     pub enabled: bool,
     pub binary: String,
     pub process_names: Vec<String>,
+    /// See `[runner.cli.claude] env_passthrough`.
+    pub env_passthrough: Vec<String>,
 }
 
 impl Default for RunnerOpencodeConfig {
@@ -167,6 +181,7 @@ impl Default for RunnerOpencodeConfig {
             enabled: false,
             binary: "opencode".to_string(),
             process_names: vec!["opencode".to_string()],
+            env_passthrough: Vec::new(),
         }
     }
 }
@@ -238,6 +253,33 @@ impl RunnerConfig {
                 CODEX_SANDBOXES.join(", ")
             ));
         }
+        for (key, names) in [
+            ("runner.cli.claude.env_passthrough", &self.cli.claude.env_passthrough),
+            ("runner.cli.codex.env_passthrough", &codex.env_passthrough),
+            (
+                "runner.cli.opencode.env_passthrough",
+                &self.cli.opencode.env_passthrough,
+            ),
+        ] {
+            for name in names {
+                let valid = !name.is_empty()
+                    && name.len() <= 64
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                    && !name.starts_with(|c: char| c.is_ascii_digit());
+                if !valid || matches!(name.as_str(), "CLAUDECODE" | "CLAUDE_CODE_ENTRYPOINT" | "TMUX") {
+                    return Err(format!(
+                        "{key} holds a name that is not an environment variable the CLI may be given"
+                    ));
+                }
+            }
+        }
+        for key in &self.trust_project_files {
+            if !super::checks::valid_project_key(key) {
+                return Err("runner.trust_project_files holds a value that is not a project key".to_string());
+            }
+        }
         for (key, binary) in [
             ("runner.tmux.binary", &tmux.binary),
             ("runner.cli.claude.binary", &self.cli.claude.binary),
@@ -256,4 +298,53 @@ impl RunnerConfig {
 fn parse_major_minor(text: &str) -> Option<(u64, u64)> {
     let (major, minor) = text.trim().split_once('.')?;
     Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+impl RunnerConfig {
+    /// Checks `[runner.mcp] mcp_config_path`: an MCP configuration decides which programs a CLI
+    /// starts, so it must not come from a place a project can write. It must be absolute (a
+    /// relative path would resolve inside the project directory the server chooses), without
+    /// control characters, not start with `-`, be a regular file owned by the runner's user with
+    /// no group or other access, and lie outside every allowed root (compared canonically).
+    ///
+    /// # Errors
+    ///
+    /// A message naming the key.
+    pub fn validate_mcp_config_path(&self) -> Result<(), String> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let Some(text) = self.mcp.mcp_config_path.as_deref() else {
+            return Ok(());
+        };
+        let key = "runner.mcp.mcp_config_path";
+        let path = std::path::Path::new(text);
+        if !path.is_absolute() || text.starts_with('-') || text.chars().any(char::is_control) {
+            return Err(format!("{key} must be an absolute path"));
+        }
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("{key} cannot be used ({})", e.kind()))?;
+        let meta = std::fs::metadata(&canonical).map_err(|e| format!("{key} cannot be used ({})", e.kind()))?;
+        if !meta.is_file() {
+            return Err(format!("{key} must be a regular file"));
+        }
+        if meta.permissions().mode() & 0o077 != 0 {
+            return Err(format!(
+                "{key} must not be accessible to group or others (use mode 0600)"
+            ));
+        }
+        if meta.uid() != nix::unistd::Uid::effective().as_raw() {
+            return Err(format!("{key} must be owned by the user the runner runs as"));
+        }
+        for root in &self.allowed_roots {
+            let root = std::path::Path::new(root);
+            if let Ok(root) = root.canonicalize()
+                && canonical.starts_with(&root)
+            {
+                return Err(format!(
+                    "{key} must be outside every allowed root: a project could change it"
+                ));
+            }
+        }
+        Ok(())
+    }
 }

@@ -11,7 +11,7 @@ pub enum Dialog {
     /// The CLI asks to log in.
     NotLoggedIn,
     /// A chooser the runner cannot answer (codex's rate-limit chooser).
-    CliDialog,
+    Chooser,
     /// The account's usage limit is reached.
     UsageLimit,
 }
@@ -22,7 +22,7 @@ impl Dialog {
         match self {
             Self::Untrusted => "workspace_untrusted",
             Self::NotLoggedIn => "cli_not_logged_in",
-            Self::CliDialog => "cli_dialog",
+            Self::Chooser => "cli_dialog",
             Self::UsageLimit => "cli_usage_limit",
         }
     }
@@ -34,7 +34,7 @@ impl Dialog {
                 "the CLI asks to trust the project directory; run `sylvode-runner trust {key}` and answer the dialog"
             ),
             Self::NotLoggedIn => format!("the CLI is not logged in; attach to tmux session {key} and log in"),
-            Self::CliDialog => format!("the CLI shows a dialog the runner cannot answer; attach to tmux session {key}"),
+            Self::Chooser => format!("the CLI shows a dialog the runner cannot answer; attach to tmux session {key}"),
             Self::UsageLimit => "the CLI reports that its usage limit is reached".to_string(),
         }
     }
@@ -58,7 +58,7 @@ pub fn classify_dialog(cli: &str, screen: &str) -> Option<Dialog> {
             if screen.contains("usage limit") {
                 Some(Dialog::UsageLimit)
             } else if screen.contains("enter select \u{b7} esc back") {
-                Some(Dialog::CliDialog)
+                Some(Dialog::Chooser)
             } else {
                 None
             }

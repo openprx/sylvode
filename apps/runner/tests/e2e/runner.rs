@@ -61,10 +61,11 @@ impl Fixture {
             bin.path(),
             "claude",
             &format!(
-                "pwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done",
+                "pwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env > '{r}.env'",
                 r = record.display()
             ),
         );
+        write_script(bin.path(), "mcp-server", "exit 0");
         Self {
             api,
             root,
@@ -75,15 +76,32 @@ impl Fixture {
         }
     }
 
+    /// Replaces what the fake `claude` does after recording its directory, arguments and environment.
+    fn claude_does(&self, tail: &str) {
+        write_script(
+            self.bin.path(),
+            "claude",
+            &format!(
+                "pwd -P >> '{r}'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{r}'; done\n/usr/bin/env > '{r}.env'\n{tail}",
+                r = self.record.display()
+            ),
+        );
+    }
+
     fn config(&self) -> String {
+        self.config_with("")
+    }
+
+    fn config_with(&self, claude_extra: &str) -> String {
         let root = self
             .root
             .path()
             .canonicalize()
             .unwrap_or_else(|_| self.root.path().to_path_buf());
         format!(
-            "{}\n[runner.cli.claude]\nbinary = \"{}\"\n",
+            "{}\n[runner.mcp]\nserver_binary = \"{}\"\n[runner.cli.claude]\nbinary = \"{}\"\n{claude_extra}\n",
             config(&self.api.url(), &self.state, &root.to_string_lossy()),
+            self.bin.file("mcp-server").display(),
             self.bin.file("claude").display()
         )
         .replace("\n[[agents]]", "\n[[agents]]")
@@ -290,10 +308,193 @@ async fn a_key_change_is_recorded_and_a_shared_key_is_refused() {
     let (_, answer) = post_signed(&server.url("/webhook"), &body.to_string()).await;
     assert_eq!(answer["reason_code"], "session_name_collision", "{answer}");
     // The registry is on disk with mode 0600.
-    let registry = fx.state.path().join("sessions").join("registry.json");
+    let registry = fx.state.path().join("s").join("sessions").join("registry.json");
     assert!(registry.is_file());
     assert_eq!(
         std::fs::metadata(&registry).expect("meta").permissions().mode() & 0o777,
         0o600
+    );
+}
+
+fn state_path(fx: &Fixture) -> std::path::PathBuf {
+    fx.state.path().join("s")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_headless_cli_gets_only_the_runners_configuration() {
+    let fx = Fixture::new().await;
+    // A project that tries to bring its own MCP servers and settings.
+    std::fs::write(
+        fx.project.join(".mcp.json"),
+        r#"{"mcpServers":{"evil":{"command":"/bin/false"}}}"#,
+    )
+    .expect("mcp");
+    std::fs::create_dir_all(fx.project.join(".claude")).expect("mkdir");
+    std::fs::write(
+        fx.project.join(".claude/settings.json"),
+        r#"{"permissions":{"allow":["Bash(*)"]}}"#,
+    )
+    .expect("settings");
+    fx.set_view(vec![(200, view(&fx.project, "headless", true))]);
+    let mut server = fx.serve();
+    let (_, answer) = post_signed(&server.url("/webhook"), &delivery()).await;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    let lines = wait_lines(&fx.record, 10, Duration::from_secs(10));
+    let argv = lines[1..].to_vec();
+    let state = state_path(&fx);
+    let json = state.join("mcp").join(format!("{BOT}.claude.json"));
+    let at = |flag: &str| {
+        argv.iter()
+            .position(|a| a == flag)
+            .unwrap_or_else(|| panic!("{flag} missing: {argv:?}"))
+    };
+    // Strict MCP with the runner's own file, outside the project.
+    assert_eq!(argv[at("--mcp-config") + 1], json.to_string_lossy());
+    assert!(argv.iter().any(|a| a == "--strict-mcp-config"));
+    assert!(!json.starts_with(&fx.project));
+    // Committed project and local settings are not loaded; only the user's own.
+    assert_eq!(argv[at("--setting-sources") + 1], "user");
+    // An explicit allow list: the eight task and entry tools and the confined read tools.
+    let allowed_at = at("--allowedTools");
+    let allowed: Vec<&String> = argv[allowed_at + 1..]
+        .iter()
+        .take_while(|a| !a.starts_with("--"))
+        .collect();
+    assert_eq!(allowed.len(), 11, "{allowed:?}");
+    assert!(allowed.iter().any(|a| *a == "mcp__sylvode__sylvode_task_get"));
+    assert!(
+        allowed
+            .iter()
+            .all(|a| !a.contains("Bash") && !a.contains("sylvode_write")),
+        "{allowed:?}"
+    );
+    assert!(
+        allowed
+            .iter()
+            .any(|a| a.starts_with("Read(//") && a.ends_with("/svwl/**)")),
+        "{allowed:?}"
+    );
+    assert_eq!(argv[at("--permission-mode") + 1], "dontAsk");
+    // The files hold the token once, with private modes, and no argument holds it.
+    assert!(argv.iter().all(|a| !a.contains("opr_")), "{argv:?}");
+    let toml = std::fs::read_to_string(state.join("mcp").join(format!("{BOT}.toml"))).expect("toml");
+    assert!(toml.contains(TOKEN));
+    assert!(!std::fs::read_to_string(&json).expect("json").contains("opr_"));
+    for (path, mode) in [
+        (&json, 0o600),
+        (&state.join("mcp").join(format!("{BOT}.toml")), 0o600),
+        (&state.join("mcp"), 0o700),
+        (&state, 0o700),
+    ] {
+        assert_eq!(
+            std::fs::metadata(path).expect("meta").permissions().mode() & 0o777,
+            mode,
+            "{path:?}"
+        );
+    }
+    let log = server.stdout().join("\n");
+    assert!(!log.contains(TOKEN));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_headless_cli_gets_an_allow_listed_environment() {
+    let fx = Fixture::new().await;
+    fx.set_view(vec![(200, view(&fx.project, "headless", true))]);
+    let server = {
+        let config = fx.config_with("env_passthrough = [\"SV_PASS_ME\"]");
+        Server::start(
+            RUNNER,
+            &config,
+            &[
+                ("SV_SENTINEL_SECRET", "leak"),
+                ("AWS_SECRET_ACCESS_KEY", "leak"),
+                ("GITHUB_TOKEN", "leak"),
+                ("SSH_AUTH_SOCK", "/tmp/leak"),
+                ("SV_PASS_ME", "kept"),
+                ("CLAUDECODE", "1"),
+                ("LC_ALL", "C"),
+            ],
+        )
+        .expect("starts")
+    };
+    let (_, answer) = post_signed(&server.url("/webhook"), &delivery()).await;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    wait_lines(&fx.record, 5, Duration::from_secs(10));
+    let env = std::fs::read_to_string(format!("{}.env", fx.record.display())).expect("env");
+    let names: Vec<&str> = env.lines().filter_map(|l| l.split_once('=').map(|(n, _)| n)).collect();
+    for leaked in [
+        "SV_SENTINEL_SECRET",
+        "AWS_SECRET_ACCESS_KEY",
+        "GITHUB_TOKEN",
+        "SSH_AUTH_SOCK",
+        "CLAUDECODE",
+    ] {
+        assert!(!names.contains(&leaked), "{leaked} reached the CLI");
+    }
+    assert!(!env.contains("leak"), "{env}");
+    assert!(
+        names.contains(&"SV_PASS_ME") && names.contains(&"PATH") && names.contains(&"LC_ALL"),
+        "{names:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_directory_swapped_for_a_link_while_waiting_for_a_slot_is_never_run_in() {
+    let fx = Fixture::new().await;
+    // The first run holds the only slot for a while.
+    fx.claude_does("/bin/sleep 3");
+    let outside = TempDir::new("rn-outside");
+    let outside_path = outside
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| outside.path().to_path_buf());
+    fx.set_view(vec![(200, view(&fx.project, "headless", true))]);
+    let server = fx.serve();
+    let (_, first) = post_signed(&server.url("/webhook"), &delivery_n(1)).await;
+    assert_eq!(first["status"], "dispatched", "{first}");
+    wait_lines(&fx.record, 3, Duration::from_secs(10));
+    let (_, second) = post_signed(&server.url("/webhook"), &delivery_n(2)).await;
+    assert_eq!(second["status"], "dispatched", "{second}");
+    // While the second waits, the directory becomes a link to somewhere else.
+    let moved = fx.project.with_file_name("svwl-moved");
+    std::fs::rename(&fx.project, &moved).expect("rename");
+    std::os::unix::fs::symlink(&outside_path, &fx.project).expect("symlink");
+    let fails = fx.api.wait_for("POST", "/fail", 2, Duration::from_secs(20)).await;
+    let reasons: Vec<String> = fails
+        .iter()
+        .map(|f| f.body["reason"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(
+        reasons
+            .iter()
+            .any(|r| r == "the project working directory changed after the task was accepted"),
+        "{reasons:?}"
+    );
+    // The CLI ran once, in the real directory, never in the link's target.
+    let record = std::fs::read_to_string(&fx.record).expect("record");
+    assert_eq!(record.matches("[Sylvode task]").count(), 1, "{record}");
+    assert!(!record.contains(&*outside_path.to_string_lossy()), "{record}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_shutdown_during_a_run_fails_the_task_as_retryable() {
+    let fx = Fixture::new().await;
+    fx.claude_does("exec /bin/sleep 30");
+    fx.set_view(vec![(200, view(&fx.project, "headless", true))]);
+    let mut server = fx.serve();
+    let (_, answer) = post_signed(&server.url("/webhook"), &delivery()).await;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    wait_lines(&fx.record, 3, Duration::from_secs(10));
+    server.terminate();
+    assert!(
+        server.wait_exit(Duration::from_secs(30)).is_some(),
+        "the runner did not exit"
+    );
+    let fails = fx.api.requests_to("POST", "/api/v1/ai/tasks/");
+    let fail = fails.iter().find(|r| r.path().ends_with("/fail")).expect("a fail call");
+    assert_eq!(fail.body["retryable"], true, "{:?}", fail.body);
+    assert_eq!(
+        fail.body["reason"],
+        "the runner stopped the run before the agent ended the task"
     );
 }

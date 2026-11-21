@@ -658,6 +658,7 @@ impl Config {
     /// type table: its permissions come from `[runner.cli.*]` and its directory from Sylvode.
     fn validate_runner_agents(&self) -> Result<(), String> {
         self.runner.validate()?;
+        self.runner.validate_mcp_config_path()?;
         let runners: Vec<&AgentConfig> = self.agents.iter().filter(|a| a.agent_type == "runner").collect();
         if runners.is_empty() {
             return Ok(());
@@ -2015,5 +2016,53 @@ url = "http://127.0.0.1:9000/hook"
         .expect("loads");
         let shown = format!("{with_global:?}");
         assert!(!shown.contains("opr_zzz") && !shown.contains("opr_yyy"), "{shown}");
+    }
+
+    /// `[runner.mcp] mcp_config_path` decides which programs a CLI starts, so a project must not be
+    /// able to write it.
+    #[test]
+    fn the_mcp_config_path_must_be_a_private_absolute_file_outside_the_roots() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("sylvode-mcp-path-{}", uuid::Uuid::new_v4()));
+        let root = base.join("work");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let outside = base.join("mcp.json");
+        std::fs::write(&outside, "{}").expect("write");
+        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let inside = root.join("mcp.json");
+        std::fs::write(&inside, "{}").expect("write");
+        std::fs::set_permissions(&inside, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let loose = base.join("loose.json");
+        std::fs::write(&loose, "{}").expect("write");
+        std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        let link = base.join("link.json");
+        std::os::unix::fs::symlink(&inside, &link).expect("symlink");
+        let load = |path: &str| {
+            Config::from_toml(&format!(
+                "{GOLDEN_BLOCK}\n[runner.mcp]\nmcp_config_path = {path:?}\n",
+                GOLDEN_BLOCK = GOLDEN_BLOCK.replace(
+                    "allowed_roots = [\"/home/dev/work/svwl\"]",
+                    &format!("allowed_roots = [{:?}]", root.to_string_lossy())
+                )
+            ))
+        };
+        assert!(load(&outside.to_string_lossy()).is_ok());
+        for (path, why) in [
+            ("mcp.json", "absolute"),
+            ("./mcp.json", "absolute"),
+            ("-evil", "absolute"),
+            ("/nonexistent/mcp.json", "cannot be used"),
+            (&*base.to_string_lossy(), "regular file"),
+            (&*inside.to_string_lossy(), "outside every allowed root"),
+            (&*link.to_string_lossy(), "outside every allowed root"),
+            (&*loose.to_string_lossy(), "0600"),
+        ] {
+            let error = load(path).expect_err(path);
+            assert!(
+                error.contains("mcp_config_path") && error.contains(why),
+                "{path}: {error}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -50,7 +50,7 @@ tokio-util = { workspace = true, features = ["rt"] }
 # Signals a whole process group (killpg) through a safe API; the crate forbids `unsafe`.
 # The same version zip already resolves in this workspace.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["signal", "fs", "dir"] }
+nix = { version = "0.31", default-features = false, features = ["signal", "fs", "dir", "user"] }
 
 [lints]
 workspace = true

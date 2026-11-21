@@ -48,15 +48,16 @@ impl<T> TaskQueue<T> {
     /// Adds `item` unless the same task and attempt is queued.
     pub fn enqueue(&mut self, task_id: &str, attempt: i64, item: T) -> Enqueued {
         if let Some(index) = self.entries.iter().position(|e| e.task_id == task_id) {
-            let entry = &mut self.entries[index];
-            if entry.attempt == attempt {
-                return Enqueued::Duplicate;
+            if let Some(entry) = self.entries.get_mut(index) {
+                if entry.attempt == attempt {
+                    return Enqueued::Duplicate;
+                }
+                *entry = Entry {
+                    task_id: task_id.to_string(),
+                    attempt,
+                    item,
+                };
             }
-            *entry = Entry {
-                task_id: task_id.to_string(),
-                attempt,
-                item,
-            };
             return Enqueued::Replaced(index + 1);
         }
         self.entries.push_back(Entry {

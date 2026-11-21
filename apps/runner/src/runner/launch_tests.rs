@@ -4,8 +4,9 @@ use std::path::Path;
 
 use super::config::{RunnerClaudeConfig, RunnerCodexConfig};
 use super::launch::{
-    LaunchError, LaunchFiles, SEARCH_MODE_TOOLS, claude_argv, claude_hook_command, codex_argv, hook_words, mcp_tool,
-    opencode_argv, rule_safe_dir, shell_quote, toml_array, toml_string,
+    LaunchError, LaunchFiles, SEARCH_MODE_TOOLS, claude_argv, claude_headless_argv, claude_hook_command, codex_argv,
+    codex_headless_argv, hook_words, mcp_tool, opencode_argv, opencode_headless_argv, rule_safe_dir, shell_quote,
+    toml_array, toml_string,
 };
 use super::tmux::SessionKey;
 
@@ -46,6 +47,8 @@ fn claude_defaults_are_exactly_the_documented_posture() {
             "--mcp-config",
             "/state/mcp/BOT.claude.json",
             "--strict-mcp-config",
+            "--setting-sources",
+            "user",
             "--settings",
             "/state/sessions/SVWL/claude-settings.json",
             "--allowedTools",
@@ -370,4 +373,95 @@ fn a_quoted_hook_command_is_parsed_by_a_shell_into_the_same_words() {
         .map(str::to_string)
         .collect();
     assert_eq!(words, hook_words(&weird, "claude", &key(), "Stop").expect("words"));
+}
+
+#[test]
+fn the_headless_claude_argv_has_the_same_posture_as_the_interactive_one() {
+    let argv = claude_headless_argv(
+        Path::new("/usr/local/bin/claude"),
+        &RunnerClaudeConfig::default(),
+        Path::new(DIR),
+        Path::new("/state/mcp/BOT.claude.json"),
+        "[Sylvode task] id=x",
+    )
+    .expect("argv");
+    assert_eq!(
+        argv[..11],
+        strings(&[
+            "/usr/local/bin/claude",
+            "-p",
+            "[Sylvode task] id=x",
+            "--permission-mode",
+            "dontAsk",
+            "--mcp-config",
+            "/state/mcp/BOT.claude.json",
+            "--strict-mcp-config",
+            "--setting-sources",
+            "user",
+            "--allowedTools",
+        ])
+    );
+    let interactive = claude(&RunnerClaudeConfig::default()).expect("argv");
+    let list = |v: &[String]| v[v.iter().position(|a| a == "--allowedTools").expect("flag") + 1..].to_vec();
+    assert_eq!(list(&argv), list(&interactive), "one allow list for both channels");
+    // A prompt that would be read as an option is refused.
+    for bad in ["", "-x", "--help"] {
+        assert!(
+            claude_headless_argv(
+                Path::new("/c"),
+                &RunnerClaudeConfig::default(),
+                Path::new(DIR),
+                Path::new("/m"),
+                bad
+            )
+            .is_err()
+        );
+    }
+    // The write tool and the extras widen it the same way.
+    let wide = claude_headless_argv(
+        Path::new("/c"),
+        &RunnerClaudeConfig {
+            allow_write_call: true,
+            ..RunnerClaudeConfig::default()
+        },
+        Path::new(DIR),
+        Path::new("/m"),
+        "p",
+    )
+    .expect("argv");
+    assert!(wide.contains(&"mcp__sylvode__sylvode_write".to_string()));
+    assert!(
+        wide.contains(&"mcp__sylvode__sylvode_read".to_string()),
+        "write does not replace the list"
+    );
+}
+
+#[test]
+fn the_headless_codex_and_opencode_argv() {
+    let codex = codex_headless_argv(
+        Path::new("/usr/bin/codex"),
+        &RunnerCodexConfig::default(),
+        Path::new(DIR),
+        Path::new("/opt/mcp-server"),
+        Path::new("/state/mcp/BOT.toml"),
+        "[Sylvode task] id=x",
+    )
+    .expect("argv");
+    assert_eq!(
+        codex[..5],
+        strings(&[
+            "/usr/bin/codex",
+            "exec",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check"
+        ])
+    );
+    assert_eq!(codex.last().map(String::as_str), Some("[Sylvode task] id=x"));
+    assert!(codex.iter().all(|a| !a.contains("dangerously-bypass")));
+    assert_eq!(
+        opencode_headless_argv(Path::new("/usr/bin/opencode"), "p").expect("argv"),
+        strings(&["/usr/bin/opencode", "run", "p"])
+    );
+    assert!(opencode_headless_argv(Path::new("/o"), "-x").is_err());
 }

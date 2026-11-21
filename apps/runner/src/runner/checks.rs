@@ -18,6 +18,24 @@ use super::paths::AllowedRoots;
 use super::sv_client::{SvClient, SvError, TASK_PROTOCOL, token_refused};
 use crate::config::Config;
 
+/// The credentials of the bot a delivery is for, to write its MCP files. `Debug` hides the token.
+#[derive(Clone)]
+pub struct BotCreds {
+    pub bot_id: String,
+    pub api_url: String,
+    pub token: String,
+}
+
+impl std::fmt::Debug for BotCreds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BotCreds")
+            .field("bot_id", &self.bot_id)
+            .field("api_url", &self.api_url)
+            .field("token", &"<redacted>")
+            .finish()
+    }
+}
+
 /// A refused delivery.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Refusal {
@@ -45,10 +63,13 @@ pub enum Channel {
 #[derive(Debug)]
 pub struct Accepted {
     pub client: SvClient,
+    pub bot: BotCreds,
     pub task_id: String,
     pub attempt: i64,
+    #[allow(dead_code, reason = "the session manager reads it")]
     pub max_attempts: i64,
     pub project_key: String,
+    #[allow(dead_code, reason = "the session manager reads it")]
     pub project_id: String,
     /// The task message of design section 4.9, built from the task view.
     pub message: String,
@@ -59,8 +80,8 @@ pub struct Accepted {
     pub cli: String,
     /// The program that runs the CLI, as found on the `PATH` or given as `binary`.
     pub program: PathBuf,
-    /// The id of the issue the task is about, when it has one.
-    pub issue_id: Option<String>,
+    /// The MCP server executable.
+    pub mcp_server: PathBuf,
 }
 
 /// What the checks decided.
@@ -162,6 +183,7 @@ pub struct Context<'a> {
     /// `Some(text)` when the protocol handshake found a mismatch.
     pub protocol_mismatch: Option<String>,
     pub client: SvClient,
+    pub bot: BotCreds,
 }
 
 fn str_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
@@ -296,12 +318,12 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     let Some(program) = finder.locate(binary) else {
         return refuse("cli_unavailable", format!("the {cli} CLI was not found on this runner"));
     };
-    if channel == Channel::Tmux && finder.locate(&runner.mcp.server_binary).is_none() {
+    let Some(mcp_server) = finder.locate(&runner.mcp.server_binary) else {
         return refuse(
             "cli_unavailable",
             "the MCP server (mcp-server) was not found on this runner",
         );
-    }
+    };
     let Some(message) = task_message(&view, task_id, attempt, max_attempts) else {
         return refuse(
             "delivery_mismatch",
@@ -310,6 +332,7 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     };
     Verdict::Run(Box::new(Accepted {
         client: ctx.client,
+        bot: ctx.bot,
         task_id: task_id.to_string(),
         attempt,
         max_attempts,
@@ -320,7 +343,7 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         channel,
         cli,
         program,
-        issue_id: str_at(&view, &["source", "issue", "id"]).map(str::to_string),
+        mcp_server,
     }))
 }
 

@@ -21,11 +21,11 @@ impl Task for T {
 
 fn timers() -> Timers {
     Timers {
-        heartbeat: Duration::from_secs(600),
-        ack_reminder: Duration::from_secs(180),
-        report_unacked: Duration::from_secs(900),
-        completion_grace: Duration::from_secs(60),
-        blocked_fail: Duration::from_secs(300),
+        heartbeat: Duration::from_mins(10),
+        ack_reminder: Duration::from_mins(3),
+        report_unacked: Duration::from_mins(15),
+        completion_grace: Duration::from_mins(1),
+        blocked_fail: Duration::from_mins(5),
         ready_timeout: Duration::from_secs(90),
         push_confirm: Duration::from_secs(10),
         poll: Duration::from_secs(10),
@@ -463,7 +463,7 @@ fn a_blocked_session_fails_its_task_after_five_minutes_and_keeps_the_session() {
 #[test]
 fn a_dialog_on_a_running_task_blocks_it() {
     let mut h = H::busy(T("a", 1));
-    let actions = h.m.on_dialog(Dialog::CliDialog, h.now);
+    let actions = h.m.on_dialog(Dialog::Chooser, h.now);
     assert_eq!(kinds(&actions), ["runner.blocked"]);
     assert!(matches!(h.m.state, State::Blocked { .. }));
     // The person answers: the turn goes on.
@@ -559,7 +559,7 @@ fn an_untrusted_directory_fails_every_waiting_task_without_retry() {
     // The other dialogs name their own codes.
     assert_eq!(Dialog::NotLoggedIn.code(), "cli_not_logged_in");
     assert_eq!(Dialog::UsageLimit.code(), "cli_usage_limit");
-    assert_eq!(Dialog::CliDialog.code(), "cli_dialog");
+    assert_eq!(Dialog::Chooser.code(), "cli_dialog");
     assert_eq!(Dialog::Untrusted.code(), "workspace_untrusted");
 }
 
@@ -625,6 +625,8 @@ fn recovered_state_is_supervised_like_a_pushed_task() {
     assert!(matches!(b.m.state, State::Blocked { .. }));
 }
 
+type Input = (&'static str, fn(&mut H) -> Vec<Action<T>>);
+
 /// Every state meets every input: nothing panics, and the invariants of the machine hold.
 #[test]
 fn every_state_meets_every_input() {
@@ -661,7 +663,6 @@ fn every_state_meets_every_input() {
             h
         }),
     ];
-    type Input = (&'static str, fn(&mut H) -> Vec<Action<T>>);
     let inputs: Vec<Input> = vec![
         ("enqueue", |h| h.enqueue(T("n", 1))),
         ("enqueue again", |h| h.enqueue(T("p", 2))),
@@ -696,7 +697,7 @@ fn every_state_meets_every_input() {
         }),
         ("ready", |h| h.m.on_ready(h.now)),
         ("dialog untrusted", |h| h.m.on_dialog(Dialog::Untrusted, h.now)),
-        ("dialog cli", |h| h.m.on_dialog(Dialog::CliDialog, h.now)),
+        ("dialog cli", |h| h.m.on_dialog(Dialog::Chooser, h.now)),
         ("session gone", |h| h.m.on_session_gone(h.now)),
         ("reminder sent", |h| {
             h.m.on_reminder(Reminder::NotAcknowledged, true, h.now)
@@ -738,7 +739,7 @@ fn every_state_meets_every_input() {
     assert_eq!(combinations, 8 * 29);
 }
 
-/// Dead and NoSession leave only through an ensure, and Idle with queued work always pushes.
+/// `Dead` and `NoSession` leave only through an ensure, and `Idle` with queued work always pushes.
 #[test]
 fn idle_with_queued_work_always_pushes_and_dead_always_ensures() {
     let mut h = H::idle();

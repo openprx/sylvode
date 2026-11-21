@@ -14,7 +14,7 @@ use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 
-use super::checks::{Channel, Context, SessionRegistry, Verdict, check_delivery, valid_project_key};
+use super::checks::{BotCreds, Channel, Context, SessionRegistry, Verdict, check_delivery, valid_project_key};
 use super::paths::AllowedRoots;
 use super::sv_client::SvClient;
 use crate::config::Config;
@@ -123,6 +123,9 @@ impl Fixture {
         let base = Dir::new();
         let root = base.sub("work");
         let project_dir = base.sub("work/svwl");
+        let mcp = base.path().join("mcp-server");
+        fs::write(&mcp, "#!/bin/sh\n").expect("mcp-server");
+        fs::set_permissions(&mcp, fs::Permissions::from_mode(0o755)).expect("chmod");
         let claude = base.path().join("claude");
         fs::write(&claude, "#!/bin/sh\n").expect("claude");
         fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).expect("chmod");
@@ -146,10 +149,12 @@ impl Fixture {
              [ai_task_callback]\nenabled = true\napi_url = \"http://{api}\"\n\
              [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n\
              [runner]\nallowed_roots = [\"{}\"]\ndelivery_check_timeout_secs = 1\n{runner_extra}\n\
+             [runner.mcp]\nserver_binary = \"{}\"\n\
              [runner.cli.claude]\nbinary = \"{}\"\n\
              [[agents]]\nid = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\n\
              [agents.route]\nbot_ids = [\"{BOT}\"]\n",
             self.root.display(),
+            self.base.path().join("mcp-server").display(),
             self.claude.display()
         ))
         .expect("config")
@@ -176,10 +181,19 @@ impl Fixture {
                 registry: &self.registry,
                 protocol_mismatch: mismatch,
                 client,
+                bot: bot(),
             },
             payload,
         )
         .await
+    }
+}
+
+fn bot() -> BotCreds {
+    BotCreds {
+        bot_id: BOT.to_string(),
+        api_url: "http://127.0.0.1:1".to_string(),
+        token: TOKEN.to_string(),
     }
 }
 
@@ -218,10 +232,6 @@ async fn a_good_headless_delivery_runs_in_the_canonical_directory() {
     assert_eq!(accepted.channel, Channel::Headless);
     assert_eq!(accepted.program, fx.claude);
     assert_eq!(accepted.project_key, "SVWL");
-    assert_eq!(
-        accepted.issue_id.as_deref(),
-        Some("33333333-3333-4333-8333-333333333333")
-    );
     // The view was fetched with the bot's token and the transport header, for this attempt.
     let seen = m.seen.lock().clone();
     assert_eq!(seen.len(), 1);
@@ -285,6 +295,7 @@ async fn invalid_roots_refuse_the_runner_agents() {
             registry: &fx.registry,
             protocol_mismatch: None,
             client,
+            bot: bot(),
         },
         &delivery(),
     )
@@ -543,7 +554,7 @@ async fn channel_and_cli_prerequisites() {
     let (code, reason) = refused(&fx.run(&config, m.clone(), addr, &delivery()).await);
     assert_eq!(code, "cli_unavailable");
     assert!(reason.contains("MCP server"), "{reason}");
-    config.runner.mcp.server_binary = fake("mcp-server", "exit 0").to_string_lossy().into_owned();
+    config.runner.mcp.server_binary = fake("mcp-server-2", "exit 0").to_string_lossy().into_owned();
     let verdict = fx.run(&config, m.clone(), addr, &delivery()).await;
     let Verdict::Run(accepted) = verdict else {
         panic!("{verdict:?}")
@@ -598,7 +609,7 @@ async fn channel_and_cli_prerequisites() {
 async fn no_refusal_text_holds_the_token() {
     let fx = Fixture::new();
     let mut texts = Vec::new();
-    for (status, channel) in [(401, "headless"), (404, "headless"), (200, "tmux")] {
+    for (status, channel) in [(401, "headless"), (404, "headless"), (200, "carrier-pigeon")] {
         let body = if status == 200 {
             json!({"code": 0, "data": task_view(&fx.project_dir, channel, "claude")})
         } else {

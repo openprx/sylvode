@@ -98,6 +98,24 @@ pub const ENV_ALLOWED: [&str; 10] = [
     "TMUX_TMPDIR",
 ];
 
+/// The variables a process of the runner's gets from the runner's own environment: the
+/// allow-list of [`ENV_ALLOWED`] and `LC_*`, the names in `extra` (an operator's explicit
+/// pass-through list), and for the `systemd-run --user` wrapper the two variables it needs. The
+/// agent variables are never passed. This one definition serves the tmux server and the headless
+/// CLI, so the two channels give a CLI the same environment.
+pub fn allowed_environment(extra: &[String], for_systemd_run: bool) -> Vec<(OsString, OsString)> {
+    std::env::vars_os()
+        .filter(|(name, _)| {
+            let name = name.to_string_lossy();
+            let allowed = ENV_ALLOWED.contains(&&*name)
+                || name.starts_with("LC_")
+                || extra.iter().any(|wanted| *wanted == *name)
+                || (for_systemd_run && ENV_ALLOWED_SYSTEMD.contains(&&*name));
+            allowed && !ENV_REMOVED.contains(&&*name)
+        })
+        .collect()
+}
+
 /// Needed only by the `systemd-run --user` wrapper.
 const ENV_ALLOWED_SYSTEMD: [&str; 2] = ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"];
 
@@ -660,14 +678,8 @@ impl Tmux {
             Command::new(&self.program)
         };
         command.env_clear();
-        for (name, value) in std::env::vars_os() {
-            let name_text = name.to_string_lossy();
-            let allowed = ENV_ALLOWED.contains(&&*name_text)
-                || name_text.starts_with("LC_")
-                || (wrap_in_scope && ENV_ALLOWED_SYSTEMD.contains(&&*name_text));
-            if allowed {
-                command.env(&name, &value);
-            }
+        for (name, value) in allowed_environment(&[], wrap_in_scope) {
+            command.env(name, value);
         }
         for (key, value) in &self.extra_env {
             command.env(key, value);

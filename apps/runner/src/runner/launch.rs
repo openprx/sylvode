@@ -14,6 +14,18 @@
 //!   needs `dangerously_bypass_permissions`, validated by the same code as the headless channel.
 //!   codex runs with `-s <sandbox> -a never` (nobody answers approvals) and `-C <dir>`.
 //!   opencode is not launched with any permission argument of the runner's.
+//! - **Nothing from the project.** A repository must not add allow rules, hooks or MCP servers to
+//!   a session. claude is therefore started with flags that stop it loading them (claude
+//!   2.1.330, `claude --help`; the help text does not say in which version each flag appeared):
+//!   `--strict-mcp-config` ("only use MCP servers from --mcp-config, ignoring all other MCP
+//!   configurations": no `.mcp.json`, no user or project server), `--mcp-config <runner file>`,
+//!   `--setting-sources user` ("comma-separated list of setting sources to load (user, project,
+//!   local)": the committed `.claude/settings.json` and `.claude/settings.local.json` are not
+//!   loaded; only the runner user's own `~/.claude/settings.json` is), `--allowedTools <explicit
+//!   list>`, and `--permission-mode`. What stays: the operator's own user settings, which
+//!   `--help` offers no flag to switch off separately. codex has no verified equivalent, so a
+//!   headless codex or opencode run is refused in a directory that holds the CLI's own
+//!   configuration unless the operator trusts the project (`[runner] trust_project_files`).
 //! - **Directory in rules.** A permission rule holds the directory, so a directory whose name has
 //!   characters with a meaning in rules (`(`, `)`, `*`, `?`, `[`, `{`, `,`, quotes, `#`, ...) is
 //!   refused.
@@ -121,6 +133,100 @@ pub fn claude_argv(
     dir: &Path,
     files: &LaunchFiles<'_>,
 ) -> Result<Vec<String>, LaunchError> {
+    let ClaudeParts {
+        mode,
+        allowed,
+        disallowed,
+    } = claude_parts(cfg, dir)?;
+    let path = utf8(files.claude_mcp_json)?;
+    let mut argv = vec![
+        utf8(program)?,
+        "--permission-mode".to_string(),
+        mode,
+        "--mcp-config".to_string(),
+        path,
+        "--strict-mcp-config".to_string(),
+        "--setting-sources".to_string(),
+        "user".to_string(),
+        "--settings".to_string(),
+        utf8(files.claude_settings)?,
+        "--allowedTools".to_string(),
+    ];
+    argv.extend(allowed);
+    if !disallowed.is_empty() {
+        argv.push("--disallowedTools".to_string());
+        argv.extend(disallowed);
+    }
+    Ok(argv)
+}
+
+/// The argument vector of a headless claude run: `-p <prompt>` first, then the same posture as the
+/// interactive session (runner MCP file only, no project settings, explicit allow list), without
+/// the hook settings (a headless run reports nothing through hooks).
+///
+/// # Errors
+///
+/// [`LaunchError`] for an unusable directory, an invalid prompt or invalid permission settings.
+pub fn claude_headless_argv(
+    program: &Path,
+    cfg: &RunnerClaudeConfig,
+    dir: &Path,
+    mcp_config: &Path,
+    prompt: &str,
+) -> Result<Vec<String>, LaunchError> {
+    let ClaudeParts {
+        mode,
+        allowed,
+        disallowed,
+    } = claude_parts(cfg, dir)?;
+    check_prompt(prompt)?;
+    // `-p` and the prompt come first, so no variadic list below can swallow the prompt.
+    let mut argv = vec![
+        utf8(program)?,
+        "-p".to_string(),
+        prompt.to_string(),
+        "--permission-mode".to_string(),
+        mode,
+        "--mcp-config".to_string(),
+        utf8(mcp_config)?,
+        "--strict-mcp-config".to_string(),
+        "--setting-sources".to_string(),
+        "user".to_string(),
+        "--allowedTools".to_string(),
+    ];
+    argv.extend(allowed);
+    if !disallowed.is_empty() {
+        argv.push("--disallowedTools".to_string());
+        argv.extend(disallowed);
+    }
+    Ok(argv)
+}
+
+/// A prompt that starts with `-` would be read as an option.
+fn check_prompt(prompt: &str) -> Result<(), LaunchError> {
+    if prompt.is_empty() || prompt.starts_with('-') {
+        return Err(LaunchError::Unsafe(
+            "the prompt is empty or starts with `-`".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn utf8(p: &Path) -> Result<String, LaunchError> {
+    p.to_str()
+        .map(str::to_string)
+        .ok_or_else(|| LaunchError::Unsafe("a runner file path is not UTF-8".to_string()))
+}
+
+struct ClaudeParts {
+    mode: String,
+    allowed: Vec<String>,
+    disallowed: Vec<String>,
+}
+
+/// The permission mode and the tool lists of claude: the design's default list, plus
+/// `sylvode_write` with `allow_write_call`, plus the configured extras (`{dir}` expanded).
+fn claude_parts(cfg: &RunnerClaudeConfig, dir: &Path) -> Result<ClaudeParts, LaunchError> {
     let dir_text = rule_safe_dir(dir)?;
     // The same validation the headless channel applies.
     let mut settings = crate::config::CliAgentConfig::headless("claude-code", dir_text, 1);
@@ -146,28 +252,11 @@ pub fn claude_argv(
             ));
         }
     }
-    let path = |p: &Path| -> Result<String, LaunchError> {
-        p.to_str()
-            .map(str::to_string)
-            .ok_or_else(|| LaunchError::Unsafe("a runner file path is not UTF-8".to_string()))
-    };
-    let mut argv = vec![
-        path(program)?,
-        "--permission-mode".to_string(),
-        permissions.mode.to_string(),
-        "--mcp-config".to_string(),
-        path(files.claude_mcp_json)?,
-        "--strict-mcp-config".to_string(),
-        "--settings".to_string(),
-        path(files.claude_settings)?,
-        "--allowedTools".to_string(),
-    ];
-    argv.extend(allowed);
-    if !disallowed.is_empty() {
-        argv.push("--disallowedTools".to_string());
-        argv.extend(disallowed);
-    }
-    Ok(argv)
+    Ok(ClaudeParts {
+        mode: permissions.mode.to_string(),
+        allowed,
+        disallowed,
+    })
 }
 
 /// A TOML value as one `-c` argument: serialised by the TOML serialiser, never concatenated.
@@ -259,6 +348,62 @@ pub fn codex_argv(
         "-c".to_string(),
         format!("notify={}", toml_array(&notify)),
     ])
+}
+
+/// The argument vector of a headless codex run: `codex exec` with the sandbox and the runner's
+/// MCP server, the prompt last.
+///
+/// # Errors
+///
+/// [`LaunchError`] for an unusable directory, an invalid prompt or invalid permission settings.
+pub fn codex_headless_argv(
+    program: &Path,
+    cfg: &RunnerCodexConfig,
+    dir: &Path,
+    mcp_server: &Path,
+    mcp_toml: &Path,
+    prompt: &str,
+) -> Result<Vec<String>, LaunchError> {
+    let dir_text = rule_safe_dir(dir)?;
+    let mut settings = crate::config::CliAgentConfig::headless("codex", dir_text, 1);
+    settings.sandbox = Some(cfg.sandbox.clone());
+    settings.dangerously_bypass_permissions = cfg.dangerously_bypass_permissions;
+    let ExecutorPermissions::Codex(CodexPermissions::Sandbox(sandbox)) = permissions(&settings)? else {
+        return Err(LaunchError::Permissions(
+            "codex is launched with a sandbox only".to_string(),
+        ));
+    };
+    check_prompt(prompt)?;
+    let server_args = vec![
+        "serve".to_string(),
+        "--transport".to_string(),
+        "stdio".to_string(),
+        "--config".to_string(),
+        utf8(mcp_toml)?,
+    ];
+    Ok(vec![
+        utf8(program)?,
+        "exec".to_string(),
+        "--sandbox".to_string(),
+        sandbox.to_string(),
+        "--skip-git-repo-check".to_string(),
+        "-c".to_string(),
+        format!("mcp_servers.{SERVER_NAME}.command={}", toml_string(&utf8(mcp_server)?)),
+        "-c".to_string(),
+        format!("mcp_servers.{SERVER_NAME}.args={}", toml_array(&server_args)),
+        prompt.to_string(),
+    ])
+}
+
+/// The argument vector of a headless opencode run: `opencode run <prompt>`; it follows its own
+/// configuration.
+///
+/// # Errors
+///
+/// [`LaunchError`] for an invalid prompt or a path that is not UTF-8.
+pub fn opencode_headless_argv(program: &Path, prompt: &str) -> Result<Vec<String>, LaunchError> {
+    check_prompt(prompt)?;
+    Ok(vec![utf8(program)?, "run".to_string(), prompt.to_string()])
 }
 
 /// The argument vector of an opencode session: the program alone. opencode follows its own

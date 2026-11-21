@@ -60,7 +60,7 @@ impl Timers {
             ack_reminder: Duration::from_secs(tmux.ack_reminder_secs),
             report_unacked: Duration::from_secs(tmux.report_unacked_after_secs),
             completion_grace: Duration::from_secs(tmux.completion_grace_secs),
-            blocked_fail: Duration::from_secs(300),
+            blocked_fail: Duration::from_mins(5),
             ready_timeout: Duration::from_secs(tmux.ready_timeout_secs),
             push_confirm: Duration::from_secs(10),
             poll: Duration::from_secs(10),
@@ -166,6 +166,7 @@ pub enum PushOutcome {
 
 /// The task the runner pushed and supervises.
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools, reason = "independent flags of one supervised task")]
 pub struct Current<T> {
     pub task: T,
     pushed_at: Instant,
@@ -185,6 +186,7 @@ pub struct Current<T> {
 
 /// The machine.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools, reason = "independent flags of one state machine")]
 pub struct Machine<T> {
     timers: Timers,
     key: String,
@@ -227,7 +229,7 @@ impl<T: Task> Machine<T> {
     }
 
     /// The session is known to run the CLI and needs no creation (a recovered session).
-    pub fn adopt_running(&mut self, now: Instant) {
+    pub const fn adopt_running(&mut self, now: Instant) {
         self.state = State::Idle;
         self.last_liveness = now;
     }
@@ -440,7 +442,7 @@ impl<T: Task> Machine<T> {
         actions
     }
 
-    fn on_turn_start(&mut self, now: Instant) {
+    const fn on_turn_start(&mut self, now: Instant) {
         self.cli_working = true;
         match self.state {
             State::Pushing { .. } | State::Blocked { .. } if self.current.is_some() => {
@@ -485,6 +487,7 @@ impl<T: Task> Machine<T> {
     }
 
     /// The outcome of [`Action::TryPush`].
+    #[allow(clippy::needless_pass_by_value, reason = "an outcome is consumed by the call")]
     pub fn on_push(&mut self, outcome: PushOutcome, now: Instant) -> Vec<Action<T>> {
         self.push_in_flight = false;
         let mut actions = Vec::new();

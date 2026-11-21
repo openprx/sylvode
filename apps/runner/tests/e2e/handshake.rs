@@ -15,7 +15,7 @@ pub fn config(api: &str, state: &TempDir, root: &str) -> String {
         "[server]\nlisten = \"127.0.0.1:0\"\n\n[security]\nwebhook_secrets = [\"{SECRET}\"]\n\n\
          [ai_task_callback]\nenabled = true\napi_url = \"{api}\"\n\n\
          [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n\n\
-         [runner]\nstate_dir = \"{}\"\nallowed_roots = [\"{root}\"]\nreport_interval_secs = 1\n\
+         [runner]\nstate_dir = \"{}/s\"\nallowed_roots = [\"{root}\"]\nreport_interval_secs = 1\n\
          delivery_check_timeout_secs = 2\n\n\
          [[agents]]\nid = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\n\n\
          [agents.route]\nbot_ids = [\"{BOT}\"]\n",

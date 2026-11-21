@@ -9,7 +9,7 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use self::checks::{Context, SessionRegistry, Verdict};
+use self::checks::{BotCreds, Context, SessionRegistry, Verdict};
 use self::paths::AllowedRoots;
 use self::sv_client::SvClient;
 use crate::AppState;
@@ -49,6 +49,8 @@ mod files_tests;
 #[cfg(test)]
 mod guide_tests;
 #[cfg(test)]
+mod headless_tests;
+#[cfg(test)]
 mod launch_tests;
 #[cfg(test)]
 mod machine_tests;
@@ -63,6 +65,8 @@ mod sv_client_tests;
 
 /// What the `runner` agents need while the service runs, built once at start-up.
 pub struct RunnerRuntime {
+    /// The state directory (private, locked), or why it cannot be used.
+    pub state: Result<Arc<files::StateDir>, String>,
     /// The validated roots, or why they are not valid (which refuses the `runner` agents only).
     pub roots: Result<AllowedRoots, String>,
     pub registry: SessionRegistry,
@@ -110,9 +114,20 @@ impl RunnerRuntime {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
+        let state_path = state_dir(config, home.as_deref());
+        let state = state_path.as_deref().map_or_else(
+            || Err("no state directory: set [runner] state_dir (no home directory is known)".to_string()),
+            |path| files::StateDir::open(path).map(Arc::new),
+        );
+        if let Err(e) = &state
+            && config.agents.iter().any(|a| a.agent_type == "runner")
+        {
+            tracing::error!("the runner state directory cannot be used: {e}; `runner` agents will refuse every task");
+        }
         Self {
+            state,
             roots,
-            registry: SessionRegistry::open(state_dir(config, home.as_deref()).as_deref()),
+            registry: SessionRegistry::open(state_path.as_deref()),
             http,
         }
     }
@@ -141,6 +156,11 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
         ));
     };
     let client = SvClient::new(state.runner.http.clone(), target.api_url, target.token, target.surface);
+    let bot_creds = BotCreds {
+        bot_id: bot.to_string(),
+        api_url: target.api_url.to_string(),
+        token: target.token.to_string(),
+    };
     let verdict = checks::check_delivery(
         Context {
             config,
@@ -148,6 +168,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             registry: &state.runner.registry,
             protocol_mismatch: state.handshake.mismatch_text(),
             client,
+            bot: bot_creds,
         },
         payload,
     )
@@ -156,9 +177,28 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
         Verdict::Unavailable => Err(StatusCode::SERVICE_UNAVAILABLE),
         Verdict::Ignored(reason) => Ok(json!({"status": "ignored", "reason": reason, "agent": agent.id})),
         Verdict::Refused(refusal) => Ok(refused(agent, refusal.code, &refusal.reason)),
+        Verdict::Run(accepted) if accepted.channel == checks::Channel::Tmux => {
+            let _ = accepted;
+            Ok(refused(
+                agent,
+                "tmux_unavailable",
+                "the tmux channel arrives with the session manager",
+            ))
+        }
         Verdict::Run(accepted) => {
+            let (Ok(files), Ok(roots)) = (&state.runner.state, &state.runner.roots) else {
+                return Ok(refused(
+                    agent,
+                    "runner_agent_disabled",
+                    "the runner state directory is not usable",
+                ));
+            };
+            let prepared = match headless::prepare(config, files, &accepted, &accepted.mcp_server) {
+                Ok(prepared) => prepared,
+                Err(refusal) => return Ok(refused(agent, refusal.code, &refusal.reason)),
+            };
             let key = accepted.project_key.clone();
-            headless::start(config, &state.background, *accepted);
+            headless::start(config, &state.background, roots.clone(), prepared, *accepted);
             Ok(json!({
                 "status": "dispatched",
                 "channel": "headless",
