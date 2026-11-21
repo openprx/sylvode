@@ -1,5 +1,6 @@
 //! Round six: the cost of converting a text grows with its internal pieces, so the work measure
-//! charges them (R6-1), and the per-block formatting allowance (R6-2).
+//! charges them (R6-1), the per-block formatting allowance (R6-2) and the tests of the paths the
+//! previous round added (R6-4).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -225,4 +226,150 @@ fn r6_2_formatting_beyond_the_allowance_counts_in_full() {
     println!("100 blocks, 40 clusters: items {items}, budget {budget}");
     assert!(items > budget);
     assert!(BaseFacts::compute(&LoroCollabEngine::load(&base).unwrap()).is_none());
+}
+
+// ---------------------------------------------------------------------------------------------
+// R6-4: the paths round five added
+// ---------------------------------------------------------------------------------------------
+
+/// A flat page of 50 blocks plus a last block of kind `kind` whose inline text holds 3,000
+/// characters typed in reverse order under 30 full-range marks. The marks are not counted while the
+/// block is unread (its text is not converted), so the page is within its budget; once the block is
+/// read they are far over it. Returns the page and the id of the text.
+fn page_with_unread_heavy_block(kind: &str, dependency: bool) -> (Vec<u8>, String) {
+    let raw = LoroDoc::new();
+    raw.import(&flat_page_of(50)).unwrap();
+    raw.set_peer_id(48_300).unwrap();
+    let keys = mark_keys(30);
+    configure_styles(&raw, &keys);
+    let list = super::floor_equivalence_tests::children(&raw);
+    let block = list.insert_container(list.len(), loro::LoroMap::new()).unwrap();
+    block.insert("nodeName", kind).unwrap();
+    let attributes = block.insert_container("attributes", loro::LoroMap::new()).unwrap();
+    if dependency {
+        attributes.insert("embed_type", "page").unwrap();
+    }
+    let text = block
+        .insert_container("children", loro::LoroList::new())
+        .unwrap()
+        .insert_container(0, loro::LoroText::new())
+        .unwrap();
+    for _ in 0..3_000 {
+        text.insert(0, "y").unwrap();
+    }
+    for key in &keys {
+        text.mark(0..3_000, key, false).unwrap();
+    }
+    let id = loro::ContainerTrait::id(&text).to_string();
+    raw.commit();
+    (raw.export(ExportMode::snapshot()).unwrap(), id)
+}
+
+/// The update makes the unread block readable, with no mark op. The window must count the block's
+/// marks, so the page goes over its budget and the full computation decides, as `next` does.
+fn assert_a_block_becoming_readable_is_counted(base: &[u8], text_id: &str, update: &[u8]) {
+    let mut engine = LoroCollabEngine::load(base).unwrap();
+    engine.prewarm_for_writes();
+    let facts = BaseFacts::compute(&engine);
+    assert!(facts.is_some(), "the page with the unread block must have facts");
+    assert!(
+        facts.as_ref().unwrap().marks.is_empty(),
+        "the unread block has no mark items in the facts"
+    );
+    crate::walk_counter::reset();
+    crate::window_check::run_window(&mut engine, facts.as_ref(), update).unwrap();
+    assert!(
+        crate::walk_counter::delta_reads().iter().any(|id| id == text_id),
+        "the block that became readable was not re-counted"
+    );
+    assert_eq!(
+        crate::walk_counter::fallback_reasons().last().map(String::as_str),
+        Some("WorkBudget")
+    );
+    let judged = super::window_round2_tests::judge(base, update);
+    judged.assert_sound("a block that becomes readable");
+    assert!(!judged.incremental, "{judged:?}");
+}
+
+/// The last block of the page, as a raw map.
+fn last_block(raw: &LoroDoc) -> loro::LoroMap {
+    let list = super::floor_equivalence_tests::children(raw);
+    let Some(loro::ValueOrContainer::Container(loro::Container::Map(block))) = list.get(list.len() - 1) else {
+        panic!("no last block")
+    };
+    block
+}
+
+#[test]
+fn r6_4_a_block_that_becomes_readable_through_its_node_name_is_counted() {
+    let (base, text_id) = page_with_unread_heavy_block("unknownKind", false);
+    let update = super::hand_encoded::raw_edit(&base, 48_301, |raw| {
+        last_block(raw).insert("nodeName", "paragraph").unwrap();
+    });
+    assert_a_block_becoming_readable_is_counted(&base, &text_id, &update);
+}
+
+#[test]
+fn r6_4_a_block_that_becomes_readable_when_a_dependency_attribute_is_removed_is_counted() {
+    let (base, text_id) = page_with_unread_heavy_block("paragraph", true);
+    let update = super::hand_encoded::raw_edit(&base, 48_302, |raw| {
+        let Some(loro::ValueOrContainer::Container(loro::Container::Map(attributes))) =
+            last_block(raw).get("attributes")
+        else {
+            panic!("no attributes")
+        };
+        attributes.delete("embed_type").unwrap();
+    });
+    assert_a_block_becoming_readable_is_counted(&base, &text_id, &update);
+}
+
+/// R5-1, the decode half: counting the items of a page does not decode the style state of a text
+/// the projection does not read (`len_unicode` of a lazily loaded text reads only its string), which
+/// costs the pieces times the styles and is the work the setup must not pay for unread texts. Timed
+/// against the conversion of the same text, with a margin of five.
+#[test]
+fn r6_4_counting_a_page_does_not_decode_the_style_state_of_an_unread_text() {
+    let raw = LoroDoc::new();
+    raw.import(&flat_page_of(50)).unwrap();
+    raw.set_peer_id(48_400).unwrap();
+    let keys = mark_keys(60);
+    configure_styles(&raw, &keys);
+    let text = raw
+        .get_map("order")
+        .insert_container("t", loro::LoroText::new())
+        .unwrap();
+    for _ in 0..3_000 {
+        text.insert(0, "y").unwrap();
+    }
+    for key in &keys {
+        text.mark(0..3_000, key, false).unwrap();
+    }
+    raw.commit();
+    let base = raw.export(ExportMode::snapshot()).unwrap();
+    let time = |convert: bool| {
+        (0..3)
+            .map(|_| {
+                let engine = LoroCollabEngine::load(&base).unwrap();
+                let started = std::time::Instant::now();
+                if convert {
+                    let Some(loro::ValueOrContainer::Container(loro::Container::Text(text))) =
+                        engine.doc.get_map("order").get("t")
+                    else {
+                        panic!("no text")
+                    };
+                    let _ = text.to_delta();
+                } else {
+                    engine.projection_items(u64::MAX).unwrap().unwrap();
+                }
+                started.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    let (counted, converted) = (time(false), time(true));
+    println!("count {counted:?}, conversion {converted:?}");
+    assert!(
+        counted * 5 < converted,
+        "counting took {counted:?}, converting the text {converted:?}: the style state is decoded"
+    );
 }
