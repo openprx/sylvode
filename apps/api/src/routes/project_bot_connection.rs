@@ -53,12 +53,14 @@ async fn require_manager(
 ) -> Result<(Uuid, ProjectRef), ApiError> {
     refuse_machines(bot)?;
     let actor = user_id(claims)?;
-    let project = execution_settings::project_ref(&state.db, project_id).await?;
+    // Authorization first: for a project that does not exist the role check is false as well, so a
+    // caller who may not manage connections cannot tell a missing project from one that exists.
     if !is_project_admin_or_owner(&state.db, project_id, actor).await? {
         return Err(ApiError::Forbidden(
             "only workspace owners and admins can manage bot connections".to_string(),
         ));
     }
+    let project = execution_settings::project_ref(&state.db, project_id).await?;
     Ok((actor, project))
 }
 
@@ -128,7 +130,8 @@ pub async fn get_bot_connection(
 ) -> Result<Response, ApiError> {
     refuse_machines(bot.as_ref())?;
     let actor = user_id(&claims)?;
-    execution_settings::project_ref(&state.db, project_id).await?;
+    // No existence check of its own: a project that does not exist has no members, so the caller
+    // gets the same refusal as for a project they cannot see.
     if is_project_admin_or_owner(&state.db, project_id, actor).await? {
         let Some(connection) = bot_connections::load_view(&state.db, project_id).await? else {
             return Ok(ApiResponse::success(json!({ "connection": null, "status": null })).into_response());

@@ -1771,3 +1771,63 @@ async fn the_report_route_is_rate_limited_and_body_limited() {
     assert_eq!(response.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
     scratch.drop_self().await;
 }
+
+/// A caller who may not manage or read the connection gets the same answer for a project that
+/// exists and for one that does not: authorization comes before the existence check.
+#[tokio::test]
+async fn an_outsider_cannot_tell_a_missing_project_from_one_that_exists() {
+    let scratch = scratch_or_skip!("bc_oracle");
+    let db = &scratch.db;
+    let w = world(db, "or").await;
+    let stranger = seed_tenant(db, "or2").await.member_id;
+    let missing = Uuid::new_v4();
+    let version = |expected_version: i32| route::VersionBody { expected_version };
+    let describe = |result: Result<Response, ApiError>| match result {
+        Err(error) => format!("{error:?}"),
+        Ok(_) => "answered".to_string(),
+    };
+    for project in [w.tenant.project_id, missing] {
+        let claims = || Extension(claims_for(stranger));
+        let state = || State(w.state.clone());
+        let answers = [
+            describe(route::get_bot_connection(state(), claims(), None, Path(project)).await),
+            describe(
+                route::connect_bot(
+                    state(),
+                    claims(),
+                    None,
+                    Path(project),
+                    HeaderMap::new(),
+                    Json(request(new_bot("Oracle bot"))),
+                )
+                .await,
+            ),
+            describe(route::disable_bot_connection(state(), claims(), None, Path(project), Json(version(1))).await),
+            describe(
+                route::rotate_bot_connection(
+                    state(),
+                    claims(),
+                    None,
+                    Path(project),
+                    HeaderMap::new(),
+                    Json(version(1)),
+                )
+                .await,
+            ),
+            describe(
+                route::remove_bot_connection(
+                    state(),
+                    claims(),
+                    None,
+                    Path(project),
+                    Query(route::RemoveQuery { expected_version: 1 }),
+                )
+                .await,
+            ),
+        ];
+        for answer in &answers {
+            assert!(answer.starts_with("Forbidden("), "{project}: {answer}");
+        }
+    }
+    scratch.drop_self().await;
+}
