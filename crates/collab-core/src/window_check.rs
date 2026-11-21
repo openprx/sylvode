@@ -339,6 +339,9 @@ pub mod fault {
         IdRewriteSkipped,
         /// Reports a limit refusal with an `observed` value one too high.
         RefusalOffByOne,
+        /// The setup's allocation guard never fires: the base facts are built whatever the setup
+        /// has cost (`crate::setup_guard`).
+        SetupGuardSkipped,
     }
 
     thread_local! {

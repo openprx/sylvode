@@ -918,6 +918,7 @@ pub(super) fn round2_cases(scale: u64) -> Vec<Case> {
     cases.extend(super::window_round3_tests::round3_cases(scale));
     cases.extend(super::window_round4_tests::round4_cases(scale));
     cases.extend(super::window_round6_tests::round6_cases(scale));
+    cases.extend(super::window_setup_guard_tests::round7_cases(scale));
     cases
 }
 

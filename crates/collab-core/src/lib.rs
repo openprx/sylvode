@@ -35,6 +35,7 @@
 //! engine there is nothing left to abstract over, so those three capabilities are plain inherent
 //! methods on [`engine::LoroCollabEngine`] instead.
 
+pub mod alloc_meter;
 pub mod block_identity;
 pub mod block_projection;
 mod editor_doc_bridge;
@@ -52,6 +53,7 @@ pub mod page_inline;
 mod prose_projection;
 pub mod reserved_roots;
 pub mod semantic;
+pub mod setup_guard;
 #[cfg(test)]
 mod test_alloc;
 pub mod tree_refs;

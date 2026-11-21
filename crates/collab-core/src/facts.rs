@@ -16,10 +16,11 @@ use std::collections::HashMap;
 
 use loro::{ContainerID, ID, LoroDoc, VersionVector};
 
-use crate::engine::LoroCollabEngine;
+use crate::engine::{LoroCollabEngine, ProjectionCount};
 use crate::limits::{DocumentLimits, check_snapshot};
 use crate::operation::{NodeId, NodeKind};
 use crate::semantic::SemanticSnapshot;
+use crate::setup_guard::SetupGuard;
 
 /// What one projected node contributes to the limits: the base's pre-image of a unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,34 +125,98 @@ pub struct BaseFacts {
     pub(crate) mark_items: u64,
 }
 
+/// What the setup computed: the facts, or none and whether the setup guard is the reason.
+#[derive(Debug, Clone)]
+pub struct SetupFacts {
+    pub facts: Option<BaseFacts>,
+    /// The setup has cost more than [`SetupGuard`] allows, so there are no facts. Telemetry: the
+    /// page takes the full window, as it does for any base without facts.
+    pub guard_fired: bool,
+}
+
+impl SetupFacts {
+    /// No facts, with or without the guard being the reason.
+    #[must_use]
+    pub const fn none(guard_fired: bool) -> Self {
+        Self {
+            facts: None,
+            guard_fired,
+        }
+    }
+}
+
 impl BaseFacts {
     /// The facts of `engine`'s current state, or `None` when the incremental check does not
     /// apply to this base and every update takes the full computation: a page with a placement
     /// structure (models 4 and 5, until the structured path exists), a tree that names a logical
-    /// id twice, or a base that the full projection or the limits do not accept (the facts
-    /// presuppose a valid base).
+    /// id twice, a base that the full projection or the limits do not accept (the facts
+    /// presuppose a valid base), or a setup that has cost more than the guard allows
+    /// ([`crate::setup_guard`]).
     ///
-    /// Costs one full projection, so it belongs to the unmetered setup.
+    /// Costs one full projection, so it belongs to the unmetered setup. The guard counts from this
+    /// call; the worker uses [`Self::compute_guarded`] with a guard started before the load.
     #[must_use]
     pub fn compute(engine: &LoroCollabEngine) -> Option<Self> {
-        if engine.has_duplicate_logical_ids() || engine.has_editor_structure().ok()? {
-            return None;
+        Self::compute_guarded(engine, &SetupGuard::start()).facts
+    }
+
+    /// [`Self::compute`] under `guard`, and whether the guard is why there are no facts.
+    ///
+    /// A fired guard is an ordinary outcome: no facts, so the page takes the full window.
+    #[must_use]
+    pub fn compute_guarded(engine: &LoroCollabEngine, guard: &SetupGuard) -> SetupFacts {
+        // A guard that cannot see the allocation would be silently off: no facts then, the same as
+        // for a fired guard, but not reported as one.
+        if !crate::alloc_meter::is_installed() {
+            return SetupFacts::none(false);
+        }
+        if guard.exceeded() {
+            return SetupFacts::none(true);
+        }
+        match Self::compute_within(engine, guard) {
+            Ok(facts) => SetupFacts {
+                facts: Some(facts),
+                guard_fired: false,
+            },
+            Err(guard_fired) => SetupFacts::none(guard_fired),
+        }
+    }
+
+    /// The facts, or `Err(true)` when the guard stopped the setup and `Err(false)` when the base
+    /// has no facts for another reason.
+    fn compute_within(engine: &LoroCollabEngine, guard: &SetupGuard) -> Result<Self, bool> {
+        if engine.has_duplicate_logical_ids() || engine.has_editor_structure().map_err(|_| false)? {
+            return Err(false);
         }
         // The work of the full projection, counted before the projection itself runs: a page far
         // over any budget is refused after the ceiling's worth of items, so the walk stops there
         // (`crate::work`). The count converts a text's delta only where the projection converts it
         // (the inline texts of the blocks it reads, `work::block_mark_items`), and a delta cannot be
-        // stopped early, so what this setup reads is what the projection reads of the same page,
-        // which the last window that accepted its state already paid for under its own limits.
-        let items = engine.projection_items(crate::work::item_budget_ceiling()).ok()??;
-        let editor_doc = engine.has_editor_doc().ok()?;
-        let snapshot = engine.semantic_snapshot().ok()?;
-        check_snapshot(&snapshot, &DocumentLimits::default()).ok()?;
-        let block_order = engine.root_block_ids().ok()?.unwrap_or_default();
-        let marks = engine.unit_mark_items()?;
+        // stopped early, so what this setup reads is what the projection reads of the same page.
+        // The count also yields the mark items of every block, so no text is converted a third time
+        // for them. The guard stops it between texts.
+        let before_count = guard.spent();
+        let counted = engine
+            .projection_count_guarded(crate::work::item_budget_ceiling(), *guard)
+            .map_err(|_| false)?;
+        let ProjectionCount::Within { items, marks } = counted else {
+            return Err(matches!(counted, ProjectionCount::GuardFired));
+        };
+        // The projection that follows converts the texts the count has just converted, so it
+        // allocates about as much as the count did: the limit must hold for both.
+        if guard.exceeded_by(guard.spent().saturating_sub(before_count)) {
+            return Err(true);
+        }
+        let editor_doc = engine.has_editor_doc().map_err(|_| false)?;
+        let snapshot = engine.semantic_snapshot().map_err(|_| false)?;
+        if guard.exceeded() {
+            return Err(true);
+        }
+        check_snapshot(&snapshot, &DocumentLimits::default()).map_err(|_| false)?;
+        let block_order = engine.root_block_ids().map_err(|_| false)?.unwrap_or_default();
         let facts = Self::from_snapshot(
             engine.doc().state_vv(),
-            BaseVersion::of(engine.doc())?,
+            BaseVersion::of(engine.doc()).ok_or(false)?,
             items,
             editor_doc,
             block_order,
@@ -159,7 +224,11 @@ impl BaseFacts {
             &snapshot,
         );
         // With the exact totals the budget is known: a page above it takes the full computation.
-        (facts.items <= facts.item_budget()).then_some(facts)
+        if facts.items <= facts.item_budget() {
+            Ok(facts)
+        } else {
+            Err(false)
+        }
     }
 
     /// The budget of the base itself (see [`crate::work::item_budget`]).

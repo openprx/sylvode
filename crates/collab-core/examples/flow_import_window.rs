@@ -59,6 +59,10 @@ use collab_core::limits::{DocumentLimits, check_snapshot};
 use collab_core::window_check::run_window;
 use collab_core::{CollabEngine, LoroCollabEngine, NodeId, NodeKind, Operation};
 
+// The facts' setup guard reads the allocation meter, which this allocator feeds.
+#[global_allocator]
+static ALLOCATOR: collab_core::alloc_meter::MeteredSystem = collab_core::alloc_meter::MeteredSystem;
+
 const BLOCKS_PER_BATCH: usize = 50;
 const SIZES: [usize; 3] = [1_000, 5_000, 9_950];
 const REBUILD_TAIL: usize = 20;

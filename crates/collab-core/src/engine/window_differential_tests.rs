@@ -333,13 +333,20 @@ impl Incremental {
     ) -> (Result<WindowAccepted, CollabError>, LoroCollabEngine) {
         let mut engine = LoroCollabEngine::load(base).expect("the trusted base loads");
         engine.prewarm_for_writes();
+        // The setup guard's fault acts while the facts are computed; the others act in the window.
+        let setup_fault = matches!(self.defect, Defect::Fault(Fault::SetupGuardSkipped))
+            .then(|| crate::window_check::fault::inject(Fault::SetupGuardSkipped));
         let mut facts = match from {
             FactsFrom::Base | FactsFrom::Tampered(_) => BaseFacts::compute(&engine),
+            FactsFrom::Guarded(limit) => {
+                BaseFacts::compute_guarded(&engine, &crate::setup_guard::SetupGuard::with_limit(*limit)).facts
+            }
             FactsFrom::OtherBase(other) => {
                 let other = LoroCollabEngine::load(other).expect("the other base loads");
                 BaseFacts::compute(&other)
             }
         };
+        drop(setup_fault);
         if let (FactsFrom::Tampered(tamper), Some(facts)) = (from, facts.as_mut()) {
             tamper(facts);
         }
@@ -1817,6 +1824,10 @@ fn incremental_mutants() -> Vec<Incremental> {
             defect: Defect::Fault(Fault::PathlessContainerSkipped),
         },
         Incremental {
+            name: "mutant: the setup guard never fires (facts are built whatever the setup cost)",
+            defect: Defect::Fault(Fault::SetupGuardSkipped),
+        },
+        Incremental {
             name: "mutant: a refusal by a total reports observed + 1",
             defect: Defect::Fault(Fault::RefusalOffByOne),
         },
@@ -1831,7 +1842,11 @@ fn oracle_expected(mutant: &Incremental) -> bool {
     !matches!(
         mutant.defect,
         Defect::Fault(
-            Fault::WorkBudgetSkipped | Fault::MarkRecountSkipped | Fault::PieceCountSkipped | Fault::RefusalOffByOne
+            Fault::WorkBudgetSkipped
+                | Fault::MarkRecountSkipped
+                | Fault::PieceCountSkipped
+                | Fault::SetupGuardSkipped
+                | Fault::RefusalOffByOne
         )
     )
 }
