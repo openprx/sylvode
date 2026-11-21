@@ -1,16 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { ApiResult } from '../src/lib/api/client';
-import type {
-	PluginContributionItem,
-	PluginInvocation,
-	PluginPanel
-} from '../src/lib/api/plugin-packages';
+import type { PluginContributionItem, PluginInvocation } from '../src/lib/api/plugin-packages';
 import type { PluginHostContext } from '../src/lib/plugins/bridge';
 import {
 	createExtensionTransport,
 	createHostDispatcher,
-	createLegacyTransport,
 	hostContext,
 	hostMethodParams,
 	mapApiFailure,
@@ -64,7 +59,6 @@ const context = hostContext(item, {
 
 function dispatcher(grants: string[], transport: HostTransport, confirm?: () => Promise<boolean>) {
 	return createHostDispatcher({
-		bridge: 2,
 		grants: () => grants,
 		context: () => context,
 		transport,
@@ -371,57 +365,6 @@ describe('amount methods', () => {
 			}
 		});
 		assert.deepEqual(await transport('amount.preview', {}, id(1)), { ok: false, code: 'failed' });
-	});
-
-	test('protocol 1 keeps the legacy limits and errors', async () => {
-		const panel: PluginPanel = {
-			package_id: 'pkg-1',
-			key: 'order_amount',
-			version: '1.0.0',
-			name: 'Order amount',
-			generation: 7,
-			grants: ['amount.preview'],
-			html: '',
-			web_sha256: '',
-			package_sha256: ''
-		};
-		const responses: ApiResult<PluginInvocation>[] = [];
-		const transport = createLegacyTransport({
-			recordId,
-			panel,
-			api: { invoke: async () => responses.shift() as ApiResult<PluginInvocation> }
-		});
-		const host = createHostDispatcher({
-			bridge: 1,
-			grants: () => panel.grants,
-			context: () => undefined,
-			transport
-		});
-		assert.deepEqual(await host.handle(id(1), 'amount.apply', {}), {
-			ok: false,
-			code: 'method_unavailable'
-		});
-		assert.deepEqual(await host.handle(id(2), undefined, {}), {
-			ok: false,
-			code: 'method_unavailable'
-		});
-		responses.push(ok(invocation(id(3), 1325)));
-		assert.deepEqual(await host.handle(id(3), 'amount.preview', {}), {
-			ok: true,
-			result: { amount_cents: 1325 }
-		});
-		assert.deepEqual(await host.handle(id(3), 'amount.preview', {}), { ok: false, code: 'busy' });
-		responses.push(err(403));
-		assert.deepEqual(await host.handle(id(4), 'amount.preview', {}), {
-			ok: false,
-			code: 'denied',
-			close: 'suspend'
-		});
-		for (let n = 5; n < 103; n++) {
-			responses.push(ok(invocation(id(n))));
-			await host.handle(id(n), 'amount.preview', {});
-		}
-		assert.deepEqual(await host.handle(id(103), 'amount.preview', {}), { ok: false, code: 'busy' });
 	});
 
 	test('a disposed dispatcher answers canceled', async () => {

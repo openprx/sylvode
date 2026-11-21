@@ -2,26 +2,22 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import {
-		legacyDraftKey,
 		creatorTemplates,
 		draftStorageKey,
 		initialTemplate,
 		originSlot,
 		type CreatorTemplateId
 	} from '#lib/plugins/creator/registry.js';
-	import { personalDraftKey, personalLegacyKey } from '#lib/plugins/creator/personal-drafts.js';
+	import { personalDraftKey } from '#lib/plugins/creator/personal-drafts.js';
 	import Button from '#lib/components/Button.svelte';
 	import CreatorPanelPreview from '#lib/components/plugins/CreatorPanelPreview.svelte';
 	import { apiClient } from '#lib/api/client.js';
 	import { formsApi } from '#lib/api/forms.js';
 	import { projectsApi } from '#lib/api/projects.js';
 	import {
-		isV3,
 		pluginLibraryApi,
 		pluginPackagesApi,
-		type PluginSlot,
 		type PluginSlotV3,
-		type PluginUpload,
 		type PluginUploadV3
 	} from '#lib/api/plugin-packages.js';
 	import {
@@ -47,7 +43,7 @@
 		| { kind: 'personal'; draftId: string }
 		| { kind: 'project'; workspaceId: string; projectId: string };
 	interface Bundle {
-		upload: PluginUpload | PluginUploadV3;
+		upload: PluginUploadV3;
 		html: string;
 		json: string;
 		fixtureCents?: number;
@@ -86,7 +82,6 @@
 		creatorTemplates.ui_view.defaults({ slot: 'project.view', formKey: null })
 	);
 	let allowed = $state(false);
-	let layoutSupported = $state(true);
 	let extensionSupported = $state(true);
 	let checking = $state(true);
 	let building = $state(false);
@@ -95,7 +90,6 @@
 	let backendMessage = $state('');
 	let installed = $state(false);
 	let bundle = $state.raw<Bundle | null>(null);
-	let previewSlot = $state<PluginSlot>(detailSlot);
 	let previewContribution = $state('');
 	let previewSchema = $state.raw<SampleField[] | null>(null);
 	let schemaFailed = $state(false);
@@ -110,13 +104,12 @@
 	const isUi = $derived(templateId === 'ui_view');
 	const template = $derived(creatorTemplates[templateId]);
 	const invalid = $derived(isUi ? invalidUiViewFields(uiDraft) : invalidDraftFields(orderDraft));
-	const templateAvailable = $derived(isUi ? extensionSupported : layoutSupported);
 	const details = ['detailLabel', 'detailTitle', 'detailText'] as const;
 	const actions = ['actionLabel', 'actionTitle', 'actionText'] as const;
 	const metadata = ['key', 'name', 'publisher', 'version', 'formKey'] as const;
 	const uiMetadata = ['key', 'name', 'publisher', 'version'] as const;
 	const uiContent = ['title', 'text'] as const;
-	const review = $derived(bundle && isV3(bundle.upload.manifest) ? bundle.upload.manifest : null);
+	const review = $derived(bundle?.upload.manifest ?? null);
 
 	$effect(() => {
 		const mine = ++scope;
@@ -125,7 +118,6 @@
 		allowed = false;
 		checking = true;
 		resetBuild();
-		previewSlot = recordOrigin;
 		storageKey = '';
 		actorId = actor ?? '';
 		if (!actor) {
@@ -178,12 +170,11 @@
 			pluginPackagesApi.list(project.projectId)
 		]);
 		if (scope !== mine) return;
-		layoutSupported = catalog.data?.layout_supported === true;
 		extensionSupported = catalog.data?.extension_supported === true;
 		if (
 			metadata.data?.workspace_id !== project.workspaceId ||
 			catalog.code !== 0 ||
-			(!layoutSupported && !extensionSupported)
+			!extensionSupported
 		) {
 			checking = false;
 			error = catalog.code === 403 ? 'plugins.manageDenied' : 'plugins.creator.unavailable';
@@ -193,31 +184,18 @@
 		checking = false;
 	}
 
-	function draftKeys(id: CreatorTemplateId, slot: PluginSlotV3, form: string | null) {
-		if (context.kind === 'personal')
-			return {
-				key: personalDraftKey(actorId, context.draftId, id),
-				legacy: id === 'order_amount' ? personalLegacyKey(actorId, context.draftId) : null
-			};
+	function draftKey(id: CreatorTemplateId, slot: PluginSlotV3, form: string | null) {
+		if (context.kind === 'personal') return personalDraftKey(actorId, context.draftId, id);
 		const target = `${encodeURIComponent(context.projectId)}:${encodeURIComponent(form ?? slot)}`;
-		return {
-			key: draftStorageKey('project', actorId, id, target),
-			legacy:
-				id === 'order_amount'
-					? legacyDraftKey('project', actorId, `${context.projectId}:${form ?? 'order_line'}`)
-					: null
-		};
+		return draftStorageKey('project', actorId, id, target);
 	}
 
 	function setupDraft(id: CreatorTemplateId, slot: PluginSlotV3, form: string | null) {
 		resetBuild();
-		previewSlot = creatorSlot(slot);
-		const keys = draftKeys(id, slot, form);
-		storageKey = keys.key;
+		storageKey = draftKey(id, slot, form);
 		let prior: string | null = null;
 		try {
-			prior =
-				localStorage.getItem(keys.key) ?? (keys.legacy ? localStorage.getItem(keys.legacy) : null);
+			prior = localStorage.getItem(storageKey);
 		} catch {
 			/* The draft remains usable in memory. */
 		}
@@ -295,7 +273,7 @@
 	}
 
 	async function build() {
-		if (!allowed || !templateAvailable || invalid.length || building || installing) return;
+		if (!allowed || !extensionSupported || invalid.length || building || installing) return;
 		const buildRevision = ++revision;
 		const mine = scope;
 		resetBuild();
@@ -316,9 +294,11 @@
 			bundle = output;
 			previewSchema = schema;
 			schemaFailed = isUi && !personal && !schema;
-			previewContribution = isV3(output.upload.manifest)
-				? (output.upload.manifest.contributions[0]?.id ?? '')
-				: '';
+			const choices = output.upload.manifest.contributions;
+			previewContribution =
+				(isUi ? undefined : choices.find((item) => item.slot === recordOrigin))?.id ??
+				choices[0]?.id ??
+				'';
 			await tick();
 			focusReviewStart(reviewStart);
 		} catch {
@@ -432,7 +412,7 @@
 				{$t('plugins.creator.origin', { values: { slot: $t(slotLabelKey(origin)) } })}
 				{$t(personal ? 'plugins.library.localDraft' : 'plugins.creator.localDraft')}
 			</p>
-			{#if !templateAvailable}
+			{#if !extensionSupported}
 				<p role="status" class="text-sm">
 					{$t(isUi ? 'plugins.creatorV3.extensionsUnavailable' : 'plugins.creator.unavailable')}
 				</p>
@@ -575,7 +555,7 @@
 				<Button
 					type="submit"
 					loading={building}
-					disabled={invalid.length > 0 || installing || !templateAvailable}
+					disabled={invalid.length > 0 || installing || !extensionSupported}
 					>{$t('plugins.creator.build')}</Button
 				>
 			</form>
@@ -588,9 +568,11 @@
 				{#if review}
 					<p class="text-sm">
 						{$t(
-							personal
-								? 'plugins.creatorV3.previewSamplePersonal'
-								: 'plugins.creatorV3.previewSampleProject'
+							isUi
+								? personal
+									? 'plugins.creatorV3.previewSamplePersonal'
+									: 'plugins.creatorV3.previewSampleProject'
+								: 'plugins.creator.previewRecord'
 						)}
 					</p>
 					{#if schemaFailed}<p role="status" class="text-sm">
@@ -612,7 +594,6 @@
 						{#if picked}
 							<CreatorPanelPreview
 								html={bundle.html}
-								slot={picked.slot}
 								v3={{
 									manifest: review,
 									contributionId: picked.id,
@@ -621,32 +602,11 @@
 									personal,
 									onViewed: () => {
 										sampleRan = true;
-									}
+									},
+									...(isUi ? {} : { onAmountPreview: async () => bundle?.fixtureCents ?? null })
 								}}
 							/>
 						{/if}
-					{/key}
-				{:else}
-					<p class="text-sm">{$t('plugins.creator.previewRecord')}</p>
-					<label class="flex flex-wrap items-center gap-2 text-sm">
-						{$t('plugins.creator.previewLocation')}
-						<select
-							bind:value={previewSlot}
-							class="rounded-control border border-input bg-transparent px-3 py-1"
-						>
-							<option value={detailSlot}>{$t(`plugins.slot.${detailSlot}`)}</option>
-							<option value={actionSlot}>{$t(`plugins.slot.${actionSlot}`)}</option>
-						</select>
-					</label>
-					{#key `${revision}:${previewSlot}`}
-						<CreatorPanelPreview
-							html={bundle.html}
-							slot={previewSlot}
-							onPreview={() => {
-								sampleRan = true;
-								return bundle?.fixtureCents ?? null;
-							}}
-						/>
 					{/key}
 				{/if}
 				<div class="space-y-2 border-t border-line pt-3 text-sm">
@@ -676,20 +636,18 @@
 						{:else}
 							<p>{$t('plugins.creatorV3.reviewNoReads')}</p>
 						{/each}
-						<p>{$t('plugins.creatorV3.reviewNoWasm')}</p>
-						<p>{$t('plugins.creatorV3.reviewCapabilities')}</p>
-					{:else if !isV3(bundle.upload.manifest)}
-						<p>
-							{$t('plugins.creator.targetForm', {
-								values: { form: bundle.upload.manifest.ui.form_key }
-							})}
-						</p>
-						<h4 class="font-medium">{$t('plugins.requestedCapabilities')}</h4>
-						<ul class="list-disc pl-5">
-							{#each bundle.upload.manifest.capabilities as item (item.name)}<li>
-									{$t(`plugins.capability.${item.name}`)}
-								</li>{/each}
-						</ul>
+						{#if review.profile === 'wasm'}
+							<p>{$t('plugins.creatorV3.reviewWasm')}</p>
+							<h4 class="font-medium">{$t('plugins.requestedCapabilities')}</h4>
+							<ul class="list-disc pl-5">
+								{#each review.capabilities as item (item.name)}<li>
+										{$t(`plugins.capability.${item.name}`)}
+									</li>{/each}
+							</ul>
+						{:else}
+							<p>{$t('plugins.creatorV3.reviewNoWasm')}</p>
+							<p>{$t('plugins.creatorV3.reviewCapabilities')}</p>
+						{/if}
 					{/if}
 					<label class="flex items-start gap-2">
 						<input
@@ -701,7 +659,7 @@
 						<span>{$t('plugins.creator.reviewed')}</span>
 					</label>
 					{#if !sampleRan}<p role="status" class="text-sm">
-							{$t(review ? 'plugins.creatorV3.previewUi' : 'plugins.creator.previewFirst')}
+							{$t(isUi ? 'plugins.creatorV3.previewUi' : 'plugins.creator.previewFirst')}
 						</p>{/if}
 					<div class="flex flex-wrap items-center gap-2">
 						<Button variant="secondary" disabled={!reviewed || !sampleRan} onclick={download}

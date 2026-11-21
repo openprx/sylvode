@@ -1,4 +1,6 @@
 pub mod extension;
+#[cfg(test)]
+mod legacy_rows;
 pub mod library;
 pub mod preferences;
 
@@ -12,7 +14,9 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use platform::timestamp::Timestamp;
 use platform::{app::AppState, auth::JwtClaims};
-use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{Semaphore, SemaphorePermit};
@@ -31,13 +35,12 @@ use crate::{
     plugins::{
         manifest::PluginRuntimePolicy,
         package::{
-            APPLY, Contribution, EnabledContribution, Manifest, PREVIEW, Placement, WASM_BYTES, WEB_BYTES, bad,
-            decode_asset, default_placements, enabled_contributions, normalize_placements, parse_guest_amount,
-            read_decimal, read_order_inputs, sha256, validate_key,
+            APPLY, PREVIEW, Placement, WASM_BYTES, WEB_BYTES, bad, parse_guest_amount, read_decimal, read_order_inputs,
+            sha256, validate_key,
         },
         package_v3::{
-            AnyManifest, ManifestV3, Profile, SCHEMA_V3, Slot, UI_DISPLAY, merge_v3_layout, normalize_v3_placements,
-            parse_manifest, plugin_error, validate_v3_grants,
+            ManifestV3, Profile, SCHEMA_V3, Slot, UI_DISPLAY, merge_v3_layout, normalize_v3_placements, parse_manifest,
+            plugin_error, validate_v3_grants,
         },
         runtime::{PluginFailureKind, PluginRuntimeOutput, invoke_wasm_plugin},
     },
@@ -65,20 +68,24 @@ fn enabled() -> Result<(), ApiError> {
     }
 }
 
-/// Protocol 3, the `ui` profile and every extension endpoint sit behind this switch.
+/// Protocol 3 (both profiles) and every extension endpoint sit behind this switch.
 pub(crate) fn extensions_enabled() -> bool {
     std::env::var("SV_FORM_PLUGIN_EXTENSIONS_ENABLED").as_deref() == Ok("1")
+}
+
+fn extensions_disabled() -> ApiError {
+    plugin_error(
+        ApiErrorKind::FeatureDisabled,
+        "extensions_disabled",
+        "Form plugin extensions are disabled",
+    )
 }
 
 pub(crate) fn require_extensions() -> Result<(), ApiError> {
     if extensions_enabled() {
         Ok(())
     } else {
-        Err(plugin_error(
-            ApiErrorKind::FeatureDisabled,
-            "extensions_disabled",
-            "Form plugin extensions are disabled",
-        ))
+        Err(extensions_disabled())
     }
 }
 
@@ -135,56 +142,16 @@ pub(crate) fn v3_layout(manifest: &ManifestV3, stored: &HashMap<String, Vec<Plac
     merge_v3_layout(manifest, stored.get(&manifest.key).map_or(&[], Vec::as_slice))
 }
 
-/// Placements as published for one package: protocol 3 from the project layout table, protocol 2
-/// from the per-package layout row, protocol 1 none.
-fn placements_json(
-    manifest: Option<&Value>,
-    stored_v2: Option<Value>,
-    stored_v3: &HashMap<String, Vec<Placement>>,
-) -> Result<Option<Value>, ApiError> {
-    match manifest {
-        Some(manifest) if is_v3(manifest) => {
-            let placements = v3_layout(&stored_manifest_v3(manifest)?, stored_v3);
-            serde_json::to_value(placements)
-                .map(Some)
-                .map_err(|_| ApiError::Internal)
-        }
-        Some(manifest) => layout_json(manifest.pointer("/ui/contributions"), stored_v2),
-        None => Ok(None),
-    }
-}
+/// SQL condition that keeps a `form_plugin_packages` row (alias `p`) to protocol 3 manifests.
+/// Rows of the retired protocols stay in the table, unread and unwritten.
+const V3_PACKAGE: &str = "p.manifest->>'schema_version'='openpr.plugin.v3'";
 
-fn layouts_enabled() -> bool {
-    std::env::var("SV_FORM_PLUGIN_LAYOUTS_ENABLED").as_deref() == Ok("1")
-}
-
-fn require_layouts_flag() -> Result<(), ApiError> {
-    if layouts_enabled() {
-        Ok(())
-    } else {
-        Err(ApiError::typed(
-            ApiErrorKind::FeatureDisabled,
-            "project plugin layouts are disabled",
-        ))
-    }
-}
-
-fn layouts_for(declarations: &Value, stored: Option<Value>) -> Result<Vec<Placement>, ApiError> {
-    let contributions: Vec<Contribution> =
-        serde_json::from_value(declarations.clone()).map_err(|_| ApiError::Internal)?;
-    stored.map_or_else(
-        || Ok(default_placements(&contributions)),
-        |stored| serde_json::from_value(stored).map_err(|_| ApiError::Internal),
-    )
-}
-
-fn layout_json(declarations: Option<&Value>, stored: Option<Value>) -> Result<Option<Value>, ApiError> {
-    declarations
-        .map(|declarations| {
-            let placements = layouts_for(declarations, stored)?;
-            serde_json::to_value(placements).map_err(|_| ApiError::Internal)
-        })
-        .transpose()
+/// Placements as published for one protocol 3 package, from the project layout table.
+fn placements_json(manifest: &Value, stored: &HashMap<String, Vec<Placement>>) -> Result<Option<Value>, ApiError> {
+    let placements = v3_layout(&stored_manifest_v3(manifest)?, stored);
+    serde_json::to_value(placements)
+        .map(Some)
+        .map_err(|_| ApiError::Internal)
 }
 
 async fn admin(state: &AppState, claims: &JwtClaims, project_id: Uuid) -> Result<(Uuid, Uuid), ApiError> {
@@ -237,29 +204,26 @@ struct Package {
     installed_at: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
     library_source_id: Option<Uuid>,
+    #[sea_orm(skip)]
     #[serde(skip_serializing_if = "Option::is_none")]
     placements: Option<Value>,
 }
 
 impl Package {
-    fn with_layouts(mut self, stored_v3: &HashMap<String, Vec<Placement>>) -> Result<Self, ApiError> {
-        self.placements = placements_json(Some(&self.manifest), self.placements.take(), stored_v3)?;
+    fn with_layouts(mut self, stored: &HashMap<String, Vec<Placement>>) -> Result<Self, ApiError> {
+        self.placements = placements_json(&self.manifest, stored)?;
         Ok(self)
     }
 
-    /// Resolves placements for a single package, reading the v3 layout rows when needed.
+    /// Resolves placements for a single package from its project's layout rows.
     async fn with_layout<C: ConnectionTrait>(self, db: &C, project_id: Uuid) -> Result<Self, ApiError> {
-        let stored_v3 = if is_v3(&self.manifest) {
-            let key = self
-                .manifest
-                .get("key")
-                .and_then(Value::as_str)
-                .ok_or(ApiError::Internal)?;
-            stored_layouts(db, project_id, Some(key)).await?
-        } else {
-            HashMap::new()
-        };
-        self.with_layouts(&stored_v3)
+        let key = self
+            .manifest
+            .get("key")
+            .and_then(Value::as_str)
+            .ok_or(ApiError::Internal)?;
+        let stored = stored_layouts(db, project_id, Some(key)).await?;
+        self.with_layouts(&stored)
     }
 }
 
@@ -269,26 +233,31 @@ struct Binding {
     package_id: Option<Uuid>,
     generation: i64,
     grants: Vec<String>,
+    #[sea_orm(skip)]
     #[serde(skip_serializing_if = "Option::is_none")]
     placements: Option<Value>,
-    #[serde(skip)]
-    declarations: Option<Value>,
-    /// The bound manifest when it uses protocol 3.
+    /// The bound manifest; always protocol 3 because a binding to any other package is unbound.
     #[serde(skip)]
     manifest_v3: Option<Value>,
 }
 
-const BINDING_FIELDS: &str = "b.key,b.package_id,b.generation,b.grants,l.placements,
-    p.manifest->'ui'->'contributions' AS declarations,
+/// A binding row as the API sees it. A row that still points at a package of a retired protocol
+/// reads as unbound (no package, no grants) but keeps its generation, so the next bind or disable
+/// request carries the generation the client read.
+const BINDING_FIELDS: &str = "b.key,
+    CASE WHEN p.manifest->>'schema_version'='openpr.plugin.v3' THEN b.package_id END AS package_id,
+    b.generation,
+    CASE WHEN p.manifest->>'schema_version'='openpr.plugin.v3' THEN b.grants ELSE '{}'::text[] END AS grants,
     CASE WHEN p.manifest->>'schema_version'='openpr.plugin.v3' THEN p.manifest END AS manifest_v3";
 
 impl Binding {
-    fn with_layouts(mut self, stored_v3: &HashMap<String, Vec<Placement>>) -> Result<Self, ApiError> {
-        self.placements = if let Some(manifest) = &self.manifest_v3 {
-            placements_json(Some(manifest), None, stored_v3)?
-        } else {
-            layout_json(self.declarations.as_ref(), self.placements.take())?
-        };
+    fn with_layouts(mut self, stored: &HashMap<String, Vec<Placement>>) -> Result<Self, ApiError> {
+        self.placements = self
+            .manifest_v3
+            .as_ref()
+            .map(|manifest| placements_json(manifest, stored))
+            .transpose()?
+            .flatten();
         Ok(self)
     }
 }
@@ -318,7 +287,6 @@ struct Catalog {
     items: Vec<Package>,
     bindings: Vec<Binding>,
     binding_history: Vec<BindingActivity>,
-    layout_supported: bool,
     extension_supported: bool,
 }
 
@@ -328,32 +296,42 @@ pub async fn list(
     Path(project_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     admin(&state, &claims, project_id).await?;
-    let stored_v3 = stored_layouts(&state.db, project_id, None).await?;
+    Ok(ApiResponse::success(
+        catalog(&state.db, project_id, extensions_enabled()).await?,
+    ))
+}
+
+/// The project's protocol 3 packages, bindings and binding history. Rows of the retired
+/// protocols are filtered out of every part.
+async fn catalog(db: &DatabaseConnection, project_id: Uuid, extension_supported: bool) -> Result<Catalog, ApiError> {
+    let stored = stored_layouts(db, project_id, None).await?;
     let items = Package::find_by_statement(statement(
-        "SELECT p.id,p.manifest,p.package_sha256,p.installed_by,p.installed_at,p.library_source_id,l.placements
-           FROM form_plugin_packages p LEFT JOIN form_plugin_layouts l ON l.package_id=p.id
-          WHERE p.project_id=$1 AND p.library_revoked_at IS NULL ORDER BY p.key,p.installed_at DESC",
+        &format!(
+            "SELECT p.id,p.manifest,p.package_sha256,p.installed_by,p.installed_at,p.library_source_id
+               FROM form_plugin_packages p
+              WHERE p.project_id=$1 AND p.library_revoked_at IS NULL AND {V3_PACKAGE}
+              ORDER BY p.key,p.installed_at DESC"
+        ),
         vec![project_id.into()],
     ))
-    .all(&state.db)
+    .all(db)
     .await?
     .into_iter()
-    .map(|package| package.with_layouts(&stored_v3))
+    .map(|package| package.with_layouts(&stored))
     .collect::<Result<Vec<_>, _>>()?;
     let bindings = Binding::find_by_statement(statement(
         &format!(
             "SELECT {BINDING_FIELDS}
            FROM form_plugin_bindings b
            LEFT JOIN form_plugin_packages p ON p.id=b.package_id
-           LEFT JOIN form_plugin_layouts l ON l.package_id=b.package_id
           WHERE b.project_id=$1 ORDER BY b.key"
         ),
         vec![project_id.into()],
     ))
-    .all(&state.db)
+    .all(db)
     .await?
     .into_iter()
-    .map(|binding| binding.with_layouts(&stored_v3))
+    .map(|binding| binding.with_layouts(&stored))
     .collect::<Result<Vec<_>, _>>()?;
     let binding_history = BindingActivity::find_by_statement(statement(
         "WITH activity AS (
@@ -363,27 +341,31 @@ pub async fn list(
         )
          SELECT a.key,a.request_id,a.actor_id,a.created_at,a.request->>'reason' AS reason,
                 older.id AS previous_package_id,older.version AS previous_version,
-                ARRAY(SELECT jsonb_array_elements_text(COALESCE(a.previous->'grants','[]'::jsonb))) AS previous_grants,
-                a.previous->'placements' AS previous_placements,
+                ARRAY(SELECT jsonb_array_elements_text(
+                    CASE WHEN older.id IS NOT NULL THEN COALESCE(a.previous->'grants','[]'::jsonb) ELSE '[]'::jsonb END
+                )) AS previous_grants,
+                CASE WHEN older.id IS NOT NULL THEN a.previous->'placements' END AS previous_placements,
                 newer.id AS package_id,newer.version,a.response->'placements' AS placements,
                 (a.response->>'generation')::bigint AS generation,
                 ARRAY(SELECT jsonb_array_elements_text(a.response->'grants')) AS grants
            FROM activity a
            LEFT JOIN form_plugin_packages older ON older.id=(a.previous->>'package_id')::uuid
+                AND older.manifest->>'schema_version'='openpr.plugin.v3'
            LEFT JOIN form_plugin_packages newer ON newer.id=(a.response->>'package_id')::uuid
+                AND newer.manifest->>'schema_version'='openpr.plugin.v3'
+          WHERE a.response->>'package_id' IS NULL OR newer.id IS NOT NULL
           ORDER BY a.created_at DESC,a.request_id
           LIMIT 100",
         vec![project_id.into()],
     ))
-    .all(&state.db)
+    .all(db)
     .await?;
-    Ok(ApiResponse::success(Catalog {
+    Ok(Catalog {
         items,
         bindings,
         binding_history,
-        layout_supported: layouts_enabled(),
-        extension_supported: extensions_enabled(),
-    }))
+        extension_supported,
+    })
 }
 
 pub async fn install(
@@ -398,9 +380,8 @@ pub async fn install(
     lock_admin(&tx, workspace_id, actor_id).await?;
     lock_project(&tx, project_id).await?;
     let previous = Package::find_by_statement(statement(
-        "SELECT p.id,p.manifest,p.package_sha256,p.installed_by,p.installed_at,p.library_source_id,l.placements
-           FROM form_plugin_packages p LEFT JOIN form_plugin_layouts l ON l.package_id=p.id
-          WHERE p.project_id=$1 AND p.key=$2 AND p.version=$3",
+        "SELECT p.id,p.manifest,p.package_sha256,p.installed_by,p.installed_at,p.library_source_id
+           FROM form_plugin_packages p WHERE p.project_id=$1 AND p.key=$2 AND p.version=$3",
         vec![
             project_id.into(),
             package.key.clone().into(),
@@ -421,8 +402,8 @@ pub async fn install(
     }
     let count = tx
         .query_one(statement(
-            "SELECT count(*) AS count FROM form_plugin_packages WHERE project_id=$1",
-            vec![project_id.into()],
+            "SELECT count(*) AS count FROM form_plugin_packages p WHERE p.project_id=$1 AND p.manifest->>'schema_version'=$2",
+            vec![project_id.into(), SCHEMA_V3.into()],
         ))
         .await?
         .ok_or(ApiError::Internal)?
@@ -432,7 +413,7 @@ pub async fn install(
     }
     let installed = Package::find_by_statement(statement(
         "INSERT INTO form_plugin_packages (project_id,key,version,manifest,package_sha256,wasm_bytes,html,installed_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,manifest,package_sha256,installed_by,installed_at,library_source_id,NULL::jsonb AS placements",
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,manifest,package_sha256,installed_by,installed_at,library_source_id",
         vec![
             project_id.into(),
             package.key.into(),
@@ -452,47 +433,15 @@ pub async fn install(
     Ok(ApiResponse::success(installed))
 }
 
-/// Dispatches on `schema_version`: protocol 1/2 keep their checks and messages, protocol 3
-/// follows the typed reasons of the extension contract.
+/// Parses and validates an install request. Only protocol 3 is accepted: any other
+/// `schema_version` is the typed `manifest_protocol_unsupported`.
 async fn validate_install(request: InstallRequest) -> Result<ValidatedPackage, ApiError> {
-    match parse_manifest(request.manifest)? {
-        AnyManifest::V2(manifest) => validate_v2(manifest, request.wasm_base64, &request.web_base64).await,
-        AnyManifest::V3(manifest) => validate_v3(manifest, request.wasm_base64, &request.web_base64).await,
-    }
-}
-
-async fn validate_v2(
-    manifest: Manifest,
-    wasm_base64: Option<String>,
-    web_base64: &str,
-) -> Result<ValidatedPackage, ApiError> {
-    manifest.validate()?;
-    if manifest.ui.contributions.is_some() {
-        require_layouts_flag()?;
-    }
-    let wasm_base64 = wasm_base64.ok_or_else(|| bad("invalid plugin asset path or size"))?;
-    let wasm = decode_asset(&manifest.wasm, "plugin.wasm", &wasm_base64, WASM_BYTES)?;
-    let html = String::from_utf8(decode_asset(&manifest.ui.entry, "panel.html", web_base64, WEB_BYTES)?)
-        .map_err(|_| bad("plugin panel must be UTF-8 HTML"))?;
-    if html.trim().is_empty() || html.contains('\0') {
-        return Err(bad("plugin panel HTML is empty or invalid"));
-    }
-    match probe_wasm(&wasm).await {
-        Ok(()) => {}
-        Err(ProbeFailure::Busy) => return Err(busy()),
-        Err(ProbeFailure::Invoke) => return Err(bad("WASM failed its ABI and capability installation check")),
-        Err(ProbeFailure::Output(error)) => return Err(error),
-    }
-    let value = serde_json::to_value(&manifest).map_err(|_| ApiError::Internal)?;
-    let package_sha256 = sha256(&serde_jcs::to_vec(&value).map_err(|_| ApiError::Internal)?);
-    Ok(ValidatedPackage {
-        key: manifest.key,
-        version: manifest.version,
-        manifest: value,
-        package_sha256,
-        wasm,
-        html,
-    })
+    validate_v3(
+        parse_manifest(request.manifest)?,
+        request.wasm_base64,
+        &request.web_base64,
+    )
+    .await
 }
 
 async fn validate_v3(
@@ -516,7 +465,7 @@ async fn validate_v3(
             match probe_wasm(&wasm).await {
                 Ok(()) => wasm,
                 Err(ProbeFailure::Busy) => return Err(busy()),
-                Err(ProbeFailure::Invoke | ProbeFailure::Output(_)) => {
+                Err(ProbeFailure::Invoke) => {
                     return Err(plugin_error(
                         ApiErrorKind::InvalidUpdate,
                         "wasm_probe_failed",
@@ -574,7 +523,6 @@ fn decode_v3_asset(size: usize, digest: &str, encoded: &str, limit: usize) -> Re
 enum ProbeFailure {
     Busy,
     Invoke,
-    Output(ApiError),
 }
 
 /// Runs both order amount capabilities once against a fixed input, as every WASM install does.
@@ -584,7 +532,7 @@ async fn probe_wasm(wasm: &[u8]) -> Result<(), ProbeFailure> {
         let probe = invoke_wasm_plugin(wasm.to_vec(), guest_input(capability, 2, 1250), runtime_policy())
             .await
             .map_err(|_| ProbeFailure::Invoke)?;
-        parse_guest_amount(&probe.output).map_err(ProbeFailure::Output)?;
+        parse_guest_amount(&probe.output).map_err(|_| ProbeFailure::Invoke)?;
     }
     Ok(())
 }
@@ -627,41 +575,65 @@ pub async fn bind(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     Path((project_id, key)): Path<(Uuid, String)>,
-    Json(mut request): Json<BindRequest>,
+    Json(request): Json<BindRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let (workspace_id, actor_id) = admin(&state, &claims, project_id).await?;
-    validate_key(&key)?;
+    let actor = BindActor { workspace_id, actor_id };
+    let response = bind_key(&state.db, actor, project_id, &key, request, extensions_enabled()).await?;
+    Ok(ApiResponse::success(response))
+}
+
+#[derive(Clone, Copy)]
+struct BindActor {
+    workspace_id: Uuid,
+    actor_id: Uuid,
+}
+
+/// Changes one key's binding for an already authorized administrator.
+async fn bind_key(
+    db: &DatabaseConnection,
+    actor: BindActor,
+    project_id: Uuid,
+    key: &str,
+    mut request: BindRequest,
+    extensions: bool,
+) -> Result<Value, ApiError> {
+    let BindActor { workspace_id, actor_id } = actor;
+    validate_key(key)?;
     if request.request_id.is_nil() {
         return Err(bad("invalid binding grants or request ID"));
     }
-    let tx = state.db.begin().await?;
+    let tx = db.begin().await?;
     lock_admin(&tx, workspace_id, actor_id).await?;
     lock_project(&tx, project_id).await?;
-    // Only a key with a real installation can acquire a binding, including disable requests.
+    // Only a key with a real protocol 3 installation can acquire a binding, including disable
+    // requests. Packages of the retired protocols are never selected.
     let selected = tx
         .query_one(statement(
-            "SELECT manifest FROM form_plugin_packages
-          WHERE project_id=$1 AND key=$2 AND ($3::uuid IS NULL OR (id=$3 AND library_revoked_at IS NULL)) LIMIT 1",
-            vec![project_id.into(), key.clone().into(), request.package_id.into()],
+            "SELECT p.manifest FROM form_plugin_packages p
+          WHERE p.project_id=$1 AND p.key=$2 AND p.manifest->>'schema_version'=$4
+            AND ($3::uuid IS NULL OR (p.id=$3 AND p.library_revoked_at IS NULL)) LIMIT 1",
+            vec![
+                project_id.into(),
+                key.to_owned().into(),
+                request.package_id.into(),
+                SCHEMA_V3.into(),
+            ],
         ))
         .await?
         .ok_or_else(|| ApiError::not_found("plugin package not installed for this project and key"))?;
     // Every binding writer holds the project lock, so the current binding cannot move from here on.
-    let target_v3 = if request.package_id.is_some() {
-        let manifest: Value = selected.try_get("", "manifest")?;
-        is_v3(&manifest).then_some(manifest)
-    } else {
-        None
-    };
-    let v3 = if let Some(manifest) = &target_v3 {
-        require_extensions()?;
-        let manifest = stored_manifest_v3(manifest)?;
+    // A current binding that still points at a package of a retired protocol reads as unbound.
+    if request.package_id.is_some() {
+        if !extensions {
+            return Err(extensions_disabled());
+        }
+        let manifest = stored_manifest_v3(&selected.try_get::<Value>("", "manifest")?)?;
         validate_v3_grants(Some(&manifest), &mut request.grants)?;
         if let Some(placements) = &mut request.placements {
             normalize_v3_placements(&manifest, placements)?;
         }
-        true
-    } else if request.package_id.is_none() && current_binding_is_v3(&tx, project_id, &key).await? {
+    } else {
         validate_v3_grants(None, &mut request.grants)?;
         if request.placements.is_some() {
             return Err(plugin_error(
@@ -670,116 +642,58 @@ pub async fn bind(
                 "a disable request cannot carry placements",
             ));
         }
-        false
-    } else {
-        validate_legacy_binding(&mut request, &selected)?;
-        false
-    };
+    }
     tx.execute(statement(
         "INSERT INTO form_plugin_bindings (project_id,key) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-        vec![project_id.into(), key.clone().into()],
+        vec![project_id.into(), key.to_owned().into()],
     ))
     .await?;
-    let current = lock_binding(&tx, project_id, &key).await?;
+    let current = lock_binding(&tx, project_id, key).await?;
     let payload = serde_json::to_value(&request).map_err(|_| ApiError::Internal)?;
-    if let Some(response) = binding_receipt(&tx, project_id, &key, request.request_id, actor_id, &payload).await? {
+    if let Some(response) = binding_receipt(&tx, project_id, key, request.request_id, actor_id, &payload).await? {
         tx.commit().await?;
-        return Ok(ApiResponse::success(response));
+        return Ok(response);
     }
     if current.generation != request.expected_generation {
         return Err(stale_binding());
     }
-    match (request.package_id, &request.placements) {
-        (Some(_), Some(placements)) if v3 => {
-            // Rows of contributions the target does not declare stay for a later rollback.
-            for placement in placements {
-                tx.execute(statement(
-                    "INSERT INTO form_plugin_contribution_layouts
-                        (project_id,key,contribution_id,enabled,position,updated_by)
-                     VALUES ($1,$2,$3,$4,$5,$6)
-                     ON CONFLICT (project_id,key,contribution_id) DO UPDATE SET enabled=EXCLUDED.enabled,
-                        position=EXCLUDED.position,updated_by=EXCLUDED.updated_by,updated_at=clock_timestamp()",
-                    vec![
-                        project_id.into(),
-                        key.clone().into(),
-                        placement.id.clone().into(),
-                        placement.enabled.into(),
-                        i16::from(placement.position).into(),
-                        actor_id.into(),
-                    ],
-                ))
-                .await?;
-            }
-        }
-        (Some(package_id), Some(placements)) => {
-            let serialized = serde_json::to_value(placements).map_err(|_| ApiError::Internal)?;
+    if let (Some(_), Some(placements)) = (request.package_id, &request.placements) {
+        // Rows of contributions the target does not declare stay for a later rollback.
+        for placement in placements {
             tx.execute(statement(
-                "INSERT INTO form_plugin_layouts (package_id,placements) VALUES ($1,$2)
-                ON CONFLICT (package_id) DO UPDATE SET placements=EXCLUDED.placements,updated_at=clock_timestamp()",
-                vec![package_id.into(), serialized.into()],
+                "INSERT INTO form_plugin_contribution_layouts
+                    (project_id,key,contribution_id,enabled,position,updated_by)
+                 VALUES ($1,$2,$3,$4,$5,$6)
+                 ON CONFLICT (project_id,key,contribution_id) DO UPDATE SET enabled=EXCLUDED.enabled,
+                    position=EXCLUDED.position,updated_by=EXCLUDED.updated_by,updated_at=clock_timestamp()",
+                vec![
+                    project_id.into(),
+                    key.to_owned().into(),
+                    placement.id.clone().into(),
+                    placement.enabled.into(),
+                    i16::from(placement.position).into(),
+                    actor_id.into(),
+                ],
             ))
             .await?;
         }
-        _ => {}
     }
     tx.execute(statement(
         "UPDATE form_plugin_bindings SET package_id=$3, generation=generation+1, grants=$4
           WHERE project_id=$1 AND key=$2",
         vec![
             project_id.into(),
-            key.clone().into(),
+            key.to_owned().into(),
             request.package_id.into(),
             request.grants.into(),
         ],
     ))
     .await?;
-    let binding = lock_binding(&tx, project_id, &key).await?;
+    let binding = lock_binding(&tx, project_id, key).await?;
     let response = serde_json::to_value(binding).map_err(|_| ApiError::Internal)?;
-    insert_binding_receipt(&tx, project_id, &key, request.request_id, actor_id, payload, &response).await?;
+    insert_binding_receipt(&tx, project_id, key, request.request_id, actor_id, payload, &response).await?;
     tx.commit().await?;
-    Ok(ApiResponse::success(response))
-}
-
-/// Protocol 1/2 grant and layout rules with their original messages.
-fn validate_legacy_binding(request: &mut BindRequest, selected: &sea_orm::QueryResult) -> Result<(), ApiError> {
-    request.grants.sort_unstable();
-    let valid_grants = match request.grants.as_slice() {
-        [] => true,
-        [preview] => preview == PREVIEW,
-        [apply, preview] => apply == APPLY && preview == PREVIEW,
-        _ => false,
-    };
-    if !valid_grants || (request.package_id.is_none() && !request.grants.is_empty()) {
-        return Err(bad("invalid binding grants or request ID"));
-    }
-    let declarations = if request.package_id.is_some() {
-        selected
-            .try_get::<Value>("", "manifest")?
-            .pointer("/ui/contributions")
-            .cloned()
-    } else {
-        None
-    };
-    if declarations.is_some() {
-        require_layouts_flag()?;
-    }
-    if let Some(placements) = &mut request.placements {
-        let declared = declarations.ok_or_else(|| bad("this version has no configurable layout"))?;
-        let declared: Vec<Contribution> = serde_json::from_value(declared).map_err(|_| ApiError::Internal)?;
-        normalize_placements(&declared, placements)?;
-    }
-    Ok(())
-}
-
-async fn current_binding_is_v3(tx: &DatabaseTransaction, project_id: Uuid, key: &str) -> Result<bool, ApiError> {
-    Ok(tx
-        .query_one(statement(
-            "SELECT 1 FROM form_plugin_bindings b JOIN form_plugin_packages p ON p.id=b.package_id
-              WHERE b.project_id=$1 AND b.key=$2 AND p.manifest->>'schema_version'=$3",
-            vec![project_id.into(), key.into(), SCHEMA_V3.into()],
-        ))
-        .await?
-        .is_some())
+    Ok(response)
 }
 
 /// Returns the stored response when this request ID already changed the binding with the same
@@ -839,7 +753,6 @@ async fn lock_binding(tx: &DatabaseTransaction, project_id: Uuid, key: &str) -> 
             "SELECT {BINDING_FIELDS}
            FROM form_plugin_bindings b
            LEFT JOIN form_plugin_packages p ON p.id=b.package_id
-           LEFT JOIN form_plugin_layouts l ON l.package_id=b.package_id
           WHERE b.project_id=$1 AND b.key=$2 FOR UPDATE OF b"
         ),
         vec![project_id.into(), key.into()],
@@ -847,12 +760,12 @@ async fn lock_binding(tx: &DatabaseTransaction, project_id: Uuid, key: &str) -> 
     .one(tx)
     .await?
     .ok_or_else(stale_binding)?;
-    let stored_v3 = if binding.manifest_v3.is_some() {
+    let stored = if binding.manifest_v3.is_some() {
         stored_layouts(tx, project_id, Some(key)).await?
     } else {
         HashMap::new()
     };
-    binding.with_layouts(&stored_v3)
+    binding.with_layouts(&stored)
 }
 
 const fn stale_binding() -> ApiError {
@@ -915,95 +828,8 @@ async fn write_allowed(state: &AppState, context: &RecordContext) -> Result<(), 
     ensure_field_write_policy_allows(state, context.form.id, &context.role, &output_patch(0)).await
 }
 
-#[derive(FromQueryResult, Serialize)]
-struct Panel {
-    package_id: Uuid,
-    key: String,
-    version: String,
-    name: String,
-    generation: i64,
-    grants: Vec<String>,
-    html: String,
-    web_sha256: String,
-    package_sha256: String,
-    #[serde(skip)]
-    declarations: Option<Value>,
-    #[serde(skip)]
-    placements: Option<Value>,
-    #[sea_orm(skip)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    contributions: Option<Vec<EnabledContribution>>,
-}
-
-pub async fn discover(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    Path(record_id): Path<Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
-    let context = record_context(&state, &claims, record_id).await?;
-    if !supports_form(&context.form)? {
-        return Ok(ApiResponse::success(Vec::<Panel>::new()));
-    }
-    match read_allowed(&state, &context).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == ApiErrorKind::Forbidden => return Ok(ApiResponse::success(Vec::new())),
-        Err(err) => return Err(err),
-    }
-    let can_apply = match write_allowed(&state, &context).await {
-        Ok(()) => true,
-        Err(error) if error.kind() == ApiErrorKind::Forbidden => false,
-        Err(error) => return Err(error),
-    };
-    let panels = Panel::find_by_statement(statement(
-        "SELECT p.id AS package_id,p.key,p.version,p.manifest->>'name' AS name,
-                b.generation,b.grants,p.html,p.manifest->'ui'->'entry'->>'sha256' AS web_sha256,p.package_sha256,
-                p.manifest->'ui'->'contributions' AS declarations,l.placements
-           FROM form_plugin_bindings b JOIN form_plugin_packages p ON p.id=b.package_id
-           LEFT JOIN form_plugin_layouts l ON l.package_id=p.id
-          WHERE b.project_id=$1 AND p.library_revoked_at IS NULL AND p.manifest->'ui'->>'form_key'=$2 AND $3=ANY(b.grants)
-            AND ($4::bool OR p.manifest->'ui'->'contributions' IS NULL)
-          ORDER BY p.key",
-        vec![
-            context.form.project_id.into(),
-            context.form.key.into(),
-            PREVIEW.into(),
-            layouts_enabled().into(),
-        ],
-    ))
-    .all(&state.db)
-    .await?;
-    let mut visible = Vec::new();
-    for mut panel in panels {
-        if let Some(declared) = panel.declarations.take() {
-            let placements = layouts_for(&declared, panel.placements.take())?;
-            let declared = serde_json::from_value(declared).map_err(|_| ApiError::Internal)?;
-            let enabled = enabled_contributions(declared, &placements);
-            if enabled.is_empty() {
-                continue;
-            }
-            panel.contributions = Some(enabled);
-        }
-        if !can_apply {
-            panel.grants.retain(|capability| capability == PREVIEW);
-        }
-        visible.push(panel);
-    }
-    Ok(ApiResponse::success(visible))
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct InvokeRequest {
-    generation: i64,
-    request_id: Uuid,
-    preview_request_id: Option<Uuid>,
-    capability: String,
-    input: Value,
-}
-
 #[derive(FromQueryResult)]
 struct ActivePackage {
-    key: String,
     version: String,
     wasm_bytes: Vec<u8>,
     wasm_sha256: String,
@@ -1069,9 +895,14 @@ pub async fn list_invocations(
 ) -> Result<impl IntoResponse, ApiError> {
     admin(&state, &claims, project_id).await?;
     let invocations = Receipt::find_by_statement(statement(
-        &format!("SELECT {RECEIPT_FIELDS} {RECEIPT_SOURCE} WHERE i.project_id=$1 ORDER BY i.created_at DESC,i.request_id LIMIT 100"),
+        &format!(
+            "SELECT {RECEIPT_FIELDS} {RECEIPT_SOURCE} WHERE i.project_id=$1 AND {V3_PACKAGE}
+              ORDER BY i.created_at DESC,i.request_id LIMIT 100"
+        ),
         vec![project_id.into()],
-    )).all(&state.db).await?;
+    ))
+    .all(&state.db)
+    .await?;
     Ok(ApiResponse::success(invocations))
 }
 
@@ -1091,8 +922,8 @@ pub(crate) struct Execution {
     capability: String,
     request_id: Uuid,
     preview_request_id: Option<Uuid>,
-    /// Set for protocol 3 invocations, which address one declared record contribution.
-    contribution: Option<ContributionTarget>,
+    /// The declared record contribution the invocation addresses.
+    contribution: ContributionTarget,
 }
 
 pub(crate) struct ContributionTarget {
@@ -1140,33 +971,26 @@ impl Execution {
         if !binding.grants.contains(&self.capability) {
             return Err(ApiError::forbidden("plugin capability has not been granted"));
         }
-        if let Some(target) = &self.contribution {
-            require_extensions()?;
-            if !binding.grants.iter().any(|grant| grant == UI_DISPLAY) {
-                return Err(contribution_unavailable());
-            }
-            let manifest = stored_manifest_v3(binding.manifest_v3.as_ref().ok_or_else(contribution_unavailable)?)?;
-            if !v3_record_target(&manifest, &target.id, &target.form_key) {
-                return Err(contribution_unavailable());
-            }
-            let placements: Vec<Placement> = binding
-                .placements
-                .map(serde_json::from_value)
-                .transpose()
-                .map_err(|_| ApiError::Internal)?
-                .unwrap_or_default();
-            if !placements
-                .iter()
-                .any(|placement| placement.id == target.id && placement.enabled)
-            {
-                return Err(contribution_unavailable());
-            }
-        } else if let Some(placements) = binding.placements {
-            require_layouts_flag()?;
-            let placements: Vec<Placement> = serde_json::from_value(placements).map_err(|_| ApiError::Internal)?;
-            if !placements.into_iter().any(|placement| placement.enabled) {
-                return Err(ApiError::forbidden("plugin has no enabled contribution"));
-            }
+        let target = &self.contribution;
+        require_extensions()?;
+        if !binding.grants.iter().any(|grant| grant == UI_DISPLAY) {
+            return Err(contribution_unavailable());
+        }
+        let manifest = stored_manifest_v3(binding.manifest_v3.as_ref().ok_or_else(contribution_unavailable)?)?;
+        if !v3_record_target(&manifest, &target.id, &target.form_key) {
+            return Err(contribution_unavailable());
+        }
+        let placements: Vec<Placement> = binding
+            .placements
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| ApiError::Internal)?
+            .unwrap_or_default();
+        if !placements
+            .iter()
+            .any(|placement| placement.id == target.id && placement.enabled)
+        {
+            return Err(contribution_unavailable());
         }
         let member = tx
             .query_one(statement(
@@ -1211,7 +1035,7 @@ impl Execution {
         }
         if receipt
             .as_ref()
-            .is_some_and(|row| row.contribution_id.as_deref() != self.contribution_id())
+            .is_some_and(|row| row.contribution_id.as_deref() != Some(self.contribution_id()))
         {
             return Err(plugin_error(
                 ApiErrorKind::InvalidUpdate,
@@ -1222,8 +1046,8 @@ impl Execution {
         Ok(receipt)
     }
 
-    fn contribution_id(&self) -> Option<&str> {
-        self.contribution.as_ref().map(|target| target.id.as_str())
+    fn contribution_id(&self) -> &str {
+        &self.contribution.id
     }
 
     async fn insert_receipt(
@@ -1245,7 +1069,7 @@ impl Execution {
             error_kind.into(),
             duration_ms.into(),
             fuel_consumed.into(),
-            self.contribution_id().map(str::to_owned).into(),
+            self.contribution_id().to_owned().into(),
         ]);
         tx.execute(statement(
             "INSERT INTO form_plugin_invocations
@@ -1355,64 +1179,7 @@ fn audited_error(kind: &str) -> ApiError {
     }
 }
 
-pub async fn invoke(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    Path((record_id, package_id)): Path<(Uuid, Uuid)>,
-    Json(request): Json<InvokeRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    if request.input.as_object().is_none_or(|input| !input.is_empty())
-        || request.request_id.is_nil()
-        || !matches!(request.capability.as_str(), PREVIEW | APPLY)
-        || (request.capability == APPLY) != request.preview_request_id.is_some()
-    {
-        return Err(bad(
-            "invalid plugin capability, request ID, preview reference, or input",
-        ));
-    }
-    let context = record_context(&state, &claims, record_id).await?;
-    read_allowed(&state, &context).await?;
-    if request.capability == APPLY {
-        write_allowed(&state, &context).await?;
-    }
-    if !supports_form(&context.form)? {
-        return Err(ApiError::not_found("plugin package does not support this Form"));
-    }
-    let active = ActivePackage::find_by_statement(statement(
-        "SELECT p.key,p.version,p.wasm_bytes,p.manifest->'wasm'->>'sha256' AS wasm_sha256
-           FROM form_plugin_packages p JOIN form_plugin_bindings b ON b.project_id=p.project_id AND b.key=p.key
-          WHERE p.project_id=$1 AND p.id=$2 AND p.library_revoked_at IS NULL AND p.manifest->'ui'->>'form_key'=$3",
-        vec![
-            context.form.project_id.into(),
-            package_id.into(),
-            context.form.key.clone().into(),
-        ],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::not_found("plugin package is not bound to this Form"))?;
-    let execution = Execution {
-        workspace_id: context.form.workspace_id,
-        project_id: context.form.project_id,
-        key: active.key.clone(),
-        package_id,
-        generation: request.generation,
-        actor_id: context.actor_id,
-        role: context.role.clone(),
-        form_id: context.form.id,
-        record_id,
-        created_by: context.record.created_by,
-        record_updated_at: context.record.updated_at,
-        schema_version: context.form.schema_version,
-        capability: request.capability,
-        request_id: request.request_id,
-        preview_request_id: request.preview_request_id,
-        contribution: None,
-    };
-    Ok(ApiResponse::success(execute(&state, context, execution, active).await?))
-}
-
-/// Shared by the protocol 1/2 and protocol 3 invoke routes once the execution is identified.
+/// Runs an identified protocol 3 invocation: replay, preview check, WASM run and receipt.
 async fn execute(
     state: &AppState,
     context: RecordContext,

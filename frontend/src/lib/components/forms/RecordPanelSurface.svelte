@@ -73,7 +73,7 @@
 	import { locale, t } from 'svelte-i18n';
 	import { onMount } from 'svelte';
 	import { writable } from 'svelte/store';
-	import type { RecordPluginActionSurface } from '#lib/plugins/placements.js';
+	import type { RecordPluginActionSurface } from '#lib/plugins/record-entries.js';
 	import {
 		formsApi,
 		type FormAttachment,

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Order amount</title>
+	<style>
+		:root {
+			color-scheme: light dark;
+			font:
+				15px/1.5 system-ui,
+				sans-serif;
+		}
+		body {
+			margin: 0;
+			padding: 1rem;
+			color: #172533;
+			background: #f2f7f8;
+		}
+		h1,
+		p {
+			margin: 0 0 0.65rem;
+		}
+		h1 {
+			font-size: 1rem;
+		}
+		output {
+			display: block;
+			margin: 0.5rem 0 1rem;
+			font:
+				650 2rem/1.1 ui-monospace,
+				monospace;
+			font-variant-numeric: tabular-nums;
+		}
+		body.record-action {
+			border-inline-start: 0.25rem solid #176784;
+		}
+		body.record-action output {
+			font-size: 1.55rem;
+		}
+		.actions {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.5rem;
+		}
+		button {
+			font: inherit;
+			padding: 0.4rem 0.7rem;
+			border: 1px solid #3b6576;
+			border-radius: 0.35rem;
+			color: #173847;
+			background: #fff;
+		}
+		button:enabled {
+			cursor: pointer;
+		}
+		button:disabled {
+			opacity: 0.6;
+		}
+		button:focus-visible {
+			outline: 3px solid #176784;
+			outline-offset: 2px;
+		}
+		#status {
+			min-height: 1.5em;
+			margin: 0.75rem 0 0;
+		}
+		@media (prefers-color-scheme: dark) {
+			body {
+				color: #e1edf0;
+				background: #19313a;
+			}
+			button {
+				color: #e1edf0;
+				background: #223f49;
+				border-color: #83a8b5;
+			}
+			button:focus-visible {
+				outline-color: #b2e2f1;
+			}
+		}
+	</style>
+	<!--author-copy-->
+	<main>
+		<h1 id="heading">Order amount</h1>
+		<p id="description"></p>
+		<output id="amount" aria-label="Order amount">—</output>
+		<div class="actions">
+			<button id="preview" type="button" disabled>Preview amount</button>
+			<button id="apply" type="button" hidden disabled>Save amount</button>
+		</div>
+		<p id="status" role="status">Connecting to the order record…</p>
+	</main>
+	<script>
+		const copy = JSON.parse(document.getElementById('author-copy').textContent);
+		const heading = document.querySelector('#heading');
+		const description = document.querySelector('#description');
+		const preview = document.querySelector('#preview');
+		const apply = document.querySelector('#apply');
+		const amount = document.querySelector('#amount');
+		const status = document.querySelector('#status');
+		let port;
+		let grants = [];
+		let requestId;
+		let action;
+		let hasPreview = false;
+		let suspended = false;
+
+		function refresh() {
+			preview.disabled = suspended || !!requestId || !grants.includes('amount.preview');
+			apply.disabled = suspended || !!requestId || !hasPreview || apply.hidden;
+		}
+
+		function request(method) {
+			if (!port || requestId || suspended) return;
+			requestId = crypto.randomUUID();
+			action = method;
+			refresh();
+			status.textContent = method === 'amount.apply' ? 'Awaiting confirmation…' : 'Calculating…';
+			port.postMessage({
+				protocol: 2,
+				type: 'request',
+				request_id: requestId,
+				method,
+				params: {}
+			});
+		}
+
+		function show(context) {
+			const contribution = context?.contribution;
+			const isAction =
+				contribution?.id === 'amount_action' && contribution.slot === 'form.record.actions';
+			document.body.classList.toggle('record-action', isAction);
+			heading.textContent = isAction ? copy.actionTitle : copy.detailTitle;
+			description.textContent = isAction ? copy.actionText : copy.detailText;
+		}
+
+		preview.addEventListener('click', () => request('amount.preview'));
+		apply.addEventListener('click', () => request('amount.apply'));
+		window.addEventListener('message', function connect(event) {
+			if (
+				event.source !== window.parent ||
+				event.origin !== 'null' ||
+				event.data?.type !== 'sylvode-plugin-connect' ||
+				event.data.protocol !== 2 ||
+				event.ports.length !== 1 ||
+				port
+			)
+				return;
+			window.removeEventListener('message', connect);
+			port = event.ports[0];
+			grants = event.data.grants;
+			show(event.data.context);
+			apply.hidden = !grants.includes('amount.apply');
+			status.textContent = apply.hidden ? 'Preview access only.' : 'Ready to preview.';
+			refresh();
+			port.onmessage = ({ data }) => {
+				if (data?.protocol !== 2) return;
+				if (data.type === 'event' && data.name === 'context') show(data.data);
+				if (data.type === 'event' && data.name === 'suspended') {
+					suspended = true;
+					status.textContent = 'This panel was suspended.';
+					refresh();
+				}
+				if (data.type !== 'result' || data.request_id !== requestId) return;
+				requestId = undefined;
+				if (data.ok) {
+					amount.value = new Intl.NumberFormat(navigator.language, {
+						minimumFractionDigits: 2,
+						maximumFractionDigits: 2
+					}).format(data.result.amount_cents / 100);
+					hasPreview = true;
+					status.textContent = action === 'amount.apply' ? 'Amount saved.' : 'Preview ready.';
+				} else {
+					status.textContent = data.error?.message ?? 'The action failed.';
+				}
+				refresh();
+			};
+			port.postMessage({ protocol: 2, type: 'ready' });
+			new ResizeObserver(() => {
+				port.postMessage({
+					protocol: 2,
+					type: 'resize',
+					height: Math.ceil(document.body.getBoundingClientRect().height)
+				});
+			}).observe(document.body);
+		});
+		document.addEventListener('keydown', (event) => {
+			if (event.key === 'Escape' && port) port.postMessage({ protocol: 2, type: 'close' });
+		});
+	</script>
+</html>

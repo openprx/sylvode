@@ -1,6 +1,13 @@
-import type { PluginSlot, PluginUpload } from '../../api/plugin-packages';
+import type {
+	PluginCapability,
+	PluginContributionV3,
+	PluginManifestV3,
+	PluginSlotV3,
+	PluginUploadV3
+} from '../../api/plugin-packages';
 import type { CreatorTemplate } from './registry';
 import template from './order-amount-template.json';
+import pageHtml from './order-amount-template.html?raw';
 
 export interface CreatorDraft {
 	key: string;
@@ -32,11 +39,11 @@ export const defaultDraft: Readonly<CreatorDraft> = {
 	actionText: 'Preview this order line’s total from the record actions.'
 };
 
-export function creatorSlot(value: string | null): PluginSlot {
+export function creatorSlot(value: string | null): PluginSlotV3 {
 	return value === actionSlot ? actionSlot : detailSlot;
 }
 
-export function creatorPlacement(slot: PluginSlot) {
+export function creatorPlacement(slot: PluginSlotV3) {
 	return { id: slot === actionSlot ? 'amount_action' : 'detail_panel', slot };
 }
 
@@ -93,7 +100,7 @@ export async function sha256(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
 }
 
 export interface CreatorPackage {
-	upload: PluginUpload;
+	upload: PluginUploadV3;
 	html: string;
 	json: string;
 	fixtureCents: number;
@@ -101,52 +108,48 @@ export interface CreatorPackage {
 
 export async function buildCreatorPackage(draft: CreatorDraft): Promise<CreatorPackage> {
 	if (invalidDraftFields(draft).length) throw new Error('Invalid draft');
-	const { key, name, publisher, version, formKey, detailLabel, actionLabel, ...text } = draft;
+	const { key, name, publisher, version, formKey } = draft;
+	const text = {
+		detailTitle: draft.detailTitle,
+		detailText: draft.detailText,
+		actionTitle: draft.actionTitle,
+		actionText: draft.actionText
+	};
 	const authorCopy = JSON.stringify(
 		Object.fromEntries(Object.entries(text).map(([field, value]) => [field, value.trim()]))
 	).replaceAll('<', '\\u003c');
-	const html = decoder
-		.decode(decodeBase64(template.web_base64))
-		.replace(
-			'<main>',
-			() => '<script type="application/json" id="author-copy">' + authorCopy + '</script>\n<main>'
-		)
-		.replace(
-			'    const placement = event.data.placement;',
-			"    const placement = event.data.placement;\n    const author = JSON.parse(document.getElementById('author-copy').textContent);"
-		)
-		.replace("'Calculate order amount';", 'author.actionTitle;')
-		.replace("'Preview this order line’s total from the record actions.';", 'author.actionText;')
-		.replace("'Order amount breakdown';", 'author.detailTitle;')
-		.replace(
-			"'Review the amount for this order line’s quantity and unit price.';",
-			'author.detailText;'
-		);
+	const html = pageHtml.replace(
+		'<!--author-copy-->',
+		() => '<script type="application/json" id="author-copy">' + authorCopy + '</script>'
+	);
 	const web = encoder.encode(html);
 	const webSha = await sha256(web);
-	const source = template.manifest;
-	const manifest = {
-		...source,
-		schema_version: 'openpr.plugin.v2' as const,
+	const manifest: PluginManifestV3 = {
+		...template.manifest,
+		schema_version: 'openpr.plugin.v3',
+		host_protocol: { min: 3, max: 3 },
+		profile: 'wasm',
+		bridge_version: 2,
 		key: key.trim(),
 		name: name.trim(),
 		publisher: publisher.trim(),
 		version: version.trim(),
-		ui: {
-			...source.ui,
-			form_key: formKey.trim(),
-			entry: { path: 'panel.html', size: web.length, sha256: webSha },
-			contributions: [
-				{ ...creatorPlacement(detailSlot), label: detailLabel.trim() },
-				{ ...creatorPlacement(actionSlot), label: actionLabel.trim() }
-			]
+		entry: { path: 'panel.html', size: web.length, sha256: webSha },
+		wasm: {
+			abi: 'openpr.plugin.v1',
+			path: 'plugin.wasm',
+			size: template.manifest.wasm.size,
+			sha256: template.manifest.wasm.sha256,
+			form_key: formKey.trim()
 		},
-		capabilities: source.capabilities.map((capability) => ({
+		contributions: contributions(draft),
+		reads: [],
+		capabilities: template.manifest.capabilities.map((capability) => ({
 			...capability,
-			name: capability.name as 'amount.preview' | 'amount.apply'
+			name: capability.name as PluginCapability
 		}))
 	};
-	const upload = {
+	const upload: PluginUploadV3 = {
 		manifest,
 		wasm_base64: template.wasm_base64,
 		web_base64: btoa(String.fromCharCode(...web))
@@ -157,6 +160,30 @@ export async function buildCreatorPackage(draft: CreatorDraft): Promise<CreatorP
 		json: JSON.stringify(upload, null, 2) + '\n',
 		fixtureCents: await runFixedGuest()
 	};
+}
+
+function contributions(draft: CreatorDraft): PluginContributionV3[] {
+	const formKey = draft.formKey.trim();
+	return [
+		{
+			id: creatorPlacement(detailSlot).id,
+			kind: 'panel',
+			slot: detailSlot,
+			label: draft.detailLabel.trim(),
+			view: 'detail',
+			route: null,
+			form_key: formKey
+		},
+		{
+			id: creatorPlacement(actionSlot).id,
+			kind: 'action',
+			slot: actionSlot,
+			label: draft.actionLabel.trim(),
+			view: 'actions',
+			route: null,
+			form_key: formKey
+		}
+	];
 }
 
 async function runFixedGuest(): Promise<number> {
@@ -193,33 +220,13 @@ async function runFixedGuest(): Promise<number> {
 export const orderAmountTemplate: CreatorTemplate<CreatorDraft> = {
 	id: 'order_amount',
 	profile: 'wasm',
-	output: 'openpr.plugin.v2',
 	slots: [detailSlot, actionSlot],
 	defaults: (origin) => readDraft(null, origin.formKey ?? defaultDraft.formKey),
 	read: (stored, origin) => readDraft(stored, origin.formKey ?? defaultDraft.formKey),
 	invalid: invalidDraftFields,
 	build: buildCreatorPackage,
 	review: (draft) => ({
-		slots: [
-			{
-				id: creatorPlacement(detailSlot).id,
-				kind: 'panel',
-				slot: detailSlot,
-				label: draft.detailLabel.trim(),
-				view: 'detail',
-				route: null,
-				form_key: draft.formKey.trim()
-			},
-			{
-				id: creatorPlacement(actionSlot).id,
-				kind: 'action',
-				slot: actionSlot,
-				label: draft.actionLabel.trim(),
-				view: 'actions',
-				route: null,
-				form_key: draft.formKey.trim()
-			}
-		],
+		slots: contributions(draft),
 		reads: [],
 		capabilities: ['amount.preview', 'amount.apply']
 	})

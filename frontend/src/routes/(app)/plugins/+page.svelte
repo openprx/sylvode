@@ -4,11 +4,9 @@
 	import { t } from 'svelte-i18n';
 	import { apiClient } from '#lib/api/client.js';
 	import {
-		isV3,
 		pluginLibraryApi,
 		type LibraryProject,
 		type PersonalPluginPackage,
-		type PluginUpload,
 		type PluginUploadV3
 	} from '#lib/api/plugin-packages.js';
 	import { listPersonalDrafts } from '#lib/plugins/creator/personal-drafts.js';
@@ -24,7 +22,7 @@
 	let importing = $state(false);
 	let importError = $state('');
 	let importNotice = $state('');
-	let upload = $state<PluginUpload | PluginUploadV3 | null>(null);
+	let upload = $state<PluginUploadV3 | null>(null);
 	let importBusy = $state(false);
 	let selection = 0;
 	let generation = 0;
@@ -139,21 +137,15 @@
 				<div class="space-y-2 border-l-2 border-line-strong pl-3 text-sm">
 					<p class="font-medium">{upload.manifest.name} · v{upload.manifest.version}</p>
 					<p>{upload.manifest.key} · {upload.manifest.publisher}</p>
-					{#if isV3(upload.manifest)}
-						<p>
-							{$t('plugins.layoutV3.installSummary', {
-								values: {
-									count: upload.manifest.contributions.length,
-									reads: upload.manifest.reads.length
-								}
-							})}
-						</p>
-						<p>{$t(`plugins.layoutV3.profile.${upload.manifest.profile}`)}</p>
-					{:else}
-						<p>
-							{$t('plugins.creator.targetForm', { values: { form: upload.manifest.ui.form_key } })}
-						</p>
-					{/if}
+					<p>
+						{$t('plugins.layoutV3.installSummary', {
+							values: {
+								count: upload.manifest.contributions.length,
+								reads: upload.manifest.reads.length
+							}
+						})}
+					</p>
+					<p>{$t(`plugins.layoutV3.profile.${upload.manifest.profile}`)}</p>
 					<Button loading={importBusy} onclick={saveImport}>{$t('plugins.library.save')}</Button>
 				</div>
 			{/if}

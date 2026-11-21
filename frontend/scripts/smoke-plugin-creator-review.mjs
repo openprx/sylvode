@@ -59,7 +59,7 @@ function api(pathname) {
 			updated_at: now
 		});
 	if (pathname === '/api/v1/projects/p1/plugin-packages')
-		return ok({ items: [], bindings: [], layout_supported: true, extension_supported: true });
+		return ok({ items: [], bindings: [], extension_supported: true });
 	return ok(list([]));
 }
 

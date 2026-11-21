@@ -410,7 +410,7 @@ async fn readable_forms(
     Ok(readable)
 }
 
-/// Amount capability facts for a record, using the same checks as the protocol 2 discovery.
+/// Amount capability facts for a record: the Form must carry the order fields and the actor may read them.
 async fn amount_facts(state: &AppState, context: &RecordContext) -> Result<(bool, bool), ApiError> {
     if !supports_form(&context.form)? {
         return Ok((false, false));
@@ -1199,7 +1199,7 @@ pub async fn invoke(
         return Err(contribution_unavailable());
     }
     let active = ActivePackage::find_by_statement(statement(
-        "SELECT key,version,wasm_bytes,manifest->'wasm'->>'sha256' AS wasm_sha256
+        "SELECT version,wasm_bytes,manifest->'wasm'->>'sha256' AS wasm_sha256
            FROM form_plugin_packages WHERE id=$1",
         vec![request.package_id.into()],
     ))
@@ -1222,10 +1222,10 @@ pub async fn invoke(
         capability: request.capability,
         request_id: request.request_id,
         preview_request_id: request.preview_request_id,
-        contribution: Some(ContributionTarget {
+        contribution: ContributionTarget {
             id: contribution_id,
             form_key: context.form.key.clone(),
-        }),
+        },
     };
     Ok(ApiResponse::success(execute(&state, context, execution, active).await?))
 }

@@ -5,7 +5,7 @@
 		entryPluginKey,
 		sameEntry,
 		type RecordPluginActionSurface
-	} from '#lib/plugins/placements.js';
+	} from '#lib/plugins/record-entries.js';
 
 	let { recordId, surface }: { recordId: string; surface: RecordPluginActionSurface } = $props();
 	const actions = $derived($surface?.recordId === recordId ? $surface : null);
