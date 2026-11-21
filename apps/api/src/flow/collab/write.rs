@@ -563,9 +563,15 @@ struct WindowIds {
     base_head_seq: i64,
 }
 
-/// The host's oracle for the worker's incremental window check: compares what the worker
-/// established about the accepted document (`report`, absent when the full computation decided)
-/// with the full projection the host just computed from the document it received.
+/// The host's oracle for the worker's window: compares what the worker established about the
+/// accepted document with the full projection the host just computed from the document it received.
+///
+/// With a `report` (the incremental check decided) the report must agree with the projection. With
+/// none (the full computation decided) there is nothing to compare, but the host's projection of
+/// the document must still be within every limit: the worker's full computation read its own id
+/// caches, the host reads the document it loads, and the write is never accepted on the worker's
+/// word alone. A document the host's projection finds over a limit after the worker accepted it is
+/// a disagreement like any other.
 ///
 /// # Errors
 /// The first field in which the two disagree. The caller does not accept the write on this
@@ -574,24 +580,179 @@ fn verify_window_report(
     report: Option<&collab_core::window_check::WindowReport>,
     projection: &collab_core::SemanticSnapshot,
 ) -> Result<(), collab_core::window_check::WindowDivergence> {
-    report.map_or(Ok(()), |report| {
-        collab_core::window_check::compare_with_projection(report, projection)
-    })
+    if let Some(report) = report {
+        return collab_core::window_check::compare_with_projection(report, projection);
+    }
+    #[cfg(test)]
+    if mutant_is(WindowMutant::NoHostCheckWithoutReport) {
+        return Ok(());
+    }
+    collab_core::limits::check_snapshot(projection, &collab_core::limits::DocumentLimits::default()).map_err(
+        |violation| collab_core::window_check::WindowDivergence {
+            field: violation.limit_kind,
+            reported: violation.limit,
+            projected: violation.observed,
+        },
+    )
 }
 
-/// Counts and logs a disagreement at error level with the identifiers that reproduce it.
-fn log_window_divergence(divergence: &collab_core::window_check::WindowDivergence, ids: WindowIds) {
+/// Deliberate faults of the host's decision, for the mutant tests: each is a way the decision goes
+/// wrong that a test must catch. Thread-local, so tests do not see each other's.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WindowMutant {
+    /// The host does not look at the document of a window that reported nothing.
+    NoHostCheckWithoutReport,
+    /// A divergence that survives the full window is accepted.
+    AcceptsSecondDivergence,
+}
+
+#[cfg(test)]
+thread_local! {
+    static WINDOW_MUTANT: std::cell::Cell<Option<WindowMutant>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn mutant_is(mutant: WindowMutant) -> bool {
+    WINDOW_MUTANT.with(std::cell::Cell::get) == Some(mutant)
+}
+
+/// How a disagreement is answered, for the log line.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DivergenceAnswer {
+    /// The first attempt: the decision is made again by the full window.
+    DecideAgain,
+    /// The full window's result is contradicted as well, or was the first attempt: the write is
+    /// refused.
+    Refuse,
+}
+
+/// Counts and logs a disagreement at error level with the identifiers that reproduce it (never
+/// content).
+fn log_window_divergence(
+    divergence: &collab_core::window_check::WindowDivergence,
+    ids: WindowIds,
+    answer: DivergenceAnswer,
+) {
     let total = WINDOW_CHECK_DIVERGENCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    tracing::error!(
-        flow_window_check_divergence_total = total,
-        field = divergence.field,
-        reported = divergence.reported,
-        projected = divergence.projected,
-        document_id = %ids.document_id,
-        update_id = %ids.update_id,
-        base_head_seq = ids.base_head_seq,
-        "incremental_check_divergence: the worker's window check disagrees with the full projection; deciding again with the full window"
-    );
+    match answer {
+        DivergenceAnswer::DecideAgain => tracing::error!(
+            flow_window_check_divergence_total = total,
+            field = divergence.field,
+            reported = divergence.reported,
+            projected = divergence.projected,
+            document_id = %ids.document_id,
+            update_id = %ids.update_id,
+            base_head_seq = ids.base_head_seq,
+            "incremental_check_divergence: the worker's window check disagrees with the full projection; deciding again with the full window"
+        ),
+        DivergenceAnswer::Refuse => tracing::error!(
+            flow_window_check_divergence_total = total,
+            field = divergence.field,
+            reported = divergence.reported,
+            projected = divergence.projected,
+            document_id = %ids.document_id,
+            update_id = %ids.update_id,
+            base_head_seq = ids.base_head_seq,
+            "window_divergence_refused: the host's projection of the document the full window accepted is not within the limits; the write is refused"
+        ),
+    }
+}
+
+/// How many disagreements for one document, within [`COOLDOWN_WINDOW`], put it on the full window
+/// directly.
+const COOLDOWN_THRESHOLD: usize = 3;
+/// The period in which [`COOLDOWN_THRESHOLD`] disagreements count.
+const COOLDOWN_WINDOW: std::time::Duration = std::time::Duration::from_mins(10);
+/// How long a document that crossed the threshold is decided by the full window directly.
+const COOLDOWN_PERIOD: std::time::Duration = std::time::Duration::from_mins(10);
+/// The most documents the tracker holds. When it is full, entries with nothing recent are dropped
+/// first, and then the one whose last disagreement is oldest.
+const COOLDOWN_MAX_DOCUMENTS: usize = 1_024;
+
+#[derive(Default)]
+struct DocumentDisagreements {
+    /// The times of the last disagreements, newest last, at most [`COOLDOWN_THRESHOLD`].
+    recent: std::collections::VecDeque<std::time::Instant>,
+    /// The document is decided by the full window directly until this time.
+    full_until: Option<std::time::Instant>,
+}
+
+/// The per-document record of disagreements between the worker's window and the host's projection.
+///
+/// A page that keeps disagreeing pays two windows and two host projections per write, under the
+/// document's coordinator permit. Past [`COOLDOWN_THRESHOLD`] disagreements within
+/// [`COOLDOWN_WINDOW`] the host asks for the full window directly for [`COOLDOWN_PERIOD`], so the
+/// page pays one. Process-local state, bounded by [`COOLDOWN_MAX_DOCUMENTS`] entries of at most
+/// [`COOLDOWN_THRESHOLD`] instants each; a restart forgets it, which only costs a few more retries.
+#[derive(Default)]
+struct DisagreementTracker {
+    by_document: std::collections::HashMap<Uuid, DocumentDisagreements>,
+}
+
+impl DisagreementTracker {
+    /// Whether `document` is decided by the full window directly at `now`.
+    fn cooling(&self, document: Uuid, now: std::time::Instant) -> bool {
+        self.by_document
+            .get(&document)
+            .and_then(|entry| entry.full_until)
+            .is_some_and(|until| now < until)
+    }
+
+    /// Records a disagreement. True when this one puts the document on the full window (the
+    /// caller logs that once).
+    fn record(&mut self, document: Uuid, now: std::time::Instant) -> bool {
+        if !self.by_document.contains_key(&document) && self.by_document.len() >= COOLDOWN_MAX_DOCUMENTS {
+            self.make_room(now);
+        }
+        let entry = self.by_document.entry(document).or_default();
+        entry.recent.push_back(now);
+        while entry
+            .recent
+            .front()
+            .is_some_and(|oldest| now.saturating_duration_since(*oldest) > COOLDOWN_WINDOW)
+        {
+            entry.recent.pop_front();
+        }
+        while entry.recent.len() > COOLDOWN_THRESHOLD {
+            entry.recent.pop_front();
+        }
+        let already = entry.full_until.is_some_and(|until| now < until);
+        if !already && entry.recent.len() >= COOLDOWN_THRESHOLD {
+            entry.full_until = Some(now + COOLDOWN_PERIOD);
+            entry.recent.clear();
+            return true;
+        }
+        false
+    }
+
+    /// Drops what has nothing recent and nothing cooling; if that frees nothing, the entry whose
+    /// last activity is oldest.
+    fn make_room(&mut self, now: std::time::Instant) {
+        self.by_document.retain(|_, entry| {
+            entry.full_until.is_some_and(|until| now < until)
+                || entry
+                    .recent
+                    .back()
+                    .is_some_and(|last| now.saturating_duration_since(*last) <= COOLDOWN_WINDOW)
+        });
+        if self.by_document.len() >= COOLDOWN_MAX_DOCUMENTS {
+            let oldest = self
+                .by_document
+                .iter()
+                .min_by_key(|(_, entry)| entry.recent.back().copied().or(entry.full_until))
+                .map(|(document, _)| *document);
+            if let Some(document) = oldest {
+                self.by_document.remove(&document);
+            }
+        }
+    }
+}
+
+fn disagreements() -> &'static parking_lot::Mutex<DisagreementTracker> {
+    static TRACKER: std::sync::LazyLock<parking_lot::Mutex<DisagreementTracker>> =
+        std::sync::LazyLock::new(|| parking_lot::Mutex::new(DisagreementTracker::default()));
+    &TRACKER
 }
 
 /// What one attempt of the isolated window produced.
@@ -660,27 +821,66 @@ fn window_attempt(
 
 /// Decides one write's window with `attempt`, which runs the isolated window in a given mode.
 ///
-/// The first attempt runs in `mode`. If the worker's incremental result is contradicted by the
-/// host's own projection, the worker's word is not taken: the disagreement is counted and logged
-/// at error level, and the decision is made once more by the full computation (the worker is asked
-/// for the full window, which it cannot be told to skip checks in). The write is accepted or
-/// refused by that result, so a wrong incremental check can neither commit a document the full
-/// computation would refuse nor turn into a plain failure the client retries forever. A full
-/// window reports nothing to disagree with; if a worker reports anyway and is contradicted, the
-/// write fails with an internal error.
+/// The first attempt runs in `mode`, or in the full mode directly for a document that keeps
+/// disagreeing (see [`DisagreementTracker`]). If the worker's result is contradicted by the host's
+/// own projection of the document it returned (`verify_window_report`: an incremental report that
+/// disagrees, or a full window's document that the host's projection finds over a limit), the
+/// worker's word is not taken: the disagreement is counted and logged at error level, and the
+/// decision is made once more by the full window. If that result is contradicted too, or the first
+/// attempt was the full window already, the write is refused with an internal error and never
+/// accepted. The retry is the one decided by the full computation, so a wrong incremental check can
+/// neither commit a document the full computation would refuse nor turn into a plain failure the
+/// client retries forever, and no worker result the host's projection contradicts is committed.
 fn decide_window(
+    ids: WindowIds,
+    mode: collab_core::isolation::WindowMode,
+    attempt: impl FnMut(collab_core::isolation::WindowMode) -> Result<WindowAttempt, ApiError>,
+) -> Result<WindowAttempt, ApiError> {
+    decide_window_with(disagreements(), ids, mode, attempt)
+}
+
+/// [`decide_window`] against a given tracker. The tracker is locked only for the instant of each
+/// read or update, never across an attempt.
+fn decide_window_with(
+    tracker: &parking_lot::Mutex<DisagreementTracker>,
     ids: WindowIds,
     mode: collab_core::isolation::WindowMode,
     mut attempt: impl FnMut(collab_core::isolation::WindowMode) -> Result<WindowAttempt, ApiError>,
 ) -> Result<WindowAttempt, ApiError> {
-    let first = attempt(mode)?;
+    use collab_core::isolation::WindowMode;
+    let cooling = tracker.lock().cooling(ids.document_id, std::time::Instant::now());
+    let first_mode = if cooling { WindowMode::Full } else { mode };
+    let first = attempt(first_mode)?;
     let WindowAttempt::Diverged(divergence) = first else {
         return Ok(first);
     };
-    log_window_divergence(&divergence, ids);
-    match attempt(collab_core::isolation::WindowMode::Full)? {
+    let entered = tracker.lock().record(ids.document_id, std::time::Instant::now());
+    if entered {
+        tracing::warn!(
+            document_id = %ids.document_id,
+            threshold = COOLDOWN_THRESHOLD,
+            cooldown_seconds = COOLDOWN_PERIOD.as_secs(),
+            "window_cooldown: the document's windows keep disagreeing with the host's projection; deciding its writes by the full window directly"
+        );
+    }
+    if first_mode == WindowMode::Full {
+        log_window_divergence(&divergence, ids, DivergenceAnswer::Refuse);
+        return Err(ApiError::internal());
+    }
+    log_window_divergence(&divergence, ids, DivergenceAnswer::DecideAgain);
+    match attempt(WindowMode::Full)? {
         WindowAttempt::Diverged(second) => {
-            log_window_divergence(&second, ids);
+            log_window_divergence(&second, ids, DivergenceAnswer::Refuse);
+            #[cfg(test)]
+            if mutant_is(WindowMutant::AcceptsSecondDivergence) {
+                return Ok(WindowAttempt::Prepared(Box::new(WindowPrepared {
+                    candidate: LoroCollabEngine::new_empty(1),
+                    semantic: collab_core::SemanticSnapshot::default(),
+                    minimum_editor_model: 0,
+                    window_cpu_us: None,
+                    incremental: false,
+                })));
+            }
             Err(ApiError::internal())
         }
         decided => Ok(decided),
@@ -704,9 +904,11 @@ mod window_oracle_tests {
         }
     }
 
+    /// A fresh document per call: the cooldown tracker is process-wide, and a test must not see
+    /// the disagreements of another.
     fn ids() -> WindowIds {
         WindowIds {
-            document_id: Uuid::nil(),
+            document_id: Uuid::new_v4(),
             update_id: Uuid::nil(),
             base_head_seq: 0,
         }
@@ -835,6 +1037,177 @@ mod window_oracle_tests {
         .expect("decides");
         assert!(matches!(decided, WindowAttempt::Prepared(_)));
         assert_eq!(modes, [WindowMode::Full]);
+    }
+
+    /// A document 33 levels deep: the projection of it is over `tree_depth`.
+    fn over_the_depth_limit() -> SemanticSnapshot {
+        let mut engine = LoroCollabEngine::new_empty(7);
+        for index in 0..34 {
+            engine
+                .apply_content_operation(&collab_core::Operation::CreateNode {
+                    id: collab_core::NodeId::from(format!("n{index}").as_str()),
+                    parent: (index > 0).then(|| collab_core::NodeId::from(format!("n{}", index - 1).as_str())),
+                    index: 0,
+                    kind: collab_core::NodeKind::NavigatorNode,
+                })
+                .expect("the node is created");
+        }
+        engine.semantic_snapshot().expect("the document projects")
+    }
+
+    #[test]
+    fn a_full_windows_document_that_the_hosts_projection_finds_over_a_limit_is_a_divergence() {
+        let projection = over_the_depth_limit();
+        let divergence = verify_window_report(None, &projection).expect_err("the host's projection is over the limit");
+        assert_eq!(divergence.field, "tree_depth");
+        assert!(divergence.projected > divergence.reported, "{divergence:?}");
+    }
+
+    /// The commit of round two: the retry is the full window, whose result has no report, and the
+    /// host compared nothing, so a document the host's projection finds over a limit was accepted.
+    /// With a stub worker that accepts and a host projection that contradicts it, both attempts
+    /// diverge and the write is refused, never decided as `Prepared`.
+    #[test]
+    fn a_retry_that_the_hosts_projection_contradicts_again_is_refused() {
+        let mut modes = Vec::new();
+        let refused = decide_window(ids(), WindowMode::Incremental, |mode| {
+            modes.push(mode);
+            Ok(diverged())
+        });
+        assert_eq!(modes, [WindowMode::Incremental, WindowMode::Full]);
+        assert!(
+            matches!(&refused, Err(error) if format!("{error:?}") == format!("{:?}", ApiError::internal())),
+            "{:?}",
+            refused.err()
+        );
+    }
+
+    #[test]
+    fn a_full_window_first_attempt_that_is_contradicted_is_refused_without_a_retry() {
+        let mut modes = Vec::new();
+        let refused = decide_window(ids(), WindowMode::Full, |mode| {
+            modes.push(mode);
+            Ok(diverged())
+        });
+        assert_eq!(
+            modes,
+            [WindowMode::Full],
+            "a second full window would decide nothing new"
+        );
+        assert!(refused.is_err());
+    }
+
+    #[test]
+    fn a_divergence_that_is_refused_is_counted_every_time() {
+        let before = WINDOW_CHECK_DIVERGENCES.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = decide_window(ids(), WindowMode::Incremental, |_| Ok(diverged()));
+        assert!(WINDOW_CHECK_DIVERGENCES.load(std::sync::atomic::Ordering::Relaxed) >= before + 2);
+    }
+
+    /// Runs `body` with `mutant` active on this thread, and reports whether `body` caught it (a
+    /// panic of an assertion).
+    fn caught_by(mutant: WindowMutant, body: impl FnOnce() + std::panic::UnwindSafe) -> bool {
+        WINDOW_MUTANT.with(|active| active.set(Some(mutant)));
+        let outcome = std::panic::catch_unwind(body);
+        WINDOW_MUTANT.with(|active| active.set(None));
+        outcome.is_err()
+    }
+
+    #[test]
+    fn the_mutants_of_the_hosts_decision_are_caught() {
+        // Without the check of a full window's document, a document over a limit is not a
+        // divergence.
+        assert!(caught_by(WindowMutant::NoHostCheckWithoutReport, || {
+            let projection = over_the_depth_limit();
+            assert!(verify_window_report(None, &projection).is_err());
+        }));
+        // A divergence that survives the full window is refused, never accepted.
+        assert!(caught_by(WindowMutant::AcceptsSecondDivergence, || {
+            let refused = decide_window(ids(), WindowMode::Incremental, |_| Ok(diverged()));
+            assert!(refused.is_err());
+        }));
+        // And with no mutant the same bodies pass.
+        let projection = over_the_depth_limit();
+        assert!(verify_window_report(None, &projection).is_err());
+        assert!(decide_window(ids(), WindowMode::Incremental, |_| Ok(diverged())).is_err());
+    }
+
+    fn at(seconds: u64) -> std::time::Instant {
+        static START: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
+        *START + std::time::Duration::from_secs(seconds)
+    }
+
+    #[test]
+    fn a_document_that_keeps_disagreeing_goes_to_the_full_window_directly() {
+        let tracker = parking_lot::Mutex::new(DisagreementTracker::default());
+        let ids = ids();
+        for _ in 0..COOLDOWN_THRESHOLD {
+            let _ = decide_window_with(&tracker, ids, WindowMode::Incremental, |mode| {
+                Ok(if mode == WindowMode::Full {
+                    prepared(false)
+                } else {
+                    diverged()
+                })
+            });
+        }
+        assert!(tracker.lock().cooling(ids.document_id, std::time::Instant::now()));
+        // Now one window is enough: the first attempt is already the full one.
+        let mut modes = Vec::new();
+        let decided = decide_window_with(&tracker, ids, WindowMode::Incremental, |mode| {
+            modes.push(mode);
+            Ok(prepared(false))
+        })
+        .expect("decides");
+        assert!(matches!(decided, WindowAttempt::Prepared(_)));
+        assert_eq!(modes, [WindowMode::Full]);
+        // Another document is not affected.
+        let other = super::WindowIds {
+            document_id: Uuid::new_v4(),
+            ..ids
+        };
+        let mut other_modes = Vec::new();
+        let _ = decide_window_with(&tracker, other, WindowMode::Incremental, |mode| {
+            other_modes.push(mode);
+            Ok(prepared(true))
+        });
+        assert_eq!(other_modes, [WindowMode::Incremental]);
+    }
+
+    #[test]
+    fn the_cooldown_needs_the_threshold_within_the_window_and_ends() {
+        let mut tracker = DisagreementTracker::default();
+        let document = Uuid::new_v4();
+        // Spread over more than the window: never reaches the threshold.
+        let spread = COOLDOWN_WINDOW.as_secs() / 2 + 1;
+        for step in 0..10 {
+            assert!(!tracker.record(document, at(step * spread)), "step {step}");
+        }
+        assert!(!tracker.cooling(document, at(10 * spread)));
+        // The threshold within the window: entered exactly once, ends after the period.
+        let start = 100_000;
+        let mut entered = 0;
+        for step in 0..(COOLDOWN_THRESHOLD as u64 + 2) {
+            entered += usize::from(tracker.record(document, at(start + step)));
+        }
+        assert_eq!(entered, 1, "logged once");
+        assert!(tracker.cooling(document, at(start + 10)));
+        assert!(!tracker.cooling(document, at(start + 10 + COOLDOWN_PERIOD.as_secs())));
+    }
+
+    #[test]
+    fn the_tracker_is_bounded() {
+        let mut tracker = DisagreementTracker::default();
+        for index in 0..(COOLDOWN_MAX_DOCUMENTS as u64 * 3) {
+            tracker.record(Uuid::new_v4(), at(index % 100));
+            assert!(tracker.by_document.len() <= COOLDOWN_MAX_DOCUMENTS);
+        }
+        assert_eq!(tracker.by_document.len(), COOLDOWN_MAX_DOCUMENTS);
+        assert!(
+            tracker
+                .by_document
+                .values()
+                .all(|entry| entry.recent.len() <= COOLDOWN_THRESHOLD)
+        );
     }
 }
 
