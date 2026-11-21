@@ -74,17 +74,20 @@ pub struct ProgressRequest {
     pub queue_position: Option<i32>,
 }
 
-/// Refuses everything but the task's own bot: a person, a system administrator, another bot, and a
-/// request without a bot context (a connected application never has one).
+/// Refuses everything but the task's own bot.
+///
+/// That is a person, a system administrator, another bot, and a request without a bot context (a
+/// connected application never has one). The refusal is the 404 of a task that does not exist, so
+/// a foreign task id cannot be told from an unknown one.
 pub fn ensure_task_bot(task: &AiTaskRow, bot: Option<&BotAuthContext>, claims: &JwtClaims) -> Result<(), ApiError> {
     let own =
         bot.is_some_and(|bot| bot.bot_id == task.ai_participant_id) && claims.sub == task.ai_participant_id.to_string();
     if own {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
-            "task can only be operated by its own bot".to_string(),
-        ))
+        // The same answer as for a task that does not exist: whether a task id exists is not
+        // something a bot that does not own it may learn.
+        Err(ApiError::NotFound("ai task not found".to_string()))
     }
 }
 
@@ -400,6 +403,13 @@ pub async fn complete_task_with_reply(
     let txn = state.db.begin().await?;
     let Some(ended) = complete_active_attempt(&txn, task_id, attempt, &result).await? else {
         let current = load_task_with_protocol(&txn, task_id).await?.task;
+        // The attempt already completed: saying the same thing again is the harmless "not active",
+        // saying something else is a conflict with the stored result, which the first call decided.
+        if current.status == "completed" && current.attempts == attempt && current.result.as_ref() != Some(&result) {
+            return Err(ApiError::Conflict(
+                "the task was already completed with a different result".to_string(),
+            ));
+        }
         return Err(not_active_for_attempt(attempt, current.attempts));
     };
     let (task, previous_status) = (ended.task, ended.previous_status);
@@ -460,6 +470,13 @@ pub async fn fail_task_with_reply(
     let txn = state.db.begin().await?;
     let Some(ended) = cas_end_attempt(&txn, task_id, attempt, end, reason).await? else {
         let current = load_task_with_protocol(&txn, task_id).await?.task;
+        // As for a completion: the same reason again is "not active", another reason is a conflict.
+        if current.status == "failed" && current.attempts == attempt && current.error_message.as_deref() != Some(reason)
+        {
+            return Err(ApiError::Conflict(
+                "the task already failed with a different reason".to_string(),
+            ));
+        }
         return Err(not_active_for_attempt(attempt, current.attempts));
     };
     let (task, previous_status) = (ended.task, ended.previous_status);
@@ -532,8 +549,9 @@ async fn finish_response(
 #[allow(clippy::expect_used, clippy::panic, clippy::too_many_lines, clippy::indexing_slicing)]
 mod tests {
     use super::{
-        AckRequest, ProgressRequest, TaskAttemptQuery, ack_task, ensure_task_bot, get_protocol, get_task,
-        list_active_tasks, report_task_progress,
+        AckRequest, CompleteRequest, FailRequest, ProgressRequest, TaskAttemptQuery, ack_task,
+        complete_task_with_reply, ensure_task_bot, fail_task_with_reply, get_protocol, get_task, list_active_tasks,
+        report_task_progress,
     };
     use crate::error::ApiError;
     use crate::middleware::bot_auth::BotAuthContext;
@@ -571,8 +589,9 @@ mod tests {
         }
     }
 
-    fn forbidden(answer: &Result<Value, ApiError>) -> bool {
-        matches!(answer, Err(ApiError::Forbidden(message)) if message == "task can only be operated by its own bot")
+    /// The one refusal for a task the caller does not own: the same as for a task that does not exist.
+    fn not_found(answer: &Result<Value, ApiError>) -> bool {
+        matches!(answer, Err(ApiError::NotFound(message)) if message == "ai task not found")
     }
 
     /// Who calls: the task's bot, another bot of the workspace, a member, a system administrator.
@@ -698,6 +717,82 @@ mod tests {
         .await
     }
 
+    async fn complete(
+        db: &DatabaseConnection,
+        w: &World,
+        caller: Caller,
+        task: Uuid,
+        n: Option<i32>,
+    ) -> Result<Value, ApiError> {
+        complete_with(db, w, caller, task, n, "s").await
+    }
+
+    async fn complete_with(
+        db: &DatabaseConnection,
+        w: &World,
+        caller: Caller,
+        task: Uuid,
+        n: Option<i32>,
+        summary: &str,
+    ) -> Result<Value, ApiError> {
+        let (claims, bot) = w.identity(caller);
+        json_of(
+            complete_task_with_reply(
+                State(state_for(db.clone())),
+                Extension(claims),
+                bot.map(Extension),
+                Path(task),
+                attempt(n),
+                Json(CompleteRequest {
+                    outcome: "done".to_string(),
+                    summary: summary.to_string(),
+                    artifacts: Vec::new(),
+                    vote: None,
+                    vote_reason: None,
+                }),
+            )
+            .await,
+        )
+        .await
+    }
+
+    async fn fail(
+        db: &DatabaseConnection,
+        w: &World,
+        caller: Caller,
+        task: Uuid,
+        n: Option<i32>,
+    ) -> Result<Value, ApiError> {
+        fail_with(db, w, caller, task, n, "r").await
+    }
+
+    async fn fail_with(
+        db: &DatabaseConnection,
+        w: &World,
+        caller: Caller,
+        task: Uuid,
+        n: Option<i32>,
+        reason: &str,
+    ) -> Result<Value, ApiError> {
+        let (claims, bot) = w.identity(caller);
+        json_of(
+            fail_task_with_reply(
+                State(state_for(db.clone())),
+                Extension(claims),
+                bot.map(Extension),
+                Path(task),
+                attempt(n),
+                Json(FailRequest {
+                    reason: reason.to_string(),
+                    retryable: false,
+                    source: None,
+                }),
+            )
+            .await,
+        )
+        .await
+    }
+
     async fn active(db: &DatabaseConnection, w: &World, caller: Caller) -> Result<Value, ApiError> {
         let (_, bot) = w.identity(caller);
         json_of(list_active_tasks(State(state_for(db.clone())), bot.map(Extension)).await).await
@@ -710,16 +805,32 @@ mod tests {
         let w = World::new(db, "au").await;
         let task = seed_task(db, &w.tenant, w.bot, "processing", 1, 0).await;
 
+        // A task of another bot is indistinguishable from a task that does not exist, on every
+        // endpoint and for every caller that is not the task's bot: one answer, no oracle.
+        let unknown = Uuid::new_v4();
         for caller in [Caller::OtherBot, Caller::Member, Caller::SystemAdmin] {
-            assert!(forbidden(&get(db, &w, caller, task, Some(1)).await), "get {caller:?}");
-            assert!(
-                forbidden(&ack(db, &w, caller, task, Some(1), "plan").await),
-                "ack {caller:?}"
-            );
-            assert!(
-                forbidden(&progress(db, &w, caller, task, Some(1), json!({"note": "x"})).await),
-                "progress {caller:?}"
-            );
+            for id in [task, unknown] {
+                assert!(
+                    not_found(&get(db, &w, caller, id, Some(1)).await),
+                    "get {caller:?} {id}"
+                );
+                assert!(
+                    not_found(&ack(db, &w, caller, id, Some(1), "plan").await),
+                    "ack {caller:?} {id}"
+                );
+                assert!(
+                    not_found(&progress(db, &w, caller, id, Some(1), json!({"note": "x"})).await),
+                    "progress {caller:?} {id}"
+                );
+                assert!(
+                    not_found(&complete(db, &w, caller, id, Some(1)).await),
+                    "complete {caller:?} {id}"
+                );
+                assert!(
+                    not_found(&fail(db, &w, caller, id, Some(1)).await),
+                    "fail {caller:?} {id}"
+                );
+            }
         }
         for caller in [Caller::Member, Caller::SystemAdmin] {
             assert!(active(db, &w, caller).await.is_err(), "active list {caller:?}");
@@ -791,7 +902,7 @@ mod tests {
             ensure_task_bot(&entry.task, None, &claims_for(w.bot))
         })
         .await;
-        assert!(matches!(refused, Err(ApiError::Forbidden(_))));
+        assert!(matches!(refused, Err(ApiError::NotFound(_))));
         assert!(
             ensure_task_bot(
                 &entry.task,
@@ -800,6 +911,51 @@ mod tests {
             )
             .is_ok()
         );
+        scratch.drop_self().await;
+    }
+
+    /// A repeat of an end the task already has is the harmless "not active" answer when it says the
+    /// same thing, and a conflict when it says something else: the stored result is the first one.
+    #[tokio::test]
+    async fn a_repeated_end_with_other_content_is_a_conflict() {
+        let scratch = scratch_or_skip!("aitp_repeat_conflict");
+        let db = &scratch.db;
+        let w = World::new(db, "rc").await;
+        let completed = seed_task(db, &w.tenant, w.bot, "processing", 1, 0).await;
+        complete_with(db, &w, Caller::TaskBot, completed, Some(1), "first summary")
+            .await
+            .expect("the first completion");
+        let same = complete_with(db, &w, Caller::TaskBot, completed, Some(1), "first summary").await;
+        assert!(
+            matches!(&same, Err(ApiError::BadRequest(message)) if message.contains("not active")),
+            "{same:?}"
+        );
+        let other = complete_with(db, &w, Caller::TaskBot, completed, Some(1), "another summary").await;
+        assert!(
+            matches!(&other, Err(ApiError::Conflict(message)) if message.contains("different result")),
+            "{other:?}"
+        );
+        // A repeat for another attempt is just not active.
+        let stale = complete_with(db, &w, Caller::TaskBot, completed, Some(2), "another summary").await;
+        assert!(matches!(&stale, Err(ApiError::BadRequest(_))), "{stale:?}");
+
+        let failed = seed_task(db, &w.tenant, w.bot, "processing", 1, 0).await;
+        fail_with(db, &w, Caller::TaskBot, failed, Some(1), "first reason")
+            .await
+            .expect("the first failure");
+        let same = fail_with(db, &w, Caller::TaskBot, failed, Some(1), "first reason").await;
+        assert!(
+            matches!(&same, Err(ApiError::BadRequest(message)) if message.contains("not active")),
+            "{same:?}"
+        );
+        let other = fail_with(db, &w, Caller::TaskBot, failed, Some(1), "another reason").await;
+        assert!(
+            matches!(&other, Err(ApiError::Conflict(message)) if message.contains("different reason")),
+            "{other:?}"
+        );
+        // Completing a failed task (or failing a completed one) stays a plain "not active".
+        let crossed = complete_with(db, &w, Caller::TaskBot, failed, Some(1), "s").await;
+        assert!(matches!(&crossed, Err(ApiError::BadRequest(_))), "{crossed:?}");
         scratch.drop_self().await;
     }
 

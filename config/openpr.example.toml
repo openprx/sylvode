@@ -262,8 +262,11 @@ transport = "stdio"
 # value. Connected (OAuth) applications ignore it.
 # tool_mode = "search"
 
-# Whether sylvode_write may be used at all. Default: true. false makes sylvode_write answer that
-# writes are disabled; the task tools and sylvode_read are not affected.
+# Whether the bot may use write tools. Default: true. false disables every write tool except the
+# task lifecycle tools (sylvode_task_get, _ack, _progress, _complete, _fail), which a runner bot
+# needs: sylvode_write answers that writes are disabled, and in full mode, on every transport
+# and in the command line (`mcp-server tools call`, `projects create`, ...) a tool the catalogue
+# marks as writing is refused before any request. Reads are not affected.
 # allow_write_call = true
 
 

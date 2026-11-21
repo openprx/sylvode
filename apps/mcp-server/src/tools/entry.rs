@@ -70,6 +70,26 @@ pub fn unlisted_refusal(mode: McpToolMode, name: &str) -> Option<String> {
     })
 }
 
+/// The name a tool is attributed to in the operation log.
+///
+/// The API records only dotted lower-case names (`work_items.update`). The task tools and the
+/// search entry tools are named for agents with underscores only, so they are attributed to dotted
+/// names: `tasks.acknowledge` for `sylvode_task_ack`, `entry.search` for `sylvode_search`. Every
+/// other tool is attributed to its own name. `sylvode_read` and `sylvode_write` never appear: a
+/// wrapper call is attributed to its target.
+pub fn attribution_name(name: &str) -> &str {
+    match name {
+        tasks::TASK_GET => "tasks.get",
+        tasks::TASK_ACK => "tasks.acknowledge",
+        tasks::TASK_PROGRESS => "tasks.progress",
+        tasks::TASK_COMPLETE => "tasks.complete",
+        tasks::TASK_FAIL => "tasks.fail",
+        OVERVIEW => "entry.overview",
+        SEARCH => "entry.search",
+        other => other,
+    }
+}
+
 /// A caller supplied name, cut and stripped of control characters for an error text.
 fn printable(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).take(80).collect::<String>()
@@ -467,23 +487,6 @@ pub fn project_argument(args: &Value) -> Result<Option<String>, String> {
             .map(|id| Some(id.to_string()))
             .map_err(|_| "Invalid arguments: project_id must be a UUID".to_string()),
         Some(_) => Err("Invalid arguments: project_id must be a UUID".to_string()),
-    }
-}
-
-/// The instructions `initialize` carries until the generated guide replaces them (P3.7).
-pub const fn instructions(mode: McpToolMode) -> &'static str {
-    match mode {
-        McpToolMode::Search => {
-            "Sylvode. Find tools with sylvode_search, call tools that only read with sylvode_read and tools \
-             that change data with sylvode_write. When a task is assigned to you, handle it with \
-             sylvode_task_get, sylvode_task_ack, sylvode_task_progress and finally sylvode_task_complete or \
-             sylvode_task_fail."
-        }
-        McpToolMode::Full => {
-            "Sylvode. Every tool is listed; call it by name. When a task is assigned to you, handle it with \
-             sylvode_task_get, sylvode_task_ack, sylvode_task_progress and finally sylvode_task_complete or \
-             sylvode_task_fail."
-        }
     }
 }
 

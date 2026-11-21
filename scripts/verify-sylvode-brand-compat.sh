@@ -104,13 +104,13 @@ rm -f "$COMPAT_DIR/config/sylvode.toml"
 CONFLICT_SEAM_APPLIED=0
 CONFLICT_MUTATION_EXIT=-1
 if [[ $RELEASE == 1.0 ]]; then
-  # ADR-0020 判据 3 (positive side) and the openpr:// `_meta.deprecation` read (D2).
+  # ADR-0020 判据 3 (positive side) and the retired openpr:// resource spelling.
   run_logged attribution-conflict-test env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
     cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p api --lib \
-    attribution_accepts_either_spelling_and_refuses_disagreement
+    attribution_reads_one_spelling_and_refuses_disagreement
   run_logged resource-alias-deprecation-test env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
     cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p mcp-server --test flow_policy_bypass_stdio_e2e \
-    all_resource_aliases_are_identical_over_stdio_http_and_sse
+    every_resource_is_served_by_its_sylvode_identity_only_over_stdio_http_and_sse
 
   # ADR-0020 判据 3 (mutation control): in a detached worktree of HEAD, turn the conflict refusal
   # into "take the canonical value" and run the same test, which must then fail.
@@ -138,7 +138,7 @@ MUTATE
     set +e
     env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="$MUTATION_RUN/target" \
       cargo test --manifest-path "$MUTATION_RUN/tree/Cargo.toml" -p api --lib \
-      attribution_accepts_either_spelling_and_refuses_disagreement >"$LOG_ROOT/attribution-conflict-mutation.log" 2>&1
+      attribution_reads_one_spelling_and_refuses_disagreement >"$LOG_ROOT/attribution-conflict-mutation.log" 2>&1
     CONFLICT_MUTATION_EXIT=$?
     set -e
   else
@@ -225,7 +225,7 @@ checks.append({"name": "compatibility-matrix-complete", "status": "passed" if no
 
 matrix_v1 = (repo / "docs/sylvode-v1.0-compatibility.md").read_text()
 v1_surfaces = required_surfaces + ["MCP attribution headers", "Attachment count headers", "Webhook `User-Agent`"]
-v1_tokens = ["not removed before Sylvode v2.0", "_meta.deprecation", "X-Sylvode-MCP-Tool", "X-OpenPR-MCP-Tool",
+v1_tokens = ["not removed before Sylvode v2.0", "X-Sylvode-MCP-Tool",
              "X-Sylvode-Attachment-Count", "X-OpenPR-Attachment-Count",
              "Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)", "**exactly** or as a **prefix**",
              "openpr_plugin_abi_version", "`opr_`", "OPENPR_TEST_DATABASE_URL"]
@@ -298,10 +298,10 @@ if target_release == "1.0":
         "default_discovery_of_the_legacy_config_warns_once_per_process_on_stderr",
         "explicit_legacy_config_and_canonical_discovery_do_not_warn",
         "serve_over_stdio_keeps_stdout_for_protocol_frames_and_prints_no_notice"]))
-    conflict_test = "middleware::bot_auth::tests::attribution_accepts_either_spelling_and_refuses_disagreement"
+    conflict_test = "middleware::bot_auth::tests::attribution_reads_one_spelling_and_refuses_disagreement"
     checks.append(named_tests("adr0020-attribution-conflict-rejected", "attribution-conflict-test", [conflict_test]))
-    checks.append(named_tests("adr0020-resource-alias-meta-deprecation", "resource-alias-deprecation-test",
-                              ["all_resource_aliases_are_identical_over_stdio_http_and_sse"]))
+    checks.append(named_tests("adr0020-retired-resource-spelling-unknown", "resource-alias-deprecation-test",
+                              ["every_resource_is_served_by_its_sylvode_identity_only_over_stdio_http_and_sse"]))
     mutation_log = logs / "attribution-conflict-mutation.log"
     mutation_body = mutation_log.read_text(errors="replace")
     target_failed = f"test {conflict_test} ... FAILED" in mutation_body
@@ -317,7 +317,7 @@ if target_release == "1.0":
         "criterion_2_stdout_byte_comparison": ["adr0020-cli-nine-groups-stdout-byte-equal"],
         "criterion_3_attribution_conflict_refused": ["adr0020-attribution-conflict-rejected",
                                                      "mutation:attribution-conflict-resolves-to-canonical"],
-        "d2_openpr_resource_meta_deprecation": ["adr0020-resource-alias-meta-deprecation"],
+        "d2_openpr_resource_meta_deprecation": ["adr0020-retired-resource-spelling-unknown"],
         "not_covered_by_this_artifact": {
             "criterion_4_brand_residue": "brand_residue_release_gate (brand-residue-result.json)",
             "criterion_5_published_release_assets": "GitHub release assets; not verifiable before the release",

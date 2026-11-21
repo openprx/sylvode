@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use crate::client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_CLI, TRANSPORT_LABEL_CLI_TOOLS_CALL, transport_label};
 use crate::protocol::{CallToolResult, ToolContent};
-use crate::server::McpServer;
+use crate::server::{McpServer, ToolSurface};
 use crate::tools::work_items::WORK_ITEM_PRIORITIES;
 
 /// Tracing target of the MCP server and of the workspace commands, and the scope of the
@@ -650,7 +650,7 @@ pub async fn run_business(global: &GlobalArgs, command: &BusinessCommands) -> an
     // the API as the configured identity and cannot run without one.
     let client =
         build_client(&mcp, Some(configured_bot_token(&mcp)?))?.with_transport_label(business_transport_label(command));
-    run_cli_command(command, &global.format, client).await
+    run_cli_command(command, &global.format, client, mcp.allow_write_call).await
 }
 
 /// The transport surface a workspace command declares to the API (`mcp-surface-v1.md`,
@@ -837,12 +837,15 @@ fn split_host_port(authority: &str) -> Option<(&str, &str)> {
     authority.rsplit_once(':')
 }
 
+/// Runs one workspace command through the same server a transport builds, so `[mcp]
+/// allow_write_call = false` refuses a write command here exactly as it does on a transport.
 async fn run_cli_command(
     command: &BusinessCommands,
     format: &OutputFormat,
     client: OpenPrClient,
+    allow_write_call: bool,
 ) -> anyhow::Result<()> {
-    let server = McpServer::new(client, platform::config::McpToolMode::Full);
+    let server = McpServer::for_surface(client, ToolSurface::new(McpToolMode::Full, allow_write_call));
 
     // Files upload requires async disk I/O before calling execute_tool, handle it separately
     if let BusinessCommands::Files(files_cmd) = command {

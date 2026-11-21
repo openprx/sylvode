@@ -7,7 +7,7 @@
 use super::catalog::{self, Access, CATALOG};
 use super::entry::{self, ENTRY_TOOL_NAMES};
 use super::tasks::{self, TASK_TOOL_NAMES};
-use super::test_support::{Api, Policy, Seen, UUID, minimal_arguments};
+use super::test_support::{Api, Policy, Seen, UUID, argument_variants, minimal_arguments};
 use crate::oauth::DelegatedGrant;
 use crate::protocol::{CallToolResult, JsonRpcRequest, ToolContent, ToolDefinition};
 use crate::server::McpServer;
@@ -30,6 +30,16 @@ fn text(result: &CallToolResult) -> String {
 
 fn server(api: &Api, mode: McpToolMode) -> Result<McpServer, String> {
     Ok(McpServer::new(api.client()?, mode))
+}
+
+/// A key the tool generates itself is random; replaces it so two runs can be compared.
+fn hide_generated_key(seen: &mut Seen, caller_key: bool) {
+    if caller_key {
+        return;
+    }
+    if let Some(key) = seen.body.get_mut("idempotency_key") {
+        *key = json!("<generated>");
+    }
 }
 
 fn registry() -> Vec<ToolDefinition> {
@@ -165,7 +175,7 @@ async fn initialize_carries_the_instructions_and_the_task_capability_for_a_plain
         );
         assert_eq!(
             response.pointer("/result/instructions").and_then(Value::as_str),
-            Some(entry::instructions(mode))
+            Some(crate::guides::SERVER_INSTRUCTIONS)
         );
         assert!(response.pointer("/result/capabilities/tools").is_some());
     }
@@ -329,10 +339,19 @@ async fn each_wrapper_refuses_the_other_access_class_for_the_whole_catalogue_bef
 #[tokio::test]
 async fn a_wrapper_call_is_the_direct_call_for_every_tool_under_every_policy() -> TestResult {
     for policy in [Policy::Permissive, Policy::DenyAll] {
-        for tool in non_task_tools() {
-            let arguments = minimal_arguments(&tool);
-            let direct_api = Api::spawn(policy).await?;
-            let wrapped_api = Api::spawn(policy).await?;
+        let direct_api = Api::spawn(policy).await?;
+        let wrapped_api = Api::spawn(policy).await?;
+        for (tool, arguments) in non_task_tools().into_iter().flat_map(|tool| {
+            let variants = argument_variants(&tool);
+            variants.into_iter().map(move |variant| (tool.clone(), variant))
+        }) {
+            // A shape the schema itself refuses never reaches the tool through a wrapper; a direct
+            // call is allowed to try it, so compare only the shapes both doors accept.
+            if crate::tools::schema_check::validate(&tool.input_schema, &arguments).is_err() {
+                continue;
+            }
+            direct_api.clear();
+            wrapped_api.clear();
             let direct = server(&direct_api, McpToolMode::Full)?
                 .call_tool(&tool.name, arguments.clone())
                 .await;
@@ -344,9 +363,14 @@ async fn a_wrapper_call_is_the_direct_call_for_every_tool_under_every_policy() -
                 .await;
             assert_eq!(text(&wrapped), text(&direct), "{policy:?} {}", tool.name);
             assert_eq!(wrapped.is_error, direct.is_error, "{policy:?} {}", tool.name);
+            // A key the tool generates itself is random; one the caller sent is compared as sent.
+            let caller_key = arguments.get("idempotency_key").is_some();
             let shape = |seen: Vec<Seen>| {
                 seen.into_iter()
-                    .map(|seen| (seen.method, seen.path, seen.query, seen.body, seen.tool))
+                    .map(|mut seen| {
+                        hide_generated_key(&mut seen, caller_key);
+                        (seen.method, seen.path, seen.query, seen.body, seen.tool)
+                    })
                     .collect::<Vec<_>>()
             };
             let wrapped_requests = wrapped_api.seen();
@@ -366,6 +390,110 @@ async fn a_wrapper_call_is_the_direct_call_for_every_tool_under_every_policy() -
             );
         }
     }
+    Ok(())
+}
+
+/// An argument the schema does not declare must never redirect a tool: with an undeclared
+/// `project_id`, `workspace_id`, `form_id` or `object_id` naming something foreign, every tool, by
+/// every door, either refuses or makes exactly the requests it makes without it, and no request
+/// body carries the foreign id. The wrapper is checked against the same rule.
+#[tokio::test]
+async fn an_undeclared_foreign_id_never_redirects_a_tool() -> TestResult {
+    const FOREIGN: &str = "99999999-9999-4999-8999-999999999999";
+    let shape = |seen: Vec<Seen>| {
+        seen.into_iter()
+            .map(|mut seen| {
+                if let Some(key) = seen.body.get_mut("idempotency_key") {
+                    *key = json!("<generated>");
+                }
+                (seen.method, seen.path, seen.query, seen.body)
+            })
+            .collect::<Vec<_>>()
+    };
+    let api = Api::spawn(Policy::Permissive).await?;
+    let mut exercised = 0;
+    for tool in non_task_tools() {
+        let declared = tool
+            .input_schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let base = minimal_arguments(&tool);
+        api.clear();
+        // A fresh server per call: the ownership cache would otherwise make the second call cheaper.
+        let baseline = server(&api, McpToolMode::Full)?
+            .call_tool(&tool.name, base.clone())
+            .await;
+        let baseline_requests = shape(api.seen());
+        for key in ["project_id", "workspace_id", "form_id", "object_id"] {
+            if declared.contains_key(key) {
+                continue;
+            }
+            let mut tampered = base.clone();
+            if let Some(object) = tampered.as_object_mut() {
+                object.insert(key.to_string(), json!(FOREIGN));
+            }
+            let doors = [
+                (McpToolMode::Full, tool.name.as_str(), tampered.clone()),
+                (
+                    McpToolMode::Search,
+                    wrapper_for(&tool.name),
+                    json!({ "tool": tool.name, "arguments": tampered }),
+                ),
+            ];
+            for (mode, name, arguments) in doors {
+                api.clear();
+                let result = server(&api, mode)?.call_tool(name, arguments).await;
+                let requests = shape(api.seen());
+                exercised += 1;
+                let refused = result.is_error == Some(true) && text(&result) != text(&baseline);
+                let identical = requests == baseline_requests;
+                assert!(
+                    refused || identical,
+                    "{} with an undeclared {key}: {requests:?} against {baseline_requests:?}",
+                    tool.name
+                );
+                assert!(
+                    !serde_json::to_string(&requests)?.contains(FOREIGN) || refused,
+                    "{} forwarded the undeclared {key}",
+                    tool.name
+                );
+            }
+        }
+    }
+    assert!(exercised > 500, "only {exercised} calls were exercised");
+    Ok(())
+}
+
+/// The case that made the rule above necessary: a tool addressed by `attachment_id` called with a
+/// `form_id` of a form the caller can read used to be governed by that form's project policy while
+/// it acted on the attachment. The undeclared id is refused before any request, by every door.
+#[tokio::test]
+async fn an_undeclared_form_id_cannot_redirect_the_policy_of_an_attachment_call() -> TestResult {
+    let api = Api::spawn(Policy::Permissive).await?;
+    for (mode, name, arguments) in [
+        (
+            McpToolMode::Full,
+            "form_attachments.archive",
+            json!({ "attachment_id": UUID, "form_id": "99999999-9999-4999-8999-999999999999" }),
+        ),
+        (
+            McpToolMode::Search,
+            entry::WRITE,
+            json!({ "tool": "form_attachments.restore", "arguments": {
+                "attachment_id": UUID, "record_id": "99999999-9999-4999-8999-999999999999" } }),
+        ),
+    ] {
+        let result = server(&api, mode)?.call_tool(name, arguments).await;
+        assert_eq!(result.is_error, Some(true), "{name}");
+        assert!(
+            text(&result).contains("does not take") || text(&result).contains("Invalid arguments"),
+            "{}",
+            text(&result)
+        );
+    }
+    assert!(api.seen().is_empty(), "{:?}", api.seen());
     Ok(())
 }
 
@@ -455,6 +583,148 @@ async fn with_writes_disabled_sylvode_write_answers_for_the_whole_catalogue_and_
     assert!(!text(&task).contains("disabled"), "{}", text(&task));
     // The write tool is still listed: the switch is an answer, not a listing.
     assert!(listed_names(&rpc(&server, "tools/list", None).await).contains(&entry::WRITE.to_string()));
+    Ok(())
+}
+
+/// `allow_write_call = false` disables every write tool except the task lifecycle tools, in every
+/// mode and by every door: the wrapper, a direct call in full mode, and a direct call of a task
+/// tool (which a runner bot needs). Enumerated over the whole catalogue.
+#[tokio::test]
+async fn with_writes_disabled_no_write_tool_runs_in_any_mode_and_the_task_tools_still_do() -> TestResult {
+    const REFUSAL: &str = "Error: writes are disabled for this bot by the runner configuration";
+    for mode in [McpToolMode::Search, McpToolMode::Full] {
+        let api = Api::spawn(Policy::Permissive).await?;
+        let server = server(&api, mode)?.with_write_call_allowed(false);
+        for tool in non_task_tools() {
+            let writes = catalog::meta(&tool.name).map(|entry| entry.access) == Some(Access::Write);
+            let arguments = minimal_arguments(&tool);
+            // The way in this mode: the wrapper in search mode, the tool's own name in full mode.
+            let (name, call_arguments) = match mode {
+                McpToolMode::Search => (
+                    wrapper_for(&tool.name),
+                    json!({ "tool": tool.name, "arguments": arguments }),
+                ),
+                McpToolMode::Full => (tool.name.as_str(), arguments),
+            };
+            let before = api.seen().len();
+            let result = server.call_tool(name, call_arguments).await;
+            if writes {
+                assert_eq!(text(&result), REFUSAL, "{mode:?} {}", tool.name);
+                assert_eq!(api.seen().len(), before, "{mode:?} {} reached the API", tool.name);
+            } else {
+                assert!(!text(&result).contains("writes are disabled"), "{mode:?} {}", tool.name);
+            }
+        }
+        // A read keeps working, and so do the five task tools: they are the documented exception.
+        for task in tasks::tool_definitions() {
+            let before = api.seen().len();
+            let result = server.call_tool(&task.name, minimal_arguments(&task)).await;
+            assert!(
+                !text(&result).contains("writes are disabled"),
+                "{mode:?} {}: {}",
+                task.name,
+                text(&result)
+            );
+            assert!(
+                api.seen().len() > before,
+                "{mode:?} {} never reached the API",
+                task.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The Flow-only surface (used by `sylvode tools call` with a user token) honours the switch too;
+/// its tools the catalogue does not know count as writes.
+#[tokio::test]
+async fn a_flow_only_server_honours_the_write_switch() -> TestResult {
+    let api = Api::spawn(Policy::Permissive).await?;
+    let server = McpServer::new(api.client()?.flow_only(), McpToolMode::Full).with_write_call_allowed(false);
+    for definition in crate::tools::flow_scope::definitions() {
+        let writes = catalog::meta(&definition.name).is_none_or(|entry| entry.access == Access::Write);
+        if !writes {
+            continue;
+        }
+        let result = server.call_tool(&definition.name, minimal_arguments(&definition)).await;
+        assert_eq!(
+            text(&result),
+            "Error: writes are disabled for this bot by the runner configuration",
+            "{}",
+            definition.name
+        );
+    }
+    assert!(api.seen().is_empty(), "{:?}", api.seen());
+    Ok(())
+}
+
+/// Every name the client can attribute a request to is one the API records: a tool name the API
+/// drops leaves that call without a tool in the operation log.
+#[test]
+fn every_attribution_name_is_recorded_by_the_api() {
+    let names = registry()
+        .into_iter()
+        .map(|tool| tool.name)
+        // The wrappers are attributed to their target and never named themselves.
+        .chain([entry::OVERVIEW, entry::SEARCH].map(str::to_string))
+        .collect::<Vec<_>>();
+    assert!(names.len() > 150);
+    for name in names {
+        let attribution = entry::attribution_name(&name);
+        assert_eq!(
+            api::middleware::bot_auth::recordable_tool_name(attribution).as_deref(),
+            Some(attribution),
+            "{name} would be logged without a tool name as {attribution}"
+        );
+    }
+    for (name, attribution) in [
+        (tasks::TASK_GET, "tasks.get"),
+        (tasks::TASK_ACK, "tasks.acknowledge"),
+        (tasks::TASK_PROGRESS, "tasks.progress"),
+        (tasks::TASK_COMPLETE, "tasks.complete"),
+        (tasks::TASK_FAIL, "tasks.fail"),
+        (entry::OVERVIEW, "entry.overview"),
+        (entry::SEARCH, "entry.search"),
+        ("work_items.update", "work_items.update"),
+    ] {
+        assert_eq!(entry::attribution_name(name), attribution);
+    }
+}
+
+/// The header the client puts on each of the five task writes is the dotted attribution name, so the
+/// API records a tool name for the whole protocol.
+#[tokio::test]
+async fn each_task_write_carries_its_attribution_name() -> TestResult {
+    let api = Api::spawn(Policy::Permissive).await?;
+    let server = server(&api, McpToolMode::Search)?;
+    for task in tasks::tool_definitions() {
+        api.clear();
+        let _ = server.call_tool(&task.name, minimal_arguments(&task)).await;
+        let seen = api.seen();
+        assert!(!seen.is_empty(), "{}", task.name);
+        for request in seen {
+            assert_eq!(
+                request.tool.as_deref(),
+                Some(entry::attribution_name(&task.name)),
+                "{}",
+                task.name
+            );
+        }
+    }
+    api.clear();
+    let _ = server
+        .call_tool(entry::SEARCH, json!({ "query": "x", "project_id": UUID }))
+        .await;
+    assert_eq!(
+        api.seen().first().and_then(|seen| seen.tool.as_deref()),
+        Some("entry.search")
+    );
+    api.clear();
+    let _ = server.call_tool(entry::OVERVIEW, json!({ "project_id": UUID })).await;
+    assert_eq!(
+        api.seen().first().and_then(|seen| seen.tool.as_deref()),
+        Some("entry.overview")
+    );
     Ok(())
 }
 

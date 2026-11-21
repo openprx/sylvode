@@ -809,7 +809,7 @@ mod tests {
     async fn errors_other_than_a_400_are_not_turned_into_success() -> Result<(), Box<dyn std::error::Error>> {
         let answer: Answer = Arc::new(|seen: &Seen| {
             if seen.method == "POST" {
-                json!({ "code": 403, "message": "task can only be operated by its own bot" })
+                json!({ "code": 404, "message": "ai task not found" })
             } else {
                 ok(view("completed", 2))
             }
@@ -823,6 +823,73 @@ mod tests {
             .await;
         assert_eq!(result.is_error, Some(true));
         assert_eq!(seen.lock().len(), 1, "a 403 must not trigger the already-ended read");
+        Ok(())
+    }
+
+    /// A repeat that says something else than the stored result is a conflict at the API (409). It
+    /// is reported as the error it is, never as `already_completed` / `already_failed`, and the
+    /// stored task is not read back to dress it up.
+    #[tokio::test]
+    async fn a_conflicting_repeat_is_an_error_not_an_already_ended_success() -> Result<(), Box<dyn std::error::Error>> {
+        for (tool, args, message) in [
+            (
+                TASK_COMPLETE,
+                json!({ "task_id": TASK, "attempt": 2, "outcome": "done", "summary": "another" }),
+                "the task was already completed with a different result",
+            ),
+            (
+                TASK_FAIL,
+                json!({ "task_id": TASK, "attempt": 2, "reason": "another" }),
+                "the task already failed with a different reason",
+            ),
+        ] {
+            let answer: Answer = Arc::new(move |seen: &Seen| {
+                if seen.method == "POST" {
+                    json!({ "code": 409, "message": message })
+                } else {
+                    ok(view("completed", 2))
+                }
+            });
+            let (server, seen) = mock(answer).await?;
+            let result = server.execute_tool_for_catalog_witness(tool, args).await;
+            assert_eq!(result.is_error, Some(true), "{tool}");
+            assert!(text(&result).contains(message), "{}", text(&result));
+            assert!(!text(&result).contains("already_"), "{}", text(&result));
+            assert_eq!(seen.lock().len(), 1, "{tool}: the stored task must not be read back");
+        }
+        Ok(())
+    }
+
+    /// A stale attempt makes the owner lookup fail (the API answers 400 for it), and a task that
+    /// is not the bot's makes it fail with 403/404. In neither case does a write follow, and the
+    /// already-ended read-back of `complete` and `fail` is not reached by the lookup's failure.
+    #[tokio::test]
+    async fn a_failed_owner_lookup_stops_every_task_tool_before_any_write() -> Result<(), Box<dyn std::error::Error>> {
+        for refusal in [
+            json!({ "code": 400, "message": "task is not active for attempt 1 (current attempt 2)" }),
+            json!({ "code": 403, "message": "forbidden" }),
+            json!({ "code": 404, "message": "ai task not found" }),
+        ] {
+            let answer: Answer = Arc::new(move |_: &Seen| refusal.clone());
+            let (server, seen) = mock(answer).await?;
+            for (tool, args) in [
+                (TASK_ACK, json!({ "task_id": TASK, "attempt": 1, "plan": "p" })),
+                (TASK_PROGRESS, json!({ "task_id": TASK, "attempt": 1, "note": "n" })),
+                (
+                    TASK_COMPLETE,
+                    json!({ "task_id": TASK, "attempt": 1, "outcome": "done", "summary": "s" }),
+                ),
+                (TASK_FAIL, json!({ "task_id": TASK, "attempt": 1, "reason": "r" })),
+            ] {
+                seen.lock().clear();
+                let result = server.call_tool(tool, args).await;
+                assert_eq!(result.is_error, Some(true), "{tool}");
+                let requests = seen.lock().clone();
+                assert_eq!(requests.len(), 1, "{tool}: {requests:?}");
+                assert_eq!(requests[0].method, "GET", "{tool}");
+                assert!(!text(&result).contains("already_"), "{tool}: {}", text(&result));
+            }
+        }
         Ok(())
     }
 
@@ -899,7 +966,7 @@ mod tests {
             ]
         );
         for request in seen.iter() {
-            assert_eq!(request.tool.as_deref(), Some(TASK_ACK));
+            assert_eq!(request.tool.as_deref(), Some("tasks.acknowledge"));
             assert_eq!(request.surface.as_deref(), Some("mcp_stdio"));
         }
         Ok(())
@@ -939,7 +1006,7 @@ mod tests {
         const SECRET: &str = "SECRET-TASK-CONTENT";
         let answer: Answer = Arc::new(|_: &Seen| {
             json!({
-                "code": 403, "message": "task can only be operated by its own bot",
+                "code": 404, "message": "ai task not found",
                 "data": { "plan": SECRET, "source": { "issue": { "title": SECRET } } }
             })
         });
@@ -954,24 +1021,22 @@ mod tests {
             ),
             (TASK_FAIL, json!({ "task_id": TASK, "attempt": 1, "reason": "r" })),
         ] {
+            // Through the policy chain the refused owner lookup is the only request: no write follows.
+            seen.lock().clear();
             let through_the_chain = server.call_tool(tool, args.clone()).await;
+            let requests = seen.lock().clone();
+            assert_eq!(requests.len(), 1, "{tool}: {requests:?}");
+            assert_eq!(requests[0].method, "GET", "{tool}");
+            assert_eq!(requests[0].path, format!("/api/v1/ai/tasks/{TASK}"), "{tool}");
+            // The tool body alone (no lookup first) is refused by the same API answer.
             let direct = server.execute_tool_for_catalog_witness(tool, args).await;
             for result in [through_the_chain, direct] {
                 assert_eq!(result.is_error, Some(true), "{tool}");
                 let message = text(&result);
-                assert!(
-                    message.contains("task can only be operated by its own bot"),
-                    "{message}"
-                );
+                assert!(message.contains("ai task not found"), "{message}");
                 assert!(!message.contains(SECRET), "{tool} leaked: {message}");
             }
         }
-        assert!(
-            seen.lock()
-                .iter()
-                .all(|request| request.method == "GET" || request.path.starts_with("/api/v1/ai/tasks/")),
-            "no write outside the task endpoints"
-        );
         Ok(())
     }
 

@@ -710,6 +710,41 @@ mod tests {
         assert!(!tools.contains(&"proposals.create".to_string()));
     }
 
+    /// The tool names the MCP server's catalogue knows, written by `sylvode-skillgen` (and checked
+    /// by `--check`). Every name the agent policy can enable must be one of them, so a policy can
+    /// never name a tool the server does not have.
+    #[test]
+    fn every_tool_the_policy_registry_names_is_in_the_catalogue_fixture() {
+        let fixture: Vec<String> = serde_json::from_str(include_str!("../../tests/fixtures/mcp-tool-names.json"))
+            .expect("the fixture is a JSON array of names");
+        assert!(fixture.len() > 100, "the fixture looks empty");
+        let every_capability = json!([
+            "issues",
+            "board",
+            "sprints",
+            "milestones",
+            "governance",
+            "approval",
+            "corrective_action",
+            "inspection",
+            "code_context",
+            "documents",
+            "attachments",
+            "forms",
+            "plugins",
+            "mcp"
+        ]);
+        for capabilities in [json!([]), every_capability] {
+            let registry = build_mcp_tool_registry(&capabilities);
+            for name in enabled_tools(&registry) {
+                assert!(
+                    fixture.contains(&name),
+                    "{name} is in the policy registry but not in the catalogue"
+                );
+            }
+        }
+    }
+
     /// The `resources` group outlives the parked project-resource tools: for projects without
     /// issues or board it is the only source of `files.upload`, and it holds nothing else.
     #[test]

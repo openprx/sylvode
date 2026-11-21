@@ -11,7 +11,7 @@
 
 use axum::{
     Extension, Json, Router,
-    extract::{Query, Request, State},
+    extract::{RawQuery, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::from_fn_with_state,
     response::IntoResponse,
@@ -23,7 +23,7 @@ use mcp_server::oauth::{
     UnavailableReason, handle_rpc, inbound_auth, parse_token_context, well_known_routes,
 };
 use mcp_server::protocol::JsonRpcRequest;
-use mcp_server::server::{ToolModeQuery, ToolSurface, requested_tool_mode};
+use mcp_server::server::{ToolSurface, requested_tool_mode};
 use platform::config::{McpOAuthRuntime, McpToolMode, Secret};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
@@ -168,11 +168,11 @@ struct AppState {
 async fn rpc(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
-    Query(query): Query<ToolModeQuery>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> axum::response::Response {
-    let mode = match requested_tool_mode(query.tools.as_deref(), &headers, McpToolMode::Search) {
+    let mode = match requested_tool_mode(query.as_deref(), &headers, McpToolMode::Search) {
         Ok(mode) => mode,
         Err(message) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))).into_response(),
     };
@@ -1069,7 +1069,7 @@ async fn delegated_callers_read_the_static_guides_and_nothing_else() -> TestResu
 
     for uri in [
         format!("sylvode://forms/{PROJECT}/records"),
-        format!("openpr://projects/{PROJECT}/issues"),
+        format!("sylvode://projects/{PROJECT}/issues"),
         "sylvode://scenario-templates".to_string(),
         format!("sylvode://workspaces/{GRANT_WORKSPACE}/navigator"),
     ] {
@@ -1098,7 +1098,8 @@ async fn delegated_callers_read_the_static_guides_and_nothing_else() -> TestResu
     assert_eq!(
         uris,
         [
-            "sylvode://skills/openpr-mcp",
+            "sylvode://skills/sylvode-mcp",
+            "sylvode://skills/sylvode-mcp/tools",
             "sylvode://guides/agents",
             "sylvode://guides/workflows"
         ]

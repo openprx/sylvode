@@ -10,6 +10,8 @@ pub struct FlowRuntime {
     pub transport: McpTransport,
     pub bind_addr: String,
     pub credential: Option<Secret>,
+    /// `[mcp] allow_write_call` of the configuration file; `true` without one.
+    pub allow_write_call: bool,
 }
 
 pub fn parse_access_token(value: &str) -> Result<Secret, std::convert::Infallible> {
@@ -96,6 +98,7 @@ impl FlowRuntime {
                 .or_else(|| configured.and_then(|value| value.bind_addr.clone()))
                 .unwrap_or_else(|| "127.0.0.1:8090".into()),
             credential,
+            allow_write_call: configured.and_then(|value| value.allow_write_call).unwrap_or(true),
         })
     }
     pub fn client(&self) -> Result<OpenPrClient, String> {

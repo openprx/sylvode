@@ -123,23 +123,64 @@ fn collect_unsupported(schema: &Value, path: &str, found: &mut Vec<String>) {
                     found.push(format!("{path}/format: unsupported format {value}"));
                 }
             }
-            "properties" => {
-                if let Some(properties) = value.as_object() {
+            "properties" => match value.as_object() {
+                Some(properties) => {
                     for (name, property) in properties {
                         collect_unsupported(property, &format!("{path}/properties/{name}"), found);
                     }
                 }
-            }
+                None => found.push(format!("{path}/properties: must be an object")),
+            },
             "items" | "not" => collect_unsupported(value, &format!("{path}/{keyword}"), found),
             "additionalProperties" => {
                 if value.is_object() {
                     collect_unsupported(value, &format!("{path}/additionalProperties"), found);
+                } else if !value.is_boolean() {
+                    found.push(format!("{path}/additionalProperties: must be a boolean or a schema"));
                 }
             }
-            "oneOf" | "anyOf" => {
-                for (index, branch) in value.as_array().into_iter().flatten().enumerate() {
-                    collect_unsupported(branch, &format!("{path}/{keyword}/{index}"), found);
+            "oneOf" | "anyOf" => match value.as_array() {
+                Some(branches) => {
+                    for (index, branch) in branches.iter().enumerate() {
+                        collect_unsupported(branch, &format!("{path}/{keyword}/{index}"), found);
+                    }
                 }
+                None => found.push(format!("{path}/{keyword}: must be an array of schemas")),
+            },
+            "required" => {
+                if !value.as_array().is_some_and(|names| names.iter().all(Value::is_string)) {
+                    found.push(format!("{path}/required: must be an array of names"));
+                }
+            }
+            "type" => {
+                let known = |name: &Value| {
+                    name.as_str().is_some_and(|name| {
+                        matches!(
+                            name,
+                            "object" | "array" | "string" | "boolean" | "null" | "integer" | "number"
+                        )
+                    })
+                };
+                let valid = match value {
+                    Value::Array(names) => names.iter().all(known),
+                    other => known(other),
+                };
+                if !valid {
+                    found.push(format!("{path}/type: unknown type {value}"));
+                }
+            }
+            "enum" => {
+                if !value.is_array() {
+                    found.push(format!("{path}/enum: must be an array"));
+                }
+            }
+            "minLength" | "maxLength" | "minItems" | "maxItems" => {
+                if value.as_u64().is_none() {
+                    found.push(format!("{path}/{keyword}: must be a non-negative integer"));
+                }
+            }
+            "minimum" | "maximum" if !value.is_number() => {
+                found.push(format!("{path}/{keyword}: must be a number"));
             }
             _ => {}
         }
@@ -248,7 +289,11 @@ fn check_string(schema: &Map<String, Value>, value: &Value, at: &str) -> Result<
             return Err(format!("{at} has the wrong format"));
         }
     }
-    if schema.get("format").and_then(Value::as_str) == Some("uuid") && Uuid::parse_str(text).is_err() {
+    // The canonical 8-4-4-4-12 form only: the braced, urn and simple spellings denote the same id
+    // but the policy chain refuses them, so the checker must not accept what the chain refuses.
+    if schema.get("format").and_then(Value::as_str) == Some("uuid")
+        && (text.len() != 36 || Uuid::parse_str(text).is_err())
+    {
         return Err(format!("{at} must be a UUID"));
     }
     Ok(())
@@ -417,6 +462,58 @@ mod tests {
         ] {
             assert!(!unsupported(&schema).is_empty(), "{schema}");
             assert!(validate(&schema, &json!({})).is_err(), "{schema}");
+        }
+    }
+
+    /// A `uuid` format is the canonical 8-4-4-4-12 form, like the policy chain reads it: the braced,
+    /// `urn:` and 32 digit spellings denote the same id but are refused by the chain, so the checker
+    /// refuses them too instead of disagreeing with it.
+    #[test]
+    fn a_uuid_format_is_the_canonical_hyphenated_form() {
+        let schema = json!({ "type": "string", "format": "uuid" });
+        for good in [
+            "11111111-1111-4111-8111-111111111111",
+            "AAAAAAAA-1111-4111-8111-111111111111",
+        ] {
+            assert!(accepts(&schema, &json!(good)), "{good}");
+        }
+        for bad in [
+            "{11111111-1111-4111-8111-111111111111}",
+            "urn:uuid:11111111-1111-4111-8111-111111111111",
+            "11111111111141118111111111111111",
+            " 11111111-1111-4111-8111-111111111111",
+            "11111111-1111-4111-8111-11111111111",
+        ] {
+            assert!(!accepts(&schema, &json!(bad)), "{bad}");
+        }
+    }
+
+    /// A schema whose keyword values are malformed is not enforceable: `properties` that is not an
+    /// object would otherwise be skipped, leaving an open schema where a closed one was meant.
+    #[test]
+    fn malformed_keyword_values_are_unsupported() {
+        for schema in [
+            json!({ "type": "object", "properties": [] }),
+            json!({ "type": "object", "properties": { "a": 1 } }),
+            json!({ "type": "object", "required": "a" }),
+            json!({ "type": "object", "required": [1] }),
+            json!({ "type": "nonsense" }),
+            json!({ "type": ["string", 5] }),
+            json!({ "type": "object", "additionalProperties": "no" }),
+            json!({ "enum": "a" }),
+            json!({ "type": "string", "minLength": "1" }),
+            json!({ "type": "array", "items": [] }),
+            json!({ "oneOf": {} }),
+            json!({ "oneOf": [1] }),
+        ] {
+            assert!(!unsupported(&schema).is_empty(), "{schema}");
+            assert!(validate(&schema, &json!({})).is_err(), "{schema}");
+        }
+        for schema in [
+            json!({ "type": ["object", "null"], "properties": {}, "required": [], "additionalProperties": true }),
+            json!({ "type": "string", "minLength": 1, "maxLength": 3, "enum": ["a"] }),
+        ] {
+            assert!(unsupported(&schema).is_empty(), "{schema}");
         }
     }
 

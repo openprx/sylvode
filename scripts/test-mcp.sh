@@ -47,7 +47,7 @@ done
 # Keep the default coupled to the repository-owned registry snapshot. An explicit override is
 # still useful when testing a deliberately rebased external deployment, but stale source defaults
 # must fail the same exact-count comparison below instead of silently weakening it.
-EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/openpr-mcp/scripts/expected-tool-count.py")}"
+EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/sylvode-mcp/scripts/expected-tool-count.py")}"
 
 # Probe the external runtime before reading credentials. A closed compose port
 # is an environment precondition failure, not evidence that MCP product code

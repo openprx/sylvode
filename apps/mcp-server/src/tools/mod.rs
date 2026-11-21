@@ -428,7 +428,7 @@ mod tests {
 
     /// The registry names and the catalogue classification are pinned in the baseline: adding,
     /// removing or reclassifying a tool needs a reviewed edit of `tool-registry-baseline.json`
-    /// (`skills/openpr-mcp/scripts/expected-tool-count.py` checks the same file against the binary).
+    /// (`skills/sylvode-mcp/scripts/expected-tool-count.py` checks the same file against the binary).
     #[test]
     fn the_registry_and_the_catalogue_match_the_pinned_baseline() {
         use sha2::{Digest, Sha256};
