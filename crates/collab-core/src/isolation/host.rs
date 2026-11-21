@@ -45,7 +45,7 @@
 use std::io::Read;
 use std::os::fd::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use super::limits::DECODE_APPLY_WALL_MS_MAX;
@@ -121,6 +121,34 @@ pub fn isolated_apply(base_snapshot: &[u8], update: &[u8]) -> Result<IsolatedApp
     run_isolated_apply(base_snapshot, update, wire::OPERATION_APPLY, &[])
 }
 
+/// What the host itself observed of one worker run between the moment the worker opened its
+/// metered window (the marker byte, see [`RESPONSE_MARKER_BYTE`]) and the moment the worker
+/// ended. The worker cannot report this about itself when a ceiling kills it, so the host reads
+/// it from the kernel: the child's CPU clock at the marker and the final `wait4` resource usage.
+///
+/// It tells a wall-watchdog kill caused by a slow workload apart from one caused by the host
+/// not giving the worker CPU: a worker that was killed at the wall deadline with
+/// [`Self::metered_cpu_us`] far below `decode_apply_cpu_ms_max` was starved, not heavy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkerObservation {
+    /// Wall-clock microseconds from the marker byte to the end of the response read (or to the
+    /// watchdog kill). `None` if the worker never opened its metered window.
+    pub metered_wall_us: Option<u64>,
+    /// CPU microseconds (user plus system) the worker consumed between the marker byte and its
+    /// exit. `None` if the window never opened or the kernel did not report the figures.
+    pub metered_cpu_us: Option<u64>,
+}
+
+/// Same as [`isolated_apply`], and additionally reports the [`WorkerObservation`] of the run.
+/// Callers use it to log whether a [`IsolatedApplyError::WallCeiling`] came with the worker
+/// having had the CPU or not.
+pub fn isolated_apply_observed(
+    base_snapshot: &[u8],
+    update: &[u8],
+) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &[])
+}
+
 /// Replays a bounded retained-history tail and computes its semantic diff inside the same
 /// killable CPU/wall/memory boundary used for untrusted apply work.
 pub fn isolated_diff(
@@ -147,6 +175,28 @@ fn run_isolated_apply(
     update: &[u8],
     operation: &'static str,
     extra_env: &[(&str, &str)],
+) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+    run_isolated_apply_observed(base_snapshot, update, operation, extra_env).0
+}
+
+/// [`run_isolated_apply`] plus the host's [`WorkerObservation`] of the run.
+fn run_isolated_apply_observed(
+    base_snapshot: &[u8],
+    update: &[u8],
+    operation: &'static str,
+    extra_env: &[(&str, &str)],
+) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    let mut observation = WorkerObservation::default();
+    let result = run_worker(base_snapshot, update, operation, extra_env, &mut observation);
+    (result, observation)
+}
+
+fn run_worker(
+    base_snapshot: &[u8],
+    update: &[u8],
+    operation: &'static str,
+    extra_env: &[(&str, &str)],
+    observation: &mut WorkerObservation,
 ) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
     let worker_path = worker_binary_path()?;
 
@@ -180,12 +230,17 @@ fn run_isolated_apply(
         .take()
         .ok_or_else(|| IsolatedApplyError::HostFailure("child stdout unavailable".to_string()))?;
 
-    let read_outcome = read_response_two_phase(&mut stdout, &child);
+    let (read_outcome, marker) = read_response_two_phase(&mut stdout, &child);
+    let metered_wall_us = marker.map(|marker| duration_micros(marker.at.elapsed()));
     drop(stdout);
 
-    let wait_status = child
-        .wait()
+    let (wait_status, final_cpu_us) = wait_for_exit(&child)
         .map_err(|err| IsolatedApplyError::HostFailure(format!("wait on isolated-apply worker failed: {err}")))?;
+    observation.metered_wall_us = metered_wall_us;
+    observation.metered_cpu_us = match (marker.and_then(|marker| marker.cpu_us), final_cpu_us) {
+        (Some(at_marker), Some(at_exit)) => Some(at_exit.saturating_sub(at_marker)),
+        _ => None,
+    };
 
     let response_bytes = match read_outcome {
         ReadOutcome::SetupPhaseTimedOut => {
@@ -291,7 +346,7 @@ enum ReadOutcome {
 /// comments for why this is split rather than one flat deadline from process spawn. `ADR-0014`
 /// section 1.1: "wall watchdog 命中...是独立的 wall 上限, 不是 CPU 上限的替代品" -- this watchdog
 /// remains independent of (does not rely on) the CPU ceiling's own `SIGPROF` enforcement.
-fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> ReadOutcome {
+fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> (ReadOutcome, Option<MarkerSample>) {
     let fd = stdout.as_raw_fd();
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 65536];
@@ -300,7 +355,7 @@ fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> ReadOutco
     let (setup_timed_out, exited_before_marker) =
         read_until(stdout, fd, child, &mut buffer, &mut chunk, setup_deadline, 1);
     if setup_timed_out {
-        return ReadOutcome::SetupPhaseTimedOut;
+        return (ReadOutcome::SetupPhaseTimedOut, None);
     }
     if buffer.is_empty() {
         // `read_until`'s only other early-exit besides "reached `min_bytes`" or "deadline" is
@@ -309,8 +364,17 @@ fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> ReadOutco
             exited_before_marker,
             "empty buffer implies EOF, not a bug in read_until"
         );
-        return ReadOutcome::ExitedBeforeResponding;
+        return (ReadOutcome::ExitedBeforeResponding, None);
     }
+
+    // The worker has just opened its metered window. Sample the child's CPU clock now, so the
+    // CPU it consumed inside the window (not during spawn and base-document load) can be told
+    // apart from the total once it has exited.
+    let marker_at = Instant::now();
+    let marker = MarkerSample {
+        at: marker_at,
+        cpu_us: child_cpu_micros(pid_of(child)),
+    };
 
     // The single-poll-then-read pattern below can (and in practice often does) return more than
     // just the marker byte in one `read` call -- pipes have no "one write = one read" guarantee.
@@ -323,13 +387,79 @@ fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> ReadOutco
     };
     buffer = response_prefix;
 
-    let metered_deadline = Instant::now() + Duration::from_millis(DECODE_APPLY_WALL_MS_MAX);
+    let metered_deadline = marker_at + Duration::from_millis(DECODE_APPLY_WALL_MS_MAX);
     let (metered_timed_out, _) = read_until(stdout, fd, child, &mut buffer, &mut chunk, metered_deadline, usize::MAX);
     if metered_timed_out {
-        return ReadOutcome::MeteredPhaseTimedOut;
+        return (ReadOutcome::MeteredPhaseTimedOut, Some(marker));
     }
 
-    ReadOutcome::Completed(buffer)
+    (ReadOutcome::Completed(buffer), Some(marker))
+}
+
+/// The host's view of the instant the worker opened its metered window.
+#[derive(Clone, Copy)]
+struct MarkerSample {
+    at: Instant,
+    /// The child's CPU time (user plus system) at that instant, if the kernel reported it.
+    cpu_us: Option<u64>,
+}
+
+fn duration_micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+/// The CPU time (user plus system) the live child `pid` has consumed so far, read from its
+/// per-process CPU clock (`clock_getcpuclockid` + `clock_gettime`). `None` if either call fails.
+fn child_cpu_micros(pid: libc::pid_t) -> Option<u64> {
+    let mut clock: libc::clockid_t = 0;
+    // SAFETY: `&raw mut clock` is a valid out-pointer for a `clockid_t`; `pid` is this
+    // process's own child that has not been reaped yet. The call returns 0 or an errno value.
+    let rc = unsafe { libc::clock_getcpuclockid(pid, &raw mut clock) };
+    if rc != 0 {
+        return None;
+    }
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `&raw mut ts` is a valid, properly aligned out-pointer for a `timespec`, and
+    // `clock` was just filled in by `clock_getcpuclockid`.
+    let rc = unsafe { libc::clock_gettime(clock, &raw mut ts) };
+    if rc != 0 {
+        return None;
+    }
+    let secs = u64::try_from(ts.tv_sec).ok()?;
+    let nanos = u64::try_from(ts.tv_nsec).ok()?;
+    Some(secs.saturating_mul(1_000_000).saturating_add(nanos / 1_000))
+}
+
+/// Reaps `child` with `wait4`, returning its exit status and the CPU time (user plus system) the
+/// kernel accounted to it. Replaces `Child::wait`, which does not expose resource usage; the
+/// child must not be waited on again afterwards (dropping the `Child` does not wait).
+fn wait_for_exit(child: &Child) -> std::io::Result<(ExitStatus, Option<u64>)> {
+    let pid = pid_of(child);
+    loop {
+        let mut status: libc::c_int = 0;
+        // SAFETY: `rusage` is a C struct of plain integers, for which all-zero is a valid value.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: `&raw mut status` and `&raw mut usage` are valid out-pointers; `pid` is this
+        // process's own child, reaped exactly once (a retry happens only after `EINTR`).
+        let reaped = unsafe { libc::wait4(pid, &raw mut status, 0, &raw mut usage) };
+        if reaped == pid {
+            return Ok((ExitStatus::from_raw(status), rusage_cpu_micros(&usage)));
+        }
+        let error = std::io::Error::last_os_error();
+        if reaped < 0 && error.kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(error);
+    }
+}
+
+fn rusage_cpu_micros(usage: &libc::rusage) -> Option<u64> {
+    let timeval_micros = |value: libc::timeval| {
+        let secs = u64::try_from(value.tv_sec).ok()?;
+        let micros = u64::try_from(value.tv_usec).ok()?;
+        Some(secs.saturating_mul(1_000_000).saturating_add(micros))
+    };
+    Some(timeval_micros(usage.ru_utime)?.saturating_add(timeval_micros(usage.ru_stime)?))
 }
 
 /// Appends to `buffer` (via `poll`/`read` on `fd`) until it holds at least `min_bytes`, EOF is
@@ -591,6 +721,13 @@ mod tests {
     /// of these workloads (none of them ever call `import_update`), so this always uses a fresh
     /// empty document and an empty update.
     fn isolated_apply_injected(env_value: &str) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+        isolated_apply_injected_observed(env_value).0
+    }
+
+    /// [`isolated_apply_injected`] plus the host's [`WorkerObservation`] of the run.
+    fn isolated_apply_injected_observed(
+        env_value: &str,
+    ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
         let worker_path = required_debug_worker_binary_for_tests();
         let guard = env_lock().lock();
         // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
@@ -601,7 +738,7 @@ mod tests {
         let base_snapshot = crate::LoroCollabEngine::new_empty(1)
             .export_snapshot()
             .expect("a fresh empty document always exports");
-        let result = run_isolated_apply(
+        let result = run_isolated_apply_observed(
             &base_snapshot,
             &[],
             wire::OPERATION_APPLY,
@@ -615,39 +752,241 @@ mod tests {
         result
     }
 
+    /// Allowance for the kernel's CPU accounting and `SIGPROF` delivery: the `ITIMER_PROF` tick
+    /// and the accounting of a killed process are not exact to the microsecond.
+    const CPU_ACCOUNTING_SLACK_US: u64 = 10_000;
+
+    /// How one injected run relates to the ceiling it targeted, judged from what the host
+    /// observed rather than from the clock alone.
+    #[derive(Debug, PartialEq, Eq)]
+    enum CeilingVerdict {
+        /// The run shows the ceiling working as specified.
+        Conclusive,
+        /// The wall watchdog killed a worker that never got the CPU it needed to reach the CPU
+        /// ceiling: the machine, not the ceiling, decided the outcome. Proves nothing either way.
+        Starved,
+        /// The run contradicts the specified behaviour; the text says how.
+        Violation(String),
+    }
+
+    /// Judges a burn that targets more CPU than `decode_apply_cpu_ms_max`. The worker must be
+    /// killed by `SIGPROF` once it has consumed the ceiling; a `WallCeiling` is acceptable only
+    /// when the worker had demonstrably not consumed it.
+    fn judge_burn_over_cpu_ceiling(
+        result: &Result<IsolatedApplySuccess, IsolatedApplyError>,
+        observation: &WorkerObservation,
+        ceiling_us: u64,
+    ) -> CeilingVerdict {
+        let Some(cpu_us) = observation.metered_cpu_us else {
+            return CeilingVerdict::Violation("the host could not observe the worker's CPU time".to_string());
+        };
+        match result {
+            Err(IsolatedApplyError::CpuCeiling) if cpu_us.saturating_add(CPU_ACCOUNTING_SLACK_US) >= ceiling_us => {
+                CeilingVerdict::Conclusive
+            }
+            Err(IsolatedApplyError::CpuCeiling) => CeilingVerdict::Violation(format!(
+                "SIGPROF killed the worker after only {cpu_us}us of CPU, below the {ceiling_us}us ceiling"
+            )),
+            Err(IsolatedApplyError::WallCeiling) if cpu_us < ceiling_us.saturating_add(CPU_ACCOUNTING_SLACK_US) => {
+                CeilingVerdict::Starved
+            }
+            Err(IsolatedApplyError::WallCeiling) => CeilingVerdict::Violation(format!(
+                "the wall watchdog had to kill a worker that consumed {cpu_us}us of CPU, over the \
+                 {ceiling_us}us ceiling: SIGPROF did not fire"
+            )),
+            other => CeilingVerdict::Violation(format!("unexpected outcome {other:?} after {cpu_us}us of CPU")),
+        }
+    }
+
+    /// Judges a burn that targets less CPU than `decode_apply_cpu_ms_max`: it must be accepted.
+    /// A `WallCeiling` means the worker was starved of CPU for the burn plus its response inside
+    /// the wall deadline; a `CpuCeiling` is never right for it.
+    fn judge_burn_under_cpu_ceiling(
+        result: &Result<IsolatedApplySuccess, IsolatedApplyError>,
+        observation: &WorkerObservation,
+    ) -> CeilingVerdict {
+        match result {
+            Ok(_) => CeilingVerdict::Conclusive,
+            Err(IsolatedApplyError::WallCeiling) => CeilingVerdict::Starved,
+            other => CeilingVerdict::Violation(format!(
+                "a burn under the CPU ceiling ended as {other:?} after {:?}us of CPU",
+                observation.metered_cpu_us
+            )),
+        }
+    }
+
+    /// Runs `run_once` until it is [`CeilingVerdict::Conclusive`] or `attempts` runs were all
+    /// starved, pausing between attempts so a short burst of contention can pass. Returns whether
+    /// a conclusive run happened; panics on the first violation.
+    #[allow(
+        clippy::print_stderr,
+        reason = "a test notice that an attempt was starved, visible with --nocapture or on a failure"
+    )]
+    fn conclusive_within(
+        attempts: usize,
+        pause: std::time::Duration,
+        what: &str,
+        mut run_once: impl FnMut() -> CeilingVerdict,
+    ) -> bool {
+        for attempt in 1..=attempts {
+            match run_once() {
+                CeilingVerdict::Conclusive => return true,
+                CeilingVerdict::Starved => {
+                    eprintln!("{what}: attempt {attempt}/{attempts} was starved of CPU by the host");
+                    std::thread::sleep(pause);
+                }
+                CeilingVerdict::Violation(why) => panic!("{what}: {why}"),
+            }
+        }
+        false
+    }
+
+    const BOUNDARY_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
+
+    /// One run of each side of the CPU ceiling, judged by [`judge_burn_under_cpu_ceiling`] and
+    /// [`judge_burn_over_cpu_ceiling`]. Margins are comfortably on each side of the ceiling
+    /// rather than at a literal +/-1us edge: `SIGPROF` delivery latency and the polling
+    /// busy-loop's own check granularity (see `test_injection::burn_cpu_micros`) both add slack.
+    fn boundary_runs() -> (u64, u64, u64) {
+        let ceiling_micros = super::super::DECODE_APPLY_CPU_MS_MAX * 1_000;
+        let under_micros = ceiling_micros - ceiling_micros / 3; // ~33ms: comfortably under 50ms.
+        let over_micros = ceiling_micros * 3; // ~150ms: comfortably over 50ms.
+        (ceiling_micros, under_micros, over_micros)
+    }
+
+    fn under_ceiling_verdict(under_micros: u64) -> CeilingVerdict {
+        let (result, observation) = isolated_apply_injected_observed(&format!("cpu_burn_micros={under_micros}"));
+        judge_burn_under_cpu_ceiling(&result, &observation)
+    }
+
+    fn over_ceiling_verdict(over_micros: u64, ceiling_micros: u64) -> CeilingVerdict {
+        let (result, observation) = isolated_apply_injected_observed(&format!("cpu_burn_micros={over_micros}"));
+        judge_burn_over_cpu_ceiling(&result, &observation, ceiling_micros)
+    }
+
+    /// The CPU ceiling's behaviour never depends on how much CPU the machine gives the worker:
+    /// a run is judged by the CPU the worker consumed as the host observed it. A worker that was
+    /// killed by the wall watchdog having consumed less CPU than the ceiling was starved by the
+    /// machine (CI runners share their cores with other tests), which says nothing about the
+    /// ceiling, so such a run is retried and, if the machine never gives it the CPU, left
+    /// inconclusive. A violation (SIGPROF not firing at the ceiling, firing early, or the wall
+    /// watchdog killing a worker that had consumed the ceiling) always fails. The strict variant
+    /// below requires a conclusive run.
     #[test]
     fn decode_apply_cpu_ms_ceiling_accepts_just_under_and_kills_with_cpu_ceiling_just_over_the_boundary() {
-        let ceiling_micros = super::super::DECODE_APPLY_CPU_MS_MAX * 1_000;
-        // Comfortably on each side of the ceiling rather than at a literal +/-1us edge: `SIGPROF`
-        // delivery/scheduling latency and the polling busy-loop's own check granularity (see
-        // `test_injection::burn_cpu_micros`) both add real-world slack, so a margin narrow enough
-        // to be flaky under CI contention would not actually prove anything a wider one -- which
-        // still stays strictly on the correct side of `DECODE_APPLY_CPU_MS_MAX` on every real run
-        // -- does not already prove.
-        let under_micros = ceiling_micros - ceiling_micros / 3; // ~33ms: comfortably under 50ms.
-        let over_micros = ceiling_micros * 3; // ~150ms: comfortably over 50ms, and still well
-        // under what a broken (non-firing) SIGPROF would need to reach before the independent
-        // 100ms wall watchdog caught it instead -- see the panic message below for why that
-        // distinction matters.
-
-        let accepted = isolated_apply_injected(&format!("cpu_burn_micros={under_micros}"));
-        assert!(
-            accepted.is_ok(),
-            "a {under_micros}us CPU burn (under the {ceiling_micros}us decode_apply_cpu_ms_max \
-             ceiling) must succeed, got {accepted:?}"
+        let (ceiling_micros, under_micros, over_micros) = boundary_runs();
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            &format!("a {under_micros}us CPU burn (under the {ceiling_micros}us decode_apply_cpu_ms_max ceiling)"),
+            || under_ceiling_verdict(under_micros),
         );
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            &format!("a {over_micros}us CPU burn (over the {ceiling_micros}us decode_apply_cpu_ms_max ceiling)"),
+            || over_ceiling_verdict(over_micros, ceiling_micros),
+        );
+    }
 
-        let rejected = isolated_apply_injected(&format!("cpu_burn_micros={over_micros}"));
-        match rejected {
-            Err(IsolatedApplyError::CpuCeiling) => {}
-            other => panic!(
-                "a {over_micros}us-targeted CPU burn (over the {ceiling_micros}us \
-                 decode_apply_cpu_ms_max ceiling) must be killed by SIGPROF and classified as \
-                 CpuCeiling specifically -- not WallCeiling (which would mean SIGPROF never fired \
-                 and the independent 100ms wall watchdog caught it instead, a different \
-                 mechanism entirely), not MemoryCeiling, not HostFailure -- got {other:?}"
+    /// The strict variant of the test above: the worker must demonstrably have had the CPU in
+    /// both runs (so the first run is accepted and the second is killed by `SIGPROF`), within
+    /// twenty attempts each. Fails on a machine that never gives the worker its CPU, so it is
+    /// not part of the default run; run it on an idle machine with
+    /// `cargo test -p collab-core --lib -- --ignored decode_apply_cpu_ms_ceiling_strict`.
+    #[test]
+    #[ignore = "needs an idle machine; run explicitly with --ignored"]
+    fn decode_apply_cpu_ms_ceiling_strict_requires_both_conclusive_runs_when_the_worker_has_the_cpu() {
+        let (ceiling_micros, under_micros, over_micros) = boundary_runs();
+        assert!(
+            conclusive_within(
+                20,
+                BOUNDARY_PAUSE,
+                "strict under-ceiling run",
+                || under_ceiling_verdict(under_micros)
             ),
-        }
+            "the worker never got the CPU for a {under_micros}us burn in twenty attempts"
+        );
+        assert!(
+            conclusive_within(20, BOUNDARY_PAUSE, "strict over-ceiling run", || over_ceiling_verdict(
+                over_micros,
+                ceiling_micros
+            )),
+            "the worker never got the CPU to reach the {ceiling_micros}us ceiling in twenty attempts"
+        );
+    }
+
+    /// The judgement itself, without a process or a clock: a wall kill is a violation only when
+    /// the worker had consumed the CPU ceiling, and a `SIGPROF` kill only counts when it did.
+    #[test]
+    fn ceiling_verdicts_separate_starvation_from_a_misbehaving_ceiling() {
+        let ceiling = 50_000;
+        let observed = |cpu: Option<u64>| WorkerObservation {
+            metered_wall_us: Some(100_000),
+            metered_cpu_us: cpu,
+        };
+        let wall = || Err(IsolatedApplyError::WallCeiling);
+        let cpu_kill = || Err(IsolatedApplyError::CpuCeiling);
+
+        // Starved: killed at the wall deadline with a fraction of the ceiling (or just about
+        // the ceiling, inside the accounting slack).
+        assert_eq!(
+            judge_burn_over_cpu_ceiling(&wall(), &observed(Some(3_000)), ceiling),
+            CeilingVerdict::Starved
+        );
+        assert_eq!(
+            judge_burn_over_cpu_ceiling(&wall(), &observed(Some(55_000)), ceiling),
+            CeilingVerdict::Starved
+        );
+        // SIGPROF did not fire although the worker had clearly consumed the ceiling.
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(&wall(), &observed(Some(90_000)), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        // A SIGPROF kill is conclusive only if the worker had the ceiling's CPU.
+        assert_eq!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(Some(52_000)), ceiling),
+            CeilingVerdict::Conclusive
+        );
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(Some(10_000)), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        // An unobservable CPU time and a burn that ran to completion are violations.
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(None), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(
+                &Ok(IsolatedApplySuccess {
+                    snapshot: Vec::new(),
+                    window_cpu_us: None
+                }),
+                &observed(Some(150_000)),
+                ceiling
+            ),
+            CeilingVerdict::Violation(_)
+        ));
+        // Under the ceiling: accepted is conclusive, a wall kill is starvation, a CPU kill is wrong.
+        assert_eq!(
+            judge_burn_under_cpu_ceiling(
+                &Ok(IsolatedApplySuccess {
+                    snapshot: Vec::new(),
+                    window_cpu_us: None
+                }),
+                &observed(Some(33_000))
+            ),
+            CeilingVerdict::Conclusive
+        );
+        assert_eq!(
+            judge_burn_under_cpu_ceiling(&wall(), &observed(Some(8_000))),
+            CeilingVerdict::Starved
+        );
+        assert!(matches!(
+            judge_burn_under_cpu_ceiling(&cpu_kill(), &observed(Some(60_000))),
+            CeilingVerdict::Violation(_)
+        ));
     }
 
     #[test]
@@ -664,7 +1003,7 @@ mod tests {
              must succeed, got {accepted:?}"
         );
 
-        let rejected = isolated_apply_injected(&format!("wall_sleep_millis={over_millis}"));
+        let (rejected, observation) = isolated_apply_injected_observed(&format!("wall_sleep_millis={over_millis}"));
         match rejected {
             Err(IsolatedApplyError::WallCeiling) => {}
             other => panic!(
@@ -675,6 +1014,20 @@ mod tests {
                  not MemoryCeiling, not HostFailure -- got {other:?}"
             ),
         }
+        // A wall kill is right only when the wall time passed while the worker consumed less CPU
+        // than the CPU ceiling: a sleeping worker is the case that shows exactly that.
+        assert!(
+            observation
+                .metered_wall_us
+                .is_some_and(|wall_us| wall_us >= ceiling_millis * 1_000),
+            "the wall kill came before the {ceiling_millis}ms deadline: {observation:?}"
+        );
+        assert!(
+            observation
+                .metered_cpu_us
+                .is_some_and(|cpu_us| cpu_us < super::super::DECODE_APPLY_CPU_MS_MAX * 1_000),
+            "a sleeping worker consumed the CPU ceiling's worth of CPU: {observation:?}"
+        );
     }
 
     #[test]
