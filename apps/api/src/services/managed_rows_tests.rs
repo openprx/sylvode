@@ -430,3 +430,58 @@ async fn the_connection_policy_passes_and_no_event_carries_a_secret() {
     }
     scratch.drop_self().await;
 }
+
+/// The Members API cannot promote a managed runner bot, and the database refuses an admin seat for
+/// one by any path, so its token never counts as a workspace admin.
+#[tokio::test]
+async fn a_managed_bot_cannot_be_given_an_admin_seat() {
+    let scratch = scratch_or_skip!("managed_role");
+    let db = &scratch.db;
+    let w = world(db, "mr").await;
+    let state = state_for(db.clone());
+    let ws = w.tenant.workspace_id;
+    let seat = || {
+        count(
+            db,
+            "SELECT COUNT(*)::bigint AS count FROM workspace_members WHERE workspace_id = $1 AND user_id = $2 AND role = 'member'",
+            vec![ws.into(), w.bot.into()],
+        )
+    };
+    let promoted = member::update_member_role(
+        State(state.clone()),
+        Extension(claims_for(w.tenant.member_id)),
+        Path((ws, w.bot)),
+        Json(member::UpdateMemberRoleRequest {
+            role: "admin".to_string(),
+        }),
+    )
+    .await;
+    assert_managed_refusal(&promoted.map(|_| ()), "changing the seat role of a managed bot");
+    assert_eq!(seat().await, 1, "the seat stays member");
+
+    // Any other path is refused by the database.
+    let direct = sea_orm::ConnectionTrait::execute(
+        db,
+        sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "UPDATE workspace_members SET role = 'admin' WHERE workspace_id = $1 AND user_id = $2",
+            vec![ws.into(), w.bot.into()],
+        ),
+    )
+    .await;
+    assert!(direct.is_err(), "a managed bot's seat cannot be admin or owner");
+    assert_eq!(seat().await, 1);
+
+    // An ordinary bot can still be promoted by an owner.
+    member::update_member_role(
+        State(state),
+        Extension(claims_for(w.tenant.member_id)),
+        Path((ws, w.free_bot)),
+        Json(member::UpdateMemberRoleRequest {
+            role: "admin".to_string(),
+        }),
+    )
+    .await
+    .expect("an ordinary bot seat can change");
+    scratch.drop_self().await;
+}

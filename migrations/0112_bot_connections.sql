@@ -76,3 +76,19 @@ CREATE TABLE IF NOT EXISTS project_bot_connections (
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_project_bot_connections_bot ON project_bot_connections (bot_id);
+
+-- 6. A runner bot is a member of its workspace and never more: its token runs agents on untrusted
+-- text, so no path may seat it as admin or owner (the Members API refuses it too, with a 409).
+CREATE OR REPLACE FUNCTION workspace_members_runner_bot_seat() RETURNS trigger AS $fn$
+BEGIN
+  IF NEW.role <> 'member' AND EXISTS (SELECT 1 FROM bot_runners WHERE bot_id = NEW.user_id) THEN
+    RAISE EXCEPTION 'a runner bot is seated as member only' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_workspace_members_runner_bot_seat ON workspace_members;
+CREATE TRIGGER trg_workspace_members_runner_bot_seat
+  BEFORE INSERT OR UPDATE OF role ON workspace_members
+  FOR EACH ROW EXECUTE FUNCTION workspace_members_runner_bot_seat();

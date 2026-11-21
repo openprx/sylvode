@@ -18,6 +18,11 @@ Operating notes for migration `0112_bot_connections.sql`: the schema under "Conn
   credentials issue time, the runner's last report) and `project_bot_connections` (one row per
   connected project, with a version for compare-and-set writes).
 
+- A trigger on `workspace_members` (`trg_workspace_members_runner_bot_seat`) refuses a role other
+  than `member` for a bot that has a `bot_runners` row. A runner bot executes agents on untrusted
+  issue text, so it is never a workspace admin or owner; the Members API also answers 409 when its
+  seat role is changed.
+
 The AI participants API (`/api/v1/projects/{project_id}/ai-participants` and its `{id}` routes) is
 removed. A bot becomes a project's AI participant only through a project bot connection.
 
