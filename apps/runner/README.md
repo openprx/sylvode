@@ -250,18 +250,12 @@ agents. With `allow_unsigned = false` and no `webhook_secrets`, every request is
 and start-up logs a warning saying so.
 
 Start-up is refused, with a message naming the agent, when a `route.trigger_kinds` value is not one
-Sylvode sends, or when an `openclaw`, `openprx` or `custom` `command` contains whitespace, names
-neither an existing file nor a program on `PATH`, and cannot be split unambiguously (see below).
+Sylvode sends, or when an `openclaw`, `openprx` or `custom` `command` contains whitespace.
 
-Commands run without a shell, so `command` is one program and its arguments go in `args`. The
-one-string form earlier documentation showed, `command = "openclaw message send"`, is still
-accepted with a deprecation warning at start-up when it is unambiguous: `args` is empty, the string
-contains no quotes or backslashes, and its first word is a program on `PATH` or a file. It is then
-split on whitespace once, at start-up, and runs as `command = "openclaw"` with
-`args = ["message", "send"]`; text inserted into arguments later is never split. Because the first
-word must be found when the service starts, this form refuses start-up where the program is not on
-the service's `PATH` (a container image without `openclaw`, say), whereas `command = "openclaw"`
-written separately only fails when a task is dispatched.
+Commands run without a shell, so `command` is one program name and its arguments go in `args`:
+`command = "openclaw"` with `args = ["message", "send"]`. A `command` with whitespace is refused
+with ``agent `X`: openclaw.command must name one program; put its arguments in openclaw.args``.
+Text inserted into arguments later is never split.
 
 ### Agent selection
 
@@ -851,7 +845,7 @@ Each of these started with 0.3.3 and refuses to start now. The error is logged o
 | # | Configuration | Error (excerpt) | Fix |
 |---|---------------|-----------------|-----|
 | 1 | `route.trigger_kinds` contains a value Sylvode never sends, such as `assignment` from the old examples | ``agent `X`: route.trigger_kinds contains `assignment`, which Sylvode never sends; valid values: assigned, created, ...`` | Use the values in [Agent selection](#agent-selection): `assigned`, and `mentioned` (not `mention`) for a comment mention on a webhook delivery |
-| 2 | An `openclaw`, `openprx` or `custom` `command` with whitespace that names no file and cannot be split unambiguously (`args` also set, quotes or backslashes in it, or its first word is not a program on `PATH`) | ``agent `X`: openclaw.command `...` contains whitespace and is not an executable, and cannot be split unambiguously (<reason>); ... write ... command = "openclaw" and args = ["message", "send"]`` | Write `command` and `args` as the error shows. The plain documented form `command = "openclaw message send"` with `openclaw` on `PATH` still starts, with a deprecation warning |
+| 2 | An `openclaw`, `openprx` or `custom` `command` with whitespace, such as `command = "openclaw message send"` | ``agent `X`: openclaw.command must name one program; put its arguments in openclaw.args`` | Write the program in `command` and its arguments in `args`: `command = "openclaw"`, `args = ["message", "send"]` |
 | 3 | An enabled tunnel with `require_inbound_sig = true` and no `hmac_secret` | `tunnel.require_inbound_sig = true requires a non-empty tunnel.hmac_secret: ...` | Set `hmac_secret` to the secret shared with the control plane, or remove `require_inbound_sig` |
 | 4 | An empty or blank entry in `security.webhook_secrets`, while signatures are verified (`allow_unsigned = false`) | `security.webhook_secrets[N] is blank; an empty HMAC key lets anyone sign a request. ...` | Set the real secret or remove the entry |
 | 5 | A blank `tunnel.hmac_secret` while the tunnel is enabled (`[features].tunnel_enabled` and `[tunnel].enabled`) | `tunnel.hmac_secret is blank; an empty HMAC key lets anyone sign an envelope. ...` | Set the real secret or remove the setting |
@@ -867,9 +861,6 @@ These configurations still start, but the service behaves differently:
 - **The tunnel client can complete a WebSocket handshake.** It never could before (its handshake
   request was rejected locally). It has been tested only against an in-process test peer: no
   Sylvode server endpoint exists yet, so an enabled tunnel still connects to nothing.
-- **The one-string `command = "openclaw message send"`** runs as `openclaw` with
-  `args = ["message", "send"]`. With 0.3.3 every dispatch to such an agent failed to spawn, so it
-  starts sending messages.
 - **`{message}` in a `custom` agent's `args`** is replaced by the message. With 0.3.3 the literal
   `{message}` was passed and the message appended after it.
 - **Agents without a template** get the rendered default message or prompt instead of literal

@@ -504,7 +504,7 @@ mod tests {
         let content = format!(
             "[server]\nlisten = \"127.0.0.1:0\"\n\n[security]\nwebhook_secrets = [\"s3cr3t-for-tests\"]\n\n{extra}"
         );
-        Config::from_toml(&content, None).expect("config is valid")
+        Config::from_toml(&content).expect("config is valid")
     }
 
     fn api_config(api_url: &str, agent_extra: &str) -> Config {
