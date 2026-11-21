@@ -143,6 +143,71 @@ impl RunnerRuntime {
     }
 }
 
+/// One line of the start-up log about what a CLI may do, and whether it is a warning.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PostureLine {
+    pub warn: bool,
+    pub text: String,
+}
+
+/// The permission posture of every CLI the `runner` agents can start: one line each, and a warning
+/// for opencode (whose permissions the runner does not control) and for any setting that turns
+/// permission checks off.
+pub fn posture(config: &Config) -> Vec<PostureLine> {
+    use crate::executor_permissions::ExecutorPermissions;
+    let runner = &config.runner;
+    let mut lines = Vec::new();
+    let claude = &runner.cli.claude;
+    let extras = claude.allowed_tools.len();
+    let write = if claude.allow_write_call {
+        " + sylvode_write"
+    } else {
+        ""
+    };
+    let settings = headless::settings_for(runner, "claude", "/");
+    let bypass = ExecutorPermissions::from_config(&settings).is_ok_and(|p| p.bypasses_permissions());
+    lines.push(PostureLine {
+        warn: bypass,
+        text: format!(
+            "claude: permission_mode = {}, allowed tools = the {} search-mode Sylvode tools{write} + Read/Glob/Grep in the \
+             project directory + {extras} configured, disallowed = {}, strict MCP config from the runner's own file, project \
+             settings not loaded{}",
+            claude.permission_mode,
+            launch::SEARCH_MODE_TOOLS.len(),
+            claude.disallowed_tools.len(),
+            if bypass { "; PERMISSION CHECKS ARE OFF" } else { "" }
+        ),
+    });
+    let codex = &runner.cli.codex;
+    let settings = headless::settings_for(runner, "codex", "/");
+    let codex_open = ExecutorPermissions::from_config(&settings).is_ok_and(|p| p.bypasses_permissions());
+    lines.push(PostureLine {
+        warn: codex_open,
+        text: format!(
+            "codex: {}, sandbox = {}, approvals never{}",
+            if codex.enabled { "enabled" } else { "disabled" },
+            codex.sandbox,
+            if codex_open && codex.enabled {
+                "; THE SANDBOX IS OFF"
+            } else {
+                ""
+            }
+        ),
+    });
+    if runner.cli.opencode.enabled {
+        lines.push(PostureLine {
+            warn: true,
+            text: "opencode is enabled: opencode permissions are not controlled by sylvode-runner".to_string(),
+        });
+    } else {
+        lines.push(PostureLine {
+            warn: false,
+            text: "opencode: disabled".to_string(),
+        });
+    }
+    lines
+}
+
 /// The one HTTP client of the runner agents: no redirect is ever followed.
 pub fn build_http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()

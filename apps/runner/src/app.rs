@@ -197,6 +197,13 @@ async fn serve(config: config::Config) -> ExitCode {
     });
 
     if has_runner_agents {
+        for line in crate::runner::posture(&state.config) {
+            if line.warn {
+                tracing::warn!("runner CLI posture: {}", line.text);
+            } else {
+                tracing::info!("runner CLI posture: {}", line.text);
+            }
+        }
         let loop_config = Arc::new(state.config.clone());
         let Ok(http) = state.runner.http.clone() else {
             return ExitCode::FAILURE;

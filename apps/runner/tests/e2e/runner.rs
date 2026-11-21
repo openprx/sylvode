@@ -591,3 +591,26 @@ async fn a_delivery_for_a_bot_the_agent_does_not_serve_is_refused() {
         "Sylvode was asked about another bot's task"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn start_up_logs_the_posture_of_every_cli_and_warns_about_opencode() {
+    let fx = Fixture::new().await;
+    let config = fx
+        .config_with("")
+        .replace("[runner.mcp]", "[runner.cli.opencode]\nenabled = true\n[runner.mcp]");
+    let mut server = Server::start(RUNNER, &config, &[]).expect("starts");
+    assert!(server.wait_for_line(
+        "runner CLI posture: claude: permission_mode = dontAsk",
+        Duration::from_secs(5)
+    ));
+    assert!(server.wait_for_line("runner CLI posture: codex: disabled", Duration::from_secs(5)));
+    assert!(server.wait_for_line(
+        "opencode permissions are not controlled by sylvode-runner",
+        Duration::from_secs(5)
+    ));
+    let warned = server
+        .stdout()
+        .iter()
+        .any(|l| l.contains(" WARN ") && l.contains("opencode permissions are not controlled"));
+    assert!(warned, "{:?}", server.stdout());
+}
