@@ -28,6 +28,14 @@ name.
   the webhook and seat; deleting a project does the same. Alert rules warn with
   `bot_not_connected_to_project` instead of `bot_has_no_active_webhook`.
   Operations: `docs/runbooks/bot-connections.md`.
+  Hardening: a runner bot receives a project's tasks only while the project has an enabled
+  connection for it (task creation, worker pick-up and delivery; pending tasks without one are
+  failed with a reason and an issue comment); its token reaches only the routes of a fixed table and
+  only the projects it is connected to; it is never seated above member; a delivery connects to the
+  address its URL check resolved, and a runner's answer body is never copied into an issue; plain
+  `http://` runner addresses need a host in `[outbound] allowed_hosts`; rotation, the disable that
+  switches the token off, removal and project deletion re-evaluate cached permissions and open
+  sessions; disabling a bot's user stops its token.
 
 - **Sylvode as an OAuth 2.1 authorization server for its own API and MCP server (P4).** A person
   can connect Ramflux, the one pre-registered public client, to one workspace: Ramflux holds its own

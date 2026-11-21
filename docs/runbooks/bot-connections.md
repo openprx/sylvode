@@ -40,6 +40,29 @@ is not affected. To let a runner bot call another route, add it to the table on 
 The AI participants API (`/api/v1/projects/{project_id}/ai-participants` and its `{id}` routes) is
 removed. A bot becomes a project's AI participant only through a project bot connection.
 
+## Tasks, rotation and removal
+
+- A runner bot's tasks reach it only while the task's project has an enabled connection for it. The
+  gate is applied when a task is created (assignment and mention create nothing, an alert rule
+  records `bot_unavailable`, a manual start answers 409), when the worker picks tasks up, and again
+  just before the delivery. The worker also fails pending tasks without an enabled connection with
+  the reason `connection_unavailable` (`bot_not_connected_to_project` or `connection_disabled`) and
+  tells the issue; a task already running continues until it ends.
+- Rotation (I1): the old token and secret stop working when the rotation commits, so a task that is
+  running on the runner can no longer report; its lease runs out and it is retried or failed. Rotate
+  when no task is running, or accept that running tasks fail.
+- Hold (I2): after a connection or a rotation the worker waits until the runner has used the new
+  token, for at most one hour after the last rotation. Rotating repeatedly restarts the wait but
+  gives an owner or admin nothing they could not do by disabling the connection.
+- A runner address that starts with `http://` is accepted only when its host is listed in
+  `[outbound] allowed_hosts` (or private targets are switched on); use `https://` otherwise. The
+  address is stored as parsed (`HTTPS://Host:443/` is `https://host`).
+- Lock order, everywhere: the project row, then `bot_runners`, then `project_bot_connections`. Connect
+  and the release for a deleted project both start with the project row.
+- Events that a connection writes carry the runner's working directory. They are not delivered to
+  webhooks (their payload is withheld, as for every event type without a delivery policy) and are not
+  part of the connected-application stream.
+
 ## Why migration 0092 changed
 
 `0092_ai_participant_config_version.sql` creates the trigger that advances
