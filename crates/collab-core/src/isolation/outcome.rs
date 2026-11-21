@@ -29,10 +29,6 @@ pub struct IsolatedApplySuccess {
     /// it decided (`None` when the full computation did). The host compares it with its own
     /// projection of the document.
     pub window_report: Option<crate::window_check::WindowReport>,
-    /// The setup guard that fired in the worker (`crate::setup_guard`): the base took more work than
-    /// that guard allows, so there were no base facts and the full computation decided. Not an
-    /// error; telemetry for the host's log.
-    pub setup_guard: Option<crate::setup_guard::Fired>,
 }
 
 pub type IsolatedDiffSuccess = wire::ReplayDiffResult;
@@ -132,4 +128,9 @@ pub struct WorkerObservation {
     /// What the worker's window check decided, from its decision record. `None` when the worker
     /// wrote no record (killed before the check decided, or a failure before the window).
     pub decision: Option<wire::WindowDecision>,
+    /// The setup guard that fired in the worker (`crate::setup_guard`), from its marker byte: the
+    /// base took more work than that guard allows, so there were no base facts and the full
+    /// computation decided. Not an error; telemetry for the host's log, reported for every attempt
+    /// whose worker opened its metered window, whether it was accepted, refused or killed.
+    pub setup_guard: Option<crate::setup_guard::Fired>,
 }

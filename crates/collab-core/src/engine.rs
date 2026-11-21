@@ -2149,6 +2149,8 @@ mod window_round4_tests;
 mod window_round6_tests;
 #[cfg(test)]
 mod window_setup_guard_tests;
+#[cfg(test)]
+pub(crate) mod window_text_guard_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

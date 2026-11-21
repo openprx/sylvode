@@ -206,7 +206,11 @@ impl BaseFacts {
         // costs about what the count did, in allocation and in CPU time: both limits must hold
         // for the two.
         let counted_bytes = guard.spent().saturating_sub(bytes_before);
-        let counted_nanos = guard.cpu_spent().saturating_sub(cpu_before);
+        // A CPU clock that cannot be read fails the guard closed.
+        let (Some(cpu_before), Some(cpu_after)) = (cpu_before, guard.cpu_spent()) else {
+            return Err(Some(Fired::Cpu));
+        };
+        let counted_nanos = cpu_after.saturating_sub(cpu_before);
         if let Some(fired) = guard.fired_by(counted_bytes, counted_nanos) {
             return Err(Some(fired));
         }

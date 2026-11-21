@@ -159,24 +159,37 @@ pub fn isolated_apply_with(
     update: &[u8],
     mode: WindowMode,
 ) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
-    isolated_apply_with_observed(base_snapshot, update, mode).0
+    isolated_apply_with_observed(
+        base_snapshot,
+        update,
+        mode,
+        crate::setup_guard::SETUP_CPU_BUDGET_MS_DEFAULT,
+    )
+    .0
 }
 
 /// [`isolated_apply_with`] that additionally reports the [`WorkerObservation`] of the run: the CPU
-/// the worker consumed, and what its window check decided, even when a ceiling killed it.
+/// the worker consumed, what its window check decided and which setup guard fired, even when a
+/// ceiling killed it. `setup_cpu_budget_ms` is the CPU budget of the worker's setup (`[flow]
+/// setup_cpu_budget_ms`); the worker uses its default for a value outside
+/// [`crate::setup_guard::SETUP_CPU_BUDGET_MS_RANGE`].
 pub fn isolated_apply_with_observed(
     base_snapshot: &[u8],
     update: &[u8],
     mode: WindowMode,
+    setup_cpu_budget_ms: u64,
 ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    let budget = setup_cpu_budget_ms.to_string();
+    let incremental = [(wire::SETUP_CPU_BUDGET_ENV, budget.as_str())];
+    let full = [
+        (wire::SETUP_CPU_BUDGET_ENV, budget.as_str()),
+        (wire::WINDOW_ENV, wire::WINDOW_FULL),
+    ];
     match mode {
-        WindowMode::Incremental => run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &[]),
-        WindowMode::Full => run_isolated_apply_observed(
-            base_snapshot,
-            update,
-            wire::OPERATION_APPLY,
-            &[(wire::WINDOW_ENV, wire::WINDOW_FULL)],
-        ),
+        WindowMode::Incremental => {
+            run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &incremental)
+        }
+        WindowMode::Full => run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &full),
     }
 }
 
@@ -188,7 +201,12 @@ pub fn isolated_apply_observed(
     base_snapshot: &[u8],
     update: &[u8],
 ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
-    isolated_apply_with_observed(base_snapshot, update, WindowMode::Incremental)
+    isolated_apply_with_observed(
+        base_snapshot,
+        update,
+        WindowMode::Incremental,
+        crate::setup_guard::SETUP_CPU_BUDGET_MS_DEFAULT,
+    )
 }
 
 /// Replays a bounded retained-history tail and computes its semantic diff inside the same
@@ -302,6 +320,8 @@ fn run_worker(
         ReadOutcome::SetupPhaseTimedOut => final_cpu_us,
         _ => marker.and_then(|marker| marker.cpu_us),
     };
+    // Which setup guard fired is in the marker byte, so a refused or killed attempt reports it too.
+    observation.setup_guard = marker.and_then(|marker| marker.setup_guard);
 
     let response_bytes = match read_outcome {
         ReadOutcome::SetupPhaseTimedOut => {
@@ -365,12 +385,10 @@ fn run_worker(
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard,
         } => Ok(IsolatedApplySuccess {
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard,
         }),
         Outcome::Rejected(err) => Err(IsolatedApplyError::Collab(err)),
     }
@@ -426,14 +444,15 @@ fn setup_phase_timeout_ms() -> u64 {
 }
 
 /// Written as the very first byte of every response the worker ever sends
-/// (`respond_and_exit` in `src/bin/isolated_apply_worker.rs`), before the framed outcome that
-/// follows it. Its only job is to let [`read_response_two_phase`] tell "still doing unmetered
+/// (`write_marker_or_exit` in `src/bin/isolated_apply_worker.rs`), before the framed outcome that
+/// follows it. This is the byte of a worker whose setup guard did not fire; one whose guard fired
+/// writes the byte `wire::marker_byte` names, which says which (`wire::guard_of_marker`). Its only job is to let [`read_response_two_phase`] tell "still doing unmetered
 /// setup" apart from "done with setup, response is now being written" -- so the *strict*
 /// `decode_apply_wall_ms_max` watchdog can start counting from the moment that is actually true,
 /// instead of from process spawn (which would double-count spawn + base-document-load time
 /// against a ceiling `contracts/limits-v1.md` scopes to decode/apply/shape-validate only: "从
 /// decode 前开始计,到 semantic diff/shape validation 完成结束").
-pub const RESPONSE_MARKER_BYTE: u8 = 0xA5;
+pub const RESPONSE_MARKER_BYTE: u8 = wire::MARKER_NO_GUARD;
 
 /// What [`read_response_two_phase`] observed.
 enum ReadOutcome {
@@ -490,6 +509,7 @@ fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> (ReadOutc
     let marker = MarkerSample {
         at: marker_at,
         cpu_us: child_cpu_micros(pid_of(child)),
+        setup_guard: buffer.first().copied().and_then(wire::guard_of_marker),
     };
 
     // The single-poll-then-read pattern below can (and in practice often does) return more than
@@ -518,6 +538,8 @@ struct MarkerSample {
     at: Instant,
     /// The child's CPU time (user plus system) at that instant, if the kernel reported it.
     cpu_us: Option<u64>,
+    /// The setup guard the marker byte names.
+    setup_guard: Option<crate::setup_guard::Fired>,
 }
 
 fn duration_micros(duration: Duration) -> u64 {
@@ -1102,7 +1124,6 @@ mod tests {
                     snapshot: Vec::new(),
                     window_cpu_us: None,
                     window_report: None,
-                    setup_guard: None,
                 }),
                 &observed(Some(150_000)),
                 ceiling
@@ -1116,7 +1137,6 @@ mod tests {
                     snapshot: Vec::new(),
                     window_cpu_us: None,
                     window_report: None,
-                    setup_guard: None,
                 }),
                 &observed(Some(33_000))
             ),
@@ -1549,6 +1569,21 @@ mod tests {
         update: &[u8],
         mode: WindowMode,
     ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+        isolated_apply_real_observed_with_budget(
+            base_snapshot,
+            update,
+            mode,
+            crate::setup_guard::SETUP_CPU_BUDGET_MS_DEFAULT,
+        )
+    }
+
+    /// [`isolated_apply_real_observed`] with the setup CPU budget the host passes to the worker.
+    fn isolated_apply_real_observed_with_budget(
+        base_snapshot: &[u8],
+        update: &[u8],
+        mode: WindowMode,
+        setup_cpu_budget_ms: u64,
+    ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
         let worker_path = required_debug_worker_binary_for_tests();
         let guard = env_lock().lock();
         // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
@@ -1556,7 +1591,7 @@ mod tests {
         unsafe {
             std::env::set_var(WORKER_BINARY_PATH_ENV, &worker_path);
         }
-        let result = isolated_apply_with_observed(base_snapshot, update, mode);
+        let result = isolated_apply_with_observed(base_snapshot, update, mode, setup_cpu_budget_ms);
         // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
         unsafe {
             std::env::remove_var(WORKER_BINARY_PATH_ENV);
@@ -1618,6 +1653,62 @@ mod tests {
             observation.decision,
             Some(WindowDecision::Undecided),
             "an import that fails never reaches the check: {observation:?}"
+        );
+    }
+
+    /// A title update by an author that has seen `base`.
+    fn a_title_update_on(base: &[u8]) -> Vec<u8> {
+        let mut server = crate::LoroCollabEngine::load(base).expect("the base loads");
+        let frontier = server.frontier();
+        server.set_title("typed").expect("the title is set");
+        server.export_from(&frontier).expect("export succeeds")
+    }
+
+    /// A-1 and A-5 on the real worker: a page with one text that costs the setup more than a
+    /// window's ceiling yields no facts, the worker reloads and meters the decode again, and the
+    /// host learns which guard fired from the marker byte even though the full window is then killed
+    /// by its ceiling and no response frame ever arrives.
+    #[test]
+    fn a_text_over_its_budget_is_reported_by_the_marker_of_an_attempt_the_full_window_kills() {
+        let base = crate::engine::window_text_guard_tests::nested_marks_page(50, 1, 1_800);
+        let update = a_title_update_on(&base);
+        let (result, observation) = isolated_apply_real_observed(&base, &update, WindowMode::Incremental);
+        assert!(
+            matches!(
+                result,
+                Err(IsolatedApplyError::CpuCeiling | IsolatedApplyError::WallCeiling)
+            ),
+            "the full window pays the decode of the text inside its ceiling and is killed: {result:?}"
+        );
+        assert_eq!(
+            observation.setup_guard,
+            Some(crate::setup_guard::Fired::Text),
+            "{observation:?}"
+        );
+        // A page without such a text reports no guard, whichever way the attempt ends.
+        let (base, update) = typed_update_on_a_block_page();
+        let snapshot = base.export_snapshot().expect("export succeeds");
+        let (result, observation) = isolated_apply_real_observed(&snapshot, &update, WindowMode::Incremental);
+        result.expect("accepted");
+        assert_eq!(observation.setup_guard, None);
+        let (result, observation) = isolated_apply_real_observed(&snapshot, b"not an update", WindowMode::Incremental);
+        assert!(result.is_err());
+        assert_eq!(observation.setup_guard, None);
+    }
+
+    /// A-4 on the real worker: the host's setting of the setup CPU budget reaches the worker. A page
+    /// whose setup costs more than half a second of CPU (250 texts of 450 nested marks, 2 s and more)
+    /// trips the CPU guard of a worker given a budget of 500 ms.
+    #[test]
+    fn the_setup_cpu_budget_of_the_host_reaches_the_worker() {
+        let base = crate::engine::window_text_guard_tests::nested_marks_page(250, 250, 450);
+        let update = a_title_update_on(&base);
+        let (_result, observation) =
+            isolated_apply_real_observed_with_budget(&base, &update, WindowMode::Incremental, 500);
+        assert_eq!(
+            observation.setup_guard,
+            Some(crate::setup_guard::Fired::Cpu),
+            "{observation:?}"
         );
     }
 

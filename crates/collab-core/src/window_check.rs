@@ -345,6 +345,9 @@ pub mod fault {
         SetupGuardSkipped,
         /// The setup's CPU guard never fires (`crate::setup_guard`).
         SetupCpuGuardSkipped,
+        /// The setup's per-text budget never fires (`crate::setup_guard`): a text that alone costs
+        /// more than the window's CPU ceiling still yields facts.
+        TextGuardSkipped,
         /// The window never tells its caller what the check decided: the worker writes no decision
         /// record, so the host cannot know the update was not sequential once a ceiling kills it.
         DecisionNotReported,
