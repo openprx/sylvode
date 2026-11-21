@@ -214,7 +214,10 @@ impl AllowedRoots {
                 let resolved = if target.is_absolute() {
                     target
                 } else {
-                    candidate.parent().map_or_else(|| PathBuf::from("/"), Path::to_path_buf).join(target)
+                    candidate
+                        .parent()
+                        .map_or_else(|| PathBuf::from("/"), Path::to_path_buf)
+                        .join(target)
                 };
                 return self.inside_following_links(&resolved, depth + 1);
             }
