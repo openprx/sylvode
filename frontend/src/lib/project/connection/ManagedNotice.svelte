@@ -15,6 +15,7 @@
 <span class="notice" data-testid="managed-notice">
 	<StatusChip tone="neutral">{$t('execution.connection.managed.chip')}</StatusChip>
 	{#each managedBy.projects as project (project.id)}
+		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- full path built by executionHref -->
 		<a class="project" href={executionHref(workspaceId, project.id)}>{project.name}</a>
 	{/each}
 </span>

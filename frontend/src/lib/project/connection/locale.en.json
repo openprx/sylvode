@@ -1,6 +1,174 @@
 {
 	"execution": {
 		"connection": {
+			"title": "Execution",
+			"description": "Run this project's agent tasks on a runner through a connected bot.",
+			"empty": "No bot is connected. Connect a bot to run this project's agent tasks on a runner.",
+			"loadingThing": "bot connection",
+			"connect": "Connect a bot",
+			"connectSubmit": "Connect bot",
+			"connecting": "Connecting…",
+			"cancel": "Cancel",
+			"save": "Save",
+			"change": "Change",
+			"reload": "Reload",
+			"forbidden": "Only workspace owners and admins can manage this project's execution settings.",
+			"bot": {
+				"label": "Bot",
+				"new": "New bot",
+				"connected": "Connected bot",
+				"noneConnected": "No bot of this workspace is connected yet",
+				"name": "Bot name",
+				"choose": "Choose a bot",
+				"option": "{name} · {address} · {count} projects"
+			},
+			"runner": {
+				"address": "Runner address",
+				"shared": "Shared by every project this bot serves",
+				"affects": "Changing it affects {count} projects"
+			},
+			"cli": {
+				"label": "CLI",
+				"claude": "Claude Code",
+				"codex": "Codex (experimental)",
+				"opencode": "opencode (experimental)"
+			},
+			"workingDirectory": "Working directory",
+			"error": {
+				"nameRequired": "Enter a bot name.",
+				"nameLength": "Use at most 100 characters.",
+				"botChoose": "Choose a bot.",
+				"urlInvalid": "Enter the runner's address, starting with http:// or https://.",
+				"dirAbsolute": "Enter an absolute path, such as /home/you/work/project.",
+				"dirSegments": "The path must not contain . or .. segments or //.",
+				"level": "Choose a level.",
+				"reasonLength": "Enter a number from 0 to 2000.",
+				"veto": "Veto requires level Vetoer or Autonomous.",
+				"domainDuplicate": "Each domain can appear once.",
+				"domainChoose": "Choose a domain and a level."
+			},
+			"block": {
+				"title": "Copy this configuration now",
+				"body": "It contains the bot's token and the signing secret. Sylvode does not keep a copy and cannot show it again. Put it in the runner's configuration file and restart the runner.",
+				"label": "Runner configuration (sylvode-runner.toml)",
+				"copy": "Copy configuration",
+				"copied": "Configuration copied",
+				"copyFailed": "Copy failed; select the text and copy it",
+				"download": "Download file",
+				"stored": "I have stored this configuration",
+				"done": "Done",
+				"doneReason": "Confirm that you stored the configuration",
+				"leave": "Leave without saving the runner configuration? It cannot be shown again.",
+				"lost": "Lost the configuration? Rotate credentials to get a new one.",
+				"scope": "This bot can act only in projects it is connected to.",
+				"leaveConfirm": "Leave"
+			},
+			"connectedNoChange": "Connected. No change is needed on the runner; make sure {directory} is inside its allowed_roots.",
+			"state": {
+				"enabled": "Enabled",
+				"disabled": "Disabled",
+				"sharedWith": "Also connected to {count} projects"
+			},
+			"status": {
+				"runner": {
+					"label": "Runner",
+					"online": "Online",
+					"waiting": "Waiting for the runner",
+					"notReporting": "Not reporting",
+					"unreachable": "Unreachable",
+					"lastReport": "Last report {time}, version {version}",
+					"noReport": "No report yet",
+					"waitingHint": "Waiting for the runner to use the new configuration.",
+					"protocolMismatch": "The runner speaks another task protocol than this server."
+				},
+				"cli": "CLI ({name})",
+				"tmux": "tmux",
+				"component": {
+					"ready": "Ready",
+					"warning": "Warning",
+					"missing": "Missing",
+					"disabled": "Disabled on the runner",
+					"unknown": "Unknown"
+				},
+				"delivery": {
+					"label": "Last delivery",
+					"delivered": "Delivered",
+					"refused": "Refused",
+					"failed": "Failed",
+					"none": "No delivery yet"
+				},
+				"refresh": "Refresh status"
+			},
+			"advanced": {
+				"title": "Advanced",
+				"execution": "Execution",
+				"governance": "Governance",
+				"channel": {
+					"label": "Channel",
+					"tmux": "Interactive session (tmux)",
+					"headless": "One-shot (headless)"
+				},
+				"onComplete": {
+					"label": "On completion",
+					"auto": "Move the issue to the first Done state",
+					"none": "Leave the issue where it is",
+					"state": "Move to state",
+					"stateChoose": "Choose a state"
+				},
+				"failLabel": "Failure label",
+				"failLabelNone": "None",
+				"tmuxWarningTitle": "The session is interactive",
+				"tmuxWarningBody": "The agent runs in a terminal session on the runner machine that anyone with access to that machine can read and type into.",
+				"level": {
+					"label": "Highest decision level",
+					"placeholder": "Choose a level",
+					"observer": "Observer",
+					"advisor": "Advisor",
+					"voter": "Voter",
+					"vetoer": "Vetoer",
+					"autonomous": "Autonomous"
+				},
+				"veto": "May veto human consensus",
+				"vetoReason": "Requires level Vetoer or Autonomous",
+				"reasonLength": "Minimum reason length",
+				"reasonLengthHelp": "Characters a vote reason must have",
+				"domains": "Per-domain level",
+				"domainsHelp": "Bots are always observers in governance decisions",
+				"domainAdd": "Add domain",
+				"domainRemove": "Remove",
+				"domainPlaceholder": "Choose a domain",
+				"domainNone": "No domain of this project can be added"
+			},
+			"conflict": "Someone else changed this connection. Reload to see the current values.",
+			"actions": {
+				"disable": "Disable",
+				"enable": "Enable",
+				"rotate": "Rotate credentials",
+				"remove": "Remove connection"
+			},
+			"enabledToast": "Connection enabled",
+			"saved": "Saved",
+			"disableDialog": {
+				"title": "Disable {bot} for {project}?",
+				"body": "The bot stops receiving tasks for this project and stops voting in it. A task already running continues until it ends.",
+				"bodyLast": "The bot's token and deliveries are paused until a project enables it again.",
+				"confirm": "Disable connection"
+			},
+			"rotateDialog": {
+				"title": "Rotate credentials of {bot}?",
+				"body": "A new token and signing secret are issued. The current ones stop working at once for every project this bot serves: {projects}. New deliveries wait up to one hour for the runner to use the new configuration.",
+				"confirm": "Rotate credentials",
+				"busy": "Rotating…"
+			},
+			"removeDialog": {
+				"title": "Remove {bot} from {project}?",
+				"bodyShared": "The bot is no longer an AI participant of this project and its execution settings are deleted. It stays connected to {projects}; its token and runner are unchanged. Votes and task history are kept.",
+				"bodyLast": "This is the bot's last project. Its token is revoked, its delivery to {address} is deleted and it leaves the workspace. Votes and task history are kept. This cannot be undone.",
+				"confirm": "Remove connection",
+				"busy": "Removing…"
+			},
+			"removed": "Connection removed",
+			"loadFailedThing": "bot connection",
 			"managed": {
 				"chip": "Managed by project connection",
 				"reason": "Change it in the project's Execution settings"

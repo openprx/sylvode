@@ -1,6 +1,174 @@
 {
 	"execution": {
 		"connection": {
+			"title": "执行",
+			"description": "通过已连接的机器人在 runner 上执行本项目的智能体任务。",
+			"empty": "尚未连接机器人。连接一个机器人以在 runner 上执行本项目的智能体任务。",
+			"loadingThing": "机器人连接",
+			"connect": "连接机器人",
+			"connectSubmit": "连接机器人",
+			"connecting": "正在连接…",
+			"cancel": "取消",
+			"save": "保存",
+			"change": "修改",
+			"reload": "重新加载",
+			"forbidden": "只有工作区所有者和管理员可以管理本项目的执行设置。",
+			"bot": {
+				"label": "机器人",
+				"new": "新机器人",
+				"connected": "已连接的机器人",
+				"noneConnected": "本工作区还没有已连接的机器人",
+				"name": "机器人名称",
+				"choose": "选择机器人",
+				"option": "{name} · {address} · {count} 个项目"
+			},
+			"runner": {
+				"address": "Runner 地址",
+				"shared": "该机器人服务的所有项目共用",
+				"affects": "修改会影响 {count} 个项目"
+			},
+			"cli": {
+				"label": "CLI",
+				"claude": "Claude Code",
+				"codex": "Codex（实验性）",
+				"opencode": "opencode（实验性）"
+			},
+			"workingDirectory": "工作目录",
+			"error": {
+				"nameRequired": "请输入机器人名称。",
+				"nameLength": "最多 100 个字符。",
+				"botChoose": "请选择机器人。",
+				"urlInvalid": "请输入以 http:// 或 https:// 开头的 runner 地址。",
+				"dirAbsolute": "请输入绝对路径，例如 /home/you/work/project。",
+				"dirSegments": "路径不能包含 . 或 .. 段，也不能包含 //。",
+				"level": "请选择级别。",
+				"reasonLength": "请输入 0 到 2000 之间的数字。",
+				"veto": "否决需要否决者或自治级别。",
+				"domainDuplicate": "每个领域只能出现一次。",
+				"domainChoose": "请选择领域和级别。"
+			},
+			"block": {
+				"title": "请立即复制此配置",
+				"body": "其中包含机器人的令牌和签名密钥。Sylvode 不保留副本，也无法再次显示。请写入 runner 的配置文件并重启 runner。",
+				"label": "Runner 配置（sylvode-runner.toml）",
+				"copy": "复制配置",
+				"copied": "已复制配置",
+				"copyFailed": "复制失败，请选中文本手动复制",
+				"download": "下载文件",
+				"stored": "我已保存此配置",
+				"done": "完成",
+				"doneReason": "请先确认已保存配置",
+				"leave": "未保存 runner 配置就离开吗？它无法再次显示。",
+				"lost": "配置丢失了？轮换凭据即可获得新配置。",
+				"scope": "此机器人只能在已连接的项目中操作。",
+				"leaveConfirm": "离开"
+			},
+			"connectedNoChange": "已连接。runner 无需改动；请确认 {directory} 在其 allowed_roots 之内。",
+			"state": {
+				"enabled": "已启用",
+				"disabled": "已停用",
+				"sharedWith": "还连接了 {count} 个项目"
+			},
+			"status": {
+				"runner": {
+					"label": "Runner",
+					"online": "在线",
+					"waiting": "等待 runner",
+					"notReporting": "无上报",
+					"unreachable": "无法访问",
+					"lastReport": "最近上报 {time}，版本 {version}",
+					"noReport": "尚无上报",
+					"waitingHint": "正在等待 runner 使用新配置。",
+					"protocolMismatch": "runner 使用的任务协议与本服务器不同。"
+				},
+				"cli": "CLI（{name}）",
+				"tmux": "tmux",
+				"component": {
+					"ready": "就绪",
+					"warning": "警告",
+					"missing": "缺失",
+					"disabled": "在 runner 上已停用",
+					"unknown": "未知"
+				},
+				"delivery": {
+					"label": "最近投递",
+					"delivered": "已投递",
+					"refused": "被拒绝",
+					"failed": "失败",
+					"none": "尚无投递"
+				},
+				"refresh": "刷新状态"
+			},
+			"advanced": {
+				"title": "高级",
+				"execution": "执行",
+				"governance": "治理",
+				"channel": {
+					"label": "通道",
+					"tmux": "交互式会话（tmux）",
+					"headless": "一次性（headless）"
+				},
+				"onComplete": {
+					"label": "完成后",
+					"auto": "将事项移到第一个完成状态",
+					"none": "保持事项状态不变",
+					"state": "移到指定状态",
+					"stateChoose": "选择状态"
+				},
+				"failLabel": "失败标签",
+				"failLabelNone": "无",
+				"tmuxWarningTitle": "该会话是交互式的",
+				"tmuxWarningBody": "智能体在 runner 机器上的终端会话中运行，任何能访问该机器的人都可以查看并输入。",
+				"level": {
+					"label": "最高决策级别",
+					"placeholder": "选择级别",
+					"observer": "观察者",
+					"advisor": "顾问",
+					"voter": "投票者",
+					"vetoer": "否决者",
+					"autonomous": "自治"
+				},
+				"veto": "可否决人类共识",
+				"vetoReason": "需要否决者或自治级别",
+				"reasonLength": "理由最短长度",
+				"reasonLengthHelp": "投票理由至少需要的字符数",
+				"domains": "按领域设置级别",
+				"domainsHelp": "机器人在治理决策中始终是观察者",
+				"domainAdd": "添加领域",
+				"domainRemove": "移除",
+				"domainPlaceholder": "选择领域",
+				"domainNone": "本项目没有可添加的领域"
+			},
+			"conflict": "其他人修改了此连接。请重新加载以查看当前值。",
+			"actions": {
+				"disable": "停用",
+				"enable": "启用",
+				"rotate": "轮换凭据",
+				"remove": "移除连接"
+			},
+			"enabledToast": "连接已启用",
+			"saved": "已保存",
+			"disableDialog": {
+				"title": "为 {project} 停用 {bot}？",
+				"body": "机器人将不再接收本项目的任务，也不再在本项目中投票。正在运行的任务会持续到结束。",
+				"bodyLast": "在有项目重新启用之前，机器人的令牌和投递会暂停。",
+				"confirm": "停用连接"
+			},
+			"rotateDialog": {
+				"title": "轮换 {bot} 的凭据？",
+				"body": "将签发新的令牌和签名密钥。当前的令牌和密钥会立即对该机器人服务的所有项目失效：{projects}。新的投递最多等待一小时，直到 runner 使用新配置。",
+				"confirm": "轮换凭据",
+				"busy": "正在轮换…"
+			},
+			"removeDialog": {
+				"title": "从 {project} 移除 {bot}？",
+				"bodyShared": "机器人不再是本项目的 AI 参与者，执行设置会被删除。它仍连接 {projects}，令牌和 runner 不变。投票和任务历史会保留。",
+				"bodyLast": "这是该机器人的最后一个项目。它的令牌会被吊销，到 {address} 的投递会被删除，并离开工作区。投票和任务历史会保留。此操作无法撤销。",
+				"confirm": "移除连接",
+				"busy": "正在移除…"
+			},
+			"removed": "连接已移除",
+			"loadFailedThing": "机器人连接",
 			"managed": {
 				"chip": "由项目连接管理",
 				"reason": "请在项目的执行设置中修改"
