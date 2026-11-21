@@ -52,17 +52,20 @@
 //!
 //! The library applies an import in one of four modes (`DiffMode`, `loro-internal`
 //! `diff_calc.rs`). `Linear` and `ImportGreaterUpdates` apply the imported ops one by one, in
-//! lamport order, to the state (`tree_state.rs` `apply_raw_move_and_convert`): only the imported
-//! ops act. `ImportGreaterUpdates` checks the parent of a move and a cycle; by reading, `Linear`
-//! does neither (`need_check` is false), and a create under a parent the document never had would
-//! then leave a node with a dangling parent that the next read of its deleted state unwraps. That
-//! was not observed: an update of one change that depends exactly on the head and creates a node
-//! under a missing parent (`r3_8_a_create_under_a_missing_parent_is_decided_as_next_does`, for a
-//! new peer and for the head's own peer) is accepted with the create dropped from the state, no
-//! panic, by `next` and by the worker alike. The argument below does not depend on the mode: it
-//! needs only that an imported op acts on the node it names, and that nothing else is added or
-//! moved, which `created_nodes_adopt_nothing` checks on the document after the import. A worker
-//! panic is a refusal, so a panic in some shape would be `next`'s behaviour as well. `Import` and `Checkout` recompute the tree from the history cache
+//! lamport order: only the imported ops act. The engine never subscribes, so the state does not
+//! record events and the ops go through `TreeState::apply_diff` (`tree_state.rs`), not through the
+//! event-recording path. `ImportGreaterUpdates` checks the parent of a move and drops an op whose
+//! parent check fails. `Linear` does not check (`need_check` is false) and leaves a node whose
+//! parent the document never had in the state with a dangling parent, which the projection refuses
+//! when the node is named and ignores otherwise; `next` does the same. Nothing panics in the worker
+//! in either mode, and `next` and the window agree
+//! (`r3_8_a_create_under_a_missing_parent_is_decided_as_next_does`). The argument below does not
+//! depend on the mode: it needs only that an imported op acts on the node it names, and that
+//! nothing else is added or moved, which `created_nodes_adopt_nothing` checks on the document after
+//! the import. A worker panic is a refusal, so a panic in some shape would be `next`'s behaviour as
+//! well.
+//!
+//! `Import` and `Checkout` recompute the tree from the history cache
 //! (`diff_calc/tree.rs` `checkout_diff`): they retreat every cached op whose lamport is at or above
 //! the lowest lamport of an op in the version difference, and replay it in (lamport, peer) order.
 //! That is how a concurrent update can add a node no op of it names: the replay of a create
@@ -145,8 +148,9 @@
 //!    itself, and no element of another kind was inserted (`UnreadableInsert`).
 //! 5. Every created target is a node the tree did not hold before the import (the two id caches
 //!    together list every node of the base tree, live or deleted, named or not), no created node
-//!    has a child that the update did not create, no existing node got its logical id from the
-//!    update, and no two nodes claim one id (`ResolvedNodeId`, `DuplicateLogicalId`).
+//!    has a child that the update did not create, and no two nodes claim one id
+//!    (`ResolvedNodeId`, `DuplicateLogicalId`). A write of an existing node's id never reaches
+//!    this clause: it is refused before the check.
 //! 6. The items (see [`crate::work`]) of the base plus an upper bound on what the update added are
 //!    within the budget of the exact post-import totals (`WorkBudget`).
 //! 7. Every touched unit is valid for the reader and no key crosses between the two kinds of unit;
@@ -406,9 +410,9 @@ fallback_reasons! {
     TreeStructure,
     /// Two tree nodes claim one logical id.
     DuplicateLogicalId,
-    /// An existing tree node got a logical id from this update, a created target already existed
-    /// in the tree (live, deleted or unnamed), a created node has children the update did not
-    /// create, or the id caches were rebuilt in full.
+    /// A created target already existed in the tree (live, deleted or unnamed), a created node has
+    /// children the update did not create, or the id caches were rebuilt in full. A write of an
+    /// existing node's id is not this: it is refused before the check ([`ID_REWRITE_REASON`]).
     ResolvedNodeId,
     /// An update wrote the key `logical_id` in a map that is not the metadata of a node it created
     /// (the write of an existing tree node's id is refused before the check, see
@@ -582,6 +586,8 @@ impl OpSummary {
                 container_type: ContainerType::Map,
             } => {
                 let node = TreeID::new(*peer, *counter);
+                // "Existing" is read after the import: a node the import itself added without a plain
+                // create of this update counts as existing, which only hand-encoded input produces.
                 !created.contains(&node) && engine.has_tree_node(node)
             }
             _ => false,
