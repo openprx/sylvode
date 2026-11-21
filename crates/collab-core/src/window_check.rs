@@ -22,6 +22,65 @@
 //! `check_snapshot`), so every refusal carries exactly the reason, limit kind and numbers it
 //! carries today.
 //!
+//! # When the check decides: strictly sequential imports only
+//!
+//! The check, and the rebuild of the id caches it relies on (`rebuild_id_cache_for`), are used for
+//! **strictly sequential** imports and for nothing else. Every other import takes the full path
+//! (`FallbackReason::NotSequential`): the id caches are rebuilt in full, exactly as `next` does
+//! (`rebuild_id_cache`), and `semantic_snapshot` and `check_snapshot` decide. This is one rule, and
+//! it replaces any reasoning about which concurrent shapes are harmless.
+//!
+//! Let `B` be the base's version (the op log's version vector before the import), `F` its frontier
+//! and `L` the highest lamport of an op in `B`. An import is **strictly sequential** when
+//!
+//! 1. the base the facts describe is the one the import started from (`B` equals the facts'
+//!    version vector);
+//! 2. nothing is pending and every change the import added has been read (a causal import refuses
+//!    otherwise);
+//! 3. every change the import added has a lamport greater than `L`; and
+//! 4. every change the import added causally depends on the whole of `B`: its deps contain every id
+//!    of `F`, or one of its deps is an op of another change of the import that does.
+//!
+//! The facts record `F` and `L` in the unmetered setup (`facts::BaseVersion`); `L` is the lamport of
+//! a head, because a lamport grows along every dependency edge. The lamport of a change is never
+//! what the client wrote: the library recomputes it from the change's deps when it imports one
+//! (`import_changes_to_oplog`, `try_get_change_lamport_from_deps`, in `loro-internal` 1.18), so
+//! clause 3 follows from clause 4 and is checked as a second, independent test. An update with no
+//! change in it (already known) is vacuously sequential.
+//!
+//! ## Why a strictly sequential import adds nothing no op of it names
+//!
+//! The library applies an import in one of four modes (`DiffMode`, `loro-internal`
+//! `diff_calc.rs`). `Linear` and `ImportGreaterUpdates` apply the imported ops one by one, in
+//! lamport order, to the state, with a parent check (`tree_state.rs` `apply_raw_move_and_convert`):
+//! only the imported ops act, and a create whose parent does not exist is dropped from the state,
+//! not revisited. `Import` and `Checkout` recompute the tree from the history cache
+//! (`diff_calc/tree.rs` `checkout_diff`): they retreat every cached op whose lamport is at or above
+//! the lowest lamport of an op in the version difference, and replay it in (lamport, peer) order.
+//! That is how a concurrent update can add a node no op of it names: the replay of a create
+//! emits a `Create` for every child the cache holds under it (`push_children_creation`), among them
+//! a node whose own create ran, and was dropped, before its parent existed, and it replays and
+//! moves base ops that sit above the lowest new lamport.
+//!
+//! For a strictly sequential import the version difference is the imported ops alone and, by clause
+//! 3, its lowest lamport is above `L`. The retreat range is `[lowest, cache maximum]` and the cache
+//! holds only ops of `B`, so it is **empty**: nothing of the base's history is retreated or replayed,
+//! in any mode (`ImportGreaterUpdates` and `Linear` never look at it at all). The only ops that act
+//! on the tree are the imported ones. Each acts on the tree through its own target: a create
+//! creates its target; a move or delete changes its target (those are not decided here, see
+//! `TreeStructure`); a map or text op writes the container it names. The one effect an imported op
+//! has on a node it does not name is the adoption by `push_children_creation`: a create of `X`
+//! emits `Create` for the nodes the history holds under `X`, which exist only if the base holds
+//! an op that names `X` as a parent before `X` existed (a hand-encoded create or move; the library
+//! does not check that a parent id was ever created). That is the one case that remains, and it is
+//! checked on the document after the import: no created node has a child the update did not create
+//! (`created_nodes_adopt_nothing`, `ResolvedNodeId`). Anything else a replay could add, move, revive
+//! or re-parent needs a base op above the lowest new lamport, and clause 3 rules that out.
+//!
+//! Where the cache rebuild was incremental and the check then falls back, the id caches are
+//! completed before the full computation reads them (`LoroCollabEngine::complete_id_cache`), so
+//! the full computation reads what `next`'s rebuild gives.
+//!
 //! # Which units an update touched
 //!
 //! The update is hostile input, so "touched" is read from the import itself, never from what the
@@ -29,8 +88,11 @@
 //! one pass shared with the downgrade guard). Each op names its container, and a container id is the
 //! id of the op that created it, so it cannot be faked. A container is mapped to its unit by its
 //! path from the root in the document after the import (`LoroDoc::get_path_to_container`), which is
-//! state, not a claim: a container that is not reachable has no path and can change nothing a
-//! reader sees.
+//! state, not a claim. **A container that has no path is not "unread"**: the library gives the
+//! metadata map of a deleted tree node, or of a node whose map is registered under another tree,
+//! no path, and the projection reads it all the same. A container without a path, and a container
+//! whose path goes through a tree node but does not start at the engine's tree, is `Unclassified`
+//! and takes the full path. What cannot be classified is never taken to be irrelevant.
 //!
 //! * Editor block (E-unit): the element of `doc.children` that is the ancestor of the container.
 //!   An element that the update inserted is named by the insert op.
@@ -50,33 +112,29 @@
 //! established.
 //!
 //! 1. The facts exist and describe the state the import started from (`FactsAbsent`, `StaleFacts`):
-//!    the base has no placement structure, no duplicate logical id, projects, is within every limit,
-//!    and its root list is not longer than [`ROOT_LIST_FALLBACK_LEN`] (`BaseFacts::compute`); the
-//!    facts' version vector equals the import's `before_state`.
-//! 2. The import left nothing pending, and the scan visited every op it added (`Unclassified`).
+//!    the base has no placement structure, no duplicate logical id, projects, is within every limit
+//!    and within the work budget of [`crate::work`] (`BaseFacts::compute`); the facts' version
+//!    vector equals the import's `before_state`.
+//! 2. The import is strictly sequential (`NotSequential`), as defined above, and left nothing
+//!    pending (`Unclassified`).
 //! 3. No op touched the `doc` map, the structure meta or tree, a shadow root, or a tree other than
 //!    the engine's (`GlobalStructure`, `TreeStructure`); no op on the engine tree is anything but
 //!    a create whose target is its own op id (`TreeStructure`); no map op writes or deletes the key
-//!    `logical_id` except in the metadata map of a node the update created (`IdRewritten`); no
-//!    container under a tree node is reached through any other root (`Unclassified`).
+//!    `logical_id` except in the metadata map of a node the update created (`IdRewritten`); every
+//!    touched container has a path, and none under a tree node is reached through any other root
+//!    (`Unclassified`).
 //! 4. Every element inserted into the root list is a map container created by the inserting op
 //!    itself, and no element of another kind was inserted (`UnreadableInsert`).
-//! 5. Every created target is a node the tree did not hold before the import. The two id caches
-//!    together list every node of the base tree, live or deleted, named or not (the load-time
-//!    rebuild visits all of `LoroTree::nodes()`, deleted nodes included, and every later rebuild
-//!    adds what it visits), so a created target found in either is not new, however its ops look: a
-//!    hand-encoded move of a target whose create op the base never saw makes the node exist
-//!    without it (`ResolvedNodeId`). Read from the other side, on the document after the import,
-//!    no created node has a child that the update did not create (`ResolvedNodeId`). No existing
-//!    node got its logical id from the update, and no two nodes claim one id (`ResolvedNodeId`,
-//!    `DuplicateLogicalId`).
-//! 6. The root list is not longer than [`ROOT_LIST_FALLBACK_LEN`] after the import
-//!    (`OversizedList`), so a page cannot grow through this path past what the full path allows.
-//! 7. Every touched container maps to a unit or is unreachable; every touched unit is valid for the
-//!    reader and no key crosses between the two kinds of unit; no existing tree node enters or
-//!    leaves the projection; the alias map is within its limit; no deepest or longest unit is over
-//!    its limit (`Unclassified`, `InvalidUnit`, `KeyCollision`, `PresenceChange`, `AliasLimit`,
-//!    `LimitReached`); and the facts and the delta agree (`Inconsistent`).
+//! 5. Every created target is a node the tree did not hold before the import (the two id caches
+//!    together list every node of the base tree, live or deleted, named or not), no created node
+//!    has a child that the update did not create, no existing node got its logical id from the
+//!    update, and no two nodes claim one id (`ResolvedNodeId`, `DuplicateLogicalId`).
+//! 6. The items (see [`crate::work`]) of the base plus an upper bound on what the update added are
+//!    within the budget of the exact post-import totals (`WorkBudget`).
+//! 7. Every touched unit is valid for the reader and no key crosses between the two kinds of unit;
+//!    no existing tree node enters or leaves the projection; the alias map is within its limit; no
+//!    deepest or longest unit is over its limit (`InvalidUnit`, `KeyCollision`, `PresenceChange`,
+//!    `AliasLimit`, `LimitReached`); and the facts and the delta agree (`Inconsistent`).
 //!
 //! Under that condition, every unit whose evaluation or whose contribution to a total or maximum
 //! can differ from the base is in the touched set, because:
@@ -90,19 +148,20 @@
 //!   back, and two peers cannot create one id. The elements removed are derived exactly from the
 //!   list after the import against the base's order, or the check falls back. A change to a block
 //!   is an op on a container reachable from it, whose path from the root in the document after the
-//!   import runs through the block (condition 7). So the blocks whose evaluation can differ are
+//!   import runs through the block (condition 3). So the blocks whose evaluation can differ are
 //!   the inserted ones, the removed ones and the ones some op's container maps to.
 //! * **Legacy tree nodes.** A node's contribution depends on its kind, its text, its
 //!   `content_source`, its key, its deleted state (its own and its ancestors') and its depth (its
-//!   parent chain). Under conditions 3 and 5 the update moves and deletes nothing and writes no
-//!   existing node's key, so no existing node changes parent, ancestors, key or depth; an existing
-//!   node can change only through an op on its own metadata map, which maps to it by path. A created
-//!   node is new, exists only because of its own create op and has no child but created ones
-//!   (condition 5), so it has no earlier state to differ from and nothing existing hangs under it;
-//!   its depth is its parent chain through created nodes and then the base's depth of an existing
-//!   parent, which has not changed. So the nodes whose evaluation can differ are the created ones
-//!   and the ones some op's container maps to. A node without a logical id is not in the projection
-//!   and counts toward nothing.
+//!   parent chain). A strictly sequential import replays no base op (above), and condition 3 leaves
+//!   it no move and no delete, and no write of an existing node's key, so no existing node changes
+//!   parent, ancestors, key or depth; an existing node can change only through an op on its own
+//!   metadata map, which maps to it by path (condition 3: a container without a path falls back). A
+//!   created node is new, exists only because of its own create op and has no child but created
+//!   ones (condition 5), so it has no earlier state to differ from and nothing existing hangs under
+//!   it; its depth is its parent chain through created nodes and then the base's depth of an
+//!   existing parent, which has not changed. So the nodes whose evaluation can differ are the
+//!   created ones and the ones some op's container maps to. A node without a logical id is not in
+//!   the projection and counts toward nothing.
 //! * **Totals.** Each total is the sum of per-unit contributions, so the total after the update is
 //!   the base's plus the sum, over the touched units, of the contribution now minus the base's
 //!   contribution: exact. Every other unit contributes what it did.
@@ -112,19 +171,62 @@
 //!   the first one over. The depth and longest bounds in the report are the larger of the base's
 //!   maximum and the touched units' values, so they are at least the exact maxima.
 //!
-//! # Shapes that take the full path, and the cost of those that do not
+//! # What takes the full path
 //!
-//! The full computation decides: pages with a placement structure (editor models 4 and 5); a base
-//! with duplicate logical ids or one the projection or the limits do not accept; every legacy tree
-//! move or delete; any op on the `doc` map, the structure containers or a tree other than the
-//! engine's; a created node that already existed; a rewrite of an existing node's logical id; a
-//! root list longer than [`ROOT_LIST_FALLBACK_LEN`]; and every shape condition 7 names.
+//! The full computation decides, with the id caches rebuilt in full as on `next`: every import that
+//! is not strictly sequential (any concurrency with the base: a client on an older version, two
+//! clients editing at once; any update that is not a single causal extension of the whole base);
+//! pages with a placement structure (editor models 4 and 5); a base with duplicate logical ids, one
+//! the projection or the limits do not accept, or one over the work budget; every legacy tree move
+//! or delete; any op on the `doc` map, the structure containers or a tree other than the engine's;
+//! a created node that already existed or has children the update did not create; a rewrite of an
+//! existing node's logical id; an update that could take the page over the work budget; a touched
+//! container without a path (the metadata of a deleted node, nodes created under a deleted
+//! parent); and every shape condition 7 names. With the configuration switch off (no facts) every
+//! window is this path, and it is `next`'s computation for every input: the same import, the same
+//! full id-cache rebuild, the same projection and limits (the differential test
+//! `with_the_switch_off_the_window_is_next_on_every_case` keeps a copy of `next`'s import as its
+//! oracle).
 //!
-//! "One window does not grow with the page" has one exception that predates this module and is
-//! not changed by it: tree nodes without a logical id. `rebuild_id_cache_for` re-reads every node
-//! the last rebuild saw without an id on every import (an import can still give one), the full
-//! path did the same, and no limit counts such nodes, so a page that holds many of them makes every
-//! window O(those nodes) on either path.
+//! # What the incremental path covers
+//!
+//! After this narrowing the incremental path covers the updates of a client that wrote on top of
+//! the page's current head: one client typing, inserting and deleting blocks, and several clients
+//! when each one's update is made after it received the previous accepted update. An update made
+//! on an older version of the page (the other client's update was accepted while this one was in
+//! flight or being typed) falls back. Measured on the simulation in
+//! `window_calibration_tests::window_realistic_fraction` (flat page of 300 blocks, 80% typing and
+//! 20% block inserts; writes at random intervals around the period; the server's accepted update
+//! reaches the other client one latency after the update reaches the server):
+//!
+//! | clients | write period per client | one-way latency | decided incrementally |
+//! | --- | --- | --- | --- |
+//! | 1 | 300 ms | 40 ms | 100% |
+//! | 2 | 5,000 ms | 100 ms | 97% |
+//! | 2 | 2,000 ms | 100 ms | 91% |
+//! | 2 | 1,000 ms | 100 ms | 82% |
+//! | 2 | 500 ms | 100 ms | 67% |
+//! | 2 | 200 ms | 20 ms | 84% |
+//! | 2 | 200 ms | 100 ms | 32% |
+//! | 2 | 200 ms | 300 ms | 12% |
+//!
+//! The fallback runs the full computation, which on a page of more than about 3,000 flat blocks (or
+//! the equivalent in legacy nodes) does not fit the 50 ms window on the reference runner: for such a
+//! page a concurrent update is refused by the CPU limit, exactly as every update of it was before
+//! the incremental window existed.
+//!
+//! # The work budget
+//!
+//! Content that no documented limit counts is not paid for by the incremental window, so the page's
+//! size is bounded separately (`crate::work`): the base's items are counted in setup (no facts above
+//! the budget), and the window keeps the count with an upper bound on what the update added and falls
+//! back above the budget (`WorkBudget`). Measured on the development machine (release), the cost of
+//! the full window per item is between 0.1 and 0.6 microseconds; the budget's uncounted part is
+//! 16,000 items, which costs the full window at most about 6 ms there, 21 ms at 3.6 times that, well
+//! under 50 ms. See `crate::work` for the unit, the budget and the table.
+//!
+//! One exception to "one window does not grow with the page" remains and is the same on either path:
+//! tree nodes without a logical id are re-read by every id-cache rebuild that can still name them.
 
 use std::collections::{HashMap, HashSet};
 
@@ -160,8 +262,13 @@ pub mod fault {
         /// Takes a created tree node for new although it already existed, and does not look at
         /// the nodes that hang under a created one.
         CreatedTargetChecksSkipped,
-        /// Does not fall back for a root list longer than [`super::ROOT_LIST_FALLBACK_LEN`].
-        ListThresholdSkipped,
+        /// Does not fall back when the page's items (base plus update) are over the budget.
+        WorkBudgetSkipped,
+        /// Treats every import as strictly sequential: rebuilds the id caches from the update's own
+        /// ops and decides incrementally even when the update is concurrent with the base.
+        SequentialGateRemoved,
+        /// Skips a container that has no path as unreachable, as the first version of the check did.
+        PathlessContainerSkipped,
         /// Does not fall back when an update writes the logical id of an existing tree node.
         IdRewriteSkipped,
         /// Reports a limit refusal with an `observed` value one too high.
@@ -257,8 +364,12 @@ fallback_reasons! {
     ResolvedNodeId,
     /// An update wrote the logical id of a tree node that already existed.
     IdRewritten,
-    /// The root list is longer than [`ROOT_LIST_FALLBACK_LEN`] elements.
-    OversizedList,
+    /// The import is not a strict causal extension of the base (see the module documentation):
+    /// some change of it is concurrent with the base, or does not depend on the whole of it.
+    NotSequential,
+    /// The page's items, the base's plus an upper bound on what the update added, are over the
+    /// budget of the page's live totals (`crate::work`).
+    WorkBudget,
     /// A container could not be mapped to a unit with certainty.
     Unclassified,
     /// A unit's key is, or looks like, a key of the other kind of unit.
@@ -299,7 +410,7 @@ pub fn run_window(
     facts: Option<&BaseFacts>,
     update: &[u8],
 ) -> Result<WindowAccepted, CollabError> {
-    let trace = engine.import_client_update_traced(update)?;
+    let trace = engine.import_client_update_traced(update, facts.map(|facts| &facts.version))?;
     match check(engine, facts, &trace) {
         Ok(report) => Ok(WindowAccepted {
             report: Some(report),
@@ -319,6 +430,9 @@ pub fn run_window(
                 crate::walk_counter::record_fallback();
                 crate::walk_counter::record_fallback_reason(&format!("{reason:?}"));
             }
+            // The full computation reads the id caches: after an incremental rebuild they are made
+            // what `next`'s full rebuild gives (a no-op after a full one).
+            engine.complete_id_cache()?;
             let semantic = engine.semantic_snapshot()?;
             check_snapshot(&semantic, &DocumentLimits::default()).map_err(CollabError::from)?;
             Ok(WindowAccepted {
@@ -344,6 +458,23 @@ pub(crate) struct OpSummary {
     /// The containers in which an op wrote or deleted the key `logical_id` of a map: for a tree
     /// node, its metadata map.
     logical_id_writes: Vec<ContainerID>,
+    /// The changes the import added, as stored: where they start and end, their lamport and deps.
+    changes: Vec<ChangeSpan>,
+    /// A change of the import whose length could not be read: nothing about the import is known.
+    unreadable_change: bool,
+    /// An upper bound on the items (see `crate::work`) the ops of the import added to the page.
+    work_added: u64,
+}
+
+/// One change of an import, reduced to what the sequential gate reads.
+#[derive(Debug, Clone)]
+struct ChangeSpan {
+    peer: u64,
+    /// The counters of its ops: `start..end`.
+    start: i32,
+    end: i32,
+    lamport: u32,
+    deps: Vec<loro::ID>,
 }
 
 /// The kinds of op an update carried, as a set.
@@ -378,9 +509,83 @@ impl OpSummary {
         !self.seen.has(Seen::TREE_OTHER)
     }
 
+    /// Reads one imported change, before its ops.
+    pub(crate) fn visit_change(&mut self, change: &loro::JsonChange) {
+        let Some(len) = change.checked_op_len().and_then(|len| i32::try_from(len).ok()) else {
+            self.unreadable_change = true;
+            return;
+        };
+        let Some(end) = change.id.counter.checked_add(len) else {
+            self.unreadable_change = true;
+            return;
+        };
+        self.changes.push(ChangeSpan {
+            peer: change.id.peer,
+            start: change.id.counter,
+            end,
+            lamport: change.lamport,
+            deps: change.deps.clone(),
+        });
+    }
+
+    /// An upper bound on the items the import's ops added to the page (see `crate::work`).
+    pub(crate) const fn work_added(&self) -> u64 {
+        self.work_added
+    }
+
+    /// Whether the import is a **strict causal extension** of the base: the one condition under
+    /// which the incremental id-cache rebuild and the incremental check are used (see the module
+    /// documentation).
+    ///
+    /// Let `B` be the base's version (`before_ops`), `F` its frontier and `L` the highest lamport
+    /// of an op in it. The import is strictly sequential when
+    ///
+    /// 1. the base the facts describe is the one the import started from (`base.oplog_vv ==
+    ///    before_ops`);
+    /// 2. every change of the import has a lamport greater than `L`; and
+    /// 3. every change of the import causally depends on the whole of `B`: either its deps contain
+    ///    every id of `F`, or one of its deps is an op of another change of the import that does.
+    ///
+    /// An import without any change (the update was already known) is vacuously sequential.
+    pub(crate) fn strictly_sequential(
+        &self,
+        base: &crate::facts::BaseVersion,
+        before_ops: &loro::VersionVector,
+    ) -> bool {
+        if self.unreadable_change || &base.oplog_vv != before_ops {
+            return false;
+        }
+        let mut order: Vec<&ChangeSpan> = self.changes.iter().collect();
+        order.sort_by_key(|change| change.lamport);
+        // `(start, end, depends on the whole base)` of the changes seen so far, by peer.
+        let mut seen: HashMap<u64, Vec<(i32, i32, bool)>> = HashMap::new();
+        for change in order {
+            if base.max_lamport.is_some_and(|highest| change.lamport <= highest) {
+                return false;
+            }
+            let covers_frontier = base.frontier.iter().all(|head| change.deps.contains(head));
+            let through_import = change.deps.iter().any(|dep| {
+                dep.counter >= before_ops.get(&dep.peer).copied().unwrap_or(0)
+                    && seen
+                        .get(&dep.peer)
+                        .into_iter()
+                        .flatten()
+                        .any(|(start, end, full)| *full && (*start..*end).contains(&dep.counter))
+            });
+            if !covers_frontier && !through_import {
+                return false;
+            }
+            seen.entry(change.peer)
+                .or_default()
+                .push((change.start, change.end, true));
+        }
+        true
+    }
+
     /// Reads one imported op. `peer` is the peer of the change that carries it and `root_list` the
     /// id of `doc.children` after the import.
     pub(crate) fn visit(&mut self, peer: u64, op: &JsonOp, root_list: Option<&ContainerID>) {
+        self.work_added = self.work_added.saturating_add(crate::work::op_items(&op.content));
         match &op.container {
             // A mergeable child of a map (the text of a legacy tree node, for one) is named like a
             // root container but belongs to the map that created it: it is mapped to its unit by
@@ -517,21 +722,6 @@ const CID_PREFIX: &str = "cid:";
 /// The key of a tree node's metadata map that holds its logical id.
 const LOGICAL_ID_KEY: &str = "logical_id";
 
-/// The root list is longer than this many elements, whatever the elements are, and the check does
-/// not decide.
-///
-/// Elements of a kind no reader supports (and prose blocks that are dependency nodes) count toward
-/// no limit and cost O(1) here, but every full projection (the setup's facts, the host's) visits
-/// each of them, and on the full path so did the metered window, which is what stopped such a page
-/// from growing: the window ran out of its CPU budget at about 16,000 elements on the reference
-/// runner. Above this length the update takes that full path again, so the stop is kept. It is
-/// one and a half times `document_block_count_max`: a page at its block limit still has room for
-/// unsupported elements beside its blocks and stays incremental, and the length is below where the
-/// full path stops, so no page that today's window accepts is made to fail. The post-import length
-/// decides, so an update cannot step over it; a base already longer takes no facts at all
-/// ([`BaseFacts::compute`]).
-pub const ROOT_LIST_FALLBACK_LEN: usize = crate::limits::DOCUMENT_BLOCK_COUNT_MAX / 2 * 3;
-
 /// `Ok(report)` when the update is certainly accepted by the full computation too, and otherwise
 /// either the reason the check did not decide or the refusal of a total.
 fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTrace) -> Result<WindowReport, Undecided> {
@@ -542,6 +732,11 @@ fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTra
     }
     if facts.state != trace.before_state {
         return Err(FallbackReason::StaleFacts.into());
+    }
+    // Only a strict causal extension of the base is decided here: any concurrency with the base
+    // can make the library replay base history and add or move nodes no op of the update names.
+    if !trace.sequential {
+        return Err(FallbackReason::NotSequential.into());
     }
     let summary = &trace.summary;
     if !injected!(StructuralFallbackSkipped) {
@@ -560,9 +755,6 @@ fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTra
     }
     if summary.seen.has(Seen::UNREADABLE_INSERT) {
         return Err(FallbackReason::UnreadableInsert.into());
-    }
-    if !injected!(ListThresholdSkipped) && engine.root_list_len().is_some_and(|len| len > ROOT_LIST_FALLBACK_LEN) {
-        return Err(FallbackReason::OversizedList.into());
     }
     let created: HashSet<TreeID> = summary.tree_created.iter().copied().collect();
     // The id caches never re-read a node they hold, so a rewritten logical id of an existing node
@@ -599,7 +791,7 @@ fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTra
     }
     evaluate_blocks(engine, facts, &touched, &limits, &mut delta)?;
     evaluate_tree_nodes(engine, facts, &created, &touched, &limits, &mut delta)?;
-    finish(facts, &delta, &limits)
+    finish(facts, summary.work_added(), &delta, &limits)
 }
 
 /// Whether `container` is the metadata map of a node in `created`.
@@ -674,9 +866,15 @@ fn touched_units(engine: &LoroCollabEngine, summary: &OpSummary) -> Result<Touch
         if injected!(TouchedUnitMissed) {
             break;
         }
-        // A container without a path is not reachable from any root: no reader sees it.
+        // A container without a path is not "unread": the metadata map of a deleted tree node has
+        // none (the library answers `None` for a child of a deleted node), and the projection
+        // reads it all the same, and so does a map registered under another tree. What cannot be
+        // classified is never taken to be irrelevant.
         let Some(path) = doc.get_path_to_container(id) else {
-            continue;
+            if injected!(PathlessContainerSkipped) {
+                continue;
+            }
+            return Err(FallbackReason::Unclassified);
         };
         let Some((ContainerID::Root { name, container_type }, _)) = path.first() else {
             return Err(FallbackReason::Unclassified);
@@ -684,8 +882,12 @@ fn touched_units(engine: &LoroCollabEngine, summary: &OpSummary) -> Result<Touch
         if crate::reserved_roots::is_shadow_root(name, *container_type) {
             return Err(FallbackReason::GlobalStructure);
         }
+        // A tree node on the path of a container under any root but the engine's tree means the
+        // library reached the container through a tree this check does not model (a metadata map
+        // registered under another tree, or a tree nested in a block): not mapped.
+        let through_node = path.iter().any(|(_, index)| matches!(index, Index::Node(_)));
         match name.as_str() {
-            DOC => match block_of(&path) {
+            DOC if !through_node => match block_of(&path) {
                 Some(block) => {
                     touched.blocks.insert(block);
                 }
@@ -700,15 +902,11 @@ fn touched_units(engine: &LoroCollabEngine, summary: &OpSummary) -> Result<Touch
                 _ => return Err(FallbackReason::Unclassified),
             },
             META | TREE => return Err(FallbackReason::GlobalStructure),
-            ALIASES => touched.aliases = true,
+            ALIASES if !through_node => touched.aliases = true,
             // The navigator order and the title never reach a limit; any other root is not read.
-            // A container below a tree node is the metadata map of a node of some tree: if the
-            // library reaches it through a tree this check does not model, it is not mapped.
-            _ => {
-                if path.iter().any(|(_, index)| matches!(index, Index::Node(_))) {
-                    return Err(FallbackReason::Unclassified);
-                }
-            }
+            _ if !through_node => {}
+            // A tree node on the path of a container under `doc`, the alias map or any other root.
+            _ => return Err(FallbackReason::Unclassified),
         }
     }
     Ok(touched)
@@ -895,7 +1093,12 @@ fn created_unit_fact(
 /// beyond either of them has already ended the check (see [`Delta::over_a_bound`]), so when this
 /// runs neither is violated, which is what makes the precedence of the three totals the full
 /// computation's.
-fn finish(facts: &BaseFacts, delta: &Delta, limits: &DocumentLimits) -> Result<WindowReport, Undecided> {
+fn finish(
+    facts: &BaseFacts,
+    work_added: u64,
+    delta: &Delta,
+    limits: &DocumentLimits,
+) -> Result<WindowReport, Undecided> {
     let total = |base: usize, change: i64| {
         i64::try_from(base)
             .ok()
@@ -925,6 +1128,14 @@ fn finish(facts: &BaseFacts, delta: &Delta, limits: &DocumentLimits) -> Result<W
     }
     if chars > limits.document_text_chars_max {
         return Err(refuse("document_text_chars", limits.document_text_chars_max, chars));
+    }
+    // The items of the page after the import: the base's plus what the update's ops can have added,
+    // against the budget of the exact totals just computed (`crate::work`).
+    if !injected!(WorkBudgetSkipped)
+        && facts.items.saturating_add(work_added)
+            > crate::work::item_budget(blocks as u64, navigators as u64, chars as u64)
+    {
+        return Err(FallbackReason::WorkBudget.into());
     }
     Ok(WindowReport {
         blocks: blocks as u64,

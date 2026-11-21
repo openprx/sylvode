@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use loro::{ContainerID, VersionVector};
+use loro::{ContainerID, ID, LoroDoc, VersionVector};
 
 use crate::engine::LoroCollabEngine;
 use crate::limits::{DocumentLimits, check_snapshot};
@@ -55,12 +55,52 @@ pub(crate) struct Contribution {
     pub chars: i64,
 }
 
+/// The causal position of the base: what the import of an update is measured against to decide
+/// whether it is a strict causal extension of the base (`OpSummary::strictly_sequential`).
+///
+/// A pure function of the base's op log, computed in setup: its version, its frontier, and the
+/// highest lamport of any op in it. A lamport is never taken from the wire: the library derives
+/// the lamport of every change it imports from the change's dependencies
+/// (`import_changes_to_oplog`, `try_get_change_lamport_from_deps`), and a lamport grows along every
+/// dependency edge, so the highest lamport of the base is the one of a head.
+#[derive(Debug, Clone)]
+pub struct BaseVersion {
+    pub(crate) oplog_vv: VersionVector,
+    pub(crate) frontier: Vec<ID>,
+    /// The highest lamport of an op of the base; `None` for a base without ops.
+    pub(crate) max_lamport: Option<u32>,
+}
+
+impl BaseVersion {
+    /// The position of `doc`'s op log, or `None` when a head's change cannot be read.
+    #[must_use]
+    pub fn of(doc: &LoroDoc) -> Option<Self> {
+        let frontier: Vec<ID> = doc.oplog_frontiers().iter().collect();
+        let mut max_lamport: Option<u32> = None;
+        for head in &frontier {
+            let change = doc.get_change(*head)?;
+            let offset = u32::try_from(head.counter.checked_sub(change.id.counter)?).ok()?;
+            let lamport = change.lamport.checked_add(offset)?;
+            max_lamport = Some(max_lamport.map_or(lamport, |current| current.max(lamport)));
+        }
+        Some(Self {
+            oplog_vv: doc.oplog_vv(),
+            frontier,
+            max_lamport,
+        })
+    }
+}
+
 /// The facts of one accepted base.
 #[derive(Debug, Clone)]
 pub struct BaseFacts {
     /// The state the facts describe. The incremental check applies them only to an import that
     /// starts from exactly this state.
     pub(crate) state: VersionVector,
+    /// The base's causal position, for the sequential gate of the import.
+    pub(crate) version: BaseVersion,
+    /// The items (see [`crate::work`]) the full projection of the base reads.
+    pub(crate) items: u64,
     /// The page has an editor document (`doc.children`), possibly empty.
     pub(crate) editor_doc: bool,
     pub(crate) blocks: usize,
@@ -91,34 +131,43 @@ impl BaseFacts {
         if engine.has_duplicate_logical_ids() || engine.has_editor_structure().ok()? {
             return None;
         }
-        // A list this long takes the full computation in the window (`ROOT_LIST_FALLBACK_LEN`), so
-        // its facts would never be read: skip the projection that makes them.
-        if engine
-            .root_list_len()
-            .is_some_and(|len| len > crate::window_check::ROOT_LIST_FALLBACK_LEN)
-        {
-            return None;
-        }
+        // The work of the full projection, counted before the projection itself runs: a page far
+        // over any budget is refused after the ceiling's worth of items, so this setup stays
+        // bounded whatever the page holds (`crate::work`).
+        let items = engine.projection_items(crate::work::item_budget_ceiling()).ok()??;
         let editor_doc = engine.has_editor_doc().ok()?;
         let snapshot = engine.semantic_snapshot().ok()?;
         check_snapshot(&snapshot, &DocumentLimits::default()).ok()?;
         let block_order = engine.root_block_ids().ok()?.unwrap_or_default();
-        Some(Self::from_snapshot(
+        let facts = Self::from_snapshot(
             engine.doc().state_vv(),
+            BaseVersion::of(engine.doc())?,
+            items,
             editor_doc,
             block_order,
             &snapshot,
-        ))
+        );
+        // With the exact totals the budget is known: a page above it takes the full computation.
+        (facts.items <= facts.item_budget()).then_some(facts)
+    }
+
+    /// The budget of the base itself (see [`crate::work::item_budget`]).
+    pub(crate) const fn item_budget(&self) -> u64 {
+        crate::work::item_budget(self.blocks as u64, self.navigators as u64, self.chars as u64)
     }
 
     fn from_snapshot(
         state: VersionVector,
+        version: BaseVersion,
+        items: u64,
         editor_doc: bool,
         block_order: Vec<ContainerID>,
         snapshot: &SemanticSnapshot,
     ) -> Self {
         let mut facts = Self {
             state,
+            version,
+            items,
             editor_doc,
             blocks: 0,
             navigators: 0,
