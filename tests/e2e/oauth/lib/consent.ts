@@ -115,6 +115,14 @@ export async function driveConsent(
 	return { view: 'consent', errorText: await consentErrorText(page) };
 }
 
+/**
+ * The app takes its language from the `locale` entry of local storage (Chinese when it is absent),
+ * not from the browser's language, so the pages the assertions read in English are told to be.
+ */
+async function useEnglish(page: Page): Promise<void> {
+	await page.addInitScript(() => window.localStorage.setItem('locale', 'en'));
+}
+
 const dialog = (page: Page): Locator => page.locator('[data-testid="confirm-dialog"]');
 
 async function confirmDisconnect(page: Page): Promise<void> {
@@ -134,6 +142,7 @@ export async function personalSettings(
 	uiOrigin: string,
 	action: { disconnectGrantId?: string; onDeleteResponse?: (status: number) => void }
 ): Promise<string[]> {
+	await useEnglish(page);
 	await page.goto(`${uiOrigin}/settings`, { waitUntil: 'load' });
 	await page.waitForSelector('[data-testid="connected-apps-personal"]', { timeout: 20_000 });
 	await page.waitForSelector(
@@ -168,6 +177,7 @@ export async function workspaceDisconnect(
 	grantId: string,
 	onDeleteResponse: (status: number) => void
 ): Promise<void> {
+	await useEnglish(page);
 	await page.goto(`${uiOrigin}/workspace/${workspaceId}/settings`, { waitUntil: 'load' });
 	const row = page.locator(`[data-testid="workspace-app-row"][data-grant-id="${grantId}"]`);
 	await row.waitFor({ timeout: 30_000 });
