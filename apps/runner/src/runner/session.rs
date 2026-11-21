@@ -29,12 +29,15 @@ use uuid::Uuid;
 
 use super::checks::{Accepted, BotCreds};
 use super::detect::{
-    Dialog, awaits_choice, classify_dialog, cut_for_log, input_is_empty, input_text, looks_busy, screens_equal,
+    Dialog, awaits_choice, classify_bottom, classify_dialog, cut_for_log, input_is_empty, input_text, looks_busy,
+    screens_equal,
 };
 use super::files::{BotFiles, PushedTask, SessionRecord, StateDir};
 use super::hooks::{HookEvent, HookMessage};
 use super::launch::{self, LaunchFiles};
-use super::machine::{Action, EnsureOutcome, Machine, PushOutcome, Reminder, Task, Timers, TurnWatch, ViewFacts};
+use super::machine::{
+    Action, EnsureOutcome, Machine, PushOutcome, Reminder, State, Task, Timers, TurnWatch, ViewFacts,
+};
 use super::message::{reminder_not_acknowledged, reminder_still_open};
 use super::sv_client::SvClient;
 use super::tmux::{
@@ -224,6 +227,9 @@ struct Shared {
     socket: SocketName,
     tmux_program: Option<PathBuf>,
     background: Background,
+    /// The nonce of each session's current launch, for the hook listener (which checks a message
+    /// before it spends anything on it).
+    nonces: Arc<Mutex<HashMap<String, String>>>,
 }
 
 /// The sessions of this runner.
@@ -254,8 +260,21 @@ impl SessionManager {
                 socket,
                 tmux_program,
                 background,
+                nonces: Arc::new(Mutex::new(HashMap::new())),
             }),
             workers: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// The listener's pre-check: a message is worth reading further only when its session has a
+    /// worker and it carries that launch's nonce.
+    pub fn nonce_check(&self) -> super::hooks::Accept {
+        let nonces = Arc::clone(&self.shared.nonces);
+        Arc::new(move |message| {
+            nonces
+                .lock()
+                .get(&message.session)
+                .is_some_and(|nonce| super::hooks::ct_eq(nonce, &message.nonce))
         })
     }
 
@@ -380,6 +399,27 @@ struct Worker {
     ticks: u32,
 }
 
+/// Whether a hook message may be applied: it carries this launch's nonce, and (where the platform
+/// names the sender) the sender runs below the session's pane process. Refuses with the reason.
+///
+/// # Errors
+///
+/// The reason for dropping the message.
+pub fn admit_hook(
+    own_nonce: &str,
+    nonce: &str,
+    chain: Option<&[u32]>,
+    pane_pid: Option<u32>,
+) -> Result<(), &'static str> {
+    if !super::hooks::ct_eq(nonce, own_nonce) {
+        return Err("wrong nonce");
+    }
+    if !super::hooks::chain_allows(chain, pane_pid) {
+        return Err("not from the pane");
+    }
+    Ok(())
+}
+
 /// The path of this executable as hooks must name it. After an in-place upgrade of the binary on
 /// Linux, `current_exe` reports `"<path> (deleted)"`; the new binary sits at the same path, so the
 /// suffix is dropped, and the path must exist.
@@ -393,9 +433,16 @@ pub fn stable_exe(raw: &Path) -> Option<PathBuf> {
 /// How long after the last hook event a turn may be called over by calm screen samples.
 const TURN_QUIET: Duration = Duration::from_mins(1);
 
+/// Whether a recovered task is blocked again: its phase says `blocked` AND a dialog is really on
+/// the screen. The phase is never re-reported once a dialog is answered, so on its own it is stale.
+#[must_use]
+pub const fn recovered_blocked(phase_blocked: bool, dialog_on_screen: bool) -> bool {
+    phase_blocked && dialog_on_screen
+}
+
 /// The directory accepted at delivery is still the same canonical path (no link was swapped in
 /// meanwhile). A session is created or restarted long after the delivery was checked.
-fn dir_unchanged(dir: &Path) -> bool {
+pub fn dir_unchanged(dir: &Path) -> bool {
     std::fs::canonicalize(dir).is_ok_and(|now| now == dir)
 }
 
@@ -422,6 +469,7 @@ impl Worker {
             .map(|record| record.nonce)
             .filter(|nonce| nonce.len() == 32)
             .unwrap_or_else(fresh_nonce);
+        shared.nonces.lock().insert(key.as_str().to_string(), nonce.clone());
         let machine = Machine::new(
             Timers::from_config(&shared.config.runner),
             key.as_str(),
@@ -463,6 +511,7 @@ impl Worker {
                 () = &mut cancelled => return,
                 _ = ticker.tick() => {
                     let mut actions = self.read_screen_signals().await;
+                    actions.extend(self.confirm_turn_by_screen().await);
                     actions.extend(self.close_stale_turn().await);
                     actions.extend(self.machine.on_tick(Instant::now()));
                     actions
@@ -497,18 +546,26 @@ impl Worker {
                         // The `blocked` phase can be stale (nothing re-reports `pushed` after a
                         // dialog is answered): the session is blocked again only if a dialog is
                         // really on the screen.
-                        let blocked = if adopt.blocked {
+                        let dialog_shown = if adopt.blocked {
                             let cli = adopt.task.cli.clone();
                             self.capture()
                                 .await
-                                .is_some_and(|screen| classify_dialog(&cli, &screen).is_some())
+                                .is_some_and(|screen| classify_bottom(&cli, &screen).is_some())
                         } else {
                             false
                         };
+                        let blocked = recovered_blocked(adopt.blocked, dialog_shown);
                         self.machine
                             .adopt_current(*adopt.task, adopt.acknowledged, blocked, now);
                     } else {
-                        actions.extend(self.machine.enqueue(*adopt.task, now));
+                        // It was pushed, so it is not typed again: its session cannot be taken
+                        // over, and the task fails as retryable (design 7.8).
+                        let reason = format!("runner restarted and session {} was gone", self.key.as_str());
+                        actions.push(Action::Fail {
+                            task: *adopt.task,
+                            reason,
+                            retryable: true,
+                        });
                     }
                 }
                 for task in requeue {
@@ -528,23 +585,11 @@ impl Worker {
                 seq,
                 peer_chain,
             } => {
-                // A message that does not carry this launch's secret did not come from this
-                // session's hook command: it is dropped.
-                if !super::hooks::ct_eq(&nonce, &self.nonce) {
-                    tracing::warn!(session = self.key.as_str(), "hook message dropped: wrong nonce");
-                    return Vec::new();
-                }
-                // The sender must run below this session's pane process, where the socket can say
-                // who the sender is.
-                if let (Some(chain), Some(record)) = (&peer_chain, self.shared.state.read_session_record(&self.key))
-                    && !chain.contains(&record.pane_pid)
-                {
-                    tracing::warn!(
-                        session = self.key.as_str(),
-                        ?chain,
-                        pane = record.pane_pid,
-                        "hook message dropped: not from the pane"
-                    );
+                // The message must carry this launch's secret and come from below this session's
+                // pane process; a session whose record cannot be read admits nothing.
+                let pane_pid = self.shared.state.read_session_record(&self.key).map(|r| r.pane_pid);
+                if let Err(why) = admit_hook(&self.nonce, &nonce, peer_chain.as_deref(), pane_pid) {
+                    tracing::debug!(session = self.key.as_str(), "hook message dropped: {why}");
                     return Vec::new();
                 }
                 // Events are applied in the order their senders stamped them: a late one is stale.
@@ -795,6 +840,29 @@ impl Worker {
 
     /// For a session without hooks, the turn events come from the screen: it changes while the CLI
     /// works and stays still, with the prompt showing, when it is idle.
+    /// A turn whose `UserPromptSubmit` was lost: while a pushed task is `Pushing` or `Blocked`, a
+    /// screen that shows the CLI at work is proof that the turn started, so the task is `Busy` and
+    /// is neither pressed with Enter again nor failed as a permission wait.
+    async fn confirm_turn_by_screen(&mut self) -> Vec<Action<TmuxTask>> {
+        let waiting = matches!(self.machine.state, State::Pushing { .. } | State::Blocked { .. })
+            && self.machine.current_task().is_some();
+        if !waiting || self.screen_mode || self.pane.is_none() || !self.ticks.is_multiple_of(2) {
+            return Vec::new();
+        }
+        let Some(cli) = self.recorded_cli() else {
+            return Vec::new();
+        };
+        let Some(screen) = self.capture().await else {
+            return Vec::new();
+        };
+        if !looks_busy(&cli, &screen) {
+            return Vec::new();
+        }
+        let now = Instant::now();
+        self.turn_watch.event(now);
+        self.machine.on_hook(HookEvent::UserPromptSubmit, now)
+    }
+
     /// A turn the hooks opened and never closed (claude runs no `Stop` when a person interrupts) is
     /// closed when the screen has been calm long enough: no busy marker, an empty visible input
     /// line, and no hook event for a minute.
@@ -855,6 +923,15 @@ impl Worker {
 
     // ----- ensure -----
 
+    /// A launch began: its nonce is published to the listener and the order counter starts over.
+    fn launched(&mut self) {
+        self.shared
+            .nonces
+            .lock()
+            .insert(self.key.as_str().to_string(), self.nonce.clone());
+        self.seq_gate = super::hooks::SeqGate::default();
+    }
+
     fn settings_job(&self, task: &TmuxTask) -> SettingsJob {
         SettingsJob {
             state: Arc::clone(&self.shared.state),
@@ -898,6 +975,7 @@ impl Worker {
             hook_socket: &socket,
             nonce: &self.nonce,
             state_dir: state.root(),
+            config_file: self.shared.config.config_path.as_deref(),
         };
         let argv = match task.cli.as_str() {
             "claude" => launch::claude_argv(&task.program, &runner.cli.claude, &task.dir, &files),
@@ -972,6 +1050,7 @@ impl Worker {
                 // A launch got a secret of its own; a session found running keeps its old one.
                 if let Some(record) = &record {
                     self.nonce.clone_from(&record.nonce);
+                    self.launched();
                 }
                 if let Some(record) = record
                     && let Err(e) = self.shared.state.write_session_record(&record)
@@ -1023,6 +1102,16 @@ impl Worker {
         if let Some(record) = self.shared.state.read_session_record(&self.key)
             && (record.cli != task.cli || Path::new(&record.dir) != task.dir)
         {
+            // Ending a CLI that is working (the hooks may be wrong) or whose person is typing
+            // would lose their work: restart it only when the screen is calm.
+            let (tmux, calm_pane, cli) = (self.tmux(), pane.clone(), record.cli.clone());
+            let user_idle = self.shared.config.runner.tmux.user_idle_secs;
+            let calm = tokio::task::spawn_blocking(move || screen_calm(&tmux, &calm_pane, &cli, user_idle))
+                .await
+                .unwrap_or(false);
+            if !calm {
+                return PushTry::Held;
+            }
             return match self.respawn_for(task, &pane).await {
                 Ok(()) => PushTry::Restarted,
                 Err(()) => PushTry::Failed,
@@ -1076,6 +1165,7 @@ impl Worker {
         }
         // A new launch gets a new secret; the old one stops authenticating anything.
         self.nonce = fresh_nonce();
+        self.launched();
         let files = self.files_for(task).map_err(|_| ())?;
         self.settings_job(task).write(&self.nonce).map_err(|_| ())?;
         let dir = WorkDir::new(&task.dir).map_err(|_| ())?;
@@ -1152,6 +1242,14 @@ impl SettingsJob {
         if !self.claude {
             return Ok(());
         }
+        // A new launch counts its hooks from the start.
+        let _ = std::fs::remove_file(
+            self.state
+                .root()
+                .join("sessions")
+                .join(self.key.as_str())
+                .join("hook.seq"),
+        );
         let toml = self.state.root().join("unused.toml");
         let claude_json = self.state.root().join("unused.json");
         let settings = self.state.claude_settings(&self.key);
@@ -1165,6 +1263,7 @@ impl SettingsJob {
             hook_socket: &socket,
             nonce,
             state_dir: self.state.root(),
+            config_file: None,
         };
         self.state
             .write_session_settings(&self.key, &files)
@@ -1283,7 +1382,7 @@ fn ensure_blocking(
         has_children,
         process_names,
         changed,
-        idle: true,
+        idle: info.dead || screen_calm(tmux, &pane, &task.cli, cfg.user_idle_secs),
         other_project,
         socket_dedicated: !cfg.socket_name.is_empty(),
     };
@@ -1315,6 +1414,23 @@ fn ensure_blocking(
     }
 }
 
+/// Whether the CLI of `pane` may be ended and started again: its screen shows neither work nor a
+/// choice, and no client typed within `user_idle_secs`.
+fn screen_calm(tmux: &Tmux, pane: &Pane, cli: &str, user_idle_secs: u64) -> bool {
+    let Ok(screen) = tmux.capture_pane(pane, None) else {
+        return false;
+    };
+    if looks_busy(cli, &screen) || awaits_choice(cli, &screen) {
+        return false;
+    }
+    let now = unix_now();
+    !tmux
+        .client_activity(&pane.key)
+        .unwrap_or_default()
+        .iter()
+        .any(|activity| now.saturating_sub(*activity) < user_idle_secs)
+}
+
 /// The gate of the one Enter retry: the same preconditions as a push, plus the pasted text still
 /// being the last thing on the input line. Pressing Enter blind could submit a person's draft or
 /// confirm a dialog's default.
@@ -1322,7 +1438,7 @@ fn enter_retry_allowed(tmux: &Tmux, pane: &Pane, cli: &str, process_names: &[Str
     let Ok(screen) = tmux.capture_pane(pane, None) else {
         return false;
     };
-    if classify_dialog(cli, &screen).is_some() {
+    if classify_bottom(cli, &screen).is_some() {
         return false;
     }
     if !input_text(cli, &screen).is_some_and(|text| text.starts_with("[Sylvode")) {
@@ -1345,6 +1461,7 @@ fn enter_retry_allowed(tmux: &Tmux, pane: &Pane, cli: &str, process_names: &[Str
 #[derive(Debug)]
 enum PushTry {
     Inactive,
+    Held,
     Pushed,
     Unknown,
     PastedNotSubmitted,
@@ -1365,6 +1482,7 @@ impl PushTry {
             Self::SessionGone => PushOutcome::SessionGone,
             Self::Failed => PushOutcome::Failed,
             Self::Inactive => PushOutcome::Inactive,
+            Self::Held => PushOutcome::Held,
         }
     }
 }
@@ -1384,13 +1502,13 @@ fn push_blocking(
     let Ok(screen) = tmux.capture_pane(pane, None) else {
         return PushTry::SessionGone;
     };
-    if let Some(dialog) = classify_dialog(cli, &screen) {
+    if let Some(dialog) = classify_bottom(cli, &screen) {
         return PushTry::Dialog(dialog);
     }
     // An empty input line says nothing about a CLI that works: it is empty while it does. The
     // screen must not show the CLI at work, nor a choice it waits for.
     if looks_busy(cli, &screen) || awaits_choice(cli, &screen) {
-        return PushTry::NotReady;
+        return PushTry::Held;
     }
     // The prompt must be on the screen and empty: nothing is pushed over a person's draft.
     if input_is_empty(cli, &screen) != Some(true) {

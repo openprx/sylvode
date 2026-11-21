@@ -19,6 +19,10 @@ pub struct Config {
     /// The `runner` agents' settings (`[runner]`).
     #[serde(default)]
     pub runner: crate::runner::config::RunnerConfig,
+    /// Where the file was read from (canonical): the file holds every token, so no project may
+    /// lie over it and the CLI may not read it. Not read from the file.
+    #[serde(skip)]
+    pub config_path: Option<std::path::PathBuf>,
     /// Safe mode, resolved once at start-up from `SYLVODE_RUNNER_SAFE_MODE`. Not read from the file.
     #[serde(skip)]
     pub safe_mode: bool,
@@ -549,7 +553,9 @@ impl Config {
 
     pub fn load(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|e| format!("failed to read config {path}: {e}"))?;
-        Self::from_toml(&content)
+        let mut config = Self::from_toml(&content)?;
+        config.config_path = std::fs::canonicalize(path).ok();
+        Ok(config)
     }
 
     /// Parses and validates a configuration.

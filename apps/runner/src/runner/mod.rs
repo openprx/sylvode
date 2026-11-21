@@ -185,6 +185,22 @@ impl RunnerRuntime {
                 }
             }
         }
+        // The configuration file holds every token and secret: no root may contain it, or a
+        // project directory could be set over it.
+        if let Some(file) = &config.config_path {
+            let clash = |roots: &AllowedRoots| roots.contains(file);
+            let message =
+                "the configuration file must be outside every allowed root (it holds the bots' tokens)".to_string();
+            if roots.as_ref().is_ok_and(&clash) {
+                tracing::error!("{message}; `runner` agents will refuse every task");
+                roots = Err(message.clone());
+            }
+            for own in agent_roots.values_mut() {
+                if own.as_ref().is_ok_and(&clash) {
+                    *own = Err(message.clone());
+                }
+            }
+        }
         // Two agents' roots must not overlap: one agent's tasks must not reach another's tree.
         let ids: Vec<String> = agent_roots.keys().cloned().collect();
         for (n, a) in ids.iter().enumerate() {
@@ -224,6 +240,28 @@ pub struct PostureLine {
     pub text: String,
 }
 
+/// Whether an extra allowed tool is a read rule confined to the project directory: exactly
+/// `Read|Glob|Grep(/{dir}/...)`, with no `..`, no `~` and nothing that could name another place.
+/// Judged on the text as normalised (a `..` segment is refused outright rather than resolved).
+fn confined_read(tool: &str) -> bool {
+    let Some(inner) = ["Read(", "Glob(", "Grep("]
+        .iter()
+        .find_map(|prefix| tool.strip_prefix(prefix))
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let Some(tail) = inner.strip_prefix("/{dir}/") else {
+        return false;
+    };
+    !tail.is_empty()
+        && !tail.contains("{dir}")
+        && !tail.contains('~')
+        && !tail.starts_with('/')
+        && !tail.contains("//")
+        && tail.split('/').all(|segment| segment != ".." && segment != ".")
+}
+
 /// The permission posture of every CLI the `runner` agents can start: one line each, and a warning
 /// for opencode (whose permissions the runner does not control) and for any setting that turns
 /// permission checks off.
@@ -239,10 +277,7 @@ pub fn posture(config: &Config) -> Vec<PostureLine> {
     } else {
         format!("[{}]", claude.allowed_tools.join(", "))
     };
-    let widened = claude.allowed_tools.iter().any(|tool| {
-        let confined_read = ["Read(", "Glob(", "Grep("].iter().any(|p| tool.starts_with(p)) && tool.contains("{dir}");
-        !confined_read
-    });
+    let widened = claude.allowed_tools.iter().any(|tool| !confined_read(tool));
     let write = if claude.allow_write_call {
         " + sylvode_write"
     } else {

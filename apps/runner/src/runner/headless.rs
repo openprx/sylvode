@@ -147,7 +147,10 @@ pub fn prepare(config: &Config, state: &StateDir, accepted: &Accepted, mcp_serve
                 &runner.cli.claude,
                 &accepted.dir,
                 &claude_json,
-                state.root(),
+                &super::launch::Protected {
+                    state_dir: state.root(),
+                    config_file: config.config_path.as_deref(),
+                },
                 prompt,
             ),
             runner.cli.claude.env_passthrough.clone(),

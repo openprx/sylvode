@@ -1,4 +1,4 @@
-use super::cli::{Row, RowState, attach_command, prunable, release_check, render_rows, trust_instructions};
+use super::cli::{Row, RowState, attach_command, live_state, prunable, release_check, render_rows, trust_instructions};
 
 fn row(state: RowState, in_registry: bool, headless: bool) -> Row {
     Row {
@@ -76,4 +76,34 @@ fn trust_tells_what_to_answer_and_how_to_attach() {
     );
     assert_eq!(attach_command("SVWL", ""), "tmux attach -t =SVWL");
     assert!(trust_instructions("K", "codex", "s").contains("trusts the directory"));
+}
+
+/// A CLI that is working shows an empty input box; it is not idle, and `--prune` must not end it.
+#[test]
+fn a_working_cli_is_never_idle() {
+    let working = "\u{273b} Thinking\u{2026} (12s \u{b7} esc to interrupt)\n\u{256d}----\u{256e}\n\u{2502} > \u{2502}\n\u{2570}----\u{256f}";
+    let idle = "done\n\u{256d}----\u{256e}\n\u{2502} > \u{2502}\n\u{2570}----\u{256f}";
+    let dialog = "Do you want to proceed?\n \u{276f} 1. Yes\n   2. No\n Esc to cancel";
+    let draft = "> half written";
+    assert_eq!(live_state("claude", idle), RowState::Idle);
+    for (name, screen) in [
+        ("working", working),
+        ("dialog", dialog),
+        ("draft", draft),
+        ("no prompt", "text"),
+    ] {
+        assert_eq!(live_state("claude", screen), RowState::Busy, "{name}");
+    }
+    let mut row = Row {
+        key: "SVWL".to_string(),
+        project_id: "p".to_string(),
+        cli: "claude".to_string(),
+        state: live_state("claude", working),
+        in_registry: false,
+        headless: true,
+        owned: true,
+    };
+    assert!(!prunable(&row), "a working CLI is not pruned");
+    row.state = live_state("claude", idle);
+    assert!(prunable(&row));
 }

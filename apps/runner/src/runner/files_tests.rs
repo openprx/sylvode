@@ -223,6 +223,7 @@ fn session_settings_hold_the_four_hooks_and_are_private() {
         hook_socket: &socket,
         nonce: "0123456789abcdef0123456789abcdef",
         state_dir: state.root(),
+        config_file: None,
     };
     assert!(state.write_session_settings(&key, &files).expect("write").changed);
     assert!(!state.write_session_settings(&key, &files).expect("again").changed);
@@ -316,6 +317,7 @@ fn session_start_and_notification_hooks_have_narrow_matchers() {
         hook_socket: &socket,
         nonce: "0123456789abcdef0123456789abcdef",
         state_dir: state.root(),
+        config_file: None,
     };
     state.write_session_settings(&key, &files).expect("write");
     let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&settings).expect("read")).expect("json");

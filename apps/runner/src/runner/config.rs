@@ -78,6 +78,10 @@ pub struct RunnerTmuxConfig {
     pub ack_reminder_secs: u64,
     pub report_unacked_after_secs: u64,
     pub completion_grace_secs: u64,
+    /// How long a screen that shows the CLI busy or waiting for a choice may hold back the queued
+    /// tasks before they are failed as retryable (a false busy reading must not stall a session
+    /// for good).
+    pub screen_hold_secs: u64,
 }
 
 impl Default for RunnerTmuxConfig {
@@ -95,6 +99,7 @@ impl Default for RunnerTmuxConfig {
             ack_reminder_secs: 180,
             report_unacked_after_secs: 900,
             completion_grace_secs: 60,
+            screen_hold_secs: 600,
         }
     }
 }

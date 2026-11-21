@@ -225,10 +225,10 @@ fn the_posture_line_names_the_extra_tools_and_warns_when_they_widen() {
     let plain = super::posture(&config(""));
     assert!(plain[0].text.contains("extra allowed tools none") && !plain[0].warn);
     let confined = super::posture(&config(
-        "[runner.cli.claude]\nallowed_tools = [\"Read({dir}/docs/**)\"]\n",
+        "[runner.cli.claude]\nallowed_tools = [\"Read(/{dir}/docs/**)\"]\n",
     ));
     assert!(
-        confined[0].text.contains("[Read({dir}/docs/**)]") && !confined[0].warn,
+        confined[0].text.contains("[Read(/{dir}/docs/**)]") && !confined[0].warn,
         "{:?}",
         confined[0]
     );

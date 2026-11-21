@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::process::ExitCode;
 
-use super::detect::input_is_empty;
+use super::detect::{awaits_choice, input_is_empty, looks_busy};
 use super::files::{SessionRecord, StateDir};
 use super::registry::SessionRegistry;
 use super::tmux::{SessionKey, SocketName, Tmux};
@@ -72,6 +72,20 @@ pub fn render_rows(rows: &[Row]) -> String {
         );
     }
     out
+}
+
+/// The state of a live session from its screen: idle only when the input line is empty AND the CLI
+/// is not at work and shows no choice. An empty input box alone says nothing (the CLI shows it
+/// while it works), and a stopped runner does not mean an idle CLI.
+pub fn live_state(cli: &str, screen: &str) -> RowState {
+    if looks_busy(cli, screen) || awaits_choice(cli, screen) {
+        return RowState::Busy;
+    }
+    if input_is_empty(cli, screen) == Some(true) {
+        RowState::Idle
+    } else {
+        RowState::Busy
+    }
 }
 
 /// A session may be pruned when the runner made it, it is idle, and either its key is no longer in
@@ -160,11 +174,9 @@ fn row_for(env: &Env, record: &SessionRecord) -> Option<Row> {
                 Ok(state) if state.dead => RowState::Dead,
                 Ok(state) => {
                     owned = pane.id.as_str() == record.pane_id && state.pid == record.pane_pid;
-                    let empty = env
-                        .tmux
+                    env.tmux
                         .capture_pane(&pane, None)
-                        .is_ok_and(|screen| input_is_empty(&record.cli, &screen) == Some(true));
-                    if empty { RowState::Idle } else { RowState::Busy }
+                        .map_or(RowState::Busy, |screen| live_state(&record.cli, &screen))
                 }
                 Err(_) => RowState::Gone,
             })

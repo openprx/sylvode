@@ -1,4 +1,6 @@
-use super::session::{EnsureDecision, EnsureFacts, decide_ensure, stable_exe, view_facts};
+use super::session::{
+    EnsureDecision, EnsureFacts, admit_hook, decide_ensure, dir_unchanged, recovered_blocked, stable_exe, view_facts,
+};
 
 fn names() -> Vec<String> {
     vec!["claude".to_string(), "claude.exe".to_string()]
@@ -241,4 +243,59 @@ fn the_executable_path_survives_an_in_place_upgrade() {
     assert_eq!(stable_exe(&deleted), None);
     assert_eq!(stable_exe(&exe), None);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+const OWN: &str = "0123456789abcdef0123456789abcdef";
+const OTHER: &str = "ffffffffffffffffffffffffffffffff";
+
+/// A hook message is dropped unless it carries this launch's nonce and, where the platform names
+/// the sender, comes from below the session's pane process; an unknown pane is a refusal.
+#[test]
+fn a_hook_message_from_the_wrong_nonce_or_outside_the_pane_is_dropped() {
+    let pane = 4000;
+    // Right nonce, a chain through the pane.
+    assert_eq!(admit_hook(OWN, OWN, Some(&[9, 8, pane, 1]), Some(pane)), Ok(()));
+    // Wrong nonce, whatever the chain.
+    assert_eq!(admit_hook(OWN, OTHER, Some(&[9, pane]), Some(pane)), Err("wrong nonce"));
+    assert_eq!(admit_hook(OWN, "", None, Some(pane)), Err("wrong nonce"));
+    // A sender outside the pane's process tree.
+    assert_eq!(
+        admit_hook(OWN, OWN, Some(&[9, 8, 7, 1]), Some(pane)),
+        Err("not from the pane")
+    );
+    // Fail closed: a chain was read but the pane is not known (session.json unreadable).
+    assert_eq!(admit_hook(OWN, OWN, Some(&[9, pane]), None), Err("not from the pane"));
+    // A platform that cannot name the sender leaves the nonce to decide.
+    assert_eq!(admit_hook(OWN, OWN, None, None), Ok(()));
+}
+
+/// The directory accepted at delivery must still be the same canonical path before a tmux session
+/// is created or restarted: a link swapped in meanwhile, or a vanished directory, is not.
+#[test]
+fn the_accepted_directory_is_rechecked_before_a_session_starts() {
+    let base = std::env::temp_dir().join(format!("sylvode-dir-test-{}", uuid::Uuid::new_v4()));
+    let real = base.join("project");
+    std::fs::create_dir_all(&real).expect("mkdir");
+    let canonical = real.canonicalize().expect("canonical");
+    assert!(dir_unchanged(&canonical));
+    // The directory is replaced by a link to somewhere else.
+    let elsewhere = base.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("mkdir");
+    std::fs::remove_dir_all(&real).expect("remove");
+    std::os::unix::fs::symlink(&elsewhere, &real).expect("link");
+    assert!(!dir_unchanged(&canonical), "a swapped link is caught");
+    // And a directory that is gone.
+    std::fs::remove_file(&real).expect("unlink");
+    assert!(!dir_unchanged(&canonical));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A `blocked` phase is stale after the dialog was answered: it counts only with a dialog on the
+/// screen.
+#[test]
+fn a_stale_blocked_phase_does_not_block_a_recovered_task() {
+    assert!(recovered_blocked(true, true));
+    assert!(!recovered_blocked(true, false), "stale phase");
+    assert!(!recovered_blocked(false, true));
+    assert!(!recovered_blocked(false, false));
 }

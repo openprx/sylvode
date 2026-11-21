@@ -534,7 +534,12 @@ fn start_sessions(
         }
     };
     let (tx, mut rx) = tokio::sync::mpsc::channel(256);
-    if let Err(e) = crate::runner::hooks::listen(&state.hook_socket(), tx) {
+    if let Err(e) = crate::runner::hooks::listen_checked(
+        &state.hook_socket(),
+        tx,
+        std::time::Duration::from_secs(5),
+        manager.nonce_check(),
+    ) {
         tracing::error!("the tmux channel is not available: {e}");
         return None;
     }

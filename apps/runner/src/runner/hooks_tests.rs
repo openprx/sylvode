@@ -10,7 +10,8 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::hooks::{
-    CLIENT_BUDGET, HookEvent, MAX_LINE, Reject, SeqGate, ancestry, ct_eq, listen, listen_with_check, parse_line, send,
+    CLIENT_BUDGET, HookEvent, MAX_LINE, Reject, SeqGate, ancestry, chain_allows, ct_eq, is_same_user, listen,
+    listen_checked, listen_with_check, next_seq, parse_line, send,
 };
 
 fn line(value: &serde_json::Value) -> Vec<u8> {
@@ -84,7 +85,8 @@ impl Dir {
     fn new() -> Self {
         // Short: a unix socket path is limited to about 100 bytes on macOS.
         let dir = PathBuf::from("/tmp").join(format!("svh-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]));
-        std::fs::create_dir_all(&dir).expect("mkdir");
+        // The session's private directory, where its hook counter lives.
+        std::fs::create_dir_all(dir.join("sessions").join("SVWL")).expect("mkdir");
         Self(dir)
     }
 }
@@ -289,4 +291,63 @@ async fn the_listener_names_the_senders_ancestry() {
         .expect("message");
     let chain = message.peer_chain.expect("the platform names the peer");
     assert!(chain.contains(&std::process::id()), "{chain:?}");
+}
+
+/// A message of another user is never heard, whatever it says.
+#[test]
+fn another_user_is_not_the_runners_user() {
+    assert!(is_same_user(501, 501));
+    assert!(!is_same_user(0, 501));
+    assert!(!is_same_user(502, 501));
+}
+
+#[test]
+fn the_pane_must_be_in_the_chain_and_an_unknown_pane_refuses() {
+    assert!(chain_allows(Some(&[5, 4, 3]), Some(4)));
+    assert!(!chain_allows(Some(&[5, 4, 3]), Some(9)));
+    assert!(!chain_allows(Some(&[5, 4, 3]), None));
+    assert!(chain_allows(None, Some(9)));
+}
+
+/// The listener asks the worker's check before it spends anything: a message with a wrong nonce is
+/// dropped there and never reaches the channel; the right one does.
+#[tokio::test]
+async fn a_message_with_a_wrong_nonce_never_reaches_the_session() {
+    let dir = Dir::new();
+    let socket = dir.0.join("hook.sock");
+    let (tx, mut rx) = mpsc::channel(8);
+    let accept: super::hooks::Accept = std::sync::Arc::new(|m| ct_eq(&m.nonce, NONCE));
+    let _server = listen_checked(&socket, tx, Duration::from_secs(5), accept).expect("listen");
+    let wrong = "ffffffffffffffffffffffffffffffff";
+    for (nonce, event) in [(wrong, "Notification"), (NONCE, "Stop")] {
+        let path = socket.clone();
+        tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", event, nonce))
+            .await
+            .expect("sent");
+    }
+    let first = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("in time")
+        .expect("message");
+    assert_eq!(first.event, HookEvent::Stop, "the wrong-nonce message was passed on");
+    assert!(rx.try_recv().is_err());
+}
+
+/// The order stamp is the session's own counter: strictly increasing across concurrent hooks, from
+/// one up, whatever the clock does.
+#[test]
+fn the_hook_counter_is_strictly_increasing_across_concurrent_hooks() {
+    let dir = Dir::new();
+    let state = dir.0.clone();
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let state = state.clone();
+            std::thread::spawn(move || (0..10).filter_map(|_| next_seq(&state, "SVWL")).collect::<Vec<u64>>())
+        })
+        .collect();
+    let mut all: Vec<u64> = handles.into_iter().flat_map(|h| h.join().expect("thread")).collect();
+    all.sort_unstable();
+    assert_eq!(all, (1..=80).collect::<Vec<u64>>());
+    // A session that has no private directory yet has no counter: nothing is stamped.
+    assert!(next_seq(&state, "NOSESSION").is_none());
 }

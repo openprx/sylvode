@@ -101,6 +101,15 @@ pub fn rule_safe_dir(dir: &Path) -> Result<&str, LaunchError> {
     }
 }
 
+/// What the CLI must never read: the state directory (every bot's token) and the configuration
+/// file. Each is denied in the form it is configured and in its canonical form, so a link in the
+/// path does not make the rule miss.
+#[derive(Clone, Copy, Debug)]
+pub struct Protected<'a> {
+    pub state_dir: &'a Path,
+    pub config_file: Option<&'a Path>,
+}
+
 /// Where the files of one launch are, and who runs the hooks.
 #[derive(Debug, Clone)]
 pub struct LaunchFiles<'a> {
@@ -118,6 +127,8 @@ pub struct LaunchFiles<'a> {
     pub hook_socket: &'a Path,
     /// The state directory: held back from the CLI's reads (it holds every bot's token).
     pub state_dir: &'a Path,
+    /// The configuration file (it holds every token): denied to the CLI as well.
+    pub config_file: Option<&'a Path>,
     /// The per-launch secret the hooks present (32 hex characters, random, never from task
     /// content): it binds a hook message to the launch that wrote it.
     pub nonce: &'a str,
@@ -142,7 +153,14 @@ pub fn claude_argv(
         mode,
         allowed,
         disallowed,
-    } = claude_parts(cfg, dir, files.state_dir)?;
+    } = claude_parts(
+        cfg,
+        dir,
+        &Protected {
+            state_dir: files.state_dir,
+            config_file: files.config_file,
+        },
+    )?;
     let path = utf8(files.claude_mcp_json)?;
     let mut argv = vec![
         utf8(program)?,
@@ -177,14 +195,14 @@ pub fn claude_headless_argv(
     cfg: &RunnerClaudeConfig,
     dir: &Path,
     mcp_config: &Path,
-    state_dir: &Path,
+    protected: &Protected<'_>,
     prompt: &str,
 ) -> Result<Vec<String>, LaunchError> {
     let ClaudeParts {
         mode,
         allowed,
         disallowed,
-    } = claude_parts(cfg, dir, state_dir)?;
+    } = claude_parts(cfg, dir, protected)?;
     check_prompt(prompt)?;
     // `-p` and the prompt come first, so no variadic list below can swallow the prompt.
     let mut argv = vec![
@@ -232,9 +250,26 @@ struct ClaudeParts {
 
 /// The permission mode and the tool lists of claude: the design's default list, plus
 /// `sylvode_write` with `allow_write_call`, plus the configured extras (`{dir}` expanded).
-fn claude_parts(cfg: &RunnerClaudeConfig, dir: &Path, state_dir: &Path) -> Result<ClaudeParts, LaunchError> {
+fn claude_parts(cfg: &RunnerClaudeConfig, dir: &Path, protected: &Protected<'_>) -> Result<ClaudeParts, LaunchError> {
     let dir_text = rule_safe_dir(dir)?;
-    let state_text = rule_safe_dir(state_dir)?;
+    // The configured form must be expressible in a rule; the canonical form is added when it is.
+    let mut state_texts = vec![rule_safe_dir(protected.state_dir)?.to_string()];
+    if let Ok(canonical) = protected.state_dir.canonicalize()
+        && let Ok(text) = rule_safe_dir(&canonical)
+        && !state_texts.iter().any(|known| known == text)
+    {
+        state_texts.push(text.to_string());
+    }
+    let mut file_texts: Vec<String> = Vec::new();
+    if let Some(file) = protected.config_file {
+        file_texts.push(rule_safe_dir(file)?.to_string());
+        if let Ok(canonical) = file.canonicalize()
+            && let Ok(text) = rule_safe_dir(&canonical)
+            && !file_texts.iter().any(|known| known == text)
+        {
+            file_texts.push(text.to_string());
+        }
+    }
     // The same validation the headless channel applies.
     let mut settings = crate::executor_permissions::ExecutorSettings::new("claude-code");
     settings.permission_mode = Some(cfg.permission_mode.clone());
@@ -253,10 +288,11 @@ fn claude_parts(cfg: &RunnerClaudeConfig, dir: &Path, state_dir: &Path) -> Resul
     allowed.extend(cfg.allowed_tools.iter().map(expand));
     // The state directory is never readable by a task, whatever the allow rules say (a deny rule
     // wins): it holds the token of every bot.
-    let mut disallowed: Vec<String> = ["Read", "Glob", "Grep"]
+    let mut disallowed: Vec<String> = state_texts
         .iter()
-        .map(|tool| format!("{tool}(/{state_text}/**)"))
+        .flat_map(|text| ["Read", "Glob", "Grep"].map(|tool| format!("{tool}(/{text}/**)")))
         .collect();
+    disallowed.extend(file_texts.iter().map(|text| format!("Read(/{text})")));
     disallowed.extend(cfg.disallowed_tools.iter().map(expand));
     for entry in allowed.iter().chain(&disallowed) {
         if entry.is_empty() || entry.starts_with('-') || entry.chars().any(char::is_control) {

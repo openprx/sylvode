@@ -4,9 +4,9 @@ use std::path::Path;
 
 use super::config::{RunnerClaudeConfig, RunnerCodexConfig};
 use super::launch::{
-    LaunchError, LaunchFiles, SEARCH_MODE_TOOLS, claude_argv, claude_headless_argv, claude_hook_command, codex_argv,
-    codex_headless_argv, hook_words, mcp_tool, opencode_argv, opencode_headless_argv, rule_safe_dir, shell_quote,
-    toml_array, toml_string,
+    LaunchError, LaunchFiles, Protected, SEARCH_MODE_TOOLS, claude_argv, claude_headless_argv, claude_hook_command,
+    codex_argv, codex_headless_argv, hook_words, mcp_tool, opencode_argv, opencode_headless_argv, rule_safe_dir,
+    shell_quote, toml_array, toml_string,
 };
 use super::tmux::SessionKey;
 
@@ -22,6 +22,7 @@ fn files() -> LaunchFiles<'static> {
         hook_socket: Path::new("/state/hook.sock"),
         nonce: NONCE,
         state_dir: Path::new("/state"),
+        config_file: None,
     }
 }
 
@@ -403,7 +404,10 @@ fn the_headless_claude_argv_has_the_same_posture_as_the_interactive_one() {
         &RunnerClaudeConfig::default(),
         Path::new(DIR),
         Path::new("/state/mcp/BOT.claude.json"),
-        Path::new("/state"),
+        &Protected {
+            state_dir: Path::new("/state"),
+            config_file: None,
+        },
         "[Sylvode task] id=x",
     )
     .expect("argv");
@@ -434,7 +438,10 @@ fn the_headless_claude_argv_has_the_same_posture_as_the_interactive_one() {
                 &RunnerClaudeConfig::default(),
                 Path::new(DIR),
                 Path::new("/m"),
-                Path::new("/state"),
+                &Protected {
+                    state_dir: Path::new("/state"),
+                    config_file: None,
+                },
                 bad
             )
             .is_err()
@@ -449,7 +456,10 @@ fn the_headless_claude_argv_has_the_same_posture_as_the_interactive_one() {
         },
         Path::new(DIR),
         Path::new("/m"),
-        Path::new("/state"),
+        &Protected {
+            state_dir: Path::new("/state"),
+            config_file: None,
+        },
         "p",
     )
     .expect("argv");
@@ -507,7 +517,10 @@ fn the_state_directory_is_denied_to_reads_on_both_channels() {
         &RunnerClaudeConfig::default(),
         Path::new(DIR),
         Path::new("/m"),
-        Path::new("/state"),
+        &Protected {
+            state_dir: Path::new("/state"),
+            config_file: None,
+        },
         "p",
     )
     .expect("argv");
@@ -518,4 +531,42 @@ fn the_state_directory_is_denied_to_reads_on_both_channels() {
             assert!(denied.iter().any(|d| d.as_str() == rule), "{rule} in {denied:?}");
         }
     }
+}
+
+/// The deny rules name the state directory and the configuration file in the form they are
+/// configured and in their canonical form (a link in the path would make one of them miss).
+#[test]
+fn the_deny_rules_cover_the_canonical_state_dir_and_the_config_file() {
+    let base = std::env::temp_dir().join(format!("sylvode-deny-test-{}", uuid::Uuid::new_v4()));
+    let real = base.join("real-state");
+    std::fs::create_dir_all(&real).expect("mkdir");
+    let link = base.join("link-state");
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+    let config = base.join("config.toml");
+    std::fs::write(&config, "").expect("file");
+    let argv = claude_headless_argv(
+        Path::new("/c"),
+        &RunnerClaudeConfig::default(),
+        Path::new(DIR),
+        Path::new("/m"),
+        &Protected {
+            state_dir: &link,
+            config_file: Some(&config),
+        },
+        "p",
+    )
+    .expect("argv");
+    let at = argv.iter().position(|a| a == "--disallowedTools").expect("deny list");
+    let denied: Vec<&String> = argv[at + 1..].iter().take_while(|a| !a.starts_with("--")).collect();
+    let canonical = real.canonicalize().expect("canonical");
+    for tool in ["Read", "Glob", "Grep"] {
+        for dir in [&link, &canonical] {
+            let rule = format!("{tool}(/{}/**)", dir.display());
+            assert!(denied.iter().any(|d| **d == rule), "{rule} in {denied:?}");
+        }
+    }
+    let file_rule = format!("Read(/{})", config.canonicalize().expect("canonical").display());
+    assert!(denied.iter().any(|d| **d == file_rule), "{file_rule} in {denied:?}");
+    assert!(denied.iter().any(|d| **d == format!("Read(/{})", config.display())));
+    let _ = std::fs::remove_dir_all(&base);
 }

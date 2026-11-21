@@ -131,6 +131,13 @@ impl AllowedRoots {
         })
     }
 
+    /// Whether `path` lies inside (or at) any root.
+    pub fn contains(&self, path: &Path) -> bool {
+        self.roots
+            .iter()
+            .any(|root| path.starts_with(&root.original) || path.starts_with(&root.canonical))
+    }
+
     /// Whether any root of `self` overlaps any root of `other`.
     pub fn overlaps_roots(&self, other: &Self) -> bool {
         self.roots
