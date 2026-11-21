@@ -3211,12 +3211,12 @@ mod database_tests {
                 let mut currently_in_a = false;
                 for sample in 0..(WARMUPS + MEASUREMENTS) {
                     let target = if currently_in_a { nav_b } else { nav_a };
-                    run_move(
+                    Box::pin(run_move(
                         &state,
                         &collab,
                         &fx,
                         &move_input(page, fx.owner_id, "owner", json!({ "target_object_id": target })),
-                    )
+                    ))
                     .await
                     .unwrap_or_else(|err| panic!("two-document sample {sample} failed: {err:?}"));
                     currently_in_a = !currently_in_a;
