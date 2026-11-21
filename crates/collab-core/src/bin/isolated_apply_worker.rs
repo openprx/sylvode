@@ -123,7 +123,7 @@ fn main() {
     // host failure -- so this cannot be a `let...else` (clippy's suggested rewrite): the
     // divergent branch needs the `Err` payload, not just "diverge".
     #[allow(clippy::manual_let_else)]
-    let base_engine = match LoroCollabEngine::load(&base_snapshot) {
+    let first_engine = match LoroCollabEngine::load(&base_snapshot) {
         Ok(engine) => engine,
         Err(err) => {
             write_marker_or_exit(None);
@@ -133,7 +133,7 @@ fn main() {
 
     // Still setup: materialise the trusted base's containers that an update would otherwise make
     // the metered import decode. No verdict is reached here and nothing depends on the update.
-    base_engine.prewarm_for_writes();
+    first_engine.prewarm_for_writes();
     // Also setup: the facts of the trusted base that the incremental window check corrects by
     // what the update touched (D2b). A pure function of the base; absent for a base the check does
     // not describe, and then the window takes the full computation.
@@ -145,17 +145,19 @@ fn main() {
     let setup = if std::env::var(wire::WINDOW_ENV).as_deref() == Ok(wire::WINDOW_FULL) {
         SetupFacts::none(None)
     } else {
-        BaseFacts::compute_guarded(&base_engine, &setup_guard)
+        BaseFacts::compute_guarded(&first_engine, &setup_guard)
     };
 
-    // A guard that fired has had the setup decode the page's texts on this engine, outside any
-    // window: the decode of a text is memoised in the document, so the full window that now decides
-    // the page would find it paid for and never meter it. The window starts from a fresh load
-    // instead, so the decode is metered again, as it was for every write before the incremental
-    // window existed, and a text whose decode alone passes the CPU ceiling is refused with the
-    // content limit. The reload is bounded by the snapshot, which the guard's own cost has not
-    // changed.
-    let base_engine = if setup.guard.is_some() {
+    // A setup that read the page's texts and ended without facts (a fired guard, a page over the
+    // item budget, a snapshot over a limit) has decoded them on this engine, outside any window:
+    // the decode of a text is memoised in the document, so the full window that now decides the
+    // page would find it paid for and never meter it. The window starts from a fresh load instead,
+    // exactly as the worker did before the incremental window existed, so the decode is metered
+    // again and a text whose decode alone passes the CPU ceiling is refused with the content
+    // limit. The first engine is dropped before the reload, so two engines never share the
+    // address-space limit. The reload is bounded by the snapshot.
+    let base_engine = if setup.needs_fresh_engine() {
+        drop(first_engine);
         match LoroCollabEngine::load(&base_snapshot) {
             Ok(fresh) => {
                 fresh.prewarm_for_writes();
@@ -167,7 +169,7 @@ fn main() {
             }
         }
     } else {
-        base_engine
+        first_engine
     };
 
     // Test builds only: a synthetic setup that sleeps or burns CPU, to exercise the host's setup

@@ -59,6 +59,7 @@ const fn observation() -> WorkerObservation {
         metered_wall_us: None,
         metered_cpu_us: None,
         setup_cpu_us: None,
+        setup_wall_us: None,
         decision: None,
         setup_guard: None,
     }

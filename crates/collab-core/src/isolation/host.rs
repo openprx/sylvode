@@ -309,6 +309,7 @@ fn run_worker_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = command.spawn().map_err(|err| spawn_failure(&err))?;
+    let spawned_at = Instant::now();
 
     {
         let mut stdin = child
@@ -353,6 +354,10 @@ fn run_worker_inner(
     observation.setup_cpu_us = match &read_outcome {
         ReadOutcome::SetupPhaseTimedOut => final_cpu_us,
         _ => marker.and_then(|marker| marker.cpu_us),
+    };
+    observation.setup_wall_us = match &read_outcome {
+        ReadOutcome::SetupPhaseTimedOut => Some(duration_micros(spawned_at.elapsed())),
+        _ => marker.map(|marker| duration_micros(marker.at.saturating_duration_since(spawned_at))),
     };
     // Which setup guard fired is in the marker byte, so a refused or killed attempt reports it too.
     observation.setup_guard = marker.and_then(|marker| marker.setup_guard);
@@ -1730,6 +1735,31 @@ mod tests {
         assert_eq!(observation.setup_guard, None);
     }
 
+    /// R9-3 on the real worker: a page over the item budget (no facts, and no guard fired) has had
+    /// its texts decoded by the setup's count, and the full window that decides it still meters
+    /// those decodes, because the worker starts it from a freshly loaded engine: 60 texts of 400
+    /// nested marks cost about 0.4 s together, far over the window's ceiling. Without the reload
+    /// the window would find them decoded and accept.
+    #[test]
+    fn a_page_over_the_item_budget_meters_the_decode_of_the_texts_the_count_read() {
+        let base = crate::engine::window_text_guard_tests::over_the_item_budget_with_decoded_texts();
+        let update = a_title_update_on(&base);
+        let (result, observation) = isolated_apply_real_observed(&base, &update, WindowMode::Incremental);
+        assert!(
+            matches!(
+                result,
+                Err(IsolatedApplyError::CpuCeiling | IsolatedApplyError::WallCeiling)
+            ),
+            "the full window pays the decode of every text inside its ceiling: {result:?}"
+        );
+        assert_eq!(observation.setup_guard, None, "no guard fired: {observation:?}");
+        assert_eq!(
+            observation.decision,
+            Some(WindowDecision::Fallback(FallbackReason::FactsAbsent)),
+            "{observation:?}"
+        );
+    }
+
     /// A-4 on the real worker: the host's setting of the setup CPU budget reaches the worker. A page
     /// whose setup costs more than half a second of CPU (250 texts of 450 nested marks, 2 s and more)
     /// trips the CPU guard of a worker given a budget of 500 ms.
@@ -1892,6 +1922,15 @@ mod tests {
         assert!(
             sleeping_cpu_us < 300_000,
             "a sleeping setup consumed {sleeping_cpu_us}us of CPU"
+        );
+        // The wall time of the setup is reported too, so that CPU well below it reads as starvation.
+        let wall_us = observation
+            .setup_wall_us
+            .expect("the wall time of a killed setup is reported");
+        assert!(wall_us >= 400_000, "killed at the timeout: {wall_us}us of wall time");
+        assert!(
+            sleeping_cpu_us * 2 < wall_us,
+            "a sleeping setup had little CPU for its wall time"
         );
 
         // A burning setup: killed at the timeout having consumed CPU for most of it.

@@ -649,6 +649,56 @@ fn r8_1_a_text_grown_through_accepted_windows_is_removed_from_the_facts_and_the_
     );
 }
 
+/// A page whose texts the count decodes (60 texts of 400 nested marks: about 7 ms each, inside the
+/// per-text budget, 0.4 s in all, far inside the page budget) and whose items are over the budget
+/// (one block of 100,000 reverse-typed characters), so the setup ends without facts and without a
+/// guard after it has read every text.
+pub fn over_the_item_budget_with_decoded_texts() -> Vec<u8> {
+    let raw = LoroDoc::new();
+    raw.import(&anchor_page(62, 60, 400, Anchors::NestedSameKey)).unwrap();
+    raw.set_peer_id(48_960).unwrap();
+    // The last block: 100,000 characters typed in reverse, one piece each.
+    let text = first_text(&raw, 61);
+    for _ in 0..crate::limits::TEXT_BLOCK_CHARS_MAX - text.len_unicode() {
+        text.insert(0, "y").unwrap();
+    }
+    raw.commit();
+    raw.export(ExportMode::snapshot()).unwrap()
+}
+
+/// R9-3: a setup that ends without facts for a reason other than a guard (the page is over the item
+/// budget) has still read every text, so the full window must start from a fresh engine to meter
+/// those decodes. Whether a fresh engine is needed is `SetupFacts::needs_fresh_engine`.
+#[test]
+fn r9_3_a_setup_without_facts_that_read_the_texts_needs_a_fresh_engine() {
+    let over = over_the_item_budget_with_decoded_texts();
+    let (items, budget) = items_and_budget(&over);
+    assert!(items > budget, "{items} items against a budget of {budget}");
+    let setup = BaseFacts::compute_guarded(&loaded(&over), &SetupGuard::start());
+    assert!(
+        setup.facts.is_none() && setup.guard.is_none(),
+        "over the item budget, no guard: facts {} guard {:?}",
+        setup.facts.is_some(),
+        setup.guard
+    );
+    assert!(setup.texts_read && setup.needs_fresh_engine());
+
+    // A fired guard needs one too, also when it fired before any text was read.
+    let setup = BaseFacts::compute_guarded(&loaded(&one_text_over_budget()), &SetupGuard::start());
+    assert_eq!(setup.guard, Some(Fired::Text));
+    assert!(setup.needs_fresh_engine());
+    let setup = BaseFacts::compute_guarded(&loaded(&forty_texts()), &SetupGuard::with_limit(1));
+    assert_eq!(setup.guard, Some(Fired::Allocation));
+    assert!(setup.facts.is_none() && setup.needs_fresh_engine());
+
+    // Facts mean the incremental window runs on the engine that was read, by design.
+    let setup = BaseFacts::compute_guarded(&loaded(&forty_texts()), &SetupGuard::start());
+    assert!(setup.facts.is_some() && !setup.needs_fresh_engine());
+    // The full mode computes nothing (it is `SetupFacts::none(None)`): nothing was read.
+    let none = crate::facts::SetupFacts::none(None);
+    assert!(!none.texts_read && !none.needs_fresh_engine());
+}
+
 /// Cases for the differential harness: a page with one hostile text, the per-text guard firing and
 /// holding, in allocation and in CPU time. Every mutant that changes what the guard does is caught
 /// by a path that differs from the worker's.

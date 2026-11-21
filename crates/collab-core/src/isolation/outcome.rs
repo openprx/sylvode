@@ -125,6 +125,11 @@ pub struct WorkerObservation {
     /// setup (spawn, base load, prewarm, base facts). For a worker killed at the setup timeout, its
     /// whole CPU time. `None` if the kernel did not report it.
     pub setup_cpu_us: Option<u64>,
+    /// Wall-clock microseconds from the spawn of the worker to the moment it opened its metered
+    /// window; for a worker killed at the setup timeout, to the kill. With [`Self::setup_cpu_us`] it
+    /// tells a setup that was not scheduled (CPU far below wall) from one that burned its time.
+    /// `None` if the worker was never spawned.
+    pub setup_wall_us: Option<u64>,
     /// What the worker's window check decided, from its decision record. `None` when the worker
     /// wrote no record (killed before the check decided, or a failure before the window).
     pub decision: Option<wire::WindowDecision>,
