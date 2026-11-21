@@ -85,10 +85,16 @@ block registry, block shares and transfers relies on reader-5 processes.
 
 Every Page write is decided inside the isolated worker's 50 ms CPU window. For flat (model 1) and
 legacy tree Pages the window works from facts about the accepted Page that the worker computes
-before the window opens, and evaluates only the units the update touched; for anything else
-(structured Pages, tree moves and deletes, edits of the `doc` map, lists longer than 15,000
-elements, and any shape the check cannot be certain about) it runs the full computation, as it
-always did. The limits and the refusals are the same either way.
+before the window opens, and evaluates only the units the update touched, but only for an update
+that is a strict causal extension of the Page's current head (the client had received everything
+accepted before it wrote). For anything else (an update made on an older version of the Page,
+which is what two clients editing at once produce, structured Pages, tree moves and deletes, edits
+of the `doc` map, edits of the metadata of a deleted node, a Page whose content that no documented
+limit counts has grown past a fixed budget, and any shape the check cannot be certain about) it runs
+the full computation, as it always did. The limits and the refusals are the same either way. On a
+Page too large for the full computation to fit the 50 ms window (more than about 3,000 flat
+blocks on the reference runner), an update that takes the full computation is refused by the CPU
+limit.
 
 After the worker returns, the API computes the full projection of the accepted document and compares
 it with what the worker established. If they disagree, the API does not accept the write on the
@@ -100,10 +106,20 @@ incremental_check_divergence: the worker's window check disagrees with the full 
 
 at error level (fields `flow_window_check_divergence_total`, `field`, `reported`, `projected`,
 `document_id`, `update_id`, `base_head_seq`; never content), and asks the worker for the full window,
-which cannot skip a check. The write is accepted or refused by that second result, so a client sees
-an ordinary rejection (or success), not an internal error. Any such line is a defect of the
-incremental check: report it with the document and update ids. The total is only a log field; the
-API exports no other counters.
+which cannot skip a check. The API also checks its own projection of the document the full window
+accepted against every limit. The write is accepted or refused by that second result, so a client
+sees an ordinary rejection (or success), not an internal error. If the second result is contradicted
+as well (or the first attempt was already the full window), the write is refused with an internal
+error and logged at error level with
+`window_divergence_refused: the host's projection of the document the full window accepted is not within the limits; the write is refused`.
+Any such line is a defect: report it with the document and update ids. A Page whose windows
+disagree three times within ten minutes is decided by the full window directly for the next ten
+minutes (logged once at warning level as `window_cooldown`), so it pays one window per write
+instead of two; the record is per process and holds at most 1,024 documents. The total is only a
+log field; the API exports no other counters.
+
+The worker is started with an empty environment (it inherits nothing from the API process); the
+only variables it sees are the ones the API sets for it.
 
 To make every write run the full computation, set in the API's configuration file:
 
