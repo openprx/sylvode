@@ -29,6 +29,8 @@ use crate::security::client_ip;
 
 /// Length of every database window, in seconds.
 pub const WINDOW_SECS: u32 = 60;
+/// Length of the daily window, in seconds.
+pub const DAY_WINDOW_SECS: u32 = 86_400;
 
 /// The database-backed buckets and their limits per window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,10 +49,16 @@ pub enum RateBucket {
     StreamConnect,
     /// Embed tickets, per grant.
     EmbedTicket,
+    /// Failed authentications on the inbound event endpoint, per client address.
+    InboundAuthFail,
+    /// Events accepted from one inbound source per minute.
+    InboundSourceMinute,
+    /// Events accepted from one inbound source per day.
+    InboundSourceDay,
 }
 
 impl RateBucket {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
         Self::Authorize,
         Self::Decision,
         Self::TokenIp,
@@ -58,6 +66,9 @@ impl RateBucket {
         Self::Revoke,
         Self::StreamConnect,
         Self::EmbedTicket,
+        Self::InboundAuthFail,
+        Self::InboundSourceMinute,
+        Self::InboundSourceDay,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -69,16 +80,29 @@ impl RateBucket {
             Self::Revoke => "revoke",
             Self::StreamConnect => "stream_connect",
             Self::EmbedTicket => "embed_ticket",
+            Self::InboundAuthFail => "inbound_auth_fail",
+            Self::InboundSourceMinute => "inbound_source_minute",
+            Self::InboundSourceDay => "inbound_source_day",
+        }
+    }
+
+    /// Length of this bucket's window, in seconds.
+    pub const fn window_secs(self) -> u32 {
+        match self {
+            Self::InboundSourceDay => DAY_WINDOW_SECS,
+            _ => WINDOW_SECS,
         }
     }
 
     /// Hits allowed per window.
     pub const fn limit(self) -> u32 {
         match self {
-            Self::Authorize | Self::Revoke => 30,
+            Self::Authorize | Self::Revoke | Self::InboundAuthFail => 30,
             Self::Decision | Self::StreamConnect => 10,
             Self::TokenIp | Self::EmbedTicket => 60,
             Self::TokenGrant => 20,
+            Self::InboundSourceMinute => 120,
+            Self::InboundSourceDay => 20_000,
         }
     }
 }
@@ -161,7 +185,7 @@ pub async fn enforce(db: &DatabaseConnection, bucket: RateBucket, key: &RateKey)
     enforce_with_limit(db, bucket, key, bucket.limit()).await
 }
 
-pub(super) async fn enforce_with_limit<C: ConnectionTrait>(
+pub(crate) async fn enforce_with_limit<C: ConnectionTrait>(
     conn: &C,
     bucket: RateBucket,
     key: &RateKey,
@@ -183,7 +207,7 @@ pub(super) async fn enforce_with_limit<C: ConnectionTrait>(
         vec![
             bucket.as_str().into(),
             key.as_hex().into(),
-            f64::from(WINDOW_SECS).into(),
+            f64::from(bucket.window_secs()).into(),
         ],
     ))
     .one(conn)
@@ -197,8 +221,9 @@ pub(super) async fn enforce_with_limit<C: ConnectionTrait>(
         && let Err(error) = conn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "DELETE FROM oauth_rate_hits WHERE bucket = $1 AND window_started < now() - interval '1 hour'",
-                vec![bucket.as_str().into()],
+                "DELETE FROM oauth_rate_hits WHERE bucket = $1 \
+                 AND window_started < now() - make_interval(secs => $2)",
+                vec![bucket.as_str().into(), f64::from(bucket.window_secs() + 3_600).into()],
             ))
             .await
     {
@@ -214,6 +239,36 @@ pub(super) async fn enforce_with_limit<C: ConnectionTrait>(
             retry_after_secs: u64::try_from(row.retry_after).unwrap_or(1).max(1),
         }))
     }
+}
+
+/// Whether `key` has already used up `limit` hits in `bucket`'s running window, without counting a
+/// hit. Lets a caller refuse before doing work whose failures are what the bucket counts.
+pub(crate) async fn is_over_limit<C: ConnectionTrait>(
+    conn: &C,
+    bucket: RateBucket,
+    key: &RateKey,
+    limit: u32,
+) -> Result<Option<RateLimited>, DbErr> {
+    let row = HitRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT hit_count, \
+           GREATEST(1, CEIL(EXTRACT(EPOCH FROM (window_started + make_interval(secs => $3) - now()))))::bigint \
+             AS retry_after \
+         FROM oauth_rate_hits \
+         WHERE bucket = $1 AND key_hash = $2 AND window_started > now() - make_interval(secs => $3)",
+        vec![
+            bucket.as_str().into(),
+            key.as_hex().into(),
+            f64::from(bucket.window_secs()).into(),
+        ],
+    ))
+    .one(conn)
+    .await?;
+    Ok(row.and_then(|row| {
+        (u32::try_from(row.hit_count).unwrap_or(u32::MAX) >= limit).then(|| RateLimited {
+            retry_after_secs: u64::try_from(row.retry_after).unwrap_or(1).max(1),
+        })
+    }))
 }
 
 /// Capacity of the per-grant bucket: the burst.
@@ -312,6 +367,9 @@ mod tests {
             (RateBucket::Revoke, "revoke", 30),
             (RateBucket::StreamConnect, "stream_connect", 10),
             (RateBucket::EmbedTicket, "embed_ticket", 60),
+            (RateBucket::InboundAuthFail, "inbound_auth_fail", 30),
+            (RateBucket::InboundSourceMinute, "inbound_source_minute", 120),
+            (RateBucket::InboundSourceDay, "inbound_source_day", 20_000),
         ];
         assert_eq!(table.len(), RateBucket::ALL.len());
         for (bucket, name, limit) in table {

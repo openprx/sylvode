@@ -322,3 +322,22 @@ transport = "stdio"
 
 # Origins allowed to embed Sylvode views in a frame (cross-origin embedding). Default: none.
 # embed_frame_ancestors = []
+
+
+# ---------------------------------------------------------------------------------------------
+# [inbound] — the alert chain: external security products post events to
+# POST /api/v1/inbound/events with a per-project source credential. Optional; off by default.
+#
+# With enabled = false the endpoint answers 503 to every caller. Sources and alert rules are
+# managed by workspace owners and admins through the API. Defaults shown; the accepted range is in
+# brackets.
+# ---------------------------------------------------------------------------------------------
+[inbound]
+enabled = false
+# max_body_bytes = 65536                          # [4096, 262144]
+# signature_tolerance_secs = 300                  # [30, 900] allowed clock difference of a signed request
+# auth_failures_per_minute_per_ip = 30            # [1, 1000]
+# max_active_alert_tasks_per_workspace = 5        # [1, 100] bot tasks that alerts may have active at once
+# max_alerts_per_rule_per_hour = 60               # [1, 10000] work items one rule may open per hour
+# event_retention_days = 30                       # [1, 365] how long stored events are kept
+# followup_interval_secs = 2                      # [1, 60] how often the worker looks for ended alert tasks

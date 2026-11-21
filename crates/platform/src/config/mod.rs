@@ -45,6 +45,7 @@
 
 mod cidr;
 mod error;
+mod inbound;
 mod oauth;
 mod raw;
 mod secret;
@@ -57,6 +58,7 @@ use uuid::Uuid;
 
 pub use cidr::IpCidr;
 pub use error::{ConfigError, EXAMPLE_CONFIG_PATH};
+pub use inbound::InboundConfig;
 pub use oauth::{
     DEFAULT_ACCESS_TOKEN_TTL_SECONDS, DEFAULT_AUTHORIZATION_CODE_TTL_SECONDS, DEFAULT_EVENT_BACKFILL_MAX_AGE_HOURS,
     DEFAULT_EVENT_BACKFILL_MAX_EVENTS, DEFAULT_EVENT_FEED_RETENTION_DAYS, DEFAULT_GRANT_MAX_LIFETIME_DAYS,
@@ -144,6 +146,8 @@ pub struct OpenPrConfig {
     pub flow: FlowConfig,
     /// `None` unless `[oauth] issuer` is set: the authorization server is off by default.
     pub oauth: Option<OAuthConfig>,
+    /// `[inbound]`: the alert chain's inbound endpoint, off unless `enabled = true`.
+    pub inbound: InboundConfig,
 }
 
 impl OpenPrConfig {

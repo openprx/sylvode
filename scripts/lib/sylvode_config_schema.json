@@ -51,6 +51,16 @@
       "event_backfill_max_age_hours",
       "max_streams_per_process",
       "embed_frame_ancestors"
+    ],
+    "inbound": [
+      "enabled",
+      "max_body_bytes",
+      "signature_tolerance_secs",
+      "auth_failures_per_minute_per_ip",
+      "max_active_alert_tasks_per_workspace",
+      "max_alerts_per_rule_per_hour",
+      "event_retention_days",
+      "followup_interval_secs"
     ]
   },
   "retired": {

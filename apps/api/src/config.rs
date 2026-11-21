@@ -18,7 +18,8 @@
 use std::sync::{Arc, OnceLock};
 
 use platform::config::{
-    DEFAULT_STORAGE_DIR, FlowConfig, IpCidr, OAuthConfig, OpenPrConfig, OutboundConfig, StorageBackend, StorageConfig,
+    DEFAULT_STORAGE_DIR, FlowConfig, InboundConfig, IpCidr, OAuthConfig, OpenPrConfig, OutboundConfig, StorageBackend,
+    StorageConfig,
 };
 
 use crate::security::default_trusted_proxies;
@@ -33,6 +34,8 @@ pub struct RuntimeConfig {
     pub trusted_proxies: Vec<IpCidr>,
     /// The authorization server settings, `None` when `[oauth] issuer` is not configured.
     pub oauth: Option<Arc<OAuthConfig>>,
+    /// The alert chain's inbound endpoint settings (`[inbound]`, off by default).
+    pub inbound: InboundConfig,
 }
 
 impl RuntimeConfig {
@@ -48,6 +51,7 @@ impl RuntimeConfig {
                 .clone()
                 .unwrap_or_else(default_trusted_proxies),
             oauth: config.oauth.clone().map(Arc::new),
+            inbound: config.inbound,
         }
     }
 
@@ -73,6 +77,7 @@ impl RuntimeConfig {
             flow: FlowConfig::default(),
             trusted_proxies: default_trusted_proxies(),
             oauth: None,
+            inbound: InboundConfig::default(),
         }
     }
 }
