@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use super::checks::Accepted;
+use super::config::RunnerConfig;
 use crate::config::{CliAgentConfig, Config};
 use crate::dispatcher::{DEFAULT_MCP_INSTRUCTIONS, render_template, run_cli_executor};
 
@@ -20,12 +21,17 @@ pub const UNFINISHED_REASON: &str = "agent ended without completing or failing t
 /// The settings of the run, built from `[runner.cli.<cli>]`, `[runner.mcp]` and the canonical
 /// directory.
 pub fn cli_settings(config: &Config, accepted: &Accepted) -> CliAgentConfig {
-    let runner = &config.runner;
-    let dir = accepted.dir.to_string_lossy();
-    let mut cfg = match accepted.cli.as_str() {
+    settings_for(&config.runner, &accepted.cli, &accepted.dir.to_string_lossy())
+}
+
+/// The settings of `cli` in `dir` as the headless executor takes them. The interactive launch
+/// validates its permissions through the same settings, so both channels refuse the same
+/// combinations.
+pub fn settings_for(runner: &RunnerConfig, cli: &str, dir: &str) -> CliAgentConfig {
+    let mut cfg = match cli {
         "claude" => {
             let claude = &runner.cli.claude;
-            let mut cfg = CliAgentConfig::headless("claude-code", &dir, RUN_TIMEOUT_SECS);
+            let mut cfg = CliAgentConfig::headless("claude-code", dir, RUN_TIMEOUT_SECS);
             cfg.permission_mode = Some(claude.permission_mode.clone());
             if !claude.allowed_tools.is_empty() || claude.allow_write_call {
                 let mut tools = claude.allowed_tools.clone();
@@ -42,12 +48,12 @@ pub fn cli_settings(config: &Config, accepted: &Accepted) -> CliAgentConfig {
         }
         "codex" => {
             let codex = &runner.cli.codex;
-            let mut cfg = CliAgentConfig::headless("codex", &dir, RUN_TIMEOUT_SECS);
+            let mut cfg = CliAgentConfig::headless("codex", dir, RUN_TIMEOUT_SECS);
             cfg.sandbox = Some(codex.sandbox.clone());
             cfg.dangerously_bypass_permissions = codex.dangerously_bypass_permissions;
             cfg
         }
-        _ => CliAgentConfig::headless("opencode", &dir, RUN_TIMEOUT_SECS),
+        _ => CliAgentConfig::headless("opencode", dir, RUN_TIMEOUT_SECS),
     };
     cfg.mcp_config_path.clone_from(&runner.mcp.mcp_config_path);
     cfg

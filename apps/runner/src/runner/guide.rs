@@ -149,7 +149,7 @@ const DIR_FLAGS: OFlag = OFlag::O_RDONLY
     .union(OFlag::O_CLOEXEC);
 
 /// What is at a name inside a directory.
-enum Entry {
+pub(super) enum Entry {
     Absent,
     Dir,
     File,
@@ -157,7 +157,7 @@ enum Entry {
     Other,
 }
 
-fn classify(parent: &impl AsFd, name: &str) -> Result<Entry, String> {
+pub(super) fn classify(parent: &impl AsFd, name: &str) -> Result<Entry, String> {
     match fstatat(parent, name, nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW) {
         Ok(stat) => {
             let kind = SFlag::from_bits_truncate(stat.st_mode as nix::libc::mode_t) & SFlag::S_IFMT;
@@ -174,7 +174,7 @@ fn classify(parent: &impl AsFd, name: &str) -> Result<Entry, String> {
     }
 }
 
-fn open_root(project_dir: &Path) -> Result<OwnedFd, String> {
+pub(super) fn open_root(project_dir: &Path) -> Result<OwnedFd, String> {
     nix::fcntl::open(
         project_dir,
         OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
@@ -183,12 +183,12 @@ fn open_root(project_dir: &Path) -> Result<OwnedFd, String> {
     .map_err(|e| errno_err("could not open the project directory", e))
 }
 
-fn open_dir(parent: &impl AsFd, name: &str) -> Result<OwnedFd, String> {
+pub(super) fn open_dir(parent: &impl AsFd, name: &str) -> Result<OwnedFd, String> {
     openat(parent, name, DIR_FLAGS, Mode::empty()).map_err(|e| errno_err("could not open a directory", e))
 }
 
 /// A regular file read in full, up to a cap.
-enum Read_ {
+pub(super) enum Read_ {
     Absent,
     /// A symbolic link or anything that is not a regular file.
     Foreign,
@@ -201,7 +201,7 @@ enum Read_ {
 
 /// Reads `name` in `parent`: never follows a link, never blocks on a FIFO, checks the type on the
 /// opened handle, and reads at most `cap` bytes.
-fn read_regular(parent: &impl AsFd, name: &str, cap: u64) -> Result<Read_, String> {
+pub(super) fn read_regular(parent: &impl AsFd, name: &str, cap: u64) -> Result<Read_, String> {
     let fd = match openat(
         parent,
         name,
@@ -244,7 +244,7 @@ fn mode_of(mode: u32) -> Mode {
 
 /// Creates `name` in `parent` exclusively (never through a link, never over an existing file) with
 /// exactly `mode` and writes `data`.
-fn create_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result<(), String> {
+pub(super) fn create_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result<(), String> {
     let fd = openat(
         parent,
         name,
@@ -260,7 +260,7 @@ fn create_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result
 
 /// Replaces `name` in `parent` with `data` through an exclusively created temporary file and a
 /// rename, with the given fixed mode.
-fn replace_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result<(), String> {
+pub(super) fn replace_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result<(), String> {
     let temp = format!(".{name}.sylvode-tmp-{}", uuid::Uuid::new_v4().simple());
     create_file(parent, &temp, data, mode)?;
     renameat(parent, temp.as_str(), parent, name).map_err(|e| {

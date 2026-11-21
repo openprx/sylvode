@@ -662,6 +662,10 @@ impl Config {
         if runners.is_empty() {
             return Ok(());
         }
+        for cli in ["claude", "codex"] {
+            let settings = crate::runner::headless::settings_for(&self.runner, cli, "/");
+            ExecutorPermissions::from_config(&settings).map_err(|e| format!("runner.cli.{cli}: {e}"))?;
+        }
         let cfg = &self.ai_task_callback;
         for agent in runners {
             let id = &agent.id;

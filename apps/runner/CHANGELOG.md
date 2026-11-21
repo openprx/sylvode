@@ -13,6 +13,7 @@ together as 0.3.53.
 
 ## Unreleased
 
+- Interactive session command lines for claude and codex with the documented permission posture (`launch.rs`), and the state directory with the per-bot MCP files and the claude hook settings (`files.rs`): directories 0700, files 0600 from creation, no token on any command line, rewritten only when they differ.
 - New agent type `runner`: executes a task according to the project's execution settings in Sylvode (headless channel; the tmux channel answers `tmux_unavailable` until the session manager arrives). New `[runner]` configuration (`allowed_roots`, `state_dir`, `[runner.tmux]`, `[runner.cli.*]`, `[runner.mcp]`); the configuration block Sylvode issues for a connected bot loads as it is. Deliveries are checked before the answer, with refusal codes (`protocol_mismatch`, `delivery_mismatch`, `execution_disabled`, `invalid_project_key`, `session_name_collision`, `path_missing`, `path_unreadable`, `path_not_directory`, `path_outside_allowlist`, `cli_disabled`, `cli_unavailable`, `tmux_unavailable`, `runner_agent_disabled`); the working directory must lie below a canonicalised allowed root.
 - Every configuration table refuses unknown keys.
 - The runner checks the task protocol with the API at start-up and every report interval, sends a sanitised report (`PUT /api/v1/ai/runner/report`), and `/health` answers JSON with `protocol: {runner, api, state}`.

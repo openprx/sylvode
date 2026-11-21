@@ -1,0 +1,320 @@
+//! The runner's state directory and the files in it that hold secrets or drive hooks (design
+//! section 6.7).
+//!
+//! ```text
+//! <state_dir>/                     0700, created with that mode
+//!   runner.lock                    exclusive flock: one runner per state directory
+//!   hook.sock                      the hook socket
+//!   mcp/<bot_id>.toml              0600: the bot's token and the MCP server's settings
+//!   mcp/<bot_id>.claude.json       0600: references the TOML, holds no token
+//!   sessions/<KEY>/claude-settings.json   0600: the hook commands
+//! ```
+//!
+//! Every directory the runner creates is made with mode 0700 and every file with mode 0600 at
+//! creation (the mode is given to `open`, never changed afterwards), exclusively and through a
+//! temporary name followed by a rename, so no reader sees a half-written file and no moment exists
+//! at which a secret is group- or world-readable. A file is rewritten only when its content (or
+//! its mode) differs. Directories are opened without following symbolic links, so a link planted
+//! under the state directory is refused. A path component is a validated bot UUID or session key,
+//! never text from a task. Tokens are never logged: the types that hold them redact `Debug`.
+
+use std::fs::File;
+use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Path, PathBuf};
+
+use nix::errno::Errno;
+use nix::sys::stat::{Mode, fstat, mkdirat};
+use serde_json::json;
+
+use super::guide::{Entry, Read_, classify, create_file, open_dir, open_root, read_regular, replace_file};
+use super::launch::{LaunchError, LaunchFiles, SERVER_NAME, claude_hook_command};
+use super::tmux::SessionKey;
+
+/// The most bytes of one of these files that are read back.
+const MAX_FILE_BYTES: u64 = 64 * 1024;
+
+/// The events the claude hooks report.
+pub const CLAUDE_EVENTS: [&str; 4] = ["SessionStart", "UserPromptSubmit", "Stop", "Notification"];
+
+const fn private_mode() -> Mode {
+    Mode::from_bits_truncate(0o700)
+}
+
+/// What the per-bot MCP configuration needs. `Debug` hides the token.
+pub struct BotFiles<'a> {
+    pub bot_id: &'a str,
+    pub api_url: &'a str,
+    pub token: &'a str,
+    pub tool_mode: &'a str,
+    pub allow_write_call: bool,
+}
+
+impl std::fmt::Debug for BotFiles<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BotFiles")
+            .field("bot_id", &self.bot_id)
+            .field("api_url", &self.api_url)
+            .field("token", &"<redacted>")
+            .field("tool_mode", &self.tool_mode)
+            .field("allow_write_call", &self.allow_write_call)
+            .finish()
+    }
+}
+
+/// What was written.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Written {
+    pub changed: bool,
+}
+
+/// The state directory.
+#[derive(Debug)]
+pub struct StateDir {
+    root: PathBuf,
+    fd: OwnedFd,
+}
+
+fn valid_bot_id(bot_id: &str) -> bool {
+    uuid::Uuid::parse_str(bot_id).is_ok_and(|id| id.hyphenated().to_string() == bot_id.to_ascii_lowercase())
+}
+
+/// Opens (and when missing creates, with mode 0700) a directory below `parent`, never through a
+/// link, and refuses one that group or others can reach.
+fn private_dir(parent: &impl AsFd, name: &str) -> Result<OwnedFd, String> {
+    match classify(parent, name)? {
+        Entry::Absent => {
+            mkdirat(parent, name, private_mode()).map_err(|e| format!("could not create `{name}`: {e}"))?;
+        }
+        Entry::Dir => {}
+        Entry::File | Entry::Other => return Err(format!("`{name}` in the state directory is not a plain directory")),
+    }
+    let fd = open_dir(parent, name)?;
+    check_private(&fd, name)?;
+    Ok(fd)
+}
+
+fn check_private(fd: &OwnedFd, what: &str) -> Result<(), String> {
+    let stat = fstat(fd).map_err(|e| format!("could not inspect `{what}`: {e}"))?;
+    let mode = u32::from(stat.st_mode as u16) & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(format!(
+            "`{what}` is accessible to group or others (mode {mode:o}); it holds secrets, so run chmod 700 on it"
+        ));
+    }
+    Ok(())
+}
+
+impl StateDir {
+    /// Opens the state directory, creating it (and missing parents) with mode 0700.
+    ///
+    /// # Errors
+    ///
+    /// A message when it cannot be created or opened, or is reachable by group or others.
+    pub fn open(root: &Path) -> Result<Self, String> {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(root)
+            .map_err(|e| format!("could not create the state directory: {}", e.kind()))?;
+        let fd = open_root(root)?;
+        check_private(&fd, "the state directory")?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            fd,
+        })
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn hook_socket(&self) -> PathBuf {
+        self.root.join("hook.sock")
+    }
+
+    pub fn mcp_toml(&self, bot_id: &str) -> PathBuf {
+        self.root.join("mcp").join(format!("{bot_id}.toml"))
+    }
+
+    pub fn claude_mcp_json(&self, bot_id: &str) -> PathBuf {
+        self.root.join("mcp").join(format!("{bot_id}.claude.json"))
+    }
+
+    pub fn claude_settings(&self, key: &SessionKey) -> PathBuf {
+        self.root
+            .join("sessions")
+            .join(key.as_str())
+            .join("claude-settings.json")
+    }
+
+    /// Takes the exclusive lock of this state directory. Hold the result for the life of the
+    /// process; a second runner on the same directory gets an error.
+    ///
+    /// # Errors
+    ///
+    /// A message when the lock is held or cannot be taken.
+    pub fn lock(&self) -> Result<nix::fcntl::Flock<File>, String> {
+        let path = self.root.join("runner.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .mode_0600()
+            .open(&path)
+            .map_err(|e| format!("could not open runner.lock: {}", e.kind()))?;
+        nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusiveNonblock).map_err(|(_, errno)| {
+            if errno == Errno::EWOULDBLOCK {
+                "another runner is using this state directory (runner.lock is held)".to_string()
+            } else {
+                format!("could not lock runner.lock: {errno}")
+            }
+        })
+    }
+
+    /// Writes the per-bot files: `mcp/<bot_id>.toml` (the token) and `mcp/<bot_id>.claude.json`
+    /// (which references the TOML and holds no token).
+    ///
+    /// # Errors
+    ///
+    /// A message (never the token).
+    pub fn write_bot_files(&self, bot: &BotFiles<'_>, mcp_server: &Path) -> Result<Written, String> {
+        if !valid_bot_id(bot.bot_id) {
+            return Err("the bot id is not a UUID".to_string());
+        }
+        if !bot.token.starts_with("opr_") || bot.token.chars().any(|c| c.is_control() || c.is_whitespace()) {
+            return Err("the bot token has an unexpected shape".to_string());
+        }
+        let toml = format!(
+            "# Written by sylvode-runner; rewritten when it differs. Holds the bot's token: keep mode 0600.\n\
+             [mcp]\napi_url = {}\nbot_token = {}\ntool_mode = {}\nallow_write_call = {}\n",
+            super::launch::toml_string(bot.api_url),
+            super::launch::toml_string(bot.token),
+            super::launch::toml_string(bot.tool_mode),
+            bot.allow_write_call
+        );
+        let toml_path = self.mcp_toml(bot.bot_id);
+        let server = mcp_server
+            .to_str()
+            .ok_or_else(|| "the MCP server path is not UTF-8".to_string())?;
+        let toml_text = toml_path
+            .to_str()
+            .ok_or_else(|| "the MCP config path is not UTF-8".to_string())?;
+        let json = serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                SERVER_NAME: {
+                    "type": "stdio",
+                    "command": server,
+                    "args": ["serve", "--transport", "stdio", "--config", toml_text],
+                }
+            }
+        }))
+        .map_err(|e| e.to_string())?;
+        let mcp = private_dir(&self.fd, "mcp")?;
+        let first = write_private(&mcp, &format!("{}.toml", bot.bot_id), toml.as_bytes())?;
+        let second = write_private(
+            &mcp,
+            &format!("{}.claude.json", bot.bot_id),
+            format!("{json}\n").as_bytes(),
+        )?;
+        Ok(Written {
+            changed: first || second,
+        })
+    }
+
+    /// Writes `sessions/<KEY>/claude-settings.json`: the four hooks, each the `hook` subcommand.
+    ///
+    /// # Errors
+    ///
+    /// A message when a path cannot be used or a file cannot be written.
+    pub fn write_session_settings(&self, key: &SessionKey, files: &LaunchFiles<'_>) -> Result<Written, String> {
+        let mut hooks = serde_json::Map::new();
+        for event in CLAUDE_EVENTS {
+            let command = claude_hook_command(files, key, event).map_err(|e: LaunchError| e.to_string())?;
+            hooks.insert(
+                event.to_string(),
+                json!([{"hooks": [{"type": "command", "command": command}]}]),
+            );
+        }
+        let text = serde_json::to_string_pretty(&json!({"hooks": hooks})).map_err(|e| e.to_string())?;
+        let sessions = private_dir(&self.fd, "sessions")?;
+        let dir = private_dir(&sessions, key.as_str())?;
+        write_private(&dir, "claude-settings.json", format!("{text}\n").as_bytes()).map(|changed| Written { changed })
+    }
+
+    /// Modes that are wider than allowed, for `doctor`: the state directory, its subdirectories
+    /// and every file in `mcp/` and `sessions/*/`.
+    pub fn wide_modes(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut check = |path: &Path, limit: u32| {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::symlink_metadata(path)
+                && meta.permissions().mode() & 0o777 & !limit != 0
+            {
+                found.push(format!(
+                    "{} has mode {:o}",
+                    path.display(),
+                    meta.permissions().mode() & 0o777
+                ));
+            }
+        };
+        check(&self.root, 0o700);
+        for sub in ["mcp", "sessions"] {
+            let dir = self.root.join(sub);
+            check(&dir, 0o700);
+            for (path, limit) in entries_below(&dir) {
+                check(&path, limit);
+            }
+        }
+        found
+    }
+}
+
+/// The entries of `dir` and of its subdirectories, with the widest mode each may have.
+fn entries_below(dir: &Path) -> Vec<(PathBuf, u32)> {
+    let mut out = Vec::new();
+    let Ok(read) = std::fs::read_dir(dir) else { return out };
+    for entry in read.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            out.push((path.clone(), 0o700));
+            out.extend(
+                std::fs::read_dir(&path)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Result::ok)
+                    .map(|file| (file.path(), 0o600)),
+            );
+        } else {
+            out.push((path, 0o600));
+        }
+    }
+    out
+}
+
+/// Writes `content` to `name` in `dir` with mode 0600 only when the file differs (or has a wider
+/// mode); returns whether it wrote.
+fn write_private(dir: &OwnedFd, name: &str, content: &[u8]) -> Result<bool, String> {
+    match read_regular(dir, name, MAX_FILE_BYTES)? {
+        Read_::Data { bytes, mode } if bytes == content && mode.trailing_zeros() >= 6 => return Ok(false),
+        Read_::Absent => create_file(dir, name, content, 0o600).or_else(|e| {
+            // A file that appeared meanwhile is replaced like any other.
+            replace_file(dir, name, content, 0o600).map_err(|_| e)
+        })?,
+        // Different content, a wider mode, a link or a special file: replaced through a temporary
+        // file and a rename, which replaces a link itself rather than writing through it.
+        _ => replace_file(dir, name, content, 0o600)?,
+    }
+    Ok(true)
+}
+
+trait OpenOptionsMode {
+    fn mode_0600(&mut self) -> &mut Self;
+}
+
+impl OpenOptionsMode for std::fs::OpenOptions {
+    fn mode_0600(&mut self) -> &mut Self {
+        use std::os::unix::fs::OpenOptionsExt;
+        self.mode(0o600)
+    }
+}

@@ -17,7 +17,11 @@ use crate::config::{AgentConfig, AiTaskCallback, Config};
 
 pub mod checks;
 pub mod config;
+#[allow(dead_code, reason = "used by the session manager, which is the next package")]
+pub mod files;
 pub mod headless;
+#[allow(dead_code, reason = "used by the session manager, which is the next package")]
+pub mod launch;
 pub mod paths;
 pub mod sv_client;
 
@@ -33,7 +37,11 @@ pub mod tmux;
 #[cfg(test)]
 mod checks_tests;
 #[cfg(test)]
+mod files_tests;
+#[cfg(test)]
 mod guide_tests;
+#[cfg(test)]
+mod launch_tests;
 #[cfg(test)]
 mod message_tests;
 #[cfg(test)]
