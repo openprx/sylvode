@@ -491,12 +491,16 @@ pub async fn bot_or_user_auth_middleware(
             /// A project bot connection made this bot: its token is limited to the projects it is
             /// connected to (`runner_bot_scope`).
             runner: bool,
+            /// The bot's user is enabled. An instance administrator who disables the user stops
+            /// the token, whatever the token's own flag says.
+            user_active: bool,
         }
 
         let bot = BotRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"SELECT id, workspace_id, permissions, transport_surface, is_active, expires_at,
-                      EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner
+                      EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner,
+                      COALESCE((SELECT u.is_active FROM users u WHERE u.id = workspace_bots.id), false) AS user_active
                FROM workspace_bots
                WHERE token_hash = $1",
             vec![token_hash.into()],
@@ -506,7 +510,7 @@ pub async fn bot_or_user_auth_middleware(
         .map_err(ApiError::internal_database_failure)?
         .ok_or_else(|| ApiError::Unauthorized("invalid bot token".to_string()))?;
 
-        if !bot.is_active {
+        if !bot.is_active || !bot.user_active {
             return Err(ApiError::Unauthorized("bot token is disabled".to_string()));
         }
         if let Some(expires_at) = bot.expires_at

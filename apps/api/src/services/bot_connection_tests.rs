@@ -1831,3 +1831,27 @@ async fn an_outsider_cannot_tell_a_missing_project_from_one_that_exists() {
     }
     scratch.drop_self().await;
 }
+
+/// An instance administrator who disables a bot's user stops its token at once, and enabling the
+/// user brings it back: the token path reads `users.is_active` as well as the token's own flag.
+#[tokio::test]
+async fn disabling_the_bot_user_stops_its_token() {
+    let scratch = scratch_or_skip!("bc_user_disable");
+    let db = &scratch.db;
+    let w = world(db, "ud").await;
+    let first = expect_connect(&w, w.tenant.project_id, new_bot("Disabled user bot")).await;
+    let token = block_token(first.config_block.as_ref().expect("block"));
+    let bot = first.connection.bot.id;
+    assert!(authenticated(&protocol_with(db, &token, Some("mcp_stdio")).await));
+
+    crate::routes::admin::delete_user(State(w.state.clone()), Path(bot))
+        .await
+        .expect("the admin route disables the user");
+    let refused = protocol_with(db, &token, Some("mcp_stdio")).await;
+    assert!(!authenticated(&refused), "{refused:?}");
+    assert_eq!(refused.1["code"], 401);
+
+    exec(db, "UPDATE users SET is_active = true WHERE id = $1", vec![bot.into()]).await;
+    assert!(authenticated(&protocol_with(db, &token, Some("mcp_stdio")).await));
+    scratch.drop_self().await;
+}
