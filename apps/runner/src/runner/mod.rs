@@ -34,6 +34,8 @@ pub mod paths;
 pub mod queue;
 #[allow(dead_code, reason = "release, entries and owner are used by the sessions command")]
 pub mod registry;
+#[allow(dead_code, reason = "wired in by the application")]
+pub mod session;
 pub mod sv_client;
 
 #[allow(dead_code, reason = "used by the session manager, which is a later package")]
@@ -48,11 +50,15 @@ pub mod tmux;
 #[cfg(test)]
 mod checks_tests;
 #[cfg(test)]
+mod detect_tests;
+#[cfg(test)]
 mod files_tests;
 #[cfg(test)]
 mod guide_tests;
 #[cfg(test)]
 mod headless_tests;
+#[cfg(test)]
+mod hooks_tests;
 #[cfg(test)]
 mod launch_tests;
 #[cfg(test)]
@@ -62,9 +68,13 @@ mod message_tests;
 #[cfg(test)]
 mod paths_tests;
 #[cfg(test)]
+mod queue_tests;
+#[cfg(test)]
 mod registry_tests;
 #[cfg(test)]
 mod sanitize_tests;
+#[cfg(test)]
+mod session_tests;
 #[cfg(test)]
 mod sv_client_tests;
 
@@ -284,11 +294,32 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
         Verdict::Ignored(reason) => Ok(json!({"status": "ignored", "reason": reason, "agent": agent.id})),
         Verdict::Refused(refusal) => Ok(refused(agent, refusal.code, &refusal.reason)),
         Verdict::Run(accepted) if accepted.channel == checks::Channel::Tmux => {
-            let _ = accepted;
-            Ok(refused(
-                agent,
-                "tmux_unavailable",
-                "the tmux channel arrives with the session manager",
+            let Some(sessions) = &state.sessions else {
+                return Ok(refused(
+                    agent,
+                    "runner_agent_disabled",
+                    "the tmux channel is not available on this runner",
+                ));
+            };
+            let key = accepted.project_key.clone();
+            let queued = sessions.enqueue(session::TmuxTask::from_accepted(&accepted)).await;
+            Ok(queued.map_or_else(
+                || {
+                    refused(
+                        agent,
+                        "runner_agent_disabled",
+                        "the session of this project could not take the task",
+                    )
+                },
+                |position| {
+                    json!({
+                        "status": "dispatched",
+                        "channel": "tmux",
+                        "agent": agent.id,
+                        "session": key,
+                        "queue_position": position,
+                    })
+                },
             ))
         }
         Verdict::Run(accepted) => {

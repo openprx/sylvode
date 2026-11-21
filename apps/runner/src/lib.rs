@@ -34,4 +34,5 @@ pub(crate) struct AppState {
     pub replay: tokio::sync::Mutex<replay::ReplayGuard>,
     pub runner: runner::RunnerRuntime,
     pub handshake: handshake::Handshake,
+    pub sessions: Option<std::sync::Arc<runner::session::SessionManager>>,
 }

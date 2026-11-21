@@ -62,6 +62,18 @@ impl std::fmt::Debug for BotFiles<'_> {
     }
 }
 
+/// What the runner knows about a session it created: which project, which pane, which CLI.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionRecord {
+    pub key: String,
+    pub project_id: String,
+    pub pane_id: String,
+    pub pane_pid: u32,
+    pub cli: String,
+    pub dir: String,
+    pub started_at: u64,
+}
+
 /// What was written.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Written {
@@ -240,6 +252,54 @@ impl StateDir {
         let sessions = private_dir(&self.fd, "sessions")?;
         let dir = private_dir(&sessions, key.as_str())?;
         write_private(&dir, "claude-settings.json", format!("{text}\n").as_bytes()).map(|changed| Written { changed })
+    }
+
+    /// Writes `sessions/<KEY>/session.json`: what the runner knows about a session it created.
+    ///
+    /// # Errors
+    ///
+    /// A message when it cannot be written.
+    pub fn write_session_record(&self, record: &SessionRecord) -> Result<(), String> {
+        let key = SessionKey::new(&record.key).map_err(|e| e.to_string())?;
+        let text = serde_json::to_string_pretty(record).map_err(|e| e.to_string())?;
+        let sessions = private_dir(&self.fd, "sessions")?;
+        let dir = private_dir(&sessions, key.as_str())?;
+        write_private(&dir, "session.json", format!("{text}\n").as_bytes()).map(|_| ())
+    }
+
+    /// Reads `sessions/<KEY>/session.json`; `None` when there is none or it is not ours (a link, a
+    /// special file, unreadable or not the expected shape).
+    pub fn read_session_record(&self, key: &SessionKey) -> Option<SessionRecord> {
+        let sessions = open_dir(&self.fd, "sessions").ok()?;
+        let dir = open_dir(&sessions, key.as_str()).ok()?;
+        match read_regular(&dir, "session.json", MAX_FILE_BYTES).ok()? {
+            Read_::Data { bytes, .. } => serde_json::from_slice(&bytes).ok(),
+            _ => None,
+        }
+    }
+
+    /// The keys that have a `session.json`, for the `sessions` command.
+    pub fn recorded_keys(&self) -> Vec<String> {
+        let Ok(sessions) = open_dir(&self.fd, "sessions") else {
+            return Vec::new();
+        };
+        let mut keys: Vec<String> = std::fs::read_dir(self.root.join("sessions"))
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| SessionKey::new(name).is_ok())
+            .filter(|name| {
+                open_dir(&sessions, name).ok().is_some_and(|dir| {
+                    matches!(
+                        read_regular(&dir, "session.json", MAX_FILE_BYTES),
+                        Ok(Read_::Data { .. })
+                    )
+                })
+            })
+            .collect();
+        keys.sort();
+        keys
     }
 
     /// Modes that are wider than allowed, for `doctor`: the state directory, its subdirectories

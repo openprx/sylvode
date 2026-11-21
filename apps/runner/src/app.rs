@@ -39,11 +39,38 @@ Options:
 enum Command {
     Help,
     Version,
-    Serve { config_path: String },
+    Serve {
+        config_path: String,
+    },
+    /// `hook --cli C --session K --event E --socket P`: report a CLI turn event to the runner.
+    Hook {
+        cli: String,
+        session: String,
+        event: String,
+        socket: String,
+    },
 }
 
-fn parse_command(first_arg: Option<OsString>) -> Result<Command, String> {
-    let Some(arg) = first_arg else {
+/// The value after `flag` in `args`; every other argument (codex appends a JSON one) is ignored.
+fn flag_value(args: &[OsString], flag: &str) -> String {
+    args.iter()
+        .position(|arg| arg == flag)
+        .and_then(|at| args.get(at + 1))
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn parse_command(args: &[OsString]) -> Result<Command, String> {
+    if args.first().is_some_and(|first| first == "hook") {
+        let rest = args.get(1..).unwrap_or_default();
+        return Ok(Command::Hook {
+            cli: flag_value(rest, "--cli"),
+            session: flag_value(rest, "--session"),
+            event: flag_value(rest, "--event"),
+            socket: flag_value(rest, "--socket"),
+        });
+    }
+    let Some(arg) = args.first().cloned() else {
         return Ok(Command::Serve {
             config_path: DEFAULT_CONFIG_PATH.to_string(),
         });
@@ -84,7 +111,8 @@ fn write_stderr_line(text: &str) {
 
 /// Runs the service.
 pub fn run() -> ExitCode {
-    let command = match parse_command(std::env::args_os().nth(1)) {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let command = match parse_command(&args) {
         Ok(command) => command,
         Err(e) => {
             write_stderr_line(&format!("error: {e}"));
@@ -96,6 +124,18 @@ pub fn run() -> ExitCode {
         Command::Help => write_stdout(HELP),
         Command::Version => write_stdout(&version_line()),
         Command::Serve { config_path } => serve_blocking(&config_path),
+        Command::Hook {
+            cli,
+            session,
+            event,
+            socket,
+        } => {
+            // Never reads stdin, never fails: a hook must not block or break the CLI that runs it.
+            if !socket.is_empty() {
+                crate::runner::hooks::send(std::path::Path::new(&socket), &cli, &session, &event);
+            }
+            ExitCode::SUCCESS
+        }
     }
 }
 
@@ -188,12 +228,25 @@ async fn serve(config: config::Config) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let handshake = crate::handshake::Handshake::new(has_runner_agents);
+    // One runner per state directory: a second instance refuses to start.
+    let _state_lock = match (has_runner_agents, &runner.state) {
+        (true, Ok(dir)) => match dir.lock() {
+            Ok(lock) => Some(lock),
+            Err(e) => {
+                tracing::error!("{e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        _ => None,
+    };
+    let sessions = start_sessions(&config, &runner, &background);
     let state = Arc::new(AppState {
         config,
         background: background.clone(),
         replay,
         runner,
         handshake,
+        sessions,
     });
 
     if has_runner_agents {
@@ -297,6 +350,47 @@ async fn serve(config: config::Config) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The session manager and the hook socket, when there are `runner` agents and a usable state
+/// directory. Without them the tmux channel is refused.
+fn start_sessions(
+    config: &config::Config,
+    runner: &crate::runner::RunnerRuntime,
+    background: &Background,
+) -> Option<Arc<crate::runner::session::SessionManager>> {
+    use sylvode_prereq::{Checker, InstallKind};
+    if !config.agents.iter().any(|agent| agent.agent_type == "runner") {
+        return None;
+    }
+    let state = runner.state.as_ref().ok()?;
+    let exe = std::env::current_exe().ok()?;
+    let tmux_program = Checker::new(InstallKind::RunnerTmux).locate(&config.runner.tmux.binary);
+    let manager = match crate::runner::session::SessionManager::new(
+        Arc::new(config.clone()),
+        Arc::clone(state),
+        exe,
+        tmux_program,
+        background.clone(),
+    ) {
+        Ok(manager) => Arc::new(manager),
+        Err(e) => {
+            tracing::error!("the tmux channel is not available: {e}");
+            return None;
+        }
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+    if let Err(e) = crate::runner::hooks::listen(&state.hook_socket(), tx) {
+        tracing::error!("the tmux channel is not available: {e}");
+        return None;
+    }
+    let router = Arc::clone(&manager);
+    tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            router.hook(message).await;
+        }
+    });
+    Some(manager)
+}
+
 /// `GET /health`: the service is up; `protocol` is the result of the handshake with Sylvode.
 async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok", "protocol": state.handshake.health()}))
@@ -339,7 +433,7 @@ mod tests {
     #[test]
     fn no_argument_serves_the_default_config() {
         assert_eq!(
-            parse_command(None),
+            parse_command(&[]),
             Ok(Command::Serve {
                 config_path: "config.toml".to_string()
             })
@@ -348,12 +442,12 @@ mod tests {
 
     #[test]
     fn flags_and_paths_are_told_apart() {
-        assert_eq!(parse_command(Some("--help".into())), Ok(Command::Help));
-        assert_eq!(parse_command(Some("-h".into())), Ok(Command::Help));
-        assert_eq!(parse_command(Some("--version".into())), Ok(Command::Version));
-        assert_eq!(parse_command(Some("-V".into())), Ok(Command::Version));
+        assert_eq!(parse_command(&["--help".into()]), Ok(Command::Help));
+        assert_eq!(parse_command(&["-h".into()]), Ok(Command::Help));
+        assert_eq!(parse_command(&["--version".into()]), Ok(Command::Version));
+        assert_eq!(parse_command(&["-V".into()]), Ok(Command::Version));
         assert_eq!(
-            parse_command(Some("/etc/sylvode-runner/config.toml".into())),
+            parse_command(&["/etc/sylvode-runner/config.toml".into()]),
             Ok(Command::Serve {
                 config_path: "/etc/sylvode-runner/config.toml".to_string()
             })
@@ -365,12 +459,12 @@ mod tests {
     #[test]
     fn an_unknown_option_is_a_usage_error() {
         for arg in ["--bogus-flag", "-x", "--", "-", "--config=x.toml"] {
-            let err = parse_command(Some(arg.into())).expect_err("refused");
+            let err = parse_command(&[arg.into()]).expect_err("refused");
             assert!(err.contains(&format!("unknown option `{arg}`")), "{err}");
             assert!(err.contains("--help"), "{err}");
         }
         assert_eq!(
-            parse_command(Some("./-odd.toml".into())),
+            parse_command(&["./-odd.toml".into()]),
             Ok(Command::Serve {
                 config_path: "./-odd.toml".to_string()
             })

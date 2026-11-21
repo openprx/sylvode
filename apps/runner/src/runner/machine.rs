@@ -373,6 +373,15 @@ impl<T: Task> Machine<T> {
         self.drive(now)
     }
 
+    /// The CLI of the session was restarted (a directory or CLI change, or a recovered pane):
+    /// wait for its readiness again.
+    pub const fn on_cli_restarted(&mut self, now: Instant) {
+        self.push_in_flight = false;
+        self.cli_working = false;
+        self.state = State::Starting { since: now };
+        self.starting_dialog = None;
+    }
+
     /// A blocking dialog is on the screen.
     pub fn on_dialog(&mut self, dialog: Dialog, now: Instant) -> Vec<Action<T>> {
         let mut actions = Vec::new();
