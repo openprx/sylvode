@@ -48,6 +48,14 @@ pub enum DispatchOrigin {
     Delegated,
     /// Created by the server itself (the governance watcher, the worker): no caller to refuse.
     System,
+    /// Created by an alert rule for an authenticated inbound event. Guarded like [`Self::Request`]:
+    /// the inbound route never runs inside a delegated request, so the guard only refuses if code
+    /// is wired wrongly. The ids are recorded in the `ai_task.created` business event.
+    InboundRule {
+        rule_id: Uuid,
+        inbound_event_id: Uuid,
+        source_id: Uuid,
+    },
 }
 
 pub struct CreateAiTaskInput {
@@ -74,7 +82,7 @@ pub async fn create_ai_task<C: ConnectionTrait>(
     input: CreateAiTaskInput,
 ) -> Result<Option<AiTaskRow>, ApiError> {
     match input.origin {
-        DispatchOrigin::Request => crate::oauth::delegated::refuse_agent_task()?,
+        DispatchOrigin::Request | DispatchOrigin::InboundRule { .. } => crate::oauth::delegated::refuse_agent_task()?,
         DispatchOrigin::Delegated => return Err(crate::oauth::delegated::agent_task_refused()),
         DispatchOrigin::System => {}
     }
@@ -161,7 +169,7 @@ pub async fn create_ai_task<C: ConnectionTrait>(
         &task,
         "ai_task.created",
         input.actor_id,
-        json!({ "type": "ai_task_service", "actor_id": input.actor_id }),
+        created_event_source(input.origin, input.actor_id),
         json!({
             "task_type": task.task_type,
             "reference_type": task.reference_type,
@@ -173,6 +181,27 @@ pub async fn create_ai_task<C: ConnectionTrait>(
     .await?;
 
     Ok(Some(task))
+}
+
+/// The `source` of the `ai_task.created` business event: the service itself, or the rule and the
+/// inbound event that caused the task.
+fn created_event_source(origin: DispatchOrigin, actor_id: Option<Uuid>) -> Value {
+    match origin {
+        DispatchOrigin::InboundRule {
+            rule_id,
+            inbound_event_id,
+            source_id,
+        } => json!({
+            "type": "inbound_rule",
+            "rule_id": rule_id,
+            "inbound_event_id": inbound_event_id,
+            "source_id": source_id,
+            "actor_id": actor_id,
+        }),
+        DispatchOrigin::Request | DispatchOrigin::Delegated | DispatchOrigin::System => {
+            json!({ "type": "ai_task_service", "actor_id": actor_id })
+        }
+    }
 }
 
 pub async fn insert_ai_task_event<C: ConnectionTrait>(

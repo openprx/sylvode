@@ -1612,6 +1612,8 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
         .merge(routes::flow_surface::seal(flow_surface_routes(&auth_state)))
         // OAuth authorization server: metadata documents and, with later packages, the endpoints.
         .merge(api::oauth::router::routes_with(&auth_state, oauth))
+        // Alert chain: the inbound event endpoint, authenticated by a source credential only.
+        .merge(api::inbound::routes(&auth_state))
         // Label routes (protected)
         .route(
             "/api/v1/workspaces/{workspace_id}/labels",
@@ -4229,10 +4231,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0109_oauth_authorization_server.sql",
         SchemaProbe::Relation("oauth_grants"),
     ),
-    (
-        "0111_alert_chain.sql",
-        SchemaProbe::Relation("inbound_events"),
-    ),
+    ("0111_alert_chain.sql", SchemaProbe::Relation("inbound_events")),
 ];
 
 /// One recorded migration outcome.
