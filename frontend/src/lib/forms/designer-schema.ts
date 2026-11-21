@@ -398,9 +398,50 @@ export function formulaArgsToText(args: unknown[] | undefined): string {
 		.join('\n');
 }
 
+/**
+ * Splits one line on commas that are outside JSON objects, arrays and strings. A line whose
+ * brackets or quotes never close is split on every comma instead.
+ */
+function splitFormulaArgsLine(line: string): string[] {
+	const parts: string[] = [];
+	let current = '';
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+
+	for (const char of line) {
+		if (inString) {
+			current += char;
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+
+		if (char === ',' && depth === 0) {
+			parts.push(current);
+			current = '';
+			continue;
+		}
+
+		if (char === '"' && depth > 0) inString = true;
+		else if (char === '{' || char === '[') depth += 1;
+		else if ((char === '}' || char === ']') && depth > 0) depth -= 1;
+
+		current += char;
+	}
+
+	if (depth > 0 || inString) return line.split(',');
+
+	parts.push(current);
+
+	return parts;
+}
+
 export function parseFormulaArgsText(value: string): unknown[] {
 	return value
-		.split(/[\n,]/)
+		.split('\n')
+		.flatMap(splitFormulaArgsLine)
 		.map((item) => item.trim())
 		.filter(Boolean)
 		.map((item) => {
