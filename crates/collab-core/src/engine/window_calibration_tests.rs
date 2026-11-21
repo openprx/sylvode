@@ -209,6 +209,107 @@ fn window_calibration() {
     let _ = (LoroDoc::new(), TreeID::new(0, 0));
 }
 
+/// A flat page of 400 blocks whose `attributes` hold `count` values made by `value`, put in by
+/// updates of at most 64 KB.
+fn flat_with_values(count: usize, value: &dyn Fn(usize) -> loro::LoroValue) -> Vec<u8> {
+    let mut base = flat_page_of_blocks(400);
+    for index in 0..count {
+        let update = raw_edit(&base, 90_000 + index as u64, |raw| {
+            let list = children(raw);
+            let Some(ValueOrContainer::Container(Container::Map(block))) = list.get(index % 400) else {
+                panic!()
+            };
+            let attributes = match block.get("attributes") {
+                Some(ValueOrContainer::Container(Container::Map(a))) => a,
+                _ => block.insert_container("attributes", LoroMap::new()).unwrap(),
+            };
+            attributes.insert(&format!("p{index}"), value(index)).unwrap();
+        });
+        assert!(update.len() <= 65_536, "{} bytes", update.len());
+        base = super::hand_encoded::accepted(&base, &update).as_ref().clone();
+    }
+    base
+}
+
+fn flat_page_of_blocks(blocks: usize) -> Vec<u8> {
+    let engine = LoroCollabEngine::new_empty(61);
+    let list: Vec<EditorInitialBlock> = (0..blocks)
+        .map(|index| EditorInitialBlock {
+            id: format!("b{index}"),
+            kind: "paragraph".into(),
+            text: "x".into(),
+            indent: 0,
+            level: None,
+        })
+        .collect();
+    initialize_editor_doc(&engine.doc, &list).unwrap();
+    engine.doc.commit();
+    engine.export_snapshot().unwrap()
+}
+
+/// The cost of the full window per item with payload in plain values, for the shapes that cost the
+/// most per byte of payload: it is what `work::BYTES_PER_ITEM` is chosen from.
+#[test]
+#[ignore = "calibration, run in release"]
+fn window_payload_calibration() {
+    use loro::LoroValue;
+    let page = flat_page_of_blocks(400);
+    measure("flat 400, no payload", &page, &trivial_update(&page));
+    let ints = |n: usize| -> LoroValue { (0..n as i64).map(|i| i % 7).collect::<Vec<_>>().into() };
+    for writes in [2, 4, 6, 8, 16] {
+        let base = flat_with_values(writes, &|_| ints(20_000));
+        measure(&format!("{writes} lists of 20,000 ints"), &base, &trivial_update(&base));
+    }
+    for writes in [4, 16, 32] {
+        let base = flat_with_values(writes, &|_| "s".repeat(60_000).into());
+        measure(&format!("{writes} strings of 60,000"), &base, &trivial_update(&base));
+    }
+    // Many tiny maps: the most elements per byte of payload.
+    let tiny_maps = |n: usize| -> LoroValue {
+        (0..n)
+            .map(|i| {
+                let mut entry = std::collections::HashMap::new();
+                entry.insert("a".to_owned(), LoroValue::from(i as i64 % 5));
+                LoroValue::from(entry)
+            })
+            .collect::<Vec<_>>()
+            .into()
+    };
+    for writes in [2, 4, 8] {
+        let base = flat_with_values(writes, &|_| tiny_maps(4_000));
+        measure(
+            &format!("{writes} lists of 4,000 one-key maps"),
+            &base,
+            &trivial_update(&base),
+        );
+    }
+    // Lists of lists of one integer each.
+    let nested = |n: usize| -> LoroValue {
+        (0..n)
+            .map(|i| LoroValue::from(vec![LoroValue::from(i as i64 % 5)]))
+            .collect::<Vec<_>>()
+            .into()
+    };
+    for writes in [2, 4, 8] {
+        let base = flat_with_values(writes, &|_| nested(8_000));
+        measure(
+            &format!("{writes} lists of 8,000 one-int lists"),
+            &base,
+            &trivial_update(&base),
+        );
+    }
+    // Maps with many short keys.
+    let wide = |n: usize| -> LoroValue {
+        let entries: std::collections::HashMap<String, LoroValue> =
+            (0..n).map(|i| (format!("k{i}"), LoroValue::from(i as i64))).collect();
+        entries.into()
+    };
+    for writes in [2, 4, 8] {
+        let base = flat_with_values(writes, &|_| wide(3_000));
+        measure(&format!("{writes} maps of 3,000 keys"), &base, &trivial_update(&base));
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // How much of a realistic write load stays incremental
 // ---------------------------------------------------------------------------------------------
