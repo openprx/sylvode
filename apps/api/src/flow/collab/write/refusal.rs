@@ -673,49 +673,6 @@ mod tests {
                 assert_defect(&refusal, "isolated_setup_exhausted");
             }
         }
-        // R9-10: a setup that consumed 80 to 100 % of its budget but had a core for less than 70 % of
-        // the wall time was starved, whatever the budget share says.
-        #[test]
-        fn r9_10_a_setup_with_its_cpu_well_below_its_wall_time_was_starved() {
-            let timed_out = |cpu_us: u64, wall_us: Option<u64>| {
-                let (err, observation) = setup_timeout(Some(cpu_us));
-                (
-                    err,
-                    WorkerObservation {
-                        setup_wall_us: wall_us,
-                        ..observation
-                    },
-                )
-            };
-            // The default budget: 2.4 s of CPU is 96 % of it and 48 % of the 5 s wall time.
-            let (err, observation) = timed_out(2_400_000, Some(5_000_000));
-            assert!(!is_setup_exhausted(&err, &observation, 2_500));
-            assert_busy(
-                &classify(err, &observation, INCREMENTAL, REBASES),
-                BusyCause::SetupStarved,
-                RetryMode::Resend,
-                1_000,
-            );
-            // The same CPU with no wall time known keeps the budget share's answer.
-            let (err, observation) = timed_out(2_400_000, None);
-            assert!(is_setup_exhausted(&err, &observation, 2_500));
-            // A worker that burned its time (4.9 s of 5 s) is exhausted.
-            let (err, observation) = timed_out(4_900_000, Some(5_000_000));
-            assert!(is_setup_exhausted(&err, &observation, 2_500));
-            assert_defect(
-                &classify(err, &observation, INCREMENTAL, REBASES),
-                "isolated_setup_exhausted",
-            );
-            // The boundary: 70 % of the wall time is not starved, one microsecond less is.
-            for (cpu_us, starved) in [(3_499_999, true), (3_500_000, false)] {
-                let (err, observation) = timed_out(cpu_us, Some(5_000_000));
-                assert_eq!(!is_setup_exhausted(&err, &observation, 2_500), starved, "{cpu_us}");
-            }
-            // A raised budget does not change the wall rule: 3.3 s is 82 % of 4 s and 66 % of the wall.
-            let (err, observation) = timed_out(3_300_000, Some(5_000_000));
-            assert!(!is_setup_exhausted(&err, &observation, 4_000));
-        }
-
         // A raised budget raises the threshold: 3 s of CPU is starvation under a 4 s budget.
         let (err, observation) = setup_timeout(Some(3_000_000));
         assert!(!is_setup_exhausted(&err, &observation, 4_000));
@@ -739,6 +696,49 @@ mod tests {
             &observation,
             2_500
         ));
+    }
+
+    // R9-10: a setup that consumed 80 to 100 % of its budget but had a core for less than 70 % of
+    // the wall time was starved, whatever the budget share says.
+    #[test]
+    fn r9_10_a_setup_with_its_cpu_well_below_its_wall_time_was_starved() {
+        let timed_out = |cpu_us: u64, wall_us: Option<u64>| {
+            let (err, observation) = setup_timeout(Some(cpu_us));
+            (
+                err,
+                WorkerObservation {
+                    setup_wall_us: wall_us,
+                    ..observation
+                },
+            )
+        };
+        // The default budget: 2.4 s of CPU is 96 % of it and 48 % of the 5 s wall time.
+        let (err, observation) = timed_out(2_400_000, Some(5_000_000));
+        assert!(!is_setup_exhausted(&err, &observation, 2_500));
+        assert_busy(
+            &classify(err, &observation, INCREMENTAL, REBASES),
+            BusyCause::SetupStarved,
+            RetryMode::Resend,
+            1_000,
+        );
+        // The same CPU with no wall time known keeps the budget share's answer.
+        let (err, observation) = timed_out(2_400_000, None);
+        assert!(is_setup_exhausted(&err, &observation, 2_500));
+        // A worker that burned its time (4.9 s of 5 s) is exhausted.
+        let (err, observation) = timed_out(4_900_000, Some(5_000_000));
+        assert!(is_setup_exhausted(&err, &observation, 2_500));
+        assert_defect(
+            &classify(err, &observation, INCREMENTAL, REBASES),
+            "isolated_setup_exhausted",
+        );
+        // The boundary: 70 % of the wall time is not starved, one microsecond less is.
+        for (cpu_us, starved) in [(3_499_999, true), (3_500_000, false)] {
+            let (err, observation) = timed_out(cpu_us, Some(5_000_000));
+            assert_eq!(!is_setup_exhausted(&err, &observation, 2_500), starved, "{cpu_us}");
+        }
+        // A raised budget does not change the wall rule: 3.3 s is 82 % of 4 s and 66 % of the wall.
+        let (err, observation) = timed_out(3_300_000, Some(5_000_000));
+        assert!(!is_setup_exhausted(&err, &observation, 4_000));
     }
 
     // Row 7: a setup timeout after a lot of CPU, or an unknown amount.
