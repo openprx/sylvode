@@ -1641,6 +1641,10 @@ fn incremental_mutants() -> Vec<Incremental> {
             defect: Defect::Fault(Fault::WorkBudgetSkipped),
         },
         Incremental {
+            name: "mutant: the mark payload of the touched texts is not re-counted",
+            defect: Defect::Fault(Fault::MarkRecountSkipped),
+        },
+        Incremental {
             name: "mutant: no fallback when an existing node's logical id is rewritten",
             defect: Defect::Fault(Fault::IdRewriteSkipped),
         },
@@ -1666,7 +1670,7 @@ fn incremental_mutants() -> Vec<Incremental> {
 fn oracle_expected(mutant: &Incremental) -> bool {
     !matches!(
         mutant.defect,
-        Defect::Fault(Fault::WorkBudgetSkipped | Fault::RefusalOffByOne)
+        Defect::Fault(Fault::WorkBudgetSkipped | Fault::MarkRecountSkipped | Fault::RefusalOffByOne)
     )
 }
 

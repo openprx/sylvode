@@ -274,6 +274,12 @@
 //! 16,000 items, which costs the full window at most about 6 ms there, 21 ms at 3.6 times that, well
 //! under 50 ms. See `crate::work` for the unit, the budget and the table.
 //!
+//! The payload of text marks is the one part the ops cannot bound (a mark that splits a text adds
+//! segments that carry the values of other marks). The facts keep the mark items per editor block,
+//! and `recount_marks` re-counts the touched blocks after the import and before any is evaluated, with
+//! an early exit at the headroom the budget has left, so a text whose segments already cost more than
+//! the budget allows falls back (`WorkBudget`) before its segments are read.
+//!
 //! The incremental window is O(the update): its id-cache rebuild reads the created nodes only (a
 //! node without a logical id gains one only through a write of the key, which falls back). The
 //! work-budget allowances are fungible across kinds of content, so the budget bounds the uncounted
@@ -316,6 +322,8 @@ pub mod fault {
         CreatedTargetChecksSkipped,
         /// Does not fall back when the page's items (base plus update) are over the budget.
         WorkBudgetSkipped,
+        /// Does not re-count the mark payload of the touched texts.
+        MarkRecountSkipped,
         /// Treats every import as strictly sequential: rebuilds the id caches from the update's own
         /// ops and decides incrementally even when the update is concurrent with the base.
         SequentialGateRemoved,
@@ -523,6 +531,9 @@ pub(crate) struct OpSummary {
     unreadable_change: bool,
     /// An upper bound on the items (see `crate::work`) the ops of the import added to the page.
     work_added: crate::work::OpWork,
+    /// An op of the import put a style mark on a text (or ended one): the only way a text gains
+    /// marks, so without it a text that had none has none.
+    mark_ops: bool,
 }
 
 /// One change of an import, reduced to what the sequential gate reads.
@@ -618,6 +629,17 @@ impl OpSummary {
         self.work_added.total_items()
     }
 
+    /// The items (without the payload) the import's ops added, which also bound how many blocks and
+    /// navigators it can have added.
+    pub(crate) const fn work_added_items(&self) -> u64 {
+        self.work_added.items
+    }
+
+    /// Whether any op of the import put a style mark on a text.
+    pub(crate) const fn has_mark_ops(&self) -> bool {
+        self.mark_ops
+    }
+
     /// Whether the import is a **strict causal extension** of the base: the one condition under
     /// which the incremental id-cache rebuild and the incremental check are used (see the module
     /// documentation).
@@ -678,6 +700,12 @@ impl OpSummary {
     /// id of `doc.children` after the import.
     pub(crate) fn visit(&mut self, peer: u64, op: &JsonOp, root_list: Option<&ContainerID>) {
         self.work_added = self.work_added.plus(crate::work::op_work(&op.content));
+        if matches!(
+            op.content,
+            JsonOpContent::Text(loro::JsonTextOp::Mark { .. } | loro::JsonTextOp::MarkEnd)
+        ) {
+            self.mark_ops = true;
+        }
         match &op.container {
             // A mergeable child of a map (the text of a legacy tree node, for one) is named like a
             // root container but belongs to the map that created it: it is mapped to its unit by
@@ -895,9 +923,52 @@ fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTra
         }
         delta.add(None, facts.units.get(key.as_str()));
     }
+    // The mark payload of the touched texts is re-counted before any unit is evaluated: evaluating a
+    // text reads its marks once per segment, which is the work this count bounds.
+    let work_added = summary.work_added();
+    let mark_items = recount_marks(engine, facts, &touched, summary, work_added)?;
     evaluate_blocks(engine, facts, &touched, &limits, &mut delta)?;
     evaluate_tree_nodes(engine, facts, &created, &touched, &limits, &mut delta)?;
-    finish(facts, summary.work_added(), &delta, &limits)
+    finish(facts, work_added.saturating_add(mark_items), &delta, &limits)
+}
+
+/// The growth of the touched blocks' mark items (see `crate::work`), or the work-budget fallback when
+/// the budget cannot hold it.
+///
+/// What bounds the re-count: the budget of the page after the update is at most that of the base's
+/// totals plus one block and one navigator per op (an op names at most one unit, so it adds at most
+/// one live block or navigator) and the documented character limit. The headroom is that budget
+/// less the base's items and the update's own bound, and a unit's walk stops once its items pass its
+/// base figure plus the headroom still left, so the payload read is at most the base figure of the
+/// touched blocks (what the evaluation of those blocks reads anyway) plus the headroom, and one
+/// value. The containers entered are bounded by the page's items, since units do not overlap.
+fn recount_marks(
+    engine: &LoroCollabEngine,
+    facts: &BaseFacts,
+    touched: &Touched,
+    summary: &OpSummary,
+    work_added: u64,
+) -> Result<u64, FallbackReason> {
+    use crate::limits::DOCUMENT_TEXT_CHARS_MAX;
+    if injected!(MarkRecountSkipped) {
+        return Ok(0);
+    }
+    let growth = summary.work_added_items();
+    let cap = crate::work::item_budget(
+        (facts.blocks as u64).saturating_add(growth),
+        (facts.navigators as u64).saturating_add(growth),
+        DOCUMENT_TEXT_CHARS_MAX as u64,
+    );
+    let spent = facts.items.saturating_add(work_added);
+    engine
+        .mark_items_added(
+            facts,
+            &touched.blocks,
+            summary.has_mark_ops(),
+            cap.saturating_sub(spent),
+            spent.saturating_add(1),
+        )
+        .ok_or(FallbackReason::WorkBudget)
 }
 
 /// Whether `container` is the metadata map of a node in `created`.
