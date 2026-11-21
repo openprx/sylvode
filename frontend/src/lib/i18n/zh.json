@@ -2827,7 +2827,8 @@
 			"authorization_churn": "权限状态反复变化，正在重试…",
 			"server_draining": {
 				"drain": "服务正在维护，将自动重新连接",
-				"contention": "正在重试，请稍候"
+				"contention": "正在重试，请稍候",
+				"apply_busy": "服务器繁忙，暂时无法保存此修改。修改已保留在恢复草稿中，请稍后再试。"
 			},
 			"checksum_mismatch": "包完整性校验失败，请重新获取该包后再上传",
 			"unsupported_format": "不支持该包格式或引擎版本，请使用兼容版本重新导出",
