@@ -491,7 +491,7 @@ pub async fn bot_or_user_auth_middleware(
             /// A project bot connection made this bot: its token is limited to the projects it is
             /// connected to (`runner_bot_scope`).
             runner: bool,
-            /// The bot's user is enabled. An instance administrator who disables the user stops
+            /// The bot's user is not disabled. An instance administrator who disables the user stops
             /// the token, whatever the token's own flag says.
             user_active: bool,
         }
@@ -500,7 +500,7 @@ pub async fn bot_or_user_auth_middleware(
             DbBackend::Postgres,
             r"SELECT id, workspace_id, permissions, transport_surface, is_active, expires_at,
                       EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner,
-                      COALESCE((SELECT u.is_active FROM users u WHERE u.id = workspace_bots.id), false) AS user_active
+                      COALESCE((SELECT u.is_active FROM users u WHERE u.id = workspace_bots.id), true) AS user_active
                FROM workspace_bots
                WHERE token_hash = $1",
             vec![token_hash.into()],

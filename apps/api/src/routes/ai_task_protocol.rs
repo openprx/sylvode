@@ -160,10 +160,10 @@ pub async fn put_runner_report(
     Ok(ApiResponse::success(json!({ "accepted": true, "interval_secs": RUNNER_REPORT_INTERVAL_SECS })).into_response())
 }
 
-/// The report route: the handler with a body limit of [`MAX_REPORT_BYTES`], applied before the body
-/// is read, so a large body is cut off instead of buffered up to the global limit.
-pub fn runner_report_route() -> axum::routing::MethodRouter<AppState> {
-    axum::routing::put(put_runner_report).layer(axum::extract::DefaultBodyLimit::max(MAX_REPORT_BYTES))
+/// The report route's body limit of [`MAX_REPORT_BYTES`], applied before the body is read, so a
+/// large body is cut off instead of buffered up to the global limit.
+pub const fn runner_report_body_limit() -> axum::extract::DefaultBodyLimit {
+    axum::extract::DefaultBodyLimit::max(MAX_REPORT_BYTES)
 }
 
 /// `GET /api/v1/ai/tasks/active`: the calling bot's own active tasks, oldest first.

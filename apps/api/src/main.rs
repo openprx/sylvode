@@ -1132,7 +1132,9 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
         )
         .route(
             "/api/v1/ai/runner/report",
-            routes::ai_task_protocol::runner_report_route().route_layer(axum_middleware::from_fn_with_state(
+            put(routes::ai_task_protocol::put_runner_report)
+                .layer(routes::ai_task_protocol::runner_report_body_limit())
+                .route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),

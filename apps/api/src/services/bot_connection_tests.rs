@@ -1759,9 +1759,17 @@ async fn the_report_route_is_rate_limited_and_body_limited() {
     let (_, answer) = body_of(limited).await;
     assert_eq!(answer["code"], 429);
 
-    // The real route's body limit: the body is cut off before the handler.
+    // The route's body limit, built as `main.rs` builds it: the body is cut off before the handler.
+    assert!(
+        include_str!("../main.rs").contains("runner_report_body_limit()"),
+        "main.rs applies it"
+    );
     let app = Router::new()
-        .route("/report", crate::routes::ai_task_protocol::runner_report_route())
+        .route(
+            "/report",
+            axum::routing::put(crate::routes::ai_task_protocol::put_runner_report)
+                .layer(crate::routes::ai_task_protocol::runner_report_body_limit()),
+        )
         .with_state(w.state.clone());
     let huge = vec![b'x'; 64 * 1024];
     let response = app
