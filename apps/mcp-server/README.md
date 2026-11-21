@@ -454,6 +454,8 @@ cargo run --bin list-tools
 
 This outputs the currently registered MCP tools with their complete JSON Schema definitions.
 
+`cargo run --bin list-tools -- --json` prints one row per tool with its name, access class (`read` or `write`) and category, taken from the tool catalogue in `src/tools/catalog.rs`. The full `tools/list` carries `annotations.readOnlyHint` from the same catalogue.
+
 ### Adding a New Tool
 
 1. Add or extend a Sylvode API client helper in `src/client/`.

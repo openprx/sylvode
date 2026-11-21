@@ -1,4 +1,5 @@
 pub mod capabilities;
+pub mod catalog;
 pub mod comments;
 pub mod context;
 pub mod files;
@@ -415,6 +416,38 @@ mod tests {
             expected_total: registry_total(surface, "0.5").expect("the surface must declare the v0.5 registry total"),
             tool_names,
         }
+    }
+
+    /// The registry names and the catalogue classification are pinned in the baseline: adding,
+    /// removing or reclassifying a tool needs a reviewed edit of `tool-registry-baseline.json`
+    /// (`skills/openpr-mcp/scripts/expected-tool-count.py` checks the same file against the binary).
+    #[test]
+    fn the_registry_and_the_catalogue_match_the_pinned_baseline() {
+        use sha2::{Digest, Sha256};
+        let baseline: serde_json::Value = serde_json::from_str(include_str!("../../tool-registry-baseline.json"))
+            .expect("the baseline is valid JSON");
+        let digest = |text: &str| hex::encode(Sha256::digest(text.as_bytes()));
+        let mut names = get_all_tool_definitions()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        assert_eq!(
+            baseline.get("count").and_then(serde_json::Value::as_u64),
+            Some(names.len() as u64),
+            "registry count drifted"
+        );
+        assert_eq!(
+            baseline.get("names_sha256").and_then(serde_json::Value::as_str),
+            Some(digest(&names.join("\n")).as_str()),
+            "registry names drifted: update names_sha256 after review"
+        );
+        assert_eq!(
+            baseline.get("catalog_sha256").and_then(serde_json::Value::as_str),
+            Some(digest(&super::catalog::classification_text()).as_str()),
+            "catalogue classification drifted: update catalog_sha256 after review"
+        );
     }
 
     #[test]

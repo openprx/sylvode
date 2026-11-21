@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 pub fn list_proposals_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "proposals.list".to_string(),
         description: "List governance proposals. The API has no project filter, so results are not scoped to \
 project_id; project_id is only used to apply this project's agent policy. Paginated: per_page defaults to the \
@@ -80,6 +81,7 @@ pub async fn list_proposals(client: &OpenPrClient, args: serde_json::Value) -> C
 
 pub fn get_proposal_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "proposals.get".to_string(),
         description: "Get details of a specific proposal".to_string(),
         input_schema: json!({
@@ -118,6 +120,7 @@ pub async fn get_proposal(client: &OpenPrClient, args: serde_json::Value) -> Cal
 
 pub fn create_proposal_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "proposals.create".to_string(),
         description: "Create a governance proposal in draft state. The project is derived from the issues \
 linked to the proposal, not from project_id."
@@ -215,6 +218,7 @@ pub async fn create_proposal(client: &OpenPrClient, args: serde_json::Value) -> 
 
 pub fn create_check_result_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "check_results.create".to_string(),
         description: "Record a governed MCP/AI check result for a high-risk action".to_string(),
         input_schema: json!({
@@ -240,6 +244,7 @@ pub fn create_check_result_tool() -> ToolDefinition {
 
 pub fn create_proposal_from_result_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "proposals.create_from_result".to_string(),
         description: "Create a governance proposal from a check result instead of directly applying a high-risk action"
             .to_string(),

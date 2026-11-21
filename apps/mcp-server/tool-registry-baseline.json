@@ -3,6 +3,7 @@
   "source": "mcp_server::get_all_tool_definitions",
   "count": 148,
   "names_sha256": "abf8300aa2d754c909db4e199ff9c49db3b1afc61aadfbbc5f44be53d9261a7d",
+  "catalog_sha256": "78ba081821038fcd506f2964d977de762e557a1e7d86090a611980a02430ea68",
   "v0_4_rebase": {
     "before_count": 107,
     "added": 15,

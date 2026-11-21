@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 
 pub fn list_bot_operation_logs_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "bot_operation_logs.list".to_string(),
         description: "List metadata-only bot operation records for the configured workspace".to_string(),
         input_schema: json!({

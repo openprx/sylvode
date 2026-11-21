@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 pub fn list_project_types_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "project_types.list".to_string(),
         description: "List project scenario types available to the bot workspace".to_string(),
         input_schema: json!({
@@ -23,6 +24,7 @@ pub async fn list_project_types(client: &OpenPrClient, _args: Value) -> CallTool
 
 pub fn get_project_type_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "project_types.get".to_string(),
         description: "Get a project scenario type and its capability schema".to_string(),
         input_schema: json!({

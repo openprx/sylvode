@@ -13,6 +13,7 @@ fn parse_input<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, CallToolR
 
 pub fn list_plugins_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "plugins.list".to_string(),
         description: "List WASM plugins installed in a project. Paginated: per_page defaults to 50 (max 200)."
             .to_string(),
@@ -30,6 +31,7 @@ pub fn list_plugins_tool() -> ToolDefinition {
 
 pub fn get_plugin_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "plugins.get".to_string(),
         description: "Get one installed WASM plugin and its manifest".to_string(),
         input_schema: json!({
@@ -44,6 +46,7 @@ pub fn get_plugin_tool() -> ToolDefinition {
 
 pub fn install_plugin_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "plugins.install".to_string(),
         description: "Install a project-scoped WASM plugin. wasm_base64 is optional for manifest-only registration."
             .to_string(),
@@ -62,6 +65,7 @@ pub fn install_plugin_tool() -> ToolDefinition {
 
 pub fn invoke_plugin_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "plugins.invoke".to_string(),
         description: "Invoke a WASM plugin hook or plugin-provided tool declared in the manifest".to_string(),
         input_schema: json!({
@@ -81,6 +85,7 @@ pub fn invoke_plugin_tool() -> ToolDefinition {
 
 pub fn list_plugin_invocations_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "plugin_invocations.list".to_string(),
         description: "List invocation logs for one WASM plugin, newest first. Paginated: per_page defaults to \
 50 (max 200)."

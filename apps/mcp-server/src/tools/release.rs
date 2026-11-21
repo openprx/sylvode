@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 pub fn get_release_readiness_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "release.readiness.get".to_string(),
         description: "Get project release/readiness gates, blockers, next actions, and AI governance evidence"
             .to_string(),

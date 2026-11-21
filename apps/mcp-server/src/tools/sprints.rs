@@ -5,6 +5,7 @@ use serde_json::json;
 
 pub fn create_sprint_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "sprints.create".to_string(),
         description: "Create a sprint in a project".to_string(),
         input_schema: json!({
@@ -77,6 +78,7 @@ pub async fn create_sprint(client: &OpenPrClient, args: serde_json::Value) -> Ca
 
 pub fn list_sprints_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "sprints.list".to_string(),
         description: "List all sprints in a project".to_string(),
         input_schema: json!({
@@ -115,6 +117,7 @@ pub async fn list_sprints(client: &OpenPrClient, args: serde_json::Value) -> Cal
 
 pub fn update_sprint_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "sprints.update".to_string(),
         description: "Update sprint fields".to_string(),
         input_schema: json!({
@@ -191,6 +194,7 @@ pub async fn update_sprint(client: &OpenPrClient, args: serde_json::Value) -> Ca
 
 pub fn delete_sprint_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "sprints.delete".to_string(),
         description: "Delete a sprint".to_string(),
         input_schema: json!({

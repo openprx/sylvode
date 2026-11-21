@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 pub fn list_scenario_templates_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "scenario_templates.list".to_string(),
         description: "List scenario templates for project creation, including workflow, fields, resources, AI roles, governance, suggested connections, and runtime usage_guide fields for operator steps, primary MCP tools, connector kinds, plugin keys, and acceptance focus".to_string(),
         input_schema: json!({
@@ -46,6 +47,7 @@ pub async fn list_scenario_templates(client: &OpenPrClient, args: Value) -> Call
 
 pub fn get_scenario_template_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "scenario_templates.get".to_string(),
         description: "Get one scenario template by key for project setup or agent instructions, including runtime usage_guide fields for frontend/REST/MCP entrypoints, operator steps, primary MCP tools, connector kinds, plugin keys, and acceptance focus".to_string(),
         input_schema: json!({
@@ -63,6 +65,7 @@ pub fn get_scenario_template_tool() -> ToolDefinition {
 
 pub fn install_scenario_template_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "scenario_templates.install".to_string(),
         description: "Install a complete multi-form scenario template into an existing project, reusing the project creation scenario bundle path for forms, views, connectors, plugins, governance, AI placeholders, and workflow backfill".to_string(),
         input_schema: json!({

@@ -36,6 +36,7 @@ use serde_json::{Value, json};
 
 pub fn code_task_context_get_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "code.task_context.get".to_string(),
         description: "Get project context plus optional work-item context for a code task".to_string(),
         input_schema: json!({
@@ -51,6 +52,7 @@ pub fn code_task_context_get_tool() -> ToolDefinition {
 
 pub fn code_change_proposal_create_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "code.change_proposal.create".to_string(),
         description: "Record a governed code change proposal as a check result instead of directly mutating code"
             .to_string(),
@@ -63,6 +65,7 @@ pub fn code_change_proposal_create_tool() -> ToolDefinition {
 
 pub fn documents_extract_summary_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "documents.extract_summary".to_string(),
         description: "Record a document summary as a governed AI check result".to_string(),
         input_schema: governed_result_schema("Document summary title", "Extracted document summary"),
@@ -71,6 +74,7 @@ pub fn documents_extract_summary_tool() -> ToolDefinition {
 
 pub fn documents_review_risk_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "documents.review_risk".to_string(),
         description: "Record document risk review findings as a high-risk governed check result".to_string(),
         input_schema: governed_result_schema("Risk review title", "Risk review summary"),
@@ -79,6 +83,7 @@ pub fn documents_review_risk_tool() -> ToolDefinition {
 
 pub fn approval_request_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "approval.request".to_string(),
         description: "Create a governed approval request check result for human decision flow".to_string(),
         input_schema: governed_result_schema("Approval request title", "Approval request summary"),
@@ -87,6 +92,7 @@ pub fn approval_request_tool() -> ToolDefinition {
 
 pub fn inspection_report_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "inspection.report".to_string(),
         description: "Record an inspection report as a governed check result".to_string(),
         input_schema: governed_result_schema("Inspection report title", "Inspection findings summary"),
@@ -95,6 +101,7 @@ pub fn inspection_report_tool() -> ToolDefinition {
 
 pub fn corrective_action_propose_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "corrective_action.propose".to_string(),
         description: "Record a corrective-action proposal as a governed check result".to_string(),
         input_schema: governed_result_schema("Corrective action title", "Corrective action summary"),

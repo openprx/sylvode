@@ -682,11 +682,11 @@ impl McpServer {
     }
 
     async fn handle_list_tools(&self, id: Option<Value>, params: Option<Value>) -> JsonRpcResponse {
-        let mut static_tools = if self.client.is_flow_only() {
+        let mut static_tools = tools::catalog::annotate(if self.client.is_flow_only() {
             tools::flow_scope::definitions()
         } else {
             tools::get_all_tool_definitions()
-        };
+        });
         if let Some(grant) = &self.delegated {
             static_tools.retain(|tool| crate::oauth_scopes::allowed(grant.scopes, &tool.name));
         }
@@ -1048,6 +1048,13 @@ impl McpServer {
 
             _ => CallToolResult::error(format!("Unknown tool: {name}")),
         }
+    }
+
+    /// Test-only door for `tools::catalog`'s HTTP method witness: runs the tool body without the
+    /// policy chain so that the witness sees exactly the requests the tool itself issues.
+    #[cfg(test)]
+    pub(crate) async fn execute_tool_for_catalog_witness(&self, name: &str, args: Value) -> CallToolResult {
+        self.execute_tool(name, args).await
     }
 
     /// Resolves the project whose agent policy governs this call.

@@ -5,6 +5,7 @@ use serde_json::json;
 
 pub fn search_all_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "search.all".to_string(),
         description: "Global search across projects, work items, and comments the caller can access".to_string(),
         input_schema: json!({
