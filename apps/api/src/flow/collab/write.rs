@@ -383,7 +383,8 @@ fn reject_from_collab_error(update_id: Option<Uuid>, err: &CollabError) -> Accep
     if let CollabError::OperationFailed { reason } = err
         && (reason == collab_core::reserved_roots::SHADOW_ROOT_REASON
             || reason == collab_core::reserved_roots::SCAN_INCOMPLETE_REASON
-            || reason == collab_core::window_check::ID_REWRITE_REASON)
+            || reason == collab_core::window_check::ID_REWRITE_REASON
+            || collab_core::tree_refs::is_tree_reference_reason(reason))
     {
         return AcceptOutcome::Rejected(Rejected {
             update_id,
@@ -824,6 +825,15 @@ fn window_attempt(
         ApiError::internal()
     })?;
     candidate_load_step.finish();
+    // A wrong worker must not be able to commit an update whose tree ops name a parent that does
+    // not exist when they run (it panics every subscribed client): the host reads the ops the
+    // document gained over the base with the same rules the window applies. The base's version
+    // comes from the blob header, so the base is not loaded a second time.
+    if let Err(err) = candidate.refuse_unresolved_tree_parents_over(base_snapshot) {
+        return Ok(WindowAttempt::Rejected(
+            collab_core::isolation::IsolatedApplyError::Collab(err),
+        ));
+    }
     // The floor comes from the same block pass as the projection, so it costs no second walk.
     let host_snapshot_step = WriteStep::start("host_semantic_snapshot");
     let (semantic, minimum_editor_model) = candidate.semantic_snapshot_with_floor().map_err(|err| {
@@ -1344,6 +1354,16 @@ fn isolated_apply_rejection(
                     update_id = %update_id,
                     reason = collab_core::window_check::ID_REWRITE_REASON,
                     "collab write: refused, the update writes the logical id of a node that already exists"
+                );
+            }
+            if let CollabError::OperationFailed { reason } = &err
+                && collab_core::tree_refs::is_tree_reference_reason(reason)
+            {
+                tracing::warn!(
+                    document_id = %document_id,
+                    update_id = %update_id,
+                    reason = reason.as_str(),
+                    "collab write: refused, the update names a tree parent that does not exist when the op runs or moves a node below itself"
                 );
             }
             Ok(reject_from_collab_error(Some(update_id), &err))
@@ -2994,6 +3014,8 @@ mod isolation_rejection_tests {
             collab_core::reserved_roots::SHADOW_ROOT_REASON,
             collab_core::reserved_roots::SCAN_INCOMPLETE_REASON,
             collab_core::window_check::ID_REWRITE_REASON,
+            collab_core::tree_refs::TREE_PARENT_MISSING_REASON,
+            collab_core::tree_refs::TREE_PARENT_CYCLE_REASON,
         ] {
             let update_id = Uuid::new_v4();
             let outcome =
