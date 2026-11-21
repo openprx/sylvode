@@ -55,6 +55,11 @@ pub async fn delete_workspace_content(tx: &DatabaseTransaction, workspace_id: Uu
     .collect();
     let ws = || vec![workspace_id.into()];
 
+    // Connections first: `bot_runners.webhook_id` is a plain reference to a webhook that the
+    // workspace cascade also deletes, so whether the cascade succeeds would depend on the order the
+    // database fires its triggers in. The connection rows cascade from the runner rows.
+    run(tx, "DELETE FROM bot_runners WHERE workspace_id = $1", ws()).await?;
+
     // Conversion provenance: jobs point at previews and lineage, all three at source objects.
     run(tx, "DELETE FROM flow_conversion_jobs WHERE workspace_id = $1", ws()).await?;
     run(tx, "DELETE FROM flow_conversion_previews WHERE workspace_id = $1", ws()).await?;

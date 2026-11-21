@@ -26,6 +26,8 @@ mod bot_connection_tests;
 
 #[cfg(test)]
 mod connection_gate_tests;
+#[cfg(test)]
+mod connection_teardown_tests;
 
 #[cfg(test)]
 mod managed_rows_tests;
