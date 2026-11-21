@@ -26,6 +26,8 @@ suite uses the local Chromium named by `CHROMIUM_BIN`, never Google Chrome).
 | Create what the suite needs | `node tests/e2e/oauth/setup.ts` |
 | Run the suite | `CHROMIUM_BIN=... npx playwright test -c tests/e2e/oauth/playwright.config.ts` |
 
+A20 runs `scripts/test-mcp.sh`, which needs bash 4 or later; on macOS the suite uses `/opt/homebrew/bin/bash` when it exists (the system `/bin/bash` is 3.2).
+
 The same commands exist as `npm run oauth:typecheck`, `oauth:selftest`, `oauth:dry-run`,
 `oauth:setup` and `oauth:e2e` in the root `package.json`. Node 24 or later runs the TypeScript
 directly (type stripping); `tsc` is the frontend's.

@@ -32,13 +32,25 @@ interface Spec {
 	timeoutMs: number;
 }
 
+/**
+ * scripts/test-mcp.sh needs bash 4 or later (scripts/lib/sylvode_compat.sh declares an associative
+ * array with `declare -gA`). macOS ships bash 3.2 as /bin/bash, so the Homebrew bash is preferred
+ * when it is installed; elsewhere `bash` on the PATH is the one the script is run with.
+ */
+function bashBinary(): string {
+	return (
+		['/opt/homebrew/bin/bash', '/usr/local/bin/bash'].find((candidate) => existsSync(candidate)) ??
+		'bash'
+	);
+}
+
 export function specsFor(cfg: Config): Spec[] {
 	const root = repoRootOf(cfg);
 	return [
 		{
 			kind: 'mcp',
 			name: 'bot-token MCP regression script (scripts/test-mcp.sh)',
-			file: 'bash',
+			file: bashBinary(),
 			args: [join(root, 'scripts', 'test-mcp.sh')],
 			cwd: root,
 			env: { MCP_URL: cfg.mcpOrigin, OPENPR_MCP_BOT_TOKEN: cfg.oprBotToken ?? '' },
