@@ -29,9 +29,12 @@
 //    after the head were never sent, so nothing in the queue is on the server. Every queued
 //    entry ends in exactly one of: re-encoded into the rebased update, or moved into the draft
 //    (an entry the live doc cannot carry because it depends on an intent that is already in the
-//    draft). The swap is one store transaction (old ids out, rebased entry in, those drafts in);
-//    memory and the doc follow only if it succeeds, otherwise the old entries stay everywhere
-//    and the rebase is tried again inside its cap.
+//    draft). The swap is one store transaction (old ids out, rebased entry in, those drafts in).
+//    The editor's doc is swapped first and never swapped back, so no keystroke can leave the
+//    canvas. If the store keeps refusing the transaction, storage is unavailable: memory takes
+//    the rebased entry, the failure is reported (`local_outbox_persistence`) and sending is held,
+//    because sending it while the store still holds the old entries would duplicate the edits
+//    after a reload. The held swap is retried on the next connect or local edit.
 //    `contention` (an unclassified server error) is retried per update at most
 //    `CONTENTION_SENDS_MAX` times; then sending pauses with the queue intact (no draft) until the
 //    next connect or the next local edit.
@@ -84,8 +87,8 @@ export type RebaseResult =
 			readonly bytes: Uint8Array | null;
 			/** Queued entries whose operations the live doc does not hold: they cannot be carried. */
 			readonly unreplayable: ReadonlySet<string>;
-			/** Swaps the editor's doc for the rebased one (synchronously) and returns the undo. */
-			readonly adopt: () => () => void;
+			/** Swaps the editor's doc for the rebased one (synchronously, never undone). */
+			readonly adopt: () => void;
 	  }
 	/** The rebase could not be built; `error` is reported instead of the final busy text. */
 	| { readonly ok: false; readonly error?: FlowError };
@@ -161,6 +164,8 @@ const RESEND_BACKOFF_CAP_MS = 4000;
 const REBASE_BACKOFF_BASE_MS = 100;
 const REBASE_BACKOFF_CAP_MS = 1000;
 const REBASE_PERSIST_SETTLE_ROUNDS = 10;
+/** Attempts at the store transaction of one rebase swap before storage counts as unavailable. */
+const SWAP_STORE_ATTEMPTS = 3;
 
 /** Full jitter: uniform in [0, min(cap, base * 2^(attempt-1))]. */
 function fullJitter(base: number, cap: number, attempt: number): number {
@@ -256,6 +261,13 @@ export class FlowOfflineSync {
 	private readonly contentionAnswers = new Map<string, number>();
 	/** Sending is paused after `CONTENTION_SENDS_MAX` contention answers; the queue is kept. */
 	private paused = false;
+	/** A rebase swap the store refused: memory already holds the rebased entry, the store still
+	 * holds the old ones. Nothing is sent until the transaction succeeds. */
+	private pendingSwap: {
+		oldIds: readonly string[];
+		replacement: OutboxEntry | null;
+		drafted: readonly RecoveryDraftEntry[];
+	} | null = null;
 
 	constructor(
 		store: OutboxStore,
@@ -513,6 +525,7 @@ export class FlowOfflineSync {
 	private async send(
 		entry: OutboxEntry
 	): Promise<'accepted' | 'retried' | 'rebased' | 'stop' | 'recover'> {
+		if (this.pendingSwap && !(await this.flushSwap())) return 'stop';
 		try {
 			await this.transport.submit(
 				{ bytes: entry.bytes, baseFrontier: entry.baseFrontier },
@@ -625,7 +638,7 @@ export class FlowOfflineSync {
 	private async rebase(
 		entry: OutboxEntry,
 		busy: FlowError
-	): Promise<'rebased' | 'retried' | 'recover'> {
+	): Promise<'rebased' | 'stop' | 'recover'> {
 		let headFrontier: string;
 		if (this.needsRebuild) {
 			// Drafted intents still have their operations in the live doc; they must leave it
@@ -704,38 +717,75 @@ export class FlowOfflineSync {
 			};
 		}
 		const oldIds = unsent.map((e) => e.updateId);
-		const undo = result.adopt();
-		// On the enqueue chain, so later edits (on the rebased doc) persist after the swap. Memory
-		// follows the store: if the replacement fails nothing changed anywhere but the doc, which is
-		// put back.
-		const swap = this.enqueueChain.then(async () => {
-			try {
-				await this.store.replace(oldIds, replacement, drafted);
-			} catch (error) {
-				undo();
-				throw error;
+		result.adopt();
+		// On the enqueue chain, so later edits (on the rebased doc) persist after the swap.
+		const swap = {
+			oldIds,
+			replacement,
+			drafted
+		};
+		const done = this.enqueueChain.then(async () => {
+			let stored = false;
+			for (let attempt = 1; attempt <= SWAP_STORE_ATTEMPTS && !stored; attempt += 1) {
+				try {
+					await this.store.replace(swap.oldIds, swap.replacement, swap.drafted);
+					stored = true;
+				} catch {
+					if (attempt < SWAP_STORE_ATTEMPTS) {
+						await this.sleep(fullJitter(REBASE_BACKOFF_BASE_MS, REBASE_BACKOFF_CAP_MS, attempt));
+					}
+				}
 			}
-			const gone = new Set(oldIds);
-			this.queue = [
-				...(replacement ? [replacement] : []),
-				...this.queue.filter((e) => !gone.has(e.updateId))
-			];
-			this.drafts = [...this.drafts, ...drafted];
-			for (const id of oldIds) {
-				this.busyAnswers.delete(id);
-				this.contentionAnswers.delete(id);
+			this.applySwap(swap);
+			if (!stored) {
+				this.pendingSwap = swap;
+				this.host.reportError({
+					code: 'network_error',
+					recoverable: true,
+					origin: 'client',
+					details: { reason: 'local_outbox_persistence' }
+				});
+				this.transport.markUnsaved?.();
 			}
-			this.publish();
+			return stored;
 		});
-		this.enqueueChain = swap.catch(() => undefined);
-		try {
-			await swap;
-		} catch {
-			// The old entries are still queued and stored; the pump resends the head, which brings
-			// the next rebase, until the cap drafts them.
-			return 'retried';
+		this.enqueueChain = done.then(
+			() => undefined,
+			() => undefined
+		);
+		return (await done) ? 'rebased' : 'stop';
+	}
+
+	/** Memory follows the swap: the rebased entry first, then whatever was enqueued since. */
+	private applySwap(swap: {
+		oldIds: readonly string[];
+		replacement: OutboxEntry | null;
+		drafted: readonly RecoveryDraftEntry[];
+	}): void {
+		const gone = new Set(swap.oldIds);
+		this.queue = [
+			...(swap.replacement ? [swap.replacement] : []),
+			...this.queue.filter((e) => !gone.has(e.updateId))
+		];
+		this.drafts = [...this.drafts, ...swap.drafted];
+		for (const id of swap.oldIds) {
+			this.busyAnswers.delete(id);
+			this.contentionAnswers.delete(id);
 		}
-		return 'rebased';
+		this.publish();
+	}
+
+	/** Retries a held swap. `true` when the store now agrees with memory. */
+	private async flushSwap(): Promise<boolean> {
+		const swap = this.pendingSwap;
+		if (!swap) return true;
+		try {
+			await this.store.replace(swap.oldIds, swap.replacement, swap.drafted);
+		} catch {
+			return false;
+		}
+		this.pendingSwap = null;
+		return true;
 	}
 
 	/** The REST bootstrap refused this user mid-rebase: the existing policy path. */

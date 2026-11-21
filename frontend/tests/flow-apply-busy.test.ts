@@ -1001,35 +1001,102 @@ await suite.checkAsync(
 );
 
 await suite.checkAsync(
-	'B-4: a store that always fails ends in the recovery draft, never in both old and rebased entries',
+	'B-4: a store that keeps failing holds the rebased entry unsent; the old entry is the only stored copy',
 	async () => {
 		const idb = await freshIndexedDb();
 		const server = new FakeCollabServer();
-		const first = await open(server, idb, (inner) => new FailingReplaceStore(inner, 100));
+		let failing: FailingReplaceStore | null = null;
+		const first = await open(
+			server,
+			idb,
+			(inner) => (failing = new FailingReplaceStore(inner, 100))
+		);
+		assert(failing, 'wrapped');
+		let oldId = '';
 		try {
-			server.policy = SEQUENTIAL_OR_REBASE(server, 'PEER|');
+			server.policy = (seen, i) => {
+				if (i === 0) oldId = seen.updateId;
+				return SEQUENTIAL_OR_REBASE(server, 'PEER|')(seen, i);
+			};
 			edit(first.entry.doc, 'mine');
-			await waitFor(() => first.entry.offline.draftEntries.length === 1, 'drafted after the cap');
+			await waitFor(() => {
+				const shown = first.lastError();
+				return (
+					(shown?.details as { reason?: string } | undefined)?.reason === 'local_outbox_persistence'
+				);
+			}, 'storage failure reported');
 			await first.entry.offline.idle();
-			assertEqual(occurrences(serverText(server), 'mine'), 0, 'the rebased copy was never sent');
-			assert(server.updatesSeen.length <= REBASE_MAX + 2, 'bounded');
-			assertEqual(first.entry.offline.pendingEntries.length, 0, 'nothing queued');
-			assertEqual(
-				(await rawOutbox(idb)).length,
-				0,
-				'the old entry left the store (into the draft)'
+			await tick(100);
+			assertEqual(occurrences(serverText(server), 'mine'), 0, 'the rebased copy is not sent');
+			assert(
+				server.updatesSeen.length <= 2,
+				'nothing else is sent while the store holds the old entry'
 			);
+			assertEqual(first.entry.offline.pendingEntries.length, 1, 'the rebased entry is queued');
+			assertDeepEqual(
+				(await rawOutbox(idb)).map((r) => r.updateId),
+				[oldId],
+				'the old entry is the only stored copy'
+			);
+			assertEqual(occurrences(textOf(first.entry.doc), 'mine'), 1, 'the canvas keeps the text');
 		} finally {
 			await first.close();
 		}
 		const second = await open(server, idb);
 		try {
-			await tick(100);
+			server.policy = () => ACCEPT;
+			await waitFor(() => server.accepted.length >= 2, 'the old entry replays');
 			await second.entry.offline.idle();
-			assertEqual(occurrences(serverText(server), 'mine'), 0, 'a reload sends nothing');
-			assertEqual(second.entry.offline.draftEntries.length, 1, 'the draft survived the reload');
+			assertEqual(occurrences(serverText(server), 'mine'), 1, 'saved exactly once after a reload');
 		} finally {
 			await second.close();
+		}
+	}
+);
+
+// R9-6: a keystroke between the doc swap and the failed store write is never lost
+await suite.checkAsync(
+	'R9-6: text typed between the rebase swap and a failed store write stays and is saved once',
+	async () => {
+		const idb = await freshIndexedDb();
+		const server = new FakeCollabServer();
+		let failing: FailingReplaceStore | null = null;
+		const ctx = await open(server, idb, (inner) => (failing = new FailingReplaceStore(inner, 100)));
+		assert(failing, 'wrapped');
+		const store = failing as FailingReplaceStore;
+		try {
+			let typed = false;
+			store.onFail = () => {
+				if (typed) return;
+				typed = true;
+				edit(ctx.entry.doc, 'late|'); // lands on the adopted doc, before the write failed
+			};
+			server.policy = SEQUENTIAL_OR_REBASE(server, 'PEER|');
+			edit(ctx.entry.doc, 'mine|');
+			await waitFor(() => typed, 'the keystroke landed in the window');
+			await waitFor(
+				() =>
+					(ctx.lastError()?.details as { reason?: string } | undefined)?.reason ===
+					'local_outbox_persistence',
+				'storage failure reported'
+			);
+			await ctx.entry.offline.idle();
+			assertEqual(occurrences(textOf(ctx.entry.doc), 'late|'), 1, 'the canvas still shows it');
+			assertEqual(occurrences(textOf(ctx.entry.doc), 'mine|'), 1, 'and the rebased edit');
+			assertEqual(occurrences(serverText(server), 'mine|'), 0, 'nothing sent while unstored');
+			// Storage recovers; the next edit resumes the held queue.
+			store.failures = 0;
+			edit(ctx.entry.doc, 'more|');
+			await waitFor(
+				() => ['mine|', 'late|', 'more|'].every((m) => occurrences(serverText(server), m) === 1),
+				'everything saved once'
+			);
+			await ctx.entry.offline.idle();
+			assertEqual(ctx.entry.offline.draftEntries.length, 0, 'nothing drafted');
+			assertEqual(stateOf(ctx.entry.doc), stateOf(server.doc), 'client doc == server doc');
+			assertEqual((await rawOutbox(idb)).length, 0, 'store empty');
+		} finally {
+			await ctx.close();
 		}
 	}
 );

@@ -660,7 +660,7 @@ export class FlowObjectRepository {
 						ok: true,
 						bytes: null,
 						unreplayable: rebased.unreplayable,
-						adopt: () => () => undefined
+						adopt: () => undefined
 					};
 				}
 				const violation = limitViolation(rebased.bytes);
@@ -674,26 +674,13 @@ export class FlowObjectRepository {
 					unreplayable: rebased.unreplayable,
 					adopt: () => {
 						// The editor rebinds to the new doc (the cursor may move); the old doc is
-						// retired like after any rebuild, and put back if the outbox cannot store
-						// the replacement.
-						const previous = target.current;
+						// retired like after any rebuild. It is never swapped back.
 						this.swapDoc(
 							target,
 							rebased.doc as unknown as LoroDocType,
 							get(target.projection.object).documentSeq,
 							() => lastKnownFrontierBase64
 						);
-						return () => {
-							if (target.current !== (rebased.doc as unknown as LoroDocType)) return;
-							const at = target.retired.indexOf(previous);
-							if (at >= 0) target.retired.splice(at, 1);
-							this.swapDoc(
-								target,
-								previous,
-								get(target.projection.object).documentSeq,
-								() => lastKnownFrontierBase64
-							);
-						};
 					}
 				};
 			},
