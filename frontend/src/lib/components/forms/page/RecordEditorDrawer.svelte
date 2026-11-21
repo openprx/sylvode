@@ -53,7 +53,8 @@
 		startSignatureStroke,
 		moveSignatureStroke,
 		endSignatureStroke,
-		clearSignatureCanvas
+		clearSignatureCanvas,
+		setSignatureValue
 	} = fp.attachments;
 	const { memberFieldHidden, memberFieldLocked } = fp.permissions;
 </script>
@@ -470,7 +471,10 @@
 									placeholder={fieldPlaceholder(field)}
 									readonly={fieldReadOnlyByCondition(field, s.recordDraft)}
 									maxlength={field.validation?.max_length}
-									oninput={(event) => setDraftValue(field.key, inputValue(event))}
+									oninput={(event) => {
+										if (!setSignatureValue(field.key, 'record', inputValue(event)))
+											event.currentTarget.value = draftString(field.key);
+									}}
 									data-signature-value={field.key}></textarea>
 							</div>
 						{:else if fieldType(field) === 'autonumber'}

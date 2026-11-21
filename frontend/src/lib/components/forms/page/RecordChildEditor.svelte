@@ -35,8 +35,13 @@
 		toggleChildDraftOption,
 		saveChildRecord
 	} = fp.recordDetail;
-	const { startSignatureStroke, moveSignatureStroke, endSignatureStroke, clearSignatureCanvas } =
-		fp.attachments;
+	const {
+		startSignatureStroke,
+		moveSignatureStroke,
+		endSignatureStroke,
+		clearSignatureCanvas,
+		setSignatureValue
+	} = fp.attachments;
 </script>
 
 {#if s.childEditor}
@@ -257,7 +262,13 @@
 								placeholder={fieldPlaceholder(childField)}
 								readonly={fieldReadOnlyByCondition(childField, s.childEditor.draft)}
 								maxlength={childField.validation?.max_length}
-								oninput={(event) => updateChildDraftValue(childField.key, inputValue(event))}
+								oninput={(event) => {
+									if (!setSignatureValue(childField.key, 'child', inputValue(event)))
+										event.currentTarget.value = draftStringFrom(
+											s.childEditor?.draft ?? {},
+											childField.key
+										);
+								}}
 								data-child-signature-value={childField.key}></textarea>
 						</div>
 					{:else if fieldType(childField) === 'autonumber'}
