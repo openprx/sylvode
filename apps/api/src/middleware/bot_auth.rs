@@ -584,18 +584,27 @@ pub async fn bot_or_user_auth_middleware(
         // A runner bot reaches only the routes and projects its connections allow.
         let method = req.method().as_str().to_owned();
         let (mut parts, body) = req.into_parts();
-        let scope =
-            super::runner_bot_scope::authorize(&state.db, bot.id, bot.workspace_id, bot.runner, &method, &mut parts)
-                .await;
-        req = Request::from_parts(parts, body);
-        if let Err(error) = scope {
-            let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-            if let Err(audit_error) =
-                record_operation(&state.db, authenticated_operation, 403, Some("forbidden"), duration_ms).await
-            {
-                tracing::error!(error = %audit_error, "bot operation log write failed for a refused bot request");
+        let scope = super::runner_bot_scope::authorize(
+            &state.db,
+            bot.id,
+            bot.workspace_id,
+            bot.runner,
+            &method,
+            &mut parts,
+            body,
+        )
+        .await;
+        match scope {
+            Ok(body) => req = Request::from_parts(parts, body),
+            Err(error) => {
+                let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+                if let Err(audit_error) =
+                    record_operation(&state.db, authenticated_operation, 403, Some("forbidden"), duration_ms).await
+                {
+                    tracing::error!(error = %audit_error, "bot operation log write failed for a refused bot request");
+                }
+                return Err(error);
             }
-            return Err(error);
         }
         operation_context = Some(authenticated_operation);
 

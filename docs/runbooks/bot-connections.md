@@ -25,20 +25,35 @@ Operating notes for migration `0112_bot_connections.sql`: the schema under "Conn
 
 ## What a runner bot's token may reach
 
-The token of a bot made by a project bot connection is not a workspace-wide token. In
-`bot_or_user_auth_middleware`, `middleware/runner_bot_scope.rs` allows it only the routes listed in
-`RUNNER_BOT_ROUTES` (the task protocol and callbacks, the project, issue, comment, label and task
-routes), and for a route that names a project or an issue only when that project has an enabled
-connection for the bot. Everything else, such as the Members, Webhooks, Bots and Forms routes, the
-Flow routes and project deletion, answers 403 `this bot may act only in projects it is connected
-to`; the answer never says whether the route, the project or the connection was the reason. The
-task routes (`/ai/tasks/...`, `/ai/callbacks/task/...`) need no project: the handler already
-requires the bot to be the task's participant, and a task that was running when its connection was
-disabled can still report how it ended. A bot without a runner row (a bot made on the Bots page)
-is not affected. To let a runner bot call another route, add it to the table on purpose.
+The token of a bot made by a project bot connection is limited to the projects where the bot has
+an enabled connection. `middleware/runner_bot_scope.rs` enforces this in
+`bot_or_user_auth_middleware`, once, for every route, from the table in
+`middleware/runner_bot_routes.rs` (one entry per method and path of `main.rs`; 445 today). A route
+has one of five classes:
 
-The AI participants API (`/api/v1/projects/{project_id}/ai-participants` and its `{id}` routes) is
-removed. A bot becomes a project's AI participant only through a project bot connection.
+| Class | Routes | Runner bot |
+|---|---|---|
+| no project (17) | the task protocol and callbacks, runner report, catalogues | allowed; the handler limits the bot to its own tasks |
+| project-resolved (290) | issues, comments, labels of an issue, sprints, board, forms, form records, attachments and jobs, plugins, domains, check results, audit reports, search with `project_id`, proposals, impact reviews, Flow objects, collections, records, exports, conversions, block shares | allowed only when the target resolves to a project that has an enabled connection for the bot |
+| own resource (13) | the bot's notifications, uploads, preferences, personal Flow home, a proposal it authored that no project claims | allowed; the handler filters by the caller |
+| admin (85) | members, roles, bots, webhooks, workspace settings and workflows, labels (workspace), project creation and deletion, connections and execution settings, alert sources and rules, Flow administration and workspace import/export | refused |
+| refused (40) | workspace-wide listings (projects, labels, activities, proposals, trust scores, workspace Flow), personal pages of the user, block transfers, Flow collab tickets, `my/*` | refused |
+
+The target is found the way the permission layer finds it for that route family: the project in the
+path; an issue, comment, form, view, record, attachment, job, plugin, sprint, check result or impact
+review by its own row; a Flow object, collection or record by `flow_objects.project_id`; a Flow
+conversion, export or block share by its source object; a proposal by the one project its linked
+issues belong to; a request that names the project in its JSON body (`project_id`, the parent
+object, the conversion's source object or preview) or in the `project_id` query parameter by that
+value. A target that does not exist, belongs to no project (except the bot's own personal space or
+its own unlinked proposal), spans two projects, or is in another project is refused. Every refusal
+answers 403 `this bot may act only in projects it is connected to`; it never says which part failed.
+A bot without a runner row (a bot made on the Bots page) is not affected.
+
+A task that was running when its connection was disabled can still report how it ended (the task
+routes need no project; the handler requires the bot to be the task's participant). A route that is
+not in the table, or a new route added to `main.rs`, is refused until it is classified:
+`every_route_of_main_is_classified` fails the build first.
 
 ## Tasks, rotation and removal
 
