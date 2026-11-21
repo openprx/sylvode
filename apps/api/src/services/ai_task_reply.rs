@@ -17,12 +17,14 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
+    routes::proposal::find_proposal,
     services::{
         ai_task_service::AiTaskRow,
         ai_task_view::SourceKind,
         comments::insert_comment,
         execution_settings::{self, ExecutionSettings},
         issues::{IssueRef, set_state},
+        proposals::{VoteActor, cast_vote},
         workflow_service::resolve_effective_workflow_for_project,
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks_after_ai_tasks},
@@ -240,11 +242,7 @@ pub async fn route_completion<C: ConnectionTrait>(
     let mut routed = RoutedReply::default();
     match kind {
         SourceKind::Manual => {}
-        SourceKind::ProposalVote => {
-            return Err(ApiError::BadRequest(
-                "completing a proposal_vote task is not supported yet".to_string(),
-            ));
-        }
+        SourceKind::ProposalVote => route_vote(state, txn, task, input, &mut routed).await?,
         SourceKind::IssueAssignment | SourceKind::CommentMention | SourceKind::ReviewRequest => {
             let issue = find_issue(txn, issue_id_for(task, kind), task.project_id)
                 .await?
@@ -283,6 +281,67 @@ pub async fn route_completion<C: ConnectionTrait>(
         }
     }
     Ok(routed)
+}
+
+/// Casts the bot's vote for a proposal vote task.
+///
+/// The vote, its reason and the choice are checked exactly as the vote endpoint checks them; a
+/// refusal (a reason that is too short, a closed voting window) is a 400 and the task stays
+/// active, so the agent can call again. A vote the bot already cast completes the task with the
+/// warning `vote already recorded`.
+async fn route_vote<C: ConnectionTrait>(
+    state: &AppState,
+    txn: &C,
+    task: &AiTaskRow,
+    input: &CompletionInput,
+    routed: &mut RoutedReply,
+) -> Result<(), ApiError> {
+    if input.outcome == Outcome::NoChange {
+        return Err(ApiError::BadRequest(
+            "a vote task cannot end with no_change".to_string(),
+        ));
+    }
+    let Some(choice) = input.vote.as_deref() else {
+        return Err(ApiError::BadRequest(
+            "vote is required for a proposal_vote task".to_string(),
+        ));
+    };
+    let proposal_id = task
+        .payload
+        .get("proposal_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| task.reference_id.map(|id| id.to_string()))
+        .ok_or_else(|| ApiError::Conflict("the proposal this task refers to is not named".to_string()))?;
+    let proposal = find_proposal(state, &proposal_id)
+        .await
+        .map_err(|_| ApiError::Conflict("the proposal this task refers to no longer exists".to_string()))?;
+    let same_workspace = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT 1 FROM projects WHERE id = $1 AND workspace_id IS NOT DISTINCT FROM $2",
+            vec![task.project_id.into(), proposal.workspace_id.into()],
+        ))
+        .await?
+        .is_some();
+    if !same_workspace {
+        return Err(ApiError::Conflict(
+            "the proposal this task refers to no longer exists".to_string(),
+        ));
+    }
+    let actor = VoteActor {
+        user_id: task.ai_participant_id,
+        author_type: "ai",
+    };
+    match cast_vote(state, txn, &actor, &proposal, choice, input.vote_reason.as_deref()).await {
+        Ok(cast) => {
+            routed.report.vote = Some(cast.vote.choice);
+            routed.triggers.extend(cast.trigger);
+        }
+        Err(ApiError::Conflict(_)) => routed.report.warnings.push("vote already recorded".to_string()),
+        Err(other) => return Err(other),
+    }
+    Ok(())
 }
 
 async fn current_state<C: ConnectionTrait>(db: &C, issue_id: Uuid) -> Result<String, ApiError> {
@@ -1081,6 +1140,302 @@ mod tests {
         }
         assert_eq!(env.status(task).await, "processing");
         assert!(env.comments().await.is_empty());
+        scratch.drop_self().await;
+    }
+
+    const LONG_REASON: &str = "The change is small, well tested and matches the documented design of the module.";
+
+    impl Env {
+        /// The bot as a voting participant of the project, and a proposal in its voting window,
+        /// linked to the project through the issue. Returns the proposal's text id.
+        async fn voting_proposal(&self) -> String {
+            let proposal = format!("PROP-{}", Uuid::new_v4());
+            exec(
+                &self.db,
+                "INSERT INTO ai_participants (id, project_id, name, model, provider, capabilities, registered_by) \
+                 VALUES ($1, $2, 'voter', 'm', 'p', '[]', $3) ON CONFLICT (id) DO NOTHING",
+                vec![
+                    self.bot.to_string().into(),
+                    self.tenant.project_id.into(),
+                    self.tenant.member_id.into(),
+                ],
+            )
+            .await;
+            exec(
+                &self.db,
+                "INSERT INTO proposals (id, title, proposal_type, status, author_id, author_type, content, workspace_id, \
+                                        voting_started_at) \
+                 VALUES ($1, 'Adopt the plan', 'feature', 'voting', $2, 'human', 'body', $3, now())",
+                vec![
+                    proposal.clone().into(),
+                    self.tenant.member_id.to_string().into(),
+                    self.tenant.workspace_id.into(),
+                ],
+            )
+            .await;
+            exec(
+                &self.db,
+                "INSERT INTO proposal_issue_links (proposal_id, issue_id) VALUES ($1, $2)",
+                vec![proposal.clone().into(), self.issue.into()],
+            )
+            .await;
+            proposal
+        }
+
+        async fn vote_task(&self, proposal: &str) -> Uuid {
+            seed_task_for(
+                &self.db,
+                &self.tenant,
+                self.bot,
+                "processing",
+                1,
+                0,
+                ("vote_requested", Some("proposal"), None),
+                json!({"proposal_id": proposal}),
+            )
+            .await
+        }
+
+        async fn votes(&self, proposal: &str) -> i64 {
+            count(
+                &self.db,
+                "SELECT COUNT(*)::bigint AS count FROM votes WHERE proposal_id = $1 AND voter_id = $2",
+                vec![proposal.to_string().into(), self.bot.to_string().into()],
+            )
+            .await
+        }
+    }
+
+    #[tokio::test]
+    async fn completing_a_vote_task_casts_the_bots_vote() {
+        let scratch = scratch_or_skip!("reply_vote");
+        let env = Env::new(&scratch.db, "vo").await;
+        let proposal = env.voting_proposal().await;
+        let task = env.vote_task(&proposal).await;
+        assert!(
+            load_task_with_protocol(&env.db, task)
+                .await
+                .expect("task")
+                .task
+                .reference_id
+                .is_none(),
+            "a PROP-<uuid> id cannot be a reference; the payload carries it"
+        );
+
+        let answer = env
+            .complete(
+                task,
+                1,
+                json!({"outcome": "done", "summary": "Voted.", "vote": "yes", "vote_reason": LONG_REASON}),
+            )
+            .await
+            .expect("complete");
+        assert_eq!(data(&answer)["reply"]["vote"], "yes");
+        assert_eq!(data(&answer)["reply"]["comment_id"], Value::Null);
+        assert_eq!(data(&answer)["reply"]["warnings"], json!([]));
+        assert_eq!(data(&answer)["task"]["status"], "completed");
+        assert_eq!(env.votes(&proposal).await, 1);
+        assert!(env.comments().await.is_empty(), "a vote task writes no comment");
+        assert_eq!(
+            count(
+                &env.db,
+                "SELECT COUNT(*)::bigint AS count FROM votes WHERE proposal_id = $1 AND choice = 'yes' AND voter_type = 'ai' \
+                 AND reason = $2",
+                vec![proposal.clone().into(), LONG_REASON.to_string().into()],
+            )
+            .await,
+            1
+        );
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn the_vote_service_returns_the_webhook_to_send_after_commit() {
+        use crate::routes::proposal::find_proposal;
+        use crate::services::proposals::{VoteActor, cast_vote};
+        use sea_orm::TransactionTrait;
+        let scratch = scratch_or_skip!("reply_vote_trigger");
+        let env = Env::new(&scratch.db, "vg").await;
+        let proposal_id = env.voting_proposal().await;
+        let state = state_for(env.db.clone());
+        let proposal = find_proposal(&state, &proposal_id).await.expect("proposal");
+        let txn = env.db.begin().await.expect("transaction");
+        let cast = cast_vote(
+            &state,
+            &txn,
+            &VoteActor {
+                user_id: env.bot,
+                author_type: "ai",
+            },
+            &proposal,
+            " YES ",
+            Some(LONG_REASON),
+        )
+        .await
+        .expect("the vote is cast");
+        txn.commit().await.expect("commit");
+        assert_eq!(cast.vote.choice, "yes");
+        assert_eq!(cast.tally.yes, 1);
+        let trigger = cast.trigger.expect("a project resolves, so there is a webhook to send");
+        assert_eq!(trigger.actor_id, env.bot);
+        assert_eq!(trigger.project_id, env.tenant.project_id);
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn a_refused_vote_leaves_the_task_active_so_the_agent_can_call_again() {
+        let scratch = scratch_or_skip!("reply_vote_refused");
+        let env = Env::new(&scratch.db, "vr").await;
+        let proposal = env.voting_proposal().await;
+
+        // A reason that is too short.
+        let task = env.vote_task(&proposal).await;
+        let short = env
+            .complete(
+                task,
+                1,
+                json!({"outcome": "done", "summary": "x", "vote": "no", "vote_reason": "too short"}),
+            )
+            .await;
+        assert!(
+            matches!(&short, Err(ApiError::BadRequest(message)) if message == "reason is required for AI vote and must be at least 50 characters"),
+            "{short:?}"
+        );
+        assert_eq!(env.status(task).await, "processing");
+        assert_eq!(env.votes(&proposal).await, 0);
+        // The same task then ends with a proper reason.
+        env.complete(
+            task,
+            1,
+            json!({"outcome": "done", "summary": "x", "vote": "no", "vote_reason": LONG_REASON}),
+        )
+        .await
+        .expect("the second call succeeds");
+        assert_eq!(env.status(task).await, "completed");
+
+        // A closed voting window.
+        let late = env.voting_proposal().await;
+        exec(
+            &env.db,
+            "UPDATE proposals SET voting_started_at = now() - interval '10 days' WHERE id = $1",
+            vec![late.clone().into()],
+        )
+        .await;
+        let late_task = env.vote_task(&late).await;
+        let closed = env
+            .complete(
+                late_task,
+                1,
+                json!({"outcome": "done", "summary": "x", "vote": "yes", "vote_reason": LONG_REASON}),
+            )
+            .await;
+        assert!(
+            matches!(&closed, Err(ApiError::BadRequest(message)) if message.contains("voting period has ended")),
+            "{closed:?}"
+        );
+        assert_eq!(env.status(late_task).await, "processing");
+
+        // A proposal that is not in voting.
+        let draft = env.voting_proposal().await;
+        exec(
+            &env.db,
+            "UPDATE proposals SET status = 'draft' WHERE id = $1",
+            vec![draft.clone().into()],
+        )
+        .await;
+        let draft_task = env.vote_task(&draft).await;
+        let refused = env
+            .complete(
+                draft_task,
+                1,
+                json!({"outcome": "done", "summary": "x", "vote": "yes", "vote_reason": LONG_REASON}),
+            )
+            .await;
+        assert!(
+            matches!(&refused, Err(ApiError::BadRequest(message)) if message == "proposal is not in voting status")
+        );
+        assert_eq!(env.status(draft_task).await, "processing");
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn an_existing_vote_completes_the_task_with_a_warning() {
+        let scratch = scratch_or_skip!("reply_vote_existing");
+        let env = Env::new(&scratch.db, "ve").await;
+        let proposal = env.voting_proposal().await;
+        exec(
+            &env.db,
+            "INSERT INTO votes (proposal_id, voter_id, voter_type, choice, weight, reason, voted_at) \
+             VALUES ($1, $2, 'ai', 'abstain', 1.0, 'earlier', now())",
+            vec![proposal.clone().into(), env.bot.to_string().into()],
+        )
+        .await;
+        let task = env.vote_task(&proposal).await;
+        let answer = env
+            .complete(
+                task,
+                1,
+                json!({"outcome": "done", "summary": "x", "vote": "yes", "vote_reason": LONG_REASON}),
+            )
+            .await
+            .expect("complete");
+        assert_eq!(data(&answer)["task"]["status"], "completed");
+        assert_eq!(data(&answer)["reply"]["vote"], Value::Null);
+        assert_eq!(data(&answer)["reply"]["warnings"], json!(["vote already recorded"]));
+        assert_eq!(env.votes(&proposal).await, 1, "the earlier vote stands");
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn a_vote_task_needs_a_vote_and_cannot_end_with_no_change() {
+        let scratch = scratch_or_skip!("reply_vote_missing");
+        let env = Env::new(&scratch.db, "vm").await;
+        let proposal = env.voting_proposal().await;
+        let task = env.vote_task(&proposal).await;
+
+        let missing = env.complete(task, 1, json!({"outcome": "done", "summary": "x"})).await;
+        assert!(
+            matches!(&missing, Err(ApiError::BadRequest(message)) if message == "vote is required for a proposal_vote task"),
+            "{missing:?}"
+        );
+        let no_change = env
+            .complete(
+                task,
+                1,
+                json!({"outcome": "no_change", "summary": "x", "vote": "yes", "vote_reason": LONG_REASON}),
+            )
+            .await;
+        assert!(matches!(&no_change, Err(ApiError::BadRequest(message)) if message.contains("no_change")));
+        assert_eq!(env.status(task).await, "processing");
+        assert_eq!(env.votes(&proposal).await, 0);
+
+        // A failed vote task writes nothing and casts no vote.
+        let failed = env
+            .fail(task, 1, json!({"reason": "cannot decide"}))
+            .await
+            .expect("fail");
+        assert_eq!(data(&failed)["reply"]["comment_id"], Value::Null);
+        assert_eq!(env.votes(&proposal).await, 0);
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn a_proposal_of_another_workspace_cannot_be_voted_on_through_a_task() {
+        let scratch = scratch_or_skip!("reply_vote_foreign");
+        let env = Env::new(&scratch.db, "vf").await;
+        let other = Env::new(&scratch.db, "vx").await;
+        let foreign = other.voting_proposal().await;
+        let task = env.vote_task(&foreign).await;
+        let refused = env
+            .complete(
+                task,
+                1,
+                json!({"outcome": "done", "summary": "x", "vote": "yes", "vote_reason": LONG_REASON}),
+            )
+            .await;
+        assert!(matches!(refused, Err(ApiError::Conflict(_))));
+        assert_eq!(env.status(task).await, "processing");
+        assert_eq!(other.votes(&foreign).await, 0);
         scratch.drop_self().await;
     }
 }

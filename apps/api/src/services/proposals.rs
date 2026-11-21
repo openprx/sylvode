@@ -136,11 +136,14 @@ pub async fn cast_vote<C: ConnectionTrait>(
     )
     .await?;
 
-    let mut trigger = None;
-    if let Some(project_id) = resolve_project_id_for_proposal(state, &proposal.id, &proposal.author_id).await?
-        && let Some(workspace_id) = resolve_workspace_id_for_project(state, project_id).await?
-    {
-        trigger = Some(TriggerContext {
+    let project_id = resolve_project_id_for_proposal(state, &proposal.id, &proposal.author_id).await?;
+    let workspace_id = match project_id {
+        Some(project_id) => resolve_workspace_id_for_project(state, project_id).await?,
+        None => None,
+    };
+    let trigger = project_id
+        .zip(workspace_id)
+        .map(|(project_id, workspace_id)| TriggerContext {
             event: WebhookEvent::ProposalVoteCast,
             workspace_id,
             project_id,
@@ -164,7 +167,6 @@ pub async fn cast_vote<C: ConnectionTrait>(
                 "tally": tally,
             })),
         });
-    }
 
     Ok(CastVote { vote, tally, trigger })
 }

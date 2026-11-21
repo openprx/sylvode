@@ -1328,6 +1328,7 @@ async fn write_proposal_audit_log(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn write_proposal_audit_log_with_conn<C: ConnectionTrait>(
     db: &C,
     proposal: &ProposalRow,

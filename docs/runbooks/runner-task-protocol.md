@@ -66,6 +66,12 @@ Both the API and the worker read them from the same file.
   to the first done state (lowest position among states of category `done`) unless it is already
   in a terminal state; `none` and `state:<key>` follow the project's setting, and an unknown key
   leaves the state with the warning `state <key> not in workflow`.
+- **Vote tasks.** Completing a `proposal_vote` task casts the bot's vote through the same service
+  as `POST /api/v1/proposals/{id}/votes`, in the same transaction as the status change. The
+  proposal id is `payload.proposal_id` (a `PROP-<uuid>` id cannot be the task reference). A refused
+  vote (reason shorter than the project's minimum, 50 characters by default; closed voting window;
+  proposal not in voting) is a 400 and the task stays active. A vote the bot already cast completes
+  the task with the warning `vote already recorded`. `no_change` and a missing `vote` are 400.
 - **Refused at delivery.** When the runner declines a task at delivery, the worker fails it and,
   for a project whose execution settings are enabled, posts `Could not start: <reason>` on the work
   item (or as a reply to the mention).
