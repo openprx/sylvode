@@ -181,6 +181,30 @@ async function deleteCachedSnapshot(userId: string | null, objectId: string): Pr
 
 /** Structural shape of a Loro map, wide enough to cover any container name (see `setTitle`'s
  * comment for why `LoroDocType.getMap` needs widening for non-`doc`/`data` containers). */
+/** At most this many rebuilds of a doc that cannot import server bytes, within `POISON_WINDOW_MS`. */
+const POISON_REBUILDS_MAX = 2;
+const POISON_WINDOW_MS = 60_000;
+/** Marks the error a replay throws when its doc was just discarded; it is not shown. */
+const DOC_REBUILD_REASON = 'doc_rebuild';
+
+function unreadableRemoteUpdate(): FlowError {
+	return {
+		code: 'invalid_update',
+		recoverable: false,
+		origin: 'client',
+		details: { reason: 'remote_update_unreadable' }
+	};
+}
+
+function docRebuildStarted(): FlowError {
+	return {
+		code: 'resync_required',
+		recoverable: true,
+		origin: 'client',
+		details: { reason: DOC_REBUILD_REASON }
+	};
+}
+
 export interface NamedLoroMap {
 	get(key: string): unknown;
 	set(key: string, value: unknown): void;
@@ -270,6 +294,8 @@ class OpenEntry implements OpenFlowObjectResult {
 	/** The next session `snapshot` replaces the doc instead of merging into it. */
 	rebuildOnSnapshot = false;
 	rebuildDone: (() => void) | null = null;
+	/** Times (ms) of the recent rebuilds of a doc that could not import server bytes. */
+	poisonRebuilds: number[] = [];
 
 	constructor(input: {
 		ownerUserId: string | null;
@@ -515,6 +541,12 @@ export class FlowObjectRepository {
 				onFlowError: (error: FlowError) => {
 					flowErrorStore.set(error);
 				},
+				onImportFailure: () => {
+					// The import of server bytes threw, so the doc may be dead. Before the entry
+					// exists (the first snapshot) nothing is mounted: report the failure.
+					if (entry) void this.recoverUnreadableDoc(entry);
+					else flowErrorStore.set(unreadableRemoteUpdate());
+				},
 				onConnected: () => {
 					entry?.offline.onConnected();
 				},
@@ -586,14 +618,24 @@ export class FlowObjectRepository {
 				await Promise.race([rebuilt, new Promise<void>((resolve) => setTimeout(resolve, 15_000))]);
 			},
 			importIntoLive: (bytes) => {
-				liveDoc().import(bytes);
+				try {
+					liveDoc().import(bytes);
+				} catch {
+					// Replay stops; the rebuild below reconnects, and the next connect replays the
+					// queue onto the fresh doc.
+					if (entry) void this.recoverUnreadableDoc(entry);
+					throw docRebuildStarted();
+				}
 			},
 			scratchFrom: (bootstrap) => scratchReplicaFrom(bootstrap),
 			enterReadOnly: () => {
 				session.setPermissionReadOnly(true);
 				readOnlyStore.set(true);
 			},
-			reportError: (error) => flowErrorStore.set(error)
+			reportError: (error) => {
+				if ((error.details as { reason?: string } | undefined)?.reason !== DOC_REBUILD_REASON)
+					flowErrorStore.set(error);
+			}
 		};
 		const offline = new FlowOfflineSync(
 			await this.outbox(userId),
@@ -659,13 +701,18 @@ export class FlowObjectRepository {
 		}
 
 		this.open_.set(input.objectId, opened);
-		for (const hold of this.transferHolds.get(input.objectId) ?? []) this.attachTransferHold(opened, hold);
+		for (const hold of this.transferHolds.get(input.objectId) ?? [])
+			this.attachTransferHold(opened, hold);
 		return opened;
 	}
 
 	/** Routes the current doc's local updates into the outbox. Re-run after every rebuild. */
 	private subscribeLocal(entry: OpenEntry, frontier: () => string): void {
-		entry.unsubscribeLocal?.();
+		try {
+			entry.unsubscribeLocal?.();
+		} catch {
+			// The previous doc is dead (see `recoverUnreadableDoc`): nothing is left to detach.
+		}
 		const target = entry.doc;
 		if (entry.editorPaused) {
 			entry.unsubscribeLocal = null;
@@ -923,8 +970,13 @@ export class FlowObjectRepository {
 				!apiClient.isAuthSessionEpoch(epoch)
 			)
 				return false;
-			doc.import(fromBase64(bootstrap.snapshot_base64));
-			for (const update of bootstrap.tail_updates) doc.import(fromBase64(update.bytes));
+			try {
+				doc.import(fromBase64(bootstrap.snapshot_base64));
+				for (const update of bootstrap.tail_updates) doc.import(fromBase64(update.bytes));
+			} catch {
+				void this.recoverUnreadableDoc(entry);
+				return false;
+			}
 			entry.projection.applyEngineDiff(
 				{ documentId: entry.handle.documentId } satisfies EngineDiff,
 				bootstrap.head_seq
@@ -936,7 +988,9 @@ export class FlowObjectRepository {
 		}
 	}
 
-	transferEditingHeld(objectId: string): boolean { return !!this.transferHolds.get(objectId)?.size; }
+	transferEditingHeld(objectId: string): boolean {
+		return !!this.transferHolds.get(objectId)?.size;
+	}
 	openTransferEntry(objectId: string): OpenFlowObjectResult | null {
 		return this.open_.get(objectId) ?? null;
 	}
@@ -946,32 +1000,41 @@ export class FlowObjectRepository {
 		entry.operationHeldStore.set(true);
 		let releaseDoc = holdEditorWrites(entry.doc, operationId);
 		const stop = entry.docGeneration.subscribe(() => {
-			releaseDoc(); releaseDoc = holdEditorWrites(entry.doc, operationId);
+			releaseDoc();
+			releaseDoc = holdEditorWrites(entry.doc, operationId);
 		});
 		const release = () => {
-			stop(); releaseDoc(); entry.operationHolds.delete(operationId);
+			stop();
+			releaseDoc();
+			entry.operationHolds.delete(operationId);
 			entry.operationHeldStore.set(entry.operationHolds.size > 0);
 		};
 		entry.lifecycleAbort.signal.addEventListener('abort', release, { once: true });
 		this.transferHoldReleases.set(`${entry.handle.objectId}:${operationId}`, () => {
-			entry.lifecycleAbort.signal.removeEventListener('abort', release); release();
+			entry.lifecycleAbort.signal.removeEventListener('abort', release);
+			release();
 		});
 	}
 	private readonly transferHoldReleases = new Map<string, () => void>();
 	holdTransferEditing(objectIds: readonly string[], operationId: string): () => void {
 		for (const id of objectIds) {
 			let holds = this.transferHolds.get(id);
-			if (!holds) { holds = new Set(); this.transferHolds.set(id, holds); }
+			if (!holds) {
+				holds = new Set();
+				this.transferHolds.set(id, holds);
+			}
 			holds.add(operationId);
 			const entry = this.open_.get(id);
 			if (entry) this.attachTransferHold(entry, operationId);
 		}
 		return () => {
 			for (const id of objectIds) {
-				const holds = this.transferHolds.get(id); holds?.delete(operationId);
+				const holds = this.transferHolds.get(id);
+				holds?.delete(operationId);
 				if (!holds?.size) this.transferHolds.delete(id);
 				const key = `${id}:${operationId}`;
-				this.transferHoldReleases.get(key)?.(); this.transferHoldReleases.delete(key);
+				this.transferHoldReleases.get(key)?.();
+				this.transferHoldReleases.delete(key);
 			}
 		};
 	}
@@ -1195,6 +1258,35 @@ export class FlowObjectRepository {
 		this.swapDoc(entry, fresh, bootstrap.head_seq, () => bootstrap.head_frontier);
 	}
 
+	/**
+	 * The doc threw while importing bytes the server provided. A failed `import` can panic the WASM
+	 * engine (a tree op under a parent that does not exist), after which every call on the doc
+	 * throws, so the doc is discarded: a fresh one is built from the REST bootstrap (or, when this
+	 * user may not read it there, from the next session snapshot, as the outbox does), the editor
+	 * rebinds to it (`swapDoc` bumps the generation) and the session reconnects, which replays the
+	 * unsent queue exactly as every other resync does. At most `POISON_REBUILDS_MAX` rebuilds per
+	 * `POISON_WINDOW_MS`; after that the editor shows its load error instead of looping.
+	 */
+	async recoverUnreadableDoc(entry: OpenEntry): Promise<void> {
+		const now = Date.now();
+		entry.poisonRebuilds = entry.poisonRebuilds.filter((at) => now - at < POISON_WINDOW_MS);
+		if (entry.poisonRebuilds.length >= POISON_REBUILDS_MAX) {
+			entry.reportEditorFailure(unreadableRemoteUpdate());
+			return;
+		}
+		entry.poisonRebuilds.push(now);
+		const objectId = entry.handle.objectId;
+		try {
+			const bootstrap = await this.acceptedBootstrap(objectId);
+			if (this.open_.get(objectId) !== entry) return;
+			if (bootstrap) await this.rebuildFromAccepted(bootstrap);
+			else entry.rebuildOnSnapshot = true;
+			await entry.session.reconnect('stale_frontier');
+		} catch {
+			entry.reportEditorFailure(unreadableRemoteUpdate());
+		}
+	}
+
 	async close(objectId: string): Promise<void> {
 		const entry = this.open_.get(objectId);
 		if (!entry) return;
@@ -1207,13 +1299,24 @@ export class FlowObjectRepository {
 		entry.offline.dispose();
 		entry.unsubscribeLocal?.();
 		await entry.session.dispose();
-		clearBodyClipboard(entry.doc);
-		releaseEditorSession(entry.doc);
-		entry.doc.free();
+		// The current doc may be the one the engine panicked on (after the rebuild budget ran out):
+		// releasing it must not stop the rest of the teardown.
+		try {
+			clearBodyClipboard(entry.doc);
+			releaseEditorSession(entry.doc);
+			entry.doc.free();
+		} catch {
+			// Nothing left to release.
+		}
 		for (const retired of entry.retired) {
-			clearBodyClipboard(retired);
-			releaseEditorSession(retired);
-			retired.free();
+			// A retired doc may be one the engine panicked on; releasing it must not stop the rest.
+			try {
+				clearBodyClipboard(retired);
+				releaseEditorSession(retired);
+				retired.free();
+			} catch {
+				// Nothing left to release.
+			}
 		}
 	}
 
@@ -1343,9 +1446,14 @@ export class FlowObjectRepository {
 	async replaceWithAccepted(bootstrap: FlowBootstrap): Promise<void> {
 		const entry = this.open_.get(bootstrap.object_id);
 		if (!entry) return;
-		entry.doc.import(fromBase64(bootstrap.snapshot_base64));
-		for (const update of bootstrap.tail_updates) {
-			entry.doc.import(fromBase64(update.bytes));
+		try {
+			entry.doc.import(fromBase64(bootstrap.snapshot_base64));
+			for (const update of bootstrap.tail_updates) {
+				entry.doc.import(fromBase64(update.bytes));
+			}
+		} catch {
+			void this.recoverUnreadableDoc(entry);
+			throw docRebuildStarted();
 		}
 		entry.projection.applyEngineDiff(
 			{ documentId: entry.handle.documentId } satisfies EngineDiff,
