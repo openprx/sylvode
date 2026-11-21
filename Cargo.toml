@@ -8,6 +8,7 @@ members = [
   "apps/runner",
   "crates/platform",
   "crates/collab-core",
+  "crates/sylvode-prereq",
   "spikes/collab-shared",
   "spikes/collab-loro",
   "spikes/collab-yrs-yjs",

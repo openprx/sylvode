@@ -110,11 +110,10 @@ async fn the_answer_does_not_echo_command_output() {
     }
 }
 
-/// The one-string `command = "openclaw message send"` that earlier documentation showed starts,
-/// logs a deprecation notice with the replacement, and runs `openclaw` with `message send`
+/// `command = "openclaw"` with `args = ["message", "send"]` runs `openclaw` with `message send`
 /// before the channel options.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_documented_one_string_openclaw_command_runs_with_a_notice() {
+async fn the_openclaw_command_runs_with_its_args_before_the_channel_options() {
     use crate::support::{TempDir, path_with, wait_lines, write_script};
 
     let bin = TempDir::new("bin");
@@ -126,18 +125,10 @@ async fn the_documented_one_string_openclaw_command_runs_with_a_notice() {
     );
     let config = format!(
         "{}\n[[agents]]\nid = \"david\"\nname = \"David\"\nagent_type = \"openclaw\"\nmessage_template = \"{{key}}\"\n\
-         [agents.openclaw]\ncommand = \"openclaw message send\"\nchannel = \"signal\"\ntarget = \"uuid:u1\"\n",
+         [agents.openclaw]\ncommand = \"openclaw\"\nargs = [\"message\", \"send\"]\nchannel = \"signal\"\ntarget = \"uuid:u1\"\n",
         config()
     );
-    let mut server =
-        Server::start(RUNNER, &config, &[("PATH", &path_with(bin.path()))]).expect("the legacy form starts");
-    assert!(
-        server.stdout().iter().any(|line| line.contains(" WARN ")
-            && line.contains("deprecated one-string form")
-            && line.contains(r#"args = ["message", "send"]"#)),
-        "{:?}",
-        server.stdout()
-    );
+    let server = Server::start(RUNNER, &config, &[("PATH", &path_with(bin.path()))]).expect("the configuration starts");
     let (status, answer) = post_signed(&server.url("/webhook"), &bot_task("David", "t").to_string()).await;
     assert_eq!(status, 200, "{answer}");
     assert_eq!(answer["result"], "ok", "{answer}");
