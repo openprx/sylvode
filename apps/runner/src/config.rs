@@ -1992,4 +1992,15 @@ url = "http://127.0.0.1:9000/hook"
         let config = Config::from_toml(GOLDEN_BLOCK).expect("block");
         assert!(!config.runner.tmux.enabled);
     }
+
+    /// claude's configuration directory is the runner's: it cannot be handed over through
+    /// `env_passthrough`.
+    #[test]
+    fn the_claude_config_dir_cannot_be_passed_through() {
+        let error = Config::from_toml(&format!(
+            "{GOLDEN_BLOCK}\n[runner.cli.claude]\nenv_passthrough = [\"CLAUDE_CONFIG_DIR\"]\n"
+        ))
+        .expect_err("refused");
+        assert!(error.contains("env_passthrough"), "{error}");
+    }
 }

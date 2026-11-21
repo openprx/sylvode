@@ -806,6 +806,22 @@ impl Worker {
             tracing::error!("launch refused for session {}: {e}", self.key.as_str());
             "the runner's settings for this CLI do not allow a session".to_string()
         })?;
+        let argv = if task.cli == "claude" {
+            // claude reads its settings, hooks and plugins from its configuration directory; the
+            // runner gives it one of its own, so the operator's `~/.claude` is not loaded.
+            let dir = state.ensure_claude_config_dir(&task.bot.bot_id).map_err(|e| {
+                tracing::error!("could not prepare the claude configuration directory: {e}");
+                "the runner could not prepare the CLI's configuration directory".to_string()
+            })?;
+            let mut wrapped = vec![
+                "/usr/bin/env".to_string(),
+                format!("CLAUDE_CONFIG_DIR={}", dir.to_string_lossy()),
+            ];
+            wrapped.extend(argv);
+            wrapped
+        } else {
+            argv
+        };
         Ok(EnsureFiles { argv })
     }
 

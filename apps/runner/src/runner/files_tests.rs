@@ -325,3 +325,25 @@ fn session_start_and_notification_hooks_have_narrow_matchers() {
     assert!(value["hooks"]["Stop"][0].get("matcher").is_none());
     assert!(value["hooks"]["UserPromptSubmit"][0].get("matcher").is_none());
 }
+
+/// claude's configuration directory is the runner's own: one per bot under the state directory,
+/// private, and refused for an id that is not a plain id.
+#[test]
+fn the_claude_config_dir_is_private_per_bot_and_only_for_plain_ids() {
+    let base = Dir::new();
+    let state = StateDir::open(&base.state()).expect("open");
+    let one = state.ensure_claude_config_dir(BOT).expect("dir");
+    let two = state
+        .ensure_claude_config_dir("22222222-2222-4222-8222-222222222222")
+        .expect("dir");
+    assert_ne!(one, two);
+    assert_eq!(one, state.root().join("claude").join(BOT));
+    for dir in [state.root().join("claude"), one.clone(), two] {
+        assert_eq!(mode(&dir), 0o700, "{dir:?}");
+    }
+    // Idempotent.
+    assert_eq!(state.ensure_claude_config_dir(BOT).expect("again"), one);
+    for bad in ["", "../x", "a/b", "a b", ".hidden"] {
+        assert!(state.ensure_claude_config_dir(bad).is_err(), "{bad:?}");
+    }
+}

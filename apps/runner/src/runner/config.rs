@@ -278,7 +278,12 @@ impl RunnerConfig {
                         .chars()
                         .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
                     && !name.starts_with(|c: char| c.is_ascii_digit());
-                if !valid || matches!(name.as_str(), "CLAUDECODE" | "CLAUDE_CODE_ENTRYPOINT" | "TMUX") {
+                if !valid
+                    || matches!(
+                        name.as_str(),
+                        "CLAUDECODE" | "CLAUDE_CODE_ENTRYPOINT" | "TMUX" | "CLAUDE_CONFIG_DIR"
+                    )
+                {
                     return Err(format!(
                         "{key} holds a name that is not an environment variable the CLI may be given"
                     ));

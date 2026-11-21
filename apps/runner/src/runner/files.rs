@@ -169,6 +169,27 @@ impl StateDir {
         self.root.join("mcp").join(format!("{bot_id}.toml"))
     }
 
+    /// The configuration directory the runner gives claude for `bot_id`
+    /// (`CLAUDE_CONFIG_DIR`): it holds only what claude and the runner write there, never the
+    /// operator's own `~/.claude`.
+    pub fn claude_config_dir(&self, bot_id: &str) -> PathBuf {
+        self.root.join("claude").join(bot_id)
+    }
+
+    /// Creates (mode 0700) and returns the claude configuration directory of `bot_id`.
+    ///
+    /// # Errors
+    ///
+    /// A message when `bot_id` is not a plain id or the directories cannot be made private.
+    pub fn ensure_claude_config_dir(&self, bot_id: &str) -> Result<PathBuf, String> {
+        if bot_id.is_empty() || !bot_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err("the bot id is not a plain id".to_string());
+        }
+        let claude = private_dir(&self.fd, "claude")?;
+        private_dir(&claude, bot_id)?;
+        Ok(self.claude_config_dir(bot_id))
+    }
+
     pub fn claude_mcp_json(&self, bot_id: &str) -> PathBuf {
         self.root.join("mcp").join(format!("{bot_id}.claude.json"))
     }

@@ -71,6 +71,8 @@ pub struct Prepared {
     pub args: Vec<String>,
     /// The operator's pass-through variable names for this CLI.
     pub passthrough: Vec<String>,
+    /// Variables the runner sets itself (`CLAUDE_CONFIG_DIR`).
+    pub set_env: Vec<(String, String)>,
 }
 
 fn refusal(code: &'static str, reason: impl Into<String>) -> Refusal {
@@ -175,10 +177,22 @@ pub fn prepare(config: &Config, state: &StateDir, accepted: &Accepted, mcp_serve
             )
         }
     })?;
+    let mut set_env = Vec::new();
+    if accepted.cli == "claude" {
+        let dir = state.ensure_claude_config_dir(&accepted.bot.bot_id).map_err(|e| {
+            tracing::error!("could not prepare the claude configuration directory: {e}");
+            refusal(
+                "runner_agent_disabled",
+                "the runner could not prepare the CLI's configuration directory",
+            )
+        })?;
+        set_env.push(("CLAUDE_CONFIG_DIR".to_string(), dir.to_string_lossy().into_owned()));
+    }
     Ok(Prepared {
         program: accepted.program.clone(),
         args,
         passthrough,
+        set_env,
     })
 }
 
@@ -206,6 +220,9 @@ pub async fn execute(
     let mut command = tokio::process::Command::new(&prepared.program);
     command.args(args).current_dir(dir).env_clear();
     for (name, value) in super::tmux::allowed_environment(&prepared.passthrough, false) {
+        command.env(name, value);
+    }
+    for (name, value) in &prepared.set_env {
         command.env(name, value);
     }
     match process::run(command, timeout, process::TERMINATION_GRACE, cancel).await {

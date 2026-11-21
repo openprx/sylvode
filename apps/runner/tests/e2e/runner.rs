@@ -443,6 +443,20 @@ async fn the_headless_cli_gets_an_allow_listed_environment() {
         names.contains(&"SV_PASS_ME") && names.contains(&"PATH") && names.contains(&"LC_ALL"),
         "{names:?}"
     );
+    // claude gets a configuration directory of the runner's own (the operator's `~/.claude` is
+    // not loaded), private, under the state directory, one per bot.
+    let config_dir = env
+        .lines()
+        .find_map(|l| l.strip_prefix("CLAUDE_CONFIG_DIR="))
+        .expect("CLAUDE_CONFIG_DIR is set by the runner");
+    assert!(
+        config_dir.ends_with(&format!("/claude/{BOT}")) && config_dir.contains("/s/"),
+        "{config_dir}"
+    );
+    assert_eq!(
+        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(config_dir).expect("dir").permissions()) & 0o777,
+        0o700
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
