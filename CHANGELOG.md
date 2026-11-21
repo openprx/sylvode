@@ -111,7 +111,11 @@ name.
   - *The one name that cannot be kept.* The compose service `webhook` is now `runner`; compose has
     no alias for a service name, so `docker compose ... logs webhook` and similar commands must name
     `runner`. The host name `webhook` still resolves on the compose network (a network alias), so
-    delivery URLs and `[outbound] allowed_hosts` entries that say `webhook:9090` keep working. The example configuration is `config/sylvode-runner.example.toml`; the smoke scripts
+    delivery URLs and `[outbound] allowed_hosts` entries that say `webhook:9090` keep working.
+  - *Installer.* `apps/runner/scripts/install.sh` installs `sylvode-runner.service` (Linux) or
+    `dev.sylvode.runner` (macOS). A unit installed under `sylvode-webhook` or `openpr-webhook` is
+    still updated in place under its own name, with a deprecation line; `install.sh --migrate`
+    moves it to the new name. `uninstall.sh` removes all three names. The example configuration is `config/sylvode-runner.example.toml`; the smoke scripts
     are `scripts/smoke-runner-routing.sh` and `scripts/smoke-browser-mention-runner.sh`
     (`SYLVODE_RUNNER_DIR`, with `SYLVODE_WEBHOOK_DIR` still accepted).
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=Sylvode Webhook Service
+Description=Sylvode Runner Service
 Documentation=https://github.com/openprx/openpr-webhook
 After=network.target
 Wants=network-online.target

@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  launchd user agent for Sylvode Webhook.
+  launchd user agent for the Sylvode runner.
   Installed to: ~/Library/LaunchAgents/{{LABEL}}.plist
   Load:   launchctl load ~/Library/LaunchAgents/{{LABEL}}.plist
   Unload: launchctl unload ~/Library/LaunchAgents/{{LABEL}}.plist

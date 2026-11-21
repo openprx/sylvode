@@ -19,6 +19,12 @@ together as 0.3.53.
 - `SYLVODE_RUNNER_SAFE_MODE` replaces `SYLVODE_WEBHOOK_SAFE_MODE` and `OPENPR_WEBHOOK_SAFE_MODE`,
   which are still read; `RUST_LOG` directives naming `sylvode_webhook` or `openpr_webhook` are
   rewritten to `sylvode_runner`. Each legacy spelling writes one deprecation line.
+- The installer creates `sylvode-runner.service` (Linux) or `dev.sylvode.runner` (macOS) and looks
+  for the `sylvode-runner` binary first, then `sylvode-webhook`, then `openpr-webhook`. A unit
+  installed under `sylvode-webhook` or `openpr-webhook` (agent `dev.sylvode.webhook` or
+  `dev.openpr.webhook`) is still updated in place under its own name, with a deprecation line that
+  names the new `--migrate` flag; `--migrate` moves it to the canonical unit and can be repeated.
+  Two or more of the three names installed together are refused. `uninstall.sh` removes all three.
 - No change to the HTTP interface, the configuration format, answers or callback bodies: the callback
   `source` stays `sylvode-webhook`.
 
