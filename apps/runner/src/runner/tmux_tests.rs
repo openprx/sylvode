@@ -332,12 +332,12 @@ fn pushed_text_refuses_every_control_character_but_newline() {
 #[test]
 fn pane_information_parses_with_a_path_that_contains_spaces() {
     assert_eq!(
-        parse_pane_info("0 4242 claude.exe /Users/x/my work\n"),
+        parse_pane_info("0 4242 claude.exe /work/my project\n"),
         Some(PaneInfo {
             dead: false,
             pid: 4242,
             current_command: "claude.exe".to_string(),
-            current_path: "/Users/x/my work".to_string(),
+            current_path: "/work/my project".to_string(),
         })
     );
     assert_eq!(parse_pane_info("1 7 zsh /tmp").map(|p| p.dead), Some(true));
