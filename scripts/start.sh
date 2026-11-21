@@ -126,12 +126,12 @@ sylvode_resolve_env_into SYLVODE_FRONTEND_PORT "$ENV_FILE" SYLVODE_FRONTEND_PORT
 sylvode_resolve_env_into SYLVODE_MCP_PORT "$ENV_FILE" SYLVODE_MCP_PORT MCP_SERVER_PORT 8090
 sylvode_resolve_env_into SYLVODE_RUNTIME_BASE "$ENV_FILE" SYLVODE_RUNTIME_BASE OPENPR_RUNTIME_BASE ''
 sylvode_resolve_env_into SYLVODE_FRONTEND_DOCKERFILE "$ENV_FILE" SYLVODE_FRONTEND_DOCKERFILE OPENPR_FRONTEND_DOCKERFILE Dockerfile
-sylvode_resolve_env_into SYLVODE_WEBHOOK_PORT "$ENV_FILE" SYLVODE_WEBHOOK_PORT OPENPR_WEBHOOK_PORT 9090
-sylvode_resolve_env_into SYLVODE_WEBHOOK_IMAGE "$ENV_FILE" SYLVODE_WEBHOOK_IMAGE OPENPR_WEBHOOK_IMAGE ghcr.io/openprx/sylvode-webhook:latest
-sylvode_resolve_env_into SYLVODE_WEBHOOK_CONFIG "$ENV_FILE" SYLVODE_WEBHOOK_CONFIG OPENPR_WEBHOOK_CONFIG ./config/sylvode-webhook.example.toml
+sylvode_resolve_env_into SYLVODE_RUNNER_PORT "$ENV_FILE" SYLVODE_RUNNER_PORT SYLVODE_WEBHOOK_PORT,OPENPR_WEBHOOK_PORT 9090
+sylvode_resolve_env_into SYLVODE_RUNNER_IMAGE "$ENV_FILE" SYLVODE_RUNNER_IMAGE SYLVODE_WEBHOOK_IMAGE,OPENPR_WEBHOOK_IMAGE ghcr.io/openprx/sylvode-runner:latest
+sylvode_resolve_env_into SYLVODE_RUNNER_CONFIG "$ENV_FILE" SYLVODE_RUNNER_CONFIG SYLVODE_WEBHOOK_CONFIG,OPENPR_WEBHOOK_CONFIG ./config/sylvode-runner.example.toml
 # Ports reach generated TOML and compose port mappings, so anything but a port number is refused
 # here, before any file is written.
-for port_var in SYLVODE_API_PORT SYLVODE_FRONTEND_PORT SYLVODE_MCP_PORT SYLVODE_WEBHOOK_PORT; do
+for port_var in SYLVODE_API_PORT SYLVODE_FRONTEND_PORT SYLVODE_MCP_PORT SYLVODE_RUNNER_PORT; do
   port_value="${!port_var}"
   if ! [[ "$port_value" =~ ^[0-9]{1,5}$ ]] || ((10#$port_value < 1 || 10#$port_value > 65535)); then
     echo "❌ $port_var must be a port number between 1 and 65535, got '$port_value'." >&2
@@ -139,7 +139,7 @@ for port_var in SYLVODE_API_PORT SYLVODE_FRONTEND_PORT SYLVODE_MCP_PORT SYLVODE_
   fi
 done
 export SYLVODE_BIND_HOST SYLVODE_API_PORT SYLVODE_FRONTEND_PORT SYLVODE_MCP_PORT SYLVODE_RUNTIME_BASE
-export SYLVODE_FRONTEND_DOCKERFILE SYLVODE_WEBHOOK_PORT SYLVODE_WEBHOOK_IMAGE SYLVODE_WEBHOOK_CONFIG
+export SYLVODE_FRONTEND_DOCKERFILE SYLVODE_RUNNER_PORT SYLVODE_RUNNER_IMAGE SYLVODE_RUNNER_CONFIG
 
 postgres_password="$(env_value POSTGRES_PASSWORD)"
 if [ -z "$postgres_password" ] || [[ "$postgres_password" == *replace_with* ]]; then

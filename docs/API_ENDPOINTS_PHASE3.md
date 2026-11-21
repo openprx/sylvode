@@ -52,7 +52,7 @@ Authorization: Bearer <token>
 
 Workspace admin or owner only. Replaces the secret with a newly generated one and returns the
 webhook with the new `secret`, once. Deliveries are signed with the new secret from then on; give
-it to the receiver (`sylvode-webhook` accepts several `webhook_secrets`, so add the new one before
+it to the receiver (`sylvode-runner` accepts several `webhook_secrets`, so add the new one before
 rotating and remove the old one afterwards).
 
 ### Delete a Webhook

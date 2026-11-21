@@ -197,5 +197,48 @@ else
 $(cat "$dir/out")"
 fi
 
+# 12. The runner variables: the canonical name is read without a notice, each former name
+# (SYLVODE_WEBHOOK_*, OPENPR_WEBHOOK_*) is read with one, and values that differ are refused.
+# A port out of range is refused by the canonical name's check, which shows which value was used.
+dir="$(fresh_copy runnerport)"
+check "$dir" SYLVODE_RUNNER_PORT=70000
+if [[ "$(cat "$dir/status")" == 1 ]] && grep -q "SYLVODE_RUNNER_PORT must be a port number between 1 and 65535, got '70000'" "$dir/out" \
+  && ! grep -qi "deprecat" "$dir/out"; then
+  ok "SYLVODE_RUNNER_PORT is validated and prints no notice"
+else
+  bad "SYLVODE_RUNNER_PORT is validated and prints no notice" "$(cat "$dir/out")"
+fi
+for legacy in SYLVODE_WEBHOOK_PORT OPENPR_WEBHOOK_PORT; do
+  dir="$(fresh_copy "legacy-$legacy")"
+  check "$dir" "$legacy=70000"
+  if [[ "$(cat "$dir/status")" == 1 ]] && grep -q "SYLVODE_RUNNER_PORT must be a port number between 1 and 65535, got '70000'" "$dir/out" \
+    && grep -q "$legacy" "$dir/out" && grep -qi "deprecat" "$dir/out"; then
+    ok "$legacy is read as SYLVODE_RUNNER_PORT and prints its notice"
+  else
+    bad "$legacy is read as SYLVODE_RUNNER_PORT and prints its notice" "$(cat "$dir/out")"
+  fi
+done
+dir="$(fresh_copy legacyrunnerall)"
+check "$dir" SYLVODE_WEBHOOK_PORT=9191 OPENPR_WEBHOOK_PORT=9191 SYLVODE_WEBHOOK_IMAGE=example.invalid/runner:1 \
+  OPENPR_WEBHOOK_CONFIG=./config/other.toml
+if [[ "$(cat "$dir/status")" == 0 ]] && grep -q "SYLVODE_WEBHOOK_PORT" "$dir/out" && grep -q "OPENPR_WEBHOOK_PORT" "$dir/out" \
+  && grep -q "SYLVODE_WEBHOOK_IMAGE" "$dir/out" && grep -q "OPENPR_WEBHOOK_CONFIG" "$dir/out"; then
+  ok "agreeing former names are accepted and each prints its notice"
+else
+  bad "agreeing former names are accepted and each prints its notice" "$(cat "$dir/out")"
+fi
+for pair in "SYLVODE_RUNNER_PORT=9190 SYLVODE_WEBHOOK_PORT=9191" "SYLVODE_RUNNER_PORT=9190 OPENPR_WEBHOOK_PORT=9191" \
+  "SYLVODE_WEBHOOK_PORT=9190 OPENPR_WEBHOOK_PORT=9191" "SYLVODE_RUNNER_IMAGE=a:1 SYLVODE_WEBHOOK_IMAGE=b:1" \
+  "SYLVODE_RUNNER_CONFIG=./a.toml OPENPR_WEBHOOK_CONFIG=./b.toml"; do
+  dir="$(fresh_copy "conflict-${pair%% *}-${pair##* }")"
+  # shellcheck disable=SC2086 # the pair is two NAME=value words
+  check "$dir" $pair
+  if [[ "$(cat "$dir/status")" != 0 ]] && grep -q "conflicts with" "$dir/out" && grep -q "refusing silent precedence" "$dir/out"; then
+    ok "different values under two names are refused: $pair"
+  else
+    bad "different values under two names are refused: $pair" "$(cat "$dir/out")"
+  fi
+done
+
 printf '\nstart.sh --check-config: %d passed, %d failed\n' "$passed" "$failed"
 [[ "$failed" -eq 0 ]]

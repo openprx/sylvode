@@ -160,30 +160,37 @@ services:
     networks:
       - openpr-network
 
-  # The optional Sylvode Webhook receiver, built from this repository (apps/webhook) with
-  # `docker compose --profile connectors build webhook`. The image carries /app/sylvode-webhook and
-  # the legacy /app/openpr-webhook. A local build is tagged with the image name below, the name
-  # releases publish under: compose builds it when no image of that name is present, and
-  # `docker compose pull webhook` fetches a published one instead. To run a specific published
-  # release, pin it, for example SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/sylvode-webhook:<sylvode version>
-  # (the image tag is the Sylvode release version). A pre-merge standalone image
-  # (ghcr.io/openprx/openpr-webhook, last tag 0.3.3) also needs the command /app/openpr-webhook. Pin a version tag rather than
-  # :latest in production. SYLVODE_WEBHOOK_IMAGE / SYLVODE_WEBHOOK_CONFIG override the defaults;
-  # scripts/start.sh maps the legacy OPENPR_WEBHOOK_IMAGE / OPENPR_WEBHOOK_CONFIG onto them.
-  webhook:
+  # The optional Sylvode runner, built from this repository (apps/runner) with
+  # `docker compose --profile connectors build runner`. The image carries /app/sylvode-runner and
+  # the former names /app/sylvode-webhook and /app/openpr-webhook. A local build is tagged with the
+  # image name below, the name releases publish under: compose builds it when no image of that name
+  # is present, and `docker compose pull runner` fetches a published one instead. To run a specific
+  # published release, pin it, for example SYLVODE_RUNNER_IMAGE=ghcr.io/openprx/sylvode-runner:<sylvode version>
+  # (the image tag is the Sylvode release version). An image published before the rename
+  # (ghcr.io/openprx/sylvode-webhook, or ghcr.io/openprx/openpr-webhook up to tag 0.3.3) also needs
+  # the command /app/sylvode-webhook or /app/openpr-webhook. Pin a version tag rather than
+  # :latest in production. SYLVODE_RUNNER_IMAGE / SYLVODE_RUNNER_CONFIG / SYLVODE_RUNNER_PORT override
+  # the defaults; scripts/start.sh maps the former SYLVODE_WEBHOOK_* and OPENPR_WEBHOOK_* names onto
+  # them. The service was named `webhook`; a compose service name cannot be aliased, so commands that
+  # name the service (`docker compose ... logs webhook`) now name `runner`.
+  runner:
     profiles:
       - connectors
     build:
       context: .
-      dockerfile: apps/webhook/Dockerfile
-    image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/sylvode-webhook:latest}
+      dockerfile: apps/runner/Dockerfile
+    image: ${SYLVODE_RUNNER_IMAGE:-ghcr.io/openprx/sylvode-runner:latest}
     volumes:
-      - ${SYLVODE_WEBHOOK_CONFIG:-./config/sylvode-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro
-    command: ["/app/sylvode-webhook", "/etc/sylvode-webhook/config.toml"]
+      - ${SYLVODE_RUNNER_CONFIG:-./config/sylvode-runner.example.toml}:/etc/sylvode-runner/config.toml:ro
+    command: ["/app/sylvode-runner", "/etc/sylvode-runner/config.toml"]
     ports:
-      - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_WEBHOOK_PORT:-9090}:9090"
+      - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_RUNNER_PORT:-9090}:9090"
+    # The old service name stays a DNS name on the compose network, so a delivery URL or an
+    # [outbound] allowed_hosts entry that says webhook:9090 keeps working.
     networks:
-      - openpr-network
+      openpr-network:
+        aliases:
+          - webhook
     restart: unless-stopped
 
 volumes:

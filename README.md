@@ -239,7 +239,7 @@ bot at most one bot task:
   without `bot_context` and queues no AI task for it. Other bots are unaffected.
 
 A delivery without `bot_context` is still sent, so a subscription keeps seeing
-every event it subscribes to as a plain notification; `sylvode-webhook` answers
+every event it subscribes to as a plain notification; `sylvode-runner` answers
 it `not_bot_task`.
 
 **How a worker AI task ends.** The worker picks a pending task up (`processing`,
@@ -603,7 +603,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 | Repository                                                   | Description                                      |
 | ------------------------------------------------------------ | ------------------------------------------------ |
 | [Sylvode](https://github.com/openprx/sylvode)                | Core platform (this repo)                        |
-| [Sylvode Webhook](apps/webhook)                              | Webhook receiver for external integrations (in this repo) |
+| [Sylvode runner](apps/runner)                                | Receives Sylvode task deliveries and runs agents (in this repo) |
 | [prx](https://github.com/openprx/prx)                        | AI assistant framework with built-in Sylvode MCP |
 | [prx-memory](https://github.com/openprx/prx-memory)          | Local-first MCP memory for coding agents         |
 | [wacli](https://github.com/openprx/wacli)                    | WhatsApp CLI with JSON-RPC daemon                |

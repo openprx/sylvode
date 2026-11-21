@@ -93,6 +93,31 @@ name.
   history, snapshot rebuilds and integrity checks still accept a page that already carries such a
   root, and the check costs the update, not the page. An uploaded package whose document carries
   such a root, in its snapshot or in its update tail, is refused the same way on import.
+- **The webhook receiver is now the Sylvode runner.** The crate is `sylvode-runner` in
+  `apps/runner`, the executable is `sylvode-runner`, the release archive is
+  `sylvode-runner-<target>.tar.gz` and the image is `ghcr.io/openprx/sylvode-runner`. Nothing
+  else changes: the HTTP interface, the configuration format, the answers and the callback bodies
+  (including the callback `source`, still `sylvode-webhook`) are as before, and the old names keep
+  working through the whole 1.x line, each with one deprecation line.
+  - *How to keep the old names.* The executables `sylvode-webhook` and `openpr-webhook` are in the
+    same archive and image as `sylvode-runner`; `sylvode-webhook-<target>.tar.gz` and
+    `openpr-webhook-<target>.tar.gz` are copies of the same archive, and
+    `ghcr.io/openprx/sylvode-webhook` and `ghcr.io/openprx/openpr-webhook` carry the same image
+    digest. `SYLVODE_WEBHOOK_SAFE_MODE` and `OPENPR_WEBHOOK_SAFE_MODE` are still read (the new name is
+    `SYLVODE_RUNNER_SAFE_MODE`), as are `RUST_LOG` directives for `sylvode_webhook` and
+    `openpr_webhook` (the new target is `sylvode_runner`). In `.env`, `scripts/start.sh` reads
+    `SYLVODE_RUNNER_PORT`, `SYLVODE_RUNNER_IMAGE` and `SYLVODE_RUNNER_CONFIG`, and still accepts
+    `SYLVODE_WEBHOOK_*` and `OPENPR_WEBHOOK_*`; a different value under two names is refused.
+  - *The one name that cannot be kept.* The compose service `webhook` is now `runner`; compose has
+    no alias for a service name, so `docker compose ... logs webhook` and similar commands must name
+    `runner`. The host name `webhook` still resolves on the compose network (a network alias), so
+    delivery URLs and `[outbound] allowed_hosts` entries that say `webhook:9090` keep working.
+  - *Installer.* `apps/runner/scripts/install.sh` installs `sylvode-runner.service` (Linux) or
+    `dev.sylvode.runner` (macOS). A unit installed under `sylvode-webhook` or `openpr-webhook` is
+    still updated in place under its own name, with a deprecation line; `install.sh --migrate`
+    moves it to the new name. `uninstall.sh` removes all three names. The example configuration is `config/sylvode-runner.example.toml`; the smoke scripts
+    are `scripts/smoke-runner-routing.sh` and `scripts/smoke-browser-mention-runner.sh`
+    (`SYLVODE_RUNNER_DIR`, with `SYLVODE_WEBHOOK_DIR` still accepted).
 
 ### Fixed
 

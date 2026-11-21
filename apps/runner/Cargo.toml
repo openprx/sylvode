@@ -1,0 +1,57 @@
+[package]
+name = "sylvode-runner"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Sylvode runner: receives Sylvode task deliveries and runs agents (formerly Sylvode Webhook)"
+repository.workspace = true
+
+[lib]
+name = "sylvode_runner"
+path = "src/lib.rs"
+
+# One library entry point, three executables: the canonical name and the two former names kept for
+# Sylvode 1.x.
+[[bin]]
+name = "sylvode-runner"
+path = "src/bin/sylvode-runner.rs"
+
+[[bin]]
+name = "sylvode-webhook"
+path = "src/bin/sylvode-webhook.rs"
+
+[[bin]]
+name = "openpr-webhook"
+path = "src/bin/openpr-webhook.rs"
+
+[dependencies]
+axum.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+reqwest.workspace = true
+tower-http.workspace = true
+futures-util = "0.3"
+# The same major version axum's `ws` feature already resolves in this workspace.
+tokio-tungstenite = "0.29"
+uuid.workspace = true
+# Parses listen addresses and tunnel URLs to compare their host exactly (already used by reqwest).
+url = "2"
+# CancellationToken and TaskTracker: stop running executors on shutdown and wait for their
+# terminal callbacks.
+tokio-util = { workspace = true, features = ["rt"] }
+
+# Signals a whole process group (killpg) through a safe API; the crate forbids `unsafe`.
+# The same version zip already resolves in this workspace.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+
+[lints]
+workspace = true
