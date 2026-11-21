@@ -9,8 +9,9 @@ import {
 	invalidDraftFields,
 	readDraft
 } from '../src/lib/plugins/creator/template';
+import { validateManifestV3 } from '../src/lib/plugins/creator/registry';
 
-test('creator builds deterministic installable bytes with both entries and the template’s fixed guest', async () => {
+test('creator builds deterministic protocol 3 wasm bytes with both locations and the template’s fixed guest', async () => {
 	const draft = {
 		...defaultDraft,
 		key: 'billing_labels',
@@ -21,21 +22,59 @@ test('creator builds deterministic installable bytes with both entries and the t
 	const created = await buildCreatorPackage(draft);
 	assert.equal(created.json, (await buildCreatorPackage(draft)).json);
 	assert.equal(created.fixtureCents, 2500);
-	assert.equal(created.upload.manifest.key, draft.key);
-	assert.equal(created.upload.manifest.ui.form_key, draft.formKey);
+	const manifest = created.upload.manifest;
+	assert.equal(manifest.schema_version, 'openpr.plugin.v3');
+	assert.equal(manifest.profile, 'wasm');
+	assert.equal(manifest.bridge_version, 2);
+	assert.deepEqual(manifest.host_protocol, { min: 3, max: 3 });
+	assert.equal(manifest.key, draft.key);
+	assert.equal(manifest.wasm?.form_key, draft.formKey);
+	assert.deepEqual(manifest.reads, []);
 	assert.deepEqual(
-		created.upload.manifest.ui.contributions?.map((value) => value.label),
+		manifest.contributions.map((value) => [
+			value.id,
+			value.kind,
+			value.slot,
+			value.view,
+			value.form_key
+		]),
+		[
+			['detail_panel', 'panel', 'form.record.detail', 'detail', 'invoice_line'],
+			['amount_action', 'action', 'form.record.actions', 'actions', 'invoice_line']
+		]
+	);
+	assert.deepEqual(
+		manifest.contributions.map((value) => value.label),
 		[defaultDraft.detailLabel, draft.actionLabel]
 	);
+	assert.deepEqual(
+		manifest.capabilities.map((item) => [item.name, item.permission]),
+		[
+			['amount.preview', 'record.read'],
+			['amount.apply', 'record.update']
+		]
+	);
+	assert.equal(validateManifestV3(manifest), null);
 	const bytes = Buffer.from(created.upload.web_base64, 'base64');
 	const wire = JSON.parse(created.json);
 	assert.equal(bytes.toString('utf8'), created.html);
-	assert.equal(wire.manifest.ui.entry.size, bytes.length);
-	assert.equal(wire.manifest.ui.entry.sha256, createHash('sha256').update(bytes).digest('hex'));
-	assert.equal(
-		wire.manifest.wasm.sha256,
-		createHash('sha256').update(Buffer.from(wire.wasm_base64, 'base64')).digest('hex')
+	assert.equal(wire.manifest.entry.size, bytes.length);
+	assert.equal(wire.manifest.entry.sha256, createHash('sha256').update(bytes).digest('hex'));
+	assert.equal('ui' in wire.manifest, false);
+	const wasm = Buffer.from(wire.wasm_base64, 'base64');
+	assert.equal(wire.manifest.wasm.sha256, createHash('sha256').update(wasm).digest('hex'));
+	assert.equal(wire.manifest.wasm.size, wasm.length);
+});
+
+test('the panel speaks bridge protocol 2 only and shows the 25.00 preview contract', async () => {
+	const { html } = await buildCreatorPackage(defaultDraft);
+	assert.ok(html.includes("protocol: 2,\n\t\t\t\ttype: 'request'"));
+	assert.equal(html.includes('protocol: 1'), false);
+	assert.equal(html.includes('event.data.placement'), false);
+	assert.ok(
+		html.includes("method: 'amount.preview'") || html.includes("request('amount.preview')")
 	);
+	assert.ok(html.includes("type: 'resize'"));
 });
 
 test('author copy remains data and preserves special characters literally', async () => {
@@ -47,7 +86,7 @@ test('author copy remains data and preserves special characters literally', asyn
 	assert.ok(text);
 	assert.equal(JSON.parse(text).actionText, actionText);
 	assert.equal(created.html.includes(actionText), false);
-	assert.ok(created.html.includes('textContent = author.actionText'));
+	assert.ok(created.html.includes('copy.actionText'));
 });
 
 test('creator restores only typed draft fields and validates Form key, package key and version', () => {

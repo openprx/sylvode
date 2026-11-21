@@ -200,9 +200,9 @@ test('ui_view reads stored drafts defensively and the mock transport serves samp
 	});
 });
 
-test('order_amount keeps v2 output and the template review matches the registry contract', async () => {
+test('order_amount builds a protocol 3 wasm package and its review matches the registry contract', async () => {
 	const tpl = creatorTemplates.order_amount;
-	assert.equal(tpl.output, 'openpr.plugin.v2');
+	assert.equal(tpl.profile, 'wasm');
 	const draft = tpl.defaults({ slot: 'form.record.actions', formKey: 'invoice_line' });
 	assert.equal(draft.formKey, 'invoice_line');
 	assert.equal((await tpl.build(draft)).json, (await buildCreatorPackage(draft)).json);
@@ -217,11 +217,11 @@ test('order_amount keeps v2 output and the template review matches the registry 
 	);
 });
 
-test('upload accepts v2 and v3 and rejects a v3 manifest carrying ui', async () => {
+test('upload accepts v3 ui and wasm packages and rejects a v3 manifest carrying ui', async () => {
 	const v3 = (await buildUiViewPackage(base)).upload;
 	assert.equal((await readPluginUpload(file(v3))).manifest.key, v3.manifest.key);
-	const v2 = await buildCreatorPackage(defaultDraft);
-	assert.equal((await readPluginUpload(file(v2.upload))).manifest.key, defaultDraft.key);
+	const wasm = await buildCreatorPackage(defaultDraft);
+	assert.equal((await readPluginUpload(file(wasm.upload))).manifest.key, defaultDraft.key);
 	await assert.rejects(
 		readPluginUpload(file({ ...v3, manifest: { ...v3.manifest, ui: { form_key: 'x' } } }))
 	);
@@ -234,7 +234,7 @@ test('upload accepts v2 and v3 and rejects a v3 manifest carrying ui', async () 
 			file({ ...v3, manifest: { ...v3.manifest, contributions: [{ id: 'a', slot: 'nope' }] } })
 		)
 	);
-	await assert.rejects(readPluginUpload(file({ ...v2.upload, wasm_base64: undefined })));
+	await assert.rejects(readPluginUpload(file({ ...wasm.upload, wasm_base64: undefined })));
 });
 
 test('layout-v3 merges stored rows with defaults and never submits undeclared rows', async () => {

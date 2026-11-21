@@ -32,12 +32,6 @@
 	const v3Picked = $derived(
 		v3?.contributions.find((entry) => entry.id === v3Contribution) ?? v3?.contributions[0]
 	);
-	const v2ui = $derived(isV3(item.manifest) ? undefined : item.manifest.ui);
-	const placement = $derived(v2ui?.contributions?.[0]);
-	const slot = $derived(
-		placement?.slot ??
-			(v2ui?.slot === 'form.record.actions' ? 'form.record.actions' : 'form.record.detail')
-	);
 	let quantity = $state<number | undefined>();
 	let unitPrice = $state<number | undefined>();
 	let amount = $state<number | undefined>();
@@ -277,7 +271,6 @@
 			{#key v3Picked.id}
 				<CreatorPanelPreview
 					{html}
-					slot={v3Picked.slot}
 					v3={{
 						manifest: v3,
 						contributionId: v3Picked.id,
@@ -289,8 +282,6 @@
 					}}
 				/>
 			{/key}
-		{:else if html}
-			<CreatorPanelPreview {html} {slot} placementId={placement?.id} onPreview={calculate} />
 		{:else if panelState === 'loading'}
 			<p role="status" class="text-sm">{$t('plugins.loadingPanel')}</p>
 		{:else if panelState === 'error'}

@@ -252,7 +252,6 @@ export async function buildUiViewPackage(
 export const uiViewTemplate: CreatorTemplate<UiViewDraft> = {
 	id: 'ui_view',
 	profile: 'ui',
-	output: 'openpr.plugin.v3',
 	slots: uiViewSlots,
 	defaults: defaultUiViewDraft,
 	read: readUiViewDraft,
