@@ -70,7 +70,7 @@ test('a non-loopback host is refused unless the override is set', () => {
 		''
 	);
 	assert.deepEqual(
-		['127.0.0.1', '127.9.9.9', 'localhost', '[::1]', 'example.com', '10.0.0.1'].map(isLoopbackHost),
+		['127.0.0.1', '127.9.9.9', 'localhost', '[::1]', 'example.com', '192.0.2.1'].map(isLoopbackHost),
 		[true, true, true, true, false, false]
 	);
 });
