@@ -273,6 +273,34 @@ fn run_worker(
     extra_env: &[(&str, &str)],
     observation: &mut WorkerObservation,
 ) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+    let mut write_error: Option<String> = None;
+    let result = run_worker_inner(
+        base_snapshot,
+        update,
+        operation,
+        extra_env,
+        observation,
+        &mut write_error,
+    );
+    // The failed request write never decided the classification; it is the detail of a host failure
+    // when that is what the worker's own outcome says it was.
+    match (result, write_error) {
+        (Err(IsolatedApplyError::HostFailure(mut failure)), Some(note)) => {
+            failure.detail = format!("{} (request write failed: {note})", failure.detail);
+            Err(IsolatedApplyError::HostFailure(failure))
+        }
+        (result, _) => result,
+    }
+}
+
+fn run_worker_inner(
+    base_snapshot: &[u8],
+    update: &[u8],
+    operation: &'static str,
+    extra_env: &[(&str, &str)],
+    observation: &mut WorkerObservation,
+    write_error: &mut Option<String>,
+) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
     let worker_path = worker_binary_path()?;
 
     let mut command = worker_command(&worker_path, operation, extra_env);
@@ -291,7 +319,13 @@ fn run_worker(
         // `stdin` drops here regardless of `write_result`, closing the write end so the child's
         // `read_exact` calls see a clean EOF rather than hanging on a half-written request.
         drop(stdin);
-        write_result.map_err(|err| host_failure(HostFailureKind::Crash, format!("request write failed: {err}")))?;
+        // A failed write (a child that exited before it read the request: `EPIPE`) says nothing
+        // about how the child ended. The host still reads what it produced and waits for it, and
+        // classifies by its exit status, its signal and its output; the error is only kept as the
+        // detail of the failure that classification ends in.
+        if let Err(err) = write_result {
+            *write_error = Some(err.to_string());
+        }
     }
 
     let mut stdout = child
@@ -1904,13 +1938,18 @@ mod tests {
 
     /// Runs the host against a stand-in program that is not the worker.
     fn isolated_apply_against(program: &str) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+        isolated_apply_against_request(program, &[])
+    }
+
+    /// [`isolated_apply_against`] with a base snapshot field of the given bytes in the request.
+    fn isolated_apply_against_request(program: &str, base: &[u8]) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
         let guard = env_lock().lock();
         // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
         // `WORKER_BINARY_PATH_ENV` while this is set.
         unsafe {
             std::env::set_var(WORKER_BINARY_PATH_ENV, program);
         }
-        let result = isolated_apply(&[], &[]);
+        let result = isolated_apply(base, &[]);
         // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
         unsafe {
             std::env::remove_var(WORKER_BINARY_PATH_ENV);
@@ -1947,5 +1986,70 @@ mod tests {
             panic!("a missing worker is a host failure, got {result:?}");
         };
         assert_eq!(failure.kind, HostFailureKind::Spawn, "{failure:?}");
+    }
+
+    /// A stand-in worker: a shell script with this body, in a directory of its own.
+    fn stand_in_worker(name: &str, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("collab-stand-in-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the stand-in directory is created");
+        let path = dir.join("worker");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("the stand-in is written");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("the stand-in is executable");
+        path
+    }
+
+    /// A request base field far larger than a pipe holds (64 KiB on Linux): a child that never reads
+    /// it makes the host's write fail with `EPIPE` once the child has exited, whatever the
+    /// scheduling, because the write cannot complete into the pipe's buffer.
+    fn a_request_larger_than_the_pipe() -> Vec<u8> {
+        vec![0; 4 * 1024 * 1024]
+    }
+
+    /// The ordering of the request write and the child's end. A failed request write never decides
+    /// the classification: the host waits for the child, reads what it produced, and classifies by
+    /// its actual outcome, so these are the same as when the write succeeds. The stand-ins make the
+    /// write fail on purpose (they exit without reading a request that cannot fit the pipe); the one
+    /// that exits after reading it makes it succeed.
+    #[test]
+    fn a_failed_request_write_does_not_decide_the_classification() {
+        let base = a_request_larger_than_the_pipe();
+        let classify = |name: &str, body: &str, request: &[u8]| {
+            let path = stand_in_worker(name, body);
+            let result = isolated_apply_against_request(path.to_str().expect("a UTF-8 path"), request);
+            let _ = std::fs::remove_dir_all(path.parent().expect("a directory"));
+            let Err(IsolatedApplyError::HostFailure(failure)) = result else {
+                panic!("{name}: a host failure, got {result:?}");
+            };
+            failure
+        };
+
+        // Exits 0 before it reads the request: the write fails, and it is still a protocol failure
+        // (exit 0 without a decision record), with the write error as the detail.
+        let failure = classify("exits-first", "exit 0", &base);
+        assert_eq!(failure.kind, HostFailureKind::Protocol, "{failure:?}");
+        assert!(failure.detail.contains("decision record"), "{failure:?}");
+        assert!(failure.detail.contains("request write failed"), "{failure:?}");
+
+        // Exits non-zero before it reads the request: a crash, by its status.
+        let failure = classify("exits-nonzero", "exit 3", &base);
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
+        assert!(failure.detail.contains("non-zero status Some(3)"), "{failure:?}");
+
+        // Killed by a signal it did not get from the host before it reads the request: classified
+        // by its signal, as before (a foreign SIGKILL is a host short of resources, not a crash).
+        let failure = classify("killed-first", "kill -KILL $$", &base);
+        assert_eq!(failure.kind, HostFailureKind::ForeignKill, "{failure:?}");
+        let failure = classify("segfault-first", "kill -SEGV $$", &base);
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
+        assert!(failure.detail.contains("signal"), "{failure:?}");
+
+        // Exits 0 after it has read the whole request: the write succeeded, the same classification
+        // and no write error in the detail.
+        let failure = classify("exits-after-reading", "cat >/dev/null\nexit 0", &base);
+        assert_eq!(failure.kind, HostFailureKind::Protocol, "{failure:?}");
+        assert!(!failure.detail.contains("request write failed"), "{failure:?}");
+        let failure = classify("exits-after-reading-nonzero", "cat >/dev/null\nexit 3", &base);
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
     }
 }
