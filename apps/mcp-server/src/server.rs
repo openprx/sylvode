@@ -498,38 +498,44 @@ const PROJECT_ID_CACHE_LIMIT: usize = 1_024;
 /// The header a connection can name its tool mode with, next to the `?tools=` query parameter.
 pub const TOOL_MODE_HEADER: &str = "x-sylvode-tool-mode";
 
-#[derive(Debug, Default, serde::Deserialize)]
-pub struct ToolModeQuery {
-    pub tools: Option<String>,
-}
-
 /// The tool mode one connection asked for, or the server's own when it asked for none.
 ///
-/// A connection asks with `?tools=` or `X-Sylvode-Tool-Mode`. A value other than `search` or `full`,
-/// and two values that disagree, are refused rather than guessed at.
+/// A connection asks with `?tools=` and `X-Sylvode-Tool-Mode`, each of which may be repeated.
+/// `raw_query` is the request's raw query string. A value other than `search` or `full`, and any
+/// two values that disagree (two parameters, two header lines, or a parameter and a header), are
+/// refused rather than guessed at; an identical repeat is harmless.
 pub fn requested_tool_mode(
-    query: Option<&str>,
+    raw_query: Option<&str>,
     headers: &axum::http::HeaderMap,
     default: McpToolMode,
 ) -> Result<McpToolMode, String> {
-    let from_header = headers
-        .get(TOOL_MODE_HEADER)
-        .map(|value| {
-            value
-                .to_str()
-                .map_err(|_| "X-Sylvode-Tool-Mode is not text".to_string())
-        })
-        .transpose()?;
     let parse =
         |source: &str, raw: &str| McpToolMode::parse(raw).ok_or_else(|| format!("{source} must be search or full"));
-    let query = query.map(|raw| parse("the tools query parameter", raw)).transpose()?;
-    let header = from_header.map(|raw| parse("X-Sylvode-Tool-Mode", raw)).transpose()?;
-    match (query, header) {
-        (Some(query), Some(header)) if query != header => {
-            Err("the tools query parameter and X-Sylvode-Tool-Mode disagree".to_string())
-        }
-        (Some(mode), _) | (None, Some(mode)) => Ok(mode),
-        (None, None) => Ok(default),
+    let mut asked = Vec::new();
+    // `Url` decodes the pairs; the host is a placeholder.
+    let pairs = raw_query
+        .and_then(|query| reqwest::Url::parse(&format!("http://mode.invalid/?{query}")).ok())
+        .map(|url| {
+            url.query_pairs()
+                .filter(|(key, _)| key == "tools")
+                .map(|(_, value)| value.into_owned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for value in &pairs {
+        asked.push(parse("the tools query parameter", value)?);
+    }
+    for line in headers.get_all(TOOL_MODE_HEADER) {
+        let text = line
+            .to_str()
+            .map_err(|_| "X-Sylvode-Tool-Mode is not text".to_string())?;
+        asked.push(parse("X-Sylvode-Tool-Mode", text)?);
+    }
+    let mut modes = asked.iter().copied();
+    match modes.next() {
+        None => Ok(default),
+        Some(first) if modes.all(|mode| mode == first) => Ok(first),
+        Some(_) => Err("the requested tool modes disagree".to_string()),
     }
 }
 

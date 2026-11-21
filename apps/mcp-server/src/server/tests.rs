@@ -321,8 +321,10 @@ fn a_connection_chooses_its_tool_mode_by_query_or_header_and_a_conflict_is_refus
         }
         map
     };
+    // The raw query string of the request, as the transports pass it on.
     let choose = |query: Option<&str>, header: Option<&str>, default| {
-        super::requested_tool_mode(query, &headers(header), default)
+        let raw = query.map(|value| format!("tools={value}"));
+        super::requested_tool_mode(raw.as_deref(), &headers(header), default)
     };
     for default in [McpToolMode::Search, McpToolMode::Full] {
         assert_eq!(
@@ -342,6 +344,42 @@ fn a_connection_chooses_its_tool_mode_by_query_or_header_and_a_conflict_is_refus
             assert!(choose(Some(bad), None, default).is_err(), "{bad:?}");
             assert!(choose(None, Some(bad), default).is_err(), "{bad:?}");
         }
+    }
+    // Repeated parameters and header lines: a conflict is refused, an identical repeat is not, and
+    // the other parameters of the query are ignored.
+    for default in [McpToolMode::Search, McpToolMode::Full] {
+        let raw = |query: &str| super::requested_tool_mode(Some(query), &HeaderMap::new(), default);
+        assert_eq!(raw("tools=full&tools=full"), Ok(McpToolMode::Full));
+        assert_eq!(raw("a=1&tools=search&b=2&tools=search"), Ok(McpToolMode::Search));
+        assert_eq!(raw("a=1&b=2"), Ok(default));
+        assert_eq!(raw(""), Ok(default));
+        assert_eq!(
+            raw("tools=%66ull"),
+            Ok(McpToolMode::Full),
+            "percent encoding is decoded"
+        );
+        for conflict in [
+            "tools=search&tools=full",
+            "tools=full&tools=search&tools=full",
+            "tools=full&tools=",
+        ] {
+            assert!(
+                raw(conflict).is_err_and(|error| error.contains("disagree") || error.contains("search or full")),
+                "{conflict}"
+            );
+        }
+        let mut lines = HeaderMap::new();
+        lines.append(super::TOOL_MODE_HEADER, HeaderValue::from_static("search"));
+        lines.append(super::TOOL_MODE_HEADER, HeaderValue::from_static("full"));
+        assert!(super::requested_tool_mode(None, &lines, default).is_err_and(|error| error.contains("disagree")));
+        let mut same = HeaderMap::new();
+        same.append(super::TOOL_MODE_HEADER, HeaderValue::from_static("full"));
+        same.append(super::TOOL_MODE_HEADER, HeaderValue::from_static("FULL"));
+        assert_eq!(super::requested_tool_mode(None, &same, default), Ok(McpToolMode::Full));
+        let mut mixed = HeaderMap::new();
+        mixed.append(super::TOOL_MODE_HEADER, HeaderValue::from_static("full"));
+        mixed.append(super::TOOL_MODE_HEADER, HeaderValue::from_static("everything"));
+        assert!(super::requested_tool_mode(None, &mixed, default).is_err());
     }
     let mut binary = HeaderMap::new();
     binary.insert(

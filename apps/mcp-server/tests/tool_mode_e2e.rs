@@ -497,3 +497,56 @@ async fn a_disabled_write_switch_holds_for_the_command_line() -> TestResult {
     assert!(!stderr.contains("writes are disabled"), "{stderr}");
     Ok(())
 }
+
+impl Http {
+    /// A tools/list with any number of `X-Sylvode-Tool-Mode` header lines.
+    async fn list_with_lines(
+        &self,
+        query: &str,
+        lines: &[&str],
+    ) -> Result<(reqwest::StatusCode, usize), Box<dyn Error>> {
+        let mut request = reqwest::Client::new()
+            .post(format!("{}/mcp/rpc{query}", self.base))
+            .bearer_auth(BOT_TOKEN)
+            .json(&list_request());
+        for line in lines {
+            request = request.header("X-Sylvode-Tool-Mode", *line);
+        }
+        let response = request.send().await?;
+        let status = response.status();
+        let body: Value = serde_json::from_str(&response.text().await?).unwrap_or(Value::Null);
+        Ok((status, names(&body).len()))
+    }
+}
+
+/// How a connection may spell its mode: case and blanks are tolerated, an identical repeat is
+/// harmless, and every repeat that disagrees, or is not a mode, is a 400.
+#[tokio::test]
+async fn http_mode_spellings_and_repeats() -> TestResult {
+    let server = Http::spawn("").await?;
+    let ok = reqwest::StatusCode::OK;
+    let bad = reqwest::StatusCode::BAD_REQUEST;
+    for (query, lines, expected) in [
+        ("?tools=FULL", vec![], (ok, 153)),
+        ("?tools=%20full%20", vec![], (ok, 153)),
+        ("?tools=full&tools=full", vec![], (ok, 153)),
+        ("?other=1&tools=search&x=2", vec![], (ok, 9)),
+        ("", vec!["full", "FULL"], (ok, 153)),
+        ("?tools=full", vec!["full", "full"], (ok, 153)),
+        ("?tools=search&tools=full", vec![], (bad, 0)),
+        ("?tools=full&tools=search", vec![], (bad, 0)),
+        ("?tools=", vec![], (bad, 0)),
+        ("?tools=full&tools=", vec![], (bad, 0)),
+        ("", vec!["search", "full"], (bad, 0)),
+        ("", vec!["full", "everything"], (bad, 0)),
+        ("", vec!["search, full"], (bad, 0)),
+        ("?tools=full", vec!["full", "search"], (bad, 0)),
+    ] {
+        let answer = server.list_with_lines(query, &lines).await?;
+        assert_eq!(answer.0, expected.0, "{query} {lines:?}");
+        if expected.0 == ok {
+            assert_eq!(answer.1, expected.1, "{query} {lines:?}");
+        }
+    }
+    Ok(())
+}

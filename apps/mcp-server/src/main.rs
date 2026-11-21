@@ -3,7 +3,7 @@
 
 use axum::{
     Extension, Json, Router,
-    extract::{Query, State},
+    extract::{Query, RawQuery, State},
     http::{HeaderMap, StatusCode},
     middleware,
     response::{
@@ -17,7 +17,7 @@ use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
 use mcp_server::oauth::{self, Caller, InboundAuth};
 use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
-use mcp_server::server::{McpServer, ToolModeQuery, ToolSurface, requested_tool_mode};
+use mcp_server::server::{McpServer, ToolSurface, requested_tool_mode};
 use platform::config::{McpRuntime, McpToolMode, McpTransport};
 use serde::Deserialize;
 use serde_json::json;
@@ -342,13 +342,13 @@ fn bad_tool_mode(message: &str) -> Response {
 async fn handle_jsonrpc(
     State(state): State<SseState>,
     Extension(caller): Extension<Caller>,
-    Query(query): Query<ToolModeQuery>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
     Json(req): Json<JsonRpcRequest>,
 ) -> Response {
     // The mode only shapes what a plain caller sees; a delegated caller ignores it, but a value
     // that is not a mode is still a malformed request.
-    let mode = match requested_tool_mode(query.tools.as_deref(), &headers, state.surface.mode) {
+    let mode = match requested_tool_mode(query.as_deref(), &headers, state.surface.mode) {
         Ok(mode) => mode,
         Err(message) => return bad_tool_mode(&message),
     };
@@ -435,13 +435,9 @@ async fn run_sse(
     serve_until_shutdown(listener, app, sessions, shutdown).await
 }
 
-async fn handle_sse_connect(
-    State(state): State<SseState>,
-    Query(query): Query<ToolModeQuery>,
-    headers: HeaderMap,
-) -> Response {
+async fn handle_sse_connect(State(state): State<SseState>, RawQuery(query): RawQuery, headers: HeaderMap) -> Response {
     // The mode is chosen once, when the stream opens, and belongs to the session.
-    let mode = match requested_tool_mode(query.tools.as_deref(), &headers, state.surface.mode) {
+    let mode = match requested_tool_mode(query.as_deref(), &headers, state.surface.mode) {
         Ok(mode) => mode,
         Err(message) => return bad_tool_mode(&message),
     };
@@ -563,7 +559,7 @@ mod sse_delivery_tests {
     };
     use axum::{
         Extension, Json,
-        extract::{Query, State},
+        extract::{Query, RawQuery, State},
         http::StatusCode,
         response::IntoResponse,
     };
@@ -649,10 +645,8 @@ mod sse_delivery_tests {
         };
         let open = |query: Option<&str>, headers: HeaderMap| {
             let state = state.clone();
-            let query = super::ToolModeQuery {
-                tools: query.map(str::to_string),
-            };
-            async move { super::handle_sse_connect(State(state), Query(query), headers).await }
+            let query = query.map(|value| format!("tools={value}"));
+            async move { super::handle_sse_connect(State(state), RawQuery(query), headers).await }
         };
         let modes = |sessions: &super::SseSessions| {
             let sessions = Arc::clone(sessions);
@@ -699,6 +693,7 @@ mod sse_delivery_tests {
             (Some("everything"), HeaderMap::new()),
             (None, header("everything")),
             (Some("full"), header("search")),
+            (Some("full&tools=search"), HeaderMap::new()),
         ] {
             let response = open(query, headers).await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
