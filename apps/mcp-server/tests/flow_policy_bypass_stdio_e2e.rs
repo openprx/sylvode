@@ -548,7 +548,6 @@ async fn all_resource_aliases_are_identical_over_stdio_http_and_sse() -> TestRes
         "sylvode://projects/{project_id}/agent-policy",
         "sylvode://projects/{project_id}/release-readiness",
         "sylvode://projects/{project_id}/type",
-        "sylvode://projects/{project_id}/resources",
         "sylvode://projects/{project_id}/recent-decisions",
         "sylvode://projects/{project_id}/sprints",
         "sylvode://issues/{identifier}",

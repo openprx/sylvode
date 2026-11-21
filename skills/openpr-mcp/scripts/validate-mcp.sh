@@ -99,10 +99,6 @@ required = {
     "scenario_templates.list",
     "scenario_templates.get",
     "scenario_templates.install",
-    "project_resources.list",
-    "project_resources.create",
-    "project_resources.update",
-    "project_resources.delete",
     "forms.list",
     "forms.get",
     "forms.create",
@@ -148,8 +144,6 @@ required = {
     "release.readiness.get",
     "check_results.create",
     "proposals.create_from_result",
-    "code.resources.list",
-    "code.directory.get",
     "code.task_context.get",
     "code.change_proposal.create",
     "documents.extract_summary",
@@ -194,7 +188,6 @@ required = {
     "release.readiness.get",
     "check_results.create",
     "proposals.create_from_result",
-    "code.resources.list",
     "code.task_context.get",
 }
 payload = json.load(sys.stdin)

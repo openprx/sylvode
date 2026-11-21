@@ -3,7 +3,7 @@
 ## Project Overview
 
 - Sylvode (formerly OpenPR) is an open-source project management platform with governance and AI integration.
-- The MCP server exposes 154 tools for managing projects, context, project types/templates/resources, operation records, universal forms, WASM plugins, issues, sprints, labels, comments, proposals, check results, release next actions, files, scenario-specific governed work, and Sylvode Flow (v0.9).
+- The MCP server exposes 148 tools for managing projects, context, project types/templates, operation records, universal forms, WASM plugins, issues, sprints, labels, comments, proposals, check results, release next actions, files, scenario-specific governed work, and Sylvode Flow (v0.9).
 - Transports: HTTP (`POST /mcp/rpc`), stdio (stdin/stdout), SSE (`GET /sse` + `POST /messages`).
 
 ## MCP Surface (Quick Reference)
@@ -16,7 +16,6 @@
   - `projects.list`, `projects.get`, `projects.create`, `projects.update`, `projects.delete`
   - `context.get_project`, `context.get_governance`, `context.get_agent_policy`
   - `project_types.list`, `project_types.get`
-  - `project_resources.list`, `project_resources.create`, `project_resources.update`, `project_resources.delete`
   - `forms.list`, `forms.get`, `forms.create`, `forms.create_from_template`, `scenario_templates.install`, `forms.update_schema`, `forms.duplicate`
   - `forms.schema_summary`, `forms.field_usage`, `forms.field_dependencies`
   - `form_schema_versions.list`, `form_schema_versions.get`
@@ -35,7 +34,7 @@
   - `sprints.list`, `sprints.create`, `sprints.update`, `sprints.delete`
   - `proposals.list`, `proposals.get`, `proposals.create`, `proposals.create_from_result`
   - `check_results.create`
-  - `code.resources.list`, `code.directory.get`, `code.task_context.get`, `code.change_proposal.create`
+  - `code.task_context.get`, `code.change_proposal.create`
   - `documents.extract_summary`, `documents.review_risk`, `approval.request`, `inspection.report`, `corrective_action.propose`
   - `members.list`, `search.all`
 - Authentication:
@@ -100,7 +99,7 @@ curl -X POST http://localhost:8090/mcp/rpc \
 
 ## Testing Guidelines
 
-- MCP regression: test all 154 tools across 3 transports (HTTP, stdio, SSE), plus project-aware `tools/list` when a project id is supplied.
+- MCP regression: test all 148 tools across 3 transports (HTTP, stdio, SSE), plus project-aware `tools/list` when a project id is supplied.
 - CLI business-flow coverage: use `sylvode tools call --name <tool> --args-json '{...}'` for universal forms, plugins, operation records, and scenario tools so CLI calls reuse the same MCP tool names and audit path.
 - API: test via `curl` or MCP client against running instance.
 - Frontend: `bun run build` must succeed.

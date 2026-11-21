@@ -6,7 +6,7 @@ Model Context Protocol (MCP) server for Sylvode project management system.
 
 The MCP Server provides AI models with tools to interact with Sylvode's project management features, including:
 - Project management (CRUD operations)
-- Project types, scenario templates, and project resources
+- Project types and scenario templates
 - Universal forms, form records, aggregate queries, and business events
 - WASM plugin install/invoke and plugin invocation history
 - Work item/issue tracking
@@ -40,7 +40,7 @@ The profile now registers 36 names: 34 actual existing Flow registry tools plus
 read/create/patch/move/link/unlink/diff, grants/inheritance/relations, Collections and
 Records, comments/mentions, page shares/appearance, trash/purge, projection lag and
 Forms references. Success values retain baseline data DTOs; typed business errors
-remain structured. The normal 154-tool registry is unchanged.
+remain structured. The normal registry is 148 tools.
 
 `objects.command` additionally requires statically mapped baseline operation policies
 on every affected project (and the outer alias policy). It cannot bypass a denied
@@ -86,7 +86,7 @@ MCP transport acceptance or of backend support for every broader Flow feature.
 
 ## Features
 
-- **154 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
+- **148 MCP Tools**: Project, governance, universal forms, WASM plugin, operation records, release next actions, template, scenario toolkit, and Sylvode Flow
 - **Three Transport Modes**: stdio (for MCP clients), HTTP JSON-RPC, and SSE
 - **JSON Schema Validation**: All tool parameters are strongly typed
 - **Sylvode API Backend**: Calls the Sylvode API with workspace-scoped bot credentials
@@ -270,10 +270,9 @@ cargo build -p mcp-server --release
 - `projects.create` - Create a new project
 - `projects.update` - Update project details
 
-### Project Types, Templates, and Resources
+### Project Types and Templates
 - `project_types.list`, `project_types.get`
 - `scenario_templates.list`, `scenario_templates.get`, `scenario_templates.install`
-- `project_resources.list`, `project_resources.create`, `project_resources.update`, `project_resources.delete`
 
 ### Universal Forms and Events
 - `forms.list`, `forms.get`, `forms.create`, `forms.create_from_template`, `forms.update_schema`, `forms.duplicate`
@@ -307,7 +306,7 @@ cargo build -p mcp-server --release
 - `search.all` - Global search across projects, work items, and comments
 
 ### Scenario Tools
-- `code.resources.list`, `code.directory.get`, `code.task_context.get`, `code.change_proposal.create`
+- `code.task_context.get`, `code.change_proposal.create`
 - `documents.extract_summary`, `documents.review_risk`, `approval.request`
 - `inspection.report`, `corrective_action.propose`
 
@@ -319,7 +318,7 @@ cargo build -p mcp-server --release
 - `objects.grants_get`, `objects.grants_set`, `objects.inheritance_set` — object authorization tools with dry-run support
 - `legacy_pages.inventory`, `legacy_pages.import_preview`, `legacy_pages.import_commit`, `legacy_pages.import_status` — ADR-0003 conditional migration tools; this deployment's inventory is zero, so the import tools always answer `not_required_zero_inventory`
 
-The v0.9 registry exposes four static resources and 22 templates under the canonical
+The v0.9 registry exposes four static resources and 21 templates under the canonical
 `sylvode://` scheme, including all five frozen Flow resource templates. The matching
 `openpr://` identity remains a read alias for every registry row and resolves to the same
 payload and policy subject; aliases are not duplicated in list results. The native `sylvode`

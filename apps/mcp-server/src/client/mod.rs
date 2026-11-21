@@ -557,47 +557,48 @@ impl OpenPrClient {
         .await
     }
 
-    pub async fn list_project_resources(&self, project_id: &str) -> Result<Value, String> {
-        self.get(&format!(
-            "/api/v1/projects/{}/resources",
-            urlencoding::encode(project_id)
-        ))
-        .await
-    }
-
-    pub async fn create_project_resource(&self, project_id: &str, body: Value) -> Result<Value, String> {
-        self.post(
-            &format!("/api/v1/projects/{}/resources", urlencoding::encode(project_id)),
-            &body,
-        )
-        .await
-    }
-
-    pub async fn update_project_resource(
-        &self,
-        project_id: &str,
-        resource_id: &str,
-        body: Value,
-    ) -> Result<Value, String> {
-        self.patch(
-            &format!(
-                "/api/v1/projects/{}/resources/{}",
-                urlencoding::encode(project_id),
-                urlencoding::encode(resource_id)
-            ),
-            &body,
-        )
-        .await
-    }
-
-    pub async fn delete_project_resource(&self, project_id: &str, resource_id: &str) -> Result<Value, String> {
-        self.delete(&format!(
-            "/api/v1/projects/{}/resources/{}",
-            urlencoding::encode(project_id),
-            urlencoding::encode(resource_id)
-        ))
-        .await
-    }
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // pub async fn list_project_resources(&self, project_id: &str) -> Result<Value, String> {
+    //     self.get(&format!(
+    //         "/api/v1/projects/{}/resources",
+    //         urlencoding::encode(project_id)
+    //     ))
+    //     .await
+    // }
+    //
+    // pub async fn create_project_resource(&self, project_id: &str, body: Value) -> Result<Value, String> {
+    //     self.post(
+    //         &format!("/api/v1/projects/{}/resources", urlencoding::encode(project_id)),
+    //         &body,
+    //     )
+    //     .await
+    // }
+    //
+    // pub async fn update_project_resource(
+    //     &self,
+    //     project_id: &str,
+    //     resource_id: &str,
+    //     body: Value,
+    // ) -> Result<Value, String> {
+    //     self.patch(
+    //         &format!(
+    //             "/api/v1/projects/{}/resources/{}",
+    //             urlencoding::encode(project_id),
+    //             urlencoding::encode(resource_id)
+    //         ),
+    //         &body,
+    //     )
+    //     .await
+    // }
+    //
+    // pub async fn delete_project_resource(&self, project_id: &str, resource_id: &str) -> Result<Value, String> {
+    //     self.delete(&format!(
+    //         "/api/v1/projects/{}/resources/{}",
+    //         urlencoding::encode(project_id),
+    //         urlencoding::encode(resource_id)
+    //     ))
+    //     .await
+    // }
 
     // ---- Universal Forms ----
 

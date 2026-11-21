@@ -600,7 +600,7 @@ async fn a_legacy_caller_still_sees_the_whole_registry() -> TestResult {
     for token in [BOT_TOKEN, JWT_SHAPED_TOKEN] {
         let reply = server.post(Some(token), &list()).await?;
         assert_eq!(reply.status, StatusCode::OK);
-        assert_eq!(listed(&reply)?.len(), 154, "{token}");
+        assert_eq!(listed(&reply)?.len(), 148, "{token}");
     }
     assert_eq!(
         source.calls(),

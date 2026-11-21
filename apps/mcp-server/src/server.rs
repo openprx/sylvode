@@ -9,12 +9,11 @@ use tokio::sync::Mutex;
 
 const SKILL_GUIDE_MD: &str = r"# Sylvode MCP Skill Guide
 
-## Tools (154)
+## Tools (148)
 
 ### Projects: projects.list, projects.get, projects.create, projects.update, projects.delete
 ### Project Types: project_types.list, project_types.get
 ### Scenario Templates: scenario_templates.list, scenario_templates.get, scenario_templates.install
-### Project Resources: project_resources.list, project_resources.create, project_resources.update, project_resources.delete
 ### Context: context.get_project, context.get_governance, context.get_agent_policy
 ### Universal Forms: forms.list, forms.get, forms.create, forms.create_from_template, forms.update_schema, forms.duplicate, forms.schema_summary, forms.field_usage, forms.field_dependencies, form_schema_versions.list, form_schema_versions.get, form_permissions.get, form_permissions.update, form_views.list, form_attachments.list, form_attachments.create, form_attachments.archive, form_attachments.restore, form_records.list, form_records.export, form_records.import_preview, form_records.import_commit, form_records.get, form_records.create, form_records.update, form_records.link, form_records.relation_targets, form_records.children, form_records.child_create, form_records.child_update, form_records.child_archive, form_records.child_restore, form_records.aggregate, events.tail
 ### Plugins: plugins.list, plugins.get, plugins.install, plugins.invoke, plugin_invocations.list
@@ -25,7 +24,7 @@ const SKILL_GUIDE_MD: &str = r"# Sylvode MCP Skill Guide
 ### Sprints: sprints.list, sprints.create, sprints.update, sprints.delete
 ### Proposals: proposals.list, proposals.get, proposals.create, proposals.create_from_result, check_results.create
 ### Release: release.readiness.get (gates, blockers, next actions)
-### Code Scenarios: code.resources.list, code.directory.get, code.task_context.get, code.change_proposal.create
+### Code Scenarios: code.task_context.get, code.change_proposal.create
 ### Traditional Scenarios: documents.extract_summary, documents.review_risk, approval.request, inspection.report, corrective_action.propose
 ### Other: members.list, search.all, bot_operation_logs.list
 ### Flow (v0.8): flow.feature_get, flow.feature_set, objects.get, objects.query, objects.history, objects.create, objects.patch, objects.move, objects.link, objects.unlink, objects.diff, objects.grants_get, objects.grants_set, objects.inheritance_set, objects.relations, objects.search, objects.reference, objects.unreference, objects.convert_preview, objects.convert_commit, objects.convert_status, objects.convert_retry, objects.export, objects.export_workspace, objects.import_artifact, objects.import_preview, objects.import_commit, objects.import_status, objects.integrity, collab.projection_lag, collab.status, collab.compact, collab.rebuild_projection, collab.repair_quarantine, deliveries.replay, collections.describe, collections.query, records.create, legacy_pages.inventory, legacy_pages.import_preview, legacy_pages.import_commit, legacy_pages.import_status, flow.comments.list, flow.comments.create, flow.comments.update, flow.comments.delete, flow.comments.resolve, flow.shares.list, flow.shares.create, flow.shares.revoke, flow.appearance.set, flow.appearance.upload, objects.restore, flow.trash.list, objects.purge, flow.mentions.list
@@ -260,22 +259,23 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
         "scenario_templates.install",
         PolicyScope::DeclaredProject { required: true },
     ),
-    (
-        "project_resources.list",
-        PolicyScope::DeclaredProject { required: true },
-    ),
-    (
-        "project_resources.create",
-        PolicyScope::DeclaredProject { required: true },
-    ),
-    (
-        "project_resources.update",
-        PolicyScope::DeclaredProject { required: true },
-    ),
-    (
-        "project_resources.delete",
-        PolicyScope::DeclaredProject { required: true },
-    ),
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // (
+    //     "project_resources.list",
+    //     PolicyScope::DeclaredProject { required: true },
+    // ),
+    // (
+    //     "project_resources.create",
+    //     PolicyScope::DeclaredProject { required: true },
+    // ),
+    // (
+    //     "project_resources.update",
+    //     PolicyScope::DeclaredProject { required: true },
+    // ),
+    // (
+    //     "project_resources.delete",
+    //     PolicyScope::DeclaredProject { required: true },
+    // ),
     ("forms.list", PolicyScope::DeclaredProject { required: true }),
     ("forms.get", PolicyScope::OwnedBy(OwnerLookup::FormData)),
     ("forms.create", PolicyScope::DeclaredProject { required: true }),
@@ -384,8 +384,9 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("labels.update", PolicyScope::WorkspaceWide),
     ("labels.delete", PolicyScope::WorkspaceWide),
     ("search.all", PolicyScope::WorkspaceWide),
-    ("code.resources.list", PolicyScope::DeclaredProject { required: true }),
-    ("code.directory.get", PolicyScope::DeclaredProject { required: true }),
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // ("code.resources.list", PolicyScope::DeclaredProject { required: true }),
+    // ("code.directory.get", PolicyScope::DeclaredProject { required: true }),
     ("code.task_context.get", PolicyScope::DeclaredProject { required: true }),
     (
         "code.change_proposal.create",
@@ -880,10 +881,11 @@ impl McpServer {
             "scenario_templates.install" => {
                 tools::scenario_templates::install_scenario_template(&self.client, args).await
             }
-            "project_resources.list" => tools::project_types::list_project_resources(&self.client, args).await,
-            "project_resources.create" => tools::project_types::create_project_resource(&self.client, args).await,
-            "project_resources.update" => tools::project_types::update_project_resource(&self.client, args).await,
-            "project_resources.delete" => tools::project_types::delete_project_resource(&self.client, args).await,
+            // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+            // "project_resources.list" => tools::project_types::list_project_resources(&self.client, args).await,
+            // "project_resources.create" => tools::project_types::create_project_resource(&self.client, args).await,
+            // "project_resources.update" => tools::project_types::update_project_resource(&self.client, args).await,
+            // "project_resources.delete" => tools::project_types::delete_project_resource(&self.client, args).await,
             "forms.list" => tools::forms::list_forms(&self.client, args).await,
             "forms.get" => tools::forms::get_form(&self.client, args).await,
             "forms.create" => tools::forms::create_form(&self.client, args).await,
@@ -973,8 +975,9 @@ impl McpServer {
 
             // Search
             "search.all" => tools::search::search_all(&self.client, args).await,
-            "code.resources.list" => tools::scenario_tools::code_resources_list(&self.client, args).await,
-            "code.directory.get" => tools::scenario_tools::code_directory_get(&self.client, args).await,
+            // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+            // "code.resources.list" => tools::scenario_tools::code_resources_list(&self.client, args).await,
+            // "code.directory.get" => tools::scenario_tools::code_directory_get(&self.client, args).await,
             "code.task_context.get" => tools::scenario_tools::code_task_context_get(&self.client, args).await,
             "code.change_proposal.create" => {
                 tools::scenario_tools::code_change_proposal_create(&self.client, args).await
@@ -1687,12 +1690,13 @@ impl McpServer {
                 "description": "Read project type, settings, and scenario metadata for a project",
                 "mimeType": "application/json"
             }),
-            json!({
-                "uriTemplate": "sylvode://projects/{project_id}/resources",
-                "name": "Project Resources",
-                "description": "Read project resources of kind directory or custom",
-                "mimeType": "application/json"
-            }),
+            // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+            // json!({
+            //     "uriTemplate": "sylvode://projects/{project_id}/resources",
+            //     "name": "Project Resources",
+            //     "description": "Read project resources of kind directory or custom",
+            //     "mimeType": "application/json"
+            // }),
             json!({
                 "uriTemplate": "sylvode://projects/{project_id}/recent-decisions",
                 "name": "Project Recent Decisions",
@@ -2163,24 +2167,25 @@ impl McpServer {
             };
         }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/resources") {
-            return match self.client.list_project_resources(project_id).await {
-                Ok(resources) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": resources.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project resources: {error}")),
-                ),
-            };
-        }
+        // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+        // if let Some(project_id) = parse_project_resource_uri(&uri, "/resources") {
+        //     return match self.client.list_project_resources(project_id).await {
+        //         Ok(resources) => JsonRpcResponse::success(
+        //             id,
+        //             json!({
+        //                 "contents": [{
+        //                     "uri": uri,
+        //                     "mimeType": "application/json",
+        //                     "text": resources.to_string()
+        //                 }]
+        //             }),
+        //         ),
+        //         Err(error) => JsonRpcResponse::error(
+        //             id,
+        //             JsonRpcError::internal_error(format!("Failed to read project resources: {error}")),
+        //         ),
+        //     };
+        // }
 
         if let Some(project_id) = parse_project_resource_uri(&uri, "/recent-decisions") {
             return match self.client.get_project_governance_context(project_id).await {
@@ -2308,7 +2313,7 @@ fn attach_canonical_resource_metadata(mut response: JsonRpcResponse, legacy_alia
 /// `/recent-decisions` maps to `context.get_governance` because that is the call it is
 /// served from: it reads the governance context and returns one field of it, so it can
 /// carry no weaker authorization than the whole document does.
-const PROJECT_RESOURCE_POLICY_TOOLS: [(&str, &str); 10] = [
+const PROJECT_RESOURCE_POLICY_TOOLS: [(&str, &str); 9] = [
     ("/issues", "work_items.list"),
     ("/forms", "forms.list"),
     ("/context", "context.get_project"),
@@ -2316,7 +2321,8 @@ const PROJECT_RESOURCE_POLICY_TOOLS: [(&str, &str); 10] = [
     ("/agent-policy", "context.get_agent_policy"),
     ("/release-readiness", "release.readiness.get"),
     ("/type", "projects.get"),
-    ("/resources", "project_resources.list"),
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // ("/resources", "project_resources.list"),
     ("/recent-decisions", "context.get_governance"),
     ("/sprints", "sprints.list"),
 ];
@@ -2925,7 +2931,6 @@ mod tests {
             "sylvode://projects/{project_id}/agent-policy",
             "sylvode://projects/{project_id}/release-readiness",
             "sylvode://projects/{project_id}/type",
-            "sylvode://projects/{project_id}/resources",
             "sylvode://projects/{project_id}/recent-decisions",
             "sylvode://projects/{project_id}/sprints",
             "sylvode://issues/{identifier}",
@@ -2945,7 +2950,7 @@ mod tests {
             )
             .collect::<Vec<_>>();
         assert_eq!(resources.len(), 4, "static resource registry cardinality drifted");
-        assert_eq!(templates.len(), 22, "template registry cardinality drifted");
+        assert_eq!(templates.len(), 21, "template registry cardinality drifted");
         assert_eq!(
             observed.len(),
             expected.len(),
@@ -4115,10 +4120,6 @@ mod tests {
 
         let router = Router::new()
             .route(&format!("/api/v1/projects/{PROJECT}"), delete(denied))
-            .route(
-                &format!("/api/v1/projects/{PROJECT}/resources/{RESOURCE}"),
-                delete(denied),
-            )
             .route(&format!("/api/v1/labels/{LABEL}"), delete(denied))
             .route(
                 &format!("/api/v1/issues/{WORK_ITEM}"),
@@ -4138,10 +4139,6 @@ mod tests {
 
         let calls = [
             ("projects.delete", json!({ "project_id": PROJECT })),
-            (
-                "project_resources.delete",
-                json!({ "project_id": PROJECT, "resource_id": RESOURCE }),
-            ),
             ("labels.delete", json!({ "label_id": LABEL })),
             ("work_items.delete", json!({ "work_item_id": WORK_ITEM })),
             (
@@ -4240,10 +4237,6 @@ mod tests {
                 "release.readiness.get",
             ),
             (format!("openpr://projects/{PROJECT}/type"), "projects.get"),
-            (
-                format!("openpr://projects/{PROJECT}/resources"),
-                "project_resources.list",
-            ),
             (
                 format!("openpr://projects/{PROJECT}/recent-decisions"),
                 "context.get_governance",
@@ -4344,9 +4337,9 @@ mod tests {
     #[test]
     fn resource_uris_carrying_an_unparsable_id_are_refused() {
         for uri in [
-            "openpr://projects/not-a-uuid/resources",
+            "openpr://projects/not-a-uuid/sprints",
             &format!("openpr://projects/{PROJECT}%2Fpad/agent-policy"),
-            &format!("openpr://projects/{PROJECT}?pad=/resources"),
+            &format!("openpr://projects/{PROJECT}?pad=/sprints"),
             "openpr://forms/not-a-uuid/records",
             "openpr://form-records/not-a-uuid/events",
             "openpr://issues/PRX 42",
@@ -4356,6 +4349,27 @@ mod tests {
                 "{uri} was classified instead of refused"
             );
         }
+    }
+
+    /// The project resources template is parked: no URI of that shape is listed or read, and
+    /// the read never reaches the API (nothing listens on the port below).
+    #[tokio::test]
+    async fn the_parked_project_resources_template_is_unknown() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        let uri = format!("sylvode://projects/{PROJECT}/resources");
+        assert!(
+            PROJECT_RESOURCE_POLICY_TOOLS
+                .iter()
+                .all(|(suffix, _)| *suffix != "/resources"),
+            "the policy table still maps /resources"
+        );
+        assert_eq!(resource_policy_subject(&uri)?, ResourceSubject::Ungoverned);
+        let response = server
+            .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })))
+            .await;
+        let body = serde_json::to_string(&response)?;
+        assert!(body.contains("Unknown resource URI"), "{uri} -> {body}");
+        Ok(())
     }
 
     /// A traversal shaped URI is stopped one step earlier: the id would span a `/`, so no

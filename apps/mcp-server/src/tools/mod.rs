@@ -37,10 +37,11 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         scenario_templates::list_scenario_templates_tool(),
         scenario_templates::get_scenario_template_tool(),
         scenario_templates::install_scenario_template_tool(),
-        project_types::list_project_resources_tool(),
-        project_types::create_project_resource_tool(),
-        project_types::update_project_resource_tool(),
-        project_types::delete_project_resource_tool(),
+        // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+        // project_types::list_project_resources_tool(),
+        // project_types::create_project_resource_tool(),
+        // project_types::update_project_resource_tool(),
+        // project_types::delete_project_resource_tool(),
         forms::list_forms_tool(),
         forms::get_form_tool(),
         forms::create_form_tool(),
@@ -116,8 +117,9 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         labels::delete_label_tool(),
         work_items::add_labels_to_work_item_tool(),
         search::search_all_tool(),
-        scenario_tools::code_resources_list_tool(),
-        scenario_tools::code_directory_get_tool(),
+        // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+        // scenario_tools::code_resources_list_tool(),
+        // scenario_tools::code_directory_get_tool(),
         scenario_tools::code_task_context_get_tool(),
         scenario_tools::code_change_proposal_create_tool(),
         scenario_tools::documents_extract_summary_tool(),
@@ -416,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn project_type_and_resource_tools_are_registered_once() {
+    fn project_type_tools_are_registered_once() {
         let tools = get_all_tool_definitions();
         let names = tools.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>();
         let unique = names.iter().copied().collect::<HashSet<_>>();
@@ -428,10 +430,6 @@ mod tests {
             "scenario_templates.list",
             "scenario_templates.get",
             "scenario_templates.install",
-            "project_resources.list",
-            "project_resources.create",
-            "project_resources.update",
-            "project_resources.delete",
             "forms.list",
             "forms.get",
             "forms.create",
@@ -478,8 +476,6 @@ mod tests {
             "check_results.create",
             "release.readiness.get",
             "bot_operation_logs.list",
-            "code.resources.list",
-            "code.directory.get",
             "code.task_context.get",
             "code.change_proposal.create",
             "documents.extract_summary",
@@ -513,6 +509,16 @@ mod tests {
                 unique.contains(expected),
                 "missing Phase 1 MCP tool registration: {expected}"
             );
+        }
+        for parked in [
+            "project_resources.list",
+            "project_resources.create",
+            "project_resources.update",
+            "project_resources.delete",
+            "code.resources.list",
+            "code.directory.get",
+        ] {
+            assert!(!unique.contains(parked), "parked tool is registered: {parked}");
         }
     }
 

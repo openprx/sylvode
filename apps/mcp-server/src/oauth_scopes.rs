@@ -72,10 +72,6 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "scenario_templates.list",
     "scenario_templates.get",
     "scenario_templates.install",
-    "project_resources.list",
-    "project_resources.create",
-    "project_resources.update",
-    "project_resources.delete",
     "forms.create",
     "forms.create_from_template",
     "forms.update_schema",
@@ -126,8 +122,6 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "labels.update",
     "labels.delete",
     "search.all",
-    "code.resources.list",
-    "code.directory.get",
     "code.task_context.get",
     "code.change_proposal.create",
     "documents.extract_summary",
@@ -272,10 +266,10 @@ mod tests {
     #[test]
     fn the_first_release_exposes_exactly_these_totals() {
         assert_eq!(SCOPED_TOOLS.len(), 8);
-        assert_eq!(WITHHELD_TOOLS.len(), 148);
-        // The main registry (154 tools) is fully covered; the two extra names are Flow-only.
-        assert_eq!(crate::tools::get_all_tool_definitions().len(), 154);
-        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 154 + 2);
+        assert_eq!(WITHHELD_TOOLS.len(), 142);
+        // The main registry (148 tools) is fully covered; the two extra names are Flow-only.
+        assert_eq!(crate::tools::get_all_tool_definitions().len(), 148);
+        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 148 + 2);
     }
 
     #[test]

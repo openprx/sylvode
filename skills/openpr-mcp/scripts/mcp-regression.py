@@ -305,51 +305,6 @@ for proto, call in CALLERS.items():
         call("scenario_templates.get", {"key": "contract_review_default"}),
         is_ok,
     )
-    check(proto, "project_resources.list", call("project_resources.list", {"project_id": PID}), is_ok)
-    ts = int(time.time()) % 100000
-    res = call("project_resources.create", {
-        "project_id": PID,
-        "kind": "custom",
-        "name": f"{proto}-regression-resource-{ts}",
-        "locator": {"source": "mcp-regression", "protocol": proto},
-        "sync_status": "manual"
-    })
-    check(proto, "project_resources.create", res, has_id)
-    dir_res = call("project_resources.create", {
-        "project_id": PID,
-        "kind": "directory",
-        "name": f"{proto}-regression-directory-{ts}",
-        "locator": {"path": "/tmp/mcp-regression"},
-        "sync_status": "manual"
-    })
-    check(proto, "project_resources.create directory", dir_res, has_id)
-    dir_id = get_id(dir_res)
-    if dir_id:
-        call("project_resources.delete", {"project_id": PID, "resource_id": dir_id})
-    check(
-        proto,
-        "project_resources.create rejects removed kind",
-        call("project_resources.create", {
-            "project_id": PID,
-            "kind": "repo",
-            "name": f"{proto}-regression-removed-kind-{ts}",
-        }),
-        lambda r: not is_ok(r),
-    )
-    res_id = get_id(res)
-    if res_id:
-        check(proto, "project_resources.update", call("project_resources.update", {
-            "project_id": PID,
-            "resource_id": res_id,
-            "name": f"{proto}-regression-resource-updated-{ts}",
-            "sync_status": "synced"
-        }), is_ok)
-        check(proto, "project_resources.delete", call("project_resources.delete", {
-            "project_id": PID,
-            "resource_id": res_id
-        }), ok_or_str)
-    else:
-        SKIP += 2
 
     # === Context ===
     print("\n🧠 Context")
@@ -451,7 +406,6 @@ for proto, call in CALLERS.items():
 
     # === Scenario Tools ===
     print(f"\n🏭 Scenario tools (code/traditional governed entries)")
-    check(proto, "code.resources.list", call("code.resources.list", {"project_id": PID}), is_ok)
     check(proto, "code.task_context.get", call("code.task_context.get", {"project_id": PID}), lambda r: isinstance(r, dict) or isinstance(r, str))
     for tool, title, summary in [
         ("code.change_proposal.create", "Code change proposal", "Governed code change proposal from regression."),
