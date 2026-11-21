@@ -1162,6 +1162,24 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
             )),
         )
         .route(
+            "/api/v1/ai/tasks/{task_id}/complete",
+            post(routes::ai_task_protocol::complete_task_with_reply).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/fail",
+            post(routes::ai_task_protocol::fail_task_with_reply).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
+        .route(
             "/api/v1/ai/callbacks/task/{task_id}/complete",
             post(routes::ai_callback::complete_task).route_layer(
                 axum_middleware::from_fn_with_state(

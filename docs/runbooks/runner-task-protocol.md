@@ -42,6 +42,34 @@ creation is not concurrent; the table is small. Running the file again changes n
 `max_processing_secs` must not be below `processing_timeout_secs`; the error names both keys.
 Both the API and the worker read them from the same file.
 
+## Behaviour decisions
+
+- **Sweep.** The worker ends an active task only when its `lease_expires_at` has passed. Pick-up
+  always sets a lease, so a task has one from the start. It also clears the previous attempt's
+  `plan`, `acknowledged_at`, `last_progress_at` and `runner_phase`.
+- **Configuration default.** If `max_processing_secs` is not set and `processing_timeout_secs` is
+  above 86400, the cap defaults to the timeout instead of failing the configuration.
+- **Execution settings versions.** A save is a compare-and-set on `version`. Without a stored row
+  the caller sends no `expected_version`; with one it sends the stored version. Any other
+  combination answers business code 409 `execution settings changed; reload` with the current
+  version, and writes nothing.
+- **Progress coalescing.** Reports of one kind (`progress`, `runner.alive`, ...) less than 30
+  seconds apart extend the lease but write a single event. The window is per kind and is read from
+  the events, so an acknowledge does not swallow the first progress report.
+- **`reply_policy` text** in the task view: `comment` (mention, review), `comment+state:auto`,
+  `comment+state:<key>` or `comment` (assignment, by the project's `on_complete_state`), `vote`
+  (proposal vote), `none` (manual); failures: `comment`, `comment+label` (assignment with a
+  failure label) or `none`.
+- **Reply routing.** Completing or failing a task through `/api/v1/ai/tasks/{id}/complete|fail`
+  writes the reply in the same transaction as the status change. It never creates a task, never
+  extracts mentions from the text, and never assigns. A completed assignment moves the work item
+  to the first done state (lowest position among states of category `done`) unless it is already
+  in a terminal state; `none` and `state:<key>` follow the project's setting, and an unknown key
+  leaves the state with the warning `state <key> not in workflow`.
+- **Refused at delivery.** When the runner declines a task at delivery, the worker fails it and,
+  for a project whose execution settings are enabled, posts `Could not start: <reason>` on the work
+  item (or as a reply to the mention).
+
 ## Rolling back
 
 Rolling back is manual and never run by the server. Stop the runner and the worker first, then run

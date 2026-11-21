@@ -21,6 +21,7 @@
 //! that commits first wins and several workers never end the same attempt twice.
 
 use api::outbound::validate_outbound_url;
+use api::services::ai_task_reply::announce_start_refusal;
 use api::services::ai_task_service::{
     AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts, notify_ai_task_failed,
     trigger_kind_for_task,
@@ -185,7 +186,7 @@ async fn settle_delivery(state: &AppState, task: &AiTaskDispatchRow, verdict: De
         }
         DeliveryVerdict::Declined(reason) => {
             tracing::warn!(task_id = %task.id, attempt = task.attempts, reason = %reason, "AI task declined by the receiver; failing it");
-            end_attempt(
+            let ended = end_attempt(
                 state,
                 task,
                 AttemptEnd::Terminal,
@@ -193,6 +194,12 @@ async fn settle_delivery(state: &AppState, task: &AiTaskDispatchRow, verdict: De
                 &reason,
             )
             .await?;
+            // The assigner works on the issue, not in the task log: say there why it did not start.
+            if let Some(ended) = ended
+                && let Err(err) = announce_start_refusal(state, &ended, &reason).await
+            {
+                tracing::warn!(task_id = %task.id, error = %err, "the start refusal could not be reported on the issue");
+            }
         }
         DeliveryVerdict::Transient(reason) => {
             tracing::warn!(task_id = %task.id, attempt = task.attempts, error = %reason, "dispatch failed");
@@ -210,19 +217,19 @@ async fn settle_delivery(state: &AppState, task: &AiTaskDispatchRow, verdict: De
 }
 
 /// Ends the attempt just delivered, unless a callback already ended it, and sends
-/// `ai.task_failed` when the task is failed.
+/// `ai.task_failed` when the task is failed. Returns the task when this call ended it.
 async fn end_attempt(
     state: &AppState,
     task: &AiTaskDispatchRow,
     end: AttemptEnd,
     reason: WorkerEndReason,
     error_message: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<api::services::ai_task_service::AiTaskRow>> {
     let ended = end_processing_attempt(&state.db, task.id, task.attempts, end, reason, error_message)
         .await
         .map_err(|err| anyhow::anyhow!("ending AI task {} attempt {} failed: {err}", task.id, task.attempts))?;
-    match ended {
-        Some(ended) if ended.status == "failed" => notify_failed(state, &ended).await,
+    match &ended {
+        Some(ended) if ended.status == "failed" => notify_failed(state, ended).await,
         Some(_) => {}
         None => tracing::info!(
             task_id = %task.id,
@@ -230,7 +237,7 @@ async fn end_attempt(
             "AI task attempt was already ended by a callback; left as it is"
         ),
     }
-    Ok(())
+    Ok(ended)
 }
 
 /// Ends every active attempt whose lease has run out.
@@ -853,7 +860,12 @@ mod database_tests {
     }
 
     #[derive(Debug, FromQueryResult)]
-    struct Lease {
+    struct Body {
+        body: String,
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct PickedTask {
         lease_secs: f64,
         phase_is_null: bool,
         attempt_fields_are_null: bool,
@@ -892,7 +904,7 @@ mod database_tests {
         assert_eq!(first.project_key, "WKR");
         assert_eq!(first.attempts, 1);
 
-        let lease = Lease::find_by_statement(Statement::from_sql_and_values(
+        let lease = PickedTask::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT EXTRACT(EPOCH FROM (lease_expires_at - started_at))::float8 AS lease_secs, \
                     (runner_phase IS NULL) AS phase_is_null, \
@@ -939,6 +951,72 @@ mod database_tests {
         assert_eq!(events(db, accepted, "delivered").await, 1);
         assert_eq!(events(db, declined, "delivered").await, 0);
         assert_eq!(events(db, transient, "delivered").await, 0);
+        scratch.drop_self().await;
+    }
+
+    /// A runner that refuses a task at delivery leaves a comment where the assigner works, for a
+    /// project whose execution settings are enabled.
+    #[tokio::test]
+    async fn a_declined_delivery_is_reported_on_the_issue_of_an_enabled_project() {
+        let scratch = scratch_or_skip!("declined_comment");
+        let db = &scratch.db;
+        let state = state_for(db.clone());
+        let enabled = seed_pending_task(db).await;
+        let plain = seed_pending_task(db).await;
+        for (task, with_settings) in [(enabled, true), (plain, false)] {
+            let issue = Uuid::new_v4();
+            exec(
+                db,
+                "INSERT INTO work_items (id, project_id, title, state, sequence_number, created_by) \
+                 SELECT $1, t.project_id, 'Issue', 'todo', 1, p.created_by FROM ai_tasks t \
+                 INNER JOIN projects p ON p.id = t.project_id WHERE t.id = $2",
+                vec![issue.into(), task.into()],
+            )
+            .await;
+            exec(
+                db,
+                "UPDATE ai_tasks SET task_type = 'issue_assigned', reference_type = 'work_item', reference_id = $2, \
+                 payload = jsonb_build_object('issue_id', $2::text) WHERE id = $1",
+                vec![task.into(), issue.into()],
+            )
+            .await;
+            if with_settings {
+                exec(
+                    db,
+                    "INSERT INTO project_execution_settings (project_id, working_directory, enabled) \
+                     SELECT project_id, '/work/a', true FROM ai_tasks WHERE id = $1",
+                    vec![task.into()],
+                )
+                .await;
+            }
+        }
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        for task in [enabled, plain] {
+            let row = picked.iter().find(|row| row.id == task).expect("picked");
+            settle_delivery(
+                &state,
+                row,
+                DeliveryVerdict::Declined("the working directory is outside the allowed roots".to_string()),
+            )
+            .await
+            .expect("declined settles");
+        }
+
+        let comments = |task: Uuid| {
+            Body::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT c.body FROM comments c INNER JOIN ai_tasks t ON t.reference_id = c.work_item_id WHERE t.id = $1",
+                vec![task.into()],
+            ))
+            .all(db)
+        };
+        let enabled_comments = comments(enabled).await.expect("comments load");
+        assert_eq!(enabled_comments.len(), 1);
+        assert_eq!(
+            enabled_comments.first().map(|row| row.body.as_str()),
+            Some("Could not start: the working directory is outside the allowed roots")
+        );
+        assert!(comments(plain).await.expect("comments load").is_empty());
         scratch.drop_self().await;
     }
 }

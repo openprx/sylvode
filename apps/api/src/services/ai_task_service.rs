@@ -133,7 +133,7 @@ pub fn trigger_kind_for_task(task_type: &str) -> &'static str {
     }
 }
 
-fn not_active_for_attempt(attempt: i32, current: i32) -> ApiError {
+pub fn not_active_for_attempt(attempt: i32, current: i32) -> ApiError {
     ApiError::BadRequest(format!(
         "task is not active for attempt {attempt} (current attempt {current})"
     ))
@@ -672,6 +672,26 @@ pub async fn end_processing_attempt<C: ConnectionTrait>(
     reason: WorkerEndReason,
     error_message: &str,
 ) -> Result<Option<AiTaskRow>, ApiError> {
+    let Some(EndedAttemptRow { task, previous_status }) =
+        cas_end_attempt(db, task_id, attempt, end, error_message).await?
+    else {
+        return Ok(None);
+    };
+    record_worker_attempt_end(db, &task, reason, &previous_status).await?;
+    Ok(Some(task))
+}
+
+/// The compare-and-set that ends attempt `attempt` of an active task without completing it.
+///
+/// The task goes back to `pending` while attempts remain (and `end` allows), otherwise to
+/// `failed`. `None` when the attempt is not active. Events are the caller's.
+pub async fn cas_end_attempt<C: ConnectionTrait>(
+    db: &C,
+    task_id: Uuid,
+    attempt: i32,
+    end: AttemptEnd,
+    error_message: &str,
+) -> Result<Option<EndedAttemptRow>, ApiError> {
     let terminal = end == AttemptEnd::Terminal;
     let sql = format!(
         r"
@@ -715,7 +735,7 @@ pub async fn end_processing_attempt<C: ConnectionTrait>(
                 decided.previous_status
         "
     );
-    let ended = EndedAttemptRow::find_by_statement(Statement::from_sql_and_values(
+    EndedAttemptRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         &sql,
         vec![
@@ -726,21 +746,16 @@ pub async fn end_processing_attempt<C: ConnectionTrait>(
         ],
     ))
     .one(db)
-    .await?;
-
-    let Some(EndedAttemptRow { task, previous_status }) = ended else {
-        return Ok(None);
-    };
-    record_worker_attempt_end(db, &task, reason, &previous_status).await?;
-    Ok(Some(task))
+    .await
+    .map_err(ApiError::from)
 }
 
 /// A task an attempt of which was just ended, with the status that attempt had.
 #[derive(Debug, FromQueryResult)]
-struct EndedAttemptRow {
+pub struct EndedAttemptRow {
     #[sea_orm(nested)]
-    task: AiTaskRow,
-    previous_status: String,
+    pub task: AiTaskRow,
+    pub previous_status: String,
 }
 
 /// Ends up to `limit` active attempts whose lease has run out.
@@ -861,6 +876,83 @@ async fn record_worker_attempt_end<C: ConnectionTrait>(
         Some(previous_status),
     )
     .await
+}
+
+/// The compare-and-set that completes attempt `attempt` of an active task with `result`. `None`
+/// when the attempt is not active (it ended, was re-queued, or is another attempt). Events are the
+/// caller's.
+pub async fn complete_active_attempt<C: ConnectionTrait>(
+    db: &C,
+    task_id: Uuid,
+    attempt: i32,
+    result: &Value,
+) -> Result<Option<EndedAttemptRow>, ApiError> {
+    let sql = format!(
+        r"
+            WITH decided AS (
+                SELECT id, status AS previous_status
+                FROM ai_tasks
+                WHERE id = $1 AND status IN {ACTIVE_TASK_STATUSES_SQL} AND attempts = $2
+                FOR UPDATE
+            )
+            UPDATE ai_tasks t
+            SET status = 'completed',
+                result = $3,
+                error_message = NULL,
+                completed_at = now(),
+                updated_at = now()
+            FROM decided
+            WHERE t.id = decided.id AND t.status IN {ACTIVE_TASK_STATUSES_SQL} AND t.attempts = $2
+            RETURNING
+                t.id, t.project_id, t.ai_participant_id, t.task_type, t.reference_type, t.reference_id,
+                t.status, t.priority, t.payload, t.result, t.error_message, t.idempotency_key, t.attempts,
+                t.max_attempts, t.next_retry_at, t.started_at, t.completed_at, t.created_at, t.updated_at,
+                decided.previous_status
+        "
+    );
+    Ok(EndedAttemptRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        &sql,
+        vec![task_id.into(), attempt.into(), result.clone().into()],
+    ))
+    .one(db)
+    .await?)
+}
+
+/// Sends `ai.task_completed` for a task that has just been completed, on behalf of `actor_id`.
+pub async fn notify_ai_task_completed(state: &AppState, task: &AiTaskRow, actor_id: Uuid) -> Result<(), ApiError> {
+    let project = ProjectWorkspaceRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT workspace_id FROM projects WHERE id = $1",
+        vec![task.project_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("project not found".to_string()))?;
+    trigger_webhooks(
+        state.clone(),
+        TriggerContext {
+            event: WebhookEvent::AiTaskCompleted,
+            workspace_id: project.workspace_id,
+            project_id: task.project_id,
+            actor_id,
+            issue_id: None,
+            comment_id: None,
+            label_id: None,
+            sprint_id: None,
+            changes: None,
+            mentions: Vec::new(),
+            extra_data: Some(json!({
+                "task_id": task.id.to_string(),
+                "task_type": task.task_type,
+                "status": task.status,
+                "reference_type": task.reference_type,
+                "reference_id": task.reference_id.map(|v| v.to_string()),
+                "result": task.result,
+            })),
+        },
+    );
+    Ok(())
 }
 
 /// Sends `ai.task_failed` for a task that has just been failed.

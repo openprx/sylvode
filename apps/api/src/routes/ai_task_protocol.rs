@@ -11,6 +11,7 @@ use axum::{
     response::IntoResponse,
 };
 use platform::{app::AppState, auth::JwtClaims};
+use sea_orm::TransactionTrait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -20,9 +21,15 @@ use crate::{
     middleware::bot_auth::BotAuthContext,
     response::ApiResponse,
     services::{
+        ai_task_reply::{
+            Artifact, CompletionInput, Outcome, ReplyReport, RoutedReply, route_completion, route_failure,
+            send_reply_triggers,
+        },
         ai_task_service::{
-            AiTaskRow, LeaseLimits, ProgressKind, TASK_PROTOCOL, acknowledge_task, is_active_status,
-            list_active_tasks_of_bot, load_task_with_protocol, report_progress,
+            AiTaskRow, AttemptEnd, LeaseLimits, ProgressKind, TASK_PROTOCOL, acknowledge_task, cas_end_attempt,
+            complete_active_attempt, insert_ai_task_business_event, insert_ai_task_event, is_active_status,
+            list_active_tasks_of_bot, load_task_with_protocol, not_active_for_attempt, notify_ai_task_completed,
+            notify_ai_task_failed, report_progress,
         },
         ai_task_view::build_task_view,
     },
@@ -89,7 +96,7 @@ pub async fn get_protocol() -> impl IntoResponse {
     ApiResponse::success(json!({
         "task_protocol": TASK_PROTOCOL,
         "api_version": env!("CARGO_PKG_VERSION"),
-        "features": ["ack", "lease", "runner_phase"],
+        "features": ["ack", "lease", "reply_routing", "runner_phase"],
         "lease": {
             "processing_timeout_secs": config.processing_timeout_secs,
             "lease_extension_secs": config.lease_extension_secs,
@@ -229,6 +236,262 @@ pub async fn report_task_progress(
         "lease_expires_at": outcome.lease_expires_at.to_rfc3339(),
         "coalesced": outcome.coalesced,
     })))
+}
+
+const MAX_SUMMARY_CHARS: usize = 20_000;
+const MAX_ARTIFACTS: usize = 20;
+const MAX_ARTIFACT_REF_CHARS: usize = 500;
+const MAX_ARTIFACT_LABEL_CHARS: usize = 200;
+const MAX_VOTE_REASON_CHARS: usize = 4000;
+const MAX_FAIL_REASON_CHARS: usize = 2000;
+const ARTIFACT_KINDS: [&str; 5] = ["commit", "branch", "pull_request", "file", "url"];
+
+#[derive(Debug, Deserialize)]
+pub struct ArtifactRequest {
+    pub kind: String,
+    #[serde(rename = "ref")]
+    pub reference: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CompleteRequest {
+    pub outcome: String,
+    pub summary: String,
+    #[serde(default)]
+    pub artifacts: Vec<ArtifactRequest>,
+    #[serde(default)]
+    pub vote: Option<String>,
+    #[serde(default)]
+    pub vote_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FailRequest {
+    pub reason: String,
+    #[serde(default)]
+    pub retryable: bool,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+fn bad(message: impl Into<String>) -> ApiError {
+    ApiError::BadRequest(message.into())
+}
+
+impl CompleteRequest {
+    fn validate(self) -> Result<CompletionInput, ApiError> {
+        let outcome =
+            Outcome::parse(&self.outcome).ok_or_else(|| bad("outcome must be done, needs_review or no_change"))?;
+        let summary = self.summary.trim();
+        if summary.is_empty() || summary.chars().count() > MAX_SUMMARY_CHARS {
+            return Err(bad(format!("summary must be 1 to {MAX_SUMMARY_CHARS} characters")));
+        }
+        if self.artifacts.len() > MAX_ARTIFACTS {
+            return Err(bad(format!("artifacts must have at most {MAX_ARTIFACTS} items")));
+        }
+        let mut artifacts = Vec::with_capacity(self.artifacts.len());
+        for artifact in self.artifacts {
+            if !ARTIFACT_KINDS.contains(&artifact.kind.as_str()) {
+                return Err(bad("artifact kind must be commit, branch, pull_request, file or url"));
+            }
+            if artifact.reference.is_empty() || artifact.reference.chars().count() > MAX_ARTIFACT_REF_CHARS {
+                return Err(bad(format!(
+                    "artifact ref must be 1 to {MAX_ARTIFACT_REF_CHARS} characters"
+                )));
+            }
+            if artifact
+                .label
+                .as_deref()
+                .is_some_and(|label| label.chars().count() > MAX_ARTIFACT_LABEL_CHARS)
+            {
+                return Err(bad(format!(
+                    "artifact label must be at most {MAX_ARTIFACT_LABEL_CHARS} characters"
+                )));
+            }
+            artifacts.push(Artifact {
+                kind: artifact.kind,
+                reference: artifact.reference,
+                label: artifact.label,
+            });
+        }
+        if let Some(vote) = self.vote.as_deref()
+            && !matches!(vote, "yes" | "no" | "abstain")
+        {
+            return Err(bad("vote must be yes, no or abstain"));
+        }
+        if self
+            .vote_reason
+            .as_deref()
+            .is_some_and(|reason| reason.chars().count() > MAX_VOTE_REASON_CHARS)
+        {
+            return Err(bad(format!(
+                "vote_reason must be at most {MAX_VOTE_REASON_CHARS} characters"
+            )));
+        }
+        Ok(CompletionInput {
+            outcome,
+            summary: summary.to_string(),
+            artifacts,
+            vote: self.vote,
+            vote_reason: self.vote_reason,
+        })
+    }
+}
+
+/// `POST /api/v1/ai/tasks/{task_id}/complete?attempt=N`: ends the task as completed and writes the
+/// reply where the task came from, in the same transaction.
+pub async fn complete_task_with_reply(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(task_id): Path<Uuid>,
+    Query(query): Query<TaskAttemptQuery>,
+    Json(request): Json<CompleteRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let entry = load_task_with_protocol(&state.db, task_id).await?;
+    ensure_task_bot(&entry.task, bot.as_ref().map(|bot| &bot.0), &claims)?;
+    let attempt = query.required()?;
+    let input = request.validate()?;
+    let bot_id = entry.task.ai_participant_id;
+
+    let result = json!({
+        "outcome": input.outcome.as_str(),
+        "summary": input.summary,
+        "artifacts": input.artifacts,
+        "vote": input.vote,
+        "vote_reason": input.vote_reason,
+    });
+    let txn = state.db.begin().await?;
+    let Some(ended) = complete_active_attempt(&txn, task_id, attempt, &result).await? else {
+        let current = load_task_with_protocol(&txn, task_id).await?.task;
+        return Err(not_active_for_attempt(attempt, current.attempts));
+    };
+    let (task, previous_status) = (ended.task, ended.previous_status);
+    let routed = route_completion(&state, &txn, &task, &input).await?;
+
+    insert_ai_task_event(
+        &txn,
+        task_id,
+        "completed",
+        json!({ "result": result, "ack_skipped": previous_status == "processing" }),
+    )
+    .await?;
+    insert_ai_task_event(&txn, task_id, "reply_routed", json!(routed.report)).await?;
+    insert_ai_task_business_event(
+        &txn,
+        &task,
+        "ai_task.completed",
+        Some(bot_id),
+        json!({ "type": "ai_task_protocol", "actor_id": bot_id }),
+        json!({ "result": task.result, "reply": routed.report }),
+        Some(previous_status.as_str()),
+    )
+    .await?;
+    txn.commit().await?;
+
+    finish_response(&state, task, routed, None).await
+}
+
+/// `POST /api/v1/ai/tasks/{task_id}/fail?attempt=N`: ends the attempt as failed, or re-queues the
+/// task when `retryable` and attempts remain, and reports a final failure where the task came from.
+pub async fn fail_task_with_reply(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(task_id): Path<Uuid>,
+    Query(query): Query<TaskAttemptQuery>,
+    Json(request): Json<FailRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let entry = load_task_with_protocol(&state.db, task_id).await?;
+    ensure_task_bot(&entry.task, bot.as_ref().map(|bot| &bot.0), &claims)?;
+    let attempt = query.required()?;
+    let reason = request.reason.trim();
+    if reason.is_empty() || reason.chars().count() > MAX_FAIL_REASON_CHARS {
+        return Err(bad(format!("reason must be 1 to {MAX_FAIL_REASON_CHARS} characters")));
+    }
+    let source = match request.source.as_deref() {
+        None | Some("agent") => "agent",
+        Some("runner") => "runner",
+        Some(_) => return Err(bad("source must be agent or runner")),
+    };
+    let end = if request.retryable {
+        AttemptEnd::RetryWhileAttemptsRemain
+    } else {
+        AttemptEnd::Terminal
+    };
+    let bot_id = entry.task.ai_participant_id;
+
+    let txn = state.db.begin().await?;
+    let Some(ended) = cas_end_attempt(&txn, task_id, attempt, end, reason).await? else {
+        let current = load_task_with_protocol(&txn, task_id).await?.task;
+        return Err(not_active_for_attempt(attempt, current.attempts));
+    };
+    let (task, previous_status) = (ended.task, ended.previous_status);
+    let will_retry = task.status == "pending";
+    let event_payload = json!({
+        "error_message": reason,
+        "source": source,
+        "attempts": task.attempts,
+        "max_attempts": task.max_attempts,
+        "next_retry_at": task.next_retry_at.map(platform::timestamp::Timestamp::to_rfc3339),
+    });
+    insert_ai_task_event(
+        &txn,
+        task_id,
+        if will_retry { "retried" } else { "failed" },
+        event_payload.clone(),
+    )
+    .await?;
+    insert_ai_task_business_event(
+        &txn,
+        &task,
+        if will_retry {
+            "ai_task.retried"
+        } else {
+            "ai_task.failed"
+        },
+        Some(bot_id),
+        json!({ "type": "ai_task_protocol", "actor_id": bot_id }),
+        event_payload,
+        Some(previous_status.as_str()),
+    )
+    .await?;
+    let routed = if will_retry {
+        RoutedReply::default()
+    } else {
+        let routed = route_failure(&txn, &task, "Could not complete", reason).await?;
+        insert_ai_task_event(&txn, task_id, "reply_routed", json!(routed.report)).await?;
+        routed
+    };
+    txn.commit().await?;
+
+    finish_response(&state, task, routed, Some(will_retry)).await
+}
+
+/// After the commit: the webhooks, then the answer with the task view. `will_retry` is `Some` for
+/// a fail.
+async fn finish_response(
+    state: &AppState,
+    task: AiTaskRow,
+    routed: RoutedReply,
+    will_retry: Option<bool>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let bot_id = task.ai_participant_id;
+    match task.status.as_str() {
+        "completed" => notify_ai_task_completed(state, &task, bot_id).await?,
+        "failed" => notify_ai_task_failed(state, &task, bot_id).await?,
+        _ => {}
+    }
+    send_reply_triggers(state, routed.triggers);
+    let entry = load_task_with_protocol(&state.db, task.id).await?;
+    let view = build_task_view(&state.db, &entry.task, &entry.protocol).await?;
+    let report: ReplyReport = routed.report;
+    Ok(ApiResponse::success(will_retry.map_or_else(
+        || json!({ "task": view, "reply": report }),
+        |will_retry| json!({ "task": view, "will_retry": will_retry, "reply": report }),
+    )))
 }
 
 #[cfg(test)]
@@ -450,6 +713,10 @@ mod tests {
             .await
             .expect("protocol");
         assert_eq!(data(&answer)["task_protocol"], 1);
+        assert_eq!(
+            data(&answer)["features"],
+            json!(["ack", "lease", "reply_routing", "runner_phase"])
+        );
         assert_eq!(data(&answer)["api_version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(data(&answer)["lease"]["lease_extension_secs"], 1800);
         assert_eq!(data(&answer)["lease"]["max_processing_secs"], 86400);
