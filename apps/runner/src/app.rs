@@ -72,6 +72,7 @@ enum Command {
         session: String,
         event: String,
         socket: String,
+        nonce: String,
     },
 }
 
@@ -129,6 +130,7 @@ fn parse_command(args: &[OsString]) -> Result<Command, String> {
             session: flag_value(rest, "--session"),
             event: flag_value(rest, "--event"),
             socket: flag_value(rest, "--socket"),
+            nonce: flag_value(rest, "--nonce"),
         });
     }
     if let Some(word) = args
@@ -200,10 +202,11 @@ pub fn run() -> ExitCode {
             session,
             event,
             socket,
+            nonce,
         } => {
             // Never reads stdin, never fails: a hook must not block or break the CLI that runs it.
             if !socket.is_empty() {
-                crate::runner::hooks::send(std::path::Path::new(&socket), &cli, &session, &event);
+                crate::runner::hooks::send(std::path::Path::new(&socket), &cli, &session, &event, &nonce);
             }
             ExitCode::SUCCESS
         }

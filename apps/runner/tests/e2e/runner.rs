@@ -207,7 +207,7 @@ async fn refusals_carry_a_code_and_never_a_path() {
     let mut cases: Vec<(Value, &str)> = vec![
         (view(&outside_path, "headless", true), "path_outside_allowlist"),
         (view(&fx.project.join("absent"), "headless", true), "path_missing"),
-        (view(&fx.project, "tmux", true), "tmux_unavailable"),
+        (view(&fx.project, "tmux", true), "tmux_channel_disabled"),
     ];
     let mut disabled = view(&fx.project, "headless", true);
     disabled["execution"]["enabled"] = json!(false);

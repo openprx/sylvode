@@ -76,6 +76,9 @@ pub struct SessionRecord {
     /// `sessions --prune` may remove it.
     #[serde(default)]
     pub headless: bool,
+    /// The per-launch secret the session's hooks present (see `LaunchFiles::nonce`).
+    #[serde(default)]
+    pub nonce: String,
 }
 
 /// What was written.
@@ -249,10 +252,18 @@ impl StateDir {
         let mut hooks = serde_json::Map::new();
         for event in CLAUDE_EVENTS {
             let command = claude_hook_command(files, key, event).map_err(|e: LaunchError| e.to_string())?;
-            hooks.insert(
-                event.to_string(),
-                json!([{"hooks": [{"type": "command", "command": command}]}]),
-            );
+            // `SessionStart` also fires after compaction, `/clear` and resume, and `Notification`
+            // also for an idle prompt: only the first start and the permission prompts are wanted.
+            let matcher = match event {
+                "SessionStart" => Some("startup"),
+                "Notification" => Some("permission_prompt|elicitation_dialog"),
+                _ => None,
+            };
+            let mut entry = json!({"hooks": [{"type": "command", "command": command}]});
+            if let (Some(matcher), Some(object)) = (matcher, entry.as_object_mut()) {
+                object.insert("matcher".to_string(), json!(matcher));
+            }
+            hooks.insert(event.to_string(), json!([entry]));
         }
         let text = serde_json::to_string_pretty(&json!({"hooks": hooks})).map_err(|e| e.to_string())?;
         let sessions = private_dir(&self.fd, "sessions")?;

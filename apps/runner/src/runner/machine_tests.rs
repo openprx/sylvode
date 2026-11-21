@@ -508,13 +508,53 @@ fn a_push_that_finds_the_session_gone_is_a_dead_session() {
     assert_eq!(h.m.queue.len(), 1);
 }
 
+/// `SessionStart` also fires after compaction, `/clear` and resume: it neither fails the running
+/// task nor lets the next one be pushed into the busy CLI.
 #[test]
-fn the_cli_restarting_under_a_task_fails_it_retryably() {
+fn a_session_start_event_while_a_task_runs_neither_fails_nor_pushes() {
     let mut h = H::busy(T("a", 1));
-    let failed = fails(&h.hook(HookEvent::SessionStart));
-    assert_eq!(failed.len(), 1);
-    assert!(failed[0].2);
-    assert_eq!(h.m.state, State::Idle);
+    h.enqueue(T("b", 1));
+    for state in ["busy", "mid-turn"] {
+        if state == "mid-turn" {
+            h.hook(HookEvent::UserPromptSubmit);
+        }
+        let actions = h.hook(HookEvent::SessionStart);
+        assert!(fails(&actions).is_empty(), "{state}: {actions:?}");
+        assert!(!kinds(&actions).contains(&"try_push"), "{state}: {actions:?}");
+        assert_eq!(h.m.state, State::Busy, "{state}");
+        assert_eq!(h.m.current_task(), Some(&T("a", 1)), "{state}");
+    }
+    // Idle and person-driven states ignore it too.
+    let mut idle = H::idle();
+    idle.hook(HookEvent::SessionStart);
+    assert_eq!(idle.m.state, State::Idle);
+}
+
+/// An idle-prompt notification (not registered any more, but the machine must not rely on it)
+/// leaves an idle session idle, and a blocked task that Sylvode ended frees the session.
+#[test]
+fn a_notification_with_nothing_running_does_not_block_and_a_blocked_task_that_ended_frees_the_session() {
+    let mut idle = H::idle();
+    assert!(idle.hook(HookEvent::Notification).is_empty());
+    assert_eq!(idle.m.state, State::Idle);
+    let mut h = H::busy(T("a", 1));
+    h.hook(HookEvent::Notification);
+    assert!(matches!(h.m.state, State::Blocked { .. }));
+    // Blocked keeps polling the task.
+    assert!(kinds(&h.tick(11)).contains(&"poll"));
+    h.enqueue(T("b", 1));
+    let actions = h.view(ViewFacts {
+        active: false,
+        acknowledged: true,
+    });
+    assert!(
+        !kinds(&actions).contains(&"try_push"),
+        "the CLI is still on its dialog: {actions:?}"
+    );
+    assert!(h.m.current_task().is_none());
+    assert!(!matches!(h.m.state, State::Blocked { .. }), "{:?}", h.m.state);
+    // The turn ending (the dialog answered) lets the next task in.
+    assert!(kinds(&h.hook(HookEvent::Stop)).contains(&"try_push"));
 }
 
 #[test]

@@ -14,6 +14,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+/// The start of the stand-in: finds its settings file in its arguments and defines `fire EVENT`,
+/// which runs the hook command registered for that event, exactly as the CLI would.
+const PRELUDE: &str = "settings=''\nfor a in \"$@\"; do [ \"$prev\" = '--settings' ] && settings=\"$a\"; prev=\"$a\"; done\n\
+fire() { c=$(grep -o '\"command\": \".*\"' \"$settings\" | grep -F -- \"'--event' '$1'\" | head -1 | sed 's/^\"command\": \"//; s/\"$//'); [ -n \"$c\" ] && /bin/sh -c \"$c\" </dev/null; }\n";
+
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
 const TOKEN: &str = concat!("opr", "_", "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a");
 const PROJECT: &str = "22222222-2222-4222-8222-222222222222";
@@ -98,13 +103,9 @@ impl Fixture {
         std::fs::create_dir_all(&project).expect("mkdir");
         let bin = TempDir::new("ts-bin");
         let log = bin.file("standin.log");
-        let socket = tmux.state().join("hook.sock");
-        let hook = |event: &str| {
-            format!(
-                "'{RUNNER}' hook --cli claude --session SVWL --event {event} --socket '{}' </dev/null",
-                socket.display()
-            )
-        };
+        // The stand-in does what the CLI does: it reads the hook commands from the settings file
+        // named by its `--settings` argument and runs them (they carry the launch's nonce).
+        let fire = |event: &str| format!("fire {event}");
         let body = if matches!(standin, Standin::Untrusted) {
             format!(
                 "echo \"argv: $*\" >> '{log}'\nprintf 'Is this a project you created or one you trust?\\n  Yes, I trust this folder\\n'\n/bin/sleep 600",
@@ -118,15 +119,16 @@ impl Fixture {
                     "/bin/sleep 1"
                 };
                 format!(
-                    "echo \"argv: $*\" >> '{log}'\n/usr/bin/env | /usr/bin/sort >> '{log}.env'\nprintf '\\033[?2004h'\n{start}\n\
+                    "{prelude}echo \"argv: $*\" >> '{log}'\n/usr/bin/env | /usr/bin/sort >> '{log}.env'\nprintf '\\033[?2004h'\n{start}\n\
                      end=$(printf '\\033[201~')\n\
                      while true; do\n  printf '> '\n  IFS= read -r first || exit 0\n  text=\"$first\"\n\
                      case \"$first\" in *\"$end\"*) ;; *) while IFS= read -r more; do text=\"$text|$more\"; case \"$more\" in *\"$end\"*) break;; esac; done;; esac\n\
                      {submit}\n  printf 'TEXT: %s\\n' \"$text\" >> '{log}'\n  {turn}\n  {stop}\ndone",
                     log = log.display(),
-                    start = hook("SessionStart"),
-                    submit = hook("UserPromptSubmit"),
-                    stop = hook("Stop"),
+                    prelude = PRELUDE,
+                    start = fire("SessionStart"),
+                    submit = fire("UserPromptSubmit"),
+                    stop = fire("Stop"),
                 )
             }
         };

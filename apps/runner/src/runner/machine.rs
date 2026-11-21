@@ -423,26 +423,23 @@ impl<T: Task> Machine<T> {
     pub fn on_hook(&mut self, event: HookEvent, now: Instant) -> Vec<Action<T>> {
         let mut actions = Vec::new();
         match event {
+            // The CLI's own start (the hook is registered for `startup` only): readiness while the
+            // session starts. In any other state it means nothing: a restart is told by the pane
+            // (its PID or its death), never by this event, and a running task is never failed or
+            // re-pushed because of it.
             HookEvent::SessionStart => {
-                if let Some(current) = self.current.take() {
-                    // The CLI restarted under a running task.
-                    actions.push(Action::Fail {
-                        task: current.task,
-                        reason: self.fail_text("the CLI in tmux session KEY restarted while the task was running"),
-                        retryable: true,
-                    });
+                if matches!(self.state, State::Starting { .. }) {
+                    self.state = State::Idle;
+                    self.starting_dialog = None;
+                    self.last_liveness = now;
                 }
-                self.cli_working = false;
-                self.state = State::Idle;
-                self.starting_dialog = None;
             }
             HookEvent::UserPromptSubmit => self.on_turn_start(now),
             HookEvent::Stop | HookEvent::TurnEnded => actions.extend(self.on_turn_end(now)),
             HookEvent::Notification => {
-                if matches!(
-                    self.state,
-                    State::Pushing { .. } | State::Busy | State::BusyUser | State::Idle
-                ) {
+                // A permission prompt or dialog with something to protect: a task in flight, or a
+                // person's turn. With nothing running there is nothing to block.
+                if matches!(self.state, State::Pushing { .. } | State::Busy | State::BusyUser) {
                     actions.extend(self.block(now));
                 }
             }
@@ -732,6 +729,13 @@ impl<T: Task> Machine<T> {
             }
             State::Blocked { since } => {
                 actions.push(Action::CheckDialog);
+                // A blocked task is still watched: when Sylvode ends it, the session is freed.
+                if let Some(current) = self.current.as_mut()
+                    && now.duration_since(current.last_poll) >= self.timers.poll
+                {
+                    current.last_poll = now;
+                    actions.push(Action::Poll(current.task.clone()));
+                }
                 if now.duration_since(since) >= self.timers.blocked_fail
                     && let Some(current) = self.current.as_mut()
                     && !current.failed_blocked

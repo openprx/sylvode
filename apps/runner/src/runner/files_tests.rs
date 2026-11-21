@@ -221,6 +221,7 @@ fn session_settings_hold_the_four_hooks_and_are_private() {
         claude_settings: &settings,
         runner_exe: &exe,
         hook_socket: &socket,
+        nonce: "0123456789abcdef0123456789abcdef",
     };
     assert!(state.write_session_settings(&key, &files).expect("write").changed);
     assert!(!state.write_session_settings(&key, &files).expect("again").changed);
@@ -237,6 +238,10 @@ fn session_settings_hold_the_four_hooks_and_are_private() {
         );
         assert!(command.contains(&format!("'--event' '{event}'")), "{command}");
         assert_eq!(value["hooks"][event][0]["hooks"][0]["type"], "command");
+        assert!(
+            command.ends_with("'--nonce' '0123456789abcdef0123456789abcdef'"),
+            "{command}"
+        );
     }
     // The hook words never carry task content: only fixed words, the key and the paths.
     assert!(!value.to_string().contains("opr_"));
@@ -272,6 +277,7 @@ fn the_headless_mark_is_set_cleared_and_ignored_without_a_record() {
         dir: "/x".to_string(),
         started_at: 1,
         headless: false,
+        nonce: String::new(),
     };
     state.write_session_record(&record).expect("write");
     state.set_headless(&key, true).expect("set");
@@ -284,4 +290,37 @@ fn the_headless_mark_is_set_cleared_and_ignored_without_a_record() {
     );
     state.set_headless(&key, false).expect("clear");
     assert_eq!(state.read_session_record(&key), Some(record));
+}
+
+/// `SessionStart` fires again after compaction, `/clear` and resume, and `Notification` also for an
+/// idle prompt: the hooks are registered for the first start and for permission prompts only.
+#[test]
+fn session_start_and_notification_hooks_have_narrow_matchers() {
+    let base = Dir::new();
+    let state = StateDir::open(&base.state()).expect("open");
+    let key = SessionKey::new("SVWL").expect("key");
+    let (exe, server, socket) = launch_files(&state);
+    let (toml, json, settings) = (
+        state.mcp_toml(BOT),
+        state.claude_mcp_json(BOT),
+        state.claude_settings(&key),
+    );
+    let files = LaunchFiles {
+        mcp_server: &server,
+        mcp_toml: &toml,
+        claude_mcp_json: &json,
+        claude_settings: &settings,
+        runner_exe: &exe,
+        hook_socket: &socket,
+        nonce: "0123456789abcdef0123456789abcdef",
+    };
+    state.write_session_settings(&key, &files).expect("write");
+    let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&settings).expect("read")).expect("json");
+    assert_eq!(value["hooks"]["SessionStart"][0]["matcher"], "startup");
+    assert_eq!(
+        value["hooks"]["Notification"][0]["matcher"],
+        "permission_prompt|elicitation_dialog"
+    );
+    assert!(value["hooks"]["Stop"][0].get("matcher").is_none());
+    assert!(value["hooks"]["UserPromptSubmit"][0].get("matcher").is_none());
 }

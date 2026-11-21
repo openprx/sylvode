@@ -191,7 +191,10 @@ enum Cmd {
         task: Box<TmuxTask>,
         reply: oneshot::Sender<usize>,
     },
-    Hook(HookEvent),
+    Hook {
+        event: HookEvent,
+        nonce: String,
+    },
     View {
         task_id: String,
         facts: Option<ViewFacts>,
@@ -276,7 +279,12 @@ impl SessionManager {
         // Only a session that has a worker (a task was queued or recovered) takes events.
         let sender = self.workers.lock().get(key.as_str()).cloned();
         if let Some(sender) = sender {
-            let _ = sender.send(Cmd::Hook(message.event)).await;
+            let _ = sender
+                .send(Cmd::Hook {
+                    event: message.event,
+                    nonce: message.nonce,
+                })
+                .await;
         }
     }
 
@@ -332,9 +340,16 @@ struct Worker {
     tx: mpsc::Sender<Cmd>,
     /// The session has no hooks (adopted): turn events are read from the screen.
     screen_mode: bool,
+    /// The secret of the current launch's hooks.
+    nonce: String,
     last_screen: Option<String>,
     still_ticks: u32,
     screen_working: bool,
+}
+
+/// A random secret of 32 hex characters (the 128 random bits of a version 4 UUID).
+fn fresh_nonce() -> String {
+    Uuid::new_v4().simple().to_string()
 }
 
 fn unix_now() -> u64 {
@@ -349,6 +364,12 @@ impl Worker {
         } else {
             format!("tmux -L {socket} attach -t ={}", key.as_str())
         };
+        let nonce = shared
+            .state
+            .read_session_record(&key)
+            .map(|record| record.nonce)
+            .filter(|nonce| nonce.len() == 32)
+            .unwrap_or_else(fresh_nonce);
         let machine = Machine::new(
             Timers::from_config(&shared.config.runner),
             key.as_str(),
@@ -363,6 +384,7 @@ impl Worker {
             rx,
             tx,
             screen_mode: false,
+            nonce,
             last_screen: None,
             still_ticks: 0,
             screen_working: false,
@@ -429,13 +451,15 @@ impl Worker {
                 let _ = reply.send(self.machine.queue.position(&id).unwrap_or(0));
                 actions
             }
-            Cmd::Hook(event) => {
-                self.screen_mode = false;
-                let mut actions = self.machine.on_hook(event, now);
-                if event == HookEvent::SessionStart {
-                    actions.extend(self.machine.on_ready(now));
+            Cmd::Hook { event, nonce } => {
+                // A message that does not carry this launch's secret did not come from this
+                // session's hook command: it is dropped.
+                if !super::hooks::ct_eq(&nonce, &self.nonce) {
+                    tracing::debug!(session = self.key.as_str(), "hook message dropped: wrong nonce");
+                    return Vec::new();
                 }
-                actions
+                self.screen_mode = false;
+                self.machine.on_hook(event, now)
             }
             Cmd::View { task_id, facts } => {
                 if self.machine.current_task().is_some_and(|t| t.task_id == task_id)
@@ -693,6 +717,7 @@ impl Worker {
             claude_settings: &settings,
             runner_exe: &self.shared.runner_exe,
             hook_socket: &socket,
+            nonce: &self.nonce,
         };
         if task.cli == "claude" {
             state.write_session_settings(&self.key, &files).map_err(|e| {
@@ -733,6 +758,7 @@ impl Worker {
         let tmux_cfg = self.shared.config.runner.tmux.clone();
         let record = self.shared.state.read_session_record(&key);
         let task = task.clone();
+        let nonce = self.nonce.clone();
         let result = tokio::task::spawn_blocking(move || {
             ensure_blocking(
                 &tmux,
@@ -742,6 +768,7 @@ impl Worker {
                 &files.argv,
                 &process_names,
                 record.as_ref(),
+                &nonce,
                 &tmux_cfg,
             )
         })
@@ -815,7 +842,9 @@ impl Worker {
         result.unwrap_or(PushTry::Failed)
     }
 
-    async fn respawn_for(&self, task: &TmuxTask, pane: &Pane) -> Result<(), ()> {
+    async fn respawn_for(&mut self, task: &TmuxTask, pane: &Pane) -> Result<(), ()> {
+        // A new launch gets a new secret; the old one stops authenticating anything.
+        self.nonce = fresh_nonce();
         let files = self.files_for(task).map_err(|_| ())?;
         let dir = WorkDir::new(&task.dir).map_err(|_| ())?;
         let tmux = self.tmux();
@@ -841,6 +870,7 @@ impl Worker {
             dir: task.dir.to_string_lossy().into_owned(),
             started_at: unix_now(),
             headless: false,
+            nonce: self.nonce.clone(),
         };
         self.shared.state.write_session_record(&record).map_err(|_| ())
     }
@@ -926,9 +956,11 @@ fn ensure_blocking(
     argv: &[String],
     process_names: &[String],
     record: Option<&SessionRecord>,
+    nonce: &str,
     cfg: &super::config::RunnerTmuxConfig,
 ) -> Result<EnsureResult, TmuxError> {
     let new_record = |pane: &Pane, pid: u32| SessionRecord {
+        nonce: nonce.to_string(),
         key: key.as_str().to_string(),
         project_id: task.project_id.clone(),
         pane_id: pane.id.as_str().to_string(),

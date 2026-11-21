@@ -9,14 +9,16 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use tokio::sync::mpsc;
 
-use super::hooks::{CLIENT_BUDGET, HookEvent, MAX_LINE, Reject, listen, parse_line, send};
+use super::hooks::{CLIENT_BUDGET, HookEvent, MAX_LINE, Reject, ct_eq, listen, parse_line, send};
 
 fn line(value: &serde_json::Value) -> Vec<u8> {
     value.to_string().into_bytes()
 }
 
+const NONCE: &str = "0123456789abcdef0123456789abcdef";
+
 fn good() -> serde_json::Value {
-    json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "ts": 1_700_000_000})
+    json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "nonce": NONCE, "ts": 1_700_000_000})
 }
 
 #[test]
@@ -55,8 +57,11 @@ fn only_the_documented_message_shape_is_accepted() {
         with("session", json!(7)),
         with("ts", json!("now")),
         with("ts", json!(null)),
-        json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop"}),
-        json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "ts": 1, "prompt": "secret text"}),
+        with("nonce", json!("short")),
+        with("nonce", json!("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")),
+        with("nonce", json!(7)),
+        json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "ts": 1}),
+        json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "ts": 1, "nonce": NONCE, "prompt": "secret text"}),
         json!([]),
         json!("text"),
         json!(5),
@@ -110,7 +115,7 @@ async fn the_socket_is_private_forwards_good_lines_and_drops_the_rest() {
         b"garbage\n".to_vec(),
         format!(
             "{}\n",
-            json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "ts": 1, "prompt": "p"})
+            json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "ts": 1, "nonce": NONCE, "prompt": "p"})
         )
         .into_bytes(),
         vec![b'a'; 100_000],
@@ -119,7 +124,12 @@ async fn the_socket_is_private_forwards_good_lines_and_drops_the_rest() {
     ] {
         send_raw(bad).await.expect("sent");
     }
-    send_raw(format!("{}\n", good()).into_bytes()).await.expect("sent");
+    {
+        let path = socket.clone();
+        tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
+            .await
+            .expect("sent");
+    }
     let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("in time")
@@ -141,7 +151,7 @@ async fn a_stale_socket_file_is_replaced() {
     let (tx, mut rx) = mpsc::channel(4);
     let _server = listen(&socket, tx).expect("listen");
     let path = socket.clone();
-    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop"))
+    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
         .await
         .expect("sent");
     let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
@@ -155,13 +165,41 @@ async fn a_stale_socket_file_is_replaced() {
 fn the_client_returns_quickly_without_a_socket_or_with_a_stuck_one() {
     let dir = Dir::new();
     let started = Instant::now();
-    send(&dir.0.join("absent.sock"), "claude", "SVWL", "Stop");
+    send(&dir.0.join("absent.sock"), "claude", "SVWL", "Stop", NONCE);
     assert!(started.elapsed() < CLIENT_BUDGET, "{:?}", started.elapsed());
     // A socket that accepts and never reads does not hold it either (the line is small, so the
     // write completes; the budget bounds the rest).
     let socket = dir.0.join("stuck.sock");
     let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind");
     let started = Instant::now();
-    send(&socket, "claude", "SVWL", "Stop");
+    send(&socket, "claude", "SVWL", "Stop", NONCE);
     assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+}
+
+#[test]
+fn the_nonce_is_carried_and_compared_without_stopping_at_the_first_difference() {
+    assert_eq!(parse_line(&line(&good())).expect("valid").nonce, NONCE);
+    assert!(ct_eq(NONCE, NONCE));
+    assert!(!ct_eq(NONCE, "0123456789abcdef0123456789abcdee"));
+    assert!(!ct_eq(NONCE, "0123456789abcdef"));
+    assert!(!ct_eq("", NONCE));
+}
+
+#[tokio::test]
+async fn a_peer_of_another_user_is_not_heard() {
+    // The listener compares the peer's uid with its own. Another uid cannot be produced in a
+    // test, so this pins the positive side: a same-user client is heard with its nonce intact.
+    let dir = Dir::new();
+    let socket = dir.0.join("hook.sock");
+    let (tx, mut rx) = mpsc::channel(4);
+    let _server = listen(&socket, tx).expect("listen");
+    let path = socket.clone();
+    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
+        .await
+        .expect("sent");
+    let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("in time")
+        .expect("message");
+    assert_eq!(message.nonce, NONCE);
 }

@@ -116,6 +116,9 @@ pub struct LaunchFiles<'a> {
     pub runner_exe: &'a Path,
     /// `state_dir/hook.sock`.
     pub hook_socket: &'a Path,
+    /// The per-launch secret the hooks present (32 hex characters, random, never from task
+    /// content): it binds a hook message to the launch that wrote it.
+    pub nonce: &'a str,
 }
 
 fn permissions(settings: &crate::executor_permissions::ExecutorSettings) -> Result<ExecutorPermissions, LaunchError> {
@@ -282,6 +285,11 @@ pub fn hook_words(
             .map(str::to_string)
             .ok_or_else(|| LaunchError::Unsafe("a runner file path is not UTF-8 or has control characters".to_string()))
     };
+    if files.nonce.len() != 32 || !files.nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(LaunchError::Unsafe(
+            "the hook nonce is not 32 hex characters".to_string(),
+        ));
+    }
     Ok(vec![
         text(files.runner_exe)?,
         "hook".to_string(),
@@ -293,6 +301,8 @@ pub fn hook_words(
         event.to_string(),
         "--socket".to_string(),
         text(files.hook_socket)?,
+        "--nonce".to_string(),
+        files.nonce.to_string(),
     ])
 }
 

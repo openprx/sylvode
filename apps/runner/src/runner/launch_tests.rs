@@ -10,6 +10,8 @@ use super::launch::{
 };
 use super::tmux::SessionKey;
 
+const NONCE: &str = "0123456789abcdef0123456789abcdef";
+
 fn files() -> LaunchFiles<'static> {
     LaunchFiles {
         mcp_server: Path::new("/opt/sylvode/bin/mcp-server"),
@@ -18,6 +20,7 @@ fn files() -> LaunchFiles<'static> {
         claude_settings: Path::new("/state/sessions/SVWL/claude-settings.json"),
         runner_exe: Path::new("/opt/sylvode/bin/sylvode-runner"),
         hook_socket: Path::new("/state/hook.sock"),
+        nonce: NONCE,
     }
 }
 
@@ -252,7 +255,9 @@ fn codex_defaults_and_values_round_trip_through_a_toml_parser() {
                 "--event",
                 "turn-ended",
                 "--socket",
-                "/state/hook.sock"
+                "/state/hook.sock",
+                "--nonce",
+                "0123456789abcdef0123456789abcdef"
             ]
             .iter()
             .map(|s| toml::Value::String((*s).to_string()))
@@ -334,12 +339,14 @@ fn hook_commands_are_fixed_words_and_quoted_values() {
             "--event",
             "Stop",
             "--socket",
-            "/state/hook.sock"
+            "/state/hook.sock",
+            "--nonce",
+            "0123456789abcdef0123456789abcdef"
         ])
     );
     assert_eq!(
         claude_hook_command(&files(), &key(), "Stop").expect("command"),
-        "'/opt/sylvode/bin/sylvode-runner' 'hook' '--cli' 'claude' '--session' 'SVWL' '--event' 'Stop' '--socket' '/state/hook.sock'"
+        "'/opt/sylvode/bin/sylvode-runner' 'hook' '--cli' 'claude' '--session' 'SVWL' '--event' 'Stop' '--socket' '/state/hook.sock' '--nonce' '0123456789abcdef0123456789abcdef'"
     );
     assert_eq!(shell_quote("it's"), "'it'\\''s'");
     assert_eq!(shell_quote("a b; rm -rf /"), "'a b; rm -rf /'");

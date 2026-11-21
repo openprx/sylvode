@@ -1,7 +1,7 @@
 //! The hook socket (design section 7.3): the CLIs report turn events by running
 //! `sylvode-runner hook ...`, which sends one JSON line to `state_dir/hook.sock`.
 //!
-//! The socket accepts exactly one message shape, `{"v":1,"cli","session","event","ts"}` with a known
+//! The socket accepts exactly one message shape, `{"v":1,"cli","session","event","nonce","ts"}` with a known
 //! CLI, a valid session key and an event that CLI can send, in at most [`MAX_LINE`] bytes. Anything
 //! else is dropped with a `debug` log of its length only: hook input can hold prompt text, which
 //! must not reach logs. The socket lives in the private state directory and is set to mode 0600.
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 
@@ -80,6 +80,18 @@ pub struct HookMessage {
     pub cli: String,
     pub session: String,
     pub event: HookEvent,
+    /// The per-launch secret of the session; the receiver compares it, in constant time, with the
+    /// one it wrote into that launch's hook command.
+    pub nonce: String,
+}
+
+/// Compares two secrets without stopping at the first difference.
+#[must_use]
+pub fn ct_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes().zip(b.bytes()).fold(0u8, |diff, (x, y)| diff | (x ^ y)) == 0
 }
 
 /// Why a line was dropped.
@@ -101,7 +113,7 @@ pub fn parse_line(line: &[u8]) -> Result<HookMessage, Reject> {
     }
     let value: Value = serde_json::from_slice(line).map_err(|_| Reject::NotJson)?;
     let object = value.as_object().ok_or(Reject::Shape)?;
-    if object.len() != 5
+    if object.len() != 6
         || object.get("v").and_then(Value::as_u64) != Some(1)
         || !object.get("ts").is_some_and(Value::is_number)
     {
@@ -111,12 +123,17 @@ pub fn parse_line(line: &[u8]) -> Result<HookMessage, Reject> {
     let (Some(cli), Some(session), Some(event)) = (text("cli"), text("session"), text("event")) else {
         return Err(Reject::Shape);
     };
+    let nonce = text("nonce").ok_or(Reject::Shape)?;
+    if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(Reject::Shape);
+    }
     SessionKey::new(session).map_err(|_| Reject::Shape)?;
     let event = HookEvent::parse(cli, event).ok_or(Reject::Shape)?;
     Ok(HookMessage {
         cli: cli.to_string(),
         session: session.to_string(),
         event,
+        nonce: nonce.to_string(),
     })
 }
 
@@ -147,7 +164,19 @@ pub fn listen(path: &Path, tx: mpsc::Sender<HookMessage>) -> Result<tokio::task:
             }
             let tx = tx.clone();
             tokio::spawn(async move {
-                let read = tokio::time::timeout(READ_TIMEOUT, read_line(stream)).await;
+                let mut stream = stream;
+                let read = tokio::time::timeout(READ_TIMEOUT, read_line(&mut stream)).await;
+                // Only the runner's own user may speak here, whatever the socket's mode says. The
+                // peer is asked after its line is read: the client waits for the acknowledgement
+                // below, so it is still connected (macOS cannot name a peer that has gone).
+                let same_user = stream
+                    .peer_cred()
+                    .is_ok_and(|peer| peer.uid() == nix::unistd::Uid::effective().as_raw());
+                let _ = stream.write_all(b"k").await;
+                if !same_user {
+                    tracing::debug!("hook line dropped: the peer is not this user");
+                    return;
+                }
                 match read {
                     Ok(Some(line)) => match parse_line(&line) {
                         Ok(message) => {
@@ -164,7 +193,7 @@ pub fn listen(path: &Path, tx: mpsc::Sender<HookMessage>) -> Result<tokio::task:
 }
 
 /// Reads one line of at most [`MAX_LINE`] bytes; `None` when it is longer or the read fails.
-async fn read_line(stream: tokio::net::UnixStream) -> Option<Vec<u8>> {
+async fn read_line(stream: &mut tokio::net::UnixStream) -> Option<Vec<u8>> {
     let mut reader = BufReader::new(stream.take((MAX_LINE + 1) as u64));
     let mut line = Vec::new();
     reader.read_until(b'\n', &mut line).await.ok()?;
@@ -176,9 +205,9 @@ async fn read_line(stream: tokio::net::UnixStream) -> Option<Vec<u8>> {
 
 /// The `hook` subcommand: sends one message to `socket` and returns. Never reads stdin, never
 /// panics, and returns within [`CLIENT_BUDGET`] even when the socket is absent or stuck.
-pub fn send(socket: &Path, cli: &str, session: &str, event: &str) {
+pub fn send(socket: &Path, cli: &str, session: &str, event: &str, nonce: &str) {
     let line = serde_json::json!({
-        "v": 1, "cli": cli, "session": session, "event": event,
+        "v": 1, "cli": cli, "session": session, "event": event, "nonce": nonce,
         "ts": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
     })
     .to_string();
@@ -187,7 +216,12 @@ pub fn send(socket: &Path, cli: &str, session: &str, event: &str) {
     std::thread::spawn(move || {
         if let Ok(mut stream) = UnixStream::connect(&socket) {
             let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
-            let _ = stream.write_all(format!("{line}\n").as_bytes());
+            if stream.write_all(format!("{line}\n").as_bytes()).is_ok() {
+                // Stay connected until the runner has looked at us (it checks who we are).
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                let mut ack = [0u8; 1];
+                let _ = std::io::Read::read(&mut stream, &mut ack);
+            }
         }
         let _ = done.send(());
     });
