@@ -120,7 +120,8 @@
 //! 3. No op touched the `doc` map, the structure meta or tree, a shadow root, or a tree other than
 //!    the engine's (`GlobalStructure`, `TreeStructure`); no op on the engine tree is anything but
 //!    a create whose target is its own op id (`TreeStructure`); no map op writes or deletes the key
-//!    `logical_id` except in the metadata map of a node the update created (`IdRewritten`); every
+//!    `logical_id` except in the metadata map of a node the update created (`IdRewritten`, and for
+//!    the map of an existing tree node a refusal, see "The refusal of an id rewrite"); every
 //!    touched container has a path, and none under a tree node is reached through any other root
 //!    (`Unclassified`).
 //! 4. Every element inserted into the root list is a map container created by the inserting op
@@ -187,6 +188,19 @@
 //! full id-cache rebuild, the same projection and limits (the differential test
 //! `with_the_switch_off_the_window_is_next_on_every_case` keeps a copy of `next`'s import as its
 //! oracle).
+//!
+//! # The refusal of an id rewrite
+//!
+//! With facts (the switch on), an update that writes or deletes the `logical_id` of a tree node that
+//! existed before it is **refused** (`OperationFailed`, reason [`ID_REWRITE_REASON`]) before the
+//! check, whatever the import's shape. The id caches never re-read a node they hold (a limitation
+//! older than this module, see `rebuild_id_cache`), so the worker keeps the old id of a renamed node
+//! while the host's fresh load reads the new one, and the two projections can differ: on `next` the
+//! write is committed even when the host's projection of the result is over a limit. No client
+//! writes an id after the node's creation (the editor sets it in the transaction that creates the
+//! node; the engine inserts it with the create), so nothing legitimate is refused. Without facts
+//! (the switch off, or a base the check does not describe) the write is `next`'s: accepted by the
+//! worker, and the host refuses a result that is over a limit.
 //!
 //! # What the incremental path covers
 //!
@@ -365,7 +379,9 @@ fallback_reasons! {
     /// in the tree (live, deleted or unnamed), a created node has children the update did not
     /// create, or the id caches were rebuilt in full.
     ResolvedNodeId,
-    /// An update wrote the logical id of a tree node that already existed.
+    /// An update wrote the key `logical_id` in a map that is not the metadata of a node it created
+    /// (the write of an existing tree node's id is refused before the check, see
+    /// [`ID_REWRITE_REASON`]; this is any other map).
     IdRewritten,
     /// The import is not a strict causal extension of the base (see the module documentation):
     /// some change of it is concurrent with the base, or does not depend on the whole of it.
@@ -418,6 +434,11 @@ pub fn run_window(
         Ok(report) => Ok(WindowAccepted {
             report: Some(report),
             fallback: None,
+        }),
+        // A write of the logical id of a node that existed before the update: refused, see
+        // `rewrites_an_existing_nodes_id`.
+        Err(Undecided::IdRewrite) => Err(CollabError::OperationFailed {
+            reason: ID_REWRITE_REASON.into(),
         }),
         // A total over its limit is exact (the base's fact plus the exact change of the touched
         // units), and no limit that precedes it can be violated, so the refusal is the full
@@ -510,6 +531,30 @@ impl OpSummary {
     /// Whether `tree_created` is every node the import added to the legacy tree.
     pub(crate) const fn tree_ids_known(&self) -> bool {
         !self.seen.has(Seen::TREE_OTHER)
+    }
+
+    /// Whether an op of the import wrote or deleted the `logical_id` of a legacy tree node that
+    /// existed before the import: a write to the `logical_id` key of the metadata map of a node
+    /// that the import did not create (a node's metadata map is named by the node's id).
+    ///
+    /// The id caches never re-read a node they hold, so the worker would keep the node's old id
+    /// while the host's fresh load reads the new one: the two projections can differ, and
+    /// `next` commits a document the host's projection finds over a limit. No client writes an id
+    /// after the node's creation (the editor and the engine set it in the transaction that creates
+    /// the node), so the window refuses such a write. Only used when the incremental window is on.
+    pub(crate) fn rewrites_an_existing_nodes_id(&self, engine: &LoroCollabEngine) -> bool {
+        let created: HashSet<TreeID> = self.tree_created.iter().copied().collect();
+        self.logical_id_writes.iter().any(|container| match container {
+            ContainerID::Normal {
+                peer,
+                counter,
+                container_type: ContainerType::Map,
+            } => {
+                let node = TreeID::new(*peer, *counter);
+                !created.contains(&node) && engine.has_tree_node(node)
+            }
+            _ => false,
+        })
     }
 
     /// Reads one imported change, before its ops.
@@ -718,6 +763,8 @@ enum Undecided {
     Fallback(FallbackReason),
     /// A total is over its limit: the refusal, with the numbers the full computation reports.
     Refused(LimitViolation),
+    /// The update writes the logical id of a tree node that existed before it: refused.
+    IdRewrite,
 }
 
 impl From<FallbackReason> for Undecided {
@@ -734,6 +781,9 @@ struct Touched {
     aliases: bool,
 }
 
+/// The reason of the refusal of a write of an existing tree node's logical id.
+pub const ID_REWRITE_REASON: &str = "logical_id_rewritten";
+
 const CID_PREFIX: &str = "cid:";
 /// The key of a tree node's metadata map that holds its logical id.
 const LOGICAL_ID_KEY: &str = "logical_id";
@@ -742,6 +792,9 @@ const LOGICAL_ID_KEY: &str = "logical_id";
 /// either the reason the check did not decide or the refusal of a total.
 fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTrace) -> Result<WindowReport, Undecided> {
     let facts = facts.ok_or(FallbackReason::FactsAbsent)?;
+    if !injected!(IdRewriteSkipped) && trace.summary.rewrites_an_existing_nodes_id(engine) {
+        return Err(Undecided::IdRewrite);
+    }
     // A causal import never leaves anything pending; if it did, the ops seen are not the update.
     if trace.status.pending.is_some() {
         return Err(FallbackReason::Unclassified.into());

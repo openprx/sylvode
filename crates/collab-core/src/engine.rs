@@ -329,9 +329,9 @@ impl LoroCollabEngine {
     /// leaves the caches, and with them the projection of this engine, on the old id, while an
     /// engine loaded from the exported snapshot reads the new one. Both engines decide a limit on
     /// what they see, so the same update can have a different projection in the worker than on the
-    /// host. The incremental window does not decide such an update (`FallbackReason::IdRewritten`);
-    /// the full path keeps its old behaviour. The remedy (re-reading the ids of every node whose
-    /// metadata an import touched, or refusing such writes) is a decision for the owner.
+    /// host. The window with base facts (`[flow] incremental_window` on) refuses such an update
+    /// before any decision (`window_check::ID_REWRITE_REASON`); with the switch off the write is
+    /// `next`'s, and the host refuses a result its projection finds over a limit.
     fn rebuild_id_cache(&mut self) -> Result<(), CollabError> {
         for tree_id in self.tree.nodes() {
             if self.tree_to_id.contains_key(&tree_id) {
@@ -1232,6 +1232,11 @@ impl LoroCollabEngine {
     }
 
     /// Whether some logical id is claimed by two tree nodes (see `duplicate_logical_ids`).
+    /// Whether the legacy tree holds `id`, live or deleted.
+    pub(crate) fn has_tree_node(&self, id: TreeID) -> bool {
+        self.tree.contains(id)
+    }
+
     pub(crate) const fn has_duplicate_logical_ids(&self) -> bool {
         self.duplicate_logical_ids
     }

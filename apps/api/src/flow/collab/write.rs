@@ -759,8 +759,13 @@ fn disagreements() -> &'static parking_lot::Mutex<DisagreementTracker> {
 enum WindowAttempt {
     /// The worker refused, or did not finish: the rejection is `isolated_apply_rejection`'s.
     Rejected(collab_core::isolation::IsolatedApplyError),
-    /// The worker accepted with an incremental result the host's projection contradicts.
-    Diverged(collab_core::window_check::WindowDivergence),
+    /// The worker accepted with a result the host's projection contradicts. `from_report` is true
+    /// when the worker's incremental check decided (it reported), false when the full computation
+    /// did; only the first counts toward the document's cooldown.
+    Diverged {
+        divergence: collab_core::window_check::WindowDivergence,
+        from_report: bool,
+    },
     /// The worker accepted, and the host's projection agrees with whatever it reported.
     Prepared(Box<WindowPrepared>),
 }
@@ -808,7 +813,10 @@ fn window_attempt(
     })?;
     host_snapshot_step.finish();
     if let Err(divergence) = verify_window_report(success.window_report.as_ref(), &semantic) {
-        return Ok(WindowAttempt::Diverged(divergence));
+        return Ok(WindowAttempt::Diverged {
+            divergence,
+            from_report: success.window_report.is_some(),
+        });
     }
     Ok(WindowAttempt::Prepared(Box::new(WindowPrepared {
         candidate,
@@ -851,10 +859,18 @@ fn decide_window_with(
     let cooling = tracker.lock().cooling(ids.document_id, std::time::Instant::now());
     let first_mode = if cooling { WindowMode::Full } else { mode };
     let first = attempt(first_mode)?;
-    let WindowAttempt::Diverged(divergence) = first else {
+    let WindowAttempt::Diverged {
+        divergence,
+        from_report,
+    } = first
+    else {
         return Ok(first);
     };
-    let entered = tracker.lock().record(ids.document_id, std::time::Instant::now());
+    // Only a contradicted incremental check counts toward the cooldown. A full computation that
+    // the host's projection contradicts is not a fault of the incremental check, and switching to
+    // the full window would not change it: counting it would let a writer keep a large page on
+    // the full window, which its CPU limit refuses, for as long as it likes.
+    let entered = from_report && tracker.lock().record(ids.document_id, std::time::Instant::now());
     if entered {
         tracing::warn!(
             document_id = %ids.document_id,
@@ -869,7 +885,7 @@ fn decide_window_with(
     }
     log_window_divergence(&divergence, ids, DivergenceAnswer::DecideAgain);
     match attempt(WindowMode::Full)? {
-        WindowAttempt::Diverged(second) => {
+        WindowAttempt::Diverged { divergence: second, .. } => {
             log_window_divergence(&second, ids, DivergenceAnswer::Refuse);
             #[cfg(test)]
             if mutant_is(WindowMutant::AcceptsSecondDivergence) {
@@ -924,12 +940,20 @@ mod window_oracle_tests {
         }))
     }
 
+    fn diverged_with(from_report: bool) -> WindowAttempt {
+        WindowAttempt::Diverged {
+            divergence: collab_core::window_check::WindowDivergence {
+                field: "blocks",
+                reported: 1,
+                projected: 0,
+            },
+            from_report,
+        }
+    }
+
+    /// A contradicted incremental check.
     fn diverged() -> WindowAttempt {
-        WindowAttempt::Diverged(collab_core::window_check::WindowDivergence {
-            field: "blocks",
-            reported: 1,
-            projected: 0,
-        })
+        diverged_with(true)
     }
 
     #[test]
@@ -1130,6 +1154,39 @@ mod window_oracle_tests {
         let projection = over_the_depth_limit();
         assert!(verify_window_report(None, &projection).is_err());
         assert!(decide_window(ids(), WindowMode::Incremental, |_| Ok(diverged())).is_err());
+    }
+
+    /// R3-3: a full computation that the host's projection contradicts does not count toward the
+    /// cooldown, however often it happens; a contradicted incremental check does.
+    #[test]
+    fn only_a_contradicted_incremental_check_counts_toward_the_cooldown() {
+        let tracker = parking_lot::Mutex::new(DisagreementTracker::default());
+        let id = ids();
+        for _ in 0..(COOLDOWN_THRESHOLD * 3) {
+            let refused = decide_window_with(&tracker, id, WindowMode::Incremental, |_| Ok(diverged_with(false)));
+            assert!(refused.is_err());
+        }
+        assert!(!tracker.lock().cooling(id.document_id, std::time::Instant::now()));
+        for _ in 0..COOLDOWN_THRESHOLD {
+            let decided = decide_window_with(&tracker, id, WindowMode::Incremental, |mode| {
+                Ok(if mode == WindowMode::Full {
+                    prepared(false)
+                } else {
+                    diverged()
+                })
+            });
+            assert!(decided.is_ok());
+        }
+        assert!(tracker.lock().cooling(id.document_id, std::time::Instant::now()));
+        // While cooling, the first attempt is the full window, whose contradiction does not renew
+        // the cooldown or count at all.
+        let mut modes = Vec::new();
+        let refused = decide_window_with(&tracker, id, WindowMode::Incremental, |mode| {
+            modes.push(mode);
+            Ok(diverged_with(false))
+        });
+        assert!(refused.is_err());
+        assert_eq!(modes, [WindowMode::Full]);
     }
 
     fn at(seconds: u64) -> std::time::Instant {
@@ -1432,7 +1489,7 @@ pub(crate) async fn hydrate_and_apply(
             return isolated_apply_rejection(update_id, document_id, err).map(HydrateOutcome::Rejected);
         }
         // `decide_window` retries a divergence with the full window and never returns one.
-        WindowAttempt::Diverged(_) => return Err(ApiError::internal()),
+        WindowAttempt::Diverged { .. } => return Err(ApiError::internal()),
     };
     tracing::debug!(
         window_cpu_us,
