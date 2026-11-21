@@ -1,4 +1,6 @@
-//! The static guides the server embeds. The skill files are generated and checked by
+//! The static guides the server embeds.
+//!
+//! The skill files are generated and checked by
 //! `sylvode-skillgen` (`skills/sylvode-mcp`), so what the server serves is exactly what the
 //! runner installs into a project.
 
