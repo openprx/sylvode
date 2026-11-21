@@ -91,7 +91,12 @@ accepted before it wrote). For anything else (an update made on an older version
 which is what two clients editing at once produce, structured Pages, tree moves and deletes, edits
 of the `doc` map, edits of the metadata of a deleted node, a Page whose content that no documented
 limit counts has grown past a fixed budget, and any shape the check cannot be certain about) it runs
-the full computation, as it always did. The limits and the refusals are the same either way. On a
+the full computation, as it always did. The limits are the same either way, and for every write the
+worker accepts or refuses on its own the decision is the full computation's, with two exceptions
+that are deliberate. With the incremental window on, the worker refuses (reason
+`logical_id_rewritten`) an update that writes or deletes the logical id of a tree node that existed
+before it; no client does that, and the full computation accepts it on stale id caches.
+And the API, not the worker, has the last word on every accepted write (next paragraph). On a
 Page too large for the full computation to fit the 50 ms window (more than about 3,000 flat
 blocks on the reference runner), an update that takes the full computation is refused by the CPU
 limit.
@@ -112,11 +117,18 @@ sees an ordinary rejection (or success), not an internal error. If the second re
 as well (or the first attempt was already the full window), the write is refused with an internal
 error and logged at error level with
 `window_divergence_refused: the host's projection of the document the full window accepted is not within the limits; the write is refused`.
-Any such line is a defect: report it with the document and update ids. A Page whose windows
-disagree three times within ten minutes is decided by the full window directly for the next ten
-minutes (logged once at warning level as `window_cooldown`), so it pays one window per write
-instead of two; the record is per process and holds at most 1,024 documents. The total is only a
-log field; the API exports no other counters.
+An `incremental_check_divergence` line is a defect of the incremental check: report it with the
+document and update ids. A `window_divergence_refused` line is not always one. It also appears when
+the full computation's own result is contradicted: with the incremental window off, or for a Page
+that has no facts, an update that rewrites a node's logical id to another node's id is accepted by
+the worker (it reads stale id caches) and the API's projection of the result can be over a limit,
+which `next` would have committed and this refuses. Report it when the Page has facts and the
+update is not such a rewrite. A Page whose incremental checks are contradicted three times within
+ten minutes is decided by the full window directly for the next ten minutes (logged once at warning
+level as `window_cooldown`), so it pays one window per write instead of two. Only a contradicted
+incremental check counts toward that; a contradicted full window does not, since the full window
+would not change it. The record is per process and holds at most 1,024 documents. The total is only
+a log field; the API exports no other counters.
 
 The worker is started with an empty environment (it inherits nothing from the API process); the
 only variables it sees are the ones the API sets for it.
@@ -129,6 +141,10 @@ incremental_window = false
 ```
 
 The default is `true`. With `false` the worker computes no facts and every window is the full
-computation, so a Page above roughly 3,000 flat blocks (or the equivalent in legacy nodes) can again
-exceed the 50 ms window on small runners, exactly as before the incremental window existed.
+computation, which is what the worker did before the incremental window existed: its decision and
+the document it accepts are the same for every input. The API is stricter than before with either
+setting: it refuses, with an internal error, a document whose projection is over a limit, which was
+committed before. With `false`, a Page above roughly 3,000 flat blocks (or the equivalent in legacy
+nodes) can again exceed the 50 ms window on small runners, exactly as before the incremental window
+existed.
 The API reads it at startup: restart it to apply the change.

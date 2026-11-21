@@ -1305,7 +1305,15 @@ fn the_incremental_window_agrees_with_the_full_computation_on_every_case() {
     }
 }
 
-/// With the configuration switch off (no facts: the full window), the worker is `next` on every
+/// What `next` and the worker made of one case, for the switch-off test.
+enum Outcome {
+    Accepted,
+    /// `next` and the worker accept, and the host's fresh load of the result refuses.
+    HostRefuses,
+    Refused,
+}
+
+/// With the configuration switch off (no facts: the full window), the **worker** is `next` on every
 /// input: the same decision (the whole error), the same id caches, the same accepted document, the
 /// same projection, and a fresh load of the accepted document agrees. `next` here is
 /// `next_oracle`: its own import with its own full id-cache rebuild, written without the helpers
@@ -1339,18 +1347,41 @@ fn with_the_switch_off_the_window_is_next_on_every_case() {
             if worker.frontier() != next.frontier() {
                 return Err("the frontiers differ".to_owned());
             }
-            worker
-                .fresh_load_decision()
-                .map_err(|e| format!("fresh load refuses: {e}"))?;
+            // The host is stricter than `next`: it projects the accepted document and refuses one
+            // that is over a limit. The only input known to make `next` commit one is a rewrite of
+            // an existing node's logical id; the expected host refusal is recorded for it, and
+            // nothing else may differ.
+            if let Err(refusal) = worker.fresh_load_decision() {
+                if !writes_an_existing_nodes_id(case) {
+                    return Err(format!("fresh load refuses: {refusal}"));
+                }
+                return Ok(Outcome::HostRefuses);
+            }
         }
-        Ok(next_decision.is_ok())
+        Ok(if next_decision.is_ok() {
+            Outcome::Accepted
+        } else {
+            Outcome::Refused
+        })
     });
     let mut accepted = 0;
+    let mut host_refusals = 0;
     for (case, result) in cases.iter().zip(results) {
-        accepted += usize::from(result.unwrap_or_else(|message| panic!("{}: {message}", case.label)));
+        match result.unwrap_or_else(|message| panic!("{}: {message}", case.label)) {
+            Outcome::Accepted => accepted += 1,
+            Outcome::HostRefuses => {
+                accepted += 1;
+                host_refusals += 1;
+            }
+            Outcome::Refused => {}
+        }
     }
+    assert!(
+        host_refusals > 0,
+        "the corpus holds no input that `next` commits and the host refuses"
+    );
     println!(
-        "the switched-off window is next in {} cases ({accepted} accepted)",
+        "the switched-off window is next in {} cases ({accepted} accepted, {host_refusals} of them refused by the host's projection)",
         cases.len()
     );
 }

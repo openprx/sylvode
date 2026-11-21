@@ -52,9 +52,17 @@
 //!
 //! The library applies an import in one of four modes (`DiffMode`, `loro-internal`
 //! `diff_calc.rs`). `Linear` and `ImportGreaterUpdates` apply the imported ops one by one, in
-//! lamport order, to the state, with a parent check (`tree_state.rs` `apply_raw_move_and_convert`):
-//! only the imported ops act, and a create whose parent does not exist is dropped from the state,
-//! not revisited. `Import` and `Checkout` recompute the tree from the history cache
+//! lamport order, to the state (`tree_state.rs` `apply_raw_move_and_convert`): only the imported
+//! ops act. `ImportGreaterUpdates` checks the parent of a move and a cycle; by reading, `Linear`
+//! does neither (`need_check` is false), and a create under a parent the document never had would
+//! then leave a node with a dangling parent that the next read of its deleted state unwraps. That
+//! was not observed: an update of one change that depends exactly on the head and creates a node
+//! under a missing parent (`r3_8_a_create_under_a_missing_parent_is_decided_as_next_does`, for a
+//! new peer and for the head's own peer) is accepted with the create dropped from the state, no
+//! panic, by `next` and by the worker alike. The argument below does not depend on the mode: it
+//! needs only that an imported op acts on the node it names, and that nothing else is added or
+//! moved, which `created_nodes_adopt_nothing` checks on the document after the import. A worker
+//! panic is a refusal, so a panic in some shape would be `next`'s behaviour as well. `Import` and `Checkout` recompute the tree from the history cache
 //! (`diff_calc/tree.rs` `checkout_diff`): they retreat every cached op whose lamport is at or above
 //! the lowest lamport of an op in the version difference, and replay it in (lamport, peer) order.
 //! That is how a concurrent update can add a node no op of it names: the replay of a create
@@ -76,6 +84,15 @@
 //! checked on the document after the import: no created node has a child the update did not create
 //! (`created_nodes_adopt_nothing`, `ResolvedNodeId`). Anything else a replay could add, move, revive
 //! or re-parent needs a base op above the lowest new lamport, and clause 3 rules that out.
+//!
+//! The predicate allows concurrency *inside* the import: several changes that each depend on the
+//! whole base and not on each other. The library applies them in lamport order, so a child whose
+//! parent is created by a concurrent change of the same import with a higher lamport is dropped from
+//! the state, while the history keeps its create: a later concurrent import replays it into the
+//! state (round two's R2-4 planting, done by one sequential update). The worker's state and the
+//! host's snapshot agree, so the decision is right, and `next` accepts the same update, but every
+//! later concurrent write to that page takes the full path and is refused by `tree_depth` once the
+//! hidden part is deep. This is older than the window and is documented here, not changed.
 //!
 //! Where the cache rebuild was incremental and the check then falls back, the id caches are
 //! completed before the full computation reads them (`LoroCollabEngine::complete_id_cache`), so
@@ -180,14 +197,19 @@
 //! pages with a placement structure (editor models 4 and 5); a base with duplicate logical ids, one
 //! the projection or the limits do not accept, or one over the work budget; every legacy tree move
 //! or delete; any op on the `doc` map, the structure containers or a tree other than the engine's;
-//! a created node that already existed or has children the update did not create; a rewrite of an
-//! existing node's logical id; an update that could take the page over the work budget; a touched
+//! a created node that already existed or has children the update did not create; a write of the
+//! key `logical_id` into a map that is not a tree node's metadata (a rewrite of an existing node's
+//! id is refused instead); an update that could take the page over the work budget; a touched
 //! container without a path (the metadata of a deleted node, nodes created under a deleted
 //! parent); and every shape condition 7 names. With the configuration switch off (no facts) every
-//! window is this path, and it is `next`'s computation for every input: the same import, the same
-//! full id-cache rebuild, the same projection and limits (the differential test
+//! window is this path, and the **worker** is `next`'s computation for every input: the same import,
+//! the same full id-cache rebuild, the same projection and limits (the differential test
 //! `with_the_switch_off_the_window_is_next_on_every_case` keeps a copy of `next`'s import as its
-//! oracle).
+//! oracle, and compares the worker only). The **host** is not `next`: after every accepted window,
+//! with the switch on or off, it projects the document it received and refuses (an internal error)
+//! one that is over a limit. `next` committed such a document in one known case, a rewrite of an
+//! existing node's logical id (see "The refusal of an id rewrite"); the corpus holds that input
+//! (`round3/id_rewrite`) and the test records the host's refusal.
 //!
 //! # The refusal of an id rewrite
 //!
@@ -223,6 +245,15 @@
 //! | 2 | 200 ms | 20 ms | 84% |
 //! | 2 | 200 ms | 100 ms | 32% |
 //! | 2 | 200 ms | 300 ms | 12% |
+//!
+//! A fallback that comes after the units were evaluated (the work budget, a presence change, a key
+//! collision, a bound reached) runs the full computation from the start, so such an update costs
+//! about the evaluation plus the full computation, and a CPU refusal of that is not retried.
+//! Avoiding it needs either the budget and the presence conditions known before evaluating (the
+//! budget needs the exact totals) or a retry with the full mode on the wire; neither is small, and
+//! it only matters for a page whose full computation already takes most of the window, for an update
+//! that touches most of its blocks and then falls back. Concurrent updates (`NotSequential`) return
+//! before any evaluation and are not affected.
 //!
 //! The fallback runs the full computation, which on a page of more than about 3,000 flat blocks (or
 //! the equivalent in legacy nodes) does not fit the 50 ms window on the reference runner: for such a
@@ -1295,12 +1326,12 @@ mod gate_tests {
     use super::{ChangeSpan, OpSummary};
     use crate::facts::BaseVersion;
 
-    fn base(heads: i32) -> (BaseVersion, VersionVector) {
+    fn base(heads: u64) -> (BaseVersion, VersionVector) {
         let mut vv = VersionVector::new();
-        let frontier: Vec<ID> = (0..i64::from(heads))
+        let frontier: Vec<ID> = (0..heads)
             .map(|peer| {
-                vv.insert(peer as u64, 1);
-                ID::new(peer as u64, 0)
+                vv.insert(peer, 1);
+                ID::new(peer, 0)
             })
             .collect();
         (
@@ -1353,7 +1384,7 @@ mod gate_tests {
                 peer: 1_000_000,
                 start: counter,
                 end: counter + 1,
-                lamport: 11 + counter as u32,
+                lamport: 11 + counter.unsigned_abs(),
                 deps: if counter == 0 {
                     first_dep.clone()
                 } else {

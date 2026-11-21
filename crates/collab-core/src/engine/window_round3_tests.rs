@@ -20,7 +20,7 @@ use loro::{
 
 use super::hand_encoded::{accepted, frontier_strings, raw_edit, rewrite_deps, set_node};
 use super::window_fixtures::{Case, FactsFrom};
-use super::window_round2_tests::{flat_page_of, grow_by, judge};
+use super::window_round2_tests::{flat_page_of, grow_by, judge, next_decision};
 use super::{CollabEngine, LoroCollabEngine};
 use crate::facts::BaseFacts;
 
@@ -222,12 +222,15 @@ fn case(label: String, kind: &'static str, base: &[u8], update: Vec<u8>) -> Case
     }
 }
 
+/// An edit of a document.
+type Edit<'a> = dyn Fn(&LoroDoc) + 'a;
+
 fn nested_meta_cases(scale: u64) -> Vec<Case> {
     let (base, j, base0, anchor) = nested_meta_base();
     let mut cases = Vec::new();
     for k in 0..scale {
         let peer = 9_500 + k;
-        let edits: [(&'static str, &dyn Fn(&LoroDoc)); 3] = [
+        let edits: [(&'static str, &Edit<'_>); 3] = [
             ("nested_kind", &|a: &LoroDoc| {
                 a.get_tree("tree")
                     .get_meta(j)
@@ -263,10 +266,6 @@ fn nested_meta_cases(scale: u64) -> Vec<Case> {
         }
     }
     cases
-}
-
-pub(super) fn round3_cases(scale: u64) -> Vec<Case> {
-    nested_meta_cases(scale)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -495,7 +494,7 @@ fn r3_2_property_strings_on_a_legacy_node_cannot_grow_a_page_without_a_bound() {
 #[test]
 fn r3_2_the_bound_on_the_items_an_update_adds_holds() {
     let page = flat_page_of(400);
-    let shapes: Vec<(&str, Box<dyn Fn(&LoroDoc)>)> = vec![
+    let shapes: Vec<(&str, Box<Edit>)> = vec![
         (
             "list",
             Box::new(|raw: &LoroDoc| {
@@ -555,4 +554,121 @@ fn r3_2_the_bound_on_the_items_an_update_adds_holds() {
         println!("{label}: items {before} -> {after}, bound {bound}");
         assert!(after <= before + bound, "{label}: {after} > {before} + {bound}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// R3-8: a create under a parent the document never had
+// ---------------------------------------------------------------------------------------------
+
+/// A single-head base and one change, depending exactly on that head, that creates a node under a
+/// parent id the base never had (hand-encoded: the library's API refuses to author it). Records
+/// what the library does with it, for a change of a new peer and for one that continues the head's
+/// own peer (the shape the library applies without a parent check), and that the window and `next`
+/// do the same.
+#[test]
+fn r3_8_a_create_under_a_missing_parent_is_decided_as_next_does() {
+    for (label, peer) in [("new peer", 9_100), ("the head's own peer", 91)] {
+        let mut engine = LoroCollabEngine::new_empty(91);
+        create_node(&mut engine, "anchor", None);
+        let base = engine.export_snapshot().unwrap();
+        let anchor = *engine.id_to_tree.get("anchor").unwrap();
+        let author = LoroDoc::new();
+        author.import(&base).unwrap();
+        author.set_peer_id(peer).unwrap();
+        let from = author.oplog_vv();
+        let tree = author.get_tree("tree");
+        tree.enable_fractional_index(0);
+        let n = tree.create(TreeParentId::Node(anchor)).unwrap();
+        set_node(&author, n, "orphan", "navigator_node");
+        author.commit();
+        let mut json = json_of(&author, &from);
+        let missing = format!("{}@{}", 5, 9_999);
+        let mut rewritten = 0;
+        for change in json["changes"].as_array_mut().unwrap() {
+            for op in change["ops"].as_array_mut().unwrap() {
+                if op["content"]["type"] == "create" {
+                    op["content"]["parent"] = serde_json::Value::String(missing.clone());
+                    rewritten += 1;
+                }
+            }
+        }
+        assert_eq!(rewritten, 1);
+        let doc = LoroDoc::new();
+        doc.import(&base).unwrap();
+        let before = doc.oplog_vv();
+        doc.import_json_updates(serde_json::to_string(&json).unwrap()).unwrap();
+        let update = doc.export(loro::ExportMode::updates(&before)).unwrap();
+
+        // What the library does: does the import panic, and is the node in the state?
+        let library = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut probe = LoroCollabEngine::load(&base).unwrap();
+            probe.prewarm_for_writes();
+            probe.import_update(&update).unwrap();
+            probe.doc().get_tree("tree").nodes().len()
+        }))
+        .map_err(|_| "panic");
+        let outcome = |facts: bool| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut engine = LoroCollabEngine::load(&base).unwrap();
+                engine.prewarm_for_writes();
+                let facts = if facts { BaseFacts::compute(&engine) } else { None };
+                crate::walk_counter::reset();
+                crate::window_check::run_window(&mut engine, facts.as_ref(), &update)
+                    .map(|accepted| (accepted.report.is_some(), crate::walk_counter::fallback_reasons()))
+                    .map_err(|e| e.to_string())
+            }))
+            .map_err(|_| "panic")
+        };
+        let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| next_decision(&base, &update)))
+            .map_err(|_| "panic");
+        let with_facts = outcome(true);
+        let without = outcome(false);
+        println!(
+            "{label}: library {library:?} | next {next:?} | window with facts {with_facts:?} | without {without:?}"
+        );
+        // All three agree: they all panic or they all decide the same way, since the behaviour is
+        // the library's.
+        assert_eq!(
+            next.is_ok(),
+            with_facts.is_ok(),
+            "{label}: next {next:?} vs window {with_facts:?}"
+        );
+        assert_eq!(next.is_ok(), without.is_ok(), "{label}");
+        if let (Ok(next), Ok(with_facts)) = (&next, &with_facts) {
+            assert_eq!(next.is_ok(), with_facts.is_ok(), "{label}");
+        }
+    }
+}
+
+/// The rewrite of an existing node's logical id to the id of a shallow node of another chain: `next`
+/// accepts it on stale caches, the host's fresh load refuses it for some targets. The worker with
+/// facts refuses it; the switch-off test records the host's refusal for the rest.
+fn id_rewrite_cases(scale: u64) -> Vec<Case> {
+    let base = two_chains();
+    let mut cases = Vec::new();
+    for k in 0..scale {
+        for target in 1..=10u64 {
+            let update = raw_edit(&base, 9_800 + k * 20 + target, |raw| {
+                let node = super::hand_encoded::tree_id_of(&base, "b30");
+                raw.get_tree("tree")
+                    .get_meta(node)
+                    .unwrap()
+                    .insert("logical_id", format!("a{target}").as_str())
+                    .unwrap();
+            });
+            cases.push(case(
+                format!("round3/id_rewrite/{k}/a{target}"),
+                "id_rewrite_to_shallow",
+                &base,
+                update,
+            ));
+        }
+    }
+    cases
+}
+
+pub(super) fn round3_cases(scale: u64) -> Vec<Case> {
+    let mut cases = nested_meta_cases(scale);
+    cases.extend(id_rewrite_cases(scale));
+    cases
 }
