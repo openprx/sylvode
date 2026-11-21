@@ -672,3 +672,58 @@ pub(super) fn round3_cases(scale: u64) -> Vec<Case> {
     cases.extend(id_rewrite_cases(scale));
     cases
 }
+
+/// The same-peer continuation of the head, creating a node under a parent the base never had,
+/// with and without a logical id. Records what the real decision paths do.
+#[test]
+fn r3_8_dangling_parent_named_and_unnamed_through_the_decision_paths() {
+    for named in [true, false] {
+        let mut engine = LoroCollabEngine::new_empty(91);
+        create_node(&mut engine, "anchor", None);
+        let base = engine.export_snapshot().unwrap();
+        let anchor = *engine.id_to_tree.get("anchor").unwrap();
+        let author = LoroDoc::new();
+        author.import(&base).unwrap();
+        author.set_peer_id(91).unwrap();
+        let from = author.oplog_vv();
+        let tree = author.get_tree("tree");
+        tree.enable_fractional_index(0);
+        let n = tree.create(TreeParentId::Node(anchor)).unwrap();
+        if named {
+            set_node(&author, n, "orphan", "navigator_node");
+        }
+        author.commit();
+        let mut json = json_of(&author, &from);
+        let missing = format!("{}@{}", 5, 9_999);
+        for change in json["changes"].as_array_mut().unwrap() {
+            for op in change["ops"].as_array_mut().unwrap() {
+                if op["content"]["type"] == "create" {
+                    op["content"]["parent"] = serde_json::Value::String(missing.clone());
+                }
+            }
+        }
+        let doc = LoroDoc::new();
+        doc.import(&base).unwrap();
+        let before = doc.oplog_vv();
+        doc.import_json_updates(serde_json::to_string(&json).unwrap()).unwrap();
+        let update = doc.export(loro::ExportMode::updates(&before)).unwrap();
+        let judged = judge(&base, &update);
+        println!("named={named}: {judged:#?}");
+        // What a client that loads the stored history would get: snapshot of the accepted doc.
+        let mut accepted = LoroCollabEngine::load(&base).unwrap();
+        let import = accepted.import_client_update(&update);
+        println!(
+            "named={named}: import_client_update -> {:?}",
+            import.as_ref().map(|_| ()).map_err(|e| e.to_string())
+        );
+        if import.is_ok() {
+            let stored = accepted.export_snapshot().unwrap();
+            let seen = LoroDoc::new();
+            seen.import(&stored).unwrap();
+            println!(
+                "named={named}: stored doc tree nodes {}",
+                seen.get_tree("tree").nodes().len()
+            );
+        }
+    }
+}
