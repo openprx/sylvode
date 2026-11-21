@@ -20,7 +20,8 @@
 //!   value charged like those of any other map (the server bounds the keys it writes itself, a client
 //!   update does not);
 //! * [`CHARS_PER_ITEM`] characters of a text container (rounded up per container);
-//!   The payload of its style marks is counted per delta segment (see "Text mark values");
+//!   The payload of its style marks and its internal pieces are counted on top, per delta segment and
+//!   per piece (see "Text mark values");
 //! * [`BYTES_PER_ITEM`] bytes of the payload of the plain values of a map or list (rounded down per
 //!   container): [`value_bytes`] counts eight bytes for every scalar, collection or container
 //!   reference in a value, nested to any depth, plus the length of every string, binary and map key.
@@ -70,7 +71,9 @@
 //! # The budget
 //!
 //! A page is within the budget when `items <= WORK_UNCOUNTED_ITEMS + ITEMS_PER_BLOCK * live
-//! blocks + ITEMS_PER_NODE * live navigators + live characters / CHARS_PER_ITEM`.
+//! blocks + ITEMS_PER_NODE * live navigators + live characters / CHARS_PER_ITEM + formatting`, where
+//! `formatting` is the page's mark items (see "Text mark values") up to [`MARK_ITEMS_PER_BLOCK`] per
+//! live block ([`item_budget_with_marks`]; see "The formatting allowance").
 //! `WORK_UNCOUNTED_ITEMS` is 16,000: at the worst cost per item of the table (0.58 us) the full
 //! window at that many items takes 9.3 ms here and 33 ms on the reference runner, under its 50 ms
 //! with a margin of one and a half; the shapes of the table with no live content stop at about 4,000
@@ -88,35 +91,101 @@
 //! a large mark value costs once per segment, and an update that splits a text adds segments that
 //! carry the values of marks it does not mention. The inline texts of the blocks the block reader
 //! converts (supported kind, not a dependency node: [`block_mark_items`]) therefore count, on top of
-//! their characters, the attributes of each delta segment ([`text_mark_items`]): the key and
-//! [`value_bytes`] of the value, at least [`ATTRIBUTE_MIN_BYTES`] per attribute instance, plus
-//! [`SEGMENT_BYTES`] for every segment after the first, [`BYTES_PER_ITEM`] bytes per item, rounded
-//! down per text, early exit at the ceiling. No value shape is refused. Every other text (a value of
-//! the `order` or alias map, a text under another key of a block, a text of a block the reader
-//! skips) is never converted by the projection, and counts by its characters only: converting it
-//! would be work that no window ever bounded, in a setup that has no limit.
+//! their characters ([`text_mark_items`]):
+//!
+//! * the key and [`value_bytes`] of every attribute of every delta segment, at least
+//!   [`ATTRIBUTE_MIN_BYTES`] for an attribute the reader skips (`null`, `false`) and at least
+//!   [`LIVE_ATTRIBUTE_MIN_BYTES`] for one it keeps (it builds a span, sorts and serialises it);
+//! * [`SEGMENT_BYTES`] for every segment after the first;
+//! * for every internal piece of a segment after the first piece of that segment, [`PIECE_BYTES`]
+//!   and the attributes of the segment once more (a key and [`value_bytes`], at least
+//!   [`PIECE_ATTRIBUTE_MIN_BYTES`] each).
+//!
+//! The last term is what the library's `to_delta` costs: it builds and compares an attribute map for
+//! every internal piece of the text before it merges equal neighbours, so the cost is the pieces
+//! times the attributes, whatever the merged segments look like. Text typed in reverse order, or
+//! interleaved by two peers, keeps one piece per character through a snapshot. The pieces are
+//! counted with `LoroText::iter` (one copy of the text, linear in its characters, which the measure
+//! and the documented limit bound) before the delta is built, so a text whose pieces alone pass the
+//! ceiling is refused without converting it.
+//!
+//! The sum is divided by [`BYTES_PER_ITEM`] and rounded down per text, with an early exit at the
+//! ceiling. No value shape is refused. Every other text (a value of the `order` or alias map, a text
+//! under another key of a block, a text of a block the reader skips) is never converted by the
+//! projection, and counts by its characters only: converting it would be work that no window ever
+//! bounded, in a setup that has no limit.
 //!
 //! Calibration (`window_calibration_tests::window_dense_mark_calibration`, release, flat page of 50
-//! blocks, one block of 20,000 characters cut into segments by marks, then full-range marks with
-//! fresh keys and the value `false`, which the reader skips before it checks the key):
+//! blocks, the shape in the first block, each grown until the page is at its budget, so the rows are
+//! comparable; the incremental window converts the touched text twice, once for the re-count and once
+//! for the evaluation, and is bounded by the 13.9 ms the reference runner's 50 ms is here):
 //!
-//! | measure | page at the budget | full window | per item |
-//! | --- | --- | --- | --- |
-//! | 9 bytes per instance, nothing per segment, marks on alternate characters | 16,635 | 20.4 ms | 1.23 us |
-//! | 24 bytes per instance, 48 per segment, marks on every eighth character | 16,634 | 5.5 ms | 0.33 us |
+//! | shape at the budget | items | full window | per item | incremental, dense block |
+//! | --- | --- | --- | --- | --- |
+//! | `bold` on every 8th character, 15 `false` keys over all | 18,829 | 5.9 ms | 0.31 us | 8.0 ms |
+//! | `bold` on alternate characters | 18,838 | 4.4 ms | 0.23 us | 4.8 ms |
+//! | all seven marks on every second segment | 18,805 | 7.0 ms | 0.37 us | 5.0 ms |
+//! | typed in reverse, no marks (64,643 pieces) | 19,052 | 4.7 ms | 0.25 us | 8.9 ms |
+//! | typed in reverse, 15 full-range `false` marks (4,038 pieces) | 18,811 | 3.9 ms | 0.21 us | 11.1 ms |
 //!
-//! With the second measure the dense block's incremental window (which converts the touched text
-//! twice, once for the re-count and once for the evaluation) takes 7.3 ms, and a write to another
-//! block 0.03 ms.
+//! Before the live-attribute and piece terms the seven-mark shape cost 1.34 us per item and the
+//! reverse-typed shape with marks was charged as one segment. A write to another block costs 0.03 to
+//! 0.06 ms in the mark shapes and 2.7 ms where the dense text has tens of thousands of pieces (the
+//! import of the update into the page).
+//!
+//! The review's page (`window_fragmented_calibration`: 240 blocks, each 4,000 reverse-typed
+//! characters, about 15 full-range marks) costs 1.0 s to project here (3.7 s on the reference
+//! runner) and its setup converted every block three times (2.6 s here, 9.2 s there, over the 5 s
+//! setup timeout). It is now 4.3 million items against a budget of about 33,000, refused after 165 ms of
+//! setup (0.6 s on the reference runner). The largest fragmented pages within the budget (4,000
+//! characters per block, `facts` present): 23 such blocks without marks on a page of 240 blocks (setup
+//! 22 ms, full projection 9 ms), 24 blocks with 15 marks on a page of 9,950 blocks (setup 379 ms,
+//! 1.4 s on the reference runner; projection 142 ms). The setup converts a text's delta before it
+//! knows what the delta costs, so a stored page that was never accepted under this measure can
+//! cost more to count than it is charged: pieces times marks, linear in the pieces of one text
+//! (at most the 1,000,000 characters of the limit) and in its marks. The pages the host accepts
+//! are within it, because every window that accepted one charged its pieces.
 //!
 //! An op cannot state the segments it adds, so the window does not bound this part by the ops. The
 //! facts keep the mark items of every block that has any, and the window re-counts the blocks the
 //! update touched, on the document after the import and before any unit is evaluated; the growth
 //! of the touched blocks is added to the update's bound. The walk of a block stops once its items
 //! pass its base figure plus the headroom the budget has left, so the payload it reads is bounded by
-//! what the touched blocks already cost plus the headroom, whatever the update holds. Legacy tree
-//! nodes are not counted: the projection reads their text as a plain string (`to_string`), so their
-//! marks cost it nothing.
+//! what the touched blocks already cost plus the headroom, whatever the update holds. A block that
+//! the reader did not read in the base (an unsupported `nodeName`, a dependency attribute) has no
+//! figure, and is re-counted when the update touches it, which is how it can become readable. Legacy
+//! tree nodes are not counted: the projection reads their text as a plain string (`to_string`), so
+//! their marks cost it nothing.
+//!
+//! # The formatting allowance
+//!
+//! Honest formatting is dense: a bold, an italic and a link that overlap cut a text into five
+//! segments and cost 22 items, six marks cost 40. A budget of [`ITEMS_PER_BLOCK`] per block is
+//! calibrated on the unformatted realistic page, so heavy formatting on a few thousand blocks
+//! crossed the budget, and the full window refuses a page of more than about 1,000 realistic blocks
+//! outright. The mark items of a page therefore also count against the allowance of
+//! [`MARK_ITEMS_PER_BLOCK`] (40) per live block, up to what the page holds: `budget + min(mark
+//! items, 40 * blocks)`. Nothing else gains from it (maps, attribute keys and tree nodes are bounded
+//! as before), and formatting beyond the allowance counts in full, so the shapes that grow a page
+//! through marks (large values over many segments, many keys, many pieces) still reach the budget:
+//! their shared part is 16,000 items plus 40 per block.
+//!
+//! Honest pages, 80-character blocks (`window_formatting_calibration`, release; items per block
+//! include the 11.9 of the unformatted page; "ref" is x3.6):
+//!
+//! | page | items per block | budget per block | setup (ref) | full projection (ref) |
+//! | --- | --- | --- | --- | --- |
+//! | 1,200 blocks, two bold+italic+link clusters | 56.4 (was 28.4) | 61.6 (was 29.6) | 36 ms (129 ms) | 16 ms (59 ms) |
+//! | 2,000 blocks, six marks | 52.4 (was 27.4) | 56.3 (was 24.3) | 62 ms (223 ms) | 27 ms (97 ms) |
+//! | 9,950 blocks, one cluster | 34.4 (was 20.4) | 39.9 (was 17.9) | 221 ms (797 ms) | 105 ms (376 ms) |
+//! | 9,950 blocks, two clusters | 56.4 | 57.9 | 320 ms (1.15 s) | 150 ms (541 ms) |
+//!
+//! All of them stay incremental. Before the allowance, the 2,000-block six-mark page and the
+//! 9,950-block cluster page were over the budget (27.4 > 24.3, 20.4 > 17.9 items per block) and took
+//! the full window, which the reference runner's limit refuses for pages of that size. The budget
+//! of a page at the block limit with the allowance is about 590,000 items, which costs the setup
+//! about 0.6 s here (2.2 s on the reference runner), under its 5 s timeout, at the 0.2 to 0.4 us per
+//! item the calibrated formatting shapes cost.
 //!
 //! The window keeps the measure without reading the page again: the items of the base plus an
 //! upper bound on the items the update added (the sum of [`op_work`] over its ops), compared with
@@ -147,12 +216,31 @@ pub const BYTES_PER_ITEM: u64 = 64;
 /// is a third of an item. See `window_calibration_tests::window_dense_mark_calibration`.
 pub const ATTRIBUTE_MIN_BYTES: u64 = 24;
 
+/// Bytes the measure charges for every attribute instance the reader keeps, at least.
+///
+/// The reader keeps an instance whose value is neither `null` nor `false`: it builds a span for it,
+/// sorts the spans of the block and serialises them (`page_inline::spans`, `prose_projection`), about 0.8 us, against 0.2 us for an
+/// instance it skips. See `window_calibration_tests::window_dense_mark_calibration`.
+pub const LIVE_ATTRIBUTE_MIN_BYTES: u64 = 128;
+
 /// Bytes the measure charges for every segment of a text after the first.
 ///
 /// A text with marks is cut into segments, each of which the reader walks and builds spans for,
 /// about 0.4 us, which is three quarters of an item. Charged only to a text that is cut at all, so
 /// the unmarked text of a realistic page pays nothing.
 pub const SEGMENT_BYTES: u64 = 48;
+
+/// Bytes the measure charges for every internal piece of a segment after the first.
+///
+/// See [`text_mark_items`]. The library builds and compares an attribute map for every
+/// piece, whether or not it carries any attribute.
+pub const PIECE_BYTES: u64 = 18;
+
+/// Bytes the measure charges for every attribute instance of a piece after the first, at least.
+///
+/// The library copies the key and the value of every
+/// attribute for every piece. See `window_calibration_tests::window_fragmented_calibration`.
+pub const PIECE_ATTRIBUTE_MIN_BYTES: u64 = 18;
 
 /// Items no documented limit bounds that a page may hold on top of what its live totals allow.
 ///
@@ -162,6 +250,16 @@ pub const WORK_UNCOUNTED_ITEMS: u64 = 16_000;
 /// Items a live block of a realistic page uses, with margin: the block map, `nodeName`,
 /// `attributes` and a few of its keys, `children` and a few inline texts.
 pub const ITEMS_PER_BLOCK: u64 = 16;
+
+/// Items of text formatting that a live block may hold without them counting against the budget.
+///
+/// Formatting is marks and internal pieces, see [`text_mark_items`]. It counts against the allowance
+/// as long as the page holds that many in all: a
+/// few overlapping clusters of bold, italic and a link, or six marks, per block, which is what an
+/// honest, heavily formatted document looks like. See the module documentation ("The formatting
+/// allowance") for the measurements. Formatting beyond the allowance counts in full, and all the
+/// other content (maps, attribute keys, tree nodes) is bounded as before.
+pub const MARK_ITEMS_PER_BLOCK: u64 = 40;
 
 /// Items a live navigator of a realistic legacy page uses, with margin: the node, its metadata map
 /// and its `logical_id`, `kind`, `text` and a few property entries.
@@ -213,17 +311,27 @@ pub const fn item_budget(blocks: u64, navigators: u64, chars: u64) -> u64 {
         .saturating_add(chars / CHARS_PER_ITEM)
 }
 
-/// The largest budget any page can have: the one of a page at every documented limit.
+/// The budget of a page with these live totals that holds `mark_items` items of text formatting
+/// (see [`MARK_ITEMS_PER_BLOCK`]): [`item_budget`] plus the formatting that fits the allowance.
+#[must_use]
+pub const fn item_budget_with_marks(blocks: u64, navigators: u64, chars: u64, mark_items: u64) -> u64 {
+    let allowance = MARK_ITEMS_PER_BLOCK.saturating_mul(blocks);
+    item_budget(blocks, navigators, chars).saturating_add(if mark_items < allowance { mark_items } else { allowance })
+}
+
+/// The largest budget any page can have: the one of a page at every documented limit, with
+/// formatting up to the allowance.
 ///
 /// A page with more items than this is over the budget whatever its totals, which lets the
 /// traversal stop there before the projection that computes the totals runs.
 #[must_use]
 pub const fn item_budget_ceiling() -> u64 {
     use crate::limits::{CONTAINER_COUNT_MAX, DOCUMENT_BLOCK_COUNT_MAX, DOCUMENT_TEXT_CHARS_MAX};
-    item_budget(
+    item_budget_with_marks(
         DOCUMENT_BLOCK_COUNT_MAX as u64,
         CONTAINER_COUNT_MAX as u64,
         DOCUMENT_TEXT_CHARS_MAX as u64,
+        u64::MAX,
     )
 }
 
@@ -310,20 +418,61 @@ pub fn op_work(content: &JsonOpContent) -> OpWork {
     }
 }
 
-/// The items of the style marks of one text: the payload of every attribute of every delta segment
-/// (a key and [`value_bytes`] of its value), divided by [`BYTES_PER_ITEM`] and rounded down.
+/// The items of the style marks and of the internal pieces of one text, in the unit of
+/// [`BYTES_PER_ITEM`] bytes, rounded down:
 ///
-/// This is what the reader pays: `page_inline::spans` converts every attribute of every segment, so a large mark value costs once per segment, and every mark that
-/// splits a text adds segments that carry the values of the marks around it. `None` as soon as the
-/// items counted so far pass `stop_over`, so the work is at most `stop_over` items of payload and
-/// one value, whatever the text holds (the segments themselves are bounded by the text's length).
+/// * the payload of every attribute of every delta segment (a key and [`value_bytes`] of its value,
+///   at least [`ATTRIBUTE_MIN_BYTES`]), and [`SEGMENT_BYTES`] for every segment after the first;
+/// * for every internal piece of a segment after the first piece of that segment, [`PIECE_BYTES`] and
+///   the attributes of the segment again (a key and [`value_bytes`], at least
+///   [`PIECE_ATTRIBUTE_MIN_BYTES`] each).
+///
+/// This is what the reader pays: `page_inline::spans` converts every attribute of every segment, so a
+/// large mark value costs once per segment, and every mark that splits a text adds segments that
+/// carry the values of the marks around it. Below that, the library's `to_delta` builds the
+/// attribute map of every internal piece of the text and compares it with the previous one before it
+/// merges equal neighbours, so the conversion costs the pieces times the attributes of their
+/// segment, whatever the merged output looks like. Text typed in reverse order, or interleaved by
+/// two peers, keeps one piece per character through a snapshot.
+///
+/// The pieces are counted first (`LoroText::iter`, which copies the text once: linear in the
+/// characters, which the measure and the documented limit bound), and the count stops the work as
+/// soon as the pieces alone pass `stop_over`, before the delta is built. The delta itself cannot
+/// stop early: its cost is the pieces times the attributes, which the base figure counted (setup) or
+/// which the metered import paid for (window). `None` as soon as the items counted so far pass
+/// `stop_over`.
 pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64) -> Option<u64> {
     #[cfg(test)]
     crate::walk_counter::record_delta_read(loro::ContainerTrait::id(text).to_string());
+    #[cfg(test)]
+    if crate::window_check::fault::active() == Some(crate::window_check::fault::Fault::PieceCountSkipped) {
+        return text_segment_items(text, &[], stop_over);
+    }
+    let mut pieces: Vec<usize> = Vec::new();
+    let mut within = true;
+    text.iter(|chunk| {
+        pieces.push(chunk.chars().count());
+        // Stop as soon as the pieces alone are over the ceiling.
+        within = (pieces.len() as u64).saturating_mul(PIECE_BYTES) / BYTES_PER_ITEM <= stop_over;
+        within
+    });
+    if !within {
+        return None;
+    }
+    text_segment_items(text, &pieces, stop_over)
+}
+
+/// The segment and piece charges of [`text_mark_items`], given the lengths in characters of the
+/// text's internal pieces in order.
+fn text_segment_items(text: &LoroText, pieces: &[usize], stop_over: u64) -> Option<u64> {
     let mut bytes: u64 = 0;
     let mut segments: u64 = 0;
+    // The piece that the next segment starts with, and where that piece starts.
+    let mut next_piece = 0_usize;
+    let mut piece_start = 0_usize;
+    let mut segment_start = 0_usize;
     for delta in text.to_delta() {
-        let TextDelta::Insert { attributes, .. } = delta else {
+        let TextDelta::Insert { insert, attributes } = delta else {
             continue;
         };
         // A text with no marks is one segment, which costs what its characters cost.
@@ -331,14 +480,38 @@ pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64) -> Option<u64> {
             bytes = bytes.saturating_add(SEGMENT_BYTES);
         }
         segments += 1;
+        let mut attribute_bytes: u64 = 0;
+        let mut piece_attribute_bytes: u64 = 0;
         for (key, value) in attributes.iter().flatten() {
-            bytes = bytes.saturating_add(
-                u64::try_from(key.len())
-                    .unwrap_or(u64::MAX)
-                    .saturating_add(value_bytes(value))
-                    .max(ATTRIBUTE_MIN_BYTES),
-            );
+            let payload = u64::try_from(key.len())
+                .unwrap_or(u64::MAX)
+                .saturating_add(value_bytes(value));
+            let kept = !matches!(value, LoroValue::Null | LoroValue::Bool(false));
+            let floor = if kept {
+                LIVE_ATTRIBUTE_MIN_BYTES
+            } else {
+                ATTRIBUTE_MIN_BYTES
+            };
+            attribute_bytes = attribute_bytes.saturating_add(payload.max(floor));
+            piece_attribute_bytes = piece_attribute_bytes.saturating_add(payload.max(PIECE_ATTRIBUTE_MIN_BYTES));
         }
+        bytes = bytes.saturating_add(attribute_bytes);
+        // The pieces that start inside this segment, all but the first.
+        let segment_end = segment_start.saturating_add(insert.chars().count());
+        let mut in_segment: u64 = 0;
+        while let Some(length) = pieces.get(next_piece)
+            && piece_start < segment_end
+        {
+            in_segment += 1;
+            piece_start = piece_start.saturating_add(*length);
+            next_piece += 1;
+        }
+        segment_start = segment_end;
+        bytes = bytes.saturating_add(
+            in_segment
+                .saturating_sub(1)
+                .saturating_mul(PIECE_BYTES.saturating_add(piece_attribute_bytes)),
+        );
         if bytes / BYTES_PER_ITEM > stop_over {
             return None;
         }

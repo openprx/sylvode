@@ -2099,6 +2099,8 @@ mod window_round2_tests;
 mod window_round3_tests;
 #[cfg(test)]
 mod window_round4_tests;
+#[cfg(test)]
+mod window_round6_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

@@ -455,7 +455,12 @@ fn items_and_budget(base: &[u8]) -> (u64, u64) {
     let chars: usize = live().map(|node| node.text.chars().count()).sum();
     (
         items,
-        crate::work::item_budget(count(NodeKind::Block), count(NodeKind::NavigatorNode), chars as u64),
+        crate::work::item_budget_with_marks(
+            count(NodeKind::Block),
+            count(NodeKind::NavigatorNode),
+            chars as u64,
+            engine.unit_mark_items().unwrap().values().sum(),
+        ),
     )
 }
 

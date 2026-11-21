@@ -276,8 +276,9 @@
 //! 16,000 items, which costs the full window at most about 6 ms there, 21 ms at 3.6 times that, well
 //! under 50 ms. See `crate::work` for the unit, the budget and the table.
 //!
-//! The payload of text marks is the one part the ops cannot bound (a mark that splits a text adds
-//! segments that carry the values of other marks). The facts keep the mark items per editor block,
+//! The payload of text marks and the internal pieces of a text are the one part the ops cannot bound (a
+//! mark that splits a text adds segments that carry the values of other marks, and a mark over a
+//! fragmented text adds an attribute to every piece). The facts keep the mark items per editor block,
 //! and `recount_marks` re-counts the touched blocks after the import and before any is evaluated.
 //! The value walk stops at the headroom the budget has left; the conversion of a text's delta itself
 //! cannot stop early, and is bounded by the base figure (which the facts counted) and by the metered
@@ -327,6 +328,8 @@ pub mod fault {
         WorkBudgetSkipped,
         /// Does not re-count the mark payload of the touched texts.
         MarkRecountSkipped,
+        /// Does not count the internal pieces of a text, only its merged segments.
+        PieceCountSkipped,
         /// Treats every import as strictly sequential: rebuilds the id caches from the update's own
         /// ops and decides incrementally even when the update is concurrent with the base.
         SequentialGateRemoved,
@@ -946,7 +949,7 @@ fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTra
     let mark_items = recount_marks(engine, facts, &touched, summary, work_added)?;
     evaluate_blocks(engine, facts, &touched, &limits, &mut delta)?;
     evaluate_tree_nodes(engine, facts, &created, &touched, &limits, &mut delta)?;
-    finish(facts, work_added.saturating_add(mark_items), &delta, &limits)
+    finish(facts, work_added, mark_items, &delta, &limits)
 }
 
 /// The growth of the touched blocks' mark items (see `crate::work`), or the work-budget fallback when
@@ -954,7 +957,8 @@ fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTra
 ///
 /// What bounds the re-count: the budget of the page after the update is at most that of the base's
 /// totals plus one block and one navigator per op (an op names at most one unit, so it adds at most
-/// one live block or navigator) and the documented character limit. The headroom is that budget
+/// one live block or navigator) and the documented character limit, with the formatting allowance
+/// of every such block. The headroom is that budget
 /// less the base's items and the update's own bound, and a block's value walk stops once its items
 /// pass its base figure plus the headroom still left. The conversion of a text's delta cannot stop
 /// early: it costs what the base figure says (which the facts counted and the evaluation of the
@@ -972,10 +976,11 @@ fn recount_marks(
         return Ok(0);
     }
     let growth = summary.work_added_items();
-    let cap = crate::work::item_budget(
+    let cap = crate::work::item_budget_with_marks(
         (facts.blocks as u64).saturating_add(growth),
         (facts.navigators as u64).saturating_add(growth),
         DOCUMENT_TEXT_CHARS_MAX as u64,
+        u64::MAX,
     );
     let spent = facts.items.saturating_add(work_added);
     engine
@@ -1296,6 +1301,7 @@ fn created_unit_fact(
 fn finish(
     facts: &BaseFacts,
     work_added: u64,
+    mark_growth: u64,
     delta: &Delta,
     limits: &DocumentLimits,
 ) -> Result<WindowReport, Undecided> {
@@ -1332,8 +1338,13 @@ fn finish(
     // The items of the page after the import: the base's plus what the update's ops can have added,
     // against the budget of the exact totals just computed (`crate::work`).
     if !injected!(WorkBudgetSkipped)
-        && facts.items.saturating_add(work_added)
-            > crate::work::item_budget(blocks as u64, navigators as u64, chars as u64)
+        && facts.items.saturating_add(work_added).saturating_add(mark_growth)
+            > crate::work::item_budget_with_marks(
+                blocks as u64,
+                navigators as u64,
+                chars as u64,
+                facts.mark_items.saturating_add(mark_growth),
+            )
     {
         return Err(FallbackReason::WorkBudget.into());
     }

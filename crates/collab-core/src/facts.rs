@@ -120,6 +120,8 @@ pub struct BaseFacts {
     /// key: the part of `items` that a text's segments multiply, which the window re-counts for the
     /// blocks an update touched.
     pub(crate) marks: HashMap<NodeId, u64>,
+    /// The sum of `marks`: the formatting the budget's allowance applies to.
+    pub(crate) mark_items: u64,
 }
 
 impl BaseFacts {
@@ -162,7 +164,12 @@ impl BaseFacts {
 
     /// The budget of the base itself (see [`crate::work::item_budget`]).
     pub(crate) const fn item_budget(&self) -> u64 {
-        crate::work::item_budget(self.blocks as u64, self.navigators as u64, self.chars as u64)
+        crate::work::item_budget_with_marks(
+            self.blocks as u64,
+            self.navigators as u64,
+            self.chars as u64,
+            self.mark_items,
+        )
     }
 
     fn from_snapshot(
@@ -174,6 +181,7 @@ impl BaseFacts {
         marks: HashMap<NodeId, u64>,
         snapshot: &SemanticSnapshot,
     ) -> Self {
+        let mark_items = marks.values().fold(0_u64, |sum, items| sum.saturating_add(*items));
         let mut facts = Self {
             state,
             version,
@@ -187,6 +195,7 @@ impl BaseFacts {
             block_order,
             units: HashMap::with_capacity(snapshot.nodes.len()),
             marks,
+            mark_items,
         };
         for (key, node) in &snapshot.nodes {
             let unit = UnitFact {

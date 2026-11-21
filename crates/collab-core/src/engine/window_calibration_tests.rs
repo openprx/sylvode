@@ -51,7 +51,13 @@ fn measure(label: &str, base: &[u8], update: &[u8]) {
             live_nodes.map(|n| n.text.chars().count()).sum::<usize>(),
         );
     }
-    let budget = crate::work::item_budget(live.0 as u64, live.1 as u64, live.2 as u64);
+    let marks = LoroCollabEngine::load(base)
+        .unwrap()
+        .unit_mark_items()
+        .unwrap()
+        .values()
+        .sum();
+    let budget = crate::work::item_budget_with_marks(live.0 as u64, live.1 as u64, live.2 as u64, marks);
     println!(
         "{label:<46} items {items:>8}  budget {budget:>8}  live (blocks, navs, chars) {live:?}  full window {:>8.2} ms  {:>6.3} us/item  reference x3.6 = {:>7.1} ms",
         best.as_secs_f64() * 1e3,
@@ -480,104 +486,250 @@ fn window_realistic_fraction() {
     }
 }
 
-/// The dense mark shape: one block of 20,000 characters cut into segments by `bold: true` marks on
-/// every eighth character (marks on alternate characters, as in the review, make 20,000 segments
-/// and are over the budget by themselves), then full-range marks with fresh one- and two-letter
-/// keys and the value `false` (which the reader skips before it checks the key, so any number of
-/// keys is accepted), added until the page is at its work budget. Each attribute instance is 9
-/// bytes of payload. Times the full window and the incremental window of a one-character edit in
-/// the dense block and in another, and prints the cost per item to compare with the 0.58 us the
-/// budget assumes.
+/// Prints, for a flat page of 50 blocks whose first block is the dense one, the items, the budget,
+/// the full window (import, projection, limits) with its cost per item, to compare with the 0.58 us
+/// the budget assumes, and the incremental window of a one-character edit in the dense block and in
+/// another.
+fn measure_dense_page(label: &str, base: &[u8]) {
+    use super::window_round4_tests::first_text;
+    let (items, budget) = super::window_round2_tests::items_and_budget(base);
+    let edit = |block: usize, peer: u64| {
+        raw_edit(base, peer, |raw| {
+            first_text(raw, block).insert(1, "z").unwrap();
+        })
+    };
+    let time = |update: &[u8], with_facts: bool| {
+        let mut best = Duration::MAX;
+        for _ in 0..5 {
+            let mut engine = LoroCollabEngine::load(base).unwrap();
+            engine.prewarm_for_writes();
+            let facts = if with_facts {
+                crate::facts::BaseFacts::compute(&engine)
+            } else {
+                None
+            };
+            let started = Instant::now();
+            crate::window_check::run_window(&mut engine, facts.as_ref(), update).unwrap();
+            best = best.min(started.elapsed());
+        }
+        best.as_secs_f64() * 1e3
+    };
+    let dense = edit(0, 47_900);
+    let other = edit(1, 47_901);
+    let full = time(&other, false);
+    println!(
+        "{label:<58} items {items:>7} / budget {budget:>7}  full window {full:7.2} ms ({:.3} us/item)  incremental: dense block {:7.2} ms, other block {:7.3} ms",
+        full * 1e3 / items as f64,
+        time(&dense, true),
+        time(&other, true),
+    );
+}
+
+/// The shapes that make a text expensive to convert, each grown until the page is at its work
+/// budget (page of 50 blocks, the shape in the first block), so that the rows are comparable:
+///
+/// * `bold` on every eighth character under 15 full-range marks with fresh keys and the value
+///   `false` (which the reader skips before it checks the key, so any number of keys is accepted);
+/// * `bold` on alternate characters;
+/// * segments that carry all seven marks the reader accepts (`strong`, `bold`, `em`, `italic`,
+///   `strike`, `code`, `link`), every second segment;
+/// * text typed in reverse order (one internal piece per character), without marks and under 15
+///   full-range marks.
+///
+/// Times the full window and the incremental windows and prints the cost per item. Run in release.
 #[test]
 #[ignore = "calibration, run in release"]
 fn window_dense_mark_calibration() {
     use super::window_round4_tests::first_text;
-    let keys: Vec<String> = ('b'..='z')
-        .map(String::from)
-        .chain(('a'..='z').flat_map(|a| ('a'..='z').map(move |b| format!("{a}{b}"))))
-        .collect();
-    let configure = |raw: &LoroDoc| {
-        let mut styles = loro::StyleConfigMap::new();
-        for key in keys.iter().map(String::as_str).chain(["bold"]) {
-            styles.insert(
-                key.into(),
-                loro::StyleConfig {
-                    expand: loro::ExpandType::None,
-                },
-            );
-        }
-        raw.config_text_style(styles);
-    };
-    let mut base = super::window_round2_tests::flat_page_of(50);
+    use super::window_round6_tests::{configure_styles, mark_keys};
+    let seven = ["strong", "bold", "em", "italic", "strike", "code", "link"].map(String::from);
+    let mut all_keys = mark_keys(15);
+    all_keys.extend(seven.iter().cloned());
     // Snapshots, not updates: the shapes below are far over the 64 KB update limit, which the
     // measurement does not need.
-    let edited = |base: &[u8], peer: u64, edit: &dyn Fn(&LoroDoc)| {
+    let built = |peer: u64, edit: &dyn Fn(&LoroDoc)| {
         let raw = LoroDoc::new();
-        raw.import(base).unwrap();
+        raw.import(&super::window_round2_tests::flat_page_of(50)).unwrap();
         raw.set_peer_id(peer).unwrap();
-        configure(&raw);
+        configure_styles(&raw, &all_keys);
         edit(&raw);
         raw.commit();
         raw.export(ExportMode::snapshot()).unwrap()
     };
-    base = edited(&base, 47_000, &|raw| {
+    // The largest `units` for which the page is within its budget: doubling, then bisection.
+    let at_budget = |label: &str, shape: &dyn Fn(&LoroDoc, usize)| {
+        let page = |units: usize| built(47_000, &|raw| shape(raw, units));
+        let within = |units: usize| {
+            let (items, budget) = super::window_round2_tests::items_and_budget(&page(units));
+            items <= budget
+        };
+        let (mut low, mut high) = (1, 2);
+        while within(high) && high < 200_000 {
+            low = high;
+            high *= 2;
+        }
+        while high - low > 1 {
+            let middle = usize::midpoint(low, high);
+            if within(middle) {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        measure_dense_page(&format!("{label} ({low} units)"), &page(low));
+    };
+    at_budget("bold on every 8th character, 15 false keys", &|raw, units| {
         let text = first_text(raw, 0);
-        text.insert(1, &"y".repeat(19_999)).unwrap();
-        for at in (0..20_000).step_by(8) {
+        text.insert(1, &"y".repeat(8 * units - 1)).unwrap();
+        for at in (0..8 * units).step_by(8) {
+            text.mark(at..at + 1, "bold", true).unwrap();
+        }
+        for key in mark_keys(15) {
+            text.mark(0..8 * units, &key, false).unwrap();
+        }
+    });
+    at_budget("bold on alternate characters", &|raw, units| {
+        let text = first_text(raw, 0);
+        text.insert(1, &"y".repeat(2 * units - 1)).unwrap();
+        for at in (0..2 * units).step_by(2) {
             text.mark(at..at + 1, "bold", true).unwrap();
         }
     });
-    let measure_page = |label: &str, base: &[u8]| {
-        let engine = LoroCollabEngine::load(base).unwrap();
-        let items = engine.projection_items(u64::MAX).unwrap().unwrap();
-        let edit = |block: usize, peer: u64| {
-            raw_edit(base, peer, |raw| {
-                first_text(raw, block).insert(1, "z").unwrap();
-            })
-        };
-        let time = |update: &[u8], with_facts: bool| {
-            let mut best = Duration::MAX;
-            for _ in 0..5 {
-                let mut engine = LoroCollabEngine::load(base).unwrap();
-                engine.prewarm_for_writes();
-                let facts = if with_facts {
-                    crate::facts::BaseFacts::compute(&engine)
+    at_budget("seven marks on every second segment", &|raw, units| {
+        let text = first_text(raw, 0);
+        text.insert(1, &"y".repeat(4 * units - 1)).unwrap();
+        for at in (0..4 * units).step_by(4) {
+            for key in &seven {
+                if key == "link" {
+                    text.mark(at..at + 2, key, "https://example.test/a/page").unwrap();
                 } else {
-                    None
-                };
-                let started = Instant::now();
-                crate::window_check::run_window(&mut engine, facts.as_ref(), update).unwrap();
-                best = best.min(started.elapsed());
+                    text.mark(at..at + 2, key, true).unwrap();
+                }
             }
-            best.as_secs_f64() * 1e3
-        };
-        let dense = edit(0, 47_900);
-        let other = edit(1, 47_901);
-        let full = time(&other, false);
-        println!(
-            "{label}: items {items:>7}  full window {full:7.2} ms ({:.3} us/item)  incremental: dense block {:7.2} ms, other block {:7.3} ms",
-            full * 1e3 / items as f64,
-            time(&dense, true),
-            time(&other, true),
-        );
-    };
-    measure_page("segments only", &base);
-    let mut peer = 47_001;
-    for key in &keys {
-        let next = edited(&base, peer, &|raw| {
-            first_text(raw, 0).mark(0..20_000, key, false).unwrap();
+        }
+    });
+    for marks in [0, 15] {
+        at_budget(&format!("typed in reverse, {marks} full-range marks"), &|raw, units| {
+            let text = first_text(raw, 0);
+            for _ in 0..units {
+                text.insert(0, "y").unwrap();
+            }
+            for key in mark_keys(marks) {
+                text.mark(0..text.len_unicode(), &key, false).unwrap();
+            }
         });
-        peer += 1;
-        let engine = LoroCollabEngine::load(&next).unwrap();
-        let items = engine.projection_items(u64::MAX).unwrap().unwrap();
-        let budget = crate::work::item_budget(50, 1, 20_050);
-        if items > budget {
-            break;
-        }
-        base = next;
-        if (peer - 47_001) % 2 == 0 {
-            measure_page(&format!("{} keys", peer - 47_001), &base);
-        }
     }
-    measure_page("at the budget", &base);
+}
+
+/// Times the setup of a page (the base facts and the host's projection) and its full window, and
+/// prints the cost per item.
+fn measure_fragmented(label: &str, base: &[u8]) {
+    use super::window_round4_tests::first_text;
+    let items = LoroCollabEngine::load(base)
+        .unwrap()
+        .projection_items(u64::MAX)
+        .unwrap()
+        .unwrap();
+    let (mut projection, mut compute, mut full) = (Duration::MAX, Duration::MAX, Duration::MAX);
+    let mut has_facts = false;
+    let update = raw_edit(base, 49_900, |raw| {
+        first_text(raw, 1).insert(1, "z").unwrap();
+    });
+    for _ in 0..3 {
+        let engine = LoroCollabEngine::load(base).unwrap();
+        let started = Instant::now();
+        engine.semantic_snapshot().unwrap();
+        projection = projection.min(started.elapsed());
+        let engine = LoroCollabEngine::load(base).unwrap();
+        engine.prewarm_for_writes();
+        let started = Instant::now();
+        has_facts = crate::facts::BaseFacts::compute(&engine).is_some();
+        compute = compute.min(started.elapsed());
+        let mut engine = LoroCollabEngine::load(base).unwrap();
+        engine.prewarm_for_writes();
+        let started = Instant::now();
+        crate::window_check::run_window(&mut engine, None, &update).unwrap();
+        full = full.min(started.elapsed());
+    }
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    println!(
+        "{label:<34} items {items:>8}  facts {has_facts:<5}  projection {:>8.2} ms ({:>6.3} us/item)  setup (count + projection + units) {:>8.2} ms  full window {:>8.2} ms  setup x3.6 {:>8.1} ms  window x3.6 {:>8.1} ms",
+        ms(projection),
+        ms(projection) * 1e3 / items.max(1) as f64,
+        ms(compute),
+        ms(full),
+        ms(compute) * 3.6,
+        ms(full) * 3.6,
+    );
+}
+
+/// The fragmented shape: text typed in reverse order keeps one internal piece per character, and
+/// converting it costs the pieces times its attributes. One block of 4,000 characters under K
+/// full-range marks on a page of 50 blocks, then the review's page of 240 such blocks.
+#[test]
+#[ignore = "calibration, run in release"]
+fn window_fragmented_calibration() {
+    use super::window_round6_tests::fragmented_page;
+    for marks in [0, 5, 10, 20, 40] {
+        measure_fragmented(
+            &format!("1 block, 4,000 chars, {marks} marks"),
+            &fragmented_page(50, 1, 4_000, marks),
+        );
+    }
+    // The review's page (240 blocks of 4,000 reverse-typed characters) is far over the budget; the
+    // setup of a page over the budget stops at the ceiling.
+    for marks in [0, 15] {
+        measure_fragmented(
+            &format!("240 blocks, 4,000 chars, {marks} marks"),
+            &fragmented_page(240, 240, 4_000, marks),
+        );
+    }
+    // The largest number of such blocks that fits the budget, on pages of 240 and 9,950 blocks.
+    for (blocks, marks) in [(240, 0), (240, 15), (9_950, 0), (9_950, 15)] {
+        let within = |fragmented: usize| {
+            let (items, budget) =
+                super::window_round2_tests::items_and_budget(&fragmented_page(blocks, fragmented, 4_000, marks));
+            items <= budget
+        };
+        let (mut low, mut high) = (0, blocks.min(240));
+        while high - low > 1 {
+            let middle = usize::midpoint(low, high);
+            if within(middle) {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        measure_fragmented(
+            &format!("{blocks} blocks, {low} x 4,000 chars, {marks} marks"),
+            &fragmented_page(blocks, low, 4_000, marks),
+        );
+    }
+}
+
+/// Honest heavy formatting: items per block under the work measure, against the budget, and the cost
+/// of the setup (count, projection and units) and of the full projection, for pages of 80-character
+/// blocks. Run in release.
+#[test]
+#[ignore = "calibration, run in release"]
+fn window_formatting_calibration() {
+    use super::window_round6_tests::{Formatting, formatted_page};
+    for (blocks, formatting) in [
+        (1_200, Formatting::Clusters(1)),
+        (1_200, Formatting::Clusters(2)),
+        (2_000, Formatting::SixMarks),
+        (2_000, Formatting::Clusters(2)),
+        (9_950, Formatting::Clusters(1)),
+        (9_950, Formatting::SixMarks),
+        (9_950, Formatting::Clusters(2)),
+    ] {
+        let base = formatted_page(blocks, formatting);
+        let (items, budget) = super::window_round2_tests::items_and_budget(&base);
+        println!(
+            "{blocks} blocks, {formatting:?}: {:.1} items per block, budget {:.1} per block, items {items}, budget {budget}",
+            items as f64 / blocks as f64,
+            budget as f64 / blocks as f64
+        );
+        measure_fragmented(&format!("{blocks} blocks {formatting:?}"), &base);
+    }
 }

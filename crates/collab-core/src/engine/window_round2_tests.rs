@@ -917,6 +917,7 @@ pub(super) fn round2_cases(scale: u64) -> Vec<Case> {
     cases.extend(growth_cases(scale));
     cases.extend(super::window_round3_tests::round3_cases(scale));
     cases.extend(super::window_round4_tests::round4_cases(scale));
+    cases.extend(super::window_round6_tests::round6_cases(scale));
     cases
 }
 
@@ -1043,10 +1044,11 @@ pub(super) fn items_and_budget(base: &[u8]) -> (u64, u64) {
     let chars: usize = live().map(|node| node.text.chars().count()).sum();
     (
         items,
-        crate::work::item_budget(
+        crate::work::item_budget_with_marks(
             count(crate::operation::NodeKind::Block),
             count(crate::operation::NodeKind::NavigatorNode),
             chars as u64,
+            engine.unit_mark_items().unwrap().values().sum(),
         ),
     )
 }
