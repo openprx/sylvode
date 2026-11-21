@@ -7,7 +7,7 @@
 use super::catalog::{self, Access, CATALOG};
 use super::entry::{self, ENTRY_TOOL_NAMES};
 use super::tasks::{self, TASK_TOOL_NAMES};
-use super::test_support::{Api, Policy, Seen, UUID, minimal_arguments};
+use super::test_support::{Api, Policy, Seen, UUID, argument_variants, minimal_arguments};
 use crate::oauth::DelegatedGrant;
 use crate::protocol::{CallToolResult, JsonRpcRequest, ToolContent, ToolDefinition};
 use crate::server::McpServer;
@@ -329,10 +329,19 @@ async fn each_wrapper_refuses_the_other_access_class_for_the_whole_catalogue_bef
 #[tokio::test]
 async fn a_wrapper_call_is_the_direct_call_for_every_tool_under_every_policy() -> TestResult {
     for policy in [Policy::Permissive, Policy::DenyAll] {
-        for tool in non_task_tools() {
-            let arguments = minimal_arguments(&tool);
-            let direct_api = Api::spawn(policy).await?;
-            let wrapped_api = Api::spawn(policy).await?;
+        let direct_api = Api::spawn(policy).await?;
+        let wrapped_api = Api::spawn(policy).await?;
+        for (tool, arguments) in non_task_tools().into_iter().flat_map(|tool| {
+            let variants = argument_variants(&tool);
+            variants.into_iter().map(move |variant| (tool.clone(), variant))
+        }) {
+            // A shape the schema itself refuses never reaches the tool through a wrapper; a direct
+            // call is allowed to try it, so compare only the shapes both doors accept.
+            if crate::tools::schema_check::validate(&tool.input_schema, &arguments).is_err() {
+                continue;
+            }
+            direct_api.clear();
+            wrapped_api.clear();
             let direct = server(&direct_api, McpToolMode::Full)?
                 .call_tool(&tool.name, arguments.clone())
                 .await;
@@ -344,9 +353,16 @@ async fn a_wrapper_call_is_the_direct_call_for_every_tool_under_every_policy() -
                 .await;
             assert_eq!(text(&wrapped), text(&direct), "{policy:?} {}", tool.name);
             assert_eq!(wrapped.is_error, direct.is_error, "{policy:?} {}", tool.name);
+            // A key the tool generates itself is random; one the caller sent is compared as sent.
+            let caller_key = arguments.get("idempotency_key").is_some();
             let shape = |seen: Vec<Seen>| {
                 seen.into_iter()
-                    .map(|seen| (seen.method, seen.path, seen.query, seen.body, seen.tool))
+                    .map(|mut seen| {
+                        if !caller_key && let Some(key) = seen.body.get_mut("idempotency_key") {
+                            *key = json!("<generated>");
+                        }
+                        (seen.method, seen.path, seen.query, seen.body, seen.tool)
+                    })
                     .collect::<Vec<_>>()
             };
             let wrapped_requests = wrapped_api.seen();

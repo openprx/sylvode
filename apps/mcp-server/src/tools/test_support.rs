@@ -203,3 +203,86 @@ impl Api {
         self.seen.lock().clear();
     }
 }
+
+/// Every argument shape of `tool` that can change what the tool does: the minimal call, the minimal
+/// call plus each optional argument on its own, and one call per `oneOf` / `anyOf` branch (with the
+/// arguments the branch excludes removed and the ones it requires added). Duplicates are dropped.
+pub fn argument_variants(tool: &ToolDefinition) -> Vec<Value> {
+    let base = minimal_arguments(tool);
+    let schema = &tool.input_schema;
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let property_value = |name: &str| {
+        properties
+            .and_then(|properties| properties.get(name))
+            .map_or_else(|| json!("x"), |property| placeholder(property, name))
+    };
+    let mut variants = vec![base.clone()];
+    for (name, property) in properties.into_iter().flatten() {
+        if base.get(name).is_none() {
+            let mut variant = base.clone();
+            if let Some(object) = variant.as_object_mut() {
+                object.insert(name.clone(), placeholder(property, name));
+            }
+            variants.push(variant);
+        }
+    }
+    for key in ["oneOf", "anyOf"] {
+        for branch in schema.get(key).and_then(Value::as_array).into_iter().flatten() {
+            let mut variant = base.clone();
+            let Some(object) = variant.as_object_mut() else {
+                continue;
+            };
+            // What the branch excludes: `not: {required: [..]}` or `not: {anyOf: [{required: [..]}]}`.
+            let not = branch.get("not");
+            let excluded = not
+                .into_iter()
+                .flat_map(|not| {
+                    let direct = not
+                        .get("required")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let nested = not
+                        .get("anyOf")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|inner| {
+                            inner
+                                .get("required")
+                                .and_then(Value::as_array)
+                                .cloned()
+                                .unwrap_or_default()
+                        })
+                        .collect::<Vec<_>>();
+                    direct.into_iter().chain(nested)
+                })
+                .filter_map(|name| name.as_str().map(str::to_string))
+                .collect::<Vec<_>>();
+            for name in &excluded {
+                object.remove(name);
+            }
+            for name in branch.get("required").and_then(Value::as_array).into_iter().flatten() {
+                if let Some(name) = name.as_str() {
+                    object.insert(name.to_string(), property_value(name));
+                }
+            }
+            for (name, property) in branch
+                .get("properties")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+            {
+                object.insert(name.clone(), placeholder(property, name));
+            }
+            variants.push(variant);
+        }
+    }
+    let mut unique: Vec<Value> = Vec::new();
+    for variant in variants {
+        if !unique.contains(&variant) {
+            unique.push(variant);
+        }
+    }
+    unique
+}

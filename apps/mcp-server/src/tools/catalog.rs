@@ -158,6 +158,14 @@ pub static ACCESS_EXCEPTIONS: &[(&str, &str)] = &[];
 
 /// `Read` tools that issue a non-GET request, each with the endpoint and why it reads only.
 pub static POST_READ_ENDPOINTS: &[(&str, &str)] = &[
+    // POST /api/v1/flow/objects/{object_id}/collab/verify (the object_id shape): the shallow integrity
+    // check of one object. The handler only reads (`verify_collab` writes no row, answers a dry-run
+    // receipt with a random operation id and no audit event); the POST carries `deep: false` and an
+    // idempotency key. Needs bot `write` permission only because the API gates by HTTP method.
+    (
+        "objects.integrity",
+        "POST /api/v1/flow/objects/{object_id}/collab/verify (shallow check, read-only handler)",
+    ),
     // POST /api/v1/flow/collections/{collection_id}/query: the filter, sort and group of the query
     // travel in the body; the endpoint only reads typed record projections.
     (
@@ -1319,7 +1327,7 @@ pub fn list_json() -> Value {
 mod tests {
     use super::{ACCESS_EXCEPTIONS, Access, CATALOG, CATEGORIES, POST_READ_ENDPOINTS, WRITE_BY_JOB_SEMANTICS};
     use crate::server::McpServer;
-    use crate::tools::test_support::{Api, Policy, minimal_arguments};
+    use crate::tools::test_support::{Api, Policy, argument_variants};
     use serde_json::json;
     use std::collections::BTreeSet;
 
@@ -1489,22 +1497,54 @@ mod tests {
     /// Read tools that refuse locally and never reach the network on this deployment (ADR-0003).
     const READ_WITHOUT_REQUEST: [&str; 2] = ["legacy_pages.inventory", "legacy_pages.import_status"];
 
-    /// Calls every registry tool against an in-process API mock and returns the recorded
-    /// requests per tool, in registry order.
+    /// Calls every registry tool against an in-process API mock with every argument shape that can
+    /// change what it does (see [`argument_variants`]) and returns, per tool, the requests of all
+    /// the calls in registry order.
     async fn requests_per_tool() -> Result<Vec<(String, Vec<(String, String)>)>, Box<dyn std::error::Error>> {
         let api = Api::spawn(Policy::Permissive).await?;
         let server = McpServer::new(api.client()?, platform::config::McpToolMode::Full);
         let mut rows = Vec::new();
         for tool in crate::tools::get_all_tool_definitions() {
             api.clear();
-            let arguments = minimal_arguments(&tool);
-            let _ = server.execute_tool_for_catalog_witness(&tool.name, arguments).await;
+            for arguments in argument_variants(&tool) {
+                let _ = server.execute_tool_for_catalog_witness(&tool.name, arguments).await;
+            }
             rows.push((
                 tool.name,
                 api.seen().into_iter().map(|seen| (seen.method, seen.path)).collect(),
             ));
         }
         Ok(rows)
+    }
+
+    /// The variants really cover more than the minimal call: tools with several shapes get several.
+    #[test]
+    fn the_witness_exercises_every_shape_of_the_tools_that_have_several() {
+        let by_name = |name: &str| {
+            crate::tools::get_all_tool_definitions()
+                .into_iter()
+                .find(|tool| tool.name == name)
+                .map(|tool| argument_variants(&tool))
+                .unwrap_or_default()
+        };
+        let integrity = by_name("objects.integrity");
+        assert!(
+            integrity.iter().any(|variant| variant.get("object_id").is_some()),
+            "{integrity:?}"
+        );
+        assert!(
+            integrity.iter().any(|variant| variant.get("workspace_id").is_some()),
+            "{integrity:?}"
+        );
+        let total = crate::tools::get_all_tool_definitions()
+            .iter()
+            .map(|tool| argument_variants(tool).len())
+            .sum::<usize>();
+        assert!(
+            total > 2 * CATALOG.len(),
+            "{total} variants for {} tools",
+            CATALOG.len()
+        );
     }
 
     #[tokio::test]
