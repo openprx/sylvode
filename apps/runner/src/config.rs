@@ -22,6 +22,7 @@ pub struct Config {
     /// Where the file was read from (canonical): the file holds every token, so no project may
     /// lie over it and the CLI may not read it. Not read from the file.
     #[serde(skip)]
+    #[allow(clippy::struct_field_names)]
     pub config_path: Option<std::path::PathBuf>,
     /// Safe mode, resolved once at start-up from `SYLVODE_RUNNER_SAFE_MODE`. Not read from the file.
     #[serde(skip)]

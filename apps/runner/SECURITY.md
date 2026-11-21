@@ -37,3 +37,17 @@ the advisory unless you prefer otherwise.
   give the service environment variables you would not give the agents.
 - Run the service as a dedicated unprivileged user (see the systemd example in the README).
 - Never commit a `config.toml` containing secrets; `.gitignore` excludes it.
+
+## The `runner` agent type
+
+- One runner OS user is one trust domain: file modes do not protect one bot's token from a CLI
+  running as the same user. Separate trust domains need separate OS users or hosts. The CLI's
+  permission posture (allow list, deny rules for the state directory and the configuration file,
+  `dontAsk`) is the only barrier inside one user, and `allowed_roots` is not a sandbox.
+- The tmux channel is off by default (`[runner.tmux] enabled = false`). Enable it only after the
+  hand checks in the README have been done on the pinned CLI version.
+- Every child process the runner starts gets an allow-listed environment, never the service's.
+- `GET /health` is unauthenticated and returns only the overall status and the protocol state.
+- A hook message is admitted only with the launch's nonce, from the runner's own user, and from
+  below the session's pane process where the platform can name the sender (Linux: `/proc`; macOS:
+  one `ps -A` snapshot per admitted message). The sender's identity is best-effort on macOS.

@@ -47,7 +47,7 @@ fn the_install_kind_follows_the_mode_and_the_agents() {
         .expect("block");
     assert!(!off.runner.tmux.enabled);
     assert_eq!(install_kind(Some(&off), Mode::Auto), InstallKind::RunnerHeadless);
-    let mut on = off.clone();
+    let mut on = off;
     on.runner.tmux.enabled = true;
     assert_eq!(install_kind(Some(&on), Mode::Auto), InstallKind::RunnerTmux);
     assert_eq!(install_kind(None, Mode::Auto), InstallKind::RunnerForwardOnly);

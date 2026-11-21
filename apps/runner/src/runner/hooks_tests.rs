@@ -339,6 +339,8 @@ async fn a_message_with_a_wrong_nonce_never_reaches_the_session() {
 fn the_hook_counter_is_strictly_increasing_across_concurrent_hooks() {
     let dir = Dir::new();
     let state = dir.0.clone();
+    // All threads must be running before any is joined: the collect is needed.
+    #[allow(clippy::needless_collect)]
     let handles: Vec<_> = (0..8)
         .map(|_| {
             let state = state.clone();

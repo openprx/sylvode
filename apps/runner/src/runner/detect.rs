@@ -112,7 +112,8 @@ pub fn input_text(cli: &str, screen: &str) -> Option<String> {
 /// Text that the task or the agent put on the screen sits above it, in the transcript.
 fn bottom_lines(screen: &str, n: usize) -> Vec<&str> {
     let lines: Vec<&str> = screen.lines().filter(|l| !l.trim().is_empty()).collect();
-    lines[lines.len().saturating_sub(n)..].to_vec()
+    let skip = lines.len().saturating_sub(n);
+    lines.into_iter().skip(skip).collect()
 }
 
 /// The bottom of the screen as text, for the classifications that must not be fooled by text higher
@@ -132,8 +133,8 @@ pub fn classify_bottom(cli: &str, screen: &str) -> Option<Dialog> {
 /// drawn) down to the bottom; without a prompt line, the last twelve lines.
 fn chrome<'a>(cli: &str, lines: &'a [&'a str]) -> &'a [&'a str] {
     let last_prompt = lines.iter().rposition(|line| prompt_rest(cli, line).is_some());
-    let from = last_prompt.map_or(lines.len().saturating_sub(12), |at| at.saturating_sub(3));
-    &lines[from..]
+    let from = last_prompt.map_or_else(|| lines.len().saturating_sub(12), |at| at.saturating_sub(3));
+    lines.get(from..).unwrap_or_default()
 }
 
 /// Whether a line is the spinner of a working CLI: a glyph, some text, then a parenthesised part
@@ -174,7 +175,13 @@ pub fn awaits_choice(cli: &str, screen: &str) -> bool {
         let digits = rest.chars().take_while(char::is_ascii_digit).count();
         digits > 0 && rest[digits..].starts_with(". ") && line.contains(['\u{276f}', '\u{203a}'])
     });
-    let footer = lines[lines.len().saturating_sub(3)..].join("\n").to_lowercase();
+    let footer = lines
+        .iter()
+        .skip(lines.len().saturating_sub(3))
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_lowercase();
     selected_option || footer.contains("enter to select") || footer.contains("esc to cancel")
 }
 
