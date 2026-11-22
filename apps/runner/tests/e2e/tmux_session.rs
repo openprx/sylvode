@@ -1,5 +1,5 @@
-//! The tmux channel end to end: the real runner, a real tmux server of its own (random socket,
-//! `-f /dev/null`, a private `TMUX_TMPDIR` under `/tmp`, killed at the end), a mock Sylvode API and
+//! The tmux channel end to end: the real runner, a real tmux server of its own (random socket, a
+//! private `TMUX_TMPDIR` under `/tmp`, killed at the end), a mock Sylvode API and
 //! a stand-in for the CLI: a shell script that turns bracketed paste on, shows a prompt, reports
 //! the turn events through the runner's own `hook` subcommand and records what it was typed.
 //!
@@ -50,7 +50,7 @@ impl Tmux {
     fn raw(&self, args: &[&str]) -> std::process::Output {
         assert!(self.socket.starts_with("svtest-"));
         Command::new(&self.program)
-            .args(["-L", &self.socket, "-f", "/dev/null"])
+            .args(["-L", &self.socket])
             .args(args)
             .env("TMUX_TMPDIR", &self.dir)
             .env_remove("TMUX")
@@ -168,8 +168,8 @@ impl Fixture {
              [ai_task_callback]\nenabled = true\napi_url = \"{}\"\n\
              [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n\
              [runner]\nstate_dir = \"{}\"\nallowed_roots = [\"{}\"]\nreport_interval_secs = 600\ndelivery_check_timeout_secs = 3\n\
-             [runner.tmux]\nenabled = true\nbinary = \"{}\"\nsocket_name = \"{}\"\npush_settle_ms = 100\nready_timeout_secs = 20\n\
-             [runner.cli.claude]\nbinary = \"{}\"\n\
+             [runner.tmux]\nbinary = \"{}\"\nsocket_name = \"{}\"\npush_settle_ms = 100\nready_timeout_secs = 20\n\
+             [runner.cli.claude]\nbinary = \"{standin}\"\nlaunch_command = [\"{standin}\", \"--permission-mode\", \"bypassPermissions\"]\n\
              [runner.mcp]\nserver_binary = \"{}\"\n\
              [[agents]]\nid = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{BOT}\"]\n",
             self.api.url(),
@@ -177,8 +177,8 @@ impl Fixture {
             canonical.display(),
             self.tmux.program.display(),
             self.tmux.socket,
-            self.bin.file("claude").display(),
             self.bin.file("mcp-server").display(),
+            standin = self.bin.file("claude").display(),
         )
     }
 
@@ -286,7 +286,7 @@ async fn a_task_is_typed_into_a_session_the_runner_created_and_the_next_waits_it
             first["session"].as_str(),
             first["queue_position"].as_u64()
         ),
-        (Some("tmux"), Some("SVWL"), Some(1))
+        (Some("tmux"), Some("SVWL-claude"), Some(1))
     );
     let second = Fixture::deliver(server.url("/webhook"), T2).await;
     assert_eq!(second["queue_position"], 2, "{second}");
@@ -297,7 +297,7 @@ async fn a_task_is_typed_into_a_session_the_runner_created_and_the_next_waits_it
         typed.len(),
         1,
         "{typed:?}\nPANE:\n{}\nLOG:\n{}",
-        String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL:"]).stdout),
+        String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL-claude:"]).stdout),
         server
             .stdout()
             .iter()
@@ -326,7 +326,7 @@ async fn a_task_is_typed_into_a_session_the_runner_created_and_the_next_waits_it
         typed.len(),
         2,
         "PANE:\n{}\nLOG:{}\n{typed:?}\n{:#?}\n{:#?}",
-        String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL:"]).stdout),
+        String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL-claude:"]).stdout),
         std::fs::read_to_string(&fx.log)
             .unwrap_or_default()
             .lines()
@@ -385,8 +385,14 @@ async fn a_task_is_typed_into_a_session_the_runner_created_and_the_next_waits_it
         .find(|l| l.starts_with("argv: "))
         .map(str::to_string)
         .expect("argv");
+    // The launch command, the runner's MCP file and its hook settings; nothing stricter.
     assert!(
-        argv.contains("--strict-mcp-config") && argv.contains("--setting-sources user"),
+        argv.contains("--permission-mode bypassPermissions")
+            && argv.contains("--mcp-config ")
+            && argv.contains("--settings ")
+            && !argv.contains("--strict-mcp-config")
+            && !argv.contains("--setting-sources")
+            && !argv.contains("--allowedTools"),
         "{argv}"
     );
     assert!(!argv.contains("opr_"), "{argv}");
@@ -416,31 +422,37 @@ async fn a_task_is_typed_into_a_session_the_runner_created_and_the_next_waits_it
     );
     let log = server.stdout().join("\n");
     assert!(!log.contains(TOKEN));
+    // The session the runner started: hooks were seen, the MCP file is in its arguments, and the
+    // default launch command runs with permission checks off.
+    let row = fx.session_row();
+    let detail = &row["detail"];
+    assert_eq!(detail["state"], "running", "{row}");
+    assert_eq!(detail["created_by"], "runner", "{row}");
+    assert!(
+        detail["hooks"].as_str().is_some_and(|h| h.starts_with("seen ")),
+        "{row}"
+    );
+    assert_eq!(detail["mcp"], "ok", "{row}");
+    assert_eq!(detail["permissions"], "bypass", "{row}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
-async fn a_session_name_is_matched_exactly_and_another_projects_session_is_left_alone() {
+async fn a_session_name_is_matched_exactly_and_other_sessions_are_left_alone() {
     if !enabled() {
         return;
     }
     let Some(program) = find_tmux() else { return };
     let fx = Fixture::new(program, Standin::Normal).await;
-    // Someone else's sessions: a longer name that starts with ours, and a number.
-    assert!(
-        fx.tmux
-            .raw(&["new-session", "-d", "-s", "SVWLX", "-c", "/tmp", "--", "cat"])
-            .status
-            .success()
-    );
-    // The server is marked as the runner's own, as one the runner started earlier would be: this
-    // test is about the exact session name, not about a foreign server (see the next test).
-    assert!(
-        fx.tmux
-            .raw(&["set-option", "-g", "@sylvode_runner", "1"])
-            .status
-            .success()
-    );
+    // Someone else's sessions: a longer name that starts with ours, and the bare project key.
+    for other in ["SVWL-claudeX", "SVWL"] {
+        assert!(
+            fx.tmux
+                .raw(&["new-session", "-d", "-s", other, "-c", "/tmp", "--", "cat"])
+                .status
+                .success()
+        );
+    }
     fx.set_view(T1, true, false);
     let server = fx.serve();
     let answer = Fixture::deliver(server.url("/webhook"), T1).await;
@@ -449,16 +461,111 @@ async fn a_session_name_is_matched_exactly_and_another_projects_session_is_left_
     let listed = String::from_utf8_lossy(&fx.tmux.raw(&["list-sessions", "-F", "#{session_name}"]).stdout).to_string();
     let mut names: Vec<&str> = listed.lines().collect();
     names.sort_unstable();
-    assert_eq!(names, ["SVWL", "SVWLX"], "{listed}");
-    // The other session got nothing.
-    let other = String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWLX:"]).stdout).to_string();
-    assert!(!other.contains("Sylvode"), "{other}");
+    assert_eq!(names, ["SVWL", "SVWL-claude", "SVWL-claudeX"], "{listed}");
+    // The others got nothing.
+    for other in ["=SVWL-claudeX:", "=SVWL:"] {
+        let pane = String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", other]).stdout).to_string();
+        assert!(!pane.contains("Sylvode"), "{other}: {pane}");
+    }
+    drop(server);
+}
+
+/// A session the operator started is used as it is: the runner types into the pane that runs the
+/// CLI, records that the operator started it, and never restarts it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_session_the_operator_started_is_used_as_it_is_and_never_restarted() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    // The operator's own `claude` (the stand-in) in the derived session. Its settings file does
+    // not exist, so it reports no hooks: the runner reads its turns from the screen.
+    let settings = fx.tmux.state().join("sessions/SVWL-claude/claude-settings.json");
+    assert!(
+        fx.tmux
+            .raw(&[
+                "new-session",
+                "-d",
+                "-s",
+                "SVWL-claude",
+                "-c",
+                &fx.project.to_string_lossy(),
+                "--",
+                &fx.bin.file("claude").to_string_lossy(),
+                "--settings",
+                &settings.to_string_lossy(),
+            ])
+            .status
+            .success()
+    );
+    let pane_pid = || {
+        String::from_utf8_lossy(
+            &fx.tmux
+                .raw(&["display-message", "-p", "-t", "=SVWL-claude:", "#{pane_pid}"])
+                .stdout,
+        )
+        .trim()
+        .to_string()
+    };
+    let before = pane_pid();
+    fx.set_view(T1, true, true);
+    let server = fx.serve();
+    let answer = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    assert_eq!(pane_pid(), before, "the CLI was restarted");
+    let record = std::fs::read_to_string(fx.tmux.state().join("sessions/SVWL-claude/session.json")).expect("record");
+    assert!(
+        record.contains("\"created_by\": \"operator\"") && record.contains(BOT),
+        "{record}"
+    );
+    drop(server);
+}
+
+/// A session without the CLI (a leftover shell) fails the task with the attach hint; nothing is
+/// typed, nothing is restarted.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_session_without_the_cli_fails_the_task_and_nothing_is_typed() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    assert!(
+        fx.tmux
+            .raw(&["new-session", "-d", "-s", "SVWL-claude", "-c", "/tmp", "--", "cat"])
+            .status
+            .success()
+    );
+    fx.set_view(T1, true, false);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
+    assert_eq!(fails.len(), 1, "{fails:?}");
+    assert_eq!(fails[0].body["retryable"], true);
+    let reason = fails[0].body["reason"].as_str().expect("reason");
+    assert!(
+        reason.contains("not running in tmux session SVWL-claude") && reason.contains("tmux attach -t SVWL-claude"),
+        "{reason}"
+    );
+    let pane = String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL-claude:"]).stdout).to_string();
+    assert!(
+        !pane.contains("Sylvode"),
+        "typed into a program that is not the CLI: {pane}"
+    );
+    assert!(fx.typed().is_empty());
     drop(server);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
-async fn an_untrusted_directory_fails_the_task_without_a_retry() {
+async fn a_first_start_dialog_fails_the_task_as_retryable_with_the_attach_hint() {
     if !enabled() {
         return;
     }
@@ -472,10 +579,11 @@ async fn an_untrusted_directory_fails_the_task_without_a_retry() {
     );
     let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
     assert_eq!(fails.len(), 1, "{fails:?}");
-    assert_eq!(fails[0].body["retryable"], false);
+    assert_eq!(fails[0].body["retryable"], true);
     let reason = fails[0].body["reason"].as_str().expect("reason");
     assert!(
-        reason.contains("sylvode-runner trust SVWL") && !reason.contains('/'),
+        reason.contains("shows a dialog; attach with tmux attach -t SVWL-claude and answer it")
+            && !reason.contains('/'),
         "{reason}"
     );
     assert_eq!(fails[0].body["source"], "runner");
@@ -499,13 +607,13 @@ async fn a_killed_session_fails_the_running_task_as_retryable() {
     );
     assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
     // The session is killed under the task.
-    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL"]).status.success());
+    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL-claude"]).status.success());
     let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
     assert_eq!(fails.len(), 1, "{fails:?}");
     assert_eq!(fails[0].body["retryable"], true);
     assert_eq!(
         fails[0].body["reason"],
-        "tmux session SVWL ended while the task was running"
+        "tmux session SVWL-claude ended while the task was running"
     );
     drop(server);
 }
@@ -557,7 +665,7 @@ async fn after_a_runner_restart_a_pushed_task_is_supervised_again_and_the_next_o
     first.terminate();
     assert!(first.wait_exit(Duration::from_secs(20)).is_some());
     // The session outlives the runner.
-    assert!(fx.tmux.raw(&["has-session", "-t", "=SVWL"]).status.success());
+    assert!(fx.tmux.raw(&["has-session", "-t", "=SVWL-claude"]).status.success());
     // Sylvode shows T1 acknowledged with a STALE phase (`queued`: the pushed report was lost or
     // overtaken); T2 is delivered after the restart. T1 must not be typed a second time.
     let listed = fx.active_view(T1, Some("queued"), true);
@@ -599,7 +707,7 @@ async fn after_a_restart_a_pushed_task_whose_session_is_gone_fails_and_a_queued_
     assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
     first.terminate();
     assert!(first.wait_exit(Duration::from_secs(20)).is_some());
-    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL"]).status.success());
+    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL-claude"]).status.success());
     let (pushed, queued) = (
         fx.active_view(T1, Some("pushed"), true),
         fx.active_view(T2, Some("queued"), false),
@@ -610,7 +718,10 @@ async fn after_a_restart_a_pushed_task_whose_session_is_gone_fails_and_a_queued_
     assert_eq!(fails.len(), 1, "{fails:?}");
     assert!(fails[0].path().contains(T1), "{fails:?}");
     assert_eq!(fails[0].body["retryable"], true);
-    assert_eq!(fails[0].body["reason"], "runner restarted and session SVWL was gone");
+    assert_eq!(
+        fails[0].body["reason"],
+        "runner restarted and session SVWL-claude was gone"
+    );
     // The queued task is queued again: the session is created and T2 is typed.
     let typed = fx.wait_typed(2, 60).await;
     assert!(
@@ -622,7 +733,7 @@ async fn after_a_restart_a_pushed_task_whose_session_is_gone_fails_and_a_queued_
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
-async fn the_operator_commands_list_refuse_and_release() {
+async fn the_operator_commands_list_and_release() {
     if !enabled() {
         return;
     }
@@ -635,34 +746,33 @@ async fn the_operator_commands_list_refuse_and_release() {
         "dispatched"
     );
     assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
-    // While the runner runs, release and prune are refused (it owns the registry and the sessions).
-    for args in [&["release", "SVWL"][..], &["sessions", "--prune"]] {
-        let refused = fx.operator(args);
-        assert!(
-            !refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("runner stopped")
-                || String::from_utf8_lossy(&refused.stderr).contains("needs the runner stopped"),
-            "{args:?}: {}",
-            String::from_utf8_lossy(&refused.stderr)
-        );
-    }
+    // While the runner runs, release is refused (it owns the registry).
+    let refused = fx.operator(&["release", "SVWL"]);
+    assert!(
+        !refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("needs the runner stopped"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
     server.terminate();
     assert!(server.wait_exit(Duration::from_secs(20)).is_some());
+    // The listing names the session, its project, the CLI and who started it; it changes nothing.
     let listing = fx.operator(&["sessions"]);
     let text = String::from_utf8_lossy(&listing.stdout).to_string();
     assert!(
-        listing.status.success() && text.contains("SVWL") && text.contains("claude") && text.contains(PROJECT),
+        listing.status.success()
+            && text.contains("SVWL-claude")
+            && text.contains("claude")
+            && text.contains(PROJECT)
+            && text.contains("runner"),
         "{text}"
     );
-    // A registered, tmux-using session is not pruned, whatever its state.
-    let pruned = String::from_utf8_lossy(&fx.operator(&["sessions", "--prune"]).stdout).to_string();
-    assert!(!pruned.contains("pruned"), "{pruned}");
-    assert!(fx.tmux.raw(&["has-session", "-t", "=SVWL"]).status.success());
-    // The key cannot be released while its session exists, and a stranger's session is not ours.
+    // `trust` and `sessions --prune` do not exist any more, and nothing was ended.
+    assert!(!fx.operator(&["sessions", "--prune"]).status.success());
+    assert!(fx.tmux.raw(&["has-session", "-t", "=SVWL-claude"]).status.success());
+    // The key cannot be released while its session exists.
     let refused = fx.operator(&["release", "SVWL"]);
     assert!(!refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("still exists"));
-    let stranger = fx.operator(&["trust", "NOPE"]);
-    assert!(!stranger.status.success());
-    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL"]).status.success());
+    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL-claude"]).status.success());
     let released = fx.operator(&["release", "SVWL"]);
     assert!(
         released.status.success(),
@@ -673,75 +783,27 @@ async fn the_operator_commands_list_refuse_and_release() {
     assert!(!again.status.success() && String::from_utf8_lossy(&again.stderr).contains("not reserved"));
 }
 
-/// A tmux server on the runner's socket that the runner did not start (no owner mark) is refused:
-/// its environment and options are somebody else's. The task is failed, nothing is typed, and the
-/// foreign session is left alone.
+/// The CLI of a session the runner creates has the operator's environment (the runner's own, minus
+/// the agent variables) and no configuration directory of the runner's.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
-async fn a_server_the_runner_did_not_start_is_refused() {
-    if !enabled() {
-        return;
-    }
-    let Some(program) = find_tmux() else { return };
-    let fx = Fixture::new(program, Standin::Normal).await;
-    // Started by "somebody else", with a sentinel in its global environment.
-    assert!(
-        fx.tmux
-            .raw(&["new-session", "-d", "-s", "OTHER", "-c", "/tmp", "--", "cat"])
-            .status
-            .success()
-    );
-    assert!(
-        fx.tmux
-            .raw(&["set-environment", "-g", "SV_FOREIGN_SENTINEL", "leak"])
-            .status
-            .success()
-    );
-    fx.set_view(T1, true, false);
-    let server = fx.serve();
-    assert_eq!(
-        Fixture::deliver(server.url("/webhook"), T1).await["status"],
-        "dispatched"
-    );
-    let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
-    assert_eq!(fails.len(), 1, "{fails:?}");
-    assert_eq!(fails[0].body["retryable"], false);
-    assert!(
-        fails[0].body["reason"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("did not start"),
-        "{fails:?}"
-    );
-    assert!(fx.typed().is_empty());
-    let listed = String::from_utf8_lossy(&fx.tmux.raw(&["list-sessions", "-F", "#{session_name}"]).stdout).to_string();
-    assert_eq!(listed.trim(), "OTHER", "{listed}");
-    drop(server);
-}
-
-/// Nothing of `env_passthrough` reaches a tmux pane: the pane gets the tmux server's environment,
-/// which the runner started with its allow-list only.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
-async fn env_passthrough_and_other_variables_do_not_reach_a_pane() {
+async fn a_session_the_runner_creates_has_the_operators_environment() {
     if !enabled() {
         return;
     }
     let Some(program) = find_tmux() else { return };
     let fx = Fixture::new(program, Standin::Normal).await;
     fx.set_view(T1, true, false);
-    let config = fx.config().replace(
-        "[runner.cli.claude]\n",
-        "[runner.cli.claude]\nenv_passthrough = [\"SV_PASS_ME\"]\n",
-    );
     let server = Server::start(
         RUNNER,
-        &config,
+        &fx.config(),
         &[
             ("TMUX_TMPDIR", &fx.tmux.dir.to_string_lossy()),
-            ("SVT_PASS_ME", "kept-for-headless"),
-            ("SVT_OTHER_SECRET", "leak"),
-            ("SVT_TOKEN", "leak"),
+            ("SVT_OPERATOR_SETTING", "operator"),
+            ("SVT_OPERATOR_TOKEN", "operator"),
+            ("CLAUDECODE", "1"),
+            ("CLAUDE_CODE_ENTRYPOINT", "cli"),
+            ("TMUX", "/tmp/tmux-0/default,1,0"),
         ],
     )
     .expect("starts");
@@ -750,18 +812,23 @@ async fn env_passthrough_and_other_variables_do_not_reach_a_pane() {
         "dispatched"
     );
     assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
-    // Names of every variable, and the values of the test-owned `SVT_*` ones and of the runner's
-    // own `CLAUDE_CONFIG_DIR`: the stand-in records nothing else.
     let names = std::fs::read_to_string(fx.tmux.state().join("standin.env.names")).expect("names");
     let values = std::fs::read_to_string(fx.tmux.state().join("standin.env.values")).expect("values");
-    for name in ["SVT_PASS_ME", "SVT_OTHER_SECRET", "SVT_TOKEN"] {
-        assert!(!names.lines().any(|n| n == name), "{name} reached the pane");
+    for name in ["SVT_OPERATOR_SETTING", "SVT_OPERATOR_TOKEN", "PATH", "HOME"] {
+        assert!(
+            names.lines().any(|n| n == name),
+            "{name} did not reach the pane: {names}"
+        );
     }
-    assert!(!values.contains("leak"), "a test-owned value reached the pane");
+    for gone in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
+        assert!(!names.lines().any(|n| n == gone), "{gone} reached the pane");
+    }
+    assert!(values.contains("SVT_OPERATOR_SETTING=operator"), "{values}");
     assert!(
-        values.contains("CLAUDE_CONFIG_DIR="),
-        "the runner's own variable is set"
+        !values.contains("CLAUDE_CONFIG_DIR="),
+        "the runner sets no configuration directory: {values}"
     );
+    assert!(!fx.tmux.state().join("claude").exists());
     drop(server);
 }
 
@@ -776,15 +843,7 @@ struct TypingClient {
 impl TypingClient {
     fn start(tmux: &Tmux, key: &str) -> Self {
         use std::io::Write;
-        let attach = [
-            "-L",
-            tmux.socket.as_str(),
-            "-f",
-            "/dev/null",
-            "attach",
-            "-t",
-            &format!("={key}"),
-        ];
+        let attach = ["-L", tmux.socket.as_str(), "attach", "-t", &format!("={key}")];
         let mut command = if cfg!(target_os = "macos") {
             let mut c = Command::new("script");
             c.args(["-q", "/dev/null"]).arg(&tmux.program).args(attach);
@@ -905,7 +964,7 @@ async fn nothing_is_typed_when_the_foreground_is_not_the_cli() {
         "dispatched"
     );
     tokio::time::sleep(Duration::from_secs(8)).await;
-    let pane = String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL:"]).stdout).to_string();
+    let pane = String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL-claude:"]).stdout).to_string();
     assert!(!pane.contains(T2), "text reached the foreground program: {pane}");
     assert_eq!(fx.typed().len(), 1);
     drop(server);
@@ -959,8 +1018,8 @@ async fn nothing_is_typed_while_a_person_types() {
         Fixture::deliver(server.url("/webhook"), T1).await["status"],
         "dispatched"
     );
-    wait_session(&fx, "SVWL", 30).await;
-    let client = TypingClient::start(&fx.tmux, "SVWL");
+    wait_session(&fx, "SVWL-claude", 30).await;
+    let client = TypingClient::start(&fx.tmux, "SVWL-claude");
     tokio::time::sleep(Duration::from_secs(2)).await;
     fx.set_mode("idle");
     tokio::time::sleep(Duration::from_secs(7)).await;
@@ -972,10 +1031,10 @@ async fn nothing_is_typed_while_a_person_types() {
         typed.len(),
         1,
         "PANE:\n{}\nCLIENTS:{}\nNOW:{:?}",
-        String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL:"]).stdout),
+        String::from_utf8_lossy(&fx.tmux.raw(&["capture-pane", "-p", "-t", "=SVWL-claude:"]).stdout),
         String::from_utf8_lossy(
             &fx.tmux
-                .raw(&["list-clients", "-F", "#{client_activity}", "-t", "=SVWL"])
+                .raw(&["list-clients", "-F", "#{client_activity}", "-t", "=SVWL-claude"])
                 .stdout
         ),
         std::time::SystemTime::now()
@@ -1028,8 +1087,8 @@ async fn the_enter_retry_needs_the_pasted_text_on_the_input_line() {
     drop(server);
 }
 
-/// The trust flow end to end: the dialog fails the task (not retryable) naming `trust`; the
-/// operator answers it in the session; the CLI starts; the next task is typed.
+/// The first-start dialog end to end: it fails the task naming the attach command; the operator
+/// answers it in the session; the CLI starts; the next task is typed.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
 async fn the_trust_dialog_flow_ends_with_the_next_task_typed() {
@@ -1051,12 +1110,12 @@ async fn the_trust_dialog_flow_ends_with_the_next_task_typed() {
         fails[0].body["reason"]
             .as_str()
             .unwrap_or_default()
-            .contains("sylvode-runner trust SVWL")
+            .contains("tmux attach -t SVWL-claude")
     );
     // The operator attaches and answers (what `trust` leads to).
     assert!(
         fx.tmux
-            .raw(&["send-keys", "-t", "=SVWL:", "1", "Enter"])
+            .raw(&["send-keys", "-t", "=SVWL-claude:", "1", "Enter"])
             .status
             .success()
     );
@@ -1069,4 +1128,164 @@ async fn the_trust_dialog_flow_ends_with_the_next_task_typed() {
     assert_eq!(typed.len(), 1, "{typed:?}");
     assert!(typed[0].contains(T2));
     drop(server);
+}
+
+/// The allowed roots matter only when the runner would create the session: with none, a working
+/// directory outside them is refused synchronously and no session is made; with the operator's
+/// session in place the same task is typed into it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_directory_outside_the_roots_matters_only_when_the_runner_would_create_the_session() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    let outside = fx
+        .root
+        .path()
+        .parent()
+        .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    let outside = std::fs::canonicalize(outside).expect("outside");
+    let set_outside = |task: &str| {
+        let mut view = fx.view(task, true, true);
+        view["execution"]["working_directory"] = json!(outside.to_string_lossy());
+        fx.api.script(|s| {
+            s.views.insert(task.to_string(), vec![(200, view.clone())]);
+        });
+    };
+    set_outside(T1);
+    let server = fx.serve();
+    let refused = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert_eq!(refused["reason_code"], "path_outside_allowlist", "{refused}");
+    assert!(
+        !fx.tmux.raw(&["has-session", "-t", "=SVWL-claude"]).status.success(),
+        "no session was created"
+    );
+    // The operator's own session exists: the directory is not the runner's concern.
+    let settings = fx.tmux.state().join("sessions/SVWL-claude/claude-settings.json");
+    assert!(
+        fx.tmux
+            .raw(&[
+                "new-session",
+                "-d",
+                "-s",
+                "SVWL-claude",
+                "-c",
+                &fx.project.to_string_lossy(),
+                "--",
+                &fx.bin.file("claude").to_string_lossy(),
+                "--settings",
+                &settings.to_string_lossy(),
+            ])
+            .status
+            .success()
+    );
+    set_outside(T2);
+    let answer = Fixture::deliver(server.url("/webhook"), T2).await;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    drop(server);
+}
+
+impl Fixture {
+    /// `doctor --json --project SVWL` and its `session.SVWL-claude` row.
+    fn session_row(&self) -> Value {
+        let output = Command::new(RUNNER)
+            .args(["doctor", "--json", "--project", "SVWL", "--config"])
+            .arg(self.config_file())
+            .env("TMUX_TMPDIR", &self.tmux.dir)
+            .env_remove("TMUX")
+            .output()
+            .expect("run doctor");
+        let report: Value = serde_json::from_slice(&output.stdout).expect("doctor json");
+        report["components"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["component"] == "session.SVWL-claude"))
+            .cloned()
+            .unwrap_or_else(|| panic!("no session row: {report}"))
+    }
+}
+
+/// `doctor --project` for a session the operator started: every field of the row, read from tmux
+/// and the CLI's process (the stand-in is started with the bypass flag and this bot's MCP file).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn doctor_describes_the_session_of_a_project() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    // No session yet: absent, and that is fine.
+    let absent = fx.session_row();
+    assert_eq!(absent["detail"]["state"], "absent", "{absent}");
+    assert_eq!(absent["status"], "ok");
+    assert_eq!(absent["found"], false);
+    // The operator's claude, with permission checks off and this bot's MCP file in its arguments.
+    let state = fx.tmux.state();
+    let settings = state.join("sessions/SVWL-claude/claude-settings.json");
+    let mcp_json = state.join(format!("mcp/{BOT}.claude.json"));
+    assert!(
+        fx.tmux
+            .raw(&[
+                "new-session",
+                "-d",
+                "-s",
+                "SVWL-claude",
+                "-c",
+                &fx.project.to_string_lossy(),
+                "--",
+                &fx.bin.file("claude").to_string_lossy(),
+                "--permission-mode",
+                "bypassPermissions",
+                "--mcp-config",
+                &mcp_json.to_string_lossy(),
+                "--settings",
+                &settings.to_string_lossy(),
+            ])
+            .status
+            .success()
+    );
+    fx.set_view(T1, true, true);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    drop(server);
+    let row = fx.session_row();
+    let detail = &row["detail"];
+    assert_eq!(detail["state"], "running", "{row}");
+    assert_eq!(detail["created_by"], "operator", "{row}");
+    assert_eq!(detail["permissions"], "bypass", "{row}");
+    assert_eq!(detail["mcp"], "ok", "{row}");
+    assert_eq!(detail["hooks"], "none", "no hook runs without settings: {row}");
+    assert!(
+        detail["pane"].as_str().is_some_and(|pane| pane.starts_with('%')),
+        "{row}"
+    );
+    assert_eq!(detail["foreground"], "claude", "{row}");
+    // Bypass and no hooks are warnings, not failures.
+    assert_eq!(row["status"], "warn", "{row}");
+    assert_eq!(row["found"], true);
+    // A session that lost its CLI fails the row, with the attach hint.
+    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL-claude"]).status.success());
+    assert!(
+        fx.tmux
+            .raw(&["new-session", "-d", "-s", "SVWL-claude", "-c", "/tmp", "--", "cat"])
+            .status
+            .success()
+    );
+    let gone = fx.session_row();
+    assert_eq!(gone["detail"]["state"], "cli_not_running", "{gone}");
+    assert_eq!(gone["status"], "fail");
+    assert!(
+        gone["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("tmux attach -t SVWL-claude")
+    );
 }

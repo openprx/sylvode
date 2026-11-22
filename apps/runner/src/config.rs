@@ -576,7 +576,7 @@ impl Config {
 
     /// Refuses a `runner` agent that cannot work, and an invalid `[runner]` block.
     ///
-    /// A `runner` agent needs `[ai_task_callback] enabled = true`, `[runner] allowed_roots`, and for
+    /// A `runner` agent needs `[ai_task_callback] enabled = true` and, for
     /// every bot of its route a token registered for `mcp_stdio` (design C17), and takes no agent
     /// type table: its permissions come from `[runner.cli.*]` and its directory from Sylvode.
     fn validate_runner_agents(&self) -> Result<(), String> {
@@ -584,11 +584,6 @@ impl Config {
         let runners: Vec<&AgentConfig> = self.agents.iter().filter(|a| a.agent_type == "runner").collect();
         if runners.is_empty() {
             return Ok(());
-        }
-        for cli in ["claude", "codex"] {
-            let settings = crate::runner::headless::settings_for(&self.runner, cli);
-            crate::executor_permissions::ExecutorPermissions::from_config(&settings)
-                .map_err(|e| format!("runner.cli.{cli}: {e}"))?;
         }
         let cfg = &self.ai_task_callback;
         // The bearer token goes to this URL: in clear text only to a loopback host.
@@ -617,12 +612,6 @@ impl Config {
                 return Err(format!(
                     "agent `{id}`: a runner agent needs [ai_task_callback] enabled = true: it reads and \
                      reports tasks with the bot's token"
-                ));
-            }
-            if self.runner.allowed_roots.is_empty() && agent.allowed_roots.is_empty() {
-                return Err(format!(
-                    "agent `{id}`: a runner agent needs allowed_roots (its own, or [runner] allowed_roots): \
-                     without a root every project is declined"
                 ));
             }
             if runners.len() > 1 && agent.allowed_roots.is_empty() {
@@ -1700,7 +1689,17 @@ url = "http://127.0.0.1:9000/hook"
         assert_eq!(cfg.runner.delivery_check_timeout_secs, 5);
         assert_eq!(cfg.runner.mcp.tool_mode, "search");
         assert!(!cfg.runner.cli.codex.enabled && !cfg.runner.cli.opencode.enabled);
-        assert_eq!(cfg.runner.tmux.socket_name, "sylvode");
+        assert_eq!(cfg.runner.tmux.socket_name, "");
+        assert_eq!(
+            cfg.runner.cli.claude.launch_command,
+            ["claude", "--permission-mode", "bypassPermissions"]
+        );
+        assert_eq!(
+            cfg.runner.cli.claude.headless_args,
+            ["--permission-mode", "bypassPermissions"]
+        );
+        assert!(cfg.runner.cli.claude.hooks && !cfg.runner.mcp.allow_write_call);
+        assert!(cfg.runner.cli.codex.headless_args.is_empty());
         // The agent resolves a token for its bot, with the surface the block registered.
         match cfg.ai_task_callback_for(GOLDEN_BOT) {
             super::AiTaskCallback::Report(target) => {
@@ -1741,7 +1740,7 @@ url = "http://127.0.0.1:9000/hook"
     }
 
     #[test]
-    fn a_runner_agent_needs_the_callback_roots_and_an_mcp_stdio_token() {
+    fn a_runner_agent_needs_the_callback_and_an_mcp_stdio_token() {
         let swap = |from: &str, to: &str| GOLDEN_BLOCK.replacen(from, to, 1);
         let error =
             Config::from_toml(&swap("enabled = true\napi_url", "enabled = false\napi_url")).expect_err("callback off");
@@ -1749,9 +1748,9 @@ url = "http://127.0.0.1:9000/hook"
             error.contains("ai_task_callback") && error.contains("enabled"),
             "{error}"
         );
-        let error = Config::from_toml(&swap("allowed_roots = [\"/srv/dev/work/svwl\"]", "allowed_roots = []"))
-            .expect_err("no roots");
-        assert!(error.contains("allowed_roots"), "{error}");
+        // A configuration without roots loads: no session may then be created and no headless run
+        // started, but a bot's existing sessions are still served.
+        Config::from_toml(&swap("allowed_roots = [\"/srv/dev/work/svwl\"]", "allowed_roots = []")).expect("no roots");
         for surface in ["rest", "mcp_http", "cli"] {
             let error = Config::from_toml(&swap("surface = \"mcp_stdio\"", &format!("surface = \"{surface}\"")))
                 .expect_err(surface);
@@ -1806,11 +1805,28 @@ url = "http://127.0.0.1:9000/hook"
             ("[runner.tmux]\nmin_version = \"3.1\"\n", "min_version"),
             ("[runner.tmux]\nmin_version = \"three\"\n", "min_version"),
             ("[runner.tmux]\nsocket_name = \"a b\"\n", "socket_name"),
+            (
+                &format!("[runner.tmux]\nsocket_name = \"{}\"\n", "a".repeat(33)),
+                "socket_name",
+            ),
             ("[runner.tmux]\nwindow_width = 5\n", "window_width"),
             ("[runner.mcp]\ntool_mode = \"both\"\n", "tool_mode"),
-            ("[runner.cli.codex]\napproval = \"on-request\"\n", "approval"),
-            ("[runner.cli.codex]\nsandbox = \"none\"\n", "sandbox"),
             ("[runner.cli.claude]\nbinary = \"\"\n", "claude.binary"),
+            ("[runner.cli.claude]\nlaunch_command = []\n", "launch_command"),
+            (
+                "[runner.cli.claude]\nlaunch_command = [\"--verbose\"]\n",
+                "launch_command",
+            ),
+            (
+                "[runner.cli.claude]\nlaunch_command = [\"claude\", \"a\\nb\"]\n",
+                "launch_command",
+            ),
+            ("[runner.cli.claude]\nheadless_args = [\"a\\u0007\"]\n", "headless_args"),
+            (
+                "[runner.cli.codex]\nheadless_args = [\"a\\nb\"]\n",
+                "codex.headless_args",
+            ),
+            ("[runner.cli.claude]\nprocess_names = []\n", "process_names"),
         ] {
             // These sections go after `[runner]` in the block; a table header may appear once, so
             // the block's own `[runner]` stays and the sub-table is appended.
@@ -2019,47 +2035,54 @@ url = "http://127.0.0.1:9000/hook"
         }
     }
 
-    /// A runner agent may use only the permission mode design 6.6 specifies; any other value is a
-    /// configuration error naming the key, and the interim `mcp_config_path` key is gone.
+    /// Every key the operator-owned session model removed is refused naming the key.
     #[test]
-    fn runner_agents_take_only_the_dont_ask_mode_and_no_mcp_config_path() {
-        for mode in ["auto", "acceptEdits", "plan", "manual", "bypassPermissions", "yolo"] {
-            let error = Config::from_toml(&format!(
-                "{GOLDEN_BLOCK}\n[runner.cli.claude]\npermission_mode = \"{mode}\"\n"
-            ))
-            .expect_err(mode);
+    fn removed_keys_are_refused_by_name() {
+        for (table, key) in [
+            ("", "trust_project_files = []"),
+            ("[runner.tmux]", "enabled = true"),
+            ("[runner.cli.claude]", "permission_mode = \"dontAsk\""),
+            ("[runner.cli.claude]", "allow_write_call = true"),
+            ("[runner.cli.claude]", "allowed_tools = []"),
+            ("[runner.cli.claude]", "disallowed_tools = []"),
+            ("[runner.cli.claude]", "dangerously_bypass_permissions = true"),
+            ("[runner.cli.claude]", "env_passthrough = [\"CLAUDE_CONFIG_DIR\"]"),
+            ("[runner.cli.codex]", "sandbox = \"read-only\""),
+            ("[runner.cli.codex]", "approval = \"never\""),
+            ("[runner.cli.codex]", "dangerously_bypass_permissions = true"),
+            ("[runner.cli.codex]", "process_names = [\"codex\"]"),
+            ("[runner.cli.codex]", "env_passthrough = []"),
+            ("[runner.cli.opencode]", "process_names = [\"opencode\"]"),
+            ("[runner.cli.opencode]", "env_passthrough = []"),
+            ("[runner.mcp]", "mcp_config_path = \"/x\""),
+        ] {
+            let name = key.split(' ').next().unwrap_or(key);
+            let text = if table.is_empty() {
+                // A key of `[runner]` itself goes right after its header.
+                GOLDEN_BLOCK.replacen("[runner]\n", &format!("[runner]\n{key}\n"), 1)
+            } else {
+                format!("{GOLDEN_BLOCK}\n{table}\n{key}\n")
+            };
+            let error = Config::from_toml(&text).expect_err(key);
             assert!(
-                error.contains("runner.cli.claude.permission_mode") && error.contains("dontAsk"),
-                "{mode}: {error}"
+                error.contains("unknown field") && error.contains(name),
+                "{key}: {error}"
             );
         }
-        Config::from_toml(&format!(
-            "{GOLDEN_BLOCK}\n[runner.cli.claude]\npermission_mode = \"dontAsk\"\n"
-        ))
-        .expect("dontAsk is the one allowed mode");
-        let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.mcp]\nmcp_config_path = \"/x\"\n"))
-            .expect_err("the key is gone");
-        assert!(
-            error.contains("unknown field") && error.contains("mcp_config_path"),
-            "{error}"
-        );
     }
 
+    /// The new keys load and `allow_write_call` lives under `[runner.mcp]`.
     #[test]
-    fn the_tmux_channel_is_off_by_default() {
-        let config = Config::from_toml(GOLDEN_BLOCK).expect("block");
-        assert!(!config.runner.tmux.enabled);
-    }
-
-    /// claude's configuration directory is the runner's: it cannot be handed over through
-    /// `env_passthrough`.
-    #[test]
-    fn the_claude_config_dir_cannot_be_passed_through() {
-        let error = Config::from_toml(&format!(
-            "{GOLDEN_BLOCK}\n[runner.cli.claude]\nenv_passthrough = [\"CLAUDE_CONFIG_DIR\"]\n"
+    fn the_session_keys_load() {
+        let config = Config::from_toml(&format!(
+            "{GOLDEN_BLOCK}\n[runner.cli.claude]\nlaunch_command = [\"claude\", \"--model\", \"x\"]\n\
+             headless_args = []\nhooks = false\n[runner.cli.codex]\nheadless_args = [\"--sandbox\", \"read-only\"]\n\
+             [runner.mcp]\nallow_write_call = true\n"
         ))
-        .expect_err("refused");
-        assert!(error.contains("env_passthrough"), "{error}");
+        .expect("loads");
+        assert_eq!(config.runner.cli.claude.launch_command, ["claude", "--model", "x"]);
+        assert!(!config.runner.cli.claude.hooks && config.runner.mcp.allow_write_call);
+        assert_eq!(config.runner.cli.codex.headless_args, ["--sandbox", "read-only"]);
     }
 
     #[test]

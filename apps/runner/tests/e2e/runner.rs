@@ -137,7 +137,7 @@ async fn a_headless_task_runs_in_the_canonical_directory_and_is_failed_when_left
     let lines = wait_lines(&fx.record, 6, Duration::from_secs(10));
     assert_eq!(Path::new(&lines[0]), fx.project.as_path(), "{lines:?}");
     assert!(lines.iter().any(|l| l == "--permission-mode"), "{lines:?}");
-    assert!(lines.iter().any(|l| l == "dontAsk"), "{lines:?}");
+    assert!(lines.iter().any(|l| l == "bypassPermissions"), "{lines:?}");
     assert!(
         lines
             .iter()
@@ -207,7 +207,6 @@ async fn refusals_carry_a_code_and_never_a_path() {
     let mut cases: Vec<(Value, &str)> = vec![
         (view(&outside_path, "headless", true), "path_outside_allowlist"),
         (view(&fx.project.join("absent"), "headless", true), "path_missing"),
-        (view(&fx.project, "tmux", true), "tmux_channel_disabled"),
     ];
     let mut disabled = view(&fx.project, "headless", true);
     disabled["execution"]["enabled"] = json!(false);
@@ -321,7 +320,7 @@ fn state_path(fx: &Fixture) -> std::path::PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_headless_cli_gets_only_the_runners_configuration() {
+async fn the_headless_cli_gets_the_runners_mcp_file_and_tool_list_and_nothing_stricter() {
     let fx = Fixture::new().await;
     // A project that tries to bring its own MCP servers and settings.
     std::fs::write(
@@ -339,7 +338,7 @@ async fn the_headless_cli_gets_only_the_runners_configuration() {
     let mut server = fx.serve();
     let (_, answer) = post_signed(&server.url("/webhook"), &delivery()).await;
     assert_eq!(answer["status"], "dispatched", "{answer}");
-    let lines = wait_lines(&fx.record, 14, Duration::from_secs(10));
+    let lines = wait_lines(&fx.record, 16, Duration::from_secs(10));
     let argv = lines[1..].to_vec();
     let state = state_path(&fx);
     let json = state.join("mcp").join(format!("{BOT}.claude.json"));
@@ -348,33 +347,35 @@ async fn the_headless_cli_gets_only_the_runners_configuration() {
             .position(|a| a == flag)
             .unwrap_or_else(|| panic!("{flag} missing: {argv:?}"))
     };
-    // Strict MCP with the runner's own file, outside the project.
+    // The runner's own MCP file, outside the project; the operator's and the project's MCP servers
+    // and settings are left alone (no strict config, no setting-source limit).
     assert_eq!(argv[at("--mcp-config") + 1], json.to_string_lossy());
-    assert!(argv.iter().any(|a| a == "--strict-mcp-config"));
     assert!(!json.starts_with(&fx.project));
-    // Committed project and local settings are not loaded; only the user's own.
-    assert_eq!(argv[at("--setting-sources") + 1], "user");
-    // An explicit allow list: the eight task and entry tools and the confined read tools.
+    for absent in [
+        "--strict-mcp-config",
+        "--setting-sources",
+        "--settings",
+        "--disallowedTools",
+    ] {
+        assert!(!argv.iter().any(|a| a == absent), "{absent}: {argv:?}");
+    }
+    // The prompt follows `-p`; the operator's arguments (default: bypass) come next.
+    assert_eq!(at("-p"), 0);
+    assert_eq!(argv[at("--permission-mode") + 1], "bypassPermissions");
+    // The allow list holds the eight task and entry tools only.
     let allowed_at = at("--allowedTools");
     let allowed: Vec<&String> = argv[allowed_at + 1..]
         .iter()
         .take_while(|a| !a.starts_with("--"))
         .collect();
-    assert_eq!(allowed.len(), 11, "{allowed:?}");
+    assert_eq!(allowed.len(), 8, "{allowed:?}");
     assert!(allowed.iter().any(|a| *a == "mcp__sylvode__sylvode_task_get"));
     assert!(
         allowed
             .iter()
-            .all(|a| !a.contains("Bash") && !a.contains("sylvode_write")),
+            .all(|a| a.starts_with("mcp__sylvode__") && !a.contains("sylvode_write")),
         "{allowed:?}"
     );
-    assert!(
-        allowed
-            .iter()
-            .any(|a| a.starts_with("Read(//") && a.ends_with("/svwl/**)")),
-        "{allowed:?}"
-    );
-    assert_eq!(argv[at("--permission-mode") + 1], "dontAsk");
     // The files hold the token once, with private modes, and no argument holds it.
     assert!(argv.iter().all(|a| !a.contains("opr_")), "{argv:?}");
     let toml = std::fs::read_to_string(state.join("mcp").join(format!("{BOT}.toml"))).expect("toml");
@@ -397,22 +398,22 @@ async fn the_headless_cli_gets_only_the_runners_configuration() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_headless_cli_gets_an_allow_listed_environment() {
+async fn the_headless_cli_gets_the_operators_environment_minus_the_agent_variables() {
     let fx = Fixture::new().await;
     fx.set_view(vec![(200, view(&fx.project, "headless", true))]);
     let server = {
-        let config = fx.config_with("env_passthrough = [\"SVT_PASS_ME\"]");
+        let config = fx.config_with("");
         Server::start(
             RUNNER,
             &config,
             &[
-                ("SV_SENTINEL_SECRET", "leak"),
-                ("AWS_SECRET_ACCESS_KEY", "leak"),
-                ("GITHUB_TOKEN", "leak"),
-                ("SSH_AUTH_SOCK", "/tmp/leak"),
-                ("SVT_CANARY", "leak"),
-                ("SVT_PASS_ME", "kept"),
+                ("SV_SENTINEL_SECRET", "operator"),
+                ("SSH_AUTH_SOCK", "/tmp/operator-agent"),
+                ("SVT_CANARY", "operator"),
+                ("CLAUDE_CONFIG_DIR", "/operator/claude"),
                 ("CLAUDECODE", "1"),
+                ("CLAUDE_CODE_ENTRYPOINT", "cli"),
+                ("TMUX", "/tmp/tmux-1/default,1,0"),
                 ("LC_ALL", "C"),
             ],
         )
@@ -434,36 +435,19 @@ async fn the_headless_cli_gets_an_allow_listed_environment() {
     let names_text = std::fs::read_to_string(&names_file).expect("names");
     let env = std::fs::read_to_string(&values_file).expect("values");
     let names: Vec<&str> = names_text.lines().collect();
-    for leaked in [
-        "SV_SENTINEL_SECRET",
-        "AWS_SECRET_ACCESS_KEY",
-        "GITHUB_TOKEN",
-        "SSH_AUTH_SOCK",
-        "SVT_CANARY",
-        "CLAUDECODE",
-    ] {
-        assert!(!names.contains(&leaked), "{leaked} reached the CLI");
+    // The operator's variables reach the CLI: it runs with their environment and login.
+    for kept in ["SV_SENTINEL_SECRET", "SSH_AUTH_SOCK", "SVT_CANARY", "LC_ALL", "PATH"] {
+        assert!(names.contains(&kept), "{kept} did not reach the CLI: {names:?}");
     }
-    assert!(!env.contains("leak"), "a test-owned value reached the CLI");
-    assert!(env.contains("SVT_PASS_ME=kept"), "{env}");
-    assert!(
-        names.contains(&"SVT_PASS_ME") && names.contains(&"PATH") && names.contains(&"LC_ALL"),
-        "{names:?}"
-    );
-    // claude gets a configuration directory of the runner's own (the operator's `~/.claude` is
-    // not loaded), private, under the state directory, one per bot.
-    let config_dir = env
-        .lines()
-        .find_map(|l| l.strip_prefix("CLAUDE_CONFIG_DIR="))
-        .expect("CLAUDE_CONFIG_DIR is set by the runner");
-    assert!(
-        config_dir.ends_with(&format!("/claude/{BOT}")) && config_dir.contains("/s/"),
-        "{config_dir}"
-    );
-    assert_eq!(
-        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(config_dir).expect("dir").permissions()) & 0o777,
-        0o700
-    );
+    assert!(env.contains("SVT_CANARY=operator"), "{env}");
+    // The three agent variables never do.
+    for gone in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "TMUX"] {
+        assert!(!names.contains(&gone), "{gone} reached the CLI");
+    }
+    // No configuration directory of the runner's: the operator's own value is passed untouched,
+    // and nothing is created under the state directory.
+    assert!(env.contains("CLAUDE_CONFIG_DIR=/operator/claude"), "{env}");
+    assert!(!state_path(&fx).join("claude").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -638,10 +622,12 @@ async fn start_up_logs_the_posture_of_every_cli_and_warns_about_opencode() {
         .config_with("")
         .replace("[runner.mcp]", "[runner.cli.opencode]\nenabled = true\n[runner.mcp]");
     let mut server = Server::start(RUNNER, &config, &[]).expect("starts");
+    // The defaults turn permission checks off: the start-up line says so, as a warning.
     assert!(server.wait_for_line(
-        "runner CLI posture: claude: permission_mode = dontAsk",
+        "runner CLI posture: claude: session launch command",
         Duration::from_secs(5)
     ));
+    assert!(server.wait_for_line("PERMISSION CHECKS ARE OFF", Duration::from_secs(5)));
     assert!(server.wait_for_line("runner CLI posture: codex: disabled", Duration::from_secs(5)));
     assert!(server.wait_for_line(
         "opencode permissions are not controlled by sylvode-runner",
@@ -654,7 +640,7 @@ async fn start_up_logs_the_posture_of_every_cli_and_warns_about_opencode() {
     assert!(warned, "{:?}", server.stdout());
 }
 
-/// A missing tmux with the tmux channel switched on degrades the runner (it starts, `/health` says
+/// A missing tmux degrades the runner (it starts, `/health` says
 /// so and names the row) instead of refusing to start, and a tmux delivery is refused at once with
 /// a reason code, so the task fails in Sylvode instead of hanging.
 #[tokio::test(flavor = "multi_thread")]
@@ -662,9 +648,7 @@ async fn a_missing_tmux_degrades_the_runner_instead_of_refusing_it() {
     let fx = Fixture::new().await;
     fx.set_view(vec![(200, view(&fx.project, "tmux", true))]);
     let empty = TempDir::new("rn-empty-path");
-    let config = fx
-        .config()
-        .replace("[runner.mcp]", "[runner.tmux]\nenabled = true\n[runner.mcp]");
+    let config = fx.config();
     let server = Server::start(RUNNER, &config, &[("PATH", &empty.path().to_string_lossy())])
         .expect("the runner starts although tmux is missing");
     // `/health` stays plain: the overall status only, with no prerequisite detail.

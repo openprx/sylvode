@@ -510,7 +510,6 @@ async fn channel_and_cli_prerequisites() {
         path
     };
     let mut config = fx.config(addr);
-    config.runner.tmux.enabled = true;
     config.runner.tmux.binary = fx.base.path().join("no-such-tmux").to_string_lossy().into_owned();
     assert_eq!(
         refused(&fx.run(&config, m.clone(), addr, &delivery()).await).0,
@@ -636,36 +635,86 @@ async fn a_refused_delivery_never_binds_a_key() {
     assert_eq!(fx.registry.owner("SVWL").as_deref(), Some(PROJECT));
 }
 
-/// The tmux channel is an operator opt-in: off, a project that asks for it is refused with a stable
-/// code while headless keeps working; codex and opencode are refused on tmux whatever the switch.
+/// There is no operator switch for the tmux channel: a project that asks for it is served, while
+/// codex and opencode are refused on tmux whatever else is set (only claude is verified there).
 #[tokio::test]
-async fn the_tmux_channel_needs_the_operator_switch_and_only_claude_is_verified() {
+async fn the_tmux_channel_has_no_switch_and_only_claude_is_verified() {
     let fx = Fixture::new();
     let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
     let (addr, _server) = serve(m.clone()).await;
-    let config = fx.config(addr);
-    assert!(!config.runner.tmux.enabled, "off by default");
-    let (code, reason) = refused(&fx.run(&config, m, addr, &delivery()).await);
-    assert_eq!(code, "tmux_channel_disabled");
-    assert!(reason.contains("[runner.tmux] enabled = true"), "{reason}");
-    // The headless channel is unaffected by the switch.
-    let m = ok_mock(task_view(&fx.project_dir, "headless", "claude"));
-    let (addr, _server) = serve(m.clone()).await;
-    assert!(matches!(
-        fx.run(&fx.config(addr), m, addr, &delivery()).await,
-        Verdict::Run(_)
-    ));
+    let mut config = fx.config(addr);
+    // A fake tmux that answers its version, so the prerequisite check passes.
+    let path = fx.base.path().join("tmux");
+    fs::write(&path, "#!/bin/sh\necho 'tmux 3.7b'\n").expect("script");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
+    config.runner.tmux.binary = path.to_string_lossy().into_owned();
+    assert!(
+        matches!(fx.run(&config, m, addr, &delivery()).await, Verdict::Run(_)),
+        "no switch is needed"
+    );
     // codex and opencode on tmux: refused entirely, enabled or not.
     for cli in ["codex", "opencode"] {
-        for switch in [false, true] {
-            let m = ok_mock(task_view(&fx.project_dir, "tmux", cli));
+        let m = ok_mock(task_view(&fx.project_dir, "tmux", cli));
+        let (addr, _server) = serve(m.clone()).await;
+        let mut config = fx.config(addr);
+        config.runner.cli.codex.enabled = true;
+        config.runner.cli.opencode.enabled = true;
+        let (code, _) = refused(&fx.run(&config, m, addr, &delivery()).await);
+        assert_eq!(code, "cli_unverified", "{cli}");
+    }
+}
+
+/// The allowed roots decide only when the runner would have to create the session: one that
+/// exists is used as it is, wherever its CLI runs. A headless run always needs them.
+#[tokio::test]
+async fn the_roots_are_checked_only_when_the_session_is_absent() {
+    let fx = Fixture::new();
+    let outside = fx.base.sub("elsewhere");
+    let marker = fx.base.path().join("session-exists");
+    let tmux = fx.base.path().join("tmux");
+    fs::write(
+        &tmux,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = -V ] && {{ echo 'tmux 3.7b'; exit 0; }}; done\n\
+             for a in \"$@\"; do [ \"$a\" = has-session ] && {{ [ -f '{}' ]; exit $?; }}; done\nexit 0\n",
+            marker.display()
+        ),
+    )
+    .expect("tmux");
+    fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let run = |dir: PathBuf, channel: &'static str| {
+        let fx = &fx;
+        let tmux = tmux.clone();
+        async move {
+            let m = ok_mock(task_view(&dir, channel, "claude"));
             let (addr, _server) = serve(m.clone()).await;
             let mut config = fx.config(addr);
-            config.runner.tmux.enabled = switch;
-            config.runner.cli.codex.enabled = true;
-            config.runner.cli.opencode.enabled = true;
-            let (code, _) = refused(&fx.run(&config, m, addr, &delivery()).await);
-            assert_eq!(code, "cli_unverified", "{cli} switch={switch}");
+            config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+            fx.run(&config, m, addr, &delivery()).await
         }
-    }
+    };
+    // No session: a directory outside the roots, or missing, is refused with the path code.
+    assert_eq!(refused(&run(outside.clone(), "tmux").await).0, "path_outside_allowlist");
+    assert_eq!(refused(&run(fx.root.join("absent"), "tmux").await).0, "path_missing");
+    let Verdict::Run(inside) = run(fx.project_dir.clone(), "tmux").await else {
+        panic!("a directory inside the roots is accepted")
+    };
+    assert!(inside.dir_checked);
+    // The session exists: the directory is not checked, the task goes to the session.
+    fs::write(&marker, "").expect("marker");
+    let Verdict::Run(outside_accepted) = run(outside.clone(), "tmux").await else {
+        panic!("an existing session is used wherever its CLI runs")
+    };
+    assert!(!outside_accepted.dir_checked);
+    assert_eq!(outside_accepted.dir, outside);
+    let Verdict::Run(missing_accepted) = run(fx.root.join("absent"), "tmux").await else {
+        panic!("an existing session is used whatever its recorded directory")
+    };
+    assert!(!missing_accepted.dir_checked);
+    let Verdict::Run(inside_again) = run(fx.project_dir.clone(), "tmux").await else {
+        panic!("accepted")
+    };
+    assert!(inside_again.dir_checked, "a directory that passes is marked as checked");
+    // A headless run has no session: the roots always apply.
+    assert_eq!(refused(&run(outside, "headless").await).0, "path_outside_allowlist");
 }

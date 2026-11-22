@@ -38,6 +38,8 @@ pub mod recovery;
 pub mod registry;
 #[allow(dead_code, reason = "wired in by the application")]
 pub mod session;
+pub mod session_report;
+pub mod setup;
 pub mod sv_client;
 
 #[allow(dead_code, reason = "used by the session manager, which is a later package")]
@@ -82,7 +84,11 @@ mod runtime_tests;
 #[cfg(test)]
 mod sanitize_tests;
 #[cfg(test)]
+mod session_report_tests;
+#[cfg(test)]
 mod session_tests;
+#[cfg(test)]
+mod setup_tests;
 #[cfg(test)]
 mod sv_client_tests;
 
@@ -240,83 +246,45 @@ pub struct PostureLine {
     pub text: String,
 }
 
-/// Whether an extra allowed tool is a read rule confined to the project directory: exactly
-/// `Read|Glob|Grep(/{dir}/...)`, with no `..`, no `~` and nothing that could name another place.
-/// Judged on the text as normalised (a `..` segment is refused outright rather than resolved).
-fn confined_read(tool: &str) -> bool {
-    let Some(inner) = ["Read(", "Glob(", "Grep("]
-        .iter()
-        .find_map(|prefix| tool.strip_prefix(prefix))
-        .and_then(|rest| rest.strip_suffix(')'))
-    else {
-        return false;
-    };
-    let Some(tail) = inner.strip_prefix("/{dir}/") else {
-        return false;
-    };
-    !tail.is_empty()
-        && !tail.contains("{dir}")
-        && !tail.contains('~')
-        && !tail.starts_with('/')
-        && !tail.contains("//")
-        && tail.split('/').all(|segment| segment != ".." && segment != ".")
+/// Whether command words turn the permission checks of the CLI off: `--dangerously-skip-permissions`
+/// or `--permission-mode bypassPermissions` (also written `--permission-mode=bypassPermissions`).
+pub fn words_bypass_permissions(words: &[String]) -> bool {
+    words.iter().enumerate().any(|(at, word)| {
+        word == "--dangerously-skip-permissions"
+            || word == "--permission-mode=bypassPermissions"
+            || (word == "--permission-mode" && words.get(at + 1).is_some_and(|next| next == "bypassPermissions"))
+    })
 }
 
-/// The permission posture of every CLI the `runner` agents can start: one line each, and a warning
-/// for opencode (whose permissions the runner does not control) and for any setting that turns
-/// permission checks off.
+/// The posture of every CLI the `runner` agents can start: one line each, and a warning for any
+/// command that turns permission checks off (the default does) and for opencode (whose permissions
+/// the runner does not control).
 pub fn posture(config: &Config) -> Vec<PostureLine> {
-    use crate::executor_permissions::ExecutorPermissions;
     let runner = &config.runner;
-    let mut lines = Vec::new();
     let claude = &runner.cli.claude;
-    // Every extra allowed tool is named: a task can use all of them. Anything but a read rule
-    // confined to the project directory widens what a task can do, and is a warning.
-    let extras = if claude.allowed_tools.is_empty() {
-        "none".to_string()
-    } else {
-        format!("[{}]", claude.allowed_tools.join(", "))
-    };
-    let widened = claude.allowed_tools.iter().any(|tool| !confined_read(tool));
-    let write = if claude.allow_write_call {
-        " + sylvode_write"
-    } else {
-        ""
-    };
-    let settings = headless::settings_for(runner, "claude");
-    let bypass = ExecutorPermissions::from_config(&settings).is_ok_and(|p| p.bypasses_permissions());
-    lines.push(PostureLine {
-        warn: bypass || widened,
+    let launch_bypass = words_bypass_permissions(&claude.launch_command);
+    let headless_bypass = words_bypass_permissions(&claude.headless_args);
+    let mut lines = vec![PostureLine {
+        warn: launch_bypass || headless_bypass,
         text: format!(
-            "claude: permission_mode = {}, allowed tools = the {} search-mode Sylvode tools{write} + Read/Glob/Grep in the \
-             project directory + extra allowed tools {extras}, extra disallowed tools {:?}, strict MCP config from the \
-             runner's own file, project settings not loaded, the operator's ~/.claude not loaded (CLAUDE_CONFIG_DIR \
-             is the runner's own){}{}",
-            claude.permission_mode,
-            launch::SEARCH_MODE_TOOLS.len(),
-            claude.disallowed_tools,
-            if bypass { "; PERMISSION CHECKS ARE OFF" } else { "" },
-            if widened {
-                "; THE EXTRA TOOLS WIDEN WHAT A TASK CAN DO"
+            "claude: session launch command {:?}, headless arguments {:?}; the CLI runs as this user with this user's \
+             environment and login{}",
+            claude.launch_command,
+            claude.headless_args,
+            if launch_bypass || headless_bypass {
+                "; PERMISSION CHECKS ARE OFF"
             } else {
                 ""
             }
         ),
-    });
+    }];
     let codex = &runner.cli.codex;
-    let settings = headless::settings_for(runner, "codex");
-    let codex_open = ExecutorPermissions::from_config(&settings).is_ok_and(|p| p.bypasses_permissions());
     lines.push(PostureLine {
-        warn: codex_open,
+        warn: false,
         text: format!(
-            "codex: {}, sandbox = {}, approvals never{}",
+            "codex: {}, headless arguments {:?}",
             if codex.enabled { "enabled" } else { "disabled" },
-            codex.sandbox,
-            if codex_open && codex.enabled {
-                "; THE SANDBOX IS OFF"
-            } else {
-                ""
-            }
+            codex.headless_args
         ),
     });
     if runner.cli.opencode.enabled {
@@ -331,6 +299,31 @@ pub fn posture(config: &Config) -> Vec<PostureLine> {
         });
     }
     lines
+}
+
+/// Writes the MCP files of every bot of the `runner` agents at start-up (design I2), so an operator
+/// can start a session with them before the first task. A failure is logged; every delivery
+/// writes them again.
+pub fn write_bot_files_at_start(state: &AppState) {
+    use sylvode_prereq::{Checker, InstallKind};
+    let (Ok(files), config) = (&state.runner.state, &state.config) else {
+        return;
+    };
+    let Some(mcp_server) = Checker::new(InstallKind::RunnerHeadless).locate(&config.runner.mcp.server_binary) else {
+        tracing::warn!("the MCP server was not found: the bots' MCP files are written when a task arrives");
+        return;
+    };
+    for target in crate::handshake::targets(config) {
+        let bot = BotCreds {
+            bot_id: target.bot_id.clone(),
+            api_url: target.api_url,
+            workspace_id: target.workspace_id,
+            token: target.token,
+        };
+        if let Err(e) = files.write_bot_files(&bot.mcp_files(&config.runner), &mcp_server) {
+            tracing::warn!("could not write the MCP files of bot {}: {e}", bot.bot_id);
+        }
+    }
 }
 
 /// The one HTTP client of the runner agents: no redirect is ever followed.
@@ -458,12 +451,8 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             if let Ok(files) = &state.runner.state {
                 install_guide(config, files, &accepted).await;
             }
-            let key = accepted.project_key.clone();
-            if let (Ok(files), Ok(session_key)) = (&state.runner.state, tmux::SessionKey::new(&key))
-                && let Err(e) = files.set_headless(&session_key, false)
-            {
-                tracing::warn!("could not clear the headless mark of session {key}: {e}");
-            }
+            let session = tmux::SessionName::new(&accepted.project_key, &accepted.cli)
+                .map_or_else(|_| accepted.project_key.clone(), |name| name.as_str().to_string());
             let queued = sessions.enqueue(session::TmuxTask::from_accepted(&accepted)).await;
             Ok(queued.map_or_else(
                 || {
@@ -478,7 +467,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
                         "status": "dispatched",
                         "channel": "tmux",
                         "agent": agent.id,
-                        "session": key,
+                        "session": session,
                         "queue_position": position,
                     })
                 },
@@ -498,13 +487,6 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             };
             install_guide(config, files, &accepted).await;
             let key = accepted.project_key.clone();
-            // A session this runner made for the project stays idle from now on: mark it so that
-            // `sessions --prune` may remove it.
-            if let Ok(session_key) = tmux::SessionKey::new(&key)
-                && let Err(e) = files.set_headless(&session_key, true)
-            {
-                tracing::warn!("could not mark session {key} as headless: {e}");
-            }
             headless::start(config, &state.background, roots.clone(), prepared, *accepted);
             Ok(json!({
                 "status": "dispatched",

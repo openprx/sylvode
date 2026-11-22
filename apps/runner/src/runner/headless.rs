@@ -1,17 +1,16 @@
 //! The headless channel: the CLI runs once, in the canonical working directory, and ends when its
 //! process ends.
 //!
-//! A run gets only what the runner gives it (design 6.1, 6.6):
-//! - the argument vector of `launch.rs`: the runner's own per-bot MCP file with strict MCP config,
-//!   an explicit allow list, and for claude `--setting-sources user` so committed project settings
-//!   (allow rules, hooks, MCP servers) are not loaded;
-//! - the allow-listed environment of the tmux channel (`tmux::allowed_environment`) plus the
-//!   variables the operator names in `[runner.cli.*] env_passthrough`, nothing else;
+//! A run gets (design section 4):
+//! - the argument vector of `launch.rs`: the operator's `headless_args`, the runner's own per-bot
+//!   MCP file and, for claude, the allow list of the Sylvode tools;
+//! - the runner's own environment minus the agent variables (`tmux::agent_environment`): the
+//!   operator's variables and login, no forced configuration directory;
 //! - a directory that is checked again after any wait for a run slot, immediately before the
 //!   process starts. The process is started in the canonical path; handing it a verified
 //!   descriptor would need an `unsafe` `fchdir` between fork and exec, which this crate forbids,
 //!   so the path is re-canonicalised and compared instead. A swap after that check, by a process of
-//!   the runner's own user, remains possible (design 6.2).
+//!   the runner's own user, remains possible.
 //!
 //! The prompt is the task message of design section 4.9. When the process ends and Sylvode still
 //! shows the task active, the runner fails it (`source: "runner"`): not retryable when the agent
@@ -22,12 +21,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::checks::{Accepted, Refusal};
-use super::config::RunnerConfig;
 use super::files::StateDir;
 use super::launch;
 use super::paths::AllowedRoots;
 use crate::config::Config;
-use crate::executor_permissions::ExecutorSettings;
 use crate::process::{self, End};
 
 /// How long one headless run may take.
@@ -42,37 +39,11 @@ pub const UNFINISHED_REASON: &str = "agent ended without completing or failing t
 /// The text the task is failed with when the runner cut the run short.
 pub const CUT_SHORT_REASON: &str = "the runner stopped the run before the agent ended the task";
 
-/// The settings of `cli` as the permission validation takes them. The launch code validates its
-/// permissions through the same settings, so every channel refuses the same combinations.
-pub fn settings_for(runner: &RunnerConfig, cli: &str) -> ExecutorSettings {
-    match cli {
-        "claude" => {
-            let claude = &runner.cli.claude;
-            let mut cfg = ExecutorSettings::new("claude-code");
-            cfg.permission_mode = Some(claude.permission_mode.clone());
-            cfg.dangerously_bypass_permissions = claude.dangerously_bypass_permissions;
-            cfg
-        }
-        "codex" => {
-            let codex = &runner.cli.codex;
-            let mut cfg = ExecutorSettings::new("codex");
-            cfg.sandbox = Some(codex.sandbox.clone());
-            cfg.dangerously_bypass_permissions = codex.dangerously_bypass_permissions;
-            cfg
-        }
-        _ => ExecutorSettings::new("opencode"),
-    }
-}
-
 /// What a run needs, decided before the delivery is answered.
 #[derive(Debug)]
 pub struct Prepared {
     pub program: PathBuf,
     pub args: Vec<String>,
-    /// The operator's pass-through variable names for this CLI.
-    pub passthrough: Vec<String>,
-    /// Variables the runner sets itself (`CLAUDE_CONFIG_DIR`).
-    pub set_env: Vec<(String, String)>,
 }
 
 fn refusal(code: &'static str, reason: impl Into<String>) -> Refusal {
@@ -80,21 +51,6 @@ fn refusal(code: &'static str, reason: impl Into<String>) -> Refusal {
         code,
         reason: reason.into(),
     }
-}
-
-/// Whether the project directory holds configuration of the CLI that the runner cannot switch off
-/// (codex, opencode) and that could widen what the run may do.
-fn has_project_cli_files(cli: &str, dir: &Path) -> bool {
-    let names: &[&str] = match cli {
-        "codex" => &[".codex", "AGENTS.md"],
-        "opencode" => &["opencode.json", "opencode.jsonc", ".opencode"],
-        _ => &[],
-    };
-    // AGENTS.md is guidance, not a permission source; only the configuration directories count.
-    names
-        .iter()
-        .filter(|name| **name != "AGENTS.md")
-        .any(|name| std::fs::symlink_metadata(dir.join(name)).is_ok())
 }
 
 /// Writes the per-bot files and builds the argument vector.
@@ -105,88 +61,37 @@ fn has_project_cli_files(cli: &str, dir: &Path) -> bool {
 pub fn prepare(config: &Config, state: &StateDir, accepted: &Accepted, mcp_server: &Path) -> Result<Prepared, Refusal> {
     let runner = &config.runner;
     let bot = &accepted.bot;
-    if matches!(accepted.cli.as_str(), "codex" | "opencode")
-        && has_project_cli_files(&accepted.cli, &accepted.dir)
-        && !runner.trust_project_files.contains(&accepted.project_key)
-    {
-        return Err(refusal(
-            "workspace_untrusted",
-            format!(
-                "the project directory has {} configuration that the runner cannot switch off; the operator must \
-                 add the project to runner.trust_project_files",
-                accepted.cli
-            ),
-        ));
-    }
-    state
-        .write_bot_files(&bot.mcp_files(runner, &accepted.cli), mcp_server)
-        .map_err(|e| {
-            tracing::error!("could not write the MCP files of bot {}: {e}", bot.bot_id);
-            refusal(
-                "runner_agent_disabled",
-                "the runner could not prepare the MCP configuration",
-            )
-        })?;
+    state.write_bot_files(&bot.mcp_files(runner), mcp_server).map_err(|e| {
+        tracing::error!("could not write the MCP files of bot {}: {e}", bot.bot_id);
+        refusal(
+            "runner_agent_disabled",
+            "the runner could not prepare the MCP configuration",
+        )
+    })?;
     let toml = state.mcp_toml(&bot.bot_id);
     let claude_json = state.claude_mcp_json(&bot.bot_id);
     let prompt = &accepted.message;
-    let (args, passthrough) = match accepted.cli.as_str() {
-        "claude" => (
-            launch::claude_headless_argv(
-                &accepted.program,
-                &runner.cli.claude,
-                &accepted.dir,
-                &claude_json,
-                &super::launch::Protected {
-                    state_dir: state.root(),
-                    config_file: config.config_path.as_deref(),
-                },
-                prompt,
-            ),
-            runner.cli.claude.env_passthrough.clone(),
+    let args = match accepted.cli.as_str() {
+        "claude" => launch::claude_headless_argv(
+            &accepted.program,
+            &runner.cli.claude,
+            &claude_json,
+            runner.mcp.allow_write_call,
+            prompt,
         ),
-        "codex" => (
-            launch::codex_headless_argv(
-                &accepted.program,
-                &runner.cli.codex,
-                &accepted.dir,
-                mcp_server,
-                &toml,
-                prompt,
-            ),
-            runner.cli.codex.env_passthrough.clone(),
-        ),
-        _ => (
-            launch::opencode_headless_argv(&accepted.program, prompt),
-            runner.cli.opencode.env_passthrough.clone(),
-        ),
+        "codex" => launch::codex_headless_argv(&accepted.program, &runner.cli.codex, mcp_server, &toml, prompt),
+        _ => launch::opencode_headless_argv(&accepted.program, prompt),
     };
-    let args = args.map_err(|e| match e {
-        launch::LaunchError::Unsafe(why) => refusal("path_outside_allowlist", why),
-        launch::LaunchError::Permissions(why) => {
-            tracing::error!("headless permissions refused: {why}");
-            refusal(
-                "runner_agent_disabled",
-                "the runner's permission settings for this CLI are not valid",
-            )
-        }
+    let args = args.map_err(|e| {
+        tracing::error!("headless launch refused: {e}");
+        refusal(
+            "runner_agent_disabled",
+            "the runner could not build the command line for this CLI",
+        )
     })?;
-    let mut set_env = Vec::new();
-    if accepted.cli == "claude" {
-        let dir = state.ensure_claude_config_dir(&accepted.bot.bot_id).map_err(|e| {
-            tracing::error!("could not prepare the claude configuration directory: {e}");
-            refusal(
-                "runner_agent_disabled",
-                "the runner could not prepare the CLI's configuration directory",
-            )
-        })?;
-        set_env.push(("CLAUDE_CONFIG_DIR".to_string(), dir.to_string_lossy().into_owned()));
-    }
     Ok(Prepared {
         program: accepted.program.clone(),
         args,
-        passthrough,
-        set_env,
     })
 }
 
@@ -198,7 +103,8 @@ pub struct RunEnd {
     pub exit_code: Option<i32>,
 }
 
-/// Starts the CLI in `dir` with the allow-listed environment and waits for it.
+/// Starts the CLI in `dir` with the operator's environment (minus the agent variables) and waits
+/// for it.
 pub async fn execute(
     prepared: &Prepared,
     dir: &Path,
@@ -213,10 +119,7 @@ pub async fn execute(
     };
     let mut command = tokio::process::Command::new(&prepared.program);
     command.args(args).current_dir(dir).env_clear();
-    for (name, value) in super::tmux::allowed_environment(&prepared.passthrough, false) {
-        command.env(name, value);
-    }
-    for (name, value) in &prepared.set_env {
+    for (name, value) in super::tmux::agent_environment() {
         command.env(name, value);
     }
     match process::run(command, timeout, process::TERMINATION_GRACE, cancel).await {

@@ -42,14 +42,10 @@ fn the_install_kind_follows_the_mode_and_the_agents() {
     assert_eq!(install_kind(Some(&plain), Mode::Tmux), InstallKind::RunnerTmux);
     assert_eq!(install_kind(Some(&plain), Mode::Headless), InstallKind::RunnerHeadless);
     assert_eq!(install_kind(Some(&plain), Mode::Auto), InstallKind::RunnerForwardOnly);
-    // `auto` with runner agents follows `[runner.tmux] enabled`.
-    let off = crate::config::Config::from_toml(include_str!("../../api/tests/fixtures/runner-config-block.toml"))
+    // `auto` with runner agents may be asked for tmux sessions: the channel is chosen in Sylvode.
+    let block = crate::config::Config::from_toml(include_str!("../../api/tests/fixtures/runner-config-block.toml"))
         .expect("block");
-    assert!(!off.runner.tmux.enabled);
-    assert_eq!(install_kind(Some(&off), Mode::Auto), InstallKind::RunnerHeadless);
-    let mut on = off;
-    on.runner.tmux.enabled = true;
-    assert_eq!(install_kind(Some(&on), Mode::Auto), InstallKind::RunnerTmux);
+    assert_eq!(install_kind(Some(&block), Mode::Auto), InstallKind::RunnerTmux);
     assert_eq!(install_kind(None, Mode::Auto), InstallKind::RunnerForwardOnly);
 }
 

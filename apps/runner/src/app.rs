@@ -29,9 +29,9 @@ Usage: sylvode-runner [CONFIG]
                              [--project KEY] [--show-paths]
        sylvode-runner --check
        sylvode-runner config check [--json] [--config PATH]
-       sylvode-runner sessions [--prune] [--config PATH]
-       sylvode-runner trust KEY [--config PATH]
+       sylvode-runner sessions [--config PATH]
        sylvode-runner release KEY [--config PATH]
+       sylvode-runner setup claude --project KEY [--dir D] [--bot ID] [--apply] [--config PATH]
        sylvode-runner --help | --version
 
 Arguments:
@@ -45,10 +45,9 @@ Commands:
   doctor         Check tmux, the CLIs and the MCP server; exit 0 ok, 2 a failed row, 1 checker error
   --check        doctor --json without network or secrets (for installers and the other binary)
   config check   Say whether the configuration loads, naming the keys that do not
-  sessions       List the tmux sessions this runner created; --prune ends the idle ones whose
-                 project no longer uses tmux
-  trust KEY      Attach to session KEY to answer its trust or login dialog
-  release KEY    Free the session name KEY once its tmux session is gone
+  sessions       List the tmux sessions this runner uses and who started each
+  release KEY    Free the project key KEY once its tmux sessions are gone
+  setup claude   Print (or with --apply write) the Sylvode MCP entry and hooks for a claude you start yourself
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -66,28 +65,22 @@ enum Command {
         config_path: String,
         json: bool,
     },
-    /// `sessions [--prune] [--config P]`.
+    /// `sessions [--config P]`.
     Sessions {
         config_path: String,
-        prune: bool,
-    },
-    /// `trust KEY [--config P]`.
-    Trust {
-        config_path: String,
-        key: String,
     },
     /// `release KEY [--config P]`.
     Release {
         config_path: String,
         key: String,
     },
-    /// `hook --cli C --session K --event E --socket P`: report a CLI turn event to the runner.
+    /// `setup claude --project KEY [--config P] [--dir D] [--bot ID] [--apply]`.
+    Setup(crate::runner::setup::SetupArgs),
+    /// `hook --cli C --event E --socket P`: report a CLI turn event to the runner.
     Hook {
         cli: String,
-        session: String,
         event: String,
         socket: String,
-        nonce: String,
     },
 }
 
@@ -100,10 +93,9 @@ fn flag_value(args: &[OsString], flag: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `sessions [--prune]`, `trust KEY`, `release KEY`, each with an optional `--config PATH`.
+/// `sessions`, `release KEY`, each with an optional `--config PATH`.
 fn parse_operator(word: &str, rest: &[OsString]) -> Result<Command, String> {
     let mut config_path = DEFAULT_CONFIG_PATH.to_string();
-    let mut prune = false;
     let mut key: Option<String> = None;
     let mut items = rest.iter();
     while let Some(item) = items.next() {
@@ -118,23 +110,58 @@ fn parse_operator(word: &str, rest: &[OsString]) -> Result<Command, String> {
                     .ok_or_else(|| "--config needs a path".to_string())?
                     .to_string();
             }
-            "--prune" if word == "sessions" => prune = true,
             other if other.starts_with('-') => return Err(format!("unknown option `{other}` for `{word}`")),
             other if word != "sessions" && key.is_none() => key = Some(other.to_string()),
             other => return Err(format!("unexpected argument `{other}` for `{word}`")),
         }
     }
     match word {
-        "sessions" => Ok(Command::Sessions { config_path, prune }),
-        "trust" => Ok(Command::Trust {
-            config_path,
-            key: key.ok_or_else(|| "`trust` needs a session name".to_string())?,
-        }),
+        "sessions" => Ok(Command::Sessions { config_path }),
         _ => Ok(Command::Release {
             config_path,
-            key: key.ok_or_else(|| "`release` needs a session name".to_string())?,
+            key: key.ok_or_else(|| "`release` needs a project key".to_string())?,
         }),
     }
+}
+
+/// `setup claude --project KEY [--config P] [--dir D] [--bot ID] [--apply]`.
+fn parse_setup(rest: &[OsString]) -> Result<Command, String> {
+    let mut items = rest.iter();
+    match items.next().and_then(|item| item.to_str()) {
+        Some("claude") => {}
+        _ => return Err("`setup` supports claude only: setup claude --project KEY".to_string()),
+    }
+    let mut args = crate::runner::setup::SetupArgs {
+        project: String::new(),
+        config_path: DEFAULT_CONFIG_PATH.to_string(),
+        dir: None,
+        bot: None,
+        apply: false,
+    };
+    while let Some(item) = items.next() {
+        let text = item
+            .to_str()
+            .ok_or_else(|| "arguments must be valid UTF-8".to_string())?;
+        let mut value = |what: &str| -> Result<String, String> {
+            items
+                .next()
+                .and_then(|v| v.to_str())
+                .map(str::to_string)
+                .ok_or_else(|| format!("{what} needs a value"))
+        };
+        match text {
+            "--apply" => args.apply = true,
+            "--project" => args.project = value("--project")?,
+            "--config" => args.config_path = value("--config")?,
+            "--dir" => args.dir = Some(std::path::PathBuf::from(value("--dir")?)),
+            "--bot" => args.bot = Some(value("--bot")?),
+            other => return Err(format!("unknown option `{other}` for `setup`")),
+        }
+    }
+    if args.project.is_empty() {
+        return Err("`setup` needs --project KEY".to_string());
+    }
+    Ok(Command::Setup(args))
 }
 
 /// `doctor ...` and `--check`.
@@ -206,20 +233,21 @@ fn parse_command(args: &[OsString]) -> Result<Command, String> {
         }
         _ => {}
     }
+    if args.first().is_some_and(|first| first == "setup") {
+        return parse_setup(args.get(1..).unwrap_or_default());
+    }
     if args.first().is_some_and(|first| first == "hook") {
         let rest = args.get(1..).unwrap_or_default();
         return Ok(Command::Hook {
             cli: flag_value(rest, "--cli"),
-            session: flag_value(rest, "--session"),
             event: flag_value(rest, "--event"),
             socket: flag_value(rest, "--socket"),
-            nonce: flag_value(rest, "--nonce"),
         });
     }
     if let Some(word) = args
         .first()
         .and_then(|first| first.to_str())
-        .filter(|w| matches!(*w, "sessions" | "trust" | "release"))
+        .filter(|w| matches!(*w, "sessions" | "release"))
     {
         return parse_operator(word, args.get(1..).unwrap_or_default());
     }
@@ -279,19 +307,18 @@ pub fn run() -> ExitCode {
         Command::Serve { config_path } => serve_blocking(&config_path),
         Command::Doctor(options) => crate::doctor::run(&options),
         Command::ConfigCheck { config_path, json } => crate::doctor::config_check(&config_path, json),
-        Command::Sessions { config_path, prune } => crate::runner::cli::run_sessions(&config_path, prune),
-        Command::Trust { config_path, key } => crate::runner::cli::run_trust(&config_path, &key),
+        Command::Sessions { config_path } => crate::runner::cli::run_sessions(&config_path),
         Command::Release { config_path, key } => crate::runner::cli::run_release(&config_path, &key),
-        Command::Hook {
-            cli,
-            session,
-            event,
-            socket,
-            nonce,
-        } => {
+        Command::Setup(args) => crate::runner::setup::run_setup(&args),
+        Command::Hook { cli, event, socket } => {
             // Never reads stdin, never fails: a hook must not block or break the CLI that runs it.
+            // Outside tmux there is nothing to report.
             if !socket.is_empty() {
-                crate::runner::hooks::send(std::path::Path::new(&socket), &cli, &session, &event, &nonce);
+                let who = crate::runner::hooks::PaneIdentity::from_env(
+                    std::env::var("TMUX").ok().as_deref(),
+                    std::env::var("TMUX_PANE").ok().as_deref(),
+                );
+                crate::runner::hooks::send(std::path::Path::new(&socket), &cli, &event, who.as_ref());
             }
             ExitCode::SUCCESS
         }
@@ -404,6 +431,7 @@ async fn serve(config: config::Config) -> ExitCode {
         }
         // Rebuild the sessions' state from Sylvode (restart recovery, design 7.8).
         tokio::spawn(crate::runner::recovery::recover_all(Arc::clone(&state)));
+        crate::runner::write_bot_files_at_start(&state);
         for line in crate::runner::posture(&state.config) {
             if line.warn {
                 tracing::warn!("runner CLI posture: {}", line.text);
@@ -538,7 +566,7 @@ fn start_sessions(
         &state.hook_socket(),
         tx,
         std::time::Duration::from_secs(5),
-        manager.nonce_check(),
+        manager.pane_check(),
     ) {
         tracing::error!("the tmux channel is not available: {e}");
         return None;
@@ -606,21 +634,12 @@ mod tests {
             parse_command(&args(&["sessions"])),
             Ok(Command::Sessions {
                 config_path: "config.toml".to_string(),
-                prune: false
             })
         );
         assert_eq!(
-            parse_command(&args(&["sessions", "--prune", "--config", "/etc/r.toml"])),
+            parse_command(&args(&["sessions", "--config", "/etc/r.toml"])),
             Ok(Command::Sessions {
                 config_path: "/etc/r.toml".to_string(),
-                prune: true
-            })
-        );
-        assert_eq!(
-            parse_command(&args(&["trust", "SVWL"])),
-            Ok(Command::Trust {
-                config_path: "config.toml".to_string(),
-                key: "SVWL".to_string()
             })
         );
         assert_eq!(
@@ -630,14 +649,51 @@ mod tests {
                 key: "SVWL".to_string()
             })
         );
+        // `trust` and `sessions --prune` are gone: the runner never attaches for the operator and
+        // never ends a session.
         for bad in [
-            &["trust"][..],
-            &["release"],
-            &["trust", "A", "B"],
-            &["trust", "--prune", "A"],
+            &["release"][..],
+            &["sessions", "--prune"],
+            &["release", "A", "B"],
             &["sessions", "KEY"],
             &["sessions", "--bogus"],
-            &["trust", "A", "--config"],
+            &["release", "A", "--config"],
+        ] {
+            assert!(parse_command(&args(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn setup_parses_its_options() {
+        let parsed = parse_command(&args(&[
+            "setup",
+            "claude",
+            "--project",
+            "QLA",
+            "--dir",
+            "/w",
+            "--bot",
+            "b",
+            "--apply",
+            "--config",
+            "c.toml",
+        ]));
+        assert_eq!(
+            parsed,
+            Ok(Command::Setup(crate::runner::setup::SetupArgs {
+                project: "QLA".to_string(),
+                config_path: "c.toml".to_string(),
+                dir: Some(std::path::PathBuf::from("/w")),
+                bot: Some("b".to_string()),
+                apply: true,
+            }))
+        );
+        for bad in [
+            &["setup"][..],
+            &["setup", "codex", "--project", "A"],
+            &["setup", "claude"],
+            &["setup", "claude", "--project"],
+            &["setup", "claude", "--project", "A", "--bogus"],
         ] {
             assert!(parse_command(&args(bad)).is_err(), "{bad:?}");
         }

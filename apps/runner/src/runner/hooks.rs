@@ -1,16 +1,20 @@
-//! The hook socket (design section 7.3): the CLIs report turn events by running
+//! The hook socket (design section 3.5): the CLIs report turn events by running
 //! `sylvode-runner hook ...`, which sends one JSON line to `state_dir/hook.sock`.
 //!
-//! The socket accepts exactly one message shape, `{"v":1,"cli","session","event","nonce","ts"}` with a known
-//! CLI, a valid session key and an event that CLI can send, in at most [`MAX_LINE`] bytes. Anything
-//! else is dropped with a `debug` log of its length only: hook input can hold prompt text, which
-//! must not reach logs. The socket lives in the private state directory and is set to mode 0600.
+//! The socket accepts exactly one message shape,
+//! `{"v":2,"cli","event","tmux","pane","seq","ts"}`, with a known CLI, an event that CLI can send,
+//! the socket path of the tmux server and the pane id the sender runs in (both read by the `hook`
+//! subcommand from `TMUX` and `TMUX_PANE`), in at most [`MAX_LINE`] bytes. Anything else, version 1
+//! lines included, is dropped with a `debug` log of its length only: hook input can hold prompt
+//! text, which must not reach logs. The socket lives in the private state directory and is set to
+//! mode 0600. No secret travels: the runner admits a message by who sent it (same user), where it
+//! says it ran (a pane a worker recorded) and whether the sender is below that pane's process.
 //!
-//! The `hook` subcommand ([`send`]) never reads stdin, ignores extra arguments, and gives up within
-//! [`CLIENT_BUDGET`]: it must never block the CLI that runs it.
+//! The `hook` subcommand ([`send`]) never reads stdin, ignores extra arguments, does nothing
+//! outside tmux, and gives up within [`CLIENT_BUDGET`]: it must never block the CLI that runs it.
 
 use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +26,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 
-use super::tmux::SessionKey;
+use super::tmux::PaneId;
 
 /// The longest hook line accepted, in bytes (newline included).
 pub const MAX_LINE: usize = 1024;
@@ -80,12 +84,13 @@ impl HookEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookMessage {
     pub cli: String,
-    pub session: String,
     pub event: HookEvent,
-    /// The per-launch secret of the session; the receiver compares it, in constant time, with the
-    /// one it wrote into that launch's hook command.
-    pub nonce: String,
-    /// The session's own hook counter: events of one session are applied in this order, and one older than the last applied is ignored.
+    /// The socket path of the tmux server the sender runs under.
+    pub tmux: String,
+    /// The pane id (`%N`) the sender runs in.
+    pub pane: String,
+    /// The pane's own hook counter: events of one pane are applied in this order, and one older
+    /// than the last applied is ignored.
     pub seq: u64,
     /// The sender and its parents, innermost first, read while the sender was still connected
     /// (where the platform names the peer): the session's pane process must be among them.
@@ -156,7 +161,7 @@ pub const fn is_same_user(peer: u32, own: u32) -> bool {
 
 /// Whether a message from a sender with this parent chain may reach the session whose pane process
 /// is `pane_pid`. Where the platform names the peer (`Some` chain) the pane must be in the chain,
-/// and an unknown pane is a refusal (fail closed); where it does not (`None`), the nonce alone
+/// and an unknown pane is a refusal (fail closed); where it does not (`None`), the pane pair alone
 /// decides.
 #[must_use]
 pub fn chain_allows(chain: Option<&[u32]>, pane_pid: Option<u32>) -> bool {
@@ -167,19 +172,59 @@ pub fn chain_allows(chain: Option<&[u32]>, pane_pid: Option<u32>) -> bool {
     }
 }
 
-/// The next number of the session's own counter, kept in `<state_dir>/sessions/<KEY>/hook.seq`
-/// under a lock. Every hook of a session takes the next number, so numbers follow the order the
-/// hooks ran in, whatever the wall clock does. `None` when the counter cannot be used.
-pub fn next_seq(state_dir: &Path, session: &str) -> Option<u64> {
+/// Where a hook of this process runs: the tmux server's socket path and PID (from `TMUX`, which
+/// tmux sets as `<socket path>,<server pid>,<session index>`) and the pane (from `TMUX_PANE`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaneIdentity {
+    pub socket: String,
+    pub server_pid: u32,
+    pub pane: String,
+}
+
+impl PaneIdentity {
+    /// `None` outside tmux and for any value that is not well formed: the hook then does nothing.
+    #[must_use]
+    pub fn from_env(tmux: Option<&str>, pane: Option<&str>) -> Option<Self> {
+        let mut parts = tmux?.rsplitn(3, ',');
+        let (_index, pid, socket) = (parts.next()?, parts.next()?, parts.next()?);
+        let server_pid: u32 = pid.parse().ok()?;
+        let pane = pane?;
+        PaneId::new(pane).ok()?;
+        valid_socket_path(socket).then(|| Self {
+            socket: socket.to_string(),
+            server_pid,
+            pane: pane.to_string(),
+        })
+    }
+
+    /// The counter file name part: `<server pid>-<pane number>`.
+    fn counter(&self) -> String {
+        format!("{}-{}", self.server_pid, self.pane.trim_start_matches('%'))
+    }
+}
+
+fn valid_socket_path(path: &str) -> bool {
+    path.starts_with('/') && path.len() <= 512 && !path.chars().any(char::is_control)
+}
+
+/// The next number of a pane's own counter, kept in `<state_dir>/panes/<server pid>-<N>.seq` under
+/// a lock. Every hook of a pane takes the next number, so numbers follow the order the hooks ran
+/// in, whatever the wall clock does. `None` when the counter cannot be used.
+pub fn next_seq(state_dir: &Path, who: &PaneIdentity) -> Option<u64> {
     use std::io::{Read, Seek, SeekFrom};
-    let dir = state_dir.join("sessions").join(session);
+    let dir = state_dir.join("panes");
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .ok()?;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
         .mode(0o600)
-        .open(dir.join("hook.seq"))
+        .open(dir.join(format!("{}.seq", who.counter())))
         .ok()?;
     let started = std::time::Instant::now();
     let mut locked = loop {
@@ -201,6 +246,14 @@ pub fn next_seq(state_dir: &Path, session: &str) -> Option<u64> {
     Some(next)
 }
 
+/// The counter file of a pane, for `doctor` (its modification time is when a hook last ran).
+#[must_use]
+pub fn seq_file(state_dir: &Path, server_pid: u32, pane: &str) -> PathBuf {
+    state_dir
+        .join("panes")
+        .join(format!("{server_pid}-{}.seq", pane.trim_start_matches('%')))
+}
+
 /// Applies events of one session in the order their senders stamped them: an event not newer than
 /// the last applied one is stale (it was overtaken on its way in) and is ignored.
 #[derive(Debug, Default)]
@@ -217,15 +270,6 @@ impl SeqGate {
         self.last = seq;
         true
     }
-}
-
-/// Compares two secrets without stopping at the first difference.
-#[must_use]
-pub fn ct_eq(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.bytes().zip(b.bytes()).fold(0u8, |diff, (x, y)| diff | (x ^ y)) == 0
 }
 
 /// Why a line was dropped.
@@ -247,28 +291,29 @@ pub fn parse_line(line: &[u8]) -> Result<HookMessage, Reject> {
     }
     let value: Value = serde_json::from_slice(line).map_err(|_| Reject::NotJson)?;
     let object = value.as_object().ok_or(Reject::Shape)?;
-    if object.len() != 6
-        || object.get("v").and_then(Value::as_u64) != Some(1)
+    if object.len() != 7
+        || object.get("v").and_then(Value::as_u64) != Some(2)
         || object.get("ts").and_then(Value::as_u64).is_none()
     {
         return Err(Reject::Shape);
     }
     let text = |key: &str| object.get(key).and_then(Value::as_str);
-    let (Some(cli), Some(session), Some(event)) = (text("cli"), text("session"), text("event")) else {
+    let (Some(cli), Some(event), Some(tmux), Some(pane)) = (text("cli"), text("event"), text("tmux"), text("pane"))
+    else {
         return Err(Reject::Shape);
     };
-    let nonce = text("nonce").ok_or(Reject::Shape)?;
-    if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+    let seq = object.get("seq").and_then(Value::as_u64).ok_or(Reject::Shape)?;
+    if !valid_socket_path(tmux) {
         return Err(Reject::Shape);
     }
-    SessionKey::new(session).map_err(|_| Reject::Shape)?;
+    PaneId::new(pane).map_err(|_| Reject::Shape)?;
     let event = HookEvent::parse(cli, event).ok_or(Reject::Shape)?;
     Ok(HookMessage {
         cli: cli.to_string(),
-        session: session.to_string(),
         event,
-        nonce: nonce.to_string(),
-        seq: object.get("ts").and_then(Value::as_u64).unwrap_or(0),
+        tmux: tmux.to_string(),
+        pane: pane.to_string(),
+        seq,
         peer_chain: None,
     })
 }
@@ -320,7 +365,7 @@ pub fn listen_with_check(
 }
 
 /// What decides, per message, whether it may go on (before the sender's ancestry is read, which
-/// costs): the session worker's nonce.
+/// costs): the pane the message names is one a session worker recorded.
 pub type Accept = Arc<dyn Fn(&HookMessage) -> bool + Send + Sync>;
 
 /// The most connections read at once; a flood of same-user connections cannot use up the
@@ -411,10 +456,7 @@ pub fn listen_checked(
                 let message = match message {
                     Some(message) if accept(&message) => Some(message),
                     Some(_) => {
-                        warn_rarely(
-                            &last_warn,
-                            "a hook message with an unknown session or a wrong nonce was dropped",
-                        );
+                        warn_rarely(&last_warn, "a hook message from a pane no session uses was dropped");
                         None
                     }
                     None => None,
@@ -461,14 +503,19 @@ async fn read_line(stream: &mut tokio::net::UnixStream) -> Option<Vec<u8>> {
 }
 
 /// The `hook` subcommand: sends one message to `socket` and returns. Never reads stdin, never
-/// panics, and returns within [`CLIENT_BUDGET`] even when the socket is absent or stuck.
-pub fn send(socket: &Path, cli: &str, session: &str, event: &str, nonce: &str) {
-    // The order stamp is the session's own counter (next to the socket's directory), not a clock.
-    let Some(seq) = socket.parent().and_then(|dir| next_seq(dir, session)) else {
+/// panics, does nothing outside tmux (`who` is `None`), and returns within [`CLIENT_BUDGET`] even
+/// when the socket is absent or stuck.
+pub fn send(socket: &Path, cli: &str, event: &str, who: Option<&PaneIdentity>) {
+    let Some(who) = who else { return };
+    // The order stamp is the pane's own counter (next to the socket), not a clock.
+    let Some(seq) = socket.parent().and_then(|dir| next_seq(dir, who)) else {
         return;
     };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
     let line = serde_json::json!({
-        "v": 1, "cli": cli, "session": session, "event": event, "nonce": nonce, "ts": seq,
+        "v": 2, "cli": cli, "event": event, "tmux": who.socket, "pane": who.pane, "seq": seq, "ts": ts,
     })
     .to_string();
     let socket: PathBuf = socket.to_path_buf();

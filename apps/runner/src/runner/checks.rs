@@ -1,6 +1,6 @@
 //! The synchronous checks of a delivery to a `runner` agent (design section 7.1), in order:
 //! the protocol field, the task view fetched with the task bot's token, the cross-check of project
-//! id and key, execution enabled, the project key and its session-name registry, the working
+//! id and key, execution enabled, the project key and its key registry, the working
 //! directory against the allowed roots, and the channel and CLI prerequisites.
 //!
 //! A refusal carries a code from the design's list and a one-line reason without any path; the
@@ -42,16 +42,16 @@ impl BotCreds {
         })
     }
 
-    /// What goes into this bot's MCP file for a launch of `cli`: the one place the file's
-    /// settings are decided, for the interactive and the headless channel alike.
-    pub fn mcp_files<'a>(&'a self, runner: &'a RunnerConfig, cli: &str) -> BotFiles<'a> {
+    /// What goes into this bot's MCP file: the one place the file's settings are decided, for the
+    /// interactive and the headless channel alike.
+    pub fn mcp_files<'a>(&'a self, runner: &'a RunnerConfig) -> BotFiles<'a> {
         BotFiles {
             bot_id: &self.bot_id,
             api_url: &self.api_url,
             workspace_id: &self.workspace_id,
             token: &self.token,
             tool_mode: &runner.mcp.tool_mode,
-            allow_write_call: cli == "claude" && runner.cli.claude.allow_write_call,
+            allow_write_call: runner.mcp.allow_write_call,
         }
     }
 }
@@ -106,6 +106,8 @@ pub struct Accepted {
     pub message: String,
     /// The canonical working directory; the only form of the path used from here on.
     pub dir: PathBuf,
+    /// The directory passed the allowed roots (always, unless the tmux session already exists).
+    pub dir_checked: bool,
     pub channel: Channel,
     /// `claude`, `codex` or `opencode`.
     pub cli: String,
@@ -126,7 +128,7 @@ pub enum Verdict {
     Unavailable,
 }
 
-/// Whether `key` is a valid session name: `^[A-Z0-9]{1,32}$`.
+/// Whether `key` is a valid project key (the first part of a session name): `^[A-Z0-9]{1,32}$`.
 pub fn valid_project_key(key: &str) -> bool {
     !key.is_empty() && key.len() <= 32 && key.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
@@ -234,17 +236,7 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
             "another project already uses this session name on this runner",
         );
     }
-    // 6. The working directory.
-    let raw_dir = str_at(execution, &["working_directory"]).unwrap_or_default();
-    let dir = match roots.check_directory(raw_dir) {
-        Ok(dir) => dir,
-        Err(refusal) => {
-            tracing::info!(code = refusal.code, directory = ?raw_dir, "working directory declined");
-            return refuse(refusal.code, refusal.reason);
-        }
-    };
-    tracing::info!(directory = ?dir, "working directory accepted");
-    // 7. Channel and CLI.
+    // 6. Channel and CLI.
     let channel = match str_at(execution, &["channel"]) {
         Some("tmux") => Channel::Tmux,
         Some("headless") => Channel::Headless,
@@ -256,27 +248,50 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         }
     };
     let cli = str_at(execution, &["cli"]).unwrap_or_default().to_string();
-    if channel == Channel::Tmux {
+    let tmux = if channel == Channel::Tmux {
         // codex and opencode have no verified tmux behaviour (readiness, dialogs, permissions):
-        // refused whatever the switch says.
+        // refused whatever else is set.
         if cli != "claude" {
             return refuse(
                 "cli_unverified",
                 format!("the {cli} CLI is not verified for the tmux channel; use the headless channel"),
             );
         }
-        if !runner.tmux.enabled {
-            return refuse(
-                "tmux_channel_disabled",
-                "the tmux channel is not enabled on this runner (operator opt-in: [runner.tmux] enabled = true)",
-            );
+        match tmux_prerequisites(runner).await {
+            Ok(tmux) => Some(tmux),
+            Err(refusal) => return Verdict::Refused(refusal),
         }
-    }
-    if channel == Channel::Tmux
-        && let Some(refusal) = tmux_prerequisites(runner).await
-    {
-        return Verdict::Refused(refusal);
-    }
+    } else {
+        None
+    };
+    // 7. The working directory. A session that exists is used as it is, wherever its CLI runs, so
+    // the allowed roots decide only when the runner would have to create the session (and always
+    // for a headless run). A directory that cannot be used for an existing session is carried on
+    // as the path given, and marked as not checked: should the session be gone when the task is
+    // served, the runner declines to create it.
+    let raw_dir = str_at(execution, &["working_directory"]).unwrap_or_default();
+    let session_exists = match &tmux {
+        Some(tmux) => {
+            let Ok(name) = super::tmux::SessionName::new(project_key, &cli) else {
+                return refuse("invalid_project_key", "the project key is not a valid session name");
+            };
+            let tmux = tmux.clone();
+            match tokio::task::spawn_blocking(move || tmux.has_session(&name)).await {
+                Ok(Ok(exists)) => exists,
+                _ => return refuse("tmux_unavailable", "the tmux session could not be looked up"),
+            }
+        }
+        None => false,
+    };
+    let (dir, dir_checked) = match roots.check_directory(raw_dir) {
+        Ok(dir) => (dir, true),
+        Err(_) if session_exists => (PathBuf::from(raw_dir), false),
+        Err(refusal) => {
+            tracing::info!(code = refusal.code, directory = ?raw_dir, "working directory declined");
+            return refuse(refusal.code, refusal.reason);
+        }
+    };
+    tracing::info!(directory = ?dir, checked = dir_checked, "working directory");
     let (enabled, binary) = match cli.as_str() {
         "claude" => (true, &runner.cli.claude.binary),
         "codex" => (runner.cli.codex.enabled, &runner.cli.codex.binary),
@@ -319,6 +334,7 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         project_id: project_id.to_string(),
         message,
         dir,
+        dir_checked,
         channel,
         cli,
         program,
@@ -330,29 +346,38 @@ fn refuse(code: &'static str, reason: impl Into<String>) -> Verdict {
     Verdict::Refused(Refusal::new(code, reason))
 }
 
-/// tmux must be on this runner and at least the configured minimum (never below 3.2).
-async fn tmux_prerequisites(runner: &super::config::RunnerConfig) -> Option<Refusal> {
+/// tmux must be on this runner and at least the configured minimum (never below 3.2). The driver
+/// is returned for the lookups that follow.
+async fn tmux_prerequisites(runner: &super::config::RunnerConfig) -> Result<super::tmux::Tmux, Refusal> {
     use sylvode_prereq::probe::parse_tmux_version;
+    let unavailable = |reason: &str| Refusal::new("tmux_unavailable", reason);
     let Some(program) = Checker::new(InstallKind::RunnerTmux).locate(&runner.tmux.binary) else {
-        return Some(Refusal::new("tmux_unavailable", "tmux was not found on this runner"));
+        return Err(unavailable("tmux was not found on this runner"));
     };
-    let socket = super::tmux::SocketName::new(&runner.tmux.socket_name).ok()?;
+    let socket = super::tmux::SocketName::new(&runner.tmux.socket_name)
+        .map_err(|_| unavailable("the tmux socket name is not valid"))?;
     let tmux = super::tmux::Tmux::new(socket).with_program(program);
-    let version = tokio::task::spawn_blocking(move || tmux.version()).await.ok()?.ok();
+    let probe = tmux.clone();
+    let version = tokio::task::spawn_blocking(move || probe.version())
+        .await
+        .map_err(|_| unavailable("the tmux version could not be read"))?
+        .ok();
     let Some(parsed) = version.as_deref().and_then(parse_tmux_version) else {
-        return Some(Refusal::new("tmux_unavailable", "the tmux version could not be read"));
+        return Err(unavailable("the tmux version could not be read"));
     };
-    let min = {
-        let (major, minor) = runner.tmux.min_version.split_once('.')?;
-        (major.parse().ok()?, minor.parse().ok()?)
-    };
+    let min = runner
+        .tmux
+        .min_version
+        .split_once('.')
+        .and_then(|(major, minor)| Some((major.parse().ok()?, minor.parse().ok()?)))
+        .ok_or_else(|| unavailable("the configured tmux minimum is not valid"))?;
     if !parsed.meets(min) {
-        return Some(Refusal::new(
+        return Err(Refusal::new(
             "tmux_unavailable",
             format!("tmux {} is older than {}", parsed.display, runner.tmux.min_version),
         ));
     }
-    None
+    Ok(tmux)
 }
 
 /// The task message of design section 4.9 for the view of a task: the issue or proposal it is

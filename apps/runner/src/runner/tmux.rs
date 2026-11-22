@@ -1,26 +1,31 @@
 //! The tmux driver: every interaction with tmux as an argument vector.
 //!
-//! # Safety rules (design sections 6.4 and 6.5, amended by the security review)
+//! # Safety rules
 //!
 //! - **No shell.** Every call is `std::process::Command` with an explicit argument vector. Nothing
 //!   is ever interpolated into a command line.
-//! - **Own server, no user configuration.** Every call carries `-L <socket>` (an empty socket
-//!   name means the user's default server and omits the flag) and `-f /dev/null`, so a server the
-//!   runner starts loads no `tmux.conf` (no `base-index`, hooks or `default-command` of the user).
-//! - **Panes by id.** [`Tmux::new_session`] prints the new pane's id (`%N`, unique for the life
-//!   of the server) and returns it as a [`Pane`]. Every later call targets that id, never a window
-//!   index, so `move-window`, `swap-window` or `base-index` cannot redirect it. Operations that
-//!   change the pane first check that it still belongs to session `KEY` (`#{session_name}`).
-//!   Session targets, where one is needed, are `=KEY` (exact match: `AB` never reaches `ABC`, and
-//!   an all-digit key is a name). Keys are `^[A-Z0-9]{1,32}$`, which has no `:`, `.`, `=`, `%`.
+//! - **The operator's server.** Every call carries `-L <socket>` when a socket name is configured;
+//!   with none it addresses the operator's default server. The runner passes no `-f`: a server it
+//!   starts loads the operator's normal `tmux.conf`, like any server the operator starts. It never
+//!   sets an option, restarts, respawns, renames, resizes or ends a session, window or pane: the
+//!   only calls that exist are `-V`, `has-session`, `new-session`, `list-panes`, `display-message`,
+//!   `capture-pane`, `list-clients`, `load-buffer`, `paste-buffer`, `delete-buffer` and
+//!   `send-keys ... Enter` (a unit test pins the set).
+//! - **Sessions by exact name.** A session is `<KEY>-<cli>` ([`SessionName`]) and is targeted as
+//!   `=<name>` (exact match: `AB-claude` never reaches `ABC-claude`). The pattern has no `:`, `.`,
+//!   `=` or `%`.
+//! - **Panes by id and PID.** A [`Pane`] holds the pane's id (`%N`, unique for the life of the
+//!   server) and the PID of its process, as the runner recorded them. Every call that types checks
+//!   that the pane still has that id, still belongs to the session and still has that PID, so a
+//!   moved pane, a renamed session or a server restarted with reused ids is refused.
 //! - **Format strings.** tmux expands several arguments as formats. Checked on tmux 3.7b with an
-//!   isolated server (`tests/tmux_integration.rs`): `-c DIR` of `new-session` and `respawn-pane`
-//!   IS expanded (`#{session_name}` in a directory name was replaced, and a `#(...)` part was
-//!   consumed; on 3.7b the command inside `#(...)` did not run, but 3.2 to 3.6 were not available
-//!   to test, and the documented behaviour of `#(...)` is to run `/bin/sh`). A [`WorkDir`
-//!   therefore refuses `#` altogether. The elements of the program argument vector after `--` are
-//!   NOT expanded (verified). The other arguments are constants (`-n cli`, `-F`, the
-//!   `display-message` formats, `set-option` values) or validated types (`-s KEY`, `-t`).
+//!   isolated server (`tests/tmux_integration.rs`): `-c DIR` of `new-session` IS expanded
+//!   (`#{session_name}` in a directory name was replaced, and a `#(...)` part was consumed; on
+//!   3.7b the command inside `#(...)` did not run, but 3.2 to 3.6 were not available to test, and
+//!   the documented behaviour of `#(...)` is to run `/bin/sh`). A [`WorkDir`] therefore refuses `#`
+//!   altogether. The elements of the program argument vector after `--` are NOT expanded
+//!   (verified). The other arguments are constants (`-n cli`, `-F`, the `display-message`
+//!   formats) or validated types (`-s NAME`, `-t`).
 //! - **Text only through stdin and a buffer, only after a gate.** [`Tmux::push_message`] loads the
 //!   text with `load-buffer -b sv-<task uuid> -` on standard input and pastes it with
 //!   `paste-buffer -p -d -b sv-<task uuid> -t %N`. No argument contains message text.
@@ -32,37 +37,37 @@
 //!   carriage return (Enter) and each line is submitted on its own (verified on 3.7b with `cat`).
 //!   `#{bracket_paste_flag}` reports the state, but it exists only since tmux 3.7; older servers
 //!   print an empty string. The gate therefore requires, before any text is loaded: the pane is
-//!   alive, in no mode (copy mode would swallow Enter), owned by the session, and its foreground
-//!   command is one of the CLI's process names the caller passes. Then, on a server that reports
-//!   the flag, the flag must be `1`. On a server that does not (3.2 to 3.6), tmux cannot tell, so
-//!   the caller must hand over a [`BracketedPasteConfirmed`], which only the session manager's
-//!   readiness check may create (see its documentation for what P5.5 must do). Without it the push
-//!   is refused.
+//!   alive, in no mode (copy mode would swallow Enter), still the recorded pane of the session, and
+//!   its foreground command is one of the CLI's process names the caller passes. Then, on a server
+//!   that reports the flag, the flag must be `1`. On a server that does not (3.2 to 3.6), tmux
+//!   cannot tell, so the caller must hand over a [`BracketedPasteConfirmed`], which only the
+//!   session manager's readiness check may create. Without it the push is refused.
 //! - **One key.** The only `send-keys` is `send-keys -t %N Enter`. No `C-c`, ever.
-//! - **No shell for the CLI either.** `new-session` and `respawn-pane` pass the program argument
-//!   vector after `--`. tmux runs a single argument through `/bin/sh -c` (verified), so a
-//!   one-element vector is run as `/usr/bin/env -- <program>`, which tmux executes directly.
+//! - **No shell for the CLI either.** `new-session` passes the program argument vector after
+//!   `--`. tmux runs a single argument through `/bin/sh -c` (verified), so a one-element vector is
+//!   run as `/usr/bin/env -- <program>`, which tmux executes directly.
 //! - **Serialisation and partial failure.** Pushes and Enter retries for one session are
 //!   serialised inside the driver. A paste that times out may or may not have been delivered, so
 //!   it is reported as [`TmuxError::DeliveryUnknown`] and is never retried here; the buffer is
 //!   deleted on every failure path.
-//! - **Environment.** tmux processes get an allow-list of variables ([`ENV_ALLOWED`]); the agent
-//!   variables `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and `TMUX` are never passed. Under systemd
-//!   (`INVOCATION_ID` set) a server that is not yet running is started through
-//!   `systemd-run --user --scope --unit=sylvode-tmux-<socket>`.
-//! - **Remaining trust assumption.** Everything on one socket runs as one OS user. tmux sets
-//!   `TMUX` inside each pane, so an agent that may run shell commands can drive every other
-//!   session on the same server (`tmux send-keys -t ...`). Nothing in-process prevents that; use a
-//!   separate socket (and OS user) per trust level.
+//! - **Environment.** `new-session`, which may start the server, gives it the runner's own
+//!   environment minus the agent variables `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and `TMUX`
+//!   ([`agent_environment`]), so the CLI in a session the runner creates has the operator's
+//!   environment and login. Every other tmux call gets only an allow-list ([`ENV_ALLOWED`]). Under
+//!   systemd (`INVOCATION_ID` set) a server that is not yet running is started through
+//!   `systemd-run --user --scope --unit=sylvode-tmux-<socket>` so it outlives the runner service.
+//! - **Remaining trust assumption.** Everything on one server runs as one OS user. tmux sets `TMUX`
+//!   inside each pane, so an agent that may run shell commands can drive every other session on
+//!   the same server (`tmux send-keys -t ...`). Nothing in-process prevents that.
 //! - **Only typed operations are public.** The call builders and the process runner are private.
 //!
 //! # Version floor
 //!
 //! The minimum tmux is 3.2. Checked against tmux's `CHANGES` (3.7b): the argument-vector form of
-//! `new-session` and `respawn-pane` exists since 2.0, `respawn-pane -c` since 2.6, `=` exact
-//! targets since 2.1, `new-session -P -F` and pane ids long before 2.0. Nothing the driver relies
-//! on is newer than 3.2 except `#{bracket_paste_flag}` (3.7), which is optional as described
-//! above. Since 3.4 `paste-buffer` refuses a dead pane, which is reported as an ordinary failure.
+//! `new-session` exists since 2.0, `=` exact targets since 2.1, `new-session -P -F` and pane ids
+//! long before 2.0. Nothing the driver relies on is newer than 3.2 except
+//! `#{bracket_paste_flag}` (3.7), which is optional as described above. Since 3.4 `paste-buffer`
+//! refuses a dead pane, which is reported as an ordinary failure.
 
 // The driver is also exposed (feature `test-support`) to its integration test, which makes its
 // items reachable; the long first paragraphs of their docs are deliberate.
@@ -102,21 +107,32 @@ pub const ENV_ALLOWED: [&str; 10] = [
     "TMUX_TMPDIR",
 ];
 
-/// The variables a process of the runner's gets from the runner's own environment: the
-/// allow-list of [`ENV_ALLOWED`] and `LC_*`, the names in `extra` (an operator's explicit
-/// pass-through list), and for the `systemd-run --user` wrapper the two variables it needs. The
-/// agent variables are never passed. This one definition serves the tmux server and the headless
-/// CLI, so the two channels give a CLI the same environment.
-pub fn allowed_environment(extra: &[String], for_systemd_run: bool) -> Vec<(OsString, OsString)> {
+/// The variables a tmux call of the runner's gets from the runner's own environment: the
+/// allow-list of [`ENV_ALLOWED`] and `LC_*`, and for the `systemd-run --user` wrapper the two
+/// variables it needs. The agent variables are never passed.
+pub fn allowed_environment(for_systemd_run: bool) -> Vec<(OsString, OsString)> {
     std::env::vars_os()
         .filter(|(name, _)| {
             let name = name.to_string_lossy();
             let allowed = ENV_ALLOWED.contains(&&*name)
                 || name.starts_with("LC_")
-                || extra.iter().any(|wanted| *wanted == *name)
                 || (for_systemd_run && ENV_ALLOWED_SYSTEMD.contains(&&*name));
             allowed && !ENV_REMOVED.contains(&&*name)
         })
+        .collect()
+}
+
+/// The environment of a CLI the runner starts (a headless run, or the tmux server that a
+/// `new-session` starts and so the panes of a session it creates): the runner's own environment
+/// minus the agent variables, so the CLI has the operator's variables and login.
+pub fn agent_environment() -> Vec<(OsString, OsString)> {
+    agent_environment_from(std::env::vars_os())
+}
+
+/// [`agent_environment`] over any list of variables.
+pub fn agent_environment_from(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<(OsString, OsString)> {
+    vars.into_iter()
+        .filter(|(name, _)| !ENV_REMOVED.contains(&&*name.to_string_lossy()))
         .collect()
 }
 
@@ -125,17 +141,14 @@ const ENV_ALLOWED_SYSTEMD: [&str; 2] = ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADD
 
 const ENV_REMOVED: [&str; 3] = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "TMUX"];
 
-/// The user option set on a tmux server the runner started, so a server somebody else started on
-/// the runner's socket (with that person's environment) is recognised and refused.
-pub const OWNER_OPTION: &str = "@sylvode_runner";
-
-/// The name of the pane window the runner owns.
+/// The name of the window of a session the runner creates.
 pub const WINDOW_NAME: &str = "cli";
 
 /// Why a push was refused before any text was loaded.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// The pane no longer belongs to the session (it was moved or the session renamed).
+    /// The pane is no longer the recorded pane of the session (moved, the session renamed, or the
+    /// pane's process is another one).
     NotOwned,
     /// The pane's program has ended.
     PaneDead,
@@ -147,9 +160,6 @@ pub enum Refusal {
     BracketedPasteOff,
     /// This tmux cannot report bracketed paste (before 3.7) and no confirmation was given.
     BracketedPasteUnconfirmed,
-    /// A tmux server runs on the runner's socket that the runner did not start (it carries no
-    /// owner mark), so its environment and options are not the runner's.
-    ForeignServer,
 }
 
 /// Why a tmux call did not work.
@@ -212,31 +222,69 @@ impl SocketName {
     }
 }
 
-/// A project key used as a session name: `^[A-Z0-9]{1,32}$`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SessionKey(String);
+/// The CLI types a session can be for.
+pub const SESSION_CLIS: [&str; 3] = ["claude", "codex", "opencode"];
 
-impl SessionKey {
+/// A session name, `<KEY>-<cli>`: the project key (`^[A-Z0-9]{1,32}$`), one hyphen and the CLI type
+/// in lower case (`claude`, `codex` or `opencode`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionName {
+    text: String,
+    key_len: usize,
+}
+
+impl SessionName {
+    /// The session of project `key` for `cli`.
+    ///
     /// # Errors
     ///
-    /// [`TmuxError::Invalid`] for any other value.
-    pub fn new(key: &str) -> Result<Self, TmuxError> {
-        if !key.is_empty() && key.len() <= 32 && key.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
-            Ok(Self(key.to_string()))
-        } else {
-            Err(TmuxError::Invalid(
+    /// [`TmuxError::Invalid`] for a key or CLI type that does not fit the pattern.
+    pub fn new(key: &str, cli: &str) -> Result<Self, TmuxError> {
+        if key.is_empty() || key.len() > 32 || !key.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+            return Err(TmuxError::Invalid(
                 "session key must match ^[A-Z0-9]{1,32}$".to_string(),
-            ))
+            ));
         }
+        if !SESSION_CLIS.contains(&cli) {
+            return Err(TmuxError::Invalid(
+                "session CLI must be claude, codex or opencode".to_string(),
+            ));
+        }
+        Ok(Self {
+            text: format!("{key}-{cli}"),
+            key_len: key.len(),
+        })
+    }
+
+    /// A name read back, for example from a hook message or a directory name.
+    ///
+    /// # Errors
+    ///
+    /// [`TmuxError::Invalid`] unless it matches `^[A-Z0-9]{1,32}-(claude|codex|opencode)$`.
+    pub fn parse(name: &str) -> Result<Self, TmuxError> {
+        let (key, cli) = name
+            .split_once('-')
+            .ok_or_else(|| TmuxError::Invalid("session name must look like KEY-cli".to_string()))?;
+        Self::new(key, cli)
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.text
     }
 
-    /// The exact session target, `=KEY`.
+    /// The project key part.
+    pub fn key(&self) -> &str {
+        self.text.get(..self.key_len).unwrap_or_default()
+    }
+
+    /// The CLI type part.
+    pub fn cli(&self) -> &str {
+        self.text.get(self.key_len + 1..).unwrap_or_default()
+    }
+
+    /// The exact session target, `=<name>`.
     pub fn session_target(&self) -> String {
-        format!("={}", self.0)
+        format!("={}", self.text)
     }
 }
 
@@ -262,11 +310,49 @@ impl PaneId {
     }
 }
 
-/// The CLI pane of a session: what the runner records at creation and uses ever after.
+/// The CLI pane of a session: its id and the PID of its process, as the runner recorded them and
+/// uses them ever after.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pane {
-    pub key: SessionKey,
+    pub name: SessionName,
     pub id: PaneId,
+    pub pid: u32,
+}
+
+/// A session [`Tmux::new_session`] created.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Created {
+    pub pane: Pane,
+    /// The socket path of the server, asked in the same call so the pane can be recorded for hooks
+    /// at once; `None` when this tmux does not say.
+    pub socket_path: Option<String>,
+}
+
+/// One pane of a session, from [`Tmux::list_panes`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListedPane {
+    pub id: PaneId,
+    pub pid: u32,
+    pub dead: bool,
+    /// The foreground command.
+    pub command: String,
+}
+
+/// The format of [`Tmux::list_panes`]; the command comes last and may contain spaces.
+pub const LIST_PANES_FORMAT: &str = "#{pane_id} #{pane_pid} #{pane_dead} #{pane_current_command}";
+
+/// Parses one line of the answer to [`LIST_PANES_FORMAT`].
+pub fn parse_listed_pane(line: &str) -> Option<ListedPane> {
+    let mut parts = line.splitn(4, ' ');
+    let id = PaneId::new(parts.next()?).ok()?;
+    let pid = parts.next()?.parse().ok()?;
+    let dead = match parts.next()? {
+        "0" => false,
+        "1" => true,
+        _ => return None,
+    };
+    let command = parts.next()?.to_string();
+    Some(ListedPane { id, pid, dead, command })
 }
 
 /// A working directory tmux may be given: absolute, UTF-8, without control characters and
@@ -488,21 +574,19 @@ pub struct Tmux {
     program: OsString,
     systemd_run: OsString,
     socket: SocketName,
-    config_file: OsString,
     extra_env: Vec<(OsString, OsString)>,
     under_systemd: bool,
     timeout: Duration,
 }
 
 impl Tmux {
-    /// A driver that runs `tmux` from the `PATH` against the server on `socket`, with no user
-    /// configuration (`-f /dev/null`).
+    /// A driver that runs `tmux` from the `PATH` against the server on `socket` (the operator's
+    /// default server when the name is empty).
     pub fn new(socket: SocketName) -> Self {
         Self {
             program: OsString::from("tmux"),
             systemd_run: OsString::from("systemd-run"),
             socket,
-            config_file: OsString::from("/dev/null"),
             extra_env: Vec::new(),
             under_systemd: std::env::var_os("INVOCATION_ID").is_some(),
             timeout: CALL_TIMEOUT,
@@ -520,14 +604,6 @@ impl Tmux {
     #[must_use]
     pub fn with_systemd_run(mut self, program: impl Into<OsString>) -> Self {
         self.systemd_run = program.into();
-        self
-    }
-
-    /// Starts servers with `-f <file>` instead of `/dev/null`. For tests that need a
-    /// configuration (the production runner never loads one).
-    #[must_use]
-    pub fn with_config_file(mut self, file: impl Into<OsString>) -> Self {
-        self.config_file = file.into();
         self
     }
 
@@ -553,15 +629,13 @@ impl Tmux {
         self
     }
 
-    /// The global options every call starts with: `-L <socket>` and `-f <file>`.
+    /// The global options every call starts with: `-L <socket>` when a socket is configured.
     fn global(&self) -> Vec<String> {
         let mut args = Vec::new();
         if !self.socket.as_str().is_empty() {
             args.push("-L".to_string());
             args.push(self.socket.as_str().to_string());
         }
-        args.push("-f".to_string());
-        args.push(self.config_file.to_string_lossy().into_owned());
         args
     }
 
@@ -578,17 +652,30 @@ impl Tmux {
         }
     }
 
-    fn has_session_call(&self, key: &SessionKey) -> Call {
-        self.call(&["has-session", "-t", &key.session_target()])
+    fn has_session_call(&self, name: &SessionName) -> Call {
+        self.call(&["has-session", "-t", &name.session_target()])
     }
 
-    fn list_sessions_call(&self) -> Call {
-        self.call(&["list-sessions"])
+    /// Every pane of every session of the server: only the exit status is used, to tell a running
+    /// server from none.
+    fn server_probe_call(&self) -> Call {
+        self.call(&["list-panes", "-a", "-F", "#{pane_id}"])
+    }
+
+    fn list_panes_call(&self, name: &SessionName) -> Call {
+        self.call(&[
+            "list-panes",
+            "-s",
+            "-t",
+            &name.session_target(),
+            "-F",
+            LIST_PANES_FORMAT,
+        ])
     }
 
     fn new_session_call(
         &self,
-        key: &SessionKey,
+        name: &SessionName,
         dir: &WorkDir,
         width: u16,
         height: u16,
@@ -601,9 +688,9 @@ impl Tmux {
             "-d",
             "-P",
             "-F",
-            "#{pane_id}",
+            "#{pane_id} #{pane_pid} #{socket_path}",
             "-s",
-            key.as_str(),
+            name.as_str(),
             "-n",
             WINDOW_NAME,
             "-x",
@@ -616,30 +703,6 @@ impl Tmux {
         ]);
         call.args.extend(argv);
         Ok(call)
-    }
-
-    /// The owner mark the runner sets on a server it starts.
-    fn owner_mark_call(&self) -> Call {
-        self.call(&["set-option", "-g", OWNER_OPTION, "1"])
-    }
-
-    fn show_owner_call(&self) -> Call {
-        self.call(&["show-option", "-gqv", OWNER_OPTION])
-    }
-
-    fn remain_on_exit_call(&self, pane: &PaneId) -> Call {
-        self.call(&["set-option", "-w", "-t", pane.as_str(), "remain-on-exit", "on"])
-    }
-
-    fn respawn_pane_call(&self, pane: &PaneId, dir: &WorkDir, argv: &[String]) -> Result<Call, TmuxError> {
-        let argv = exec_argv(argv)?;
-        let mut call = self.call(&["respawn-pane", "-k", "-t", pane.as_str(), "-c", dir.as_str(), "--"]);
-        call.args.extend(argv);
-        Ok(call)
-    }
-
-    fn adopt_call(&self, key: &SessionKey) -> Call {
-        self.call(&["list-panes", "-t", &format!("={}:0", key.as_str()), "-F", "#{pane_id}"])
     }
 
     fn state_call(&self, pane: &PaneId) -> Call {
@@ -660,8 +723,8 @@ impl Tmux {
         self.call(&rest)
     }
 
-    fn list_clients_call(&self, key: &SessionKey) -> Call {
-        self.call(&["list-clients", "-F", "#{client_activity}", "-t", &key.session_target()])
+    fn list_clients_call(&self, name: &SessionName) -> Call {
+        self.call(&["list-clients", "-F", "#{client_activity}", "-t", &name.session_target()])
     }
 
     fn load_buffer_call(&self, buffer: &BufferName, text: &PushText<'_>) -> Call {
@@ -682,7 +745,10 @@ impl Tmux {
         self.call(&["send-keys", "-t", pane.as_str(), "Enter"])
     }
 
-    fn command(&self, wrap_in_scope: bool) -> Command {
+    /// A tmux process. `inherit_environment` gives it the runner's environment minus the agent
+    /// variables (only `new-session`, which may start the server the CLI inherits from); otherwise
+    /// it gets the allow-list.
+    fn command(&self, wrap_in_scope: bool, inherit_environment: bool) -> Command {
         let mut command = if wrap_in_scope {
             let unit = if self.socket.as_str().is_empty() {
                 "sylvode-tmux-default".to_string()
@@ -698,7 +764,12 @@ impl Tmux {
             Command::new(&self.program)
         };
         command.env_clear();
-        for (name, value) in allowed_environment(&[], wrap_in_scope) {
+        let environment = if inherit_environment {
+            agent_environment()
+        } else {
+            allowed_environment(wrap_in_scope)
+        };
+        for (name, value) in environment {
             command.env(name, value);
         }
         for (key, value) in &self.extra_env {
@@ -712,7 +783,7 @@ impl Tmux {
     }
 
     fn run(&self, call: &Call) -> Result<Output, TmuxError> {
-        self.run_command(self.command(false), call)
+        self.run_command(self.command(false, false), call)
     }
 
     fn run_command(&self, mut command: Command, call: &Call) -> Result<Output, TmuxError> {
@@ -781,8 +852,8 @@ impl Tmux {
         }
     }
 
-    fn lock_for(&self, key: &SessionKey) -> Arc<Mutex<()>> {
-        let name = format!("{}\0{}", self.socket.as_str(), key.as_str());
+    fn lock_for(&self, name: &SessionName) -> Arc<Mutex<()>> {
+        let name = format!("{}\0{}", self.socket.as_str(), name.as_str());
         Arc::clone(session_locks().lock().entry(name).or_default())
     }
 
@@ -795,13 +866,13 @@ impl Tmux {
         Ok(self.run_ok(&Self::version_call())?.stdout.trim().to_string())
     }
 
-    /// Whether session `key` exists. Exit status 1 (no such session, or no server) is `false`.
+    /// Whether session `name` exists. Exit status 1 (no such session, or no server) is `false`.
     ///
     /// # Errors
     ///
     /// Any other failure.
-    pub fn has_session(&self, key: &SessionKey) -> Result<bool, TmuxError> {
-        let output = self.run(&self.has_session_call(key))?;
+    pub fn has_session(&self, name: &SessionName) -> Result<bool, TmuxError> {
+        let output = self.run(&self.has_session_call(name))?;
         match output.code {
             Some(0) => Ok(true),
             Some(1) => Ok(false),
@@ -809,82 +880,66 @@ impl Tmux {
         }
     }
 
-    /// Whether a server is running on the socket.
+    /// Whether a server is running (on the socket, or the default one).
     ///
     /// # Errors
     ///
     /// Spawn failures and timeouts.
     pub fn server_running(&self) -> Result<bool, TmuxError> {
-        Ok(self.run(&self.list_sessions_call())?.code == Some(0))
+        Ok(self.run(&self.server_probe_call())?.code == Some(0))
     }
 
-    /// Refuses to use a tmux server on the runner's own socket that the runner did not start: a
-    /// running server without the owner mark was started by something else, with its environment.
-    /// The default server (empty socket name) is the user's own and is not checked.
-    ///
-    /// # Errors
-    ///
-    /// [`Refusal::ForeignServer`], or a tmux failure.
-    pub fn verify_server(&self) -> Result<(), TmuxError> {
-        if self.socket.as_str().is_empty() || !self.server_running()? {
-            return Ok(());
-        }
-        let output = self.run_ok(&self.show_owner_call())?;
-        if output.stdout.trim() == "1" {
-            Ok(())
-        } else {
-            Err(TmuxError::Refused(Refusal::ForeignServer))
-        }
-    }
-
-    /// Creates session `key` with one window running `argv` and returns its pane (the caller
-    /// records it). Then sets `remain-on-exit` so a CLI that exits leaves a dead pane. When the
-    /// server is not yet running and the process is a systemd service, the server is started in
-    /// its own scope.
+    /// Creates session `name` with one window running `argv` and returns its pane and the server's
+    /// socket path (the caller records them). Sets no option. The server, if this starts it, and so the CLI, gets the
+    /// runner's environment minus the agent variables. When the server is not yet running and the
+    /// process is a systemd service, the server is started in its own scope.
     ///
     /// # Errors
     ///
     /// Invalid arguments and tmux failures.
     pub fn new_session(
         &self,
-        key: &SessionKey,
+        name: &SessionName,
         dir: &WorkDir,
         width: u16,
         height: u16,
         argv: &[String],
-    ) -> Result<Pane, TmuxError> {
-        let call = self.new_session_call(key, dir, width, height, argv)?;
+    ) -> Result<Created, TmuxError> {
+        let call = self.new_session_call(name, dir, width, height, argv)?;
         let started_server = !self.server_running()?;
         let scope = self.under_systemd && started_server;
-        let output = self.run_command(self.command(scope), &call)?;
+        let output = self.run_command(self.command(scope, true), &call)?;
         if output.code != Some(0) {
             return Err(failed(&output));
         }
-        let id = one_line(&output.stdout).ok_or_else(|| unreadable("pane id"))?;
-        let pane = Pane {
-            key: key.clone(),
-            id: PaneId::new(id)?,
+        let line = one_line(&output.stdout).ok_or_else(|| unreadable("pane id"))?;
+        // The socket path comes last: it may hold a space.
+        let mut parts = line.splitn(3, ' ');
+        let (Some(id), Some(pid), Some(socket)) = (parts.next(), parts.next(), parts.next()) else {
+            return Err(unreadable("pane id"));
         };
-        if started_server {
-            self.run_ok(&self.owner_mark_call())?;
-        }
-        self.run_ok(&self.remain_on_exit_call(&pane.id))?;
-        Ok(pane)
+        Ok(Created {
+            pane: Pane {
+                name: name.clone(),
+                id: PaneId::new(id)?,
+                pid: pid.parse().map_err(|_| unreadable("pane pid"))?,
+            },
+            socket_path: socket.starts_with('/').then(|| socket.to_string()),
+        })
     }
 
-    /// The pane of window 0 of a session the runner did not create. Window 0 is looked up once,
-    /// here; the caller records the id and uses it from then on.
+    /// Every pane of the session (all windows), in tmux's order.
     ///
     /// # Errors
     ///
-    /// A failure status (no such session or window) or an unreadable answer.
-    pub fn adopt_pane(&self, key: &SessionKey) -> Result<Pane, TmuxError> {
-        let output = self.run_ok(&self.adopt_call(key))?;
-        let first = output.stdout.lines().next().ok_or_else(|| unreadable("pane id"))?;
-        Ok(Pane {
-            key: key.clone(),
-            id: PaneId::new(first)?,
-        })
+    /// A failure status (no such session) or an unreadable answer.
+    pub fn list_panes(&self, name: &SessionName) -> Result<Vec<ListedPane>, TmuxError> {
+        let output = self.run_ok(&self.list_panes_call(name))?;
+        output
+            .stdout
+            .lines()
+            .map(|line| parse_listed_pane(line).ok_or_else(|| unreadable("pane list")))
+            .collect()
     }
 
     /// State of the pane, from one call.
@@ -906,6 +961,31 @@ impl Tmux {
             .ok_or_else(|| unreadable("pane field"))
     }
 
+    /// The socket path of the server the pane lives on, as the panes' programs see it in `TMUX`.
+    ///
+    /// # Errors
+    ///
+    /// A failure status or an unreadable answer (a tmux that does not know the variable).
+    pub fn socket_path(&self, pane: &Pane) -> Result<String, TmuxError> {
+        let path = self.field(pane, "#{socket_path}")?;
+        if path.starts_with('/') {
+            Ok(path)
+        } else {
+            Err(unreadable("socket path"))
+        }
+    }
+
+    /// The process id of the tmux server the pane lives on (for the pane's hook counter file).
+    ///
+    /// # Errors
+    ///
+    /// A failure status or an unreadable answer.
+    pub fn server_pid(&self, pane: &Pane) -> Result<u32, TmuxError> {
+        self.field(pane, "#{pid}")?
+            .parse()
+            .map_err(|_| unreadable("server pid"))
+    }
+
     /// State, foreground command and directory of the pane, each from its own call.
     ///
     /// # Errors
@@ -921,26 +1001,16 @@ impl Tmux {
         })
     }
 
+    /// The pane's state, after checking it is still the recorded pane: it belongs to the session
+    /// and its process is the recorded one (the id is what is asked, so the id matches by
+    /// construction).
     fn require_owned(&self, pane: &Pane) -> Result<PaneState, TmuxError> {
         let state = self.pane_state(pane)?;
-        if state.session_name == pane.key.as_str() {
+        if state.session_name == pane.name.as_str() && state.pid == pane.pid {
             Ok(state)
         } else {
             Err(TmuxError::Refused(Refusal::NotOwned))
         }
-    }
-
-    /// Restarts the pane with `argv` in `dir`, after checking it still belongs to the session.
-    ///
-    /// # Errors
-    ///
-    /// Invalid arguments, a pane that is no longer the session's, and tmux failures.
-    pub fn respawn_pane(&self, pane: &Pane, dir: &WorkDir, argv: &[String]) -> Result<(), TmuxError> {
-        let call = self.respawn_pane_call(&pane.id, dir, argv)?;
-        let lock = self.lock_for(&pane.key);
-        let _guard = lock.lock();
-        self.require_owned(pane)?;
-        self.run_ok(&call).map(|_| ())
     }
 
     /// The visible text of the pane, with `scrollback_lines` more lines above it when given.
@@ -957,8 +1027,8 @@ impl Tmux {
     /// # Errors
     ///
     /// A failure status.
-    pub fn client_activity(&self, key: &SessionKey) -> Result<Vec<u64>, TmuxError> {
-        let output = self.run_ok(&self.list_clients_call(key))?;
+    pub fn client_activity(&self, name: &SessionName) -> Result<Vec<u64>, TmuxError> {
+        let output = self.run_ok(&self.list_clients_call(name))?;
         Ok(output
             .stdout
             .lines()
@@ -1008,7 +1078,7 @@ impl Tmux {
     ) -> Result<(), TmuxError> {
         let text = PushText::new(text)?;
         let buffer = BufferName::for_task(task_id);
-        let lock = self.lock_for(&pane.key);
+        let lock = self.lock_for(&pane.name);
         let _guard = lock.lock();
         self.check_gate(pane, guard)?;
         if let Err(error) = self.run_ok(&self.load_buffer_call(&buffer, &text)) {
@@ -1036,7 +1106,7 @@ impl Tmux {
     ///
     /// A refusal or a failure status.
     pub fn retry_enter(&self, pane: &Pane) -> Result<(), TmuxError> {
-        let lock = self.lock_for(&pane.key);
+        let lock = self.lock_for(&pane.name);
         let _guard = lock.lock();
         let state = self.require_owned(pane)?;
         if state.dead {
@@ -1046,40 +1116,6 @@ impl Tmux {
             return Err(TmuxError::Refused(Refusal::PaneInMode));
         }
         self.run_ok(&self.send_enter_call(&pane.id)).map(|_| ())
-    }
-
-    /// Ends session `key` (exact match). Only for sessions the runner created.
-    ///
-    /// # Errors
-    ///
-    /// A failure status or a timeout.
-    pub fn kill_session(&self, key: &SessionKey) -> Result<(), TmuxError> {
-        self.run_ok(&self.call(&["kill-session", "-t", &key.session_target()]))
-            .map(|_| ())
-    }
-
-    /// The command that attaches the operator's terminal to session `key`. It keeps the caller's
-    /// environment (the terminal needs `TERM`) and standard streams.
-    pub fn attach_command(&self, key: &SessionKey) -> Command {
-        let mut command = Command::new(&self.program);
-        if !self.socket.as_str().is_empty() {
-            command.args(["-L", self.socket.as_str()]);
-        }
-        command.args(["attach", "-t", &key.session_target()]);
-        command
-    }
-
-    /// Stops the server on a socket of the runner's own. Refused for the user's default server
-    /// (an empty socket name). Meant for tests and for pruning.
-    ///
-    /// # Errors
-    ///
-    /// [`TmuxError::Invalid`] for the default server; spawn failures and timeouts.
-    pub fn kill_server(&self) -> Result<(), TmuxError> {
-        if self.socket.as_str().is_empty() {
-            return Err(TmuxError::Invalid("will not stop the default tmux server".to_string()));
-        }
-        self.run(&self.call(&["kill-server"])).map(|_| ())
     }
 }
 

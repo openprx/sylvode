@@ -60,7 +60,7 @@ fn fake_tmux(dir: &TempDir, version_line: &str, server_up: bool) {
     dir.script(
         "tmux",
         &format!(
-            "case \"$1\" in\n-V) echo '{version_line}';;\n-L) [ \"$3\" = list-sessions ] || exit 9; {list};;\nesac"
+            "case \"$1\" in\n-V) echo '{version_line}';;\n-L) [ \"$3\" = list-sessions ] || exit 9; {list};;\nlist-sessions) {list};;\nesac"
         ),
     );
 }
@@ -154,6 +154,21 @@ fn a_tmux_that_exits_non_zero_is_unparsable() {
     let component = checker(InstallKind::RunnerTmux, &dir).check_tmux("sylvode");
     assert_eq!(component.version, None);
     assert_eq!(component.status, Status::Fail);
+}
+
+/// An empty socket name is the operator's default server: probed without `-L`, reported as such.
+#[test]
+fn an_empty_socket_name_is_the_default_server() {
+    let dir = TempDir::new();
+    fake_tmux(&dir, "tmux 3.7b", true);
+    let component = checker(InstallKind::RunnerTmux, &dir).check_tmux("");
+    assert_eq!(detail(&component, "socket"), &json!("default"));
+    assert_eq!(detail(&component, "server_running"), &json!(true));
+    assert_eq!(component.status, Status::Ok);
+    // With no server on the default socket it says so.
+    fake_tmux(&dir, "tmux 3.7b", false);
+    let component = checker(InstallKind::RunnerTmux, &dir).check_tmux("");
+    assert_eq!(detail(&component, "server_running"), &json!(false));
 }
 
 #[test]

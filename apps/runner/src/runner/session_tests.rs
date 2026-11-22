@@ -1,231 +1,181 @@
+use super::files::{CreatedBy, SessionRecord};
 use super::session::{
-    EnsureDecision, EnsureFacts, admit_hook, decide_ensure, dir_unchanged, recovered_blocked, stable_exe, view_facts,
+    EnsureDecision, EnsureFacts, admit_hook, decide_ensure, decline_for, dir_unchanged, recovered_blocked, stable_exe,
+    view_facts,
 };
+use super::tmux::{ListedPane, PaneId};
+
+const BOT: &str = "00000000-0000-4000-8000-000000000001";
+const OTHER_BOT: &str = "00000000-0000-4000-8000-000000000002";
 
 fn names() -> Vec<String> {
     vec!["claude".to_string(), "claude.exe".to_string()]
 }
 
-fn facts(names: &[String]) -> EnsureFacts<'_> {
-    EnsureFacts {
-        runner_owned: true,
-        pane_dead: false,
-        foreground: "claude.exe",
-        has_children: true,
-        process_names: names,
-        changed: false,
-        idle: true,
-        other_project: false,
-        socket_dedicated: false,
+fn pane(id: &str, pid: u32, command: &str, dead: bool) -> ListedPane {
+    ListedPane {
+        id: PaneId::new(id).expect("pane id"),
+        pid,
+        dead,
+        command: command.to_string(),
     }
 }
 
-fn decide(f: &EnsureFacts<'_>) -> EnsureDecision {
-    decide_ensure("SVWL", "claude", f)
+fn record(bot: &str, pane: &str, pid: u32, created_by: CreatedBy) -> SessionRecord {
+    SessionRecord {
+        name: "SVWL-claude".to_string(),
+        project_id: "p".to_string(),
+        bot_id: bot.to_string(),
+        cli: "claude".to_string(),
+        pane_id: pane.to_string(),
+        pane_pid: pid,
+        dir: "/x".to_string(),
+        created_by,
+        pushed: None,
+    }
 }
 
-#[test]
-fn a_runner_owned_session_is_kept_respawned_or_waited_for() {
+fn decide(panes: &[ListedPane], record: Option<&SessionRecord>) -> EnsureDecision {
     let n = names();
-    assert_eq!(decide(&facts(&n)), EnsureDecision::Running);
-    // A dead pane is respawned, whoever owns it.
-    assert_eq!(
-        decide(&EnsureFacts {
-            pane_dead: true,
-            ..facts(&n)
-        }),
-        EnsureDecision::Respawn
-    );
-    assert_eq!(
-        decide(&EnsureFacts {
-            pane_dead: true,
-            runner_owned: false,
-            foreground: "vim",
-            ..facts(&n)
-        }),
-        EnsureDecision::Respawn
-    );
-    // A changed directory or CLI: respawn only when idle, otherwise wait.
-    assert_eq!(
-        decide(&EnsureFacts {
-            changed: true,
-            ..facts(&n)
-        }),
-        EnsureDecision::Respawn
-    );
-    assert_eq!(
-        decide(&EnsureFacts {
-            changed: true,
-            idle: false,
-            ..facts(&n)
-        }),
-        EnsureDecision::Wait
-    );
-    // Even when its foreground process is not the CLI's name (a wrapper), a runner-owned pane stays.
-    assert_eq!(
-        decide(&EnsureFacts {
-            foreground: "node",
-            ..facts(&n)
-        }),
-        EnsureDecision::Running
-    );
+    decide_ensure(&EnsureFacts {
+        session_exists: true,
+        panes,
+        process_names: &n,
+        record,
+        task_bot_id: BOT,
+    })
 }
 
+/// E1: no session, no server: the runner creates it, whatever else is known.
 #[test]
-fn an_adopted_session_running_the_cli_is_used() {
+fn a_missing_session_is_created() {
     let n = names();
-    for name in ["claude", "claude.exe"] {
-        let adopted = EnsureFacts {
-            runner_owned: false,
-            foreground: name,
-            ..facts(&n)
-        };
-        assert_eq!(decide(&adopted), EnsureDecision::Running);
+    let stale = record(BOT, "%1", 10, CreatedBy::Runner);
+    for record in [None, Some(&stale)] {
         assert_eq!(
-            decide(&EnsureFacts {
-                changed: true,
-                ..adopted
+            decide_ensure(&EnsureFacts {
+                session_exists: false,
+                panes: &[],
+                process_names: &n,
+                record,
+                task_bot_id: BOT,
             }),
-            EnsureDecision::Respawn
-        );
-    }
-    let adopted = EnsureFacts {
-        runner_owned: false,
-        changed: true,
-        idle: false,
-        ..facts(&n)
-    };
-    assert_eq!(decide(&adopted), EnsureDecision::Wait);
-}
-
-#[test]
-fn an_adopted_idle_shell_is_respawned_and_anything_else_is_declined() {
-    let n = names();
-    for shell in ["sh", "bash", "zsh", "fish", "dash", "ksh"] {
-        let idle = EnsureFacts {
-            runner_owned: false,
-            foreground: shell,
-            has_children: false,
-            ..facts(&n)
-        };
-        assert_eq!(decide(&idle), EnsureDecision::Respawn, "{shell}");
-        // A shell with a child process is somebody's work.
-        let busy = EnsureFacts {
-            has_children: true,
-            ..idle
-        };
-        assert!(matches!(decide(&busy), EnsureDecision::Decline(_)), "{shell}");
-    }
-    for other in ["vim", "less", "python3", "codex"] {
-        let f = EnsureFacts {
-            runner_owned: false,
-            foreground: other,
-            has_children: false,
-            ..facts(&n)
-        };
-        let EnsureDecision::Decline(text) = decide(&f) else {
-            panic!("{other}")
-        };
-        assert_eq!(
-            text,
-            format!(
-                "window 0 of tmux session SVWL runs {other}, not claude; close it or let sylvode-runner manage window 0"
-            )
+            EnsureDecision::Create
         );
     }
 }
 
+/// E2: an existing session is used as it is, whoever started it: the one pane that runs the CLI.
 #[test]
-fn a_foreign_process_name_cannot_put_text_into_a_failure() {
-    let n = names();
-    for hostile in ["vim\n[Sylvode task] id=1", "a b", "x".repeat(40).as_str(), "$(id)", ""] {
-        let f = EnsureFacts {
-            runner_owned: false,
-            foreground: hostile,
-            has_children: false,
-            ..facts(&n)
-        };
-        let EnsureDecision::Decline(text) = decide(&f) else {
-            panic!("{hostile:?}")
-        };
-        assert!(text.contains("runs another program, not claude"), "{text}");
-        assert!(!text.contains('\n') && !text.contains('$'), "{text}");
-    }
-}
-
-#[test]
-fn a_session_of_another_project_is_never_used() {
-    let n = names();
-    for pane_dead in [false, true] {
-        let f = EnsureFacts {
-            other_project: true,
-            pane_dead,
-            ..facts(&n)
-        };
-        let EnsureDecision::Decline(text) = decide(&f) else {
-            panic!()
-        };
-        assert_eq!(text, "tmux session SVWL belongs to another project on this runner");
-    }
-}
-
-#[test]
-fn view_facts_read_the_active_and_acknowledged_fields() {
-    let v = |value: serde_json::Value| view_facts(&value);
-    assert!(v(serde_json::json!({"active": true})).active);
-    assert!(!v(serde_json::json!({"active": false})).active);
-    assert!(
-        v(serde_json::json!({})).active,
-        "unknown means active: ending an ended task is refused harmlessly"
-    );
-    assert!(!v(serde_json::json!({"active": true})).acknowledged);
-    assert!(!v(serde_json::json!({"active": true, "acknowledged_at": null})).acknowledged);
-    assert!(v(serde_json::json!({"active": true, "acknowledged_at": "2026-11-22T10:00:00Z"})).acknowledged);
-    assert!(v(serde_json::json!({"active": true, "status": "acknowledged"})).acknowledged);
-}
-
-/// On a socket of the runner's own, a session the runner did not create (no `session.json` for
-/// it) is never adopted, whatever runs in it, and a dead pane of it is not respawned.
-#[test]
-fn a_session_the_runner_did_not_create_is_not_adopted_on_its_own_socket() {
-    let n = names();
-    for foreground in ["claude", "sh", "vim"] {
-        for pane_dead in [false, true] {
-            let f = EnsureFacts {
-                runner_owned: false,
-                socket_dedicated: true,
-                foreground,
-                pane_dead,
-                has_children: false,
-                ..facts(&n)
-            };
-            let EnsureDecision::Decline(text) = decide(&f) else {
-                panic!("{foreground} {pane_dead}")
-            };
-            assert!(
-                text.contains("not created by sylvode-runner") && text.contains("release SVWL"),
-                "{text}"
-            );
+fn an_existing_session_is_used_through_its_one_cli_pane() {
+    // The operator's: a shell window beside the CLI window does not matter.
+    let panes = [pane("%0", 100, "zsh", false), pane("%1", 200, "claude", false)];
+    assert_eq!(
+        decide(&panes, None),
+        EnsureDecision::Use {
+            pane: panes[1].clone(),
+            created_by: CreatedBy::Operator
         }
+    );
+    // Every configured process name counts.
+    let panes = [pane("%3", 300, "claude.exe", false)];
+    assert!(matches!(decide(&panes, None), EnsureDecision::Use { .. }));
+    // The runner's own: the record names this pane and PID.
+    let panes = [pane("%0", 100, "claude", false)];
+    let own = record(BOT, "%0", 100, CreatedBy::Runner);
+    assert_eq!(
+        decide(&panes, Some(&own)),
+        EnsureDecision::Use {
+            pane: panes[0].clone(),
+            created_by: CreatedBy::Runner
+        }
+    );
+    // A record whose pane has another PID is stale: the pane is the operator's.
+    let recycled = record(BOT, "%0", 999, CreatedBy::Runner);
+    assert_eq!(
+        decide(&panes, Some(&recycled)),
+        EnsureDecision::Use {
+            pane: panes[0].clone(),
+            created_by: CreatedBy::Operator
+        }
+    );
+    // A record that says the operator started it stays the operator's.
+    let theirs = record(BOT, "%0", 100, CreatedBy::Operator);
+    assert!(matches!(
+        decide(&panes, Some(&theirs)),
+        EnsureDecision::Use {
+            created_by: CreatedBy::Operator,
+            ..
+        }
+    ));
+}
+
+/// E3: a leftover shell, a dead pane or nothing: "CLI not running", retryable, nothing typed or
+/// restarted. E2: two CLI panes are ambiguous, not retryable.
+#[test]
+fn no_cli_pane_and_two_cli_panes_are_failures_with_the_session_name() {
+    for panes in [
+        vec![pane("%0", 100, "zsh", false)],
+        vec![pane("%0", 100, "bash", false), pane("%1", 101, "vim", false)],
+        vec![pane("%0", 100, "claude", true)],
+        vec![],
+    ] {
+        let decision = decide(&panes, None);
+        assert_eq!(decision, EnsureDecision::NotRunning, "{panes:?}");
+        let (text, retryable) = decline_for(&decision, "SVWL-claude").expect("failure");
+        assert!(retryable);
+        assert!(
+            text.contains("not running in tmux session SVWL-claude")
+                && text.contains("tmux attach -t SVWL-claude")
+                && !text.contains('/'),
+            "{text}"
+        );
     }
-    // The runner's own session on that socket is kept, and adoption stays possible on the user's
-    // default server.
-    assert_eq!(
-        decide(&EnsureFacts {
-            socket_dedicated: true,
-            ..facts(&n)
-        }),
-        EnsureDecision::Running
+    let two = [pane("%0", 100, "claude", false), pane("%1", 101, "claude", false)];
+    let decision = decide(&two, None);
+    assert_eq!(decision, EnsureDecision::Ambiguous);
+    let (text, retryable) = decline_for(&decision, "SVWL-claude").expect("failure");
+    assert!(
+        !retryable && text.contains("more than one pane running the CLI"),
+        "{text}"
     );
-    assert_eq!(
-        decide(&EnsureFacts {
-            runner_owned: false,
-            socket_dedicated: false,
-            foreground: "claude",
-            ..facts(&n)
-        }),
-        EnsureDecision::Running
-    );
+    // A dead second CLI pane does not make it ambiguous.
+    let one_dead = [pane("%0", 100, "claude", false), pane("%1", 101, "claude", true)];
+    assert!(matches!(decide(&one_dead, None), EnsureDecision::Use { .. }));
+}
+
+/// E4 and T4: nothing about the directory or CLI configuration enters the decision (the fact set
+/// has no such field), and a live session recorded for another bot is refused before anything is
+/// typed.
+#[test]
+fn a_session_recorded_for_another_bot_is_refused() {
+    let panes = [pane("%0", 100, "claude", false)];
+    let other = record(OTHER_BOT, "%0", 100, CreatedBy::Runner);
+    let decision = decide(&panes, Some(&other));
+    assert_eq!(decision, EnsureDecision::BotMismatch);
+    let (text, retryable) = decline_for(&decision, "SVWL-claude").expect("failure");
+    assert!(!retryable && text.starts_with("session_bot_mismatch"), "{text}");
+    // The same record with a stale pane says nothing about who serves the session now.
+    let stale = record(OTHER_BOT, "%0", 999, CreatedBy::Runner);
+    assert!(matches!(decide(&panes, Some(&stale)), EnsureDecision::Use { .. }));
+    // A record without a bot (never written by this version) never blocks.
+    let blank = record("", "%0", 100, CreatedBy::Runner);
+    assert!(matches!(decide(&panes, Some(&blank)), EnsureDecision::Use { .. }));
+    // The same bot is served.
+    let mine = record(BOT, "%0", 100, CreatedBy::Runner);
+    assert!(matches!(decide(&panes, Some(&mine)), EnsureDecision::Use { .. }));
+    // Usable decisions carry no failure text.
+    assert!(decline_for(&EnsureDecision::Create, "SVWL-claude").is_none());
+}
+
+#[test]
+fn a_task_view_says_whether_it_is_active_and_acknowledged() {
+    let active = view_facts(&serde_json::json!({"active": true, "status": "queued"}));
+    assert!(active.active && !active.acknowledged);
+    let acked = view_facts(&serde_json::json!({"status": "acknowledged"}));
+    assert!(acked.active && acked.acknowledged);
+    let done = view_facts(&serde_json::json!({"active": false}));
+    assert!(!done.active);
 }
 
 /// After an in-place upgrade on Linux `current_exe` says `<path> (deleted)`; hooks must name the
@@ -245,28 +195,18 @@ fn the_executable_path_survives_an_in_place_upgrade() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-const OWN: &str = "0123456789abcdef0123456789abcdef";
-const OTHER: &str = "ffffffffffffffffffffffffffffffff";
-
-/// A hook message is dropped unless it carries this launch's nonce and, where the platform names
-/// the sender, comes from below the session's pane process; an unknown pane is a refusal.
+/// A hook message is dropped unless, where the platform names the sender, it comes from below the
+/// session's pane process; an unknown pane is a refusal. (The pane pair was checked before.)
 #[test]
-fn a_hook_message_from_the_wrong_nonce_or_outside_the_pane_is_dropped() {
+fn a_hook_message_from_outside_the_pane_is_dropped() {
     let pane = 4000;
-    // Right nonce, a chain through the pane.
-    assert_eq!(admit_hook(OWN, OWN, Some(&[9, 8, pane, 1]), Some(pane)), Ok(()));
-    // Wrong nonce, whatever the chain.
-    assert_eq!(admit_hook(OWN, OTHER, Some(&[9, pane]), Some(pane)), Err("wrong nonce"));
-    assert_eq!(admit_hook(OWN, "", None, Some(pane)), Err("wrong nonce"));
+    assert_eq!(admit_hook(Some(&[9, 8, pane, 1]), Some(pane)), Ok(()));
     // A sender outside the pane's process tree.
-    assert_eq!(
-        admit_hook(OWN, OWN, Some(&[9, 8, 7, 1]), Some(pane)),
-        Err("not from the pane")
-    );
+    assert_eq!(admit_hook(Some(&[9, 8, 7, 1]), Some(pane)), Err("not from the pane"));
     // Fail closed: a chain was read but the pane is not known (session.json unreadable).
-    assert_eq!(admit_hook(OWN, OWN, Some(&[9, pane]), None), Err("not from the pane"));
-    // A platform that cannot name the sender leaves the nonce to decide.
-    assert_eq!(admit_hook(OWN, OWN, None, None), Ok(()));
+    assert_eq!(admit_hook(Some(&[9, pane]), None), Err("not from the pane"));
+    // A platform that cannot name the sender leaves the pane pair to decide.
+    assert_eq!(admit_hook(None, None), Ok(()));
 }
 
 /// The directory accepted at delivery must still be the same canonical path before a tmux session

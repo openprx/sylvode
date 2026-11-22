@@ -12,6 +12,7 @@ mod handshake;
 mod hook;
 mod mock_sv;
 mod runner;
+mod setup;
 mod startup;
 mod support;
 mod tmux_session;

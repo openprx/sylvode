@@ -203,8 +203,9 @@ log "Embedded PATH: $SERVICE_PATH"
 # ---------------------------------------------------------------------------
 # Prerequisites: doctor, with the PATH the service will have (not the shell's)
 #
-# The mode is `auto`: the runner follows its configuration. tmux is needed only when
-# `[runner.tmux] enabled = true`; headless runs need none, so no flag is involved.
+# The mode is `auto`: the runner follows its configuration. tmux is needed whenever the
+# configuration has a `runner` agent (a project may use the tmux channel at any time); a
+# configuration without one needs none, so no flag is involved.
 # Exit 2 means a row failed: its hint is printed and nothing is installed. Nothing is ever
 # installed silently.
 # ---------------------------------------------------------------------------
