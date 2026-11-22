@@ -1195,7 +1195,7 @@ pub static CATALOG: &[ToolMeta] = &[
         name: "flow.trash.list",
         category: "flow",
         access: Access::Read,
-        summary: "List the archived Flow objects of a workspace",
+        summary: "List the archived Flow objects of a workspace or project",
         keywords: &["deleted", "recycle bin"],
     },
     ToolMeta {
@@ -1686,10 +1686,8 @@ mod tests {
             "lists the workspace's labels; labels.list_by_project is allowed",
         ),
         ("proposals.list", "lists every proposal of the workspace"),
-        // Workspace-wide Flow reads: project-scoped versions are a follow-up.
-        ("objects.query", "lists the workspace's Flow objects"),
-        ("objects.search", "searches the workspace's Flow"),
-        ("flow.trash.list", "lists the workspace's Flow trash"),
+        // Operational Flow reads. objects.query, objects.search and flow.trash.list are not here: they
+        // take a project_id, and a runner bot's request is allowed when it names a connected project.
         ("collab.projection_lag", "reads the workspace's Flow projection lag"),
         // Flow administration, imports and workspace exports.
         ("objects.export_workspace", "exports the whole workspace's Flow"),
@@ -1783,6 +1781,55 @@ mod tests {
             }
         }
         assert!(surprises.is_empty(), "{surprises:#?}");
+        Ok(())
+    }
+
+    /// The Flow reads of a project reach a route that a runner bot is allowed on when they name the
+    /// project: the route is classified by the query's `project_id`, so the request must carry it,
+    /// and it must carry the very project of the call.
+    #[tokio::test]
+    async fn the_project_form_of_the_flow_reads_reaches_an_allowed_route() -> Result<(), Box<dyn std::error::Error>> {
+        use api::middleware::runner_bot_scope::{Class, Find};
+        const PROJECT: &str = "7d1c2f0e-4b6a-4c55-9a3e-0f2d8b1a6c11";
+        const WORKSPACE: &str = "3a9f5c42-81de-4e07-b6a1-5c2e90d47f38";
+        let api = Api::spawn(Policy::Permissive).await?;
+        let server = McpServer::new(api.client()?, platform::config::McpToolMode::Full);
+        for (name, arguments) in [
+            (
+                "objects.query",
+                json!({"workspace_id": WORKSPACE, "project_id": PROJECT}),
+            ),
+            (
+                "objects.search",
+                json!({"workspace_id": WORKSPACE, "project_id": PROJECT, "q": "plan"}),
+            ),
+            (
+                "flow.trash.list",
+                json!({"workspace_id": WORKSPACE, "project_id": PROJECT}),
+            ),
+        ] {
+            api.clear();
+            let _ = server.execute_tool_for_catalog_witness(name, arguments).await;
+            let seen = api.seen();
+            let [request] = seen.as_slice() else {
+                return Err(format!("{name} issued {seen:?}").into());
+            };
+            assert_eq!(request.method, "GET", "{name}");
+            assert_eq!(
+                class_of(&request.method, &request.path),
+                Some(Class::Project(Find::Query("project_id"))),
+                "{name}: {}",
+                request.path
+            );
+            assert!(
+                request
+                    .query
+                    .split('&')
+                    .any(|pair| pair == format!("project_id={PROJECT}")),
+                "{name}: {}",
+                request.query
+            );
+        }
         Ok(())
     }
 }

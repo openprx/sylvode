@@ -388,7 +388,7 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("flow.appearance.set", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
     ("flow.appearance.upload", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
     ("objects.restore", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
-    ("flow.trash.list", PolicyScope::WorkspaceWide),
+    ("flow.trash.list", PolicyScope::DeclaredProject { required: false }),
     ("objects.purge", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
     ("flow.mentions.list", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
     (tools::tasks::TASK_GET, PolicyScope::OwnedBy(OwnerLookup::AiTask)),

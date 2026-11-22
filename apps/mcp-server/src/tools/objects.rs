@@ -1080,7 +1080,7 @@ pub fn query_flow_objects_tool() -> ToolDefinition {
         name: "objects.query".to_string(),
         description: "List Flow objects in a workspace, scoped to one project or, with \
 unprojected=true, to objects that belong to no project. project_id and unprojected are mutually \
-exclusive."
+exclusive. A runner bot must pass the project_id of one of its connected projects."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -1899,7 +1899,7 @@ pub fn search_flow_objects_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "objects.search".to_string(),
-        description: "Search one project or the projectless scope with per-result API reauthorization; bots have no all_visible escape hatch.".to_string(),
+        description: "Search one project or the projectless scope with per-result API reauthorization; bots have no all_visible escape hatch. A runner bot must pass the project_id of one of its connected projects.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {

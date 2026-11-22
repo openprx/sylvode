@@ -47,7 +47,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
     super::get_all_tool_definitions().into_iter().filter(|tool|supports(&tool.name)).map(|mut tool|{
   let selector=matches!(tool.name.as_str(),"flow.trash.list"|"collab.projection_lag");
   if let Some(properties)=tool.input_schema.get_mut("properties"){
-   for key in ["scope_id","workspace_id","project_id"]{if key=="project_id"&&tool.name=="flow.trash.list"{continue;}set(properties,key,json!({"type":"string","format":"uuid"}));}
+   for key in ["scope_id","workspace_id","project_id"]{set(properties,key,json!({"type":"string","format":"uuid"}));}
    if selector {set(properties,"personal",json!({"const":true}));}
    if matches!(tool.name.as_str(),"flow.comments.create"|"flow.comments.update"|"flow.comments.delete"|"flow.comments.resolve"|"flow.appearance.set"|"flow.appearance.upload"|"objects.purge"){
     set(properties,"idempotency_key",json!({"type":"string","minLength":1,"maxLength":128,"description":"Optional stable retry intent key"}));
@@ -66,7 +66,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
   if tool.name=="objects.move"{tool.description="Move an eligible Page/Collection within its canonical scope, preserving typed Record association. Source management and target edit are required; cross-scope ownership changes are refused. Genuine legacy workspace uses its original move service.".into();}
   if tool.name=="collab.projection_lag"{tool.description="Read actual policy-filtered projection lag. Personal scope accepts cursor and limit1..100, has no project filter, and enforces the published scan budget; genuine legacy workspace retains its original query contract.".into();}
   if tool.name=="objects.diff"{tool.description="Read a bounded semantic diff at retained sequences under current authorization and field secrecy. No raw update bytes are returned; stable editor block anchors may be container IDs.".into();}
-  if tool.name=="flow.trash.list"{tool.description="List archived objects the caller can view. Personal scope supports cursor and limit1..100 with explicit scan-budget refusal; genuine legacy workspace retains its original query contract.".into();}
+  if tool.name=="flow.trash.list"{tool.description="List archived objects the caller can view. Personal scope supports cursor and limit1..100 with explicit scan-budget refusal; project_id limits a workspace listing to the archived objects of that project (a runner bot must name one of its connected projects); genuine legacy workspace retains its original query contract.".into();}
   tool.description=format!("{} Scope-native Flow profile: canonical object/scope authority; real-workspace OPR compatibility only. Personal recipients/grants follow current resource eligibility, not a global directory. Backend gates remain authoritative.",tool.description);
   if tool.name=="objects.reference"{tool.description.push_str(" The actual destination Form/record project policy is checked independently of the source scope.");}
   if tool.name=="objects.unreference"{tool.description.push_str(" Source-Edit link cleanup does not read or mutate the destination Form.");}
@@ -140,11 +140,6 @@ pub async fn prepare(client: &OpenPrClient, name: &str, args: &Value) -> Result<
     flow_scope::validate_arguments(name, args)?;
     if matches!(name, "flow.trash.list" | "collab.projection_lag") {
         let selected = copied(args, &["personal", "scope_id", "workspace_id", "project_id"]);
-        if name == "flow.trash.list" && selected.get("project_id").is_some() {
-            return Err(CallToolResult::error(
-                "Trash is a scope list and does not accept project_id",
-            ));
-        }
         // Query's scope selector resolves identity lazily on this call, without tools/list side effects.
         let mut request = flow_scope::prepare_core(client, "objects.query", &selected).await?;
         let prefix = if let Some(workspace) = request.legacy_workspace_id.as_deref() {

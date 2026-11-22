@@ -1717,14 +1717,24 @@ impl OpenPrClient {
     pub async fn list_flow_trash(
         &self,
         workspace_id: &str,
+        project_id: Option<&str>,
         cursor: Option<&str>,
         limit: Option<u64>,
     ) -> Result<Value, String> {
-        let query = match (cursor, limit) {
-            (Some(cursor), Some(limit)) => format!("?cursor={}&limit={limit}", urlencoding::encode(cursor)),
-            (Some(cursor), None) => format!("?cursor={}", urlencoding::encode(cursor)),
-            (None, Some(limit)) => format!("?limit={limit}"),
-            (None, None) => String::new(),
+        let mut pairs = Vec::new();
+        if let Some(project_id) = project_id {
+            pairs.push(format!("project_id={}", urlencoding::encode(project_id)));
+        }
+        if let Some(cursor) = cursor {
+            pairs.push(format!("cursor={}", urlencoding::encode(cursor)));
+        }
+        if let Some(limit) = limit {
+            pairs.push(format!("limit={limit}"));
+        }
+        let query = if pairs.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", pairs.join("&"))
         };
         self.get(&format!(
             "/api/v1/workspaces/{}/flow/trash{query}",
