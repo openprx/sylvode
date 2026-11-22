@@ -1,4 +1,5 @@
-//! A project's bot connection: connect, read, update, disable, enable, rotate credentials, remove.
+//! A project's bot connections: list, connect, read, update, disable, enable, rotate credentials
+//! and remove, one connection per (project, bot).
 //!
 //! Owners and admins of the project's workspace manage the connection; members read a reduced
 //! view. A bot is refused whatever permissions it holds, and so is an OAuth delegated caller:
@@ -104,48 +105,103 @@ struct BlockAnswer<'a> {
     config_block: Option<&'a ConfigBlock>,
 }
 
-async fn status_of(state: &AppState, connection: &ConnectionView) -> Result<ConnectionStatus, ApiError> {
+async fn status_of(
+    state: &AppState,
+    project_key: &str,
+    connection: &ConnectionView,
+) -> Result<ConnectionStatus, ApiError> {
     bot_connection_status::compute(
         &state.db,
         connection.bot.id,
+        project_key,
         &connection.execution.cli,
         &connection.execution.channel,
     )
     .await
 }
 
-async fn answer<'a>(state: &AppState, connection: &'a ConnectionView) -> Result<ConnectionAnswer<'a>, ApiError> {
+async fn answer<'a>(
+    state: &AppState,
+    project_key: &str,
+    connection: &'a ConnectionView,
+) -> Result<ConnectionAnswer<'a>, ApiError> {
     Ok(ConnectionAnswer {
-        status: status_of(state, connection).await?,
+        status: status_of(state, project_key, connection).await?,
         connection,
     })
 }
 
-/// `GET /api/v1/projects/{project_id}/bot-connection`
-pub async fn get_bot_connection(
+/// Who may read: owners and admins get the full view, other members the reduced one, everyone
+/// else is refused. No existence check of its own: a project that does not exist has no members,
+/// so the caller gets the same refusal as for a project they cannot see.
+async fn reader(
+    state: &AppState,
+    claims: &JwtClaims,
+    bot: Option<&Extension<BotAuthContext>>,
+    project_id: Uuid,
+) -> Result<bool, ApiError> {
+    refuse_machines(bot)?;
+    let actor = user_id(claims)?;
+    if is_project_admin_or_owner(&state.db, project_id, actor).await? {
+        return Ok(true);
+    }
+    if !is_project_member(&state.db, project_id, actor).await? {
+        return Err(ApiError::Forbidden("project access denied".to_string()));
+    }
+    Ok(false)
+}
+
+/// `GET /api/v1/projects/{project_id}/bot-connections`: every connection, ordered by bot name.
+///
+/// Owners and admins get `{"connections": [{connection, status}]}`, other members
+/// `{"connections": [MemberView]}`.
+pub async fn list_bot_connections(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(project_id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    refuse_machines(bot.as_ref())?;
-    let actor = user_id(&claims)?;
-    // No existence check of its own: a project that does not exist has no members, so the caller
-    // gets the same refusal as for a project they cannot see.
-    if is_project_admin_or_owner(&state.db, project_id, actor).await? {
-        let Some(connection) = bot_connections::load_view(&state.db, project_id).await? else {
-            return Ok(ApiResponse::success(json!({ "connection": null, "status": null })).into_response());
-        };
-        return Ok(ApiResponse::success(answer(&state, &connection).await?).into_response());
+    if !reader(&state, &claims, bot.as_ref(), project_id).await? {
+        let connections = bot_connections::list_member_views(&state.db, project_id).await?;
+        return Ok(ApiResponse::success(json!({ "connections": connections })).into_response());
     }
-    if !is_project_member(&state.db, project_id, actor).await? {
-        return Err(ApiError::Forbidden("project access denied".to_string()));
+    let project = execution_settings::project_ref(&state.db, project_id).await?;
+    let views = bot_connections::list_views(&state.db, project_id).await?;
+    let mut connections = Vec::with_capacity(views.len());
+    for connection in &views {
+        connections.push(json!({
+            "connection": connection,
+            "status": status_of(&state, &project.key, connection).await?,
+        }));
     }
-    let connection: Option<MemberView> = bot_connections::load_member_view(&state.db, project_id).await?;
-    Ok(ApiResponse::success(json!({ "connection": connection })).into_response())
+    Ok(ApiResponse::success(json!({ "connections": connections })).into_response())
 }
 
-/// `POST /api/v1/projects/{project_id}/bot-connection`
+/// `GET /api/v1/projects/{project_id}/bot-connections/{bot_id}`: one connection.
+///
+/// 404 when the project has none for the bot. Owners and admins get `{connection, status}`, other members
+/// `{connection: MemberView}`.
+pub async fn get_bot_connection(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((project_id, bot_id)): Path<(Uuid, Uuid)>,
+) -> Result<Response, ApiError> {
+    let missing = || ApiError::NotFound(bot_connections::NO_CONNECTION.to_string());
+    if !reader(&state, &claims, bot.as_ref(), project_id).await? {
+        let connection: MemberView = bot_connections::load_member_view(&state.db, project_id, bot_id)
+            .await?
+            .ok_or_else(missing)?;
+        return Ok(ApiResponse::success(json!({ "connection": connection })).into_response());
+    }
+    let project = execution_settings::project_ref(&state.db, project_id).await?;
+    let connection = bot_connections::load_view(&state.db, project_id, bot_id)
+        .await?
+        .ok_or_else(missing)?;
+    Ok(ApiResponse::success(answer(&state, &project.key, &connection).await?).into_response())
+}
+
+/// `POST /api/v1/projects/{project_id}/bot-connections`
 pub async fn connect_bot(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -157,23 +213,25 @@ pub async fn connect_bot(
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
     let connected = bot_connections::connect(&state, &project, actor, req, origin_of(&headers)).await?;
     Ok(no_store(ApiResponse::success(BlockAnswer {
-        status: status_of(&state, &connected.connection).await?,
+        status: status_of(&state, &project.key, &connected.connection).await?,
         connection: &connected.connection,
         config_block: connected.config_block.as_ref(),
     })))
 }
 
-/// `PATCH /api/v1/projects/{project_id}/bot-connection`
+/// `PATCH /api/v1/projects/{project_id}/bot-connections/{bot_id}`
 pub async fn update_bot_connection(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Path(project_id): Path<Uuid>,
+    Path((project_id, bot_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdateRequest>,
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
-    match bot_connections::update(&state, &project, actor, req).await? {
-        Outcome::Done(connection) => Ok(ApiResponse::success(answer(&state, &connection).await?).into_response()),
+    match bot_connections::update(&state, &project, bot_id, actor, req).await? {
+        Outcome::Done(connection) => {
+            Ok(ApiResponse::success(answer(&state, &project.key, &connection).await?).into_response())
+        }
         Outcome::Conflict { current } => Ok(version_conflict(&current)),
     }
 }
@@ -185,56 +243,67 @@ pub struct VersionBody {
     pub expected_version: i32,
 }
 
-/// `POST /api/v1/projects/{project_id}/bot-connection/disable`
+/// `POST /api/v1/projects/{project_id}/bot-connections/{bot_id}/disable`
 pub async fn disable_bot_connection(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Path(project_id): Path<Uuid>,
+    Path((project_id, bot_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<VersionBody>,
 ) -> Result<Response, ApiError> {
-    set_enabled(state, claims, bot, project_id, body, false).await
+    set_enabled(state, claims, bot, (project_id, bot_id), body, false).await
 }
 
-/// `POST /api/v1/projects/{project_id}/bot-connection/enable`
+/// `POST /api/v1/projects/{project_id}/bot-connections/{bot_id}/enable`
 pub async fn enable_bot_connection(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Path(project_id): Path<Uuid>,
+    Path((project_id, bot_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<VersionBody>,
 ) -> Result<Response, ApiError> {
-    set_enabled(state, claims, bot, project_id, body, true).await
+    set_enabled(state, claims, bot, (project_id, bot_id), body, true).await
 }
 
 async fn set_enabled(
     state: AppState,
     claims: JwtClaims,
     bot: Option<Extension<BotAuthContext>>,
-    project_id: Uuid,
+    (project_id, bot_id): (Uuid, Uuid),
     body: VersionBody,
     enabled: bool,
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
-    match bot_connections::set_enabled(&state, &project, actor, body.expected_version, enabled).await? {
-        Outcome::Done(connection) => Ok(ApiResponse::success(answer(&state, &connection).await?).into_response()),
+    match bot_connections::set_enabled(&state, &project, bot_id, actor, body.expected_version, enabled).await? {
+        Outcome::Done(connection) => {
+            Ok(ApiResponse::success(answer(&state, &project.key, &connection).await?).into_response())
+        }
         Outcome::Conflict { current } => Ok(version_conflict(&current)),
     }
 }
 
-/// `POST /api/v1/projects/{project_id}/bot-connection/rotate`
+/// `POST /api/v1/projects/{project_id}/bot-connections/{bot_id}/rotate`
 pub async fn rotate_bot_connection(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Path(project_id): Path<Uuid>,
+    Path((project_id, bot_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
     Json(body): Json<VersionBody>,
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
-    match bot_connections::rotate(&state, &project, actor, body.expected_version, origin_of(&headers)).await? {
+    match bot_connections::rotate(
+        &state,
+        &project,
+        bot_id,
+        actor,
+        body.expected_version,
+        origin_of(&headers),
+    )
+    .await?
+    {
         Outcome::Done(rotated) => Ok(no_store(ApiResponse::success(BlockAnswer {
-            status: status_of(&state, &rotated.connection).await?,
+            status: status_of(&state, &project.key, &rotated.connection).await?,
             connection: &rotated.connection,
             config_block: Some(&rotated.config_block),
         }))),
@@ -247,16 +316,16 @@ pub struct RemoveQuery {
     pub expected_version: i32,
 }
 
-/// `DELETE /api/v1/projects/{project_id}/bot-connection?expected_version=N`
+/// `DELETE /api/v1/projects/{project_id}/bot-connections/{bot_id}?expected_version=N`
 pub async fn remove_bot_connection(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Path(project_id): Path<Uuid>,
+    Path((project_id, bot_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<RemoveQuery>,
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
-    match bot_connections::remove(&state, &project, actor, query.expected_version).await? {
+    match bot_connections::remove(&state, &project, bot_id, actor, query.expected_version).await? {
         Outcome::Done(removed) => Ok(ApiResponse::success(removed).into_response()),
         Outcome::Conflict { current } => Ok(version_conflict(&current)),
     }

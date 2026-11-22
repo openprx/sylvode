@@ -121,16 +121,17 @@ pub async fn get_project_context(
     // release covers decisions, and the field is left out rather than sent empty, which would
     // read as "no decisions".
     //
-    // The execution settings are left out for the same callers: they name a directory on the
+    // The executions (one per bot connection) are left out for the same callers: they name a directory on the
     // runner's machine, which no connected application has a use for, and an absent key (unlike
-    // `null`) does not read as "this project has no settings".
+    // empty array) does not read as "this project has no connections".
     if crate::oauth::delegated::current().is_none()
         && let Some(object) = context.as_object_mut()
     {
         let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
         object.insert("recent_decisions".to_owned(), json!(decisions));
-        let execution = crate::services::execution_settings::load(&state.db, project_id).await?;
-        object.insert("execution".to_owned(), json!(execution));
+        let executions =
+            crate::services::execution_settings::list_for_project(&state.db, project_id, &project.key).await?;
+        object.insert("executions".to_owned(), json!(executions));
     }
     Ok(ApiResponse::success(context))
 }
@@ -820,11 +821,12 @@ mod tests {
         serde_json::from_slice(&bytes).expect("the body is JSON")
     }
 
-    /// The execution settings name a directory on the runner's machine: people and bots get them
-    /// (`null` without a row), a connected application gets no `execution` key at all.
+    /// The executions (one per bot connection) name a directory on the runner's machine: people and
+    /// bots get them (an empty array without a connection), a connected application gets no
+    /// `executions` key at all.
     #[tokio::test]
-    async fn the_context_carries_execution_settings_except_for_connected_applications() {
-        use super::tenant_fixture::{bot_context_for, exec, seed_bot_user};
+    async fn the_context_carries_the_executions_except_for_connected_applications() {
+        use super::tenant_fixture::{bot_context_for, exec, seed_bot_user, seed_connection, seed_connection_on};
         use crate::middleware::bot_auth::EventSurface;
         use crate::oauth::delegated::{DelegatedAuthContext, with_context};
         use crate::oauth::scopes::{ProjectScope, ScopeSet, TokenResource};
@@ -833,21 +835,33 @@ mod tests {
         let db = &scratch.db;
         let tenant = seed_tenant(db, "cx").await;
         let bot = seed_bot_user(db, &tenant).await;
+        let second = seed_bot_user(db, &tenant).await;
 
         let without = context_body(db, tenant.member_id, None, tenant.project_id).await;
-        assert!(
-            without["data"].get("execution").is_some_and(serde_json::Value::is_null),
-            "a project without settings reports null: {without}"
+        assert_eq!(
+            without["data"]["executions"],
+            serde_json::json!([]),
+            "a project without connections reports an empty list: {without}"
         );
 
-        exec(
-            db,
-            "INSERT INTO project_execution_settings (project_id, working_directory, enabled) VALUES ($1, '/work/a', true)",
-            vec![tenant.project_id.into()],
-        )
-        .await;
+        seed_connection(db, &tenant, tenant.project_id, bot, true, "/work/a").await;
+        seed_connection_on(db, &tenant, tenant.project_id, second, false, "/work/b", "headless").await;
+        for (id, name) in [(bot, "Alpha"), (second, "Bravo")] {
+            exec(
+                db,
+                "UPDATE workspace_bots SET name = $2 WHERE id = $1",
+                vec![id.into(), name.to_string().into()],
+            )
+            .await;
+        }
+        let expected = serde_json::json!([
+            {"bot_id": bot, "bot_name": "Alpha", "enabled": true, "channel": "tmux", "cli": "claude",
+             "working_directory": "/work/a", "session_name": "Pcx-claude"},
+            {"bot_id": second, "bot_name": "Bravo", "enabled": false, "channel": "headless", "cli": "claude",
+             "working_directory": "/work/b", "session_name": null},
+        ]);
         let person = context_body(db, tenant.member_id, None, tenant.project_id).await;
-        assert_eq!(person["data"]["execution"]["working_directory"], "/work/a");
+        assert_eq!(person["data"]["executions"], expected);
         let bot_view = context_body(
             db,
             bot,
@@ -855,7 +869,7 @@ mod tests {
             tenant.project_id,
         )
         .await;
-        assert_eq!(bot_view["data"]["execution"]["working_directory"], "/work/a");
+        assert_eq!(bot_view["data"]["executions"], expected);
 
         let delegated = DelegatedAuthContext {
             grant_id: uuid::Uuid::new_v4(),
@@ -872,8 +886,8 @@ mod tests {
         };
         let connected = with_context(delegated, context_body(db, tenant.member_id, None, tenant.project_id)).await;
         assert!(
-            connected["data"].get("execution").is_none(),
-            "a connected application gets no execution key: {connected}"
+            connected["data"].get("executions").is_none(),
+            "a connected application gets no executions key: {connected}"
         );
         assert!(
             !connected.to_string().contains("/work/a"),
@@ -1118,6 +1132,79 @@ pub mod tenant_fixture {
         )
         .await;
         bot_id
+    }
+
+    /// The shared rows of a connected bot (token row, managed webhook, `bot_runners`) for a bot
+    /// user of `tenant`, written once per bot.
+    pub async fn seed_bot_runner(db: &impl ConnectionTrait, tenant: &Tenant, bot_id: Uuid) {
+        exec(
+            db,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix) \
+             VALUES ($1, $2, 'tenant bot', replace($1::text, '-', '') || replace($1::text, '-', ''), 'svb_test') \
+             ON CONFLICT (id) DO NOTHING",
+            vec![bot_id.into(), tenant.workspace_id.into()],
+        )
+        .await;
+        let hook = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, created_by) \
+             SELECT $1, $2, 'runner', 'https://93.184.216.34:9090/webhook', 'secret', '{}', $3 \
+             WHERE NOT EXISTS (SELECT 1 FROM bot_runners WHERE bot_id = $4)",
+            vec![
+                hook.into(),
+                tenant.workspace_id.into(),
+                tenant.member_id.into(),
+                bot_id.into(),
+            ],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO bot_runners (bot_id, workspace_id, webhook_id, runner_url) \
+             SELECT $1, $2, $3, 'https://93.184.216.34:9090' \
+             WHERE NOT EXISTS (SELECT 1 FROM bot_runners WHERE bot_id = $1)",
+            vec![bot_id.into(), tenant.workspace_id.into(), hook.into()],
+        )
+        .await;
+    }
+
+    /// A connection of `bot_id` to `project_id`, tmux and claude, in `working_directory`.
+    pub async fn seed_connection(
+        db: &impl ConnectionTrait,
+        tenant: &Tenant,
+        project_id: Uuid,
+        bot_id: Uuid,
+        enabled: bool,
+        working_directory: &str,
+    ) {
+        seed_connection_on(db, tenant, project_id, bot_id, enabled, working_directory, "tmux").await;
+    }
+
+    /// [`seed_connection`] on `channel` (`tmux` or `headless`).
+    pub async fn seed_connection_on(
+        db: &impl ConnectionTrait,
+        tenant: &Tenant,
+        project_id: Uuid,
+        bot_id: Uuid,
+        enabled: bool,
+        working_directory: &str,
+        channel: &str,
+    ) {
+        seed_bot_runner(db, tenant, bot_id).await;
+        exec(
+            db,
+            "INSERT INTO project_bot_connections (project_id, bot_id, enabled, working_directory, channel) \
+             VALUES ($1, $2, $3, $4, $5)",
+            vec![
+                project_id.into(),
+                bot_id.into(),
+                enabled.into(),
+                working_directory.to_string().into(),
+                channel.to_string().into(),
+            ],
+        )
+        .await;
     }
 
     /// A person who belongs to `tenant`'s workspace with `role` (`owner`, `admin` or `member`).

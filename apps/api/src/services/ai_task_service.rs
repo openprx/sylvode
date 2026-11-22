@@ -472,9 +472,8 @@ pub async fn runner_bot_block<C: ConnectionTrait>(
         DbBackend::Postgres,
         r"
             SELECT EXISTS (SELECT 1 FROM bot_runners WHERE bot_id = $2) AS runner,
-                   (SELECT s.enabled
+                   (SELECT c.enabled
                       FROM project_bot_connections c
-                      JOIN project_execution_settings s ON s.project_id = c.project_id
                      WHERE c.project_id = $1 AND c.bot_id = $2) AS enabled
         ",
         vec![project_id.into(), bot_id.into()],
@@ -1003,8 +1002,7 @@ pub async fn fail_tasks_without_connection(
                 INNER JOIN bot_runners r ON r.bot_id = t.ai_participant_id
                 LEFT JOIN project_bot_connections c
                        ON c.project_id = t.project_id AND c.bot_id = t.ai_participant_id
-                LEFT JOIN project_execution_settings s ON s.project_id = c.project_id
-                WHERE t.status = 'pending' AND (c.project_id IS NULL OR NOT COALESCE(s.enabled, false))
+                WHERE t.status = 'pending' AND (c.project_id IS NULL OR NOT c.enabled)
                 ORDER BY t.created_at
                 LIMIT $1
                 FOR UPDATE OF t SKIP LOCKED

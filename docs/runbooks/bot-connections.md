@@ -16,7 +16,12 @@ Operating notes for migration `0112_bot_connections.sql`: the schema under "Conn
   (`GET /api/v1/projects/{project_id}/ai-participants/{bot_id}/learning` and `/alignment-stats`).
 - Two new tables: `bot_runners` (one row per connected bot: managed webhook, runner address,
   credentials issue time, the runner's last report) and `project_bot_connections` (one row per
-  connected project, with a version for compare-and-set writes).
+  (project, bot), with a version for compare-and-set writes and the execution settings of the
+  connection: enabled flag, channel, CLI, working directory). `0114_multi_bot_connections.sql`
+  brings a database that holds the earlier shape (one connection per project, settings in
+  `project_execution_settings`) forward; a new database has the final shape from `0112`. A project
+  has at most one tmux connection per CLI type (partial unique index `pbc_one_tmux_per_cli`);
+  headless connections are not limited.
 
 - A trigger on `workspace_members` (`trg_workspace_members_runner_bot_seat`) refuses a role other
   than `member` for a bot that has a `bot_runners` row. A runner bot executes agents on untrusted
@@ -72,8 +77,9 @@ not in the table, or a new route added to `main.rs`, is refused until it is clas
 - A runner address that starts with `http://` is accepted only when its host is listed in
   `[outbound] allowed_hosts` (or private targets are switched on); use `https://` otherwise. The
   address is stored as parsed (`HTTPS://Host:443/` is `https://host`).
-- Lock order, everywhere: the project row, then `bot_runners`, then `project_bot_connections`. Connect
-  and the release for a deleted project both start with the project row.
+- Lock order, everywhere: the project row, then the `bot_runners` rows (bot id order), then the
+  `project_bot_connections` rows. Connect and the release for a deleted project both start with the
+  project row; the release removes the connections one bot at a time.
 - Events that a connection writes carry the runner's working directory. They are not delivered to
   webhooks (their payload is withheld, as for every event type without a delivery policy) and are not
   part of the connected-application stream.
@@ -97,10 +103,12 @@ the row versions do not change.
 
 Without touching the schema, nothing needs to change: no connection exists until one is created.
 
+`0114` has no down file: restore the disposable database from the redeploy procedure.
+
 Removing the schema, in this order:
 
 ```sql
-DROP TABLE IF EXISTS project_bot_connections, bot_runners;
+DROP TABLE IF EXISTS project_bot_connections, bot_runners, project_execution_settings;
 ALTER TABLE ai_participants
   ADD COLUMN IF NOT EXISTS model varchar(100),
   ADD COLUMN IF NOT EXISTS provider varchar(50),

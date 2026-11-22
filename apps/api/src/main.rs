@@ -1006,17 +1006,17 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
             ),
         )
         .route(
-            "/api/v1/projects/{project_id}/execution-settings",
-            get(routes::project_execution::get_execution_settings)
+            "/api/v1/projects/{project_id}/bot-connections",
+            get(routes::project_bot_connection::list_bot_connections)
+                .post(routes::project_bot_connection::connect_bot)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
                     middleware::bot_auth::bot_or_user_auth_middleware,
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/bot-connection",
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}",
             get(routes::project_bot_connection::get_bot_connection)
-                .post(routes::project_bot_connection::connect_bot)
                 .patch(routes::project_bot_connection::update_bot_connection)
                 .delete(routes::project_bot_connection::remove_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
@@ -1025,7 +1025,7 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/bot-connection/disable",
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}/disable",
             post(routes::project_bot_connection::disable_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -1033,7 +1033,7 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/bot-connection/enable",
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}/enable",
             post(routes::project_bot_connection::enable_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -1041,7 +1041,7 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/bot-connection/rotate",
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}/rotate",
             post(routes::project_bot_connection::rotate_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -3815,6 +3815,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0113_ai_task_chain.sql",
         include_str!("../../../migrations/0113_ai_task_chain.sql"),
     ),
+    (
+        "0114_multi_bot_connections.sql",
+        include_str!("../../../migrations/0114_multi_bot_connections.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4372,7 +4376,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     ),
     (
         "0110_runner_task_protocol.sql",
-        SchemaProbe::Relation("project_execution_settings"),
+        SchemaProbe::Column("ai_tasks", "runner_phase"),
     ),
     ("0111_alert_chain.sql", SchemaProbe::Relation("inbound_events")),
     (
@@ -4382,6 +4386,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0113_ai_task_chain.sql",
         SchemaProbe::Column("ai_tasks", "chain_root_id"),
+    ),
+    (
+        "0114_multi_bot_connections.sql",
+        SchemaProbe::Column("project_bot_connections", "channel"),
     ),
 ];
 
@@ -4950,6 +4958,7 @@ mod tests {
                 "0111_alert_chain.sql",
                 "0112_bot_connections.sql",
                 "0113_ai_task_chain.sql",
+                "0114_multi_bot_connections.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -4966,9 +4975,10 @@ mod tests {
 
     /// The post-cutoff files that intentionally drop relations. Everything else past the cutoff
     /// must stay replay-safe.
-    const RETIREMENT_MIGRATIONS: [&str; 2] = [
+    const RETIREMENT_MIGRATIONS: [&str; 3] = [
         "0052_drop_connectors_and_agent_invocations.sql",
         "0053_drop_event_outbox.sql",
+        "0114_multi_bot_connections.sql",
     ];
 
     /// Non-destructive post-cutoff migrations must remain safe to replay. The explicitly
@@ -5003,6 +5013,7 @@ mod tests {
             "agent_invocation_tool_calls",
             "agent_invocations",
             "event_outbox",
+            "project_execution_settings",
         ];
         for (name, sql) in MIGRATIONS.iter().filter(|(name, _)| *name > MIGRATION_ADOPTION_CUTOFF) {
             if RETIREMENT_MIGRATIONS.contains(name) {
@@ -5036,6 +5047,10 @@ mod tests {
                 ["agent_invocation_tool_calls", "agent_invocations", "connectors"].as_slice(),
             ),
             ("0053_drop_event_outbox.sql", ["event_outbox"].as_slice()),
+            (
+                "0114_multi_bot_connections.sql",
+                ["project_execution_settings"].as_slice(),
+            ),
         ] {
             let sql = MIGRATIONS
                 .iter()

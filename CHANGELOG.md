@@ -87,12 +87,17 @@ name.
 
 ### Added
 
-- **Connect a bot to a project.** A project is connected to one bot that runs its agent tasks on a
-  runner. `POST /api/v1/projects/{id}/bot-connection` creates (or reuses) the bot, its token, a
-  managed webhook, the AI participant registration and the execution settings in one transaction
-  and returns the runner configuration block (token and signing secret) once, with
-  `Cache-Control: no-store`. `GET`, `PATCH`, `DELETE` and `.../disable`, `.../enable`, `.../rotate`
-  complete it; every write carries the connection's `version`. Owners and admins only; bots and
+- **Connect bots to a project.** A project is connected to one or several bots that run its agent
+  tasks on runners; a connection is (project, bot) and holds its own execution settings (enabled,
+  channel, CLI, working directory). `POST /api/v1/projects/{id}/bot-connections` creates (or
+  reuses) the bot, its token, a managed webhook, the AI participant registration and the
+  connection in one transaction and returns the runner configuration block (token and signing
+  secret) once, with `Cache-Control: no-store`. `GET .../bot-connections`, `GET`, `PATCH`,
+  `DELETE .../bot-connections/{bot_id}` and `.../{bot_id}/disable`, `/enable`, `/rotate` complete
+  it; every write carries the connection's `version`. A project has at most one tmux connection per
+  CLI type (409 naming the bot that holds it); headless connections are not limited. A task uses
+  the connection of its project and its bot, and the task view names the tmux session
+  (`session_name`, `<KEY>-<cli>`). Owners and admins only; bots and
   connected applications are refused. The runner address is checked with the outbound policy
   (`[outbound] allowed_hosts`). `GET` answers a status computed from the runner's report
   (`PUT /api/v1/ai/runner/report`, sanitised, 16 KiB limit), the token's use and the latest delivery.
@@ -230,9 +235,9 @@ name.
   `(project_id, id)` (one bot, several projects), drops the stored-only columns `model`,
   `provider`, `api_endpoint` and `capabilities`, and drops the learning records' foreign key.
   Learning records are read per project: `GET /api/v1/projects/{id}/ai-participants/{bot_id}/learning`
-  and `.../alignment-stats` replace `/api/v1/ai-participants/{id}/...`. `PUT
-  /api/v1/projects/{id}/execution-settings` is removed (the connection writes the settings);
-  `GET` stays. The worker's end reason `receiver_declined` is now `runner_declined`.
+  and `.../alignment-stats` replace `/api/v1/ai-participants/{id}/...`. The
+  project-level execution settings endpoints are removed (each connection holds its settings), and
+  the project context lists them as `executions`, one per connection. The worker's end reason `receiver_declined` is now `runner_declined`.
 
 ### Fixed
 

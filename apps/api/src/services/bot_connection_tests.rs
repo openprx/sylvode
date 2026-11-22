@@ -118,9 +118,24 @@ pub fn update_request(value: Value) -> UpdateRequest {
     serde_json::from_value(value).expect("an update request")
 }
 
+/// The bot of the project's only connection; a project without one answers the 404 of a missing
+/// connection, and a project with several is a mistake of the test.
+pub async fn sole_bot(db: &DatabaseConnection, project: Uuid) -> Result<Uuid, ApiError> {
+    let mut bots = bot_connections::list_member_views(db, project).await?;
+    assert!(bots.len() <= 1, "this helper is for a project with one connection");
+    bots.pop()
+        .map(|view| view.bot.id)
+        .ok_or_else(|| ApiError::NotFound(bot_connections::NO_CONNECTION.to_string()))
+}
+
 pub async fn update(w: &W, project: Uuid, body: Value) -> Result<Outcome<ConnectionView>, ApiError> {
+    let bot = sole_bot(&w.state.db, project).await?;
+    update_for(w, project, bot, body).await
+}
+
+pub async fn update_for(w: &W, project: Uuid, bot: Uuid, body: Value) -> Result<Outcome<ConnectionView>, ApiError> {
     let project = project_ref(&w.state.db, project).await?;
-    bot_connections::update(&w.state, &project, w.owner, update_request(body)).await
+    bot_connections::update(&w.state, &project, bot, w.owner, update_request(body)).await
 }
 
 #[allow(
@@ -140,18 +155,35 @@ pub async fn set_enabled(
     version: i32,
     enabled: bool,
 ) -> Result<Outcome<ConnectionView>, ApiError> {
+    let bot = sole_bot(&w.state.db, project).await?;
+    set_enabled_for(w, project, bot, version, enabled).await
+}
+
+pub async fn set_enabled_for(
+    w: &W,
+    project: Uuid,
+    bot: Uuid,
+    version: i32,
+    enabled: bool,
+) -> Result<Outcome<ConnectionView>, ApiError> {
     let project = project_ref(&w.state.db, project).await?;
-    bot_connections::set_enabled(&w.state, &project, w.owner, version, enabled).await
+    bot_connections::set_enabled(&w.state, &project, bot, w.owner, version, enabled).await
 }
 
 pub async fn rotate(w: &W, project: Uuid, version: i32) -> Result<Outcome<Rotated>, ApiError> {
+    let bot = sole_bot(&w.state.db, project).await?;
     let project = project_ref(&w.state.db, project).await?;
-    bot_connections::rotate(&w.state, &project, w.owner, version, None).await
+    bot_connections::rotate(&w.state, &project, bot, w.owner, version, None).await
 }
 
 pub async fn remove(w: &W, project: Uuid, version: i32) -> Result<Outcome<Removed>, ApiError> {
+    let bot = sole_bot(&w.state.db, project).await?;
+    remove_for(w, project, bot, version).await
+}
+
+pub async fn remove_for(w: &W, project: Uuid, bot: Uuid, version: i32) -> Result<Outcome<Removed>, ApiError> {
     let project = project_ref(&w.state.db, project).await?;
-    bot_connections::remove(&w.state, &project, w.owner, version).await
+    bot_connections::remove(&w.state, &project, bot, w.owner, version).await
 }
 
 pub fn bad_request(result: Result<impl std::fmt::Debug, ApiError>) -> String {
@@ -305,11 +337,7 @@ async fn an_owner_connects_a_new_bot_and_every_row_exists() {
         1
     );
     assert_eq!(
-        one(
-            "SELECT 1 FROM project_execution_settings s JOIN project_bot_connections c ON c.project_id = s.project_id \
-             WHERE c.bot_id = $1 AND s.enabled AND c.version = 1"
-        )
-        .await,
+        one("SELECT 1 FROM project_bot_connections c WHERE c.bot_id = $1 AND c.enabled AND c.version = 1").await,
         1
     );
     for event in ["project.bot_connected", "webhook.created"] {
@@ -330,9 +358,8 @@ async fn an_owner_connects_a_new_bot_and_every_row_exists() {
         n(
             db,
             "SELECT 1 FROM project_bot_connections c \
-             JOIN project_execution_settings s ON s.project_id = c.project_id \
              JOIN ai_participants a ON a.project_id = c.project_id AND a.id = c.bot_id::text \
-             WHERE s.enabled <> a.is_active",
+             WHERE c.enabled <> a.is_active",
             vec![]
         )
         .await,
@@ -381,7 +408,6 @@ async fn a_failure_at_any_step_leaves_no_row_behind() {
         "webhooks",
         "bot_runners",
         "ai_participants",
-        "project_execution_settings",
         "project_bot_connections",
         "business_events",
     ];
@@ -394,14 +420,13 @@ async fn a_failure_at_any_step_leaves_no_row_behind() {
     };
     let before = snapshot().await;
     // One trigger per write of the connect, each raising once it is reached.
-    let steps: [(&str, &str); 9] = [
+    let steps: [(&str, &str); 8] = [
         ("users", ""),
         ("workspace_members", ""),
         ("workspace_bots", ""),
         ("webhooks", ""),
         ("bot_runners", ""),
         ("ai_participants", ""),
-        ("project_execution_settings", ""),
         ("project_bot_connections", ""),
         ("business_events", "WHEN (NEW.event_type = 'project.bot_connected')"),
     ];
@@ -482,9 +507,17 @@ async fn a_connected_bot_joins_a_second_project_without_new_credentials() {
         bad_request(connect(&w, p3, existing_bot(Uuid::new_v4())).await),
         "bot.id: not a connected bot of this workspace"
     );
-    // One connected bot per project.
+    // The same bot twice in one project is refused; a second tmux connection for claude is refused
+    // with the name of the bot that holds the session.
+    match connect(&w, w.tenant.project_id, existing_bot(bot)).await {
+        Err(ApiError::Conflict(message)) => assert_eq!(message, "project already has a connection for this bot"),
+        other => panic!("expected a 409, got {:?}", other.map(|_| ())),
+    }
     match connect(&w, w.tenant.project_id, new_bot("Second bot")).await {
-        Err(ApiError::Conflict(message)) => assert_eq!(message, "project already has a bot connection; reload"),
+        Err(ApiError::Conflict(message)) => assert_eq!(
+            message,
+            "channel: project already has a tmux connection for claude (bot Shared bot)"
+        ),
         other => panic!("expected a 409, got {:?}", other.map(|_| ())),
     }
     scratch.drop_self().await;
@@ -520,7 +553,11 @@ async fn two_simultaneous_connects_make_one_connection_and_one_bot() {
         "exactly one connect wins"
     );
     let loser = results.iter().find_map(|r| r.as_ref().err()).expect("one loses");
-    assert!(matches!(loser, ApiError::Conflict(message) if message == "project already has a bot connection; reload"));
+    assert!(
+        matches!(loser, ApiError::Conflict(message)
+            if message.starts_with("channel: project already has a tmux connection for claude (bot Racer ")),
+        "{loser:?}"
+    );
     assert_eq!(
         n(db, "SELECT 1 FROM workspace_bots", vec![]).await,
         1,
@@ -616,9 +653,13 @@ async fn only_owners_and_admins_manage_and_machines_never_do() {
     );
 
     // An admin connects.
-    call(admin, None, new_bot("Admin bot"))
+    let admin_connect = call(admin, None, new_bot("Admin bot"))
         .await
         .expect("an admin connects");
+    let admin_bot: Uuid = body_of(admin_connect).await.1["data"]["connection"]["bot"]["id"]
+        .as_str()
+        .and_then(|id| id.parse().ok())
+        .expect("the bot id");
 
     // Reading: owners and admins see the full view, members the reduced one, machines nothing.
     let get = |user: Uuid, bot: Option<crate::middleware::bot_auth::BotAuthContext>| {
@@ -628,7 +669,7 @@ async fn only_owners_and_admins_manage_and_machines_never_do() {
                 State(state),
                 Extension(claims_for(user)),
                 bot.map(Extension),
-                Path(project),
+                Path((project, admin_bot)),
             )
             .await
         }
@@ -658,16 +699,44 @@ async fn only_owners_and_admins_manage_and_machines_never_do() {
         Err(ApiError::Forbidden(message)) => assert_eq!(message, "project access denied"),
         other => panic!("expected a 403, got {:?}", other.map(|_| ())),
     }
-    // A project with no connection reads as null.
+    // A project with no connection for the bot is a 404; the list is empty.
     let none = route::get_bot_connection(
+        State(w.state.clone()),
+        Extension(claims_for(stranger.member_id)),
+        None,
+        Path((stranger.project_id, admin_bot)),
+    )
+    .await;
+    assert!(
+        matches!(none, Err(ApiError::NotFound(ref message)) if message == "project has no connection for this bot"),
+        "{:?}",
+        none.map(|_| ())
+    );
+    let listed = route::list_bot_connections(
         State(w.state.clone()),
         Extension(claims_for(stranger.member_id)),
         None,
         Path(stranger.project_id),
     )
     .await
-    .expect("a member of that workspace reads");
-    assert_eq!(body_of(none).await.1["data"]["connection"], Value::Null);
+    .expect("a member of that workspace lists");
+    assert_eq!(body_of(listed).await.1["data"]["connections"], json!([]));
+    // The list shows the connection too, in each reader's view.
+    let list = |user: Uuid| {
+        let state = w.state.clone();
+        async move {
+            let answer = route::list_bot_connections(State(state), Extension(claims_for(user)), None, Path(project))
+                .await
+                .expect("list");
+            body_of(answer).await.1["data"]["connections"].clone()
+        }
+    };
+    let full = list(w.owner).await;
+    assert_eq!(full[0]["connection"]["bot"]["name"], "Admin bot");
+    assert!(full[0]["status"].is_object());
+    let reduced = list(member).await;
+    assert_eq!(reduced[0]["bot"]["name"], "Admin bot");
+    assert!(reduced[0].get("runner").is_none());
     scratch.drop_self().await;
 }
 
@@ -934,9 +1003,9 @@ async fn disable_and_enable_follow_the_last_enabled_connection() {
     let state_of = |project: Uuid| async move {
         text_of(
             db,
-            "SELECT (s.enabled::text || '/' || a.is_active::text) AS v \
-             FROM project_execution_settings s JOIN ai_participants a ON a.project_id = s.project_id \
-             WHERE s.project_id = $1",
+            "SELECT (c.enabled::text || '/' || a.is_active::text) AS v \
+             FROM project_bot_connections c JOIN ai_participants a ON a.project_id = c.project_id \
+             WHERE c.project_id = $1",
             vec![project.into()],
         )
         .await
@@ -1081,7 +1150,6 @@ async fn removing_the_last_connection_releases_the_bot_but_keeps_the_account() {
     assert_eq!(removed.bot_still_connected_to[0].id, p2);
     for sql in [
         "SELECT 1 FROM ai_participants WHERE project_id = $1",
-        "SELECT 1 FROM project_execution_settings WHERE project_id = $1",
         "SELECT 1 FROM project_bot_connections WHERE project_id = $1",
     ] {
         assert_eq!(n(db, sql, vec![w.tenant.project_id.into()]).await, 0, "{sql}");
@@ -1237,6 +1305,10 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
     );
     assert_eq!(block["token_prefix"].as_str().map(str::len), Some(8));
     let version = i32::try_from(body["data"]["connection"]["version"].as_i64().expect("version")).expect("small");
+    let bot_id: Uuid = body["data"]["connection"]["bot"]["id"]
+        .as_str()
+        .and_then(|id| id.parse().ok())
+        .expect("the bot id");
 
     // Reading never returns a token or a secret, whoever reads.
     let token = block_token(&crate::services::runner_config_block::ConfigBlock {
@@ -1252,9 +1324,14 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
         .expect("secret")
         .to_string();
     for user in [w.owner, seed_member(db, &w.tenant, "member").await] {
-        let read = route::get_bot_connection(State(w.state.clone()), Extension(claims_for(user)), None, Path(project))
-            .await
-            .expect("read");
+        let read = route::get_bot_connection(
+            State(w.state.clone()),
+            Extension(claims_for(user)),
+            None,
+            Path((project, bot_id)),
+        )
+        .await
+        .expect("read");
         let (_, read) = body_of(read).await;
         let printed = read.to_string();
         assert!(
@@ -1280,7 +1357,7 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
         State(w.state.clone()),
         Extension(claims_for(w.owner)),
         None,
-        Path(project),
+        Path((project, bot_id)),
         headers,
         Json(route::VersionBody {
             expected_version: version,
@@ -1299,7 +1376,7 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
         State(w.state.clone()),
         Extension(claims_for(w.owner)),
         None,
-        Path(project),
+        Path((project, bot_id)),
         HeaderMap::new(),
         Json(route::VersionBody {
             expected_version: version,
@@ -1317,7 +1394,7 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
         State(w.state.clone()),
         Extension(claims_for(w.owner)),
         None,
-        Path(project),
+        Path((project, bot_id)),
         Query(route::RemoveQuery {
             expected_version: version + 1,
         }),
@@ -1348,11 +1425,12 @@ async fn report_as(
 }
 
 async fn status_json(w: &W, project: Uuid) -> Value {
+    let bot = sole_bot(&w.state.db, project).await.expect("one connection");
     let read = route::get_bot_connection(
         State(w.state.clone()),
         Extension(claims_for(w.owner)),
         None,
-        Path(project),
+        Path((project, bot)),
     )
     .await
     .expect("read");
@@ -1515,6 +1593,37 @@ async fn the_status_follows_token_use_reports_and_deliveries() {
         online["tmux"],
         json!({"state": "ready", "source": "report", "version": "3.4"})
     );
+    assert_eq!(
+        online["tmux_session"],
+        Value::Null,
+        "the report has no row for this session"
+    );
+    assert_eq!(online["bypass"], Value::Null);
+    // A report with the session row of this connection and the posture row.
+    let key: String = text_of(db, "SELECT key AS v FROM projects WHERE id = $1", vec![project.into()]).await;
+    exec(
+        db,
+        "UPDATE bot_runners SET report = jsonb_set(report, '{components}', report->'components' || $2::jsonb) \
+         WHERE bot_id = $1",
+        vec![
+            bot.into(),
+            json!([
+                {"component": "tmux_session", "project_key": key, "cli": "claude", "status": "warn",
+                 "state": "running", "created_by": "operator", "hooks": "seen", "permissions": "bypass",
+                 "mcp": "ok"},
+                {"component": "posture", "status": "warn", "bypass": {"tmux": true}}
+            ])
+            .into(),
+        ],
+    )
+    .await;
+    let with_session = status_json(&w, project).await;
+    assert_eq!(
+        with_session["tmux_session"],
+        json!({"session_name": format!("{key}-claude"), "status": "warn", "state": "running",
+               "created_by": "operator", "hooks": "seen", "permissions": "bypass", "mcp": "ok"})
+    );
+    assert_eq!(with_session["bypass"], true);
     // A stale report stops counting.
     exec(
         db,
@@ -1525,6 +1634,8 @@ async fn the_status_follows_token_use_reports_and_deliveries() {
     let stale = status_json(&w, project).await;
     assert_eq!(stale["runner"]["state"], "not_reporting");
     assert_eq!(stale["cli"]["state"], "unknown");
+    assert_eq!(stale["tmux_session"], Value::Null);
+    assert_eq!(stale["bypass"], Value::Null);
 
     // Deliveries: a refusal with its code, then a failed delivery.
     let task = Uuid::new_v4();
@@ -1806,11 +1917,13 @@ async fn an_outsider_cannot_tell_a_missing_project_from_one_that_exists() {
         Err(error) => format!("{error:?}"),
         Ok(_) => "answered".to_string(),
     };
+    let bot = Uuid::new_v4();
     for project in [w.tenant.project_id, missing] {
         let claims = || Extension(claims_for(stranger));
         let state = || State(w.state.clone());
         let answers = [
-            describe(route::get_bot_connection(state(), claims(), None, Path(project)).await),
+            describe(route::get_bot_connection(state(), claims(), None, Path((project, bot))).await),
+            describe(route::list_bot_connections(state(), claims(), None, Path(project)).await),
             describe(
                 route::connect_bot(
                     state(),
@@ -1822,13 +1935,15 @@ async fn an_outsider_cannot_tell_a_missing_project_from_one_that_exists() {
                 )
                 .await,
             ),
-            describe(route::disable_bot_connection(state(), claims(), None, Path(project), Json(version(1))).await),
+            describe(
+                route::disable_bot_connection(state(), claims(), None, Path((project, bot)), Json(version(1))).await,
+            ),
             describe(
                 route::rotate_bot_connection(
                     state(),
                     claims(),
                     None,
-                    Path(project),
+                    Path((project, bot)),
                     HeaderMap::new(),
                     Json(version(1)),
                 )
@@ -1839,7 +1954,7 @@ async fn an_outsider_cannot_tell_a_missing_project_from_one_that_exists() {
                     state(),
                     claims(),
                     None,
-                    Path(project),
+                    Path((project, bot)),
                     Query(route::RemoveQuery { expected_version: 1 }),
                 )
                 .await,

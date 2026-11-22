@@ -491,7 +491,7 @@ governance (`/proposals/*`, `/proposal-comments/*`, `/decisions/*`,
 `/decision-domains/*`, `/governance/*`, `/trust-scores/*`,
 `/impact-reviews/*`, `/vetoers/*`); AI (`/ai/*`, `/ai-learning/*`, the
 project-scoped `/projects/{id}/ai-participants/{bot_id}/learning`); bot connections
-(`/projects/{id}/bot-connection`, `.../disable`, `.../enable`, `.../rotate`); templates (`/scenario-templates/*`, `/project-types/*`,
+(`/projects/{id}/bot-connections`, `.../{bot_id}`, `.../{bot_id}/disable`, `/enable`, `/rotate`); templates (`/scenario-templates/*`, `/project-types/*`,
 `/proposal-templates/*`); files and misc (`/upload`, `/uploads/*`, `/search`,
 `/export/*`, `/notifications/*`).
 

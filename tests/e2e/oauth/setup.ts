@@ -83,9 +83,12 @@ async function connectProject(
 	projectId: string,
 	bot: { name: string } | { id: string }
 ): Promise<string> {
-	const path = `/api/v1/projects/${projectId}/bot-connection`;
-	const read = asRecord(await admin.data(rec, `read the connection of ${label}`, 'GET', path));
-	const existing = asRecord(asRecord(read?.connection)?.bot);
+	const path = `/api/v1/projects/${projectId}/bot-connections`;
+	const read = asRecord(await admin.data(rec, `read the connections of ${label}`, 'GET', path));
+	const listed = Array.isArray(read?.connections) ? read.connections : [];
+	const existing = listed
+		.map((entry) => asRecord(asRecord(asRecord(entry)?.connection)?.bot))
+		.find((found) => ('id' in bot ? str(found?.id) === bot.id : str(found?.name) === bot.name));
 	const existingId = str(existing?.id);
 	if (existingId !== undefined) {
 		log(`bot connection of ${label}: exists`);

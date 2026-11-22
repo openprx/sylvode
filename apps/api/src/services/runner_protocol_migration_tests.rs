@@ -1,5 +1,6 @@
 //! Migration 0110 against a real database server: it re-runs cleanly, leaves running tasks
-//! alone, enforces the documented status set and validates execution settings in the database.
+//! alone and enforces the documented status set. The execution settings of a connection are
+//! validated by the database too (checks of `project_bot_connections`, 0112).
 //!
 //! Needs `OPENPR_TEST_DATABASE_URL`; without it every test reports that it was skipped. The file
 //! is located by its name suffix, so these tests do not change when the migration is renumbered.
@@ -8,7 +9,7 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
-use crate::routes::context::tenant_fixture::{count, exec, seed_bot_user, seed_tenant};
+use crate::routes::context::tenant_fixture::{Tenant, count, exec, seed_bot_runner, seed_bot_user, seed_tenant};
 use crate::scratch_or_skip;
 
 fn migration_sql() -> String {
@@ -37,7 +38,8 @@ async fn constraints_named(db: &DatabaseConnection, name: &str) -> i64 {
 
 async fn insert_settings(
     db: &DatabaseConnection,
-    project_id: Uuid,
+    tenant: &Tenant,
+    bot_id: Uuid,
     directory: &str,
     column: &str,
     value: &str,
@@ -45,7 +47,7 @@ async fn insert_settings(
     // `column` and `value` override one default, so each case changes exactly one field.
     let (channel, cli, gate, state) = match column {
         "channel" => (value, "claude", "none", "auto"),
-        "cli" => ("tmux", value, "none", "auto"),
+        "cli" => ("headless", value, "none", "auto"),
         "approval_gate" => ("tmux", "claude", value, "auto"),
         "on_complete_state" => ("tmux", "claude", "none", value),
         _ => ("tmux", "claude", "none", "auto"),
@@ -53,11 +55,12 @@ async fn insert_settings(
     let outcome = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "INSERT INTO project_execution_settings \
-             (project_id, working_directory, channel, cli, approval_gate, on_complete_state) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO project_bot_connections \
+             (project_id, bot_id, working_directory, channel, cli, approval_gate, on_complete_state) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
             vec![
-                project_id.into(),
+                tenant.project_id.into(),
+                bot_id.into(),
                 directory.to_string().into(),
                 channel.to_string().into(),
                 cli.to_string().into(),
@@ -69,8 +72,8 @@ async fn insert_settings(
     if outcome.is_ok() {
         exec(
             db,
-            "DELETE FROM project_execution_settings WHERE project_id = $1",
-            vec![project_id.into()],
+            "DELETE FROM project_bot_connections WHERE project_id = $1",
+            vec![tenant.project_id.into()],
         )
         .await;
     }
@@ -130,7 +133,8 @@ async fn execution_settings_are_validated_by_the_database() {
     let scratch = scratch_or_skip!("runner_protocol_settings");
     let db = &scratch.db;
     let tenant = seed_tenant(db, "rs").await;
-    let project = tenant.project_id;
+    let bot = seed_bot_user(db, &tenant).await;
+    seed_bot_runner(db, &tenant, bot).await;
 
     let long_path = format!("/{}", "a".repeat(1024));
     assert_eq!(long_path.len(), 1025);
@@ -146,13 +150,13 @@ async fn execution_settings_are_validated_by_the_database() {
         long_path.as_str(),
     ] {
         assert!(
-            !insert_settings(db, project, bad, "", "").await,
+            !insert_settings(db, &tenant, bot, bad, "", "").await,
             "working directory {bad:?} must be refused"
         );
     }
     for good in ["/a", "/a/b_c", "/a/.hidden/b", "/a/b..c"] {
         assert!(
-            insert_settings(db, project, good, "", "").await,
+            insert_settings(db, &tenant, bot, good, "", "").await,
             "working directory {good:?} must be accepted"
         );
     }
@@ -165,7 +169,7 @@ async fn execution_settings_are_validated_by_the_database() {
         ("on_complete_state", "state:"),
     ] {
         assert!(
-            !insert_settings(db, project, "/a", column, value).await,
+            !insert_settings(db, &tenant, bot, "/a", column, value).await,
             "{column} = {value:?} must be refused"
         );
     }
@@ -176,10 +180,31 @@ async fn execution_settings_are_validated_by_the_database() {
         ("on_complete_state", "none"),
     ] {
         assert!(
-            insert_settings(db, project, "/a", column, value).await,
+            insert_settings(db, &tenant, bot, "/a", column, value).await,
             "{column} = {value:?} must be accepted"
         );
     }
 
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn the_tmux_channel_is_claude_only_in_the_database() {
+    let scratch = scratch_or_skip!("runner_protocol_tmux_cli");
+    let db = &scratch.db;
+    let tenant = seed_tenant(db, "rt").await;
+    let bot = seed_bot_user(db, &tenant).await;
+    seed_bot_runner(db, &tenant, bot).await;
+    for cli in ["codex", "opencode"] {
+        let outcome = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO project_bot_connections (project_id, bot_id, working_directory, channel, cli) \
+                 VALUES ($1, $2, '/a', 'tmux', $3)",
+                vec![tenant.project_id.into(), bot.into(), cli.to_string().into()],
+            ))
+            .await;
+        assert!(outcome.is_err(), "tmux with {cli} must be refused");
+    }
     scratch.drop_self().await;
 }

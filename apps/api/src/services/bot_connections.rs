@@ -1,17 +1,19 @@
 //! Project bot connections: connect a bot to a project and run its agent tasks on a runner.
 //!
-//! A connection is derived from rows that already exist (the bot user and `workspace_bots` token,
-//! the `webhooks` row, the `ai_participants` registration, `project_execution_settings`) plus two
-//! linking tables: `bot_runners` (what is shared by all of a bot's projects) and
-//! `project_bot_connections` (the project-to-bot link and its version).
+//! A connection is (project, bot): a project may have several. It is derived from rows that already
+//! exist (the bot user and `workspace_bots` token, the `webhooks` row, the `ai_participants`
+//! registration) plus two linking tables: `bot_runners` (what is shared by all of a bot's projects)
+//! and `project_bot_connections` (the project-to-bot link, its version and its execution settings:
+//! enabled, channel, CLI, working directory). A project has at most one tmux connection per CLI
+//! type, so the session `<KEY>-<cli>` always belongs to one bot.
 //!
 //! Every write here is one transaction: it either leaves every row in place or none. The token and
 //! the webhook's signing secret exist only in memory, are returned once inside the configuration
 //! block, and appear in no event, log line or error. Business events carry ids, names, the runner
 //! address and the token prefix.
 //!
-//! Lock order, everywhere: the project row, then the `bot_runners` row, then the
-//! `project_bot_connections` row, then the rows that hang off them. Connect takes the project row
+//! Lock order, everywhere: the project row, then the `bot_runners` row(s) in bot id order, then the
+//! `project_bot_connections` row(s), then the rows that hang off them. Connect takes the project row
 //! `FOR UPDATE`; releasing a connection for a project that is being deleted takes it
 //! `FOR NO KEY UPDATE` (the delete route removes the row itself later in its transaction), so a
 //! connect and a project deletion of the same project queue behind each other instead of crossing
@@ -30,7 +32,7 @@ use crate::{
     events::{BusinessEventInput, insert_business_event},
     services::{
         bots::{self, ManagedPolicy, ManagedProject, NewBot},
-        execution_settings::{self, ExecutionSettings, ExecutionSettingsInput, ProjectRef, SaveOutcome, ValidSettings},
+        execution_settings::{self, ExecutionSettings, ExecutionSettingsInput, ProjectRef, ValidSettings},
         runner_config_block::{self, BlockInput, ConfigBlock},
         trust_score_service::normalize_domain_key,
         webhooks::{self, NewWebhook},
@@ -45,8 +47,8 @@ const MAX_DOMAIN_OVERRIDES: usize = 50;
 /// The hint added to a refusal of a blocked runner address.
 const ALLOWED_HOSTS_HINT: &str = "an administrator can allow this host with [outbound] allowed_hosts";
 
-pub const NO_CONNECTION: &str = "project has no bot connection";
-pub const ALREADY_CONNECTED: &str = "project already has a bot connection; reload";
+pub const NO_CONNECTION: &str = "project has no connection for this bot";
+pub const ALREADY_CONNECTED: &str = "project already has a connection for this bot";
 pub const VERSION_CONFLICT: &str = "connection changed; reload";
 
 fn invalid(field: &str, why: &str) -> ApiError {
@@ -75,7 +77,7 @@ pub struct GovernanceInput {
     pub domain_overrides: Option<Map<String, Value>>,
 }
 
-/// `POST /bot-connection`.
+/// `POST /bot-connections`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectRequest {
@@ -102,7 +104,7 @@ where
     Option::<T>::deserialize(deserializer).map(Some)
 }
 
-/// `PATCH /bot-connection`.
+/// `PATCH /bot-connections/{bot_id}`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateRequest {
@@ -179,6 +181,9 @@ pub struct ExecutionView {
     pub channel: String,
     pub cli: String,
     pub working_directory: String,
+    /// `<KEY>-<cli>` for the tmux channel, absent for headless.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<String>,
     pub on_complete_state: String,
     pub on_fail_label_id: Option<Uuid>,
     pub approval_gate: String,
@@ -510,20 +515,30 @@ async fn load_participant(
     .ok_or(ApiError::Internal)
 }
 
-async fn load_link(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Option<LinkRow>, ApiError> {
+async fn load_link(db: &impl ConnectionTrait, project_id: Uuid, bot_id: Uuid) -> Result<Option<LinkRow>, ApiError> {
     one(
         db,
-        &format!("SELECT {LINK_COLUMNS} FROM project_bot_connections WHERE project_id = $1"),
-        vec![project_id.into()],
+        &format!("SELECT {LINK_COLUMNS} FROM project_bot_connections WHERE project_id = $1 AND bot_id = $2"),
+        vec![project_id.into(), bot_id.into()],
     )
     .await
 }
 
-/// The connection of a project as owners and admins see it, `None` when it has none.
-pub async fn load_view(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Option<ConnectionView>, ApiError> {
-    let Some(link) = load_link(db, project_id).await? else {
-        return Ok(None);
-    };
+async fn load_links(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Vec<LinkRow>, ApiError> {
+    Ok(LinkRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!(
+            "SELECT {LINK_COLUMNS} FROM project_bot_connections WHERE project_id = $1 \
+             ORDER BY (SELECT lower(name) FROM workspace_bots WHERE id = bot_id), bot_id"
+        ),
+        vec![project_id.into()],
+    ))
+    .all(db)
+    .await?)
+}
+
+async fn view_of_link(db: &impl ConnectionTrait, link: LinkRow) -> Result<ConnectionView, ApiError> {
+    let project_id = link.project_id;
     let runner: RunnerRow = one(
         db,
         &format!("SELECT {RUNNER_COLUMNS} FROM bot_runners WHERE bot_id = $1"),
@@ -538,11 +553,12 @@ pub async fn load_view(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Op
     )
     .await?
     .ok_or(ApiError::Internal)?;
-    let settings = execution_settings::load(db, project_id)
+    let settings = execution_settings::load(db, project_id, link.bot_id)
         .await?
         .ok_or(ApiError::Internal)?;
+    let key = project_key(db, project_id).await?;
     let participant = load_participant(db, project_id, link.bot_id).await?;
-    Ok(Some(ConnectionView {
+    Ok(ConnectionView {
         project_id,
         version: link.version,
         enabled: settings.enabled,
@@ -559,6 +575,7 @@ pub async fn load_view(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Op
             shared_with_projects: connected_projects(db, link.bot_id).await?,
         },
         execution: ExecutionView {
+            session_name: (settings.channel == "tmux").then(|| execution_settings::session_name(&key, &settings.cli)),
             channel: settings.channel,
             cli: settings.cli,
             working_directory: settings.working_directory,
@@ -571,14 +588,31 @@ pub async fn load_view(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Op
         created_at: link.created_at,
         updated_by: link.updated_by,
         updated_at: link.updated_at,
-    }))
+    })
 }
 
-/// The connection of a project as members see it, `None` when it has none.
-pub async fn load_member_view(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Option<MemberView>, ApiError> {
-    let Some(link) = load_link(db, project_id).await? else {
-        return Ok(None);
-    };
+/// The connection of `bot_id` to a project as owners and admins see it, `None` when there is none.
+pub async fn load_view(
+    db: &impl ConnectionTrait,
+    project_id: Uuid,
+    bot_id: Uuid,
+) -> Result<Option<ConnectionView>, ApiError> {
+    match load_link(db, project_id, bot_id).await? {
+        Some(link) => Ok(Some(view_of_link(db, link).await?)),
+        None => Ok(None),
+    }
+}
+
+/// Every connection of a project as owners and admins see them, ordered by bot name.
+pub async fn list_views(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Vec<ConnectionView>, ApiError> {
+    let mut views = Vec::new();
+    for link in load_links(db, project_id).await? {
+        views.push(view_of_link(db, link).await?);
+    }
+    Ok(views)
+}
+
+async fn member_view_of_link(db: &impl ConnectionTrait, link: &LinkRow) -> Result<MemberView, ApiError> {
     let bot: BotRow = one(
         db,
         "SELECT name, token_prefix, is_active FROM workspace_bots WHERE id = $1",
@@ -586,10 +620,10 @@ pub async fn load_member_view(db: &impl ConnectionTrait, project_id: Uuid) -> Re
     )
     .await?
     .ok_or(ApiError::Internal)?;
-    let settings = execution_settings::load(db, project_id)
+    let settings = execution_settings::load(db, link.project_id, link.bot_id)
         .await?
         .ok_or(ApiError::Internal)?;
-    Ok(Some(MemberView {
+    Ok(MemberView {
         bot: MemberBot {
             id: link.bot_id,
             name: bot.name,
@@ -597,7 +631,28 @@ pub async fn load_member_view(db: &impl ConnectionTrait, project_id: Uuid) -> Re
         enabled: settings.enabled,
         cli: settings.cli,
         channel: settings.channel,
-    }))
+    })
+}
+
+/// The connection of `bot_id` to a project as members see it, `None` when there is none.
+pub async fn load_member_view(
+    db: &impl ConnectionTrait,
+    project_id: Uuid,
+    bot_id: Uuid,
+) -> Result<Option<MemberView>, ApiError> {
+    match load_link(db, project_id, bot_id).await? {
+        Some(link) => Ok(Some(member_view_of_link(db, &link).await?)),
+        None => Ok(None),
+    }
+}
+
+/// Every connection of a project as members see them, ordered by bot name.
+pub async fn list_member_views(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Vec<MemberView>, ApiError> {
+    let mut views = Vec::new();
+    for link in load_links(db, project_id).await? {
+        views.push(member_view_of_link(db, &link).await?);
+    }
+    Ok(views)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -609,11 +664,11 @@ struct Locked {
     runner: RunnerRow,
 }
 
-/// Locks the `bot_runners` row and then the connection row of `project_id`, in the lock order of
-/// this module. 404 when the project has no connection.
-async fn lock(tx: &impl ConnectionTrait, project_id: Uuid) -> Result<Locked, ApiError> {
+/// Locks the `bot_runners` row and then the connection row of (`project_id`, `bot_id`), in the lock
+/// order of this module. 404 when the project has no connection for the bot.
+async fn lock(tx: &impl ConnectionTrait, project_id: Uuid, bot_id: Uuid) -> Result<Locked, ApiError> {
     let missing = || ApiError::NotFound(NO_CONNECTION.to_string());
-    let unlocked = load_link(tx, project_id).await?.ok_or_else(missing)?;
+    let unlocked = load_link(tx, project_id, bot_id).await?.ok_or_else(missing)?;
     let runner: RunnerRow = one(
         tx,
         &format!("SELECT {RUNNER_COLUMNS} FROM bot_runners WHERE bot_id = $1 FOR UPDATE"),
@@ -623,11 +678,10 @@ async fn lock(tx: &impl ConnectionTrait, project_id: Uuid) -> Result<Locked, Api
     .ok_or_else(missing)?;
     let link: LinkRow = one::<LinkRow>(
         tx,
-        &format!("SELECT {LINK_COLUMNS} FROM project_bot_connections WHERE project_id = $1 FOR UPDATE"),
-        vec![project_id.into()],
+        &format!("SELECT {LINK_COLUMNS} FROM project_bot_connections WHERE project_id = $1 AND bot_id = $2 FOR UPDATE"),
+        vec![project_id.into(), runner.bot_id.into()],
     )
     .await?
-    .filter(|link| link.bot_id == runner.bot_id)
     .ok_or_else(missing)?;
     Ok(Locked { link, runner })
 }
@@ -647,8 +701,8 @@ async fn bump(tx: &impl ConnectionTrait, locked: &Locked, actor: Uuid, shared: b
         run(
             tx,
             "UPDATE project_bot_connections SET version = version + 1, updated_by = $2, updated_at = now() \
-             WHERE project_id = $1",
-            vec![locked.link.project_id.into(), actor.into()],
+             WHERE project_id = $1 AND bot_id = $3",
+            vec![locked.link.project_id.into(), actor.into(), locked.link.bot_id.into()],
         )
         .await?;
     }
@@ -747,8 +801,7 @@ async fn other_enabled(tx: &impl ConnectionTrait, bot_id: Uuid, project_id: Uuid
     Ok(one::<Count>(
         tx,
         "SELECT COUNT(*)::bigint AS n FROM project_bot_connections c \
-         JOIN project_execution_settings s ON s.project_id = c.project_id \
-         WHERE c.bot_id = $1 AND c.project_id <> $2 AND s.enabled",
+         WHERE c.bot_id = $1 AND c.project_id <> $2 AND c.enabled",
         vec![bot_id.into(), project_id.into()],
     )
     .await?
@@ -779,20 +832,103 @@ fn settings_input(settings: &ExecutionSettings) -> ExecutionSettingsInput {
     }
 }
 
-/// Stores `valid` as the project's settings. The caller holds the connection lock, so the settings
-/// row cannot change underneath: the version it reads is the one it writes against.
-async fn store_settings(
-    tx: &impl ConnectionTrait,
-    project: &ProjectRef,
+/// The refusal of a second tmux connection for a CLI: names the bot that holds the session.
+fn tmux_taken(cli: &str, holder: &str) -> ApiError {
+    ApiError::Conflict(format!(
+        "channel: project already has a tmux connection for {cli} (bot {holder})"
+    ))
+}
+
+/// The bot, other than `except`, that holds the tmux connection for `cli` in the project.
+async fn tmux_holder(
+    db: &impl ConnectionTrait,
+    project_id: Uuid,
+    cli: &str,
+    except: Option<Uuid>,
+) -> Result<Option<String>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Holder {
+        name: String,
+    }
+    Ok(one::<Holder>(
+        db,
+        "SELECT b.name FROM project_bot_connections c JOIN workspace_bots b ON b.id = c.bot_id \
+         WHERE c.project_id = $1 AND c.channel = 'tmux' AND c.cli = $2 AND ($3::uuid IS NULL OR c.bot_id <> $3) \
+         ORDER BY b.name LIMIT 1",
+        vec![project_id.into(), cli.to_string().into(), except.into()],
+    )
+    .await?
+    .map(|row| row.name))
+}
+
+/// Refuses a tmux connection for `valid` when another bot of the project already has one for the
+/// same CLI (rule C3). The unique index catches the race this check cannot see.
+async fn ensure_tmux_free(
+    db: &impl ConnectionTrait,
+    project_id: Uuid,
+    bot_id: Uuid,
     valid: &ValidSettings,
-    actor: Uuid,
-) -> Result<ExecutionSettings, ApiError> {
-    let expected = execution_settings::load(tx, project.id)
+) -> Result<(), ApiError> {
+    if valid.channel != "tmux" {
+        return Ok(());
+    }
+    tmux_holder(db, project_id, &valid.cli, Some(bot_id))
         .await?
-        .map(|settings| settings.version);
-    match execution_settings::upsert(tx, project, valid, expected, actor).await? {
-        SaveOutcome::Saved { after, .. } => Ok(after),
-        SaveOutcome::Conflict { .. } => Err(ApiError::Internal),
+        .map_or(Ok(()), |holder| Err(tmux_taken(&valid.cli, &holder)))
+}
+
+/// Maps the unique violation of `pbc_one_tmux_per_cli` to the 409 of rule C3. The failed statement
+/// aborted its transaction, so the bot's name is read through `lookup`, a connection of its own.
+async fn tmux_race(
+    lookup: &impl ConnectionTrait,
+    err: sea_orm::DbErr,
+    project_id: Uuid,
+    bot_id: Uuid,
+    cli: &str,
+) -> ApiError {
+    if err.to_string().contains("pbc_one_tmux_per_cli") {
+        let holder = tmux_holder(lookup, project_id, cli, Some(bot_id))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "another bot".to_string());
+        return tmux_taken(cli, &holder);
+    }
+    ApiError::from(err)
+}
+
+/// Writes `valid` into the connection row of (`project_id`, `bot_id`). The caller holds the
+/// connection lock and bumps the version afterwards.
+async fn store_settings(
+    state: &AppState,
+    tx: &impl ConnectionTrait,
+    project_id: Uuid,
+    bot_id: Uuid,
+    valid: &ValidSettings,
+) -> Result<(), ApiError> {
+    let outcome = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE project_bot_connections \
+             SET enabled = $3, channel = $4, cli = $5, working_directory = $6, on_complete_state = $7, \
+                 on_fail_label_id = $8, approval_gate = $9 \
+             WHERE project_id = $1 AND bot_id = $2",
+            vec![
+                project_id.into(),
+                bot_id.into(),
+                valid.enabled.into(),
+                valid.channel.clone().into(),
+                valid.cli.clone().into(),
+                valid.working_directory.clone().into(),
+                valid.on_complete_state.clone().into(),
+                valid.on_fail_label_id.into(),
+                valid.approval_gate.clone().into(),
+            ],
+        ))
+        .await;
+    match outcome {
+        Ok(_) => Ok(()),
+        Err(err) => Err(tmux_race(&state.db, err, project_id, bot_id, &valid.cli).await),
     }
 }
 
@@ -805,7 +941,9 @@ async fn check_version(
     if locked.link.version == expected_version {
         return Ok(None);
     }
-    let current = load_view(tx, locked.link.project_id).await?.ok_or(ApiError::Internal)?;
+    let current = load_view(tx, locked.link.project_id, locked.link.bot_id)
+        .await?
+        .ok_or(ApiError::Internal)?;
     Ok(Some(Box::new(current)))
 }
 
@@ -877,14 +1015,11 @@ pub async fn connect(
     // Serialises connects of the same project: the second waits here and then sees the first.
     one::<ProjectRef>(
         &tx,
-        "SELECT id, workspace_id FROM projects WHERE id = $1 FOR UPDATE",
+        "SELECT id, workspace_id, key FROM projects WHERE id = $1 FOR UPDATE",
         vec![project.id.into()],
     )
     .await?
     .ok_or_else(|| ApiError::NotFound("project not found".to_string()))?;
-    if load_link(&tx, project.id).await?.is_some() {
-        return Err(ApiError::Conflict(ALREADY_CONNECTED.to_string()));
-    }
 
     let mut fresh: Option<(String, String, String, Timestamp)> = None;
     let (runner, bot_name, new_bot) = match valid.bot {
@@ -969,6 +1104,9 @@ pub async fn connect(
             )
             .await?
             .ok_or_else(|| invalid("bot.id", "not a connected bot of this workspace"))?;
+            if load_link(&tx, project.id, id).await?.is_some() {
+                return Err(ApiError::Conflict(ALREADY_CONNECTED.to_string()));
+            }
             if runner.runner_url != valid.runner_url {
                 return Err(ApiError::Conflict(format!(
                     "runner_url: this bot already delivers to {}; change the address on its connection",
@@ -987,6 +1125,7 @@ pub async fn connect(
     };
 
     let bot_id = runner.bot_id;
+    ensure_tmux_free(&tx, project.id, bot_id, &valid.settings).await?;
     one::<Count>(
         &tx,
         "INSERT INTO ai_participants \
@@ -1005,13 +1144,31 @@ pub async fn connect(
         ],
     )
     .await?;
-    let settings = store_settings(&tx, project, &valid.settings, actor).await?;
-    run(
-        &tx,
-        "INSERT INTO project_bot_connections (project_id, bot_id, created_by, updated_by) VALUES ($1, $2, $3, $3)",
-        vec![project.id.into(), bot_id.into(), actor.into()],
-    )
-    .await?;
+    let settings = &valid.settings;
+    let inserted = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO project_bot_connections \
+             (project_id, bot_id, enabled, channel, cli, working_directory, on_complete_state, \
+              on_fail_label_id, approval_gate, created_by, updated_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)",
+            vec![
+                project.id.into(),
+                bot_id.into(),
+                settings.enabled.into(),
+                settings.channel.clone().into(),
+                settings.cli.clone().into(),
+                settings.working_directory.clone().into(),
+                settings.on_complete_state.clone().into(),
+                settings.on_fail_label_id.into(),
+                settings.approval_gate.clone().into(),
+                actor.into(),
+            ],
+        ))
+        .await;
+    if let Err(err) = inserted {
+        return Err(tmux_race(&state.db, err, project.id, bot_id, &settings.cli).await);
+    }
 
     // Shared parts follow the per-project state: this connection is enabled, so they are on.
     let switched = if !new_bot && !shared_is_on(&tx, &runner).await? {
@@ -1054,7 +1211,7 @@ pub async fn connect(
     )
     .await?;
 
-    let connection = load_view(&tx, project.id).await?.ok_or(ApiError::Internal)?;
+    let connection = load_view(&tx, project.id, bot_id).await?.ok_or(ApiError::Internal)?;
     let config_block = match fresh {
         Some((token, token_prefix, secret, issued_at)) => {
             let key = project_key(&tx, project.id).await?;
@@ -1094,10 +1251,11 @@ pub async fn connect(
 // Update, disable, enable
 // ---------------------------------------------------------------------------------------------
 
-/// Changes the address, execution settings or governance of a connection.
+/// Changes the address, execution settings or governance of the connection of `bot_id`.
 pub async fn update(
     state: &AppState,
     project: &ProjectRef,
+    bot_id: Uuid,
     actor: Uuid,
     req: UpdateRequest,
 ) -> Result<Outcome<ConnectionView>, ApiError> {
@@ -1109,12 +1267,12 @@ pub async fn update(
         None => None,
     };
     let tx = state.db.begin().await?;
-    let locked = lock(&tx, project.id).await?;
+    let locked = lock(&tx, project.id, bot_id).await?;
     if let Some(current) = check_version(&tx, &locked, req.expected_version).await? {
         return Ok(Outcome::Conflict { current });
     }
 
-    let settings = execution_settings::load(&tx, project.id)
+    let settings = execution_settings::load(&tx, project.id, bot_id)
         .await?
         .ok_or(ApiError::Internal)?;
     let participant = load_participant(&tx, project.id, locked.runner.bot_id).await?;
@@ -1137,6 +1295,7 @@ pub async fn update(
         input.on_fail_label_id = label;
     }
     let valid = execution_settings::validate(state, project, &input).await?;
+    ensure_tmux_free(&tx, project.id, bot_id, &valid).await?;
     let governance = match &req.governance {
         Some(change) => validate_governance(&before, change)?,
         None => before.clone(),
@@ -1190,7 +1349,7 @@ pub async fn update(
         json!(valid.on_fail_label_id),
     );
     track("governance", json!(before), json!(governance));
-    store_settings(&tx, project, &valid, actor).await?;
+    store_settings(state, &tx, project.id, bot_id, &valid).await?;
     if governance != before {
         run(
             &tx,
@@ -1223,12 +1382,12 @@ pub async fn update(
         }),
     )
     .await?;
-    let view = load_view(&tx, project.id).await?.ok_or(ApiError::Internal)?;
+    let view = load_view(&tx, project.id, bot_id).await?.ok_or(ApiError::Internal)?;
     tx.commit().await?;
     Ok(Outcome::Done(view))
 }
 
-/// Disables or enables a connection for its project.
+/// Disables or enables the connection of `bot_id` for its project.
 ///
 /// Switching the last enabled connection of a bot off (or the first one back on) also switches the
 /// bot's token and webhook. Repeating the state it already has answers the current connection and
@@ -1236,20 +1395,21 @@ pub async fn update(
 pub async fn set_enabled(
     state: &AppState,
     project: &ProjectRef,
+    bot_id: Uuid,
     actor: Uuid,
     expected_version: i32,
     enabled: bool,
 ) -> Result<Outcome<ConnectionView>, ApiError> {
     let tx = state.db.begin().await?;
-    let locked = lock(&tx, project.id).await?;
+    let locked = lock(&tx, project.id, bot_id).await?;
     if let Some(current) = check_version(&tx, &locked, expected_version).await? {
         return Ok(Outcome::Conflict { current });
     }
-    let settings = execution_settings::load(&tx, project.id)
+    let settings = execution_settings::load(&tx, project.id, bot_id)
         .await?
         .ok_or(ApiError::Internal)?;
     if settings.enabled == enabled {
-        let view = load_view(&tx, project.id).await?.ok_or(ApiError::Internal)?;
+        let view = load_view(&tx, project.id, bot_id).await?.ok_or(ApiError::Internal)?;
         return Ok(Outcome::Done(view));
     }
 
@@ -1262,7 +1422,7 @@ pub async fn set_enabled(
         on_fail_label_id: settings.on_fail_label_id,
         approval_gate: settings.approval_gate.clone(),
     };
-    store_settings(&tx, project, &valid, actor).await?;
+    store_settings(state, &tx, project.id, bot_id, &valid).await?;
     run(
         &tx,
         "UPDATE ai_participants SET is_active = $3 WHERE project_id = $1 AND id = $2",
@@ -1301,7 +1461,7 @@ pub async fn set_enabled(
         json!({ "bot_id": locked.runner.bot_id, "shared_parts_switched": switch }),
     )
     .await?;
-    let view = load_view(&tx, project.id).await?.ok_or(ApiError::Internal)?;
+    let view = load_view(&tx, project.id, bot_id).await?.ok_or(ApiError::Internal)?;
     tx.commit().await?;
     settle_epoch(state, locked.runner.workspace_id, epoch).await;
     Ok(Outcome::Done(view))
@@ -1316,12 +1476,13 @@ pub async fn set_enabled(
 pub async fn rotate(
     state: &AppState,
     project: &ProjectRef,
+    bot_id: Uuid,
     actor: Uuid,
     expected_version: i32,
     origin: Option<&str>,
 ) -> Result<Outcome<Rotated>, ApiError> {
     let tx = state.db.begin().await?;
-    let locked = lock(&tx, project.id).await?;
+    let locked = lock(&tx, project.id, bot_id).await?;
     if let Some(current) = check_version(&tx, &locked, expected_version).await? {
         return Ok(Outcome::Conflict { current });
     }
@@ -1372,7 +1533,7 @@ pub async fn rotate(
     )
     .await?;
 
-    let settings = execution_settings::load(&tx, project.id)
+    let settings = execution_settings::load(&tx, project.id, bot_id)
         .await?
         .ok_or(ApiError::Internal)?;
     let key = project_key(&tx, project.id).await?;
@@ -1395,7 +1556,7 @@ pub async fn rotate(
         issuer: issuer.as_deref(),
         origin,
     });
-    let connection = load_view(&tx, project.id).await?.ok_or(ApiError::Internal)?;
+    let connection = load_view(&tx, project.id, bot_id).await?.ok_or(ApiError::Internal)?;
     // The old token stops working with this commit: its cached permissions and sessions go too.
     let epoch = crate::flow::collab::authz::advance_epoch_if_present(&tx, locked.runner.workspace_id).await?;
     tx.commit().await?;
@@ -1423,7 +1584,7 @@ pub struct Removal {
 
 /// Removes the connection of `project_id` inside `tx`.
 ///
-/// Always: the link, the participant registration and the project's settings. When it was the bot's
+/// Always: the connection row (settings included) and the participant registration. When it was the bot's
 /// last connection: also the shared parts (the `bot_runners` row, the webhook, the token, the
 /// workspace seat). The bot's user row stays: its task history, comments and votes name it. The
 /// caller holds the locks of [`lock`].
@@ -1436,20 +1597,14 @@ async fn remove_locked(
     let runner = &locked.runner;
     run(
         tx,
-        "DELETE FROM project_bot_connections WHERE project_id = $1",
-        vec![project_id.into()],
+        "DELETE FROM project_bot_connections WHERE project_id = $1 AND bot_id = $2",
+        vec![project_id.into(), runner.bot_id.into()],
     )
     .await?;
     run(
         tx,
         "DELETE FROM ai_participants WHERE project_id = $1 AND id = $2",
         vec![project_id.into(), runner.bot_id.to_string().into()],
-    )
-    .await?;
-    run(
-        tx,
-        "DELETE FROM project_execution_settings WHERE project_id = $1",
-        vec![project_id.into()],
     )
     .await?;
     let remaining = connected_projects(tx, runner.bot_id).await?;
@@ -1502,15 +1657,16 @@ async fn remove_locked(
     })
 }
 
-/// Removes the connection of a project.
+/// Removes the connection of `bot_id` to a project.
 pub async fn remove(
     state: &AppState,
     project: &ProjectRef,
+    bot_id: Uuid,
     actor: Uuid,
     expected_version: i32,
 ) -> Result<Outcome<Removed>, ApiError> {
     let tx = state.db.begin().await?;
-    let locked = lock(&tx, project.id).await?;
+    let locked = lock(&tx, project.id, bot_id).await?;
     if let Some(current) = check_version(&tx, &locked, expected_version).await? {
         return Ok(Outcome::Conflict { current });
     }
@@ -1523,13 +1679,19 @@ pub async fn remove(
     }))
 }
 
-/// Releases the connection of a project that is about to be deleted.
+#[derive(FromQueryResult)]
+struct BotId {
+    bot_id: Uuid,
+}
+
+/// Releases every connection of a project that is about to be deleted.
 ///
-/// A deleted project never leaves an orphaned managed webhook or a live token. A project without a
-/// connection is left alone. The caller owns the transaction.
+/// A deleted project never leaves an orphaned managed webhook or a live token. A project without
+/// connections is left alone. The caller owns the transaction. The connections go one bot at a
+/// time in bot id order, each under the locks of [`lock`].
 ///
-/// Returns the workspace and the authorization epoch when the bot's seat left (its last project),
-/// for the caller to pass to [`settle_epoch`] after its commit.
+/// Returns the workspace and the latest authorization epoch when a bot's seat left (its last
+/// project), for the caller to pass to [`settle_epoch`] after its commit.
 pub async fn release_for_project(tx: &impl ConnectionTrait, project_id: Uuid) -> Result<Option<(Uuid, i64)>, ApiError> {
     // The project row first, as connect does (see the lock order in the module header).
     run(
@@ -1538,12 +1700,22 @@ pub async fn release_for_project(tx: &impl ConnectionTrait, project_id: Uuid) ->
         vec![project_id.into()],
     )
     .await?;
-    if load_link(tx, project_id).await?.is_none() {
-        return Ok(None);
+    let bots = BotId::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT bot_id FROM project_bot_connections WHERE project_id = $1 ORDER BY bot_id",
+        vec![project_id.into()],
+    ))
+    .all(tx)
+    .await?;
+    let mut settled = None;
+    for BotId { bot_id } in bots {
+        let locked = lock(tx, project_id, bot_id).await?;
+        let removal = remove_locked(tx, project_id, &locked, None).await?;
+        if let Some(epoch) = removal.epoch {
+            settled = Some((removal.workspace_id, epoch));
+        }
     }
-    let locked = lock(tx, project_id).await?;
-    let removal = remove_locked(tx, project_id, &locked, None).await?;
-    Ok(removal.epoch.map(|epoch| (removal.workspace_id, epoch)))
+    Ok(settled)
 }
 
 #[cfg(test)]

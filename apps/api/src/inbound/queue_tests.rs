@@ -382,7 +382,7 @@ async fn a_bot_without_an_enabled_connection_settles_the_waiting_task_at_once() 
 
     exec(
         w.db(),
-        "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+        "UPDATE project_bot_connections SET enabled = false WHERE project_id = $1",
         vec![w.tenant.project_id.into()],
     )
     .await;
@@ -402,7 +402,7 @@ async fn a_bot_without_an_enabled_connection_settles_the_waiting_task_at_once() 
     // A removed connection settles a waiting task the same way.
     exec(
         w.db(),
-        "UPDATE project_execution_settings SET enabled = true WHERE project_id = $1",
+        "UPDATE project_bot_connections SET enabled = true WHERE project_id = $1",
         vec![w.tenant.project_id.into()],
     )
     .await;
@@ -426,7 +426,7 @@ async fn a_bot_without_an_enabled_connection_is_not_queued_behind_a_cap() {
     assert_eq!(w.post(&w.event("e-1", "k-1", "high")).await.0, StatusCode::ACCEPTED);
     exec(
         w.db(),
-        "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+        "UPDATE project_bot_connections SET enabled = false WHERE project_id = $1",
         vec![w.tenant.project_id.into()],
     )
     .await;

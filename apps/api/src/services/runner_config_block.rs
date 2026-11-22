@@ -19,6 +19,11 @@ pub const FILENAME: &str = "sylvode-runner.toml";
 /// `api_url` when neither `[oauth] issuer` nor a request origin is known. The runner refuses it at
 /// start-up, so a missing value is loud.
 pub const API_URL_PLACEHOLDER: &str = "replace-with-the-sylvode-api-url";
+/// Commented, so it changes no key: the command a tmux session started by the runner runs, with its
+/// default. An operator who wants other flags uncomments it under `[runner.cli.claude]`.
+const CLAUDE_LAUNCH_COMMENT: &str = "# A tmux session the runner starts runs this command (the default is shown). Uncomment to change it.\n\
+# [runner.cli.claude]\n\
+# launch_command = [\"claude\", \"--permission-mode\", \"bypassPermissions\"]\n\n";
 /// `listen` when the runner address does not name a local interface.
 const DEFAULT_LISTEN: &str = "127.0.0.1:9090";
 
@@ -172,6 +177,7 @@ pub fn build(input: &BlockInput<'_>) -> ConfigBlock {
         "[runner]\n# The runner refuses any working directory outside these. Review before use.\nallowed_roots = [{}]\n\n",
         toml_string(input.working_directory)
     );
+    text.push_str(CLAUDE_LAUNCH_COMMENT);
     if matches!(input.cli, "codex" | "opencode") {
         let _ = write!(
             text,
@@ -293,6 +299,12 @@ mod tests {
         assert_eq!(agents[0]["id"].as_str(), Some(BOT));
         assert_eq!(agents[0]["route"]["bot_ids"][0].as_str(), Some(BOT));
         assert!(table["runner"].get("cli").is_none(), "no cli section for claude");
+        assert!(
+            block
+                .text
+                .contains("# launch_command = [\"claude\", \"--permission-mode\", \"bypassPermissions\"]"),
+            "the commented launch command shows its default"
+        );
         for word in ["capabilities", "model", "provider"] {
             assert!(!block.text.contains(word), "the block must not mention {word}");
         }
