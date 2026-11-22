@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
@@ -279,13 +280,19 @@
 	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div class="text-sm text-fg-muted">
-				<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+				<a href={resolve('/(app)/workspace')} class="hover:underline">{$t('nav.myWorkspace')}</a>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects" class="hover:underline">{$t('project.title')}</a
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId })}
+					class="hover:underline">{$t('project.title')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:underline"
-					>{$t('project.detail')}</a
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]', {
+						workspaceId,
+						projectId
+					})}
+					class="hover:underline">{$t('project.detail')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
 				<span class="font-medium text-fg">{$t('issue.list')}</span>

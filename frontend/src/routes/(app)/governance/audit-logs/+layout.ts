@@ -1,3 +1,4 @@
+import { resolve } from '$app/paths';
 import { goto } from '$app/navigation';
 import { browser } from '$app/env';
 import { isAdminUser } from '#lib/utils/auth.js';
@@ -12,17 +13,17 @@ export function load() {
 
 	const raw = localStorage.getItem('auth_user');
 	if (!raw) {
-		goto('/workspace');
+		goto(resolve('/(app)/workspace'));
 		return {};
 	}
 
 	try {
 		const user = JSON.parse(raw) as User;
 		if (!isAdminUser(user)) {
-			goto('/workspace');
+			goto(resolve('/(app)/workspace'));
 		}
 	} catch {
-		goto('/workspace');
+		goto(resolve('/(app)/workspace'));
 	}
 
 	return {};

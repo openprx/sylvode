@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -331,13 +332,19 @@
 	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
 			<div class="text-sm text-fg-muted">
-				<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+				<a href={resolve('/(app)/workspace')} class="hover:underline">{$t('nav.myWorkspace')}</a>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects" class="hover:underline">{$t('project.title')}</a
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId })}
+					class="hover:underline">{$t('project.title')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:underline"
-					>{$t('project.detail')}</a
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]', {
+						workspaceId,
+						projectId
+					})}
+					class="hover:underline">{$t('project.detail')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
 				<span class="font-medium text-fg">{$t('board.title')}</span>
@@ -352,7 +359,13 @@
 						values: { sprint: sprintNameMap[sprintFilterId] ?? sprintFilterId }
 					})}</span
 				>
-				<a href="/workspace/{workspaceId}/projects/{projectId}/board" class="text-fg underline">
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/board', {
+						workspaceId,
+						projectId
+					})}
+					class="text-fg underline"
+				>
 					{$t('board.clearFilter')}
 				</a>
 			</div>
@@ -466,7 +479,10 @@
 								<div class="ml-2 space-y-2">
 									<div class="flex items-start justify-between gap-2">
 										<a
-											href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
+											href={resolve(
+												'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
+												{ workspaceId, projectId, issueId: issue.id }
+											)}
 											class="line-clamp-2 text-sm font-medium text-fg hover:underline"
 										>
 											{issue.title}

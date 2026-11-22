@@ -517,6 +517,7 @@
 		</h2>
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
 			{#each coreModules as module, index (index)}
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app paths held in a static module table -->
 				<a
 					href={module.href}
 					class="group rounded-card border border-line bg-raised p-5 transition hover:-translate-y-0.5"
@@ -701,6 +702,7 @@
 						<span class="text-lg text-fg-muted transition group-hover:text-fg">→</span>
 					</div>
 				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{/each}
 		</div>
 	</section>
@@ -711,6 +713,7 @@
 		</h2>
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
 			{#each reviewModules as module, index (index)}
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app paths held in a static module table -->
 				<a
 					href={module.href}
 					class={`group rounded-card border border-line bg-raised p-5 transition hover:-translate-y-0.5 ${
@@ -902,6 +905,7 @@
 						<span class="text-lg text-fg-muted transition group-hover:text-fg">→</span>
 					</div>
 				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{/each}
 		</div>
 	</section>
@@ -912,6 +916,7 @@
 		</h2>
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
 			{#each systemModules as module, index (index)}
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app paths held in a static module table -->
 				<a
 					href={module.href}
 					class="group rounded-card border border-line bg-raised p-5 transition hover:-translate-y-0.5"
@@ -1096,6 +1101,7 @@
 						<span class="text-lg text-fg-muted transition group-hover:text-fg">→</span>
 					</div>
 				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{/each}
 		</div>
 	</section>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
 	import ProjectPluginNav from '#lib/components/plugins/ProjectPluginNav.svelte';
 	import FlowSharedBlockList from '#lib/components/flow/FlowSharedBlockList.svelte';
@@ -62,7 +63,13 @@
 
 		if (loadedProject.type_key === 'custom_form') {
 			workbench?.close(taskKey, true);
-			await goto(`/workspace/${workspaceId}/projects/${projectId}/forms`, { replaceState: true });
+			await goto(
+				resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/forms', {
+					workspaceId,
+					projectId
+				}),
+				{ replaceState: true }
+			);
 			return;
 		}
 
@@ -198,7 +205,10 @@
 				</div>
 				<div class="grid gap-3 md:grid-cols-2">
 					<a
-						href={`/workspace/${workspaceId}/projects/${projectId}/issues`}
+						href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues', {
+							workspaceId,
+							projectId
+						})}
 						class="rounded-control border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 					>
 						<h3 class="text-sm font-semibold text-fg">
@@ -209,7 +219,10 @@
 						</p>
 					</a>
 					<a
-						href={`/workspace/${workspaceId}/projects/${projectId}/board`}
+						href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/board', {
+							workspaceId,
+							projectId
+						})}
 						class="rounded-control border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 					>
 						<h3 class="text-sm font-semibold text-fg">
@@ -220,7 +233,10 @@
 						</p>
 					</a>
 					<a
-						href={`/workspace/${workspaceId}/projects/${projectId}/cycles`}
+						href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/cycles', {
+							workspaceId,
+							projectId
+						})}
 						class="rounded-control border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 					>
 						<h3 class="text-sm font-semibold text-fg">
@@ -243,7 +259,10 @@
 					</p>
 				</div>
 				<a
-					href={`/workspace/${workspaceId}/projects/${projectId}/forms`}
+					href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/forms', {
+						workspaceId,
+						projectId
+					})}
 					class="flex items-start gap-3 rounded-control border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 				>
 					<FileText class="mt-0.5 h-5 w-5 text-fg-muted" aria-hidden="true" />
@@ -276,7 +295,10 @@
 						</p>
 					</div>
 					<a
-						href={`/workspace/${workspaceId}/projects/${projectId}/issues`}
+						href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues', {
+							workspaceId,
+							projectId
+						})}
 						class="inline-flex items-center justify-center rounded-control border border-line px-3 py-2 text-sm font-medium text-fg transition-colors hover:border-line-strong hover:bg-surface"
 					>
 						{$t('project.openScenarioWork')}
@@ -332,7 +354,10 @@
 				<div class="space-y-3">
 					{#each recentIssues as issue (issue.id)}
 						<a
-							href={`/workspace/${workspaceId}/projects/${projectId}/issues/${issue.id}`}
+							href={resolve(
+								'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
+								{ workspaceId, projectId, issueId: issue.id }
+							)}
 							class="block rounded-control p-3 hover:bg-surface"
 						>
 							<div class="space-y-1.5">

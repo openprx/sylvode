@@ -52,6 +52,7 @@
 			<ul class="grid gap-3 md:grid-cols-3">
 				{#each [...layout.inline, ...layout.more] as item (itemKey(item))}
 					<li>
+						<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
 						<a
 							href={href(item)}
 							class="block rounded-card border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
@@ -65,6 +66,7 @@
 								})}
 							</span>
 						</a>
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					</li>
 				{/each}
 			</ul>

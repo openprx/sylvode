@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { getContext } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import type { PluginSlotV3 } from '#lib/api/plugin-packages.js';
@@ -21,7 +22,10 @@
 
 {#if canManage?.()}
 	<a
-		href={`/workspace/${workspaceId}/projects/${projectId}/settings/plugins/creator?slot=${slot}${formKey ? `&form=${encodeURIComponent(formKey)}` : ''}`}
+		href={resolve(
+			`/(app)/workspace/[workspaceId]/projects/[projectId]/settings/plugins/creator?slot=${slot}${formKey ? `&form=${encodeURIComponent(formKey)}` : ''}`,
+			{ workspaceId, projectId }
+		)}
 		data-plugin-creator-slot={slot}
 		aria-label={$t('plugins.creator.launchFrom', { values: { slot: $t(slotLabelKey(slot)) } })}
 		class="inline-flex items-center rounded-control px-2 py-1 text-sm text-fg underline"

@@ -363,6 +363,7 @@
 												</div>
 
 												{#if attachmentSignedUrl(attachment)}
+													<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 													<a
 														href={attachmentSignedUrl(attachment) || undefined}
 														target="_blank"
@@ -372,7 +373,9 @@
 														data-attachment-signed-url={attachmentSignedUrl(attachment)}
 														>{$t('forms.attachmentOpen')}</a
 													>
+													<!-- eslint-enable svelte/no-navigation-without-resolve -->
 
+													<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 													<a
 														href={attachmentSignedUrl(attachment) || undefined}
 														download={attachment.file_name}
@@ -383,6 +386,7 @@
 														<FileDown class="mr-1 h-3.5 w-3.5" aria-hidden="true" />
 														{$t('forms.attachmentDownload')}
 													</a>
+													<!-- eslint-enable svelte/no-navigation-without-resolve -->
 												{/if}
 
 												<Button

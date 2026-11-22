@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -192,13 +193,13 @@
 					<div class="rounded-control border border-line p-3">
 						<div class="mb-2 flex flex-wrap items-center gap-2">
 							<a
-								href={`/proposals/${review.proposal_id}`}
+								href={resolve('/(app)/proposals/[id]', { id: review.proposal_id })}
 								class="text-sm font-medium text-fg underline"
 							>
 								{review.proposal_id}
 							</a>
 							<a
-								href={`/proposals/${review.proposal_id}/review`}
+								href={resolve('/(app)/proposals/[id]/review', { id: review.proposal_id })}
 								class="text-xs text-fg-muted hover:underline"
 							>
 								{$t('impactReview.detailLink')}

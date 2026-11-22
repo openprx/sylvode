@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount, tick } from 'svelte';
@@ -509,7 +510,12 @@
 		}
 
 		toast.success(get(t)('issue.deleted'));
-		goto(`/workspace/${workspaceId}/projects/${projectId}/issues`);
+		goto(
+			resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues', {
+				workspaceId,
+				projectId
+			})
+		);
 	}
 
 	async function handleAddLabel() {
@@ -1031,14 +1037,19 @@
 				class="flex flex-col gap-3 rounded-card border border-line bg-raised p-4 sm:flex-row sm:items-center sm:justify-between"
 			>
 				<div class="text-sm text-fg-muted">
-					<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+					<a href={resolve('/(app)/workspace')} class="hover:underline">{$t('nav.myWorkspace')}</a>
 					<span class="mx-1 text-fg-muted">/</span>
-					<a href="/workspace/{workspaceId}/projects" class="hover:underline"
-						>{$t('project.title')}</a
+					<a
+						href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId })}
+						class="hover:underline">{$t('project.title')}</a
 					>
 					<span class="mx-1 text-fg-muted">/</span>
-					<a href="/workspace/{workspaceId}/projects/{projectId}/issues" class="hover:underline"
-						>{$t('issue.list')}</a
+					<a
+						href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues', {
+							workspaceId,
+							projectId
+						})}
+						class="hover:underline">{$t('issue.list')}</a
 					>
 					<span class="mx-1 text-fg-muted">/</span>
 					<span class="font-medium text-fg">{formatIssueCode(issue)}</span>
@@ -1071,7 +1082,7 @@
 							<div class="mb-3 flex flex-wrap items-center gap-2">
 								{#if issue.proposal_id}
 									<a
-										href={`/proposals/${issue.proposal_id}`}
+										href={resolve('/(app)/proposals/[id]', { id: issue.proposal_id })}
 										class="inline-flex items-center rounded-full border bg-surface px-2 py-0.5 text-xs font-medium text-fg"
 									>
 										{$t('issue.sourceProposal')}: {issue.proposal_id}
@@ -1116,6 +1127,7 @@
 										</p>
 										<div class="space-y-1">
 											{#each existingIssueAttachments as attachment (attachment.url)}
+												<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 												<a
 													href={attachment.url}
 													target="_blank"
@@ -1125,6 +1137,7 @@
 													{attachment.isImage ? '🖼️' : '📎'}
 													{attachment.filename}
 												</a>
+												<!-- eslint-enable svelte/no-navigation-without-resolve -->
 											{/each}
 										</div>
 									</div>

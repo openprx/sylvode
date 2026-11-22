@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { locale, t } from 'svelte-i18n';
@@ -283,10 +284,13 @@
 	<header class="space-y-2">
 		<a
 			class="text-sm text-fg underline"
-			href={`/workspace/${workspaceId}/projects/${projectId}/forms`}>{$t('plugins.backToForms')}</a
+			href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/forms', {
+				workspaceId,
+				projectId
+			})}>{$t('plugins.backToForms')}</a
 		>
 		<h1 class="text-2xl font-semibold">{$t('plugins.projectSettings')}</h1>
-		<a href="/plugins" class="inline-block text-sm text-fg underline">
+		<a href={resolve('/(app)/plugins')} class="inline-block text-sm text-fg underline">
 			{$t('plugins.library.title')}
 		</a>
 	</header>

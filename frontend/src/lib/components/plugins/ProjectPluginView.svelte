@@ -79,6 +79,7 @@
 					navigate: async (target) => {
 						// A frame that is no longer shown does not navigate anymore.
 						if (view.opened?.token !== opened.token) return;
+						// eslint-disable-next-line svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type
 						await goto(navigationHref(target, { workspaceId, projectId, key: pluginKey, from }));
 					},
 					onStale: () => void projectDiscovery(projectId).refresh()
@@ -126,6 +127,7 @@
 
 	function onClose(reason: string) {
 		if (closeView(view, reason) === 'back') {
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type
 			void goto(backHref);
 			return;
 		}
@@ -155,21 +157,26 @@
 			{$t('plugins.host.unavailable')}
 		</h1>
 		<p class="text-sm text-fg-muted">{$t('plugins.host.unavailableHint')}</p>
+		<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
 		<a href={backHref} class="text-sm text-fg underline"
 			>{$t(from ? 'plugins.host.back' : 'plugins.host.backToProject')}</a
 		>
+		<!-- eslint-enable svelte/no-navigation-without-resolve -->
 	</section>
 {:else}
 	<div class="space-y-4">
 		<div class="flex flex-wrap items-center justify-between gap-2">
+			<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
 			<a href={backHref} class="text-sm text-fg underline"
 				>{$t(from ? 'plugins.host.back' : 'plugins.host.backToProject')}</a
 			>
+			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			<PluginPreferenceMenu {projectId} items={discovery.items} />
 		</div>
 		{#if tabs.inline.length + tabs.more.length > 0}
 			<nav aria-label={$t('plugins.apps.tabsLabel')} class="flex flex-wrap items-center gap-2">
 				{#each tabs.inline as item (itemKey(item))}
+					<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
 					<a
 						href={appHref(workspaceId, projectId, item.key, item.contribution.route ?? '', {
 							from
@@ -180,6 +187,7 @@
 						class="rounded-control border border-input px-3 py-1.5 text-sm hover:bg-surface aria-[current=page]:bg-selected aria-[current=page]:font-semibold"
 						>{item.contribution.label}</a
 					>
+					<!-- eslint-enable svelte/no-navigation-without-resolve -->
 				{/each}
 				{#if tabs.more.length}
 					<details class="relative">
@@ -191,12 +199,14 @@
 						>
 							{#each tabs.more as item (itemKey(item))}
 								<li>
+									<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
 									<a
 										class="block underline"
 										href={appHref(workspaceId, projectId, item.key, item.contribution.route ?? '', {
 											from
 										})}>{item.contribution.label}</a
 									>
+									<!-- eslint-enable svelte/no-navigation-without-resolve -->
 								</li>
 							{/each}
 						</ul>

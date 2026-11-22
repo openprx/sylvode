@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
@@ -100,11 +101,17 @@
 	}
 
 	function goToWorkspace(workspaceId: string) {
-		goto(`/workspace/${workspaceId}`);
+		goto(resolve('/(app)/workspace/[workspaceId]', { workspaceId }));
 	}
 
 	function goToIssue(workspaceId: string, projectId: string, issueId: string) {
-		goto(`/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}`);
+		goto(
+			resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]', {
+				workspaceId,
+				projectId,
+				issueId
+			})
+		);
 	}
 
 	function openCreateModal() {

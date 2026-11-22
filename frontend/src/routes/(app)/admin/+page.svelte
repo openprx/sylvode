@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -44,7 +45,7 @@
 		const meResponse = await authApi.me();
 		if (meResponse.code !== 0 || !isAdminUser(meResponse.data?.user ?? null)) {
 			toast.error(get(t)('admin.adminOnlyPage'));
-			goto('/workspace');
+			goto(resolve('/(app)/workspace'));
 			return;
 		}
 
@@ -107,10 +108,11 @@
 			<p class="mt-1 text-sm text-fg-muted">{$t('admin.overview')}</p>
 		</div>
 		<div class="flex gap-2">
-			<Button variant="secondary" onclick={() => goto('/admin/users')}
+			<Button variant="secondary" onclick={() => goto(resolve('/(app)/admin/users'))}
 				>{$t('admin.createUser')}</Button
 			>
-			<Button onclick={() => goto('/inbox')}>{$t('admin.viewRecentActivity')}</Button>
+			<Button onclick={() => goto(resolve('/(app)/inbox'))}>{$t('admin.viewRecentActivity')}</Button
+			>
 		</div>
 	</div>
 

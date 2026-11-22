@@ -1,6 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { t } from 'svelte-i18n';
 	import { Plus, RefreshCw } from '@lucide/svelte';
 	import Button from '#lib/components/Button.svelte';
@@ -17,17 +18,22 @@
 >
 	<div>
 		<div class="text-sm text-fg-muted">
-			<a href="/workspace" class="hover:text-fg">{$t('forms.workspace')}</a>
+			<a href={resolve('/(app)/workspace')} class="hover:text-fg">{$t('forms.workspace')}</a>
 			<span class="mx-1 text-fg-muted">/</span>
 
-			<a href={`/workspace/${s.workspaceId}/projects`} class="hover:text-fg"
-				>{$t('forms.projects')}</a
+			<a
+				href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId: s.workspaceId })}
+				class="hover:text-fg">{$t('forms.projects')}</a
 			>
 
 			<span class="mx-1 text-fg-muted">/</span>
 
-			<a href={`/workspace/${s.workspaceId}/projects/${s.projectId}`} class="hover:text-fg"
-				>{s.project?.name ?? $t('forms.projectFallback')}</a
+			<a
+				href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]', {
+					workspaceId: s.workspaceId,
+					projectId: s.projectId
+				})}
+				class="hover:text-fg">{s.project?.name ?? $t('forms.projectFallback')}</a
 			>
 		</div>
 

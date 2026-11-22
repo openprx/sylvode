@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { locale, t } from 'svelte-i18n';
 	import { slotLabelKey } from '#lib/plugins/layout-v3.js';
 	import CreatorPanelPreview from './CreatorPanelPreview.svelte';
@@ -304,7 +305,13 @@
 						<div class="flex flex-wrap items-center gap-2">
 							{#if project?.can_manage && link.status === 'attached'}
 								<a
-									href={`/workspace/${encodeURIComponent(project.workspace_id)}/projects/${encodeURIComponent(project.id)}/settings/plugins`}
+									href={resolve(
+										'/(app)/workspace/[workspaceId]/projects/[projectId]/settings/plugins',
+										{
+											workspaceId: encodeURIComponent(project.workspace_id),
+											projectId: encodeURIComponent(project.id)
+										}
+									)}
 									class="text-fg underline">{$t('plugins.library.manageInProject')}</a
 								>
 							{/if}

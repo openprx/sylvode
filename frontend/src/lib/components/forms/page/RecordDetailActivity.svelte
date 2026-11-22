@@ -221,6 +221,7 @@
 										</div>
 									</div>
 
+									<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 									<a
 										href={attachmentSignedUrl(attachment) || undefined}
 										target="_blank"
@@ -230,7 +231,9 @@
 										data-record-detail-attachment-signed-url={attachmentSignedUrl(attachment)}
 										>{$t('forms.attachmentOpen')}</a
 									>
+									<!-- eslint-enable svelte/no-navigation-without-resolve -->
 
+									<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 									<a
 										href={attachmentSignedUrl(attachment) || undefined}
 										download={attachment.file_name}
@@ -239,6 +242,7 @@
 										data-record-detail-attachment-signed-download={attachmentSignedUrl(attachment)}
 										>{$t('forms.attachmentDownload')}</a
 									>
+									<!-- eslint-enable svelte/no-navigation-without-resolve -->
 								</div>
 							{/each}
 
@@ -252,6 +256,7 @@
 									</div>
 
 									{#if safeLinkUrl(url)}
+										<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 										<a
 											href={safeLinkUrl(url)}
 											target="_blank"
@@ -260,6 +265,7 @@
 											data-record-detail-attachment-value-open={field.key}
 											>{$t('forms.attachmentOpen')}</a
 										>
+										<!-- eslint-enable svelte/no-navigation-without-resolve -->
 									{:else}
 										<span
 											class="rounded px-2 py-1 text-[11px] font-medium text-warning"

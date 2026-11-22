@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
 	import { projectConflicts, reviewProjectDraft } from '#lib/workbench/project-session.js';
@@ -209,9 +210,11 @@
 		return project.type_key === 'custom_form';
 	}
 
-	function projectHref(project: Project): string {
-		const baseHref = `/workspace/${workspaceId}/projects/${project.id}`;
-		return isFormsProject(project) ? `${baseHref}/forms` : baseHref;
+	function projectHref(project: Project) {
+		const params = { workspaceId, projectId: project.id };
+		return isFormsProject(project)
+			? resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/forms', params)
+			: resolve('/(app)/workspace/[workspaceId]/projects/[projectId]', params);
 	}
 
 	function goToProject(project: Project) {
@@ -378,7 +381,7 @@
 <div class="mx-auto max-w-7xl">
 	<div class="mb-6">
 		<nav class="mb-4 flex items-center gap-2 text-sm text-fg-muted">
-			<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+			<a href={resolve('/(app)/workspace')} class="hover:underline">{$t('nav.myWorkspace')}</a>
 			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"
 				></path>

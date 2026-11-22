@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -125,7 +126,7 @@
 
 	async function loadAll() {
 		if (!proposalId) {
-			goto('/proposals');
+			goto(resolve('/(app)/proposals'));
 			return;
 		}
 		loading = true;
@@ -463,7 +464,7 @@
 			return;
 		}
 		toast.success(get(t)('governance.draftDeleted'));
-		goto('/proposals');
+		goto(resolve('/(app)/proposals'));
 	}
 
 	async function vote(choice: VoteChoice) {
@@ -691,7 +692,7 @@
 		<StateBlock
 			kind="notFound"
 			place={$t('governance.place')}
-			action={{ run: () => goto('/proposals') }}
+			action={{ run: () => goto(resolve('/(app)/proposals')) }}
 			data-testid="proposal-detail-not-found"
 		/>
 	</div>
@@ -878,7 +879,10 @@
 					<h2 class="text-lg font-semibold text-fg">
 						{$t('impactReview.title')}
 					</h2>
-					<a href={`/proposals/${proposal.id}/review`} class="text-sm text-fg underline">
+					<a
+						href={resolve('/(app)/proposals/[id]/review', { id: proposal.id })}
+						class="text-sm text-fg underline"
+					>
 						{$t('impactReview.detailLink')}
 					</a>
 				</div>
@@ -1007,7 +1011,7 @@
 				<div class="space-y-2">
 					{#if proposal.status === 'draft' && isAuthor}
 						<a
-							href={`/proposals/${proposal.id}/edit`}
+							href={resolve('/(app)/proposals/[id]/edit', { id: proposal.id })}
 							class="block w-full rounded-control border border-fg bg-raised px-3 py-2 text-center text-sm hover:bg-surface"
 							>{$t('governance.editDraft')}</a
 						>
@@ -1169,20 +1173,20 @@
 				{/if}
 				<div class="mt-3 flex flex-wrap gap-2">
 					<a
-						href={`/proposals/${proposal.id}/review`}
+						href={resolve('/(app)/proposals/[id]/review', { id: proposal.id })}
 						class="inline-flex rounded-control border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface"
 					>
 						{$t('impactReview.detailLink')}
 					</a>
 					<a
-						href={`/proposals/${proposal.id}/veto`}
+						href={resolve('/(app)/proposals/[id]/veto', { id: proposal.id })}
 						class="inline-flex rounded-control border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface"
 					>
 						{$t('vetoDetail.title')}
 					</a>
 				</div>
 				<a
-					href={`/proposals/${proposal.id}/chain`}
+					href={resolve('/(app)/proposals/[id]/chain', { id: proposal.id })}
 					class="mt-3 inline-block text-xs text-fg underline"
 				>
 					{$t('governanceExt.viewChain')}

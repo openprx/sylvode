@@ -8,5 +8,6 @@ export function navigateTask(path: string, replace = false): Promise<void> {
 		(!taskResource(url.href) && url.pathname !== '/workspace')
 	)
 		return Promise.reject(new Error('Unsupported task route'));
+	// eslint-disable-next-line svelte/no-navigation-without-resolve -- the URL is validated as a same-origin task route above
 	return goto(url, { reset: false, replace });
 }

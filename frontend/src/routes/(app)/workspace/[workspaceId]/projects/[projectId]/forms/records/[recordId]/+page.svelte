@@ -600,7 +600,15 @@
 <div class="min-h-screen bg-canvas px-4 py-6 sm:px-6 lg:px-8">
 	<div class="mx-auto max-w-7xl space-y-5">
 		<a
-			href={`/workspace/${workspaceId}/projects/${projectId}/forms${form && record ? `?form=${form.id}&record=${record.id}` : ''}`}
+			href={form && record
+				? resolve(
+						`/(app)/workspace/[workspaceId]/projects/[projectId]/forms?form=${form.id}&record=${record.id}`,
+						{ workspaceId, projectId }
+					)
+				: resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/forms', {
+						workspaceId,
+						projectId
+					})}
 			class="inline-flex items-center gap-2 text-sm font-medium text-fg-muted hover:text-fg"
 			data-durable-record-detail-back
 		>
@@ -1215,6 +1223,7 @@
 																</div>
 															</div>
 
+															<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 															<a
 																href={attachmentSignedUrl(attachment) || undefined}
 																target="_blank"
@@ -1224,10 +1233,12 @@
 															>
 																{$t('forms.attachmentOpen')}
 															</a>
+															<!-- eslint-enable svelte/no-navigation-without-resolve -->
 														</div>
 													{/each}
 													{#each valueUrls as url, index (index)}
 														{#if safeLinkUrl(url)}
+															<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 															<a
 																href={safeLinkUrl(url)}
 																target="_blank"
@@ -1237,6 +1248,7 @@
 															>
 																{url}
 															</a>
+															<!-- eslint-enable svelte/no-navigation-without-resolve -->
 														{:else}
 															<span
 																class="block truncate rounded-control bg-surface px-2 py-1.5 font-mono text-[11px] text-warning"
@@ -1281,6 +1293,7 @@
 														</div>
 													</div>
 
+													<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 													<a
 														href={attachmentSignedUrl(attachment) || undefined}
 														target="_blank"
@@ -1290,6 +1303,7 @@
 													>
 														{$t('forms.attachmentOpen')}
 													</a>
+													<!-- eslint-enable svelte/no-navigation-without-resolve -->
 												</div>
 											{/each}
 										{/if}

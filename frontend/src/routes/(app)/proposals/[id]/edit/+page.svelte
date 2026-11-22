@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { tick } from 'svelte';
 	import { page } from '$app/state';
@@ -72,7 +73,7 @@
 
 	async function loadProposal() {
 		if (!proposalId) {
-			goto('/proposals');
+			goto(resolve('/(app)/proposals'));
 			return;
 		}
 		loadFailure = null;
@@ -88,12 +89,12 @@
 		proposal = res.data.proposal;
 		if (proposal.status !== 'draft') {
 			toast.error(get(t)('governance.draftOnlyEditable'));
-			goto(`/proposals/${proposal.id}`);
+			goto(resolve('/(app)/proposals/[id]', { id: proposal.id }));
 			return;
 		}
 		if (!meId || proposal.author_id !== meId) {
 			toast.error(get(t)('governance.authorOnlyEdit'));
-			goto(`/proposals/${proposal.id}`);
+			goto(resolve('/(app)/proposals/[id]', { id: proposal.id }));
 			return;
 		}
 		title = proposal.title;
@@ -140,7 +141,7 @@
 			return;
 		}
 		toast.success(get(t)('governance.updateSuccess'));
-		goto(`/proposals/${proposal.id}`);
+		goto(resolve('/(app)/proposals/[id]', { id: proposal.id }));
 	}
 
 	function appendContentImage(url: string, mimeType: string): void {
@@ -248,7 +249,7 @@
 		<StateBlock
 			kind="notFound"
 			place={$t('governance.place')}
-			action={{ run: () => goto('/proposals') }}
+			action={{ run: () => goto(resolve('/(app)/proposals')) }}
 			data-testid="proposal-edit-not-found"
 		/>
 	</div>
@@ -407,7 +408,7 @@
 
 				<div class="flex items-center justify-end gap-2">
 					<a
-						href={`/proposals/${proposalId}`}
+						href={resolve('/(app)/proposals/[id]', { id: proposalId })}
 						class="rounded-control border border-input bg-field px-4 py-2 text-sm"
 						>{$t('common.cancel')}</a
 					>

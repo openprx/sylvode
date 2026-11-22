@@ -1,3 +1,4 @@
+import { resolve } from '$app/paths';
 // 应用路由布局（需要认证）
 import { goto } from '$app/navigation';
 import { browser } from '$app/env';
@@ -9,7 +10,7 @@ export function load() {
 	if (browser) {
 		const token = apiClient.getToken();
 		if (!token) {
-			goto('/auth/login');
+			goto(resolve('/(auth)/auth/login'));
 			return;
 		}
 	}

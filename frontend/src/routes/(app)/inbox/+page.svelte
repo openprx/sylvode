@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -204,7 +205,11 @@
 			return null;
 		}
 
-		const route = `/workspace/${projectResponse.data.workspace_id}/projects/${projectResponse.data.id}/issues/${issueId}`;
+		const route = resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]', {
+			workspaceId: projectResponse.data.workspace_id,
+			projectId: projectResponse.data.id,
+			issueId
+		});
 		issueRouteCache.set(issueId, route);
 		return route;
 	}
@@ -224,6 +229,7 @@
 			await markRead(notification.id);
 		}
 
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- cached in-app issue path
 		goto(route);
 	}
 </script>

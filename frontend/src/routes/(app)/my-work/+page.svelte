@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -45,7 +46,13 @@
 	}
 
 	function goToIssue(workspaceId: string, projectId: string, issueId: string) {
-		goto(`/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}`);
+		goto(
+			resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]', {
+				workspaceId,
+				projectId,
+				issueId
+			})
+		);
 	}
 
 	function formatRelativeTime(dateText: string): string {

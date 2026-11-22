@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { tick } from 'svelte';
 	import { get } from 'svelte/store';
@@ -338,9 +339,9 @@
 		const createdId = String((res.data as Record<string, unknown>).id ?? '');
 		toast.success(get(t)('governance.createSuccess'));
 		if (createdId) {
-			goto(`/proposals/${createdId}`);
+			goto(resolve('/(app)/proposals/[id]', { id: createdId }));
 		} else {
-			goto('/proposals');
+			goto(resolve('/(app)/proposals'));
 		}
 	}
 </script>
@@ -540,7 +541,9 @@
 			</div>
 
 			<div class="flex items-center justify-end gap-2">
-				<a href="/proposals" class="rounded-control border border-input bg-field px-4 py-2 text-sm"
+				<a
+					href={resolve('/(app)/proposals')}
+					class="rounded-control border border-input bg-field px-4 py-2 text-sm"
 					>{$t('common.cancel')}</a
 				>
 				<button
