@@ -507,6 +507,14 @@ thread_local! {
     static SETUP_TIMEOUT_OVERRIDE_MS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Widens the wall watchdog of the metered window for the calling test thread, for the tests
+    /// that are about the CPU ceiling and must not be decided by a starved worker. The CPU ceiling
+    /// is not touched. Never set outside tests.
+    static METERED_WALL_OVERRIDE_MS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
 /// The setup timeout in force: [`SETUP_PHASE_SAFETY_TIMEOUT_MS`], or a test's shorter one.
 #[allow(clippy::missing_const_for_fn, reason = "reads a thread-local in test builds")]
 fn setup_phase_timeout_ms() -> u64 {
@@ -613,6 +621,10 @@ fn read_response_two_phase(
 /// The wall-clock watchdog of the metered window of `operation`: [`DECODE_APPLY_WALL_MS_MAX`], or
 /// the import-specific one for the `import` operation only.
 fn metered_wall_ms(operation: &str) -> u64 {
+    #[cfg(test)]
+    if let Some(override_ms) = METERED_WALL_OVERRIDE_MS.with(std::cell::Cell::get) {
+        return override_ms;
+    }
     if operation == wire::OPERATION_IMPORT {
         IMPORT_DECODE_WALL_MS_MAX
     } else {
@@ -2099,13 +2111,35 @@ mod tests {
         );
     }
 
+    /// Runs `body` with the wall watchdog of the metered window of this thread widened to `millis`.
+    fn with_metered_wall_ms<T>(millis: u64, body: impl FnOnce() -> T) -> T {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                METERED_WALL_OVERRIDE_MS.with(|slot| slot.set(None));
+            }
+        }
+        METERED_WALL_OVERRIDE_MS.with(|slot| slot.set(Some(millis)));
+        let _reset = Reset;
+        body()
+    }
+
     /// The point of the decision record: a worker killed by the CPU ceiling after the check decided
     /// `NotSequential` has still told the host so.
+    ///
+    /// The product's wall deadline of the window is 100 ms, so a 50 ms CPU burn needs the worker to
+    /// hold half a core for 100 ms. A test binary that runs its tests on every core, next to other
+    /// load, can starve a worker for longer than that in one burst, and the attempts of one run
+    /// (250 ms apart) then all land in the burst. This test is about the decision surviving the CPU
+    /// kill, not about the wall deadline (which has its own tests), so its wall watchdog is widened to
+    /// two seconds while the CPU ceiling stays at 50 ms. A wall kill is still not a pass: it is an
+    /// inconclusive attempt, as before.
     #[test]
     fn a_cpu_kill_after_a_not_sequential_decision_keeps_the_decision() {
         let observation = conclusive_run("a CPU kill after the decision", || {
-            let (result, observation) =
-                isolated_apply_injected_observed(&format!("decision_then_burn={}:150000", not_sequential_code()));
+            let (result, observation) = with_metered_wall_ms(2_000, || {
+                isolated_apply_injected_observed(&format!("decision_then_burn={}:150000", not_sequential_code()))
+            });
             match result {
                 Err(IsolatedApplyError::CpuCeiling) => Some(observation),
                 // Starved: killed at the wall deadline before it burned the ceiling. The record was
