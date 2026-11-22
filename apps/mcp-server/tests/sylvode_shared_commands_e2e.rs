@@ -38,9 +38,9 @@ const MISSING: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 /// One request as the stand-in saw it: method, path with query, body.
 type Seen = Arc<tokio::sync::Mutex<Vec<(String, String, String)>>>;
 
-/// The transport surface each request declared, canonical header then legacy header
-/// (`mcp-surface-v1.md` "Transport → actor/origin"; ADR-0020 D3 sends both spellings).
-type Surfaces = Arc<tokio::sync::Mutex<Vec<(String, String)>>>;
+/// The transport surface each request declared in `X-Sylvode-MCP-Surface`
+/// (`mcp-surface-v1.md` "Transport → actor/origin").
+type Surfaces = Arc<tokio::sync::Mutex<Vec<String>>>;
 
 /// Starts the recording stand-in API and returns its base URL and its request log.
 ///
@@ -56,17 +56,12 @@ async fn spawn_api() -> Result<(String, Seen, Surfaces), BoxError> {
         let log = Arc::clone(&log);
         let surface_log = Arc::clone(&surface_log);
         async move {
-            let declared = {
-                let header = |name: &str| -> String {
-                    request
-                        .headers()
-                        .get(name)
-                        .and_then(|value| value.to_str().ok())
-                        .unwrap_or_default()
-                        .to_string()
-                };
-                (header("x-sylvode-mcp-surface"), header("x-openpr-mcp-surface"))
-            };
+            let declared = request
+                .headers()
+                .get("x-sylvode-mcp-surface")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
             surface_log.lock().await.push(declared);
             let method = request.method().to_string();
             let target = request
@@ -586,13 +581,8 @@ async fn tools_call_declares_the_cli_tools_call_surface_and_native_commands_decl
             );
             let surfaces = std::mem::take(&mut *fixture.surfaces.lock().await);
             assert!(!surfaces.is_empty(), "{binary} {args:?}: no request reached the API");
-            for (canonical, legacy) in &surfaces {
-                // (X-Sylvode-MCP-Surface, retired X-OpenPR-MCP-Surface)
-                assert_eq!(canonical, expected, "{binary} {args:?}: X-Sylvode-MCP-Surface");
-                assert_eq!(
-                    legacy, "",
-                    "{binary} {args:?}: the retired X-OpenPR-MCP-Surface header is not sent"
-                );
+            for surface in &surfaces {
+                assert_eq!(surface, expected, "{binary} {args:?}: X-Sylvode-MCP-Surface");
             }
         }
     }

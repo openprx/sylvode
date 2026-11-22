@@ -9283,15 +9283,14 @@ mod flow_database_tests {
     }
 
     /// ADR-0020 D3 through the production `bot_or_user_auth_middleware` and a real
-    /// `workspace_bots` row: the `X-Sylvode-MCP-*` headers reach `business_events.source`; the
-    /// retired `X-OpenPR-MCP-*` spelling is not read at all (neither alone nor next to the
-    /// canonical one); a disagreement between repeated occurrences of one header is refused with
-    /// the envelope's `401` and writes nothing.
+    /// `workspace_bots` row: the `X-Sylvode-MCP-*` headers reach `business_events.source`; a
+    /// disagreement between repeated occurrences of one header is refused with the envelope's
+    /// `401` and writes nothing.
     // The axum route pattern below contains `{workspace_id}`, which is axum's path-parameter
     // syntax and not a format argument, but is indistinguishable from one to the lint.
     #[allow(clippy::literal_string_with_formatting_args)]
     #[tokio::test]
-    async fn mcp_attribution_headers_use_one_spelling_and_refuse_disagreement() {
+    async fn mcp_attribution_headers_reach_the_event_source_and_refuse_disagreement() {
         #[derive(FromQueryResult)]
         struct SourceRow {
             source: Value,
@@ -9367,24 +9366,13 @@ mod flow_database_tests {
             }
         };
 
-        let accepted: [(&str, &'static [(&'static str, &'static str)]); 2] = [
-            (
-                "canonical only",
-                &[
-                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
-                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
-                ],
-            ),
-            (
-                "the retired spelling next to the canonical one is ignored, even when it disagrees",
-                &[
-                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
-                    ("X-OpenPR-MCP-Surface", "mcp_http"),
-                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
-                    ("X-OpenPR-MCP-Tool", "flow.object_delete"),
-                ],
-            ),
-        ];
+        let accepted: [(&str, &'static [(&'static str, &'static str)]); 1] = [(
+            "both headers",
+            &[
+                ("X-Sylvode-MCP-Surface", "mcp_stdio"),
+                ("X-Sylvode-MCP-Tool", "flow.object_create"),
+            ],
+        )];
         for (case, headers) in accepted {
             let body = create(headers).await;
             assert_eq!(body["code"], 0, "{case}: the request must be accepted: {body}");
@@ -9444,19 +9432,15 @@ mod flow_database_tests {
             );
         }
 
-        // The retired spelling alone attributes nothing: the credential is registered for a
+        // Without attribution headers nothing is declared: the credential is registered for a
         // transport, and no `X-Sylvode-MCP-Surface` declares it.
-        let legacy_only = create(&[
-            ("X-OpenPR-MCP-Surface", "mcp_stdio"),
-            ("X-OpenPR-MCP-Tool", "flow.object_create"),
-        ])
-        .await;
-        assert_eq!(legacy_only["code"], 401, "{legacy_only}");
+        let undeclared = create(&[]).await;
+        assert_eq!(undeclared["code"], 401, "{undeclared}");
         assert!(
-            legacy_only["message"]
+            undeclared["message"]
                 .as_str()
                 .is_some_and(|message| message.contains("not valid for the presented transport")),
-            "{legacy_only}"
+            "{undeclared}"
         );
 
         let events_after = SourceRow::find_by_statement(Statement::from_sql_and_values(

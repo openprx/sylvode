@@ -754,7 +754,7 @@ mod tests {
                 .headers()
                 .get(reqwest::header::USER_AGENT)
                 .map(reqwest::header::HeaderValue::as_bytes),
-            Some(b"Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)".as_slice())
+            Some(b"Sylvode-Webhook/1.0".as_slice())
         );
         assert_eq!(
             request

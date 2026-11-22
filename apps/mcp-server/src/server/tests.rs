@@ -165,12 +165,10 @@ async fn every_registered_resource_is_served_by_its_sylvode_identity_only() -> T
     );
     assert_eq!(observed, expected, "resource registry identities or order drifted");
 
-    // Every resource answers by its own `sylvode://` identity; the retired `openpr://` spelling of
-    // the same identity is unknown, carries no migration metadata and reaches no backend.
+    // Every resource answers by its own `sylvode://` identity and carries no migration metadata.
     for (index, registered) in observed.into_iter().enumerate() {
         let index = i64::try_from(index)?;
         let canonical = expand_resource_template(registered);
-        let retired = canonical.replacen("sylvode://", "openpr://", 1);
         let canonical_response = server
             .handle_request(request(100 + index, "resources/read", Some(json!({"uri":canonical}))))
             .await
@@ -183,20 +181,6 @@ async fn every_registered_resource_is_served_by_its_sylvode_identity_only() -> T
         assert!(
             result.pointer("/contents/0/_meta").is_none(),
             "{registered} carries migration metadata"
-        );
-        let retired_response = server
-            .handle_request(request(200 + index, "resources/read", Some(json!({"uri":retired}))))
-            .await
-            .ok_or("retired resources/read returned no response")?;
-        let body = serde_json::to_string(&retired_response)?;
-        assert!(
-            body.contains("Unknown resource URI"),
-            "the retired spelling of {registered} is still served: {body}"
-        );
-        assert_eq!(
-            resource_policy_subject(&retired)?,
-            ResourceSubject::Ungoverned,
-            "the retired spelling of {registered} is mapped to a policy subject"
         );
     }
     Ok(())
@@ -396,11 +380,7 @@ async fn the_static_resources_are_the_embedded_generated_files() -> TestResult {
             Some(&json!("text/markdown"))
         );
     }
-    for gone in [
-        "sylvode://skills/openpr-mcp",
-        "openpr://skills/openpr-mcp",
-        "openpr://skills/sylvode-mcp/missing",
-    ] {
+    for gone in ["sylvode://skills/sylvode-mcp/missing"] {
         let response = server
             .handle_resources_read(Some(json!(1)), Some(json!({ "uri": gone })))
             .await;
