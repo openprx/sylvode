@@ -104,7 +104,7 @@ routes::flow::flow_database_tests::flow_search_rejects_each_invalid_scope_and_bo
 routes::search::tests::db_search_is_scoped_to_workspace_and_project
 routes::search::tests::db_bot_search_is_scoped_by_token_workspace
 EOF
-WORKER_TEST="flow_projection::tests::flow_projection_indexes_only_the_accepted_projection_and_tracks_lag"
+WORKER_TEST="flow::search::tests::flow_projection_indexes_only_the_accepted_projection_and_tracks_lag"
 : >"$TEST_LOG"
 TEST_START="$(date +%s%N)"
 TEST_EXIT=0
@@ -170,7 +170,7 @@ if len(adr_rules) != 4 or not flow_rule or "stale_frontier" not in flow_rule:
     raise SystemExit("contract parse failed: non-empty ADR-0009 four-rule set and FlowSearchHit rule required")
 
 search = (repo / "apps/api/src/flow/search.rs").read_text(encoding="utf-8")
-worker = (repo / "apps/worker/src/flow_projection.rs").read_text(encoding="utf-8")
+worker = (repo / "apps/worker/src/flow/search.rs").read_text(encoding="utf-8")
 legacy = (repo / "apps/api/src/routes/search.rs").read_text(encoding="utf-8")
 flow_routes = (repo / "apps/api/src/routes/flow.rs").read_text(encoding="utf-8")
 

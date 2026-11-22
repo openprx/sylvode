@@ -256,17 +256,17 @@ COLLAB_CORE_ISOLATED_APPLY_WORKER_RS="$REPO_ROOT/crates/collab-core/src/bin/isol
 # flow/query.rs alone -- read it too so a real boundary test written here (rather than in
 # query.rs, which has none) can actually be found.
 ROUTES_FLOW_RS="$REPO_ROOT/apps/api/src/routes/flow.rs"
-# `workspace_subscribers`'s registration ceiling lives in the webhook subscription endpoints
+# `workspace_subscribers`'s registration ceiling lives in the webhook subscription service
 # (v0.4's only `subscriber_kind` is `webhook`), so its enforcement call sites cannot be seen from
 # any of the collab/flow modules above. Read it too, or this limit_kind's case would report
 # "verified absent" while a real call site sits in a file this script never opened.
-ROUTES_WEBHOOK_RS="$REPO_ROOT/apps/api/src/routes/webhook.rs"
+SERVICES_WEBHOOKS_RS="$REPO_ROOT/apps/api/src/services/webhooks.rs"
 for f in "$LIMITS_RS" "$COLLAB_CORE_LIMITS_RS" "$COLLAB_CORE_ERROR_RS" "$REGISTRY_RS" "$SESSION_RS" \
          "$WRITE_RS" "$COMMAND_RS" "$QUERY_RS" "$BOOTSTRAP_RS" "$ERROR_RS" "$RESPONSE_RS" "$DISPATCHER_RS" \
          "$MIGRATION_SQL" "$FRONTEND_TYPES_TS" "$FRONTEND_LIMITS_TS" "$COLLAB_CORE_ISOLATION_LIMITS_RS" \
          "$COLLAB_CORE_ISOLATION_HOST_RS" "$COLLAB_CORE_ISOLATION_ALLOC_RS" \
          "$COLLAB_CORE_ISOLATION_CHILD_RUNTIME_RS" "$COLLAB_CORE_ISOLATED_APPLY_WORKER_RS" \
-         "$ROUTES_FLOW_RS" "$ROUTES_WEBHOOK_RS"; do
+         "$ROUTES_FLOW_RS" "$SERVICES_WEBHOOKS_RS"; do
   if [[ ! -f "$f" ]]; then
     echo "FAIL: source file not found (nothing to statically verify): $f" >&2
     exit 2
@@ -288,7 +288,7 @@ if ! python3 - "$CONTRACT_PATH" "$LIMITS_RS" "$COLLAB_CORE_LIMITS_RS" "$COLLAB_C
       "$ERROR_RS" "$RESPONSE_RS" "$DISPATCHER_RS" "$MIGRATION_SQL" "$FRONTEND_TYPES_TS" "$FRONTEND_LIMITS_TS" \
       "$COLLAB_CORE_ISOLATION_LIMITS_RS" "$COLLAB_CORE_ISOLATION_HOST_RS" "$COLLAB_CORE_ISOLATION_ALLOC_RS" \
       "$COLLAB_CORE_ISOLATION_CHILD_RUNTIME_RS" "$COLLAB_CORE_ISOLATED_APPLY_WORKER_RS" \
-      "$ROUTES_FLOW_RS" "$ROUTES_WEBHOOK_RS" "$V08_GATE_YAML" "$V05_GATE_YAML" \
+      "$ROUTES_FLOW_RS" "$SERVICES_WEBHOOKS_RS" "$V08_GATE_YAML" "$V05_GATE_YAML" \
       > "$STATIC_JSON_FILE" 2>"$EVIDENCE_ROOT/logs/limits.static.err.log" <<'PY'
 import json
 import re
@@ -298,7 +298,7 @@ import sys
  write_rs, command_rs, query_rs, bootstrap_rs, error_rs, response_rs, dispatcher_rs, migration_sql,
  frontend_types_ts, frontend_limits_ts, collab_core_isolation_limits_rs, collab_core_isolation_host_rs,
  collab_core_isolation_alloc_rs, collab_core_isolation_child_runtime_rs,
- collab_core_isolated_apply_worker_rs, routes_flow_rs, routes_webhook_rs, v08_gate_yaml,
+ collab_core_isolated_apply_worker_rs, routes_flow_rs, services_webhooks_rs, v08_gate_yaml,
  v05_gate_yaml) = sys.argv[1:26]
 
 
@@ -489,7 +489,7 @@ collab_core_isolation_alloc_text = read(collab_core_isolation_alloc_rs)
 collab_core_isolation_child_runtime_text = read(collab_core_isolation_child_runtime_rs)
 collab_core_isolated_apply_worker_text = read(collab_core_isolated_apply_worker_rs)
 routes_flow_rs_text = read(routes_flow_rs)
-routes_webhook_rs_text = read(routes_webhook_rs)
+services_webhooks_rs_text = read(services_webhooks_rs)
 
 const_re = re.compile(r"pub const (\w+):\s*[\w<>&']+\s*=\s*([\d_]+)\s*;")
 rust_consts = {m.group(1): int(m.group(2).replace("_", "")) for m in const_re.finditer(limits_rs_text)}
@@ -680,7 +680,7 @@ TEST_SOURCE_TEXT_PARTS = (
     ("routes/flow.rs", routes_flow_rs_text),
     # `workspace_subscribers`'s registration surface -- read for the same reason routes/flow.rs is:
     # a boundary test written next to the enforcement it proves must be findable here.
-    ("routes/webhook.rs", routes_webhook_rs_text),
+    ("services/webhooks.rs", services_webhooks_rs_text),
 )
 TEST_SOURCE_BY_LABEL = {label: text for label, text in TEST_SOURCE_TEXT_PARTS}
 ALL_TEST_FN_NAMES = [
@@ -806,7 +806,7 @@ findings["boundary_test_covering"] = {
 
 # `workspace_subscribers`: the ceiling is declared in apps/api/src/flow/collab/limits.rs (its
 # wire-report/declaration home, excluded here exactly like every other constant's) and enforced in
-# the dispatcher's expansion path plus the webhook subscription endpoints that grow the directory.
+# the dispatcher's expansion path plus the webhook subscription service that grows the directory.
 # Counted across both files, so "wired" means a real call site outside the declaration.
 # dispatcher.rs's own `#[cfg(test)] mod dispatcher_database_tests` is cut off first: a reference
 # from a test proves a test exists, not that production code enforces anything, and counting one
@@ -821,7 +821,7 @@ findings["subscribers_per_workspace_max_expansion_guard_call_sites"] = count(
     r"workspace_subscriber_count\(|SUBSCRIBERS_PER_WORKSPACE_MAX", expand_work_text
 )
 findings["subscribers_per_workspace_max_registration_call_sites"] = count(
-    r"ensure_workspace_subscriber_slot\(", routes_webhook_rs_text
+    r"ensure_workspace_subscriber_slot\(", services_webhooks_rs_text
 )
 findings["subscribers_per_workspace_max_referenced_outside_limits_rs"] = (
     findings["subscribers_per_workspace_max_expansion_guard_call_sites"]
@@ -1888,7 +1888,7 @@ for key, limit_kind, const in (
 # ---- workspace_subscribers (`subscribers_per_workspace_max`, frozen at 100 on 2026-08-31) ----
 #
 # This ceiling is enforced on two paths that have to agree, so both are required here: the
-# registration path (apps/api/src/routes/webhook.rs -- v0.4's only `subscriber_kind` is `webhook`,
+# registration path (apps/api/src/services/webhooks.rs -- v0.4's only `subscriber_kind` is `webhook`,
 # so that endpoint is where a workspace's subscriber directory grows, and where a caller is refused
 # with `limit_exceeded{limit_kind:"workspace_subscribers"}`), and the dispatcher's own expansion
 # path (apps/api/src/events/dispatcher.rs -- the "dispatcher fan-out 的放大边界" the contract row
@@ -1921,7 +1921,7 @@ boundary_cases.append(case(
     "passed" if ws_passed else "failed",
     (
         f"events/dispatcher.rs::expand_work names this ceiling {ws_expansion_sites} time(s) (the "
-        f"fan-out guard), and routes/webhook.rs calls ensure_workspace_subscriber_slot "
+        f"fan-out guard), and services/webhooks.rs calls ensure_workspace_subscriber_slot "
         f"{ws_registration_sites} time(s) (the registration ceiling)"
         + (
             ""
