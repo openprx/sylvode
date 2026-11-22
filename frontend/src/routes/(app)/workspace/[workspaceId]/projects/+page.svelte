@@ -13,7 +13,7 @@
 	import { goto } from '$app/navigation';
 	import { CheckCircle2, Code2, TableProperties } from '@lucide/svelte';
 	import Modal from '#lib/components/Modal.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
@@ -396,7 +396,7 @@
 					{$t('project.count', { values: { count: filteredProjects.length } })}
 				</p>
 			</div>
-			<Button onclick={openCreateModal}>
+			<Button variant="primary" onclick={openCreateModal}>
 				<svg class="mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"
 					></path>
@@ -441,7 +441,7 @@
 	{:else if projects.length === 0}
 		<EmptyState icon="box" title={$t('project.none')} description={$t('project.noneDesc')}>
 			{#snippet action()}
-				<Button onclick={openCreateModal}>{$t('project.create')}</Button>
+				<Button variant="primary" onclick={openCreateModal}>{$t('project.create')}</Button>
 			{/snippet}
 		</EmptyState>
 	{:else if filteredProjects.length === 0}
@@ -653,7 +653,9 @@
 			>{$t('common.cancel')}</Button
 		>
 
-		<Button type="submit" loading={creating} onclick={handleCreate}>{$t('common.create')}</Button>
+		<Button variant="primary" type="submit" loading={creating} onclick={handleCreate}
+			>{$t('common.create')}</Button
+		>
 	{/snippet}
 </Modal>
 
@@ -735,6 +737,7 @@
 		>
 
 		<Button
+			variant="primary"
 			type="submit"
 			loading={updating}
 			disabled={!!remoteProject || projectUnavailable}
@@ -770,7 +773,7 @@
 			>{$t('common.cancel')}</Button
 		>
 
-		<Button variant="danger" loading={deleting} onclick={handleDelete}
+		<Button variant="danger-quiet" loading={deleting} onclick={handleDelete}
 			>{$t('workspace.confirmDelete')}</Button
 		>
 	{/snippet}

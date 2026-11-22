@@ -24,7 +24,7 @@
 		ISSUE_ATTACHMENT_MAX_SIZE_BYTES,
 		type UploadedAttachment
 	} from '#lib/utils/attachments.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { isImageUploadMime, isAllowedUploadMime } from '#lib/utils/upload.js';
 	import { apiClient } from '#lib/api/client.js';
 	import FileUpload from '#lib/components/FileUpload.svelte';
@@ -1020,10 +1020,15 @@
 					<span class="font-medium text-fg">{formatIssueCode(issue)}</span>
 				</div>
 				<div class="flex flex-wrap gap-2">
-					<Button variant="ghost" size="sm" onclick={toggleIssueEditMode}>
+					<Button variant="text" size="sm" onclick={toggleIssueEditMode}>
 						{editingIssue ? $t('issue.cancelEdit') : $t('common.edit')}
 					</Button>
-					<Button variant="danger" size="sm" onclick={handleDeleteIssue} loading={deletingIssue}>
+					<Button
+						variant="danger-quiet"
+						size="sm"
+						onclick={handleDeleteIssue}
+						loading={deletingIssue}
+					>
 						{$t('common.delete')}
 					</Button>
 					<Button
@@ -1108,11 +1113,10 @@
 									</div>
 								{/if}
 								<div class="flex gap-2">
-									<Button onclick={saveIssueEdit} loading={savingIssue}
+									<Button variant="primary" onclick={saveIssueEdit} loading={savingIssue}
 										>{$t('issue.saveChanges')}</Button
 									>
-									<Button variant="ghost" onclick={toggleIssueEditMode}
-										>{$t('common.cancel')}</Button
+									<Button variant="text" onclick={toggleIssueEditMode}>{$t('common.cancel')}</Button
 									>
 								</div>
 							</div>
@@ -1158,14 +1162,12 @@
 											</div>
 											{#if canManageComment(comment)}
 												<div class="flex gap-1">
-													<Button
-														variant="ghost"
-														size="sm"
-														onclick={() => startEditComment(comment)}>{$t('common.edit')}</Button
+													<Button variant="text" size="sm" onclick={() => startEditComment(comment)}
+														>{$t('common.edit')}</Button
 													>
 
 													<Button
-														variant="ghost"
+														variant="text"
 														size="sm"
 														onclick={() => handleDeleteComment(comment.id)}
 														disabled={commentBusyId === comment.id}
@@ -1209,13 +1211,14 @@
 												/>
 												<div class="flex gap-2">
 													<Button
+														variant="primary"
 														size="sm"
 														onclick={handleUpdateComment}
 														disabled={commentBusyId === comment.id}
 													>
 														{$t('common.save')}
 													</Button>
-													<Button variant="ghost" size="sm" onclick={cancelEditComment}
+													<Button variant="text" size="sm" onclick={cancelEditComment}
 														>{$t('common.cancel')}</Button
 													>
 												</div>
@@ -1307,6 +1310,7 @@
 									/>
 								</div>
 								<Button
+									variant="primary"
 									size="sm"
 									onclick={handleAddLabel}
 									disabled={!selectedLabelId || labelSaving}
@@ -1328,7 +1332,7 @@
 									/>
 									<Button
 										size="sm"
-										variant="ghost"
+										variant="text"
 										onclick={handleCreateLabel}
 										loading={creatingLabel}
 									>
@@ -1422,6 +1426,7 @@
 							/>
 						</div>
 						<Button
+							variant="primary"
 							onclick={handleCreateComment}
 							disabled={!newComment.trim() && commentAttachments.length === 0}
 							loading={commentSubmitting}

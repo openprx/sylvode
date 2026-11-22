@@ -7,7 +7,7 @@
 		type BotOperationLog,
 		type BotOperationOutcome
 	} from '#lib/api/operation-logs.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import { toast } from '#lib/stores/toast.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
@@ -138,7 +138,9 @@
 				</select>
 			</div>
 			<div class="flex gap-2">
-				<Button onclick={applyFilters} disabled={loading}>{$t('connections.applyFilters')}</Button>
+				<Button variant="primary" onclick={applyFilters} disabled={loading}
+					>{$t('connections.applyFilters')}</Button
+				>
 				<Button variant="secondary" onclick={resetFilters} disabled={loading}
 					>{$t('connections.resetFilters')}</Button
 				>

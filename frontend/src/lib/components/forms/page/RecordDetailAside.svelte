@@ -4,7 +4,7 @@
 	import { formatDate } from '#lib/forms/record-format.js';
 	import CreatorPluginLink from '#lib/components/plugins/CreatorPluginLink.svelte';
 	import RecordPluginActions from '#lib/components/plugins/RecordPluginActions.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { Pencil, X } from '@lucide/svelte';
 	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
 	import { t } from 'svelte-i18n';

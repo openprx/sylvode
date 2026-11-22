@@ -28,7 +28,7 @@
 	} from '@lucide/svelte';
 	import type { FormField, FormRecord } from '#lib/api/forms.js';
 	import type { FieldDisplayContext } from '#lib/forms/field-display.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import FieldValue from './FieldValue.svelte';
 
 	interface Props {

@@ -22,7 +22,7 @@
 		type ScenarioFieldDef
 	} from '#lib/utils/scenario-template.js';
 	import { scenarioTemplateName } from '#lib/utils/project-type-i18n.js';
-	import Button from './Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import FileUpload from './FileUpload.svelte';
 	import Input from './Input.svelte';
 	import Modal from './Modal.svelte';
@@ -548,7 +548,8 @@
 
 	{#snippet footer()}
 		<Button variant="secondary" onclick={() => (open = false)}>{$t('common.cancel')}</Button>
-		<Button loading={creating} onclick={handleCreate}>{$t('issue.create')}</Button>
+		<Button variant="primary" loading={creating} onclick={handleCreate}>{$t('issue.create')}</Button
+		>
 	{/snippet}
 </Modal>
 

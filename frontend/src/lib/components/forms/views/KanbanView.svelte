@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { Trash2 } from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import OptionValueBadges from '#lib/components/forms/OptionValueBadges.svelte';
 	import {
 		recordFieldHiddenByCondition,
@@ -80,6 +80,7 @@
 			</label>
 
 			<Button
+				variant="primary"
 				size="sm"
 				onclick={bulkMoveKanbanRecords}
 				loading={s.bulkMovingKanban}

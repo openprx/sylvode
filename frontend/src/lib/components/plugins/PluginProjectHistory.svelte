@@ -10,7 +10,7 @@
 		type PluginInvocationEvent,
 		type PluginPlacement
 	} from '#lib/api/plugin-packages.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 
 	let {
 		projectId,

@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { ArrowDown, ArrowUp, Plus, Trash2 } from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { detailSectionColumns as detailLayoutSectionColumns } from '#lib/forms/detail-layout.js';
 	import { fieldLabel } from '#lib/forms/field-options.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
@@ -307,8 +307,11 @@
 
 	<div class="mt-3 flex justify-end">
 		<span data-detail-layout-section-save>
-			<Button size="sm" loading={s.detailLayoutSectionSaving} onclick={saveDetailLayoutSections}
-				>{$t('forms.saveDetailSections')}</Button
+			<Button
+				variant="primary"
+				size="sm"
+				loading={s.detailLayoutSectionSaving}
+				onclick={saveDetailLayoutSections}>{$t('forms.saveDetailSections')}</Button
 			>
 		</span>
 	</div>

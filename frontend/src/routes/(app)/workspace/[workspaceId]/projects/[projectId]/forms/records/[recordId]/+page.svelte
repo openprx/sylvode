@@ -30,7 +30,7 @@
 		type FormRecordLink,
 		type UniversalForm
 	} from '#lib/api/forms.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import FieldValue from '#lib/components/forms/FieldValue.svelte';
 	import {
 		buildDetailSections,

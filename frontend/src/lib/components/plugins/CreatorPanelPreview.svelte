@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { locale, t } from 'svelte-i18n';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import PluginFrameHost from '#lib/components/plugins/PluginFrameHost.svelte';
 	import type { V3PreviewSpec } from '#lib/plugins/creator/registry.js';
 	import type { PluginHostContext } from '#lib/plugins/bridge.js';

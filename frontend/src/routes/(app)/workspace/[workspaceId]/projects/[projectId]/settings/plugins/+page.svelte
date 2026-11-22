@@ -18,7 +18,7 @@
 	} from '#lib/plugins/layout-v3.js';
 	import ProjectPluginRequests from '#lib/components/plugins/ProjectPluginRequests.svelte';
 	import PluginProjectHistory from '#lib/components/plugins/PluginProjectHistory.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { projectsApi } from '#lib/api/projects.js';
 	import { apiClient } from '#lib/api/client.js';
 	import {
@@ -355,7 +355,7 @@
 					{#if !extensionSupported}<p role="status">
 							{$t('plugins.layoutV3.extensionsUnavailable')}
 						</p>{/if}
-					<Button onclick={install} loading={busy} disabled={candidateBlocked}>
+					<Button variant="primary" onclick={install} loading={busy} disabled={candidateBlocked}>
 						{$t('plugins.installPackage')}
 					</Button>
 				</div>
@@ -415,7 +415,7 @@
 								<div class="flex flex-wrap items-center gap-2 text-sm">
 									<p>{$t('plugins.library.removeQuestion')}</p>
 									<Button
-										variant="danger"
+										variant="danger-quiet"
 										size="sm"
 										disabled={busy}
 										onclick={() => removeFromProject(item)}>{$t('plugins.library.confirm')}</Button
@@ -449,7 +449,7 @@
 										{$t('plugins.layoutV3.resetConfirm', { values: { key: item.manifest.key } })}
 									</p>
 									<Button
-										variant="danger"
+										variant="danger-quiet"
 										size="sm"
 										loading={busy}
 										onclick={() => resetConfiguration(item)}>{$t('plugins.library.confirm')}</Button
@@ -511,6 +511,7 @@
 							{/if}
 							<div class="flex flex-wrap items-center gap-2">
 								<Button
+									variant="primary"
 									disabled={!grantsReady || !validPositions}
 									loading={busy}
 									onclick={() => updateBinding(item.manifest.key, item)}
@@ -527,7 +528,7 @@
 								</Button>
 								{#if active}
 									<Button
-										variant="danger"
+										variant="danger-quiet"
 										disabled={busy}
 										onclick={() => updateBinding(item.manifest.key, null)}
 										>{$t('plugins.disablePlugin')}</Button

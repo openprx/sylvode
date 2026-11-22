@@ -4,7 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { t } from 'svelte-i18n';
 	import { Plus, RefreshCw } from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
 
@@ -49,7 +49,7 @@
 			{$t('forms.refresh')}
 		</Button>
 
-		<Button onclick={() => (s.showCreateForm = !s.showCreateForm)}>
+		<Button variant="primary" onclick={() => (s.showCreateForm = !s.showCreateForm)}>
 			<Plus class="mr-2 h-4 w-4" aria-hidden="true" />
 			{$t('forms.newForm')}
 		</Button>

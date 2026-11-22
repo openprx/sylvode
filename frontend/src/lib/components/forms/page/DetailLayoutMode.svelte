@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { ArrowDown, ArrowUp } from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { detailLayoutModes } from '#lib/forms/page-constants.js';
 	import {
 		detailPageFieldColumns,
@@ -108,8 +108,11 @@
 
 		<div class="mt-3 flex justify-end">
 			<span data-detail-header-save>
-				<Button size="sm" loading={s.detailHeaderSaving} onclick={saveDetailHeader}
-					>{$t('forms.saveDetailHeader')}</Button
+				<Button
+					variant="primary"
+					size="sm"
+					loading={s.detailHeaderSaving}
+					onclick={saveDetailHeader}>{$t('forms.saveDetailHeader')}</Button
 				>
 			</span>
 		</div>
@@ -213,8 +216,11 @@
 			>
 
 			<span data-detail-highlights-save>
-				<Button size="sm" loading={s.detailHighlightSaving} onclick={saveDetailHighlights}
-					>{$t('forms.saveDetailHighlights')}</Button
+				<Button
+					variant="primary"
+					size="sm"
+					loading={s.detailHighlightSaving}
+					onclick={saveDetailHighlights}>{$t('forms.saveDetailHighlights')}</Button
 				>
 			</span>
 		</div>
@@ -287,6 +293,7 @@
 		<div class="mt-3 flex justify-end">
 			<span data-detail-page-composition-save>
 				<Button
+					variant="primary"
 					size="sm"
 					loading={s.detailPageCompositionSaving}
 					onclick={saveDetailPageComposition}>{$t('forms.saveDetailPageComposition')}</Button

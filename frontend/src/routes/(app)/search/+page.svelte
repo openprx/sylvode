@@ -13,7 +13,7 @@
 		type SearchResult
 	} from '#lib/api/search.js';
 	import { toast } from '#lib/stores/toast.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { previewText } from '#lib/utils/search.js';
 
 	let query = $state('');
@@ -128,7 +128,7 @@
 				placeholder={$t('search.placeholder')}
 				class="flex-1 rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 			/>
-			<Button type="submit" loading={searching}>{$t('common.search')}</Button>
+			<Button variant="primary" type="submit" loading={searching}>{$t('common.search')}</Button>
 		</div>
 	</form>
 

@@ -16,7 +16,7 @@
 		TableProperties,
 		X
 	} from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { fieldLabel } from '#lib/forms/field-options.js';
 	import type { ViewFilterLogic, ViewFilterOperator } from '#lib/forms/page-types.js';
 	import { inputValue, selectValue } from '#lib/forms/record-format.js';

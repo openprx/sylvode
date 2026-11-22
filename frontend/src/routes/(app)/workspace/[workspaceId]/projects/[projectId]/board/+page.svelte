@@ -12,7 +12,7 @@
 	import { toast } from '#lib/stores/toast.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import Input from '#lib/components/Input.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Badge from '#lib/components/Badge.svelte';
 	import Avatar from '#lib/components/Avatar.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
@@ -425,7 +425,9 @@
 				placeholder={$t('issue.quickCreatePlaceholder')}
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 			/>
-			<Button loading={creatingQuick} onclick={handleQuickCreate}>+ {$t('issue.create')}</Button>
+			<Button variant="primary" loading={creatingQuick} onclick={handleQuickCreate}
+				>+ {$t('issue.create')}</Button
+			>
 		</div>
 	</div>
 

@@ -12,7 +12,7 @@
 	import { toast } from '#lib/stores/toast.js';
 	import { isAdminUser } from '#lib/utils/auth.js';
 	import Card from '#lib/components/Card.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 
 	interface SystemStats {
 		users: number;
@@ -112,7 +112,8 @@
 			<Button variant="secondary" onclick={() => goto(resolve('/(app)/admin/users'))}
 				>{$t('admin.createUser')}</Button
 			>
-			<Button onclick={() => goto(resolve('/(app)/inbox'))}>{$t('admin.viewRecentActivity')}</Button
+			<Button variant="primary" onclick={() => goto(resolve('/(app)/inbox'))}
+				>{$t('admin.viewRecentActivity')}</Button
 			>
 		</div>
 	</div>

@@ -9,7 +9,7 @@
 	import { toast } from '#lib/stores/toast.js';
 	import { goto } from '$app/navigation';
 	import Modal from '#lib/components/Modal.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Card from '#lib/components/Card.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
@@ -363,7 +363,7 @@
 			</h1>
 			<p class="text-fg-muted">{$t('workspace.selectWorkspace')}</p>
 		</div>
-		<Button onclick={openCreateModal}>
+		<Button variant="primary" onclick={openCreateModal}>
 			<svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"
 				></path>
@@ -382,7 +382,9 @@
 	{:else if workspaces.length === 0}
 		<EmptyState icon="office" title={$t('workspace.none')} description={$t('workspace.noneDesc')}>
 			{#snippet action()}
-				<Button onclick={openCreateModal}>{$t('workspace.createWorkspace')}</Button>
+				<Button variant="primary" onclick={openCreateModal}
+					>{$t('workspace.createWorkspace')}</Button
+				>
 			{/snippet}
 		</EmptyState>
 
@@ -632,7 +634,9 @@
 		<Button variant="secondary" onclick={() => (showCreateModal = false)}
 			>{$t('common.cancel')}</Button
 		>
-		<Button type="button" loading={creating} onclick={handleCreate}>{$t('common.create')}</Button>
+		<Button variant="primary" type="button" loading={creating} onclick={handleCreate}
+			>{$t('common.create')}</Button
+		>
 	{/snippet}
 </Modal>
 
@@ -664,7 +668,9 @@
 		<Button variant="secondary" onclick={() => (showEditModal = false)}
 			>{$t('common.cancel')}</Button
 		>
-		<Button type="submit" loading={updating} onclick={handleUpdate}>{$t('common.save')}</Button>
+		<Button variant="primary" type="submit" loading={updating} onclick={handleUpdate}
+			>{$t('common.save')}</Button
+		>
 	{/snippet}
 </Modal>
 
@@ -693,7 +699,7 @@
 		<Button variant="secondary" onclick={() => (showDeleteModal = false)}
 			>{$t('common.cancel')}</Button
 		>
-		<Button variant="danger" loading={deleting} onclick={handleDelete}
+		<Button variant="danger-quiet" loading={deleting} onclick={handleDelete}
 			>{$t('workspace.confirmDelete')}</Button
 		>
 	{/snippet}

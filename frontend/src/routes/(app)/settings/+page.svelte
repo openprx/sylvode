@@ -8,7 +8,7 @@
 	import { setTheme, theme, type Theme } from '#lib/theme.js';
 	import Card from '#lib/components/Card.svelte';
 	import Input from '#lib/components/Input.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import ConnectedAppsPersonal from '#lib/oauth/ConnectedAppsPersonal.svelte';
 	import { locale, t } from 'svelte-i18n';
 
@@ -205,7 +205,9 @@
 				</select>
 			</div>
 			<div class="mt-4 flex justify-end">
-				<Button loading={savingProfile} onclick={saveProfile}>{$t('settings.saveProfile')}</Button>
+				<Button variant="primary" loading={savingProfile} onclick={saveProfile}
+					>{$t('settings.saveProfile')}</Button
+				>
 			</div>
 		</Card>
 
@@ -231,7 +233,7 @@
 				/>
 			</div>
 			<div class="mt-4 flex justify-end">
-				<Button loading={savingPassword} onclick={updatePassword}
+				<Button variant="primary" loading={savingPassword} onclick={updatePassword}
 					>{$t('settings.updatePassword')}</Button
 				>
 			</div>
@@ -256,7 +258,7 @@
 				</label>
 			</div>
 			<div class="mt-4 flex justify-end">
-				<Button loading={savingNotifications} onclick={saveNotificationPrefs}
+				<Button variant="primary" loading={savingNotifications} onclick={saveNotificationPrefs}
 					>{$t('settings.savePrefs')}</Button
 				>
 			</div>

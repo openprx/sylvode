@@ -2,7 +2,7 @@
 
 <script lang="ts">
 	import { TableProperties, Plus, Pencil, Trash2 } from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { fieldLabel } from '#lib/forms/field-options.js';
 	import { childRelationKeyForField } from '#lib/forms/record-draft-values.js';
 	import { displayValue } from '#lib/forms/record-format.js';
