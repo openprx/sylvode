@@ -1,10 +1,5 @@
 [
 	{
-		"file": "src/lib/shell/brand/brand.ts",
-		"rules": ["hex"],
-		"reason": "brand favicon colours: the logo's own colours, the single allowed exception to tokens-only colour"
-	},
-	{
 		"file": "src/lib/components/IssueCreateModal.svelte",
 		"rules": ["hex"],
 		"reason": "default colour of a label that has none: data a user sets with a colour picker and the API stores, not styling"

@@ -8,7 +8,6 @@ import { Suite, assert, assertEqual, finish } from './support/harness';
 import { installSvelteSsr, renderToHtml } from './support/svelte-ssr';
 
 await installSvelteSsr();
-const { BRAND, faviconDataUrl, faviconSvg } = await import('../src/lib/shell/brand/brand');
 const { default: BrandMark } = await import('../src/lib/shell/brand/BrandMark.svelte');
 const { DEFAULT_THEME, resolveTheme } = await import('../src/lib/theme');
 const { LOCALE_OPTIONS, THEME_OPTIONS, normalizeAppLocale } =
@@ -18,20 +17,13 @@ const { default: AccountMenu } = await import('../src/lib/shell/account/AccountM
 const suite = new Suite('shell-brand-account');
 const bootSource = readFileSync(new URL('../static/theme-boot.js', import.meta.url), 'utf8');
 
-suite.check('the favicon is an SVG data URL with both colour schemes', () => {
-	const url = faviconDataUrl();
-	assert(url.startsWith('data:image/svg+xml,'), url.slice(0, 40));
-	const svg = decodeURIComponent(url.slice('data:image/svg+xml,'.length));
-	assertEqual(svg, faviconSvg(), 'round trip');
+suite.check('the favicon is a static SVG with both colour schemes and one stroked path', () => {
+	const svg = readFileSync(new URL('../static/favicon.svg', import.meta.url), 'utf8');
 	assert(svg.includes('prefers-color-scheme:dark'), 'dark rule');
-	assert(svg.includes(BRAND.favicon.light[0]) && svg.includes(BRAND.favicon.dark[1]), 'colours');
-	assertEqual((svg.match(/<path /g) ?? []).length, 2, 'two shapes');
-});
-
-suite.check('brand data: name, symbol and favicon shapes', () => {
-	assertEqual(BRAND.name, 'Sylvode', 'name');
-	assertEqual(BRAND.symbol.viewBox, '0 0 64 64', 'viewBox');
-	assert(BRAND.symbol.paths.length > 0, 'paths');
+	assert(svg.includes('#161616') && svg.includes('#EBEBEB'), 'ink colours');
+	assertEqual((svg.match(/<path /g) ?? []).length, 1, 'one path');
+	const layout = readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
+	assert(layout.includes('href="/favicon.svg"'), 'layout links the favicon');
 });
 
 suite.check('the default theme follows the system', () => {
@@ -92,7 +84,7 @@ suite.check('account model: options and locale normalisation', () => {
 await suite.checkAsync('BrandMark: named image, or hidden when decorative', async () => {
 	const named = await renderToHtml(BrandMark, {});
 	assert(named.includes('role="img"') && named.includes('aria-label="Sylvode"'), named);
-	assert(named.includes('fill="currentColor"') && named.includes('width="28"'), 'mono, 28');
+	assert(named.includes('stroke="currentColor"') && named.includes('width="28"'), 'mono, 28');
 	const decorative = await renderToHtml(BrandMark, { decorative: true, size: 24 });
 	assert(
 		decorative.includes('aria-hidden="true"') && !decorative.includes('role="img"'),
