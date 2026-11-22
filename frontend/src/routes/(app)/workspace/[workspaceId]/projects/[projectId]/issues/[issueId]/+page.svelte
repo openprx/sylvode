@@ -910,7 +910,7 @@
 		return rendered.replace(
 			/(^|[\s>])@([^\s@<]+)/g,
 			(_matched, prefix: string, mention: string) =>
-				`${prefix}<span class=\"comment-mention\">@${mention}</span>`
+				`${prefix}<span class="comment-mention">@${mention}</span>`
 		);
 	}
 

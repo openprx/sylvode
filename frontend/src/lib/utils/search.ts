@@ -3,7 +3,7 @@ export function stripMarkdown(input: string): string {
 		.replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
 		.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
 		.replace(/`{1,3}[^`]*`{1,3}/g, ' ')
-		.replace(/[#>*_~\-]+/g, ' ')
+		.replace(/[#>*_~-]+/g, ' ')
 		.replace(/\r?\n+/g, ' ')
 		.replace(/\s+/g, ' ')
 		.trim();
