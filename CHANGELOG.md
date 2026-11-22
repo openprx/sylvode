@@ -10,6 +10,8 @@ name.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-23
+
 ### Added
 
 - **Runner `doctor`, `--check` and `config check`; degraded start-up; installer checks.**
@@ -282,7 +284,6 @@ name.
   (migration `0107`, additive). Comment lists, anchored comments, block shares and transfers
   finish the registration in short capped steps before they read block identities.
 
-## [0.5.0] - 2026-11-19
 
 ### Added
 
