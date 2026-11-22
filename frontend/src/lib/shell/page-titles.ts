@@ -69,6 +69,8 @@ const RULES: readonly TitleRule[] = [
 	),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/settings(\/plugins)?$/, 'plugins.projectSettings'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/settings\/execution$/, 'execution.connection.title'),
+	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/settings\/inbound-sources$/, 'inbound.sources.title'),
+	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/settings\/alert-rules$/, 'inbound.rules.title'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/forms$/, 'pageTitle.projectForms'),
 	rule(/^\/workspace\/[^/]+\/projects$/, 'pageTitle.workspaceProjects'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+$/, 'pageTitle.projectDetail'),

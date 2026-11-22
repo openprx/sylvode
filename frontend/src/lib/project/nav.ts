@@ -39,7 +39,9 @@ export const PROJECT_NAV_KEYS = {
 	apps: 'shell.projectNav.apps',
 	settings: 'shell.projectNav.settings',
 	pluginsSection: 'shell.sections.projectPlugins',
-	executionSection: 'execution.connection.title'
+	executionSection: 'execution.connection.title',
+	inboundSourcesSection: 'inbound.sources.title',
+	alertRulesSection: 'inbound.rules.title'
 } as const;
 
 /** Type key of the form-centred project type: its overview is the forms page. */
@@ -92,7 +94,7 @@ export function settingsSections(
 	options: { base?: string; translate?: NavTranslate } = {}
 ): SettingsSectionEntry[] {
 	if (!isAdmin) return [];
-	void typeKey; // every type has Plugins and Execution; External API, Public forms and Templates join per type later
+	void typeKey; // every type has Plugins, Execution, Inbound sources and Alert rules; External API, Public forms and Templates join per type later
 	const base = options.base ?? '';
 	const t = options.translate ?? identity;
 	return [
@@ -107,6 +109,18 @@ export function settingsSections(
 			label: t(PROJECT_NAV_KEYS.executionSection),
 			labelKey: PROJECT_NAV_KEYS.executionSection,
 			href: `${base}/settings/execution`
+		},
+		{
+			id: 'inbound-sources',
+			label: t(PROJECT_NAV_KEYS.inboundSourcesSection),
+			labelKey: PROJECT_NAV_KEYS.inboundSourcesSection,
+			href: `${base}/settings/inbound-sources`
+		},
+		{
+			id: 'alert-rules',
+			label: t(PROJECT_NAV_KEYS.alertRulesSection),
+			labelKey: PROJECT_NAV_KEYS.alertRulesSection,
+			href: `${base}/settings/alert-rules`
 		}
 	];
 }

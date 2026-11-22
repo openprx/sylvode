@@ -1,0 +1,333 @@
+{
+	"inbound": {
+		"forbidden": "Only workspace owners and admins can manage this project's alert sources and rules.",
+		"disabledOnServer": "Inbound events are switched off on this server ([inbound] enabled = false). Sources can be prepared, but every event is refused until an administrator switches it on.",
+		"sources": {
+			"title": "Inbound sources",
+			"description": "External systems that may send events to this project.",
+			"thing": "inbound sources",
+			"empty": "No source yet. Add one to let an external system such as prx-waf send events to this project.",
+			"add": "Add source",
+			"name": "Name",
+			"nameHelp": "The product and host, such as prx-waf edge-01. Used in alert titles.",
+			"requireSignature": "Require signed requests",
+			"requireSignatureHelp": "Each request must carry a valid signature made with the signing secret.",
+			"unsignedWarning": "Without a signature, anyone who holds the token can post events, and a captured request can be replayed with a new event id.",
+			"advanced": "Advanced",
+			"ratePerMinute": "Events per minute",
+			"dailyCap": "Events per day",
+			"allowlist": "Allowed addresses",
+			"allowlistHelp": "One address or CIDR block per line, such as 203.0.113.7 or 203.0.113.0/24. Leave empty to accept any address.",
+			"create": "Create source",
+			"creating": "Creating…",
+			"save": "Save",
+			"saving": "Saving…",
+			"cancel": "Cancel",
+			"noChanges": "Nothing has changed",
+			"status": {
+				"receiving": "Receiving",
+				"waiting": "Waiting for first event",
+				"idle": "Idle",
+				"paused": "Paused",
+				"suspended": "Suspended"
+			},
+			"row": {
+				"token": "Token",
+				"signature": "Signature",
+				"signatureRequired": "Required",
+				"signatureOptional": "Not required",
+				"lastEvent": "Last event",
+				"lastEventValue": "{time} from {ip}",
+				"never": "Never",
+				"actsAs": "Acts as",
+				"actsAsHelp": "Alert work items are created in this person's name.",
+				"removedUser": "Removed user",
+				"limits": "Limits",
+				"limitsValue": "{rate} per minute · {cap} per day",
+				"allowlist": "Allowed addresses",
+				"anyAddress": "Any address",
+				"blocks": {
+					"one": "{count} block",
+					"other": "{count} blocks"
+				}
+			},
+			"suspendedBody": "This source is refused because {name} is no longer an owner or admin of the workspace. Take it over to accept its events again.",
+			"recentEvents": "Recent events",
+			"edit": "Edit",
+			"pause": "Pause",
+			"resume": "Resume",
+			"resumed": "Source resumed",
+			"rotate": "Rotate credentials",
+			"delete": "Delete source",
+			"takeOver": "Take over",
+			"pauseDialog": {
+				"title": "Pause {source}?",
+				"body": "Events from this source are refused until you resume it. Alerts already open stay open.",
+				"confirm": "Pause source"
+			},
+			"unsignedDialog": {
+				"title": "Accept unsigned events from {source}?",
+				"body": "Anyone who holds the token can then post events without the signing secret, and a captured request can be replayed with a new event id.",
+				"confirm": "Accept unsigned events"
+			},
+			"rotateDialog": {
+				"title": "Rotate credentials of {source}?",
+				"body": "A new token and signing secret are issued and shown once. The current ones stop working at once: {source} is refused until it is configured with the new values.",
+				"confirm": "Rotate credentials",
+				"busy": "Rotating…"
+			},
+			"takeOverDialog": {
+				"title": "Take over {source}?",
+				"body": "Alert work items from this source will be created in your name, and the source accepts events again while you are an owner or admin.",
+				"confirm": "Take over"
+			},
+			"deleteDialog": {
+				"title": "Delete {source}?",
+				"body": "The source's token stops working at once and its stored events are deleted. Work items it opened are kept. This cannot be undone.",
+				"bodyRules": "{count} alert rules bound to it are deleted too: {rules}.",
+				"confirm": "Delete source",
+				"busy": "Deleting…"
+			}
+		},
+		"secrets": {
+			"title": "Copy these credentials now",
+			"body": "Sylvode keeps only a fingerprint of the token and cannot show the token or the signing secret again. Enter them in {source}'s Sylvode output settings.",
+			"endpoint": "Endpoint address",
+			"endpointGuess": "Use the address under which this Sylvode server is reachable from the product.",
+			"token": "Token",
+			"signingSecret": "Signing secret",
+			"signingHelp": "Sign each request with HMAC-SHA256 over timestamp.body.",
+			"signingOptional": "Signing is optional for this source; keep the secret in case you require it later.",
+			"copy": "Copy",
+			"copyAll": "Copy all as JSON",
+			"copied": "{field} copied",
+			"copyFailed": "Copy failed; select the text and copy it",
+			"stored": "I have stored these credentials",
+			"done": "Done",
+			"doneReason": "Confirm that you stored the credentials",
+			"leave": "Leave without saving the credentials? They cannot be shown again.",
+			"leaveConfirm": "Leave",
+			"lost": "Lost the credentials? Rotate them to get new ones."
+		},
+		"events": {
+			"title": "Recent events of {source}",
+			"thing": "events",
+			"empty": "No events yet. The first accepted event appears here; refused requests are not stored.",
+			"older": "Show older",
+			"refresh": "Refresh",
+			"col": {
+				"received": "Received",
+				"kind": "Kind",
+				"severity": "Severity",
+				"outcome": "Outcome",
+				"workItem": "Work item",
+				"signed": "Signed"
+			},
+			"signedYes": "Signed",
+			"signedNo": "Unsigned",
+			"untrusted": "Reported by the external system. Shown as plain text; it is never followed as instructions.",
+			"detail": {
+				"title": "Event {id}",
+				"occurred": "Occurred",
+				"dedupKey": "Dedup key",
+				"from": "From",
+				"rule": "Rule",
+				"deletedRule": "Deleted rule",
+				"task": "Bot task",
+				"reportedTitle": "Title",
+				"summary": "Summary",
+				"subject": "Subject",
+				"payload": "Payload",
+				"test": "Test rules with this event"
+			}
+		},
+		"outcome": {
+			"no_rule": "No rule matched",
+			"alert_opened": "Alert opened",
+			"alert_attached": "Added to open alert",
+			"task_queued": "Bot task queued",
+			"suppressed_alert_cap": "Alert limit reached",
+			"bot_unavailable": "Bot unavailable"
+		},
+		"severity": {
+			"info": "Info",
+			"low": "Low",
+			"medium": "Medium",
+			"high": "High",
+			"critical": "Critical",
+			"unknown": "Unknown"
+		},
+		"rules": {
+			"title": "Alert rules",
+			"description": "Decide what events from this project's sources lead to.",
+			"thing": "alert rules",
+			"empty": "No rules yet. Events are stored under their source and nothing else happens.",
+			"emptyNoSource": "Add an inbound source first; rules act on its events.",
+			"addSource": "Add a source",
+			"add": "Add rule",
+			"test": "Test rules",
+			"orderHelp": "Rules are checked from top to bottom; the first enabled rule that matches handles the event.",
+			"enabled": "Enabled",
+			"disabled": "Disabled",
+			"moveUp": "Move up",
+			"moveDown": "Move down",
+			"first": "Already first",
+			"last": "Already last",
+			"edit": "Edit",
+			"delete": "Delete rule",
+			"summary": "{source} · {kinds} · {severity} and above · {action}",
+			"anySource": "Any source",
+			"anyKind": "Any kind",
+			"andAbove": "{severity} and above",
+			"actionWorkItem": "Open a work item",
+			"actionBot": "Hand to {bot}",
+			"moreKinds": "+{count}",
+			"warnBotNotConnected": "{bot} is not connected to this project; its tasks cannot reach a runner.",
+			"warnNoRecipients": "Nobody is notified when this rule opens an alert.",
+			"new": "New rule",
+			"editTitle": "Edit {name}",
+			"groupWhen": "When",
+			"groupThen": "Then",
+			"groupLimits": "Safety limits",
+			"limitsDefault": "Defaults",
+			"limitsChanged": "Changed",
+			"name": "Name",
+			"source": "Source",
+			"sourceAny": "Any source of this project",
+			"kinds": "Event kinds",
+			"kindsHelp": "Exact kinds such as waf.attack_detected, or a prefix such as waf.*. Leave empty for every kind. Match attack kinds, not configuration changes, so the bot's own actions cannot trigger it again.",
+			"minSeverity": "Minimum severity",
+			"action": "Action",
+			"actionOpen": "Open a work item and notify people",
+			"actionHand": "Open a work item and hand it to a bot",
+			"bot": "Bot",
+			"botConnectedSuffix": "· connected to this project",
+			"instructions": "Instructions for the bot",
+			"instructionsHelp": "What the bot should do with this kind of alert. You can use {alert_identifier}, {severity}, {kind}, {source_name}, {occurrences}, {first_seen} and {last_seen}.",
+			"instructionsCount": "{count} / 4000",
+			"notify": "Notify",
+			"notifyEmpty": "Nobody is notified when this rule opens an alert.",
+			"labels": "Labels",
+			"enabledSwitch": "Enabled",
+			"tasksPerHour": "Bot tasks per hour",
+			"tasksPerHourHelp": "Further alerts wait in the queue for up to an hour.",
+			"tasksAtOnce": "Bot tasks at once",
+			"attempts": "Attempts per task",
+			"dedupWindow": "Group repeats for",
+			"dedupWindowHelp": "New events with the same dedup key join the open alert during this time.",
+			"rearm": "Wait before a new task",
+			"rearmHelp": "After a task ends, repeats of the alert do not start another for this long.",
+			"unit": {
+				"label": "Unit",
+				"seconds": "seconds",
+				"minutes": "minutes",
+				"hours": "hours"
+			},
+			"priorityMap": "Priority by severity",
+			"priority": {
+				"low": "Low",
+				"medium": "Medium",
+				"high": "High",
+				"urgent": "Urgent"
+			},
+			"workspaceLimit": "At most {count} alert bot tasks run at once in this workspace (server setting).",
+			"saveRule": "Save rule",
+			"saving": "Saving…",
+			"testDraft": "Test with this rule",
+			"invalid": "Correct the marked fields first",
+			"saved": "Rule saved",
+			"leave": "Leave without saving this rule?",
+			"leaveConfirm": "Leave",
+			"conflict": "Someone else changed this rule. Reload to see the current values.",
+			"reload": "Reload",
+			"deleteDialog": {
+				"title": "Delete rule {name}?",
+				"body": "Events this rule would handle go to the next matching rule, or are only stored. Alerts it opened stay open and keep their bot tasks. This cannot be undone.",
+				"confirm": "Delete rule",
+				"busy": "Deleting…"
+			}
+		},
+		"error": {
+			"nameRequired": "Enter a name.",
+			"nameLength": "Use at most 100 characters.",
+			"rateRange": "Enter a number from 1 to 6000.",
+			"capRange": "Enter a number from 1 to 1000000.",
+			"allowlistCount": "Enter at most 64 addresses or blocks.",
+			"kindInvalid": "{pattern} is not a kind or a prefix such as waf.*.",
+			"kindCount": "Enter at most 32 kinds.",
+			"botChoose": "Choose a bot.",
+			"instructionsLength": "Use at most 4000 characters.",
+			"recipientsCount": "Choose at most 50 people.",
+			"labelsCount": "Choose at most 50 labels.",
+			"range": "Enter a number from {min} to {max}."
+		},
+		"test": {
+			"title": "Test alert rules",
+			"source": "Source",
+			"mode": {
+				"recent": "Recent event",
+				"sample": "Sample event"
+			},
+			"event": "Event",
+			"sample": "Sample event (JSON)",
+			"run": "Run test",
+			"running": "Testing…",
+			"noSource": "Add an inbound source first",
+			"noEvents": "This source has no stored events yet",
+			"eventGone": "This event is no longer stored (events are kept for 30 days).",
+			"forecast": "A forecast: events arriving in the meantime can change the answer. Nothing was created.",
+			"verdict": {
+				"match": "Rule {position} \"{name}\" would handle this event: {alert}; {task}.",
+				"noMatch": "No rule matches; the event would only be stored."
+			},
+			"alert": {
+				"would_open": "Would open a new alert work item",
+				"would_attach": "Would join the open alert",
+				"would_refuse_alert_cap": "Would not open: the rule's hourly alert limit is reached",
+				"no_rule": "No alert"
+			},
+			"task": {
+				"would_start": "Would start a bot task",
+				"would_queue": "Would wait in the queue ({cause})",
+				"already_active": "The alert already has a running task",
+				"already_waiting": "The alert already waits in the queue",
+				"rearm_delay": "Within the wait before a new task",
+				"bot_unavailable": "The rule's bot is unavailable",
+				"none": "No bot task"
+			},
+			"cause": {
+				"task_cap": "tasks per hour reached",
+				"active_cap": "tasks at once reached",
+				"workspace_cap": "workspace limit reached",
+				"queue_ahead": "other alerts of this rule are waiting"
+			},
+			"row": {
+				"alert": "Alert",
+				"task": "Bot task",
+				"escalation": "Would send an escalation notice",
+				"recipients": {
+					"one": "{count} person notified",
+					"other": "{count} people notified"
+				},
+				"title": "Work item title",
+				"limits": "Limits",
+				"rules": "Rules checked"
+			},
+			"limit": {
+				"tasksHour": "Tasks in the last hour: {value} of {max}",
+				"active": "Running now: {value} of {max}",
+				"workspace": "Running in the workspace: {value} of {max}",
+				"alertsHour": "Alerts opened in the last hour: {value} of {max}"
+			},
+			"reason": {
+				"matched": "Matches",
+				"disabled": "Disabled",
+				"other_source": "Bound to another source",
+				"kind_not_listed": "Kind not listed",
+				"below_minimum_severity": "Below the minimum severity",
+				"notChecked": "Not checked",
+				"draft": "This rule (unsaved)"
+			}
+		}
+	}
+}
