@@ -188,6 +188,15 @@ pub fn block_token(block: &crate::services::runner_config_block::ConfigBlock) ->
         .to_string()
 }
 
+/// The workspace the block names on the bot's entry.
+pub fn block_workspace(block: &crate::services::runner_config_block::ConfigBlock) -> String {
+    let table: toml::Table = block.text.parse().expect("valid TOML");
+    table["ai_task_callback"]["bots"][0]["workspace_id"]
+        .as_str()
+        .expect("workspace_id")
+        .to_string()
+}
+
 pub fn block_secret(block: &crate::services::runner_config_block::ConfigBlock) -> String {
     let table: toml::Table = block.text.parse().expect("valid TOML");
     table["security"]["webhook_secrets"][0]
@@ -248,6 +257,8 @@ async fn an_owner_connects_a_new_bot_and_every_row_exists() {
     let view = &connected.connection;
     let bot = view.bot.id;
     let block = connected.config_block.as_ref().expect("a new bot gets a block");
+    // The MCP server the runner starts for the CLI needs the bot's workspace.
+    assert_eq!(block_workspace(block), w.tenant.workspace_id.to_string());
 
     assert_eq!(view.version, 1);
     assert!(view.enabled);
@@ -992,6 +1003,7 @@ async fn rotating_replaces_the_token_and_the_secret_for_every_project() {
         panic!("rotate failed");
     };
     let (new_token, new_secret) = (block_token(&rotated.config_block), block_secret(&rotated.config_block));
+    assert_eq!(block_workspace(&rotated.config_block), block_workspace(&old_block));
     assert_ne!(new_token, old_token);
     assert_ne!(new_secret, old_secret);
     assert!(

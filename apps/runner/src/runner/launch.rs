@@ -101,9 +101,10 @@ pub fn rule_safe_dir(dir: &Path) -> Result<&str, LaunchError> {
     }
 }
 
-/// What the CLI must never read: the state directory (every bot's token) and the configuration
-/// file. Each is denied in the form it is configured and in its canonical form, so a link in the
-/// path does not make the rule miss.
+/// What the CLI must never read.
+///
+/// The state directory (every bot's token) and the configuration file. Each is denied in the form
+/// it is configured and in its canonical form, so a link in the path does not make the rule miss.
 #[derive(Clone, Copy, Debug)]
 pub struct Protected<'a> {
     pub state_dir: &'a Path,
@@ -183,9 +184,11 @@ pub fn claude_argv(
     Ok(argv)
 }
 
-/// The argument vector of a headless claude run: `-p <prompt>` first, then the same posture as the
-/// interactive session (runner MCP file only, no project settings, explicit allow list), without
-/// the hook settings (a headless run reports nothing through hooks).
+/// The argument vector of a headless claude run.
+///
+/// `-p <prompt>` first, then the same posture as the interactive session (runner MCP file only, no
+/// project settings, explicit allow list), without the hook settings (a headless run reports
+/// nothing through hooks).
 ///
 /// # Errors
 ///
