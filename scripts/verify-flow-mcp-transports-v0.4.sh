@@ -206,7 +206,7 @@ psql "$SCRATCH_URL" -v ON_ERROR_STOP=1 -q <<SQL
 INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, created_at, updated_at)
 VALUES ('$OWNER_USER', 'mcp-verify-$RUN_ID@example.local', '', 'MCP Verify Owner', 'user', true, 'human', now(), now());
 INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, agent_type, created_at, updated_at)
-VALUES ('$BOT_ID', '$BOT_ID@bot.openpr.local', '!', 'MCP Verify Bot', 'user', true, 'bot_mcp', 'mcp', now(), now());
+VALUES ('$BOT_ID', '$BOT_ID@bot.sylvode.local', '!', 'MCP Verify Bot', 'user', true, 'bot_mcp', 'mcp', now(), now());
 INSERT INTO workspaces (id, slug, name, created_by, created_at, updated_at)
 VALUES ('$WORKSPACE', 'mcp-verify-$RUN_ID', 'MCP Verify', '$OWNER_USER', now(), now()),
        ('$OTHER_WORKSPACE', 'mcp-verify-other-$RUN_ID', 'MCP Verify Other', '$OWNER_USER', now(), now());

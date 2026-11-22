@@ -1,12 +1,9 @@
-//! The workspace command groups shared by the `mcp-server` and `sylvode` executables.
+//! The command line of the `mcp-server` and `sylvode` executables.
 //!
 //! `projects`, `work-items`, `comments`, `labels`, `sprints`, `search`, `files`,
 //! `operation-logs` and `tools` are defined exactly once, here, as [`BusinessCommands`], and run
-//! by exactly one handler, [`run_business`]. `mcp-server` mounts them beside `serve` through
-//! [`Cli`]; `sylvode` mounts the very same enum through [`BusinessCli`] (ADR-0020 D5). Both
-//! executables therefore parse the same arguments, resolve configuration the same way, print
-//! the same bytes and exit with the same codes for every one of these commands; only the
-//! program name in `--help` differs.
+//! by exactly one handler, [`run_business`]. `sylvode` mounts them through [`BusinessCli`];
+//! `mcp-server` offers only `serve` and `doctor` through [`Cli`].
 
 // Argument objects are assembled by key; allow indexing for this module.
 #![allow(clippy::indexing_slicing)]
@@ -45,9 +42,9 @@ pub enum OutputFormat {
     Table,
 }
 
-/// Sylvode MCP server and CLI tool. The `mcp-server` executable remains a compatibility shim.
+/// Sylvode MCP server.
 #[derive(Debug, Parser)]
-#[command(name = "mcp-server", about = "Sylvode MCP server and CLI tool", long_about = None, version)]
+#[command(name = "mcp-server", about = "Sylvode MCP server", long_about = None, version)]
 #[command(arg_required_else_help = true, subcommand_required = false)]
 pub struct Cli {
     #[command(subcommand)]
@@ -62,8 +59,8 @@ pub struct Cli {
     pub global: GlobalArgs,
 }
 
-/// The workspace command groups as `sylvode` mounts them: the same [`BusinessCommands`] and
-/// [`GlobalArgs`] as [`Cli`], without `serve`.
+/// The workspace command groups as `sylvode` mounts them: [`BusinessCommands`] and
+/// [`GlobalArgs`].
 ///
 /// Build the parser with [`business_cli_command`], which only adjusts help prose that names
 /// the program.
@@ -115,11 +112,9 @@ pub enum Commands {
     Serve(ServeArgs),
     /// Check the prerequisites of this MCP server: configuration, tmux, agent CLIs, runner, API
     Doctor(DoctorArgs),
-    #[command(flatten)]
-    Business(BusinessCommands),
 }
 
-/// The nine workspace command groups, shared verbatim by `mcp-server` and `sylvode`.
+/// The nine workspace command groups mounted by `sylvode`.
 #[derive(Debug, Subcommand)]
 pub enum BusinessCommands {
     /// Manage projects
@@ -652,34 +647,6 @@ fn fmt_val(v: &Value) -> String {
 
 /// The subcommand path a command line selected, as typed: `projects list`, `search`.
 ///
-/// Names only, never argument values, so it is safe to print: a value may be a token.
-pub fn subcommand_path(matches: &clap::ArgMatches) -> String {
-    let mut path = Vec::new();
-    let mut current = matches;
-    while let Some((name, next)) = current.subcommand() {
-        path.push(name);
-        current = next;
-    }
-    path.join(" ")
-}
-
-/// Tells the user, on stderr and once per process, that `mcp-server <subcommand>` is deprecated
-/// in favour of `sylvode <subcommand>` (ADR-0020 D2).
-///
-/// Never stdout: a workspace command's stdout is a machine contract, and nothing about it may
-/// change. A failed write is dropped rather than reported, because stderr is the only channel
-/// it could be reported on and D2 forbids the notice from failing the command; `writeln!` is
-/// used instead of `eprintln!` because the latter panics when stderr cannot be written.
-pub fn report_legacy_invocation(subcommand: &str) {
-    static REPORTED: std::sync::Once = std::sync::Once::new();
-    REPORTED.call_once(|| {
-        let notice = platform::deprecation::legacy_cli_invocation(subcommand);
-        let mut stderr = std::io::stderr().lock();
-        let written = writeln!(stderr, "{notice}").and_then(|()| stderr.flush());
-        drop(written);
-    });
-}
-
 /// Runs one workspace command end to end: configuration, identity, the tool call and its
 /// output. The single handler behind every [`BusinessCommands`] variant in both executables.
 pub async fn run_business(global: &GlobalArgs, command: &BusinessCommands) -> anyhow::Result<()> {
@@ -1089,7 +1056,7 @@ mod tests {
                 tool.name
             );
         }
-        let parsers = [("mcp-server", Cli::command()), ("sylvode", business_cli_command())];
+        let parsers = [("sylvode", business_cli_command())];
         for (program, parser) in parsers {
             for action in ["create", "update"] {
                 let mut parser = parser.clone();
@@ -1127,13 +1094,12 @@ mod tests {
     #[test]
     fn work_items_create_sends_a_state_only_when_asked() {
         let parse = |extra: &[&str]| {
-            let mut line = vec!["mcp-server", "work-items", "create", "--project", "p", "--title", "t"];
+            let mut line = vec!["sylvode", "work-items", "create", "--project", "p", "--title", "t"];
             line.extend_from_slice(extra);
-            let cli = Cli::try_parse_from(line).unwrap_or_else(|error| panic!("{error}"));
-            let Commands::Business(command) = cli.command.expect("a subcommand") else {
-                panic!("not a workspace command");
-            };
-            tool_invocation(&command).unwrap_or_else(|error| panic!("{error}")).1
+            let cli = BusinessCli::try_parse_from(line).unwrap_or_else(|error| panic!("{error}"));
+            tool_invocation(&cli.command)
+                .unwrap_or_else(|error| panic!("{error}"))
+                .1
         };
         let without = parse(&[]);
         assert_eq!(without.get("state"), None, "{without}");
@@ -1143,8 +1109,8 @@ mod tests {
 
     #[test]
     fn parses_generic_tool_call_command() {
-        let cli = Cli::try_parse_from([
-            "mcp-server",
+        let cli = BusinessCli::try_parse_from([
+            "sylvode",
             "tools",
             "call",
             "--name",
@@ -1154,8 +1120,8 @@ mod tests {
         ])
         .expect("generic tools call command should parse");
 
-        match cli.command.expect("a subcommand") {
-            Commands::Business(BusinessCommands::Tools(cmd)) => match cmd.action {
+        match cli.command {
+            BusinessCommands::Tools(cmd) => match cmd.action {
                 ToolsAction::Call { name, args_json } => {
                     assert_eq!(name, "forms.list");
                     assert_eq!(
@@ -1170,8 +1136,8 @@ mod tests {
 
     #[test]
     fn parses_operation_log_filters() {
-        let cli = Cli::try_parse_from([
-            "mcp-server",
+        let cli = BusinessCli::try_parse_from([
+            "sylvode",
             "operation-logs",
             "list",
             "--tool-name",
@@ -1183,8 +1149,8 @@ mod tests {
         ])
         .expect("operation log command should parse");
 
-        match cli.command.expect("a subcommand") {
-            Commands::Business(BusinessCommands::OperationLogs(command)) => match command.action {
+        match cli.command {
+            BusinessCommands::OperationLogs(command) => match command.action {
                 OperationLogsAction::List {
                     tool_name,
                     outcome,
@@ -1307,9 +1273,9 @@ mod tests {
     #[test]
     fn no_help_screen_shows_a_markdown_escape() {
         let mut screens = Vec::new();
-        let mut legacy = Cli::command();
-        legacy.build();
-        help_screens(&mut legacy, "mcp-server", &mut screens);
+        let mut server = Cli::command();
+        server.build();
+        help_screens(&mut server, "mcp-server", &mut screens);
         let mut business = business_cli_command();
         business.build();
         help_screens(&mut business, "sylvode", &mut screens);
@@ -1352,7 +1318,7 @@ mod tests {
                 .expect("a subcommand")
             {
                 Commands::Serve(args) => args,
-                Commands::Business(_) | Commands::Doctor(_) => panic!("expected serve command"),
+                Commands::Doctor(_) => panic!("expected serve command"),
             }
         };
         assert_eq!(serve(&[]).tools, None);
@@ -1392,7 +1358,7 @@ mod tests {
                 assert!(matches!(args.transport, Some(Transport::Http)));
                 assert_eq!(args.bind_addr, None);
             }
-            Commands::Business(_) | Commands::Doctor(_) => panic!("expected serve command"),
+            Commands::Doctor(_) => panic!("expected serve command"),
         }
 
         let bare = Cli::try_parse_from(["mcp-server", "serve"]).expect("bare serve should parse");
@@ -1401,7 +1367,7 @@ mod tests {
                 assert!(args.transport.is_none());
                 assert!(args.bind_addr.is_none());
             }
-            Commands::Business(_) | Commands::Doctor(_) => panic!("expected serve command"),
+            Commands::Doctor(_) => panic!("expected serve command"),
         }
     }
 
@@ -1410,20 +1376,16 @@ mod tests {
     /// `mcp-server projects list --config <path>` fail to parse.
     #[test]
     fn the_config_flag_parses_on_every_subcommand() {
+        let config = Some(std::path::Path::new("/etc/sylvode.toml"));
+        let serve = Cli::try_parse_from(["mcp-server", "serve", "--config", "/etc/sylvode.toml"])
+            .unwrap_or_else(|error| panic!("serve should parse: {error}"));
+        assert_eq!(serve.global.config.as_deref(), config);
         for args in [
-            vec!["mcp-server", "serve", "--config", "/etc/sylvode.toml"],
-            vec!["mcp-server", "projects", "list", "--config", "/etc/sylvode.toml"],
+            vec!["sylvode", "projects", "list", "--config", "/etc/sylvode.toml"],
+            vec!["sylvode", "work-items", "get", "PRX-1", "--config", "/etc/sylvode.toml"],
+            vec!["sylvode", "search", "anything", "--config", "/etc/sylvode.toml"],
             vec![
-                "mcp-server",
-                "work-items",
-                "get",
-                "PRX-1",
-                "--config",
-                "/etc/sylvode.toml",
-            ],
-            vec!["mcp-server", "search", "anything", "--config", "/etc/sylvode.toml"],
-            vec![
-                "mcp-server",
+                "sylvode",
                 "tools",
                 "call",
                 "--name",
@@ -1431,12 +1393,13 @@ mod tests {
                 "--config",
                 "/etc/sylvode.toml",
             ],
-            vec!["mcp-server", "--config", "/etc/sylvode.toml", "projects", "list"],
+            vec!["sylvode", "--config", "/etc/sylvode.toml", "projects", "list"],
         ] {
-            let cli = Cli::try_parse_from(&args).unwrap_or_else(|error| panic!("{args:?} should parse: {error}"));
+            let cli =
+                BusinessCli::try_parse_from(&args).unwrap_or_else(|error| panic!("{args:?} should parse: {error}"));
             assert_eq!(
                 cli.global.config.as_deref(),
-                Some(std::path::Path::new("/etc/sylvode.toml")),
+                config,
                 "{args:?} did not carry the config path"
             );
         }
@@ -1450,23 +1413,29 @@ mod tests {
     }
 
     /// `BUSINESS_GROUPS` is what `sylvode` routes on, so it has to name exactly the groups the
-    /// shared enum defines, in both parsers, and `serve` and `doctor` must stay `mcp-server`'s alone.
+    /// enum defines. `mcp-server` has `serve` and `doctor` only: a workspace command typed
+    /// after it is an unknown command.
     #[test]
-    fn the_business_group_list_matches_both_parsers() {
-        let legacy: Vec<String> = Cli::command()
-            .get_subcommands()
-            .map(|command| command.get_name().to_string())
-            .filter(|name| !matches!(name.as_str(), "serve" | "doctor"))
-            .collect();
+    fn the_business_group_list_matches_the_parser() {
         let sylvode: Vec<String> = BusinessCli::command()
             .get_subcommands()
             .map(|command| command.get_name().to_string())
             .collect();
-        assert_eq!(legacy, BUSINESS_GROUPS);
         assert_eq!(sylvode, BUSINESS_GROUPS);
+        let server: Vec<String> = Cli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_string())
+            .filter(|name| name != "help")
+            .collect();
+        assert_eq!(server, ["serve", "doctor"]);
         for own in ["serve", "doctor"] {
-            assert!(Cli::command().find_subcommand(own).is_some(), "{own}");
             assert!(BusinessCli::command().find_subcommand(own).is_none(), "{own}");
+        }
+        for group in BUSINESS_GROUPS {
+            assert!(
+                Cli::try_parse_from(["mcp-server", group]).is_err(),
+                "mcp-server accepted {group}"
+            );
         }
     }
 

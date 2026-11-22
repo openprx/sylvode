@@ -682,7 +682,7 @@ export class Fake {
 					connectedId = ref.id;
 				} else {
 					const created = this.addUser(
-						`${randomUUID()}@bot.openpr.local`,
+						`${randomUUID()}@bot.sylvode.local`,
 						String(ref.name),
 						'',
 						'user',

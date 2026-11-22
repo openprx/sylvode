@@ -177,7 +177,7 @@ fn cli_config(api_url: &str, bot_token: &str) -> Result<ConfigFile, Box<dyn Erro
 /// `cwd` is always a directory with no `config/sylvode.toml` in it, so nothing succeeds by
 /// accident of where the test happened to run.
 async fn run_cli(cwd: &FsPath, args: &[&str], envs: &[(&str, &str)]) -> Result<Output, Box<dyn Error>> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_mcp-server"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sylvode"));
     command
         .args(args)
         .current_dir(cwd)
@@ -568,7 +568,7 @@ async fn a_missing_configuration_file_is_explained_and_the_environment_is_not_a_
 
 /// `--config` is declared global, so it has to be accepted wherever it is written.
 ///
-/// Declaring it on `serve` alone once made `mcp-server projects list --config <path>` fail to
+/// Declaring it on `serve` alone once made `sylvode projects list --config <path>` fail to
 /// parse, and that is the spelling every operator reaches for first. The `cli.rs` unit test
 /// covers the grammar; what is added here is that the path is actually *loaded* from each
 /// position — the commands run in a directory with no configuration file, so one that ignored

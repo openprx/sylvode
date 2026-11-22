@@ -452,7 +452,7 @@ async fn cli(extra_keys: &str, arguments: &[&str]) -> Result<(bool, String, Stri
         },
         extra_keys,
     )?;
-    let output = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
+    let output = Command::new(env!("CARGO_BIN_EXE_sylvode"))
         .arg("--config")
         .arg(config.path())
         .args(arguments)

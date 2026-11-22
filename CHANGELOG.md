@@ -26,6 +26,8 @@ name.
 
 ### Removed
 
+- **`mcp-server <command>` workspace form.** `mcp-server` offers only `serve` and `doctor`; the workspace
+  commands exist only under `sylvode`, and the old form fails as an unknown command.
 - **Legacy task callbacks and `agent_type = "cli"`.** The API no longer serves
   `POST /api/v1/ai/callbacks/task/{id}/complete`, `.../fail` or `.../progress`; a task ends through
   the task protocol (`POST /api/v1/ai/tasks/{id}/complete` or `.../fail?attempt=N`). The runner
@@ -677,8 +679,7 @@ name.
   membership.
 
 This release renames the product from OpenPR to Sylvode and adds Sylvode Flow. Read
-**Breaking and behaviour changes** before upgrading, then follow the upgrade sequence in the
-[v1.0 compatibility matrix](docs/sylvode-v1.0-compatibility.md#upgrade-sequence). Every legacy
+**Breaking and behaviour changes** before upgrading. Every legacy
 OpenPR name keeps working; see **Deprecated**.
 
 ### Fixed
@@ -739,8 +740,7 @@ OpenPR name keeps working; see **Deprecated**.
   `cli_tools_call` for `tools call` (see **`tools call` declares its own transport surface**) —
   on the Members page or with `POST /api/v1/workspaces/{id}/bots` and `"transport_surface"`, then
   put the new token in that client's configuration (`mcp.bot_token`, the agent's bearer token or
-  `--bot-token`). Existing tokens are not rebound automatically; see the
-  [upgrade sequence](docs/sylvode-v1.0-compatibility.md#upgrade-sequence).
+  `--bot-token`). Existing tokens are not rebound automatically.
 - **Outbound webhook `User-Agent` changed** from `OpenPR-Webhook/1.0` to
   `Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)`. A `User-Agent` cannot be sent twice,
   so receivers that match the old value **exactly** or as a **prefix** no longer match and must
@@ -1615,8 +1615,7 @@ replacement and the earliest removal.
   off Linux the isolated-apply entry points refuse every Flow collaborative write and object diff
   with `server_rejected` (`details.reason = "isolated_apply_unsupported_platform"`,
   `write_state: not_applied`) instead of applying anything outside the boundary, `api` logs one
-  startup `warn`, and `collab-isolated-apply-worker` is a stub that exits with status 2. See the
-  [platform matrix](docs/sylvode-v1.0-compatibility.md#platform-matrix).
+  startup `warn`, and `collab-isolated-apply-worker` is a stub that exits with status 2.
 - Flow collaboration: publishing the cross-instance fanout notice after a committed update no
   longer reports a failure on every write. The statement filtered on `pg_notify(..) IS NULL`,
   which is never true (`pg_notify` returns `void`), so it returned no row and the API logged

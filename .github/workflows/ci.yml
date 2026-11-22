@@ -138,8 +138,7 @@ jobs:
           if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
             changed=true
           elif git diff --name-only "$base" HEAD -- apps/mcp-server skills apps/api/src/routes/context.rs \
-              apps/api/tests/fixtures README.md docs/README.md apps/runner/src/runner/guide.rs \
-              apps/runner/src/guide.rs crates/platform Cargo.lock .github/workflows/ci.yml | grep -q .; then
+              apps/api/tests/fixtures README.md docs/README.md apps/runner/src/runner/guide.rs crates/platform Cargo.lock .github/workflows/ci.yml | grep -q .; then
             changed=true
           else
             changed=false

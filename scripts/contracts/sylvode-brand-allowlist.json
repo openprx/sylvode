@@ -20,7 +20,7 @@
         "**"
       ],
       "pattern": "https://openpr\\.(?:dev|local)/schemas/[A-Za-z0-9._-]+|openpr-(?:universal-forms-[a-z-]+|project-release-readiness)\\.schema\\.json",
-      "explanation": "JSON Schema $id URLs and the schema file names they resolve to; the v0.9 matrix (testing/fixtures/v09-openpr-schema-ids.json) freezes them and D3 keeps schema identifiers. Also covers the tracked file names that carry the identifier.",
+      "explanation": "JSON Schema $id URLs and the schema file names they resolve to; D3 keeps schema identifiers. Also covers the tracked file names that carry the identifier.",
       "applies_to": [
         "content",
         "path"
@@ -48,7 +48,7 @@
         "**"
       ],
       "pattern": "[Xx]-(?:OpenPR|openpr)-[A-Za-z*-]*",
-      "explanation": "The X-OpenPR-* header spellings (attachment count and MCP attribution), no longer sent or read; only history, the frozen compatibility records and documentation of the removal name them."
+      "explanation": "The X-OpenPR-* header spellings (attachment count and MCP attribution), no longer sent or read; only history and documentation of the removal name them."
     },
     {
       "id": "sylvode-webhook-user-agent",
@@ -68,7 +68,7 @@
         "**"
       ],
       "pattern": "(?:[\\w.$/{}-]*/)?openpr\\.(?:compose|mcp|example|toml)[\\w.*:]*|`openpr\\.\\*`",
-      "explanation": "The legacy config/openpr.toml and config/openpr.compose*.toml names, no longer discovered; only history, the frozen compatibility records and documentation of the removal name them."
+      "explanation": "The legacy config/openpr.toml and config/openpr.compose*.toml names, no longer discovered; only history and documentation of the removal name them."
     },
     {
       "id": "sylvode-legacy-resource-uris",
@@ -78,7 +78,7 @@
         "**"
       ],
       "pattern": "openpr://[\\w{}/<>.?=&$-]*",
-      "explanation": "The retired openpr:// MCP resource URI spelling, which is no longer served: only history and the frozen v0.9 gate name it."
+      "explanation": "The retired openpr:// MCP resource URI spelling, which is no longer served: only history names it."
     },
     {
       "id": "sylvode-legacy-release-archives",
@@ -86,14 +86,10 @@
       "repo": "sylvode",
       "paths": [
         "CHANGELOG.md",
-        "README.md",
-        "docs/sylvode-v0.9-compatibility.md",
-        "docs/sylvode-v1.0-compatibility.md",
-        "scripts/verify-sylvode-install-upgrade.sh",
-        "scripts/verify-sylvode-brand-compat.sh"
+        "README.md"
       ],
       "pattern": "openpr-(?:<target>|\\*|frontend\\.tar\\.gz|\\$\\{\\{ matrix\\.suffix \\}\\}[\\w.]*|mcp-server-<target>)|`openpr-\\*`",
-      "explanation": "The openpr-<target> and openpr-frontend.tar.gz release archive aliases, no longer published, and the removed openpr-mcp-server-<target> archives; only history, the frozen compatibility records and documentation of the removal name them."
+      "explanation": "The openpr-<target> and openpr-frontend.tar.gz release archive aliases, no longer published, and the removed openpr-mcp-server-<target> archives; only history and documentation of the removal name them."
     },
     {
       "id": "sylvode-database-names",
@@ -103,7 +99,7 @@
         "**"
       ],
       "pattern": "postgres(?:ql)?://[^\\s\\\"'`]*openpr[^\\s\\\"'`]*|-U openpr(?: -d (?:openpr|postgres))?|-d openpr|pg_dump -U openpr openpr|POSTGRES_(?:DB|USER|PASSWORD)[:=] ?openpr\\w*|(?:DROP|CREATE) DATABASE (?:IF EXISTS )?openpr|openpr_backup_|openpr_dev_password|DATABASE_URL=postgres://openpr[^\\s\\\"]*|\\$\\{POSTGRES_PORT\\}/openpr|PG(?:DATABASE|USER):-openpr",
-      "explanation": "Database, role and backup names: ADR-0020 D3 keeps database names, roles, tables, columns and the migration history. Backup files keep the openpr_backup_ prefix so existing backups stay in rotation and listing, and development databases created by scripts/dev-up.sh keep their openpr_dev_password; both are listed under \"Not renamed\" in docs/sylvode-v1.0-compatibility.md."
+      "explanation": "Database, role and backup names: ADR-0020 D3 keeps database names, roles, tables, columns and the migration history. Backup files keep the openpr_backup_ prefix so existing backups stay in rotation and listing, and development databases created by scripts/dev-up.sh keep their openpr_dev_password."
     },
     {
       "id": "sylvode-compose-network",
@@ -111,8 +107,6 @@
       "repo": "sylvode",
       "paths": [
         "docker-compose.yml",
-        "docs/sylvode-v0.9-compatibility.md",
-        "docs/sylvode-v1.0-compatibility.md",
         "CHANGELOG.md"
       ],
       "pattern": "openpr-network",
@@ -138,8 +132,8 @@
       "paths": [
         "**"
       ],
-      "pattern": "(?:bot\\+\\{\\}|admin)@openpr\\.local\\b|[\\w${}+-]*@bot\\.openpr\\.local\\b",
-      "explanation": "Synthetic identities stored in the users table: the bot user domain (`<id>@bot.openpr.local`, any local part, as the API and the gate fixtures create them), the bot JWT subject email (`bot+{}@openpr.local`) and the built-in admin seeded by migration 0008 (`admin@openpr.local`). Existing rows carry these values; D3 keeps database data unchanged."
+      "pattern": "(?:bot\\+\\{\\}|admin)@openpr\\.local\\b",
+      "explanation": "Synthetic identities stored in the users table: the bot JWT subject email (`bot+{}@openpr.local`) and the built-in admin seeded by migration 0008 (`admin@openpr.local`). Existing rows carry these values; D3 keeps database data unchanged."
     },
     {
       "id": "sylvode-skill-resource-id",
@@ -206,20 +200,6 @@
       "explanation": "File names of the signed 2026-05-31 Universal Forms acceptance bundle; its manifest, checksums and the report generators identify the bundle by these names."
     },
     {
-      "id": "sylvode-v09-frozen-matrix",
-      "reason": "frozen_evidence",
-      "repo": "sylvode",
-      "paths": [
-        "**"
-      ],
-      "pattern": "v09-openpr-[\\w.-]+|openpr_uri_alias_all_resources_three_transports|v08_openpr_registry",
-      "explanation": "The frozen v0.9 compatibility matrix fixture and gate keys (testing/fixtures/v09-openpr-schema-ids.json, the v0.9 rc compose project, the v0.9 gate check ids). Also covers the tracked file names that carry the identifier.",
-      "applies_to": [
-        "content",
-        "path"
-      ]
-    },
-    {
       "id": "sylvode-frozen-receipt-repository",
       "reason": "frozen_evidence",
       "repo": "sylvode",
@@ -237,12 +217,10 @@
       "reason": "migration_page",
       "repo": "sylvode",
       "paths": [
-        "docs/sylvode-v0.9-compatibility.md",
-        "docs/sylvode-v1.0-compatibility.md",
         "docs/upgrade-0.2.1.md"
       ],
       "pattern": "(?i:openpr)",
-      "explanation": "Compatibility matrices and the upgrade guide: they exist to name every OpenPR-era identifier next to its replacement."
+      "explanation": "The upgrade guide: it exists to name every OpenPR-era identifier next to its replacement."
     },
     {
       "id": "sylvode-changelog",
@@ -292,19 +270,6 @@
       "explanation": "Notes that Sylvode was formerly OpenPR and that OpenPR-era names keep working (ADR-0020 D4: documentation keeps the 'formerly OpenPR' note)."
     },
     {
-      "id": "sylvode-legacy-behaviour-tests",
-      "reason": "legacy_behaviour_test",
-      "repo": "sylvode",
-      "paths": [
-        "scripts/verify-sylvode-brand-compat.sh",
-        "scripts/verify-no-undocumented-renames-v0.9.sh",
-        "scripts/verify-mcp-uri-aliases.sh",
-        "scripts/verify-sylvode-install-upgrade.sh"
-      ],
-      "pattern": "(?i:openpr)",
-      "explanation": "Tests and gates whose subject is the legacy behaviour: legacy config discovery, the deprecation notices, the URI aliases, the v0.9 rename matrix and the install/upgrade path from OpenPR releases."
-    },
-    {
       "id": "sylvode-legacy-negative-checks",
       "reason": "legacy_behaviour_test",
       "repo": "sylvode",
@@ -347,30 +312,6 @@
       ],
       "pattern": "--repo openpr-webhook=\\.\\./openpr-webhook",
       "explanation": "The release form of the gate names the webhook checkout by its kept repository name (ADR-0020 D4)."
-    },
-    {
-      "id": "sylvode-v10-gate-sibling-checkouts",
-      "reason": "kept_repository_url",
-      "repo": "sylvode",
-      "paths": [
-        "docs/sylvode-v1-stable-runbook.md",
-        "scripts/report-flow-v1.0-json.sh",
-        "scripts/verify-flow-v1.0-json.sh"
-      ],
-      "pattern": "openpr-webhook",
-      "explanation": "The v1.0 gate chain and its runbook name the webhook checkout, and its residue-scan name, by the kept repository name (ADR-0020 D4)."
-    },
-    {
-      "id": "sylvode-v10-gate-keys",
-      "reason": "stable_identifier",
-      "repo": "sylvode",
-      "paths": [
-        "docs/sylvode-v1-stable-runbook.md",
-        "scripts/report-flow-v1.0-json.sh",
-        "scripts/verify-flow-v1.0-json.sh"
-      ],
-      "pattern": "openpr_compat_deprecation_verified",
-      "explanation": "A hard gate key the v1.0 gate contract defines (gates/v1.0-gate.yaml); the chain must spell it exactly as the contract does."
     },
     {
       "id": "webhook-repository-url",
@@ -699,7 +640,7 @@
         "**"
       ],
       "pattern": "OPENPR_TEST_DATABASE_URL",
-      "explanation": "The database URL every database test reads; CI and developer environments set it. Listed under \"Not renamed\" in docs/sylvode-v1.0-compatibility.md."
+      "explanation": "The database URL every database test reads; CI and developer environments set it."
     },
     {
       "id": "sylvode-legacy-compose-variables",
@@ -709,7 +650,7 @@
         "**"
       ],
       "pattern": "OPENPR_(?:BIND_HOST|API_PORT|FRONTEND_PORT|MCP_PORT|RUNTIME_BASE|FRONTEND_DOCKERFILE)\\b|`OPENPR_\\*`",
-      "explanation": "Legacy compose variables that scripts/start.sh no longer reads; only history and the frozen compatibility records name them."
+      "explanation": "Legacy compose variables that scripts/start.sh no longer reads; only history names them."
     },
     {
       "id": "sylvode-script-environment-inputs",
@@ -739,7 +680,7 @@
         "migrations/*.sql"
       ],
       "pattern": "OPENPR_[A-Z0-9_]*|\\(SYLVODE\\|OPENPR\\)_",
-      "explanation": "Environment inputs of the gate scripts, smokes, test suites and build (for example OPENPR_V10_CAPACITY_RESULT, OPENPR_FRONTEND_URL, OPENPR_BUILD_GIT_COMMIT): CI jobs, release builds and frozen gate runs set them by these names, so renaming one needs an alias. Listed under \"Not renamed\" in docs/sylvode-v1.0-compatibility.md."
+      "explanation": "Environment inputs of the gate scripts, smokes, test suites and build (for example OPENPR_V10_CAPACITY_RESULT, OPENPR_FRONTEND_URL, OPENPR_BUILD_GIT_COMMIT): CI jobs, release builds and frozen gate runs set them by these names, so renaming one needs an alias."
     },
     {
       "id": "sylvode-rust-client-types",

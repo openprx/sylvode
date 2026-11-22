@@ -239,7 +239,7 @@ pub async fn create(tx: &impl ConnectionTrait, input: NewBot<'_>) -> Result<Crea
     let now = Timestamp::now();
     let perms_json = serde_json::to_value(&input.permissions).unwrap_or_else(|_| serde_json::json!(["read"]));
     let workspace_role = workspace_role_from_permissions(&input.permissions);
-    let bot_email = format!("{bot_id}@bot.openpr.local");
+    let bot_email = format!("{bot_id}@bot.sylvode.local");
 
     let advanced_epoch = crate::flow::collab::authz::advance_epoch_if_present(tx, input.workspace_id).await?;
 

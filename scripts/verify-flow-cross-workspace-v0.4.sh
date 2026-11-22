@@ -202,8 +202,8 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q <<SQL
 INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, agent_type, created_at, updated_at)
 VALUES ('$USER_A', '$EMAIL_A', '$PW_HASH', 'XWS User A', 'user', true, 'human', NULL, now(), now()),
        ('$USER_B', '$EMAIL_B', '$PW_HASH', 'XWS User B', 'user', true, 'human', NULL, now(), now()),
-       ('$BOT_RW', 'xws-bot-rw-$RUN_ID@bot.openpr.local', '!', 'XWS Bot RW', 'user', true, 'bot_mcp', 'mcp', now(), now()),
-       ('$BOT_RO', 'xws-bot-ro-$RUN_ID@bot.openpr.local', '!', 'XWS Bot RO', 'user', true, 'bot_mcp', 'mcp', now(), now());
+       ('$BOT_RW', 'xws-bot-rw-$RUN_ID@bot.sylvode.local', '!', 'XWS Bot RW', 'user', true, 'bot_mcp', 'mcp', now(), now()),
+       ('$BOT_RO', 'xws-bot-ro-$RUN_ID@bot.sylvode.local', '!', 'XWS Bot RO', 'user', true, 'bot_mcp', 'mcp', now(), now());
 INSERT INTO workspaces (id, slug, name, created_by, created_at, updated_at)
 VALUES ('$WS_A', 'xws-a-$RUN_ID', 'XWS A', '$USER_A', now(), now()),
        ('$WS_B', 'xws-b-$RUN_ID', 'XWS B', '$USER_B', now(), now()),
