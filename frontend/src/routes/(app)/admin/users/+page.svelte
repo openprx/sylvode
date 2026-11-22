@@ -332,9 +332,8 @@
 			/>
 		</div>
 		<div>
-			<label
-				class="mb-1 block text-sm font-medium text-fg"
-				for="roleFilter">{$t('admin.role')}</label
+			<label class="mb-1 block text-sm font-medium text-fg" for="roleFilter"
+				>{$t('admin.role')}</label
 			>
 			<select
 				id="roleFilter"
@@ -347,9 +346,8 @@
 			</select>
 		</div>
 		<div>
-			<label
-				class="mb-1 block text-sm font-medium text-fg"
-				for="statusFilter">{$t('admin.status')}</label
+			<label class="mb-1 block text-sm font-medium text-fg" for="statusFilter"
+				>{$t('admin.status')}</label
 			>
 			<select
 				id="statusFilter"
@@ -380,9 +378,7 @@
 					>
 						<div class="flex items-start justify-between gap-3">
 							<div class="min-w-0">
-								<p
-									class="text-sm font-semibold text-fg flex items-center gap-1.5"
-								>
+								<p class="text-sm font-semibold text-fg flex items-center gap-1.5">
 									{#if isBot(user)}
 										<BotIcon class="h-4 w-4 text-fg-muted" title={$t('admin.botBadge')} />
 									{/if}
@@ -405,9 +401,7 @@
 								{user.status}
 							</span>
 						</div>
-						<div
-							class="mt-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted"
-						>
+						<div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
 							<span>{$t('admin.role')}：{user.role}</span>
 							{#if isBot(user)}
 								<span
@@ -492,9 +486,7 @@
 										{/if}
 									</div>
 								</td>
-								<td class="px-4 py-3 text-sm text-fg-muted"
-									>{formatDate(user.created_at)}</td
-								>
+								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(user.created_at)}</td>
 								<td class="px-4 py-3 text-sm">
 									<span
 										class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium {user.status ===
@@ -543,9 +535,8 @@
 		class="space-y-4"
 	>
 		<div>
-			<label
-				class="mb-1 block text-sm font-medium text-fg"
-				for="entityType">{$t('admin.entityType')}</label
+			<label class="mb-1 block text-sm font-medium text-fg" for="entityType"
+				>{$t('admin.entityType')}</label
 			>
 			<select
 				id="entityType"
@@ -569,9 +560,8 @@
 		<Input label={$t('admin.name')} bind:value={createForm.name} required />
 		{#if entityType === 'bot'}
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="agentType">{$t('admin.agentType')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="agentType"
+					>{$t('admin.agentType')}</label
 				>
 				<select
 					id="agentType"
@@ -656,9 +646,8 @@
 			<Input label={$t('admin.name')} bind:value={editForm.name} required />
 			<Input type="email" label={$t('admin.email')} bind:value={editForm.email} required />
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="editRole">{$t('admin.role')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="editRole"
+					>{$t('admin.role')}</label
 				>
 				<select
 					id="editRole"

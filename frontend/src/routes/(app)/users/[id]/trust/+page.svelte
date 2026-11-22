@@ -181,9 +181,7 @@
 						<div class="space-y-2">
 							{#each domainScores as item (item.project_id + item.domain)}
 								<div>
-									<div
-										class="mb-1 flex items-center justify-between text-xs text-fg-muted"
-									>
+									<div class="mb-1 flex items-center justify-between text-xs text-fg-muted">
 										<span>{item.domain}</span>
 										<span>{item.score}</span>
 									</div>
@@ -239,9 +237,7 @@
 					{:else}
 						<div class="mt-3 space-y-2">
 							{#each relatedAppeals as item (item.id)}
-								<div
-									class="rounded border border-line px-3 py-2 text-sm"
-								>
+								<div class="rounded border border-line px-3 py-2 text-sm">
 									<div class="flex items-center justify-between gap-2">
 										<div class="font-medium text-fg">
 											{$t('trustProfile.appealWithLog', { values: { id: item.log_id } })}

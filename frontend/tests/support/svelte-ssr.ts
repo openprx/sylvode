@@ -42,11 +42,11 @@ export async function installSvelteSsr(): Promise<void> {
 					'export async function goto() {} export function afterNavigate() {} export function beforeNavigate() {}',
 				'$app/stores':
 					'import { readable } from "svelte/store"; export const page = readable({ url: new URL("http://localhost/"), params: {} });',
-				'$app/state':
-					'export const page = { url: new URL("http://localhost/"), params: {} };',
+				'$app/state': 'export const page = { url: new URL("http://localhost/"), params: {} };',
 				'$app/environment':
 					'export const browser = false; export const dev = false; export const building = false;',
-				'$app/env': 'export const browser = false; export const dev = false; export const building = false;',
+				'$app/env':
+					'export const browser = false; export const dev = false; export const building = false;',
 				'svelte-i18n':
 					'import { readable } from "svelte/store"; export const t = readable((key) => key); export const locale = readable("zh"); export function init() {} export function register() {} export function getLocaleFromNavigator() { return "zh"; }'
 			};

@@ -1,21 +1,19 @@
 [
-  {
-    "root_block_cid": "cid:2@3361166978987262402:Map",
-    "selection": "block",
-    "share_id": "2584c844-445d-4740-8119-c67078b8648c",
-    "state": "active",
-    "revision": 1,
-    "member_count": 1,
-    "audiences": [
-      {
-        "workspace_id": "60bf847b-5a76-45a1-809b-32547cac7686",
-        "project_id": "12b68d98-cab2-4e2d-8052-d03930a03eb1",
-        "audience": "users",
-        "recipient_user_ids": [
-          "ec9ea1b8-8d2e-44e0-9156-8a5aa2f8f5f1"
-        ],
-        "permission": "edit"
-      }
-    ]
-  }
+	{
+		"root_block_cid": "cid:2@3361166978987262402:Map",
+		"selection": "block",
+		"share_id": "2584c844-445d-4740-8119-c67078b8648c",
+		"state": "active",
+		"revision": 1,
+		"member_count": 1,
+		"audiences": [
+			{
+				"workspace_id": "60bf847b-5a76-45a1-809b-32547cac7686",
+				"project_id": "12b68d98-cab2-4e2d-8052-d03930a03eb1",
+				"audience": "users",
+				"recipient_user_ids": ["ec9ea1b8-8d2e-44e0-9156-8a5aa2f8f5f1"],
+				"permission": "edit"
+			}
+		]
+	}
 ]

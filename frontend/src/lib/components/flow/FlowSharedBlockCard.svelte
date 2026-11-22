@@ -35,9 +35,7 @@
 		class="text-xs text-fg-muted"
 	>
 		{$t('flow.shared.unavailable')}
-	</p>{:else if excerpt}<p
-		class="mt-1 line-clamp-2 whitespace-pre-wrap text-sm text-fg-muted"
-	>
+	</p>{:else if excerpt}<p class="mt-1 line-clamp-2 whitespace-pre-wrap text-sm text-fg-muted">
 		{excerpt}
 	</p>{/if}
 <p class="mt-1 text-xs text-fg-muted">

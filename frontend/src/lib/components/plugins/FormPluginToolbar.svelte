@@ -234,16 +234,13 @@
 		class="fixed inset-y-0 right-0 z-40 flex w-full max-w-xl flex-col border-l border-overlay-line bg-overlay text-fg shadow-overlay"
 		onkeydown={onKeydown}
 	>
-		<div
-			class="flex items-center justify-between gap-2 border-b border-line p-3"
-		>
+		<div class="flex items-center justify-between gap-2 border-b border-line p-3">
 			<h3 class="text-sm font-semibold">{active.name} · {active.contribution.label}</h3>
 			<button
 				type="button"
 				bind:this={closeButton}
 				onclick={() => closeDrawer()}
-				class="rounded-control px-2 py-1 text-sm underline"
-				>{$t('plugins.host.closeDrawer')}</button
+				class="rounded-control px-2 py-1 text-sm underline">{$t('plugins.host.closeDrawer')}</button
 			>
 		</div>
 		<div class="min-h-0 flex-1 overflow-auto">

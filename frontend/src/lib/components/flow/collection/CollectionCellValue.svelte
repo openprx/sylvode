@@ -36,10 +36,7 @@
 {:else if display.kind === 'options'}
 	<span class="flex flex-wrap gap-1">
 		{#each display.values as option (option)}
-			<span
-				class="rounded bg-surface px-1.5 py-0.5 text-xs text-fg"
-				>{option}</span
-			>
+			<span class="rounded bg-surface px-1.5 py-0.5 text-xs text-fg">{option}</span>
 		{/each}
 	</span>
 {:else if display.kind === 'relation'}

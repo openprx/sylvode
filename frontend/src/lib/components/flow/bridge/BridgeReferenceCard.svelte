@@ -67,10 +67,7 @@
 			<p class="text-xs font-medium uppercase tracking-wide text-fg-muted">
 				{$t(REFERENCE_MODE_KEYS[mode])} · {$t(TARGET_TYPE_KEYS[reference.target_type])}
 			</p>
-			<h3
-				class="truncate text-sm font-semibold text-fg"
-				data-testid="flow-bridge-card-title"
-			>
+			<h3 class="truncate text-sm font-semibold text-fg" data-testid="flow-bridge-card-title">
 				{reference.title || $t('flow.bridge.card.untitled')}
 			</h3>
 		</div>
@@ -85,10 +82,7 @@
 	{#if mode === 'embed'}
 		<div class="mt-3" data-testid="flow-bridge-embed-body" aria-live="polite">
 			{#if !viewable || content?.kind === 'restricted'}
-				<p
-					class="text-sm text-fg-muted"
-					data-testid="flow-bridge-embed-restricted"
-				>
+				<p class="text-sm text-fg-muted" data-testid="flow-bridge-embed-restricted">
 					{$t('flow.bridge.card.restricted')}
 				</p>
 			{:else if !content}

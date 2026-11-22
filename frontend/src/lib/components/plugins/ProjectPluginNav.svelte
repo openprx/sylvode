@@ -40,10 +40,7 @@
 		data-plugin-slot="project.view"
 	>
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
-			<h2
-				id="project-plugin-nav-title"
-				class="text-lg font-semibold text-fg"
-			>
+			<h2 id="project-plugin-nav-title" class="text-lg font-semibold text-fg">
 				{$t('plugins.apps.navTitle')}
 			</h2>
 			<div class="flex flex-wrap items-center gap-2">
@@ -61,9 +58,7 @@
 							data-plugin-contribution={item.contribution.id}
 							aria-label={$t('plugins.apps.open', { values: { label: item.contribution.label } })}
 						>
-							<span class="block text-sm font-semibold text-fg"
-								>{item.contribution.label}</span
-							>
+							<span class="block text-sm font-semibold text-fg">{item.contribution.label}</span>
 							<span class="mt-1 block text-sm text-fg-muted">
 								{$t('plugins.apps.publisher', {
 									values: { name: item.name, version: item.version }

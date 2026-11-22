@@ -137,9 +137,7 @@
 				{@const issues = groupedIssues[status]}
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3
-							class="flex items-center gap-2 text-lg font-semibold text-fg"
-						>
+						<h3 class="flex items-center gap-2 text-lg font-semibold text-fg">
 							<svg
 								class="h-5 w-5 text-fg-muted"
 								fill="none"

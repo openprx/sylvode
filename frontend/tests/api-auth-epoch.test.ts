@@ -409,7 +409,9 @@ test('a session check cut short by the page unloading does not end the stored se
 	try {
 		// A second instance of the module, loaded while `window` exists, registers the listeners.
 		const fresh = '../src/lib/stores/auth?unload-fixture';
-		const { verifySession } = (await import(/* @vite-ignore */ fresh)) as typeof import('../src/lib/stores/auth');
+		const { verifySession } = (await import(
+			/* @vite-ignore */ fresh
+		)) as typeof import('../src/lib/stores/auth');
 		const failed = { code: 500, message: 'synthetic aborted check', data: null };
 		apiClient.installAuthSession(jwt('actor-u'), 'synthetic-u', 'actor-u');
 		target.dispatchEvent(new Event('pagehide'));

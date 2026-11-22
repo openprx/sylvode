@@ -176,9 +176,8 @@
 				</div>
 			</div>
 			<div class="mt-4">
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="language">{$t('settings.language')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="language"
+					>{$t('settings.language')}</label
 				>
 				<select
 					id="language"

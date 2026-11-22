@@ -35,10 +35,7 @@
 		<dl class="grid grid-cols-1 gap-4 text-sm md:grid-cols-2">
 			<div>
 				<dt class="text-fg-muted">{$t('flow.import.report.statusLabel')}</dt>
-				<dd
-					class="mt-1 font-medium text-fg"
-					data-testid="flow-import-report-status"
-				>
+				<dd class="mt-1 font-medium text-fg" data-testid="flow-import-report-status">
 					{statusLabel(report.status)}
 				</dd>
 			</div>

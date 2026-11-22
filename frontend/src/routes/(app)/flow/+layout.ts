@@ -26,7 +26,8 @@ export const load: LayoutLoad = async ({ params }) => {
 		// a source object or provide navigation context.
 		if (!isConversionJobId(params.jobId)) return { flowEnabled: true, navigationEnabled: false };
 		const job = await flowApi.getConversion(params.jobId);
-		if (job.code === 404 || job.code === 403) return { flowEnabled: true, navigationEnabled: false };
+		if (job.code === 404 || job.code === 403)
+			return { flowEnabled: true, navigationEnabled: false };
 		if (job.code !== 0 || !job.data) return { flowEnabled: false, ...routeFailure(job) };
 		objectId = job.data.source_object_id;
 	}

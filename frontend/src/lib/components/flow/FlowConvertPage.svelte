@@ -91,11 +91,7 @@
 				>{$t('flow.mounts.retry')}</button
 			>
 		{:else if availability.mode === 'unavailable'}
-			<p
-				role="status"
-				class="text-sm text-fg-muted"
-				data-testid="flow-conversion-unavailable"
-			>
+			<p role="status" class="text-sm text-fg-muted" data-testid="flow-conversion-unavailable">
 				{$t('flow.personal.conversionUnavailable')}
 			</p>
 		{:else}

@@ -46,9 +46,8 @@
 			<Input label={$t('admin.siteName')} bind:value={basicSettings.siteName} disabled />
 			<Input label={$t('admin.siteUrl')} bind:value={basicSettings.siteUrl} disabled />
 			<div class="md:col-span-2">
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="allowWorkspaceCreate">{$t('admin.workspaceCreatePermission')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="allowWorkspaceCreate"
+					>{$t('admin.workspaceCreatePermission')}</label
 				>
 				<select
 					id="allowWorkspaceCreate"
