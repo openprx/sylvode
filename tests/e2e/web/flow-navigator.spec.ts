@@ -340,6 +340,12 @@ test('navigator: Flow search, lag badge, Page create and typed Collection bounda
 	expect(createdPage.object.object_type).toBe('page');
 	await expect(page).toHaveURL(new RegExp(`/workspace/${workspace.id}/flow/${createdPage.object.id}$`));
 	await expect(page.getByRole('textbox', { name: 'Page title', exact: true })).toHaveValue(createdPage.object.title);
+	// The tree is built from REST reads; a collaborative socket that connects late (a slow runner)
+	// must not hold it back. Keep every socket closed for longer than the assertion timeout.
+	await page.routeWebSocket(/.*/, async (ws) => {
+		await new Promise((resolve) => setTimeout(resolve, 12_000));
+		ws.connectToServer();
+	});
 	await page.reload();
 	await expect(page.getByRole('treeitem', { name: createdPage.object.title })).toHaveAttribute('aria-selected', 'true');
 
