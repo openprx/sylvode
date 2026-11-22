@@ -383,6 +383,7 @@
 	async function aggregateMonthlyDecisions(
 		decisionProjectIds: string[]
 	): Promise<DecisionAggregate> {
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local date arithmetic, not reactive state
 		const monthStart = new Date();
 		monthStart.setDate(1);
 		monthStart.setHours(0, 0, 0, 0);
@@ -447,6 +448,7 @@
 	}
 
 	function getTodayStartIso(): string {
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local date arithmetic, not reactive state
 		const todayStart = new Date();
 		todayStart.setHours(0, 0, 0, 0);
 		return todayStart.toISOString();

@@ -68,6 +68,7 @@
 			return;
 		}
 
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const next = new Set<string>();
 		for (const row of res.data.items || []) {
 			if (row.user_id === meId && row.project_id && row.domain) {

@@ -247,6 +247,7 @@
 	function extractMentionIds(text: string): string[] {
 		const content = text.toLowerCase();
 		const ids: string[] = [];
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const seen = new Set<string>();
 		for (const member of mentionCandidates) {
 			const marker = `@${member.name}`.toLowerCase();

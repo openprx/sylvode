@@ -160,6 +160,7 @@
 	): DetailPageWidgetKey[] {
 		const rawWidgets = isRecord(layout) && Array.isArray(layout.widgets) ? layout.widgets : [];
 		if (rawWidgets.length === 0) return defaultDetailPageWidgetKeys();
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const seen = new Set<DetailPageWidgetKey>();
 		const keys: DetailPageWidgetKey[] = [];
 		for (const rawWidget of rawWidgets) {

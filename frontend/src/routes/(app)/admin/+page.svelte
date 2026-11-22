@@ -65,6 +65,7 @@
 		const workspaces = workspaceResponse.data.items ?? [];
 		let projectCount = 0;
 		let issueCount = 0;
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const userIdSet = new Set<string>();
 
 		for (const workspace of workspaces) {

@@ -20,6 +20,7 @@
 	let operatingId = $state<string | null>(null);
 	let markingAll = $state(false);
 
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- plain cache that nothing renders from
 	const issueRouteCache = new Map<string, string>();
 
 	onMount(async () => {

@@ -581,6 +581,7 @@
 	function extractMentionIds(text: string): string[] {
 		let content = text.toLowerCase();
 		const ids: string[] = [];
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const seen = new Set<string>();
 
 		// Sort by name length descending to match longest names first

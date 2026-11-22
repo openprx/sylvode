@@ -302,6 +302,7 @@
 			return Array.from({ length: totalCount }, (_, i) => i + 1);
 		}
 
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const pages = new Set<number>([1, totalCount, current - 1, current, current + 1]);
 		if (current <= 3) {
 			pages.add(2);
