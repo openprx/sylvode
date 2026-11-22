@@ -328,6 +328,16 @@
 				"notChecked": "Not checked",
 				"draft": "This rule (unsaved)"
 			}
+		},
+		"extra": {
+			"unsignedTitle": "Requests will not be verified",
+			"paused": "Source paused",
+			"takenOver": "Source taken over",
+			"deleted": "Source deleted",
+			"saved": "Source saved",
+			"stale": "This source changed or was removed in the meantime. Reload to see the current state.",
+			"reload": "Reload",
+			"rulesLoadFailed": "Could not read the rules bound to this source, so nothing was deleted. Try again."
 		}
 	}
 }

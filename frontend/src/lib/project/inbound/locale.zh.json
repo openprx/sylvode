@@ -326,6 +326,16 @@
 				"notChecked": "未检查",
 				"draft": "此规则（未保存）"
 			}
+		},
+		"extra": {
+			"unsignedTitle": "请求将不会被验证",
+			"paused": "来源已暂停",
+			"takenOver": "来源已接管",
+			"deleted": "来源已删除",
+			"saved": "来源已保存",
+			"stale": "该来源在此期间已被修改或删除。请重新加载以查看当前状态。",
+			"reload": "重新加载",
+			"rulesLoadFailed": "无法读取绑定到该来源的规则，因此未删除任何内容。请重试。"
 		}
 	}
 }
