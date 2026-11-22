@@ -24,6 +24,43 @@ pub const OPERATION_DIFF: &str = "diff";
 pub const WINDOW_ENV: &str = "COLLAB_ISOLATION_WINDOW";
 pub const WINDOW_FULL: &str = "full";
 
+/// Child-only setting of the CPU budget of the setup, in milliseconds (`[flow] setup_cpu_budget_ms`),
+/// set by the trusted host for every apply spawn. The worker accepts a value inside
+/// [`crate::setup_guard::SETUP_CPU_BUDGET_MS_RANGE`] and uses its default for anything else, so no
+/// value can switch the guard off.
+pub const SETUP_CPU_BUDGET_ENV: &str = "COLLAB_ISOLATION_SETUP_CPU_BUDGET_MS";
+
+/// The marker byte a worker writes when it opens its metered window, which also tells the host which
+/// setup guard, if any, fired in that worker: no guard, the allocation guard, the CPU guard, or the
+/// per-text guard. The host reads it for every attempt, accepted or refused, killed or not.
+pub const MARKER_NO_GUARD: u8 = 0xA5;
+const MARKER_ALLOCATION_GUARD: u8 = 0xA6;
+const MARKER_CPU_GUARD: u8 = 0xA7;
+const MARKER_TEXT_GUARD: u8 = 0xA8;
+
+/// The marker byte of a worker whose setup guard `fired` is the given one (or none).
+#[must_use]
+pub const fn marker_byte(fired: Option<Fired>) -> u8 {
+    match fired {
+        None => MARKER_NO_GUARD,
+        Some(Fired::Allocation) => MARKER_ALLOCATION_GUARD,
+        Some(Fired::Cpu) => MARKER_CPU_GUARD,
+        Some(Fired::Text) => MARKER_TEXT_GUARD,
+    }
+}
+
+/// The setup guard a marker byte names. Anything that is not one of the four markers is no guard:
+/// the field is telemetry, and an unknown byte never changes a verdict.
+#[must_use]
+pub const fn guard_of_marker(byte: u8) -> Option<Fired> {
+    match byte {
+        MARKER_ALLOCATION_GUARD => Some(Fired::Allocation),
+        MARKER_CPU_GUARD => Some(Fired::Cpu),
+        MARKER_TEXT_GUARD => Some(Fired::Text),
+        _ => None,
+    }
+}
+
 /// Response payload cap. Sized well above `bootstrap_response_bytes_max` (12 MiB,
 /// `contracts/limits-v1.md`) with headroom for a real exported document snapshot -- unlike
 /// `spikes/collab-shared`'s calibration frame (1 MiB, sized for a tiny synthetic report), this
@@ -188,23 +225,25 @@ pub enum Outcome {
     /// accepted document (`window_check::WindowReport`); `None` when the full computation decided.
     /// The host compares it with its own projection of the accepted document.
     ///
-    /// `setup_guard` says which of the worker's setup guards (`crate::setup_guard`) fired, so that the
-    /// window had no base facts and the full computation decided. Telemetry only.
+    /// `touched_blocks` are the container ids of the editor blocks the update touched, sent only
+    /// with a report: the host measures the decode cost of their texts in the candidate document
+    /// (`LoroCollabEngine::first_text_over_budget`).
     Success {
         snapshot: Vec<u8>,
         window_cpu_us: Option<u64>,
         window_report: Option<WindowReport>,
-        setup_guard: Option<Fired>,
+        touched_blocks: Vec<String>,
     },
     Rejected(CollabError),
 }
 
 /// The encoding of a window CPU time that was not measured, when a report follows it.
 const NOT_MEASURED: u64 = u64::MAX;
-/// Flags of a success outcome: a window report follows, and which setup guard fired.
+/// Flags of a success outcome: a window report follows.
 const FLAG_REPORT: u8 = 1;
-const FLAG_ALLOCATION_GUARD: u8 = 2;
-const FLAG_CPU_GUARD: u8 = 4;
+/// The most touched blocks a success outcome carries, and the longest container id of one.
+const MAX_TOUCHED_BLOCKS: u32 = 1_000_000;
+const MAX_CONTAINER_ID_BYTES: usize = 256;
 const TAG_SUCCESS: u8 = 0;
 const TAG_EMPTY_INPUT: u8 = 1;
 const TAG_INPUT_TOO_LARGE: u8 = 2;
@@ -234,6 +273,7 @@ fn static_str_from(value: &str) -> &'static str {
         "document_block_count" => "document_block_count",
         "text_block_chars" => "text_block_chars",
         "document_text_chars" => "document_text_chars",
+        "text_decode_cost" => "text_decode_cost",
         _ => "unknown",
     }
 }
@@ -251,7 +291,7 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard,
+            touched_blocks,
         } => {
             buf.push(TAG_SUCCESS);
             write_field(&mut buf, snapshot)?;
@@ -261,11 +301,6 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
             let mut flags = 0;
             if window_report.is_some() {
                 flags |= FLAG_REPORT;
-            }
-            match setup_guard {
-                Some(Fired::Allocation) => flags |= FLAG_ALLOCATION_GUARD,
-                Some(Fired::Cpu) => flags |= FLAG_CPU_GUARD,
-                None => {}
             }
             buf.push(flags);
             if let Some(report) = window_report {
@@ -277,6 +312,12 @@ pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
                     report.longest_bound,
                 ] {
                     write_u64(&mut buf, value)?;
+                }
+                let count = u32::try_from(touched_blocks.len())
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many touched blocks"))?;
+                write_u32(&mut buf, count)?;
+                for block in touched_blocks {
+                    write_str(&mut buf, block)?;
                 }
             }
         }
@@ -351,33 +392,35 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
             let mut flag_byte = [0u8; 1];
             cursor.read_exact(&mut flag_byte)?;
             let [flags] = flag_byte;
-            if flags & !(FLAG_REPORT | FLAG_ALLOCATION_GUARD | FLAG_CPU_GUARD) != 0
-                || flags & FLAG_ALLOCATION_GUARD != 0 && flags & FLAG_CPU_GUARD != 0
-            {
+            if flags & !FLAG_REPORT != 0 {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown outcome flags"));
             }
-            let window_report = if flags & FLAG_REPORT == 0 {
-                None
+            let (window_report, touched_blocks) = if flags & FLAG_REPORT == 0 {
+                (None, Vec::new())
             } else {
-                Some(WindowReport {
+                let report = WindowReport {
                     blocks: read_u64(&mut cursor)?,
                     navigators: read_u64(&mut cursor)?,
                     chars: read_u64(&mut cursor)?,
                     depth_bound: read_u64(&mut cursor)?,
                     longest_bound: read_u64(&mut cursor)?,
-                })
+                };
+                let count = read_u32(&mut cursor)?;
+                if count > MAX_TOUCHED_BLOCKS {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "too many touched blocks"));
+                }
+                // Not `with_capacity(count)`: the count is the sender's claim.
+                let mut blocks = Vec::new();
+                for _ in 0..count {
+                    blocks.push(read_str(&mut cursor, MAX_CONTAINER_ID_BYTES)?);
+                }
+                (Some(report), blocks)
             };
             Ok(Outcome::Success {
                 snapshot,
                 window_cpu_us,
                 window_report,
-                setup_guard: if flags & FLAG_ALLOCATION_GUARD != 0 {
-                    Some(Fired::Allocation)
-                } else if flags & FLAG_CPU_GUARD != 0 {
-                    Some(Fired::Cpu)
-                } else {
-                    None
-                },
+                touched_blocks,
             })
         }
         TAG_EMPTY_INPUT => {
@@ -613,17 +656,15 @@ mod tests {
     #[test]
     fn success_outcome_round_trips() {
         for window_cpu_us in [None, Some(0), Some(13_980)] {
-            for setup_guard in [None, Some(Fired::Allocation), Some(Fired::Cpu)] {
-                let outcome = Outcome::Success {
-                    snapshot: b"exported snapshot bytes".to_vec(),
-                    window_cpu_us,
-                    window_report: None,
-                    setup_guard,
-                };
-                let payload = encode_outcome(&outcome).expect("encode succeeds");
-                let decoded = decode_outcome(&payload).expect("decode succeeds");
-                assert_eq!(decoded, outcome);
-            }
+            let outcome = Outcome::Success {
+                snapshot: b"exported snapshot bytes".to_vec(),
+                window_cpu_us,
+                window_report: None,
+                touched_blocks: Vec::new(),
+            };
+            let payload = encode_outcome(&outcome).expect("encode succeeds");
+            let decoded = decode_outcome(&payload).expect("decode succeeds");
+            assert_eq!(decoded, outcome);
         }
     }
 
@@ -637,23 +678,21 @@ mod tests {
             longest_bound: 99,
         };
         for window_cpu_us in [None, Some(0), Some(13_980)] {
-            for setup_guard in [None, Some(Fired::Allocation), Some(Fired::Cpu)] {
-                let outcome = Outcome::Success {
-                    snapshot: b"exported snapshot bytes".to_vec(),
-                    window_cpu_us,
-                    window_report: Some(report),
-                    setup_guard,
-                };
-                let payload = encode_outcome(&outcome).expect("encode succeeds");
-                assert_eq!(decode_outcome(&payload).expect("decode succeeds"), outcome);
-            }
+            let outcome = Outcome::Success {
+                snapshot: b"exported snapshot bytes".to_vec(),
+                window_cpu_us,
+                window_report: Some(report),
+                touched_blocks: vec!["cid:1@2:Map".to_owned(), "cid:3@4:Map".to_owned()],
+            };
+            let payload = encode_outcome(&outcome).expect("encode succeeds");
+            assert_eq!(decode_outcome(&payload).expect("decode succeeds"), outcome);
         }
         // A report cut short is a corrupt payload, not a report with fewer fields.
         let payload = encode_outcome(&Outcome::Success {
             snapshot: b"snap".to_vec(),
             window_cpu_us: Some(1),
             window_report: Some(report),
-            setup_guard: None,
+            touched_blocks: vec!["cid:1@2:Map".to_owned()],
         })
         .expect("encode succeeds");
         for cut in 1..=48 {
@@ -667,12 +706,31 @@ mod tests {
     }
 
     #[test]
+    fn the_marker_byte_names_the_setup_guard_that_fired() {
+        let all = [None, Some(Fired::Allocation), Some(Fired::Cpu), Some(Fired::Text)];
+        let mut seen = std::collections::HashSet::new();
+        for fired in all {
+            let byte = marker_byte(fired);
+            assert!(seen.insert(byte), "{fired:?} shares its marker byte {byte:#x}");
+            assert_ne!(
+                byte, b'\n',
+                "a newline would split the marker write of a line-buffered stdout"
+            );
+            assert_eq!(guard_of_marker(byte), fired);
+        }
+        assert_eq!(marker_byte(None), MARKER_NO_GUARD);
+        // A byte no worker writes names no guard and changes no verdict.
+        assert_eq!(guard_of_marker(0), None);
+        assert_eq!(guard_of_marker(0xFF), None);
+    }
+
+    #[test]
     fn success_outcome_with_unknown_flags_is_rejected() {
         let mut payload = encode_outcome(&Outcome::Success {
             snapshot: b"snap".to_vec(),
             window_cpu_us: None,
             window_report: None,
-            setup_guard: None,
+            touched_blocks: Vec::new(),
         })
         .expect("encode succeeds");
         *payload.last_mut().expect("a payload") = 0x80;
@@ -714,6 +772,7 @@ mod tests {
             "document_block_count",
             "text_block_chars",
             "document_text_chars",
+            "text_decode_cost",
         ] {
             let outcome = Outcome::Rejected(CollabError::LimitExceeded {
                 limit_kind,

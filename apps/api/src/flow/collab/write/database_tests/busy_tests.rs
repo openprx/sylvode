@@ -13,7 +13,7 @@ use axum::response::IntoResponse;
 use collab_core::isolation::wire::WindowDecision;
 use collab_core::isolation::{HostFailure, HostFailureKind, IsolatedApplyError, WindowMode, WorkerObservation};
 use collab_core::window_check::{FallbackReason, WindowReport};
-use sea_orm::{DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -30,6 +30,9 @@ use crate::flow::collab::write::{AcceptOutcome, RebasePolicy, UpdateRequest, acc
 use crate::flow::command::execute_command;
 
 struct Fixture {
+    /// These tests exercise the incremental window (experimental, off by default), so the thread
+    /// that runs them has `[flow] incremental_window = true`.
+    _incremental: Option<crate::config::test_support::IncrementalWindowOn>,
     state: AppState,
     workspace_id: Uuid,
     owner_id: Uuid,
@@ -38,10 +41,23 @@ struct Fixture {
 }
 
 async fn fixture(scratch: &super::Scratch) -> Fixture {
+    fixture_with(scratch, Some(crate::config::test_support::enable_incremental_window())).await
+}
+
+/// A fixture on the default configuration (the incremental window off).
+async fn default_fixture(scratch: &super::Scratch) -> Fixture {
+    fixture_with(scratch, None).await
+}
+
+async fn fixture_with(
+    scratch: &super::Scratch,
+    incremental: Option<crate::config::test_support::IncrementalWindowOn>,
+) -> Fixture {
     let state = state_for(scratch.db.clone());
     let (workspace_id, owner_id) = seed_workspace(&state).await;
     let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
     Fixture {
+        _incremental: incremental,
         state,
         workspace_id,
         owner_id,
@@ -55,7 +71,9 @@ fn observed(cpu_us: Option<u64>, decision: Option<WindowDecision>) -> WorkerObse
         metered_wall_us: Some(100_000),
         metered_cpu_us: cpu_us,
         setup_cpu_us: None,
+        setup_wall_us: None,
         decision,
+        setup_guard: None,
     }
 }
 
@@ -117,6 +135,18 @@ async fn a_title_update(f: &Fixture, title: &str) -> Vec<u8> {
 }
 
 async fn submit(f: &Fixture, update_id: Uuid, bytes: Vec<u8>, policy: RebasePolicy) -> AcceptOutcome {
+    submit_raw(f, update_id, bytes, policy)
+        .await
+        .expect("accept does not error")
+}
+
+/// [`submit`] that hands back the error of the write when there is one.
+async fn submit_raw(
+    f: &Fixture,
+    update_id: Uuid,
+    bytes: Vec<u8>,
+    policy: RebasePolicy,
+) -> Result<AcceptOutcome, ApiError> {
     let epoch = authz::read_epoch(&f.state.db, f.workspace_id)
         .await
         .expect("epoch reads");
@@ -148,7 +178,6 @@ async fn submit(f: &Fixture, update_id: Uuid, bytes: Vec<u8>, policy: RebasePoli
         },
     )
     .await
-    .expect("accept does not error")
 }
 
 fn rejection(outcome: AcceptOutcome) -> crate::flow::collab::write::Rejected {
@@ -394,14 +423,6 @@ async fn a_defect_of_the_isolation_host_is_server_rejected_with_a_named_reason()
         (host_failure(HostFailureKind::Crash, None), "isolated_apply_failed"),
         (host_failure(HostFailureKind::Protocol, None), "isolated_apply_failed"),
         (host_failure(HostFailureKind::Spawn, None), "isolated_apply_failed"),
-        (
-            host_failure(HostFailureKind::SetupTimeout, Some(4_000_000)),
-            "isolated_setup_exhausted",
-        ),
-        (
-            host_failure(HostFailureKind::SetupTimeout, None),
-            "isolated_setup_exhausted",
-        ),
     ];
     for (scripted, reason) in cases {
         scripted_attempts::enable(f.document_id, vec![scripted]);
@@ -706,4 +727,530 @@ async fn a_rest_divergence_is_server_rejected_window_divergence() {
     assert_eq!(body["error_code"], "server_rejected");
     assert_eq!(body["code"], 500);
     scratch.drop_self().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// A-1: the backstop of the setup guards
+// ---------------------------------------------------------------------------------------------
+
+/// A setup that timed out having used its CPU budget.
+fn setup_exhausted(setup_cpu_us: Option<u64>) -> Scripted {
+    host_failure(HostFailureKind::SetupTimeout, setup_cpu_us)
+}
+
+/// A CPU kill of the full window, after the setup guard had fired (no facts).
+fn full_window_cpu_kill() -> Scripted {
+    Scripted::Refuse(
+        IsolatedApplyError::CpuCeiling,
+        WorkerObservation {
+            setup_guard: Some(collab_core::setup_guard::Fired::Text),
+            ..observed(
+                Some(52_000),
+                Some(WindowDecision::Fallback(FallbackReason::FactsAbsent)),
+            )
+        },
+    )
+}
+
+/// The review's end state, no longer permanent: a setup that timed out with its CPU used does not
+/// answer `server_rejected{isolated_setup_exhausted}` on every write. The write is decided again with
+/// the full window (here: accepted), the document is on the full window for the following writes,
+/// and one attempt each is all they cost.
+#[tokio::test]
+async fn a_setup_that_used_its_cpu_budget_is_decided_by_the_full_window_and_the_document_cools() {
+    for (cpu, label) in [
+        (Some(4_900_000), "high"),
+        (Some(2_000_000), "at 80 percent"),
+        (None, "unknown"),
+    ] {
+        let scratch = scratch_or_skip!("backstop-accepted");
+        let f = fixture(&scratch).await;
+        scripted_attempts::enable(f.document_id, vec![setup_exhausted(cpu), Scripted::InProcess]);
+        let outcome = submit(
+            &f,
+            Uuid::new_v4(),
+            a_title_update(&f, "backstop").await,
+            RebasePolicy::ClientRebases,
+        )
+        .await;
+        assert!(
+            matches!(outcome, AcceptOutcome::Accepted(_)),
+            "{label}: accepted by the full window"
+        );
+        assert_eq!(
+            scripted_attempts::modes(f.document_id),
+            [WindowMode::Incremental, WindowMode::Full],
+            "{label}: the second attempt is the full window"
+        );
+        // The next writes take the full window directly.
+        for round in 0..2 {
+            let outcome = submit(
+                &f,
+                Uuid::new_v4(),
+                a_title_update(&f, &format!("after the backstop {round}")).await,
+                RebasePolicy::ClientRebases,
+            )
+            .await;
+            assert!(matches!(outcome, AcceptOutcome::Accepted(_)), "{label}: write {round}");
+        }
+        assert_eq!(
+            scripted_attempts::modes(f.document_id),
+            [
+                WindowMode::Incremental,
+                WindowMode::Full,
+                WindowMode::Full,
+                WindowMode::Full
+            ],
+            "{label}: one full attempt per write, no incremental setup"
+        );
+        scratch.drop_self().await;
+    }
+}
+
+/// When the full window refuses as well the write gets the answer the full window produces: the
+/// content limit, not the defect and not a server error. Only a full window that times out in its
+/// own setup (the load alone) is the defect.
+#[tokio::test]
+async fn when_the_full_window_refuses_after_the_backstop_the_answer_is_its_own() {
+    let scratch = scratch_or_skip!("backstop-refused");
+    let f = fixture(&scratch).await;
+    let head_before = head_seq_of(&f.state, f.document_id).await;
+
+    scripted_attempts::enable(
+        f.document_id,
+        vec![setup_exhausted(Some(4_900_000)), full_window_cpu_kill()],
+    );
+    let update_id = Uuid::new_v4();
+    let rejected = rejection(
+        submit(
+            &f,
+            update_id,
+            a_title_update(&f, "limit").await,
+            RebasePolicy::ClientRebases,
+        )
+        .await,
+    );
+    assert_eq!(rejected.code, RejectedCode::LimitExceeded);
+    assert!(!rejected.recoverable);
+    assert_eq!(rejected.write_state, crate::flow::collab::frame::WriteState::NotApplied);
+    assert_eq!(rejected.update_id, Some(update_id));
+    assert_eq!(
+        rejected.details.expect("limit details")["limit_kind"],
+        "decode_apply_cpu_ms"
+    );
+    assert_eq!(
+        scripted_attempts::modes(f.document_id),
+        [WindowMode::Incremental, WindowMode::Full]
+    );
+    assert_eq!(head_seq_of(&f.state, f.document_id).await, head_before);
+    scratch.drop_self().await;
+
+    // The full window timing out in its own setup is the defect: nothing is left to try.
+    let scratch = scratch_or_skip!("backstop-both-time-out");
+    let f = fixture(&scratch).await;
+    scripted_attempts::enable(
+        f.document_id,
+        vec![setup_exhausted(Some(4_900_000)), setup_exhausted(Some(4_900_000))],
+    );
+    let rejected = rejection(
+        submit(
+            &f,
+            Uuid::new_v4(),
+            a_title_update(&f, "defect").await,
+            RebasePolicy::ClientRebases,
+        )
+        .await,
+    );
+    assert_eq!(rejected.code, RejectedCode::ServerRejected);
+    assert_eq!(rejected.details, Some(json!({ "reason": "isolated_setup_exhausted" })));
+    scratch.drop_self().await;
+}
+
+/// A starved setup is not the backstop: it is the busy answer, one attempt, no cooldown.
+#[tokio::test]
+async fn a_starved_setup_is_not_the_backstop() {
+    let scratch = scratch_or_skip!("backstop-starved");
+    let f = fixture(&scratch).await;
+    scripted_attempts::enable(f.document_id, vec![setup_exhausted(Some(1_999_999))]);
+    let update_id = Uuid::new_v4();
+    let rejected = rejection(
+        submit(
+            &f,
+            update_id,
+            a_title_update(&f, "starved").await,
+            RebasePolicy::ClientRebases,
+        )
+        .await,
+    );
+    assert_busy(&rejected, update_id, "resend", 1_000, "setup_starved");
+    assert_eq!(scripted_attempts::modes(f.document_id), [WindowMode::Incremental]);
+    scratch.drop_self().await;
+}
+
+/// A document whose accepted state cannot be read back is `server_rejected{document_base_unreadable}`
+/// on every write, not an internal error that the WebSocket reports as the retryable `contention`.
+#[tokio::test]
+async fn a_base_that_does_not_load_is_server_rejected_with_a_stable_reason() {
+    let scratch = scratch_or_skip!("base-unreadable");
+    let f = fixture(&scratch).await;
+    let update = a_title_update(&f, "before the damage").await;
+    let garbage = b"this is not a loro snapshot".to_vec();
+    f.state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE collab_documents SET snapshot = $1, snapshot_checksum = $2 WHERE id = $3",
+            vec![
+                garbage.clone().into(),
+                crate::flow::collab::write::content_hash(&garbage).into(),
+                f.document_id.into(),
+            ],
+        ))
+        .await
+        .expect("the snapshot is replaced");
+    for round in 0..2 {
+        let error = submit_raw(&f, Uuid::new_v4(), update.clone(), RebasePolicy::ClientRebases)
+            .await
+            .err()
+            .expect("a base that does not load is an error of the write");
+        assert_eq!(error.kind(), ApiErrorKind::ServerRejected, "attempt {round}");
+        assert_eq!(details_of(&error), &json!({ "reason": "document_base_unreadable" }));
+    }
+    scratch.drop_self().await;
+}
+
+/// A panic on the blocking thread that runs the window is `server_rejected{isolated_apply_failed}`:
+/// deterministic for the base and the update, so never the retryable `contention`.
+#[tokio::test]
+async fn a_panic_in_the_window_task_is_server_rejected_and_not_contention() {
+    let scratch = scratch_or_skip!("window-panic");
+    let f = fixture(&scratch).await;
+    scripted_attempts::enable(f.document_id, vec![Scripted::Panic]);
+    let bytes = a_title_update(&f, "panic").await;
+    let error = submit_raw(&f, Uuid::new_v4(), bytes, RebasePolicy::ClientRebases)
+        .await
+        .err()
+        .expect("a panic of the window task is an error of the write");
+    assert_eq!(error.kind(), ApiErrorKind::ServerRejected);
+    assert_eq!(details_of(&error), &json!({ "reason": "isolated_apply_failed" }));
+    scratch.drop_self().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The default configuration: the incremental window is off
+// ---------------------------------------------------------------------------------------------
+
+/// With the default configuration (`[flow] incremental_window` unset) the write takes the full
+/// window only, which is what the worker did before the incremental window existed: one attempt in
+/// `WindowMode::Full`, no facts, so a refusal that needs a sequential update is the content answer
+/// and nothing is ever asked to rebase.
+#[tokio::test]
+async fn with_the_default_configuration_every_write_takes_the_full_window() {
+    assert!(!crate::config::incremental_window(), "the default configuration");
+    assert_eq!(super::super::configured_window_mode(), WindowMode::Full);
+    let scratch = scratch_or_skip!("default-full-window");
+    let f = default_fixture(&scratch).await;
+    scripted_attempts::enable(f.document_id, vec![Scripted::InProcess, needs_sequential()]);
+    let outcome = submit(
+        &f,
+        Uuid::new_v4(),
+        a_title_update(&f, "default").await,
+        RebasePolicy::ClientRebases,
+    )
+    .await;
+    assert!(matches!(outcome, AcceptOutcome::Accepted(_)));
+    // A CPU kill whose decision record says "not sequential" cannot happen in the full mode, and
+    // if it did the answer would be the content limit, never a rebase.
+    let rejected = rejection(
+        submit(
+            &f,
+            Uuid::new_v4(),
+            a_title_update(&f, "default two").await,
+            RebasePolicy::ClientRebases,
+        )
+        .await,
+    );
+    assert_eq!(rejected.code, RejectedCode::LimitExceeded);
+    assert_eq!(
+        scripted_attempts::modes(f.document_id),
+        [WindowMode::Full, WindowMode::Full]
+    );
+    scratch.drop_self().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// R9-1: an update must not leave a text over the per-text decode budget
+// ---------------------------------------------------------------------------------------------
+
+/// The document's accepted state at its head, as a Loro document.
+#[cfg(target_os = "linux")]
+async fn head_document(f: &Fixture) -> loro::LoroDoc {
+    use collab_core::CollabEngine;
+    let engine = crate::flow::collab::write::prepare_build_engine(
+        &f.state.db,
+        &WarmCache::new(),
+        f.document_id,
+        Uuid::new_v4(),
+        None,
+    )
+    .await
+    .expect("the head loads")
+    .unwrap_or_else(|_| panic!("the head is readable"));
+    let doc = loro::LoroDoc::new();
+    doc.import(&engine.export_snapshot().expect("the head exports"))
+        .expect("the head imports");
+    doc
+}
+
+/// The first block of the page, its first inline text, and the block's container id.
+#[cfg(target_os = "linux")]
+fn first_block_text(doc: &loro::LoroDoc) -> (loro::LoroText, String) {
+    use loro::{Container, ContainerTrait, ValueOrContainer};
+    let Some(ValueOrContainer::Container(Container::List(children))) = doc.get_map("doc").get("children") else {
+        panic!("the page has a block list");
+    };
+    let Some(ValueOrContainer::Container(Container::Map(block))) = children.get(0) else {
+        panic!("the page has a block");
+    };
+    let id = block.id().to_string();
+    let Some(ValueOrContainer::Container(Container::List(inline))) = block.get("children") else {
+        panic!("the block has inline children");
+    };
+    let text = (0..inline.len())
+        .find_map(|index| match inline.get(index) {
+            Some(ValueOrContainer::Container(Container::Text(text))) => Some(text),
+            _ => None,
+        })
+        .expect("the block has a text");
+    (text, id)
+}
+
+/// An update by a new peer that adds `count` nested `bold` marks over the first character of the
+/// first block's text, alternating the value so that none is redundant.
+#[cfg(target_os = "linux")]
+async fn nested_marks_update(f: &Fixture, existing: usize, count: usize) -> Vec<u8> {
+    use loro::ExportMode;
+    let doc = head_document(f).await;
+    doc.set_peer_id(Uuid::new_v4().as_u64_pair().0).expect("peer id");
+    let before = doc.oplog_vv();
+    let (text, _) = first_block_text(&doc);
+    for step in existing..existing + count {
+        text.mark(0..1, "bold", step % 2 == 0).expect("the mark applies");
+    }
+    doc.commit();
+    doc.export(ExportMode::updates(&before)).expect("the update exports")
+}
+
+/// The smallest number of nested marks that takes the first text of the page over the per-text
+/// budget on this machine, measured the way the host measures a candidate: a fresh load of a
+/// document with that many marks, the texts of its first block decoded under the guard.
+#[cfg(target_os = "linux")]
+async fn marks_that_exhaust_the_text_budget(f: &Fixture) -> usize {
+    use collab_core::CollabEngine;
+    use loro::ExportMode;
+    let head = head_document(f)
+        .await
+        .export(ExportMode::snapshot())
+        .expect("the head exports");
+    let over = |count: usize| {
+        let doc = loro::LoroDoc::new();
+        doc.import(&head).expect("the head imports");
+        let (text, block_id) = first_block_text(&doc);
+        for step in 0..count {
+            text.mark(0..1, "bold", step % 2 == 0).expect("the mark applies");
+        }
+        doc.commit();
+        let engine =
+            collab_core::LoroCollabEngine::load(&doc.export(ExportMode::snapshot()).expect("exports")).expect("loads");
+        engine.first_text_over_budget(&[block_id]).is_some()
+    };
+    let (mut low, mut high) = (50_usize, 4_000_usize);
+    assert!(over(high), "4,000 nested marks cost more than the budget");
+    while high - low > 20 {
+        let middle = usize::midpoint(low, high);
+        if over(middle) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    high
+}
+
+/// How one run of the growth scenario ended.
+#[cfg(target_os = "linux")]
+enum GrowthRun {
+    /// The page was grown to 90 percent of the marks that exhaust the text's decode budget, and the
+    /// push of 20 percent more was answered with this outcome (the head before it is `head_before`).
+    Pushed {
+        outcome: AcceptOutcome,
+        head_before: i64,
+        marks: usize,
+    },
+    /// A step of the growth was not accepted: the machine's timing moved under the run.
+    Disturbed(String),
+}
+
+/// Grows the first text of a fresh page, through updates the incremental window accepts, to 90
+/// percent of the marks that exhaust its decode budget on this machine, then submits one update
+/// of 20 percent more, which takes the text to about 1.2 times the budget (and costs the window about
+/// half of its ceiling).
+#[cfg(target_os = "linux")]
+async fn grow_and_push(f: &Fixture) -> GrowthRun {
+    let key = Uuid::new_v4().to_string();
+    execute_command(
+        &f.state,
+        command_input(f.object_id, f.owner_id, "insert_block", insert_block("grow"), &key),
+    )
+    .await
+    .expect("the block is created");
+    let edge = marks_that_exhaust_the_text_budget(f).await;
+    assert!(edge >= 200, "the budget holds a real text: {edge} marks");
+    let target = edge * 90 / 100;
+    let mut marks = 0;
+    while marks < target {
+        let step = 50.min(target - marks);
+        let update = nested_marks_update(f, marks, step).await;
+        match submit(f, Uuid::new_v4(), update, RebasePolicy::ClientRebases).await {
+            AcceptOutcome::Accepted(_) => marks += step,
+            AcceptOutcome::Rejected(rejected) => {
+                return GrowthRun::Disturbed(format!("{marks} of {target} marks: {rejected:?}"));
+            }
+        }
+    }
+    let head_before = head_seq_of(&f.state, f.document_id).await;
+    let update = nested_marks_update(f, marks, edge * 20 / 100).await;
+    let outcome = submit(f, Uuid::new_v4(), update, RebasePolicy::ClientRebases).await;
+    GrowthRun::Pushed {
+        outcome,
+        head_before,
+        marks,
+    }
+}
+
+/// The review's R9-1 on the real worker: the push that would take the text to about 1.2 times its
+/// decode budget is refused with `limit_exceeded{text_decode_cost}` before it is committed,
+/// `head_seq` does not move, and the page stays writable (an unrelated write and a small growth are
+/// accepted). The scenario depends on the machine's timing at both ends of its margins (the text at
+/// 0.8 of the budget, the push at 1.2, the window at half its ceiling), so a run that the timing
+/// disturbs (a growth step refused, a push refused by the window's own ceiling) is repeated on a
+/// fresh page, up to three times; a run that reaches the push and is answered otherwise than by the
+/// measure's refusal is the product failing, and ends the test.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_update_that_would_leave_a_text_over_its_decode_budget_is_refused_and_the_page_stays_writable() {
+    let mut last = String::new();
+    for attempt in 0..3 {
+        let scratch = scratch_or_skip!("text-budget-refused");
+        let f = fixture(&scratch).await;
+        let (outcome, head_before, marks) = match grow_and_push(&f).await {
+            GrowthRun::Pushed {
+                outcome,
+                head_before,
+                marks,
+            } => (outcome, head_before, marks),
+            GrowthRun::Disturbed(why) => {
+                last = format!("attempt {attempt}: {why}");
+                scratch.drop_self().await;
+                continue;
+            }
+        };
+        let AcceptOutcome::Rejected(rejected) = outcome else {
+            last = format!("attempt {attempt}: the push was accepted");
+            scratch.drop_self().await;
+            continue;
+        };
+        let details = rejected.details.clone().expect("limit details");
+        if details["limit_kind"] != "text_decode_cost" {
+            last = format!("attempt {attempt}: the push was refused otherwise: {rejected:?}");
+            scratch.drop_self().await;
+            continue;
+        }
+        assert_eq!(rejected.code, RejectedCode::LimitExceeded, "{rejected:?}");
+        assert!(!rejected.recoverable);
+        assert_eq!(rejected.write_state, crate::flow::collab::frame::WriteState::NotApplied);
+        assert_eq!(details["limit"], 50);
+        assert_eq!(head_seq_of(&f.state, f.document_id).await, head_before);
+        // The page is writable: a title update and a small growth are accepted.
+        let bytes = a_title_update_at_head(&f, "still writable").await;
+        let outcome = submit(&f, Uuid::new_v4(), bytes, RebasePolicy::ClientRebases).await;
+        assert!(
+            matches!(outcome, AcceptOutcome::Accepted(_)),
+            "an unrelated write is accepted"
+        );
+        let outcome = submit(
+            &f,
+            Uuid::new_v4(),
+            nested_marks_update(&f, marks, 5).await,
+            RebasePolicy::ClientRebases,
+        )
+        .await;
+        assert!(
+            matches!(outcome, AcceptOutcome::Accepted(_)),
+            "five more marks fit the budget"
+        );
+        scratch.drop_self().await;
+        return;
+    }
+    panic!("three runs in a row did not end in the measure's refusal: {last}");
+}
+
+/// The mutant without the host's measure: the same push is accepted, the text is committed over its
+/// budget, and the next write to the page is refused by the full window, which decodes the text
+/// inside its CPU ceiling (`decode_apply_cpu_ms`): the page is bricked, which the measure prevents.
+/// A run the timing disturbs is repeated, as above.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn without_the_host_measure_the_push_bricks_the_page() {
+    let mut last = String::new();
+    for attempt in 0..3 {
+        let scratch = scratch_or_skip!("text-budget-mutant");
+        let f = fixture(&scratch).await;
+        crate::flow::collab::write::TEXT_BUDGET_CHECK_SKIPPED
+            .lock()
+            .insert(f.document_id);
+        let outcome = match grow_and_push(&f).await {
+            GrowthRun::Pushed { outcome, .. } => outcome,
+            GrowthRun::Disturbed(why) => {
+                last = format!("attempt {attempt}: the growth was disturbed: {why}");
+                scratch.drop_self().await;
+                continue;
+            }
+        };
+        if !matches!(outcome, AcceptOutcome::Accepted(_)) {
+            last = format!("attempt {attempt}: the push was refused by the window itself");
+            scratch.drop_self().await;
+            continue;
+        }
+        let bytes = a_title_update_at_head(&f, "bricked").await;
+        let rejected = rejection(submit(&f, Uuid::new_v4(), bytes, RebasePolicy::ClientRebases).await);
+        assert_eq!(rejected.code, RejectedCode::LimitExceeded);
+        assert_eq!(
+            rejected.details.expect("limit details")["limit_kind"],
+            "decode_apply_cpu_ms",
+            "every later write is refused: the full window decodes the text inside its ceiling"
+        );
+        scratch.drop_self().await;
+        return;
+    }
+    panic!("three runs in a row did not brick the page without the measure: {last}");
+}
+
+/// A title update against the document's head (the snapshot row can lag the head).
+#[cfg(target_os = "linux")]
+async fn a_title_update_at_head(f: &Fixture, title: &str) -> Vec<u8> {
+    use collab_core::CollabEngine;
+    let mut engine = crate::flow::collab::write::prepare_build_engine(
+        &f.state.db,
+        &WarmCache::new(),
+        f.document_id,
+        Uuid::new_v4(),
+        None,
+    )
+    .await
+    .expect("the head loads")
+    .unwrap_or_else(|_| panic!("the head is readable"));
+    let frontier = engine.frontier();
+    engine.set_title(title).expect("title sets");
+    engine.export_from(&frontier).expect("update exports")
 }

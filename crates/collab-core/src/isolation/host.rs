@@ -159,24 +159,37 @@ pub fn isolated_apply_with(
     update: &[u8],
     mode: WindowMode,
 ) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
-    isolated_apply_with_observed(base_snapshot, update, mode).0
+    isolated_apply_with_observed(
+        base_snapshot,
+        update,
+        mode,
+        crate::setup_guard::SETUP_CPU_BUDGET_MS_DEFAULT,
+    )
+    .0
 }
 
 /// [`isolated_apply_with`] that additionally reports the [`WorkerObservation`] of the run: the CPU
-/// the worker consumed, and what its window check decided, even when a ceiling killed it.
+/// the worker consumed, what its window check decided and which setup guard fired, even when a
+/// ceiling killed it. `setup_cpu_budget_ms` is the CPU budget of the worker's setup (`[flow]
+/// setup_cpu_budget_ms`); the worker uses its default for a value outside
+/// [`crate::setup_guard::SETUP_CPU_BUDGET_MS_RANGE`].
 pub fn isolated_apply_with_observed(
     base_snapshot: &[u8],
     update: &[u8],
     mode: WindowMode,
+    setup_cpu_budget_ms: u64,
 ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    let budget = setup_cpu_budget_ms.to_string();
+    let incremental = [(wire::SETUP_CPU_BUDGET_ENV, budget.as_str())];
+    let full = [
+        (wire::SETUP_CPU_BUDGET_ENV, budget.as_str()),
+        (wire::WINDOW_ENV, wire::WINDOW_FULL),
+    ];
     match mode {
-        WindowMode::Incremental => run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &[]),
-        WindowMode::Full => run_isolated_apply_observed(
-            base_snapshot,
-            update,
-            wire::OPERATION_APPLY,
-            &[(wire::WINDOW_ENV, wire::WINDOW_FULL)],
-        ),
+        WindowMode::Incremental => {
+            run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &incremental)
+        }
+        WindowMode::Full => run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &full),
     }
 }
 
@@ -188,7 +201,12 @@ pub fn isolated_apply_observed(
     base_snapshot: &[u8],
     update: &[u8],
 ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
-    isolated_apply_with_observed(base_snapshot, update, WindowMode::Incremental)
+    isolated_apply_with_observed(
+        base_snapshot,
+        update,
+        WindowMode::Incremental,
+        crate::setup_guard::SETUP_CPU_BUDGET_MS_DEFAULT,
+    )
 }
 
 /// Replays a bounded retained-history tail and computes its semantic diff inside the same
@@ -255,6 +273,34 @@ fn run_worker(
     extra_env: &[(&str, &str)],
     observation: &mut WorkerObservation,
 ) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+    let mut write_error: Option<String> = None;
+    let result = run_worker_inner(
+        base_snapshot,
+        update,
+        operation,
+        extra_env,
+        observation,
+        &mut write_error,
+    );
+    // The failed request write never decided the classification; it is the detail of a host failure
+    // when that is what the worker's own outcome says it was.
+    match (result, write_error) {
+        (Err(IsolatedApplyError::HostFailure(mut failure)), Some(note)) => {
+            failure.detail = format!("{} (request write failed: {note})", failure.detail);
+            Err(IsolatedApplyError::HostFailure(failure))
+        }
+        (result, _) => result,
+    }
+}
+
+fn run_worker_inner(
+    base_snapshot: &[u8],
+    update: &[u8],
+    operation: &'static str,
+    extra_env: &[(&str, &str)],
+    observation: &mut WorkerObservation,
+    write_error: &mut Option<String>,
+) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
     let worker_path = worker_binary_path()?;
 
     let mut command = worker_command(&worker_path, operation, extra_env);
@@ -263,6 +309,7 @@ fn run_worker(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = command.spawn().map_err(|err| spawn_failure(&err))?;
+    let spawned_at = Instant::now();
 
     {
         let mut stdin = child
@@ -273,7 +320,13 @@ fn run_worker(
         // `stdin` drops here regardless of `write_result`, closing the write end so the child's
         // `read_exact` calls see a clean EOF rather than hanging on a half-written request.
         drop(stdin);
-        write_result.map_err(|err| host_failure(HostFailureKind::Crash, format!("request write failed: {err}")))?;
+        // A failed write (a child that exited before it read the request: `EPIPE`) says nothing
+        // about how the child ended. The host still reads what it produced and waits for it, and
+        // classifies by its exit status, its signal and its output; the error is only kept as the
+        // detail of the failure that classification ends in.
+        if let Err(err) = write_result {
+            *write_error = Some(err.to_string());
+        }
     }
 
     let mut stdout = child
@@ -302,6 +355,12 @@ fn run_worker(
         ReadOutcome::SetupPhaseTimedOut => final_cpu_us,
         _ => marker.and_then(|marker| marker.cpu_us),
     };
+    observation.setup_wall_us = match &read_outcome {
+        ReadOutcome::SetupPhaseTimedOut => Some(duration_micros(spawned_at.elapsed())),
+        _ => marker.map(|marker| duration_micros(marker.at.saturating_duration_since(spawned_at))),
+    };
+    // Which setup guard fired is in the marker byte, so a refused or killed attempt reports it too.
+    observation.setup_guard = marker.and_then(|marker| marker.setup_guard);
 
     let response_bytes = match read_outcome {
         ReadOutcome::SetupPhaseTimedOut => {
@@ -365,12 +424,12 @@ fn run_worker(
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard,
+            touched_blocks,
         } => Ok(IsolatedApplySuccess {
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard,
+            touched_blocks,
         }),
         Outcome::Rejected(err) => Err(IsolatedApplyError::Collab(err)),
     }
@@ -426,14 +485,15 @@ fn setup_phase_timeout_ms() -> u64 {
 }
 
 /// Written as the very first byte of every response the worker ever sends
-/// (`respond_and_exit` in `src/bin/isolated_apply_worker.rs`), before the framed outcome that
-/// follows it. Its only job is to let [`read_response_two_phase`] tell "still doing unmetered
+/// (`write_marker_or_exit` in `src/bin/isolated_apply_worker.rs`), before the framed outcome that
+/// follows it. This is the byte of a worker whose setup guard did not fire; one whose guard fired
+/// writes the byte `wire::marker_byte` names, which says which (`wire::guard_of_marker`). Its only job is to let [`read_response_two_phase`] tell "still doing unmetered
 /// setup" apart from "done with setup, response is now being written" -- so the *strict*
 /// `decode_apply_wall_ms_max` watchdog can start counting from the moment that is actually true,
 /// instead of from process spawn (which would double-count spawn + base-document-load time
 /// against a ceiling `contracts/limits-v1.md` scopes to decode/apply/shape-validate only: "从
 /// decode 前开始计,到 semantic diff/shape validation 完成结束").
-pub const RESPONSE_MARKER_BYTE: u8 = 0xA5;
+pub const RESPONSE_MARKER_BYTE: u8 = wire::MARKER_NO_GUARD;
 
 /// What [`read_response_two_phase`] observed.
 enum ReadOutcome {
@@ -490,6 +550,7 @@ fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> (ReadOutc
     let marker = MarkerSample {
         at: marker_at,
         cpu_us: child_cpu_micros(pid_of(child)),
+        setup_guard: buffer.first().copied().and_then(wire::guard_of_marker),
     };
 
     // The single-poll-then-read pattern below can (and in practice often does) return more than
@@ -518,6 +579,8 @@ struct MarkerSample {
     at: Instant,
     /// The child's CPU time (user plus system) at that instant, if the kernel reported it.
     cpu_us: Option<u64>,
+    /// The setup guard the marker byte names.
+    setup_guard: Option<crate::setup_guard::Fired>,
 }
 
 fn duration_micros(duration: Duration) -> u64 {
@@ -1102,7 +1165,7 @@ mod tests {
                     snapshot: Vec::new(),
                     window_cpu_us: None,
                     window_report: None,
-                    setup_guard: None,
+                    touched_blocks: Vec::new(),
                 }),
                 &observed(Some(150_000)),
                 ceiling
@@ -1116,7 +1179,7 @@ mod tests {
                     snapshot: Vec::new(),
                     window_cpu_us: None,
                     window_report: None,
-                    setup_guard: None,
+                    touched_blocks: Vec::new(),
                 }),
                 &observed(Some(33_000))
             ),
@@ -1549,6 +1612,21 @@ mod tests {
         update: &[u8],
         mode: WindowMode,
     ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+        isolated_apply_real_observed_with_budget(
+            base_snapshot,
+            update,
+            mode,
+            crate::setup_guard::SETUP_CPU_BUDGET_MS_DEFAULT,
+        )
+    }
+
+    /// [`isolated_apply_real_observed`] with the setup CPU budget the host passes to the worker.
+    fn isolated_apply_real_observed_with_budget(
+        base_snapshot: &[u8],
+        update: &[u8],
+        mode: WindowMode,
+        setup_cpu_budget_ms: u64,
+    ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
         let worker_path = required_debug_worker_binary_for_tests();
         let guard = env_lock().lock();
         // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
@@ -1556,7 +1634,7 @@ mod tests {
         unsafe {
             std::env::set_var(WORKER_BINARY_PATH_ENV, &worker_path);
         }
-        let result = isolated_apply_with_observed(base_snapshot, update, mode);
+        let result = isolated_apply_with_observed(base_snapshot, update, mode, setup_cpu_budget_ms);
         // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
         unsafe {
             std::env::remove_var(WORKER_BINARY_PATH_ENV);
@@ -1618,6 +1696,87 @@ mod tests {
             observation.decision,
             Some(WindowDecision::Undecided),
             "an import that fails never reaches the check: {observation:?}"
+        );
+    }
+
+    /// A title update by an author that has seen `base`.
+    fn a_title_update_on(base: &[u8]) -> Vec<u8> {
+        let mut server = crate::LoroCollabEngine::load(base).expect("the base loads");
+        let frontier = server.frontier();
+        server.set_title("typed").expect("the title is set");
+        server.export_from(&frontier).expect("export succeeds")
+    }
+
+    /// A-1 and A-5 on the real worker: a page with one text that costs the setup more than a
+    /// window's ceiling yields no facts, the worker reloads and meters the decode again, and the
+    /// host learns which guard fired from the marker byte even though the full window is then killed
+    /// by its ceiling and no response frame ever arrives.
+    #[test]
+    fn a_text_over_its_budget_is_reported_by_the_marker_of_an_attempt_the_full_window_kills() {
+        let base = crate::engine::window_text_guard_tests::nested_marks_page(50, 1, 1_800);
+        let update = a_title_update_on(&base);
+        let (result, observation) = isolated_apply_real_observed(&base, &update, WindowMode::Incremental);
+        assert!(
+            matches!(
+                result,
+                Err(IsolatedApplyError::CpuCeiling | IsolatedApplyError::WallCeiling)
+            ),
+            "the full window pays the decode of the text inside its ceiling and is killed: {result:?}"
+        );
+        assert_eq!(
+            observation.setup_guard,
+            Some(crate::setup_guard::Fired::Text),
+            "{observation:?}"
+        );
+        // A page without such a text reports no guard, whichever way the attempt ends.
+        let (base, update) = typed_update_on_a_block_page();
+        let snapshot = base.export_snapshot().expect("export succeeds");
+        let (result, observation) = isolated_apply_real_observed(&snapshot, &update, WindowMode::Incremental);
+        result.expect("accepted");
+        assert_eq!(observation.setup_guard, None);
+        let (result, observation) = isolated_apply_real_observed(&snapshot, b"not an update", WindowMode::Incremental);
+        assert!(result.is_err());
+        assert_eq!(observation.setup_guard, None);
+    }
+
+    /// R9-3 on the real worker: a page over the item budget (no facts, and no guard fired) has had
+    /// its texts decoded by the setup's count, and the full window that decides it still meters
+    /// those decodes, because the worker starts it from a freshly loaded engine: 60 texts of 400
+    /// nested marks cost about 0.4 s together, far over the window's ceiling. Without the reload
+    /// the window would find them decoded and accept.
+    #[test]
+    fn a_page_over_the_item_budget_meters_the_decode_of_the_texts_the_count_read() {
+        let base = crate::engine::window_text_guard_tests::over_the_item_budget_with_decoded_texts();
+        let update = a_title_update_on(&base);
+        let (result, observation) = isolated_apply_real_observed(&base, &update, WindowMode::Incremental);
+        assert!(
+            matches!(
+                result,
+                Err(IsolatedApplyError::CpuCeiling | IsolatedApplyError::WallCeiling)
+            ),
+            "the full window pays the decode of every text inside its ceiling: {result:?}"
+        );
+        assert_eq!(observation.setup_guard, None, "no guard fired: {observation:?}");
+        assert_eq!(
+            observation.decision,
+            Some(WindowDecision::Fallback(FallbackReason::FactsAbsent)),
+            "{observation:?}"
+        );
+    }
+
+    /// A-4 on the real worker: the host's setting of the setup CPU budget reaches the worker. A page
+    /// whose setup costs more than half a second of CPU (250 texts of 450 nested marks, 2 s and more)
+    /// trips the CPU guard of a worker given a budget of 500 ms.
+    #[test]
+    fn the_setup_cpu_budget_of_the_host_reaches_the_worker() {
+        let base = crate::engine::window_text_guard_tests::nested_marks_page(250, 250, 450);
+        let update = a_title_update_on(&base);
+        let (_result, observation) =
+            isolated_apply_real_observed_with_budget(&base, &update, WindowMode::Incremental, 500);
+        assert_eq!(
+            observation.setup_guard,
+            Some(crate::setup_guard::Fired::Cpu),
+            "{observation:?}"
         );
     }
 
@@ -1768,6 +1927,15 @@ mod tests {
             sleeping_cpu_us < 300_000,
             "a sleeping setup consumed {sleeping_cpu_us}us of CPU"
         );
+        // The wall time of the setup is reported too, so that CPU well below it reads as starvation.
+        let wall_us = observation
+            .setup_wall_us
+            .expect("the wall time of a killed setup is reported");
+        assert!(wall_us >= 400_000, "killed at the timeout: {wall_us}us of wall time");
+        assert!(
+            sleeping_cpu_us * 2 < wall_us,
+            "a sleeping setup had little CPU for its wall time"
+        );
 
         // A burning setup: killed at the timeout having consumed CPU for most of it.
         let burned_us = conclusive_run("a burning setup", || {
@@ -1813,13 +1981,18 @@ mod tests {
 
     /// Runs the host against a stand-in program that is not the worker.
     fn isolated_apply_against(program: &str) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+        isolated_apply_against_request(program, &[])
+    }
+
+    /// [`isolated_apply_against`] with a base snapshot field of the given bytes in the request.
+    fn isolated_apply_against_request(program: &str, base: &[u8]) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
         let guard = env_lock().lock();
         // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
         // `WORKER_BINARY_PATH_ENV` while this is set.
         unsafe {
             std::env::set_var(WORKER_BINARY_PATH_ENV, program);
         }
-        let result = isolated_apply(&[], &[]);
+        let result = isolated_apply(base, &[]);
         // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
         unsafe {
             std::env::remove_var(WORKER_BINARY_PATH_ENV);
@@ -1856,5 +2029,70 @@ mod tests {
             panic!("a missing worker is a host failure, got {result:?}");
         };
         assert_eq!(failure.kind, HostFailureKind::Spawn, "{failure:?}");
+    }
+
+    /// A stand-in worker: a shell script with this body, in a directory of its own.
+    fn stand_in_worker(name: &str, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("collab-stand-in-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the stand-in directory is created");
+        let path = dir.join("worker");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("the stand-in is written");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("the stand-in is executable");
+        path
+    }
+
+    /// A request base field far larger than a pipe holds (64 KiB on Linux): a child that never reads
+    /// it makes the host's write fail with `EPIPE` once the child has exited, whatever the
+    /// scheduling, because the write cannot complete into the pipe's buffer.
+    fn a_request_larger_than_the_pipe() -> Vec<u8> {
+        vec![0; 4 * 1024 * 1024]
+    }
+
+    /// The ordering of the request write and the child's end. A failed request write never decides
+    /// the classification: the host waits for the child, reads what it produced, and classifies by
+    /// its actual outcome, so these are the same as when the write succeeds. The stand-ins make the
+    /// write fail on purpose (they exit without reading a request that cannot fit the pipe); the one
+    /// that exits after reading it makes it succeed.
+    #[test]
+    fn a_failed_request_write_does_not_decide_the_classification() {
+        let base = a_request_larger_than_the_pipe();
+        let classify = |name: &str, body: &str, request: &[u8]| {
+            let path = stand_in_worker(name, body);
+            let result = isolated_apply_against_request(path.to_str().expect("a UTF-8 path"), request);
+            let _ = std::fs::remove_dir_all(path.parent().expect("a directory"));
+            let Err(IsolatedApplyError::HostFailure(failure)) = result else {
+                panic!("{name}: a host failure, got {result:?}");
+            };
+            failure
+        };
+
+        // Exits 0 before it reads the request: the write fails, and it is still a protocol failure
+        // (exit 0 without a decision record), with the write error as the detail.
+        let failure = classify("exits-first", "exit 0", &base);
+        assert_eq!(failure.kind, HostFailureKind::Protocol, "{failure:?}");
+        assert!(failure.detail.contains("decision record"), "{failure:?}");
+        assert!(failure.detail.contains("request write failed"), "{failure:?}");
+
+        // Exits non-zero before it reads the request: a crash, by its status.
+        let failure = classify("exits-nonzero", "exit 3", &base);
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
+        assert!(failure.detail.contains("non-zero status Some(3)"), "{failure:?}");
+
+        // Killed by a signal it did not get from the host before it reads the request: classified
+        // by its signal, as before (a foreign SIGKILL is a host short of resources, not a crash).
+        let failure = classify("killed-first", "kill -KILL $$", &base);
+        assert_eq!(failure.kind, HostFailureKind::ForeignKill, "{failure:?}");
+        let failure = classify("segfault-first", "kill -SEGV $$", &base);
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
+        assert!(failure.detail.contains("signal"), "{failure:?}");
+
+        // Exits 0 after it has read the whole request: the write succeeded, the same classification
+        // and no write error in the detail.
+        let failure = classify("exits-after-reading", "cat >/dev/null\nexit 0", &base);
+        assert_eq!(failure.kind, HostFailureKind::Protocol, "{failure:?}");
+        assert!(!failure.detail.contains("request write failed"), "{failure:?}");
+        let failure = classify("exits-after-reading-nonzero", "cat >/dev/null\nexit 3", &base);
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
     }
 }

@@ -89,6 +89,12 @@ pub(super) enum FactsFrom {
     /// The facts of the base, computed under a CPU guard on the tests' stepping clock (1 ms per read)
     /// with a budget of this many reads.
     CpuStepped(u64),
+    /// The facts of the base, computed under a guard whose per-text allocation limit is this many
+    /// bytes (and no other limit).
+    TextGuarded(u64),
+    /// The facts of the base, computed under a per-text CPU budget on the tests' stepping clock (1 ms
+    /// per read) of this many reads (and no other limit).
+    TextCpuStepped(u64),
     /// The facts of another snapshot of the page: they describe a state the import does not start
     /// from.
     OtherBase(Arc<Vec<u8>>),

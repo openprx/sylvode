@@ -41,6 +41,7 @@ pub const fn isolated_apply_with_observed(
     _base_snapshot: &[u8],
     _update: &[u8],
     _mode: WindowMode,
+    _setup_cpu_budget_ms: u64,
 ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
     (Err(unsupported()), observation())
 }
@@ -58,7 +59,9 @@ const fn observation() -> WorkerObservation {
         metered_wall_us: None,
         metered_cpu_us: None,
         setup_cpu_us: None,
+        setup_wall_us: None,
         decision: None,
+        setup_guard: None,
     }
 }
 

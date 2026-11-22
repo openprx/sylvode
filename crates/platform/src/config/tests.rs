@@ -1133,8 +1133,9 @@ fn a_conversion_reap_interval_outside_one_second_to_one_day_is_refused() {
 }
 
 #[test]
-fn the_incremental_window_is_on_by_default_and_can_be_switched_off() {
-    assert!(parse("").unwrap().flow.incremental_window);
+fn the_incremental_window_is_off_by_default_and_can_be_switched_on() {
+    assert!(!parse("").unwrap().flow.incremental_window);
+    assert!(!parse("[flow]\n").unwrap().flow.incremental_window);
     assert!(
         parse("[flow]\nincremental_window = true\n")
             .unwrap()
@@ -1148,9 +1149,24 @@ fn the_incremental_window_is_on_by_default_and_can_be_switched_off() {
             .incremental_window
     );
     assert!(
-        parse("[flow]\nincremental_window = \"off\"\n").is_err(),
+        parse("[flow]\nincremental_window = \"on\"\n").is_err(),
         "a non-boolean value is refused"
     );
+}
+
+#[test]
+fn the_setup_cpu_budget_defaults_to_2500_and_is_bounded() {
+    assert_eq!(parse("").unwrap().flow.setup_cpu_budget_ms, 2_500);
+    for value in [500_u64, 2_500, 3_000, 4_000] {
+        let configured = parse(&format!("[flow]\nsetup_cpu_budget_ms = {value}\n")).unwrap();
+        assert_eq!(configured.flow.setup_cpu_budget_ms, value);
+    }
+    for value in ["0", "499", "4001", "100000", "-1", "\"2500\"", "2.5"] {
+        assert!(
+            parse(&format!("[flow]\nsetup_cpu_budget_ms = {value}\n")).is_err(),
+            "{value} is refused"
+        );
+    }
 }
 
 #[test]

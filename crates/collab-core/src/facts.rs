@@ -132,13 +132,29 @@ pub struct SetupFacts {
     /// The setup has cost more than [`SetupGuard`] allows, so there are no facts. Telemetry: the
     /// page takes the full window, as it does for any base without facts.
     pub guard: Option<Fired>,
+    /// The setup read (decoded and converted) the page's texts on the engine it was given, whether
+    /// or not it ended with facts. The decode of a text is memoised in its document, so a window
+    /// that runs on that engine does not pay for it: a window that must meter the decode starts
+    /// from a freshly loaded engine when there are no facts and this is set.
+    pub texts_read: bool,
 }
 
 impl SetupFacts {
-    /// No facts, with or without a guard being the reason.
+    /// No facts, with or without a guard being the reason, and no text read.
     #[must_use]
     pub const fn none(guard: Option<Fired>) -> Self {
-        Self { facts: None, guard }
+        Self {
+            facts: None,
+            guard,
+            texts_read: false,
+        }
+    }
+
+    /// Whether the full window that decides the page needs an engine the setup has not read the
+    /// texts of: there are no facts, and either a guard fired or the texts were read.
+    #[must_use]
+    pub const fn needs_fresh_engine(&self) -> bool {
+        self.facts.is_none() && (self.guard.is_some() || self.texts_read)
     }
 }
 
@@ -170,18 +186,28 @@ impl BaseFacts {
         if let Some(fired) = guard.fired() {
             return SetupFacts::none(Some(fired));
         }
-        match Self::compute_within(engine, guard) {
+        let mut texts_read = false;
+        match Self::compute_within(engine, guard, &mut texts_read) {
             Ok(facts) => SetupFacts {
                 facts: Some(facts),
                 guard: None,
+                texts_read,
             },
-            Err(guard) => SetupFacts::none(guard),
+            Err(guard) => SetupFacts {
+                facts: None,
+                guard,
+                texts_read,
+            },
         }
     }
 
     /// The facts, or the guard that stopped the setup (`Err(Some(_))`), or `Err(None)` when the base
     /// has no facts for another reason.
-    fn compute_within(engine: &LoroCollabEngine, guard: &SetupGuard) -> Result<Self, Option<Fired>> {
+    fn compute_within(
+        engine: &LoroCollabEngine,
+        guard: &SetupGuard,
+        texts_read: &mut bool,
+    ) -> Result<Self, Option<Fired>> {
         if engine.has_duplicate_logical_ids() || engine.has_editor_structure().map_err(|_| None)? {
             return Err(None);
         }
@@ -193,6 +219,7 @@ impl BaseFacts {
         // The count also yields the mark items of every block, so no text is converted a third time
         // for them. The guard stops it between texts.
         let (bytes_before, cpu_before) = (guard.spent(), guard.cpu_spent());
+        *texts_read = true;
         let counted = engine
             .projection_count_guarded(crate::work::item_budget_ceiling(), *guard)
             .map_err(|_| None)?;
@@ -206,7 +233,11 @@ impl BaseFacts {
         // costs about what the count did, in allocation and in CPU time: both limits must hold
         // for the two.
         let counted_bytes = guard.spent().saturating_sub(bytes_before);
-        let counted_nanos = guard.cpu_spent().saturating_sub(cpu_before);
+        // A CPU clock that cannot be read fails the guard closed.
+        let (Some(cpu_before), Some(cpu_after)) = (cpu_before, guard.cpu_spent()) else {
+            return Err(Some(Fired::Cpu));
+        };
+        let counted_nanos = cpu_after.saturating_sub(cpu_before);
         if let Some(fired) = guard.fired_by(counted_bytes, counted_nanos) {
             return Err(Some(fired));
         }

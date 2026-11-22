@@ -2399,7 +2399,13 @@ mod tests {
 
         // A typed `server_rejected` names its own reason: the isolated-apply defects reach the
         // client as themselves, not as the database refusal and not as contention.
-        for reason in ["window_divergence", "isolated_apply_failed", "isolated_setup_exhausted"] {
+        for reason in [
+            "window_divergence",
+            "isolated_apply_failed",
+            "isolated_setup_exhausted",
+            "document_base_unreadable",
+            "candidate_derivation_failed",
+        ] {
             let rejection = write_error_rejection(&ApiError::server_rejected(reason));
             assert_eq!(rejection.code, RejectedCode::ServerRejected, "{reason}");
             assert!(!rejection.recoverable, "{reason}");
@@ -6103,7 +6109,9 @@ mod tests {
                 metered_wall_us: Some(100_000),
                 metered_cpu_us: cpu_us,
                 setup_cpu_us: None,
+                setup_wall_us: None,
                 decision,
+                setup_guard: None,
             }
         }
 
@@ -6138,6 +6146,7 @@ mod tests {
         /// afterwards.
         #[tokio::test]
         async fn apply_busy_reaches_a_websocket_client_in_both_retry_modes_and_the_session_survives() {
+            let _incremental = crate::config::test_support::enable_incremental_window();
             use crate::flow::collab::write::scripted_attempts::{self, Scripted};
 
             let scratch = scratch_or_skip!("apply-busy-modes");
@@ -6209,6 +6218,7 @@ mod tests {
         /// answers the original receipt.
         #[tokio::test]
         async fn a_busy_update_resent_under_the_same_update_id_commits_once_over_the_socket() {
+            let _incremental = crate::config::test_support::enable_incremental_window();
             use crate::flow::collab::write::scripted_attempts;
 
             let scratch = scratch_or_skip!("apply-busy-resend");
@@ -6252,6 +6262,7 @@ mod tests {
         /// retryable `contention`).
         #[tokio::test]
         async fn content_limits_and_defects_stay_permanent_on_the_socket() {
+            let _incremental = crate::config::test_support::enable_incremental_window();
             use crate::flow::collab::write::scripted_attempts::{self, Scripted};
             use collab_core::isolation::wire::WindowDecision;
             use collab_core::isolation::{HostFailure, HostFailureKind, IsolatedApplyError};
@@ -6336,6 +6347,101 @@ mod tests {
                 assert_eq!(details.expect("details")[key], expected);
             }
             assert_eq!(read_head_seq(&state, document_id).await, head_seq_before);
+            scratch.drop_self().await;
+        }
+
+        /// A-1, the end state of the review, over a real socket: a page whose setup used its CPU
+        /// budget does not answer `server_rejected{isolated_setup_exhausted}` write after write
+        /// until the session closes. The first write is decided by the full window, which refuses
+        /// it with the content limit; so are the writes that follow (the document is on the full
+        /// window). Four refusals, one more than the streak that closes a connection, leave the
+        /// socket open, and a write the full window accepts is accepted on it.
+        #[tokio::test]
+        async fn a_setup_that_used_its_cpu_budget_answers_the_content_limit_and_the_session_stays_open() {
+            let _incremental = crate::config::test_support::enable_incremental_window();
+            use crate::flow::collab::write::scripted_attempts::{self, Scripted};
+            use collab_core::isolation::wire::WindowDecision;
+            use collab_core::isolation::{HostFailure, HostFailureKind, IsolatedApplyError};
+            use collab_core::window_check::FallbackReason;
+
+            let scratch = scratch_or_skip!("setup-backstop-open");
+            let state = state_for(scratch.db.clone());
+            let (workspace_id, owner_id) = seed_workspace(&state).await;
+            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let token = jwt_for(owner_id);
+            let addr = spawn_server(state.clone()).await;
+            let client_id = "setup-backstop-open-client";
+            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
+
+            let setup_exhausted = || {
+                Scripted::Refuse(
+                    IsolatedApplyError::HostFailure(HostFailure::new(HostFailureKind::SetupTimeout, "scripted")),
+                    collab_core::isolation::WorkerObservation {
+                        setup_cpu_us: Some(4_900_000),
+                        ..observed_worker(None, None)
+                    },
+                )
+            };
+            let cpu_kill = || {
+                Scripted::Refuse(
+                    IsolatedApplyError::CpuCeiling,
+                    observed_worker(
+                        Some(52_000),
+                        Some(WindowDecision::Fallback(FallbackReason::FactsAbsent)),
+                    ),
+                )
+            };
+            scripted_attempts::enable(
+                document_id,
+                vec![
+                    setup_exhausted(),
+                    cpu_kill(),
+                    cpu_kill(),
+                    cpu_kill(),
+                    cpu_kill(),
+                    Scripted::InProcess,
+                ],
+            );
+            for round in 0..4 {
+                let update = next_update_frame(&state, document_id).await;
+                let sent_update_id = update_id_of(&update);
+                send_frame(&mut ws, &update).await;
+                let Rejection {
+                    update_id,
+                    code,
+                    recoverable,
+                    write_state,
+                    details,
+                } = expect_rejection(recv_frame_or_close(&mut ws).await);
+                assert_eq!(code, RejectedCode::LimitExceeded, "write {round}");
+                assert_eq!(update_id, Some(sent_update_id));
+                assert!(!recoverable);
+                assert_eq!(write_state, crate::flow::collab::frame::WriteState::NotApplied);
+                assert_eq!(details.expect("details")["limit_kind"], "decode_apply_cpu_ms");
+            }
+            assert_eq!(
+                scripted_attempts::modes(document_id),
+                [
+                    collab_core::isolation::WindowMode::Incremental,
+                    collab_core::isolation::WindowMode::Full,
+                    collab_core::isolation::WindowMode::Full,
+                    collab_core::isolation::WindowMode::Full,
+                    collab_core::isolation::WindowMode::Full,
+                ],
+                "the first write tried the setup and then the full window, the next ones the full window only"
+            );
+            assert_eq!(read_head_seq(&state, document_id).await, head_seq_before);
+
+            let update = next_update_frame(&state, document_id).await;
+            send_frame(&mut ws, &update).await;
+            let Received::Frame(frame) = recv_frame_or_close(&mut ws).await else {
+                panic!("the session survives four content-limit answers");
+            };
+            let Frame::Accepted { head_seq, .. } = *frame else {
+                panic!("a write the full window accepts is accepted, got {frame:?}");
+            };
+            assert_eq!(head_seq, head_seq_before + 1);
             scratch.drop_self().await;
         }
 

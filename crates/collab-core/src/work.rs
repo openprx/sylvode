@@ -219,7 +219,7 @@ use loro::{
 };
 
 use crate::operation::NodeId;
-use crate::setup_guard::{Fired, SetupGuard};
+use crate::setup_guard::{Fired, SetupGuard, TextMark};
 
 /// Characters of one text container that count as one item.
 pub const CHARS_PER_ITEM: u64 = 256;
@@ -470,9 +470,11 @@ pub fn op_work(content: &JsonOpContent) -> OpWork {
 pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64, guard: Option<&SetupGuard>) -> Result<u64, Stop> {
     #[cfg(test)]
     crate::walk_counter::record_delta_read(loro::ContainerTrait::id(text).to_string());
+    // The text's own cost, measured from here: its decode (the `iter` below) and its conversion.
+    let mark = guard.map(SetupGuard::text_start);
     #[cfg(test)]
     if crate::window_check::fault::active() == Some(crate::window_check::fault::Fault::PieceCountSkipped) {
-        return text_segment_items(text, &[], stop_over, guard);
+        return text_segment_items(text, &[], stop_over, guard.zip(mark));
     }
     let mut pieces: Vec<usize> = Vec::new();
     let mut within = true;
@@ -485,7 +487,7 @@ pub(crate) fn text_mark_items(text: &LoroText, stop_over: u64, guard: Option<&Se
     if !within {
         return Err(Stop::Ceiling);
     }
-    text_segment_items(text, &pieces, stop_over, guard)
+    text_segment_items(text, &pieces, stop_over, guard.zip(mark))
 }
 
 /// The segment and piece charges of [`text_mark_items`], given the lengths in characters of the
@@ -494,11 +496,14 @@ fn text_segment_items(
     text: &LoroText,
     pieces: &[usize],
     stop_over: u64,
-    guard: Option<&SetupGuard>,
+    guard: Option<(&SetupGuard, TextMark)>,
 ) -> Result<u64, Stop> {
     // The decode of the text's style state (the `iter` before) is paid for; the conversion of its
-    // delta, which a hostile shape makes the dearer part, is not started when the setup is over.
-    if let Some(fired) = guard.and_then(SetupGuard::fired) {
+    // delta, which a hostile shape makes the dearer part, is not started when the setup is over or
+    // when the decode alone has cost this text more than its budget.
+    if let Some((guard, mark)) = guard
+        && let Some(fired) = guard.fired().or_else(|| guard.text_fired(mark))
+    {
         return Err(Stop::Guard(fired));
     }
     let mut bytes: u64 = 0;
@@ -551,6 +556,13 @@ fn text_segment_items(
         if bytes / BYTES_PER_ITEM > stop_over {
             return Err(Stop::Ceiling);
         }
+    }
+    // The conversion is paid for too: a text whose decode and conversion together passed its budget
+    // yields no facts, whichever of the two was the dear part.
+    if let Some((guard, mark)) = guard
+        && let Some(fired) = guard.text_fired(mark)
+    {
+        return Err(Stop::Guard(fired));
     }
     Ok(bytes / BYTES_PER_ITEM)
 }

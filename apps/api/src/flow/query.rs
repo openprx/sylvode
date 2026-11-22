@@ -827,6 +827,7 @@ pub(crate) fn isolated_diff_error(
         observation,
         collab_core::isolation::WindowMode::Full,
         RebasePolicy::None,
+        crate::config::runtime().flow.setup_cpu_budget_ms,
     );
     record(
         &AttemptLog {

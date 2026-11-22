@@ -14,8 +14,10 @@
 //!    decoded state of the base's block list, alias map, order map and placement tree and builds
 //!    the root key index, work the import of an update would otherwise do inside the window. It
 //!    reaches no verdict and never sees the update.
-//! 3. Write `host::RESPONSE_MARKER_BYTE` to stdout and flush -- the unmetered setup phase is now
-//!    over. This is the signal `isolation::host::read_response_two_phase` uses to start its own
+//! 3. Write the marker byte (`wire::marker_byte`: `host::RESPONSE_MARKER_BYTE`, or the byte that names
+//!    the setup guard that fired) to stdout and flush -- the unmetered setup phase is now over. A
+//!    fired guard (`setup_guard`) has the worker load and prewarm the base again first, so that the
+//!    full window meters the decode of the texts the setup decoded on the first engine. This is the signal `isolation::host::read_response_two_phase` uses to start its own
 //!    independent `decode_apply_wall_ms_max` watchdog from the *right* moment (the metered window
 //!    is about to open), not from whenever the full response happens to be ready. See
 //!    [`write_marker_or_exit`]'s doc comment for why this must happen here and not folded into the
@@ -67,7 +69,7 @@ use collab_core::isolation::{alloc, child_runtime, host, wire};
 #[cfg(target_os = "linux")]
 use collab_core::limits::{DocumentLimits, check_snapshot};
 #[cfg(target_os = "linux")]
-use collab_core::setup_guard::SetupGuard;
+use collab_core::setup_guard::{self, SetupGuard};
 #[cfg(target_os = "linux")]
 use collab_core::window_check::{self, WindowReport};
 #[cfg(target_os = "linux")]
@@ -103,32 +105,35 @@ fn main() {
 
     let operation = std::env::var(wire::OPERATION_ENV).unwrap_or_else(|_| wire::OPERATION_APPLY.to_string());
     if operation == wire::OPERATION_DIFF {
-        write_marker_or_exit();
+        write_marker_or_exit(None);
         respond_and_exit(&replay_diff_check_and_encode(&base_snapshot, &update));
     }
     if operation != wire::OPERATION_APPLY {
         exit_without_response(1);
     }
 
-    // The setup guard's count starts here, before the base is decoded.
-    let setup_guard = SetupGuard::start();
+    // The setup guard's count starts here, before the base is decoded. Its CPU budget is the host's
+    // setting (`[flow] setup_cpu_budget_ms`); a value outside the accepted range is the default.
+    let setup_guard = SetupGuard::start_with_cpu_budget(setup_guard::cpu_budget_nanos_from_setting(
+        std::env::var(wire::SETUP_CPU_BUDGET_ENV).ok().as_deref(),
+    ));
 
     // `LoroCollabEngine::load`'s error is reported via the normal response frame (it is a real,
     // well-typed `CollabError` a caller-facing rejection can be built from), not treated as a
     // host failure -- so this cannot be a `let...else` (clippy's suggested rewrite): the
     // divergent branch needs the `Err` payload, not just "diverge".
     #[allow(clippy::manual_let_else)]
-    let base_engine = match LoroCollabEngine::load(&base_snapshot) {
+    let first_engine = match LoroCollabEngine::load(&base_snapshot) {
         Ok(engine) => engine,
         Err(err) => {
-            write_marker_or_exit();
+            write_marker_or_exit(None);
             respond_and_exit(&wire::Outcome::Rejected(err));
         }
     };
 
     // Still setup: materialise the trusted base's containers that an update would otherwise make
     // the metered import decode. No verdict is reached here and nothing depends on the update.
-    base_engine.prewarm_for_writes();
+    first_engine.prewarm_for_writes();
     // Also setup: the facts of the trusted base that the incremental window check corrects by
     // what the update touched (D2b). A pure function of the base; absent for a base the check does
     // not describe, and then the window takes the full computation.
@@ -140,7 +145,31 @@ fn main() {
     let setup = if std::env::var(wire::WINDOW_ENV).as_deref() == Ok(wire::WINDOW_FULL) {
         SetupFacts::none(None)
     } else {
-        BaseFacts::compute_guarded(&base_engine, &setup_guard)
+        BaseFacts::compute_guarded(&first_engine, &setup_guard)
+    };
+
+    // A setup that read the page's texts and ended without facts (a fired guard, a page over the
+    // item budget, a snapshot over a limit) has decoded them on this engine, outside any window:
+    // the decode of a text is memoised in the document, so the full window that now decides the
+    // page would find it paid for and never meter it. The window starts from a fresh load instead,
+    // exactly as the worker did before the incremental window existed, so the decode is metered
+    // again and a text whose decode alone passes the CPU ceiling is refused with the content
+    // limit. The first engine is dropped before the reload, so two engines never share the
+    // address-space limit. The reload is bounded by the snapshot.
+    let base_engine = if setup.needs_fresh_engine() {
+        drop(first_engine);
+        match LoroCollabEngine::load(&base_snapshot) {
+            Ok(fresh) => {
+                fresh.prewarm_for_writes();
+                fresh
+            }
+            Err(err) => {
+                write_marker_or_exit(setup.guard);
+                respond_and_exit(&wire::Outcome::Rejected(err));
+            }
+        }
+    } else {
+        first_engine
     };
 
     // Test builds only: a synthetic setup that sleeps or burns CPU, to exercise the host's setup
@@ -148,7 +177,7 @@ fn main() {
     #[cfg(debug_assertions)]
     test_injection::run_setup_workload();
 
-    write_marker_or_exit();
+    write_marker_or_exit(setup.guard);
     respond_and_exit(&decode_apply_check_and_export(base_engine, &setup, &update));
 }
 
@@ -166,7 +195,7 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
                 snapshot,
                 window_cpu_us: None,
                 window_report: None,
-                setup_guard: None,
+                touched_blocks: Vec::new(),
             },
             Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
                 reason: format!("diff result encoding failed: {error}"),
@@ -272,7 +301,8 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
     })
 }
 
-/// Writes [`host::RESPONSE_MARKER_BYTE`] and flushes, marking the exact moment this process's
+/// Writes the marker byte (`wire::marker_byte`: [`host::RESPONSE_MARKER_BYTE`] when no setup guard
+/// fired, and a byte that names the guard that did) and flushes, marking the exact moment this process's
 /// unmetered setup (reading the request, loading the base document) is over. Split out from
 /// [`respond_and_exit`] -- an earlier version of this file wrote the marker together with the
 /// final framed response, which made `isolation::host::read_response_two_phase`'s
@@ -289,10 +319,10 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
 /// failure in `main` does -- a write failure this early means the parent cannot receive a useful
 /// response of any shape.
 #[cfg(target_os = "linux")]
-fn write_marker_or_exit() {
+fn write_marker_or_exit(setup_guard: Option<collab_core::setup_guard::Fired>) {
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
-    if lock.write_all(&[host::RESPONSE_MARKER_BYTE]).is_err() || lock.flush().is_err() {
+    if lock.write_all(&[wire::marker_byte(setup_guard)]).is_err() || lock.flush().is_err() {
         drop(lock);
         exit_without_response(1);
     }
@@ -369,7 +399,7 @@ fn run_metered(engine: LoroCollabEngine, facts: Option<&BaseFacts>, update: &[u8
 #[cfg(target_os = "linux")]
 struct Metered {
     /// The accepted engine and what the incremental check established, or the rejection.
-    verdict: Result<(LoroCollabEngine, Option<WindowReport>), wire::Outcome>,
+    verdict: Result<(LoroCollabEngine, Option<WindowReport>, Vec<String>), wire::Outcome>,
     window_cpu_us: Option<u64>,
 }
 
@@ -401,10 +431,10 @@ fn metered_workload(
     engine: LoroCollabEngine,
     facts: Option<&BaseFacts>,
     update: &[u8],
-) -> Result<(LoroCollabEngine, Option<WindowReport>), wire::Outcome> {
+) -> Result<(LoroCollabEngine, Option<WindowReport>, Vec<String>), wire::Outcome> {
     #[cfg(debug_assertions)]
     if let Some(workload) = test_injection::workload_from_env() {
-        return Ok((test_injection::run(&workload, engine), None));
+        return Ok((test_injection::run(&workload, engine), None, Vec::new()));
     }
     decode_apply_and_check(engine, facts, update)
 }
@@ -417,12 +447,12 @@ fn decode_apply_and_check(
     mut engine: LoroCollabEngine,
     facts: Option<&BaseFacts>,
     update: &[u8],
-) -> Result<(LoroCollabEngine, Option<WindowReport>), wire::Outcome> {
+) -> Result<(LoroCollabEngine, Option<WindowReport>, Vec<String>), wire::Outcome> {
     // Import, then the structural check of the result: incrementally against the base facts when
     // that is certain, with the full projection and `check_snapshot` otherwise. Every refusal is
     // the full computation's own.
     match window_check::run_window(&mut engine, facts, update, &mut write_decision_record) {
-        Ok(accepted) => Ok((engine, accepted.report)),
+        Ok(accepted) => Ok((engine, accepted.report, accepted.touched_blocks)),
         Err(err) => Err(wire::Outcome::Rejected(err)),
     }
 }
@@ -445,12 +475,12 @@ fn decode_apply_and_check(
 fn decode_apply_check_and_export(engine: LoroCollabEngine, setup: &SetupFacts, update: &[u8]) -> wire::Outcome {
     let Metered { verdict, window_cpu_us } = run_metered(engine, setup.facts.as_ref(), update);
     match verdict {
-        Ok((accepted, window_report)) => match accepted.export_snapshot() {
+        Ok((accepted, window_report, touched_blocks)) => match accepted.export_snapshot() {
             Ok(snapshot) => wire::Outcome::Success {
                 snapshot,
                 window_cpu_us,
                 window_report,
-                setup_guard: setup.guard,
+                touched_blocks,
             },
             Err(err) => wire::Outcome::Rejected(err),
         },
@@ -728,13 +758,14 @@ mod tests {
             snapshot,
             window_cpu_us,
             window_report,
-            setup_guard,
+            touched_blocks,
         } = outcome
         else {
             panic!("expected Success, a title-only update stays well within every ceiling");
         };
         assert!(window_cpu_us.is_some(), "the worker reports the window CPU time");
-        assert!(setup_guard.is_none(), "a tiny base never trips a setup guard");
+        assert!(setup.guard.is_none(), "a tiny base never trips a setup guard");
+        assert!(touched_blocks.is_empty(), "a title touches no block");
         assert!(
             window_report.is_some(),
             "a title-only update on a tree page is decided by the incremental check"
