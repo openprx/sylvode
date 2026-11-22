@@ -180,6 +180,11 @@ export function isKindPattern(pattern: string): boolean {
 	return base.length <= KIND_MAX_LENGTH;
 }
 
+/** The first exact kind (not a `prefix.*`) of a kinds text, for the rule test sample event. */
+export function firstExactKind(text: string): string | null {
+	return parseKinds(text).patterns.find((p) => !p.endsWith('.*')) ?? null;
+}
+
 export interface ParsedKinds {
 	/** Valid patterns in typed order; duplicates are dropped silently. */
 	patterns: string[];

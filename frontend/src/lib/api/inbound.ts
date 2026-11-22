@@ -2,6 +2,7 @@ import { apiClient, type ApiResult } from './client';
 import {
 	parseDeleted,
 	parseEvents,
+	parseIssueAlert,
 	parseRuleWrite,
 	parseRules,
 	parseSecretsAnswer,
@@ -9,6 +10,7 @@ import {
 	parseSourceList,
 	parseTestResult,
 	type InboundEvent,
+	type IssueAlert,
 	type Priority,
 	type Rule,
 	type RuleAction,
@@ -209,6 +211,14 @@ export const inboundApi = {
 
 	async deleteRule(id: string): Promise<CallResult<{ deleted: true }>> {
 		return narrowed(await apiClient.delete<unknown>(rulePath(id)), parseDeleted);
+	},
+
+	/** Alert facts of one work item. A 404 `code` means the item is not an alert. */
+	async getIssueAlert(issueId: string): Promise<CallResult<IssueAlert>> {
+		return narrowed(
+			await apiClient.get<unknown>(`/api/v1/issues/${encodeURIComponent(issueId)}/alert`),
+			parseIssueAlert
+		);
 	},
 
 	// Rule test (nothing is written, no limit is counted)

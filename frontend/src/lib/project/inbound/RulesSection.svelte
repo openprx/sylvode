@@ -18,6 +18,7 @@
 	import type { Connection } from '#lib/project/connection/wire.js';
 	import SectionFrame from './SectionFrame.svelte';
 	import RuleEditor, { type BotOption, type PersonOption } from './RuleEditor.svelte';
+	import RuleTestDialog from './RuleTestDialog.svelte';
 	import RuleRow from './RuleRow.svelte';
 	import { loadStateOf, type LoadState } from './load-state';
 	import { movedOrder, toggleBody } from './rule-form';
@@ -42,6 +43,7 @@
 
 	/** `null`: the list; `{ rule: null }`: a new rule; `{ rule }`: that rule's editor. */
 	let editing = $state<{ rule: Rule | null } | null>(null);
+	let testOpen = $state(false);
 	let busy = $state(false);
 	let conflict = $state(false);
 	let deleting = $state<Rule | null>(null);
@@ -237,7 +239,14 @@
 			<div class="strip">
 				<p class="order-help">{$t('inbound.rules.orderHelp')}</p>
 				<div class="strip-actions">
-					<!-- U5 HOOK: the "Test rules" button goes here. -->
+					<Button
+						variant="secondary"
+						disabled={sources.length === 0}
+						disabledReason={$t('inbound.test.noSource')}
+						onclick={() => (testOpen = true)}
+					>
+						{$t('inbound.rules.test')}
+					</Button>
 					<Button variant="primary" onclick={() => (editing = { rule: null })}>
 						{$t('inbound.rules.add')}
 					</Button>
@@ -264,6 +273,10 @@
 		{/if}
 	{/if}
 </SectionFrame>
+
+{#if testOpen}
+	<RuleTestDialog open onclose={() => (testOpen = false)} {projectId} />
+{/if}
 
 <DestructiveDialog
 	open={deleting !== null}

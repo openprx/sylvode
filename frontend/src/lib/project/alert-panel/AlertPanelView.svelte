@@ -2,14 +2,16 @@
 
 <script lang="ts">
 	import { t } from 'svelte-i18n';
+	import { resolve } from '$app/paths';
 	import Button from '../../ui/button/Button.svelte';
 	import SettingRow from '../../ui/setting-row/SettingRow.svelte';
 	import StateBlock from '../../ui/state-block/StateBlock.svelte';
 	import StatusChip from '../../ui/status-chip/StatusChip.svelte';
 	import { tooltip } from '../../ui/tooltip/tooltip';
 	import { absoluteTime, relativeTime } from '../agent-tasks/time';
-	import type { IssueAlert } from './api';
-	import { KIND_MAX, NAME_MAX, alertRulesHref, clampText, severityView, taskRowView } from './view';
+	import SeverityChip from '../inbound/SeverityChip.svelte';
+	import type { IssueAlert } from '../inbound/wire';
+	import { KIND_MAX, NAME_MAX, clampText, severityWord, taskRowView } from './view';
 
 	interface Props {
 		/** The facts, or null when the work item is not an alert or the load failed. */
@@ -25,7 +27,6 @@
 
 	let { alert, failed, loading, workspaceId, projectId, isAdmin, onrefresh }: Props = $props();
 
-	const severity = $derived(alert ? severityView(alert.severity) : null);
 	const task = $derived(alert ? taskRowView(alert) : null);
 </script>
 
@@ -34,8 +35,8 @@
 		<header class="head">
 			<div class="who">
 				<h2 id="alert-panel-title" class="title">{$t('alertPanel.title')}</h2>
-				{#if alert && severity}
-					<StatusChip tone={severity.tone}>{$t(severity.labelKey)}</StatusChip>
+				{#if alert}
+					<SeverityChip severity={severityWord(alert.severity)} />
 					<StatusChip>{alert.open ? $t('alertPanel.open') : $t('alertPanel.closed')}</StatusChip>
 				{/if}
 			</div>
@@ -100,9 +101,13 @@
 							<span class="text muted" data-testid="alert-rule">{$t('alertPanel.deletedRule')}</span
 							>
 						{:else if isAdmin}
-							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- full path built by alertRulesHref -->
-							<a class="link" data-testid="alert-rule" href={alertRulesHref(workspaceId, projectId)}
-								>{clampText(alert.rule.name, NAME_MAX)}</a
+							<a
+								class="link"
+								data-testid="alert-rule"
+								href={resolve(
+									'/(app)/workspace/[workspaceId]/projects/[projectId]/settings/alert-rules',
+									{ workspaceId, projectId }
+								)}>{clampText(alert.rule.name, NAME_MAX)}</a
 							>
 						{:else}
 							<span class="text" data-testid="alert-rule"

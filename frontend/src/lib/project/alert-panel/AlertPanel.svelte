@@ -1,7 +1,8 @@
 <svelte:options runes />
 
 <script lang="ts">
-	import { alertPanelApi, type IssueAlert } from './api';
+	import { inboundApi } from '#lib/api/inbound.js';
+	import type { IssueAlert } from '#lib/project/inbound/wire.js';
 	import AlertPanelView from './AlertPanelView.svelte';
 	import { outcomeOf } from './view';
 
@@ -26,11 +27,11 @@
 	async function load(id: string) {
 		const mine = ++requestId;
 		loading = true;
-		const result = await alertPanelApi.getIssueAlert(id);
+		const result = await inboundApi.getIssueAlert(id);
 		if (mine !== requestId) return;
-		const outcome = outcomeOf(result.code, result.data !== null);
-		if (outcome === 'shown') {
-			alert = result.data;
+		const outcome = outcomeOf(result.ok ? 0 : result.code, result.ok);
+		if (result.ok) {
+			alert = result.value;
 			failed = false;
 		} else if (outcome === 'hidden') {
 			alert = null;

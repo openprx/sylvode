@@ -6,7 +6,7 @@
  */
 import type { AiTask } from '../../api/ai-tasks';
 import { statusView, type Tone } from '../agent-tasks/status';
-import type { IssueAlert } from './api';
+import { SEVERITIES, type IssueAlert, type Severity } from '../inbound/wire';
 
 /** Longest kind shown (the server accepts at most 64 characters; anything longer is cut). */
 export const KIND_MAX = 64;
@@ -31,22 +31,9 @@ export function clampText(text: string, max: number): string {
 	return points.length <= max ? text : `${points.slice(0, max).join('')}…`;
 }
 
-const SEVERITIES = new Set(['info', 'low', 'medium', 'high', 'critical']);
-
-export interface SeverityView {
-	/** Message key under `alertPanel.severity.*`. */
-	labelKey: string;
-	tone: Tone;
-}
-
-/** Critical is danger, high is warning, the rest neutral; an unknown word is "Unknown". */
-export function severityView(severity: string | null): SeverityView {
-	if (severity === null || !SEVERITIES.has(severity)) {
-		return { labelKey: 'alertPanel.severity.unknown', tone: 'neutral' };
-	}
-	const tone: Tone =
-		severity === 'critical' ? 'danger' : severity === 'high' ? 'warning' : 'neutral';
-	return { labelKey: `alertPanel.severity.${severity}`, tone };
+/** The severity word of the alert for the shared `SeverityChip`; `null` when it is unknown. */
+export function severityWord(severity: string | null): Severity | null {
+	return SEVERITIES.find((word) => word === severity) ?? null;
 }
 
 export type TaskRowView =
@@ -79,9 +66,4 @@ export function taskRowView(alert: IssueAlert): TaskRowView {
 		default:
 			return { kind: 'unknown', code: clampText(alert.task_state, KIND_MAX) };
 	}
-}
-
-/** The Alert rules section of a project's settings (owners and admins only). */
-export function alertRulesHref(workspaceId: string, projectId: string): string {
-	return `/workspace/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}/settings/alert-rules`;
 }

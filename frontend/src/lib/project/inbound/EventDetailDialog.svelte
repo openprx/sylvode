@@ -7,6 +7,8 @@
 	import SettingRow from '#lib/ui/setting-row/SettingRow.svelte';
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import TipBar from '#lib/ui/tip-bar/TipBar.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
+	import RuleTestDialog from './RuleTestDialog.svelte';
 	import SeverityChip from './SeverityChip.svelte';
 	import { reportedJson, ruleNameOf } from './source-view';
 	import { eventWorkItemHref, outcomeTone, outcomeWord } from './status';
@@ -15,7 +17,7 @@
 	interface Props {
 		open: boolean;
 		event: InboundEvent | null;
-		/** The source the event belongs to (the rule test entry of the footer uses it). */
+		/** The source the event belongs to; the rule test dialog starts on it. */
 		sourceId: string;
 		workspaceId: string;
 		projectId: string;
@@ -23,9 +25,13 @@
 		rules: Rule[] | null;
 		onclose: () => void;
 	}
-	// sourceId is part of the dialog contract for the rule test entry added at merge
-	// eslint-disable-next-line svelte/no-unused-props
-	let { open, event, workspaceId, projectId, rules, onclose }: Props = $props();
+	let { open, event, sourceId, workspaceId, projectId, rules, onclose }: Props = $props();
+
+	let testOpen = $state(false);
+	// A different event starts from a closed test dialog.
+	$effect(() => {
+		if (!open || event === null) testOpen = false;
+	});
 
 	const word = $derived(event ? outcomeWord(event.outcome) : null);
 	const href = $derived(event ? eventWorkItemHref(workspaceId, projectId, event) : null);
@@ -120,10 +126,23 @@
 				<pre class="reported" data-testid="event-payload">{reportedJson(event.payload)}</pre>
 			</section>
 		</div>
-		<!-- U5 hook: the "Test rules with this event" button (`inbound.events.detail.test`) goes
-		     here; it opens the rule test dialog with `sourceId` and `event.id`. -->
 	{/if}
+	{#snippet actions()}
+		<Button variant="secondary" disabled={event === null} onclick={() => (testOpen = true)}>
+			{$t('inbound.events.detail.test')}
+		</Button>
+	{/snippet}
 </Dialog>
+
+{#if testOpen && event}
+	<RuleTestDialog
+		open
+		onclose={() => (testOpen = false)}
+		{projectId}
+		{sourceId}
+		eventId={event.id}
+	/>
+{/if}
 
 <style>
 	.rows {

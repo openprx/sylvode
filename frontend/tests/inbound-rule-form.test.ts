@@ -17,6 +17,7 @@ import {
 	draftChanged,
 	draftFromRule,
 	draftValid,
+	firstExactKind,
 	isKindPattern,
 	limitsAreDefault,
 	movedOrder,
@@ -512,5 +513,15 @@ await suite.checkAsync(
 		assert(edit.includes('inbound.rules.limitsChanged'), 'changed limits are marked');
 	}
 );
+
+suite.check('the first exact kind skips prefixes and invalid lines', () => {
+	assertEqual(
+		firstExactKind('waf.*\nBad Kind\nwaf.attack_detected\nother.kind'),
+		'waf.attack_detected',
+		'first'
+	);
+	assertEqual(firstExactKind('waf.*'), null, 'prefix only');
+	assertEqual(firstExactKind(''), null, 'empty');
+});
 
 finish(suite.result());

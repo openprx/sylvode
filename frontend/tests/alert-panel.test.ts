@@ -1,5 +1,5 @@
 /**
- * Alert panel on the work item page: response narrowing (`lib/project/alert-panel/api.ts`), the
+ * Alert panel on the work item page: response narrowing (`parseIssueAlert` in `lib/project/inbound/wire.ts`), the
  * pure view-model (`view.ts`), the feature locale files and the markup of the panel for every
  * state, including plain-text rendering of text written by an external system.
  *
@@ -8,14 +8,13 @@
 import { readFileSync } from 'node:fs';
 import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/harness';
 import { installSvelteSsr, renderToHtml } from './support/svelte-ssr';
-import { narrowIssueAlert, type IssueAlert } from '../src/lib/project/alert-panel/api';
+import { parseIssueAlert, type IssueAlert } from '../src/lib/project/inbound/wire';
 import {
 	KIND_MAX,
 	NAME_MAX,
-	alertRulesHref,
 	clampText,
 	outcomeOf,
-	severityView,
+	severityWord,
 	taskRowView
 } from '../src/lib/project/alert-panel/view';
 
@@ -46,7 +45,7 @@ function wire(overrides: Record<string, unknown> = {}): Record<string, unknown> 
 }
 
 function alert(overrides: Record<string, unknown> = {}): IssueAlert {
-	const narrowed = narrowIssueAlert(wire(overrides));
+	const narrowed = parseIssueAlert(wire(overrides));
 	if (narrowed === null) throw new Error('fixture must narrow');
 	return narrowed;
 }
@@ -61,27 +60,27 @@ const base = {
 };
 
 suite.check('narrowing accepts the documented shape and nulls', () => {
-	const a = narrowIssueAlert(wire());
+	const a = parseIssueAlert(wire());
 	assert(a !== null, 'narrows');
 	assertEqual(a?.occurrences, 3, 'occurrences');
-	const bare = narrowIssueAlert(
+	const bare = parseIssueAlert(
 		wire({ source: null, rule: null, kind: null, severity: null, task: null })
 	);
 	assertEqual(bare?.source, null, 'deleted source');
 	assertEqual(bare?.rule, null, 'deleted rule');
-	const withTask = narrowIssueAlert(wire({ task: { id: 't1', status: 'pending' } }));
+	const withTask = parseIssueAlert(wire({ task: { id: 't1', status: 'pending' } }));
 	assertDeepEqual(withTask?.task, { id: 't1', status: 'pending' }, 'task');
 });
 
 suite.check('narrowing refuses wrong types', () => {
-	assertEqual(narrowIssueAlert(null), null, 'null');
-	assertEqual(narrowIssueAlert([]), null, 'array');
-	assertEqual(narrowIssueAlert(wire({ occurrences: '3' })), null, 'occurrences string');
-	assertEqual(narrowIssueAlert(wire({ open: 'yes' })), null, 'open string');
-	assertEqual(narrowIssueAlert(wire({ source: { id: 1, name: 'x' } })), null, 'source id');
-	assertEqual(narrowIssueAlert(wire({ task: { id: 't' } })), null, 'task status missing');
-	assertEqual(narrowIssueAlert(wire({ first_seen_at: 5 })), null, 'time number');
-	assertEqual(narrowIssueAlert(wire({ queue_expires_at: 5 })), null, 'expiry number');
+	assertEqual(parseIssueAlert(null), null, 'null');
+	assertEqual(parseIssueAlert([]), null, 'array');
+	assertEqual(parseIssueAlert(wire({ occurrences: '3' })), null, 'occurrences string');
+	assertEqual(parseIssueAlert(wire({ open: 'yes' })), null, 'open string');
+	assertEqual(parseIssueAlert(wire({ source: { id: 1, name: 'x' } })), null, 'source id');
+	assertEqual(parseIssueAlert(wire({ task: { id: 't' } })), null, 'task status missing');
+	assertEqual(parseIssueAlert(wire({ first_seen_at: 5 })), null, 'time number');
+	assertEqual(parseIssueAlert(wire({ queue_expires_at: 5 })), null, 'expiry number');
 });
 
 suite.check('404 and 403 hide the panel, other failures show the retry state', () => {
@@ -114,15 +113,12 @@ suite.check('task rows for none, created, waiting, suppressed and unknown', () =
 	);
 });
 
-suite.check('severity tones and unknown words', () => {
-	assertEqual(severityView('critical').tone, 'danger', 'critical');
-	assertEqual(severityView('high').tone, 'warning', 'high');
-	for (const word of ['medium', 'low', 'info']) {
-		assertEqual(severityView(word).tone, 'neutral', word);
-		assertEqual(severityView(word).labelKey, `alertPanel.severity.${word}`, `${word} key`);
+suite.check('severity words map to the shared severities', () => {
+	for (const word of ['critical', 'high', 'medium', 'low', 'info']) {
+		assertEqual(severityWord(word), word, word);
 	}
-	assertEqual(severityView('bogus').labelKey, 'alertPanel.severity.unknown', 'unknown');
-	assertEqual(severityView(null).labelKey, 'alertPanel.severity.unknown', 'null');
+	assertEqual(severityWord('bogus'), null, 'unknown');
+	assertEqual(severityWord(null), null, 'null');
 });
 
 suite.check('clamping counts characters and marks the cut', () => {
@@ -131,14 +127,6 @@ suite.check('clamping counts characters and marks the cut', () => {
 	assertEqual(clampText('😀😀😀', 2), '😀😀…', 'code points');
 	assertEqual(KIND_MAX, 64, 'kind limit');
 	assertEqual(NAME_MAX, 100, 'name limit');
-});
-
-suite.check('rules link points at the Alert rules section', () => {
-	assertEqual(
-		alertRulesHref('w 1', 'p1'),
-		'/workspace/w%201/projects/p1/settings/alert-rules',
-		'href'
-	);
 });
 
 await suite.checkAsync('nothing renders for a non-alert item', async () => {
@@ -155,7 +143,7 @@ await suite.checkAsync('retry state renders when loading failed', async () => {
 
 await suite.checkAsync('shown state prints the facts without a task', async () => {
 	const html = await renderToHtml(AlertPanelView, { ...base, alert: alert() });
-	assert(html.includes('alertPanel.severity.high'), 'severity word');
+	assert(html.includes('inbound.severity.high'), 'severity word');
 	assert(html.includes('alertPanel.open'), 'open chip');
 	assert(html.includes('prx-waf edge-01'), 'source');
 	assert(html.includes('waf.attack_detected'), 'kind');
@@ -177,7 +165,10 @@ await suite.checkAsync('closed alert and deleted source and rule', async () => {
 await suite.checkAsync('admins get the rule link, members do not', async () => {
 	const admin = await renderToHtml(AlertPanelView, { ...base, isAdmin: true, alert: alert() });
 	assert(
-		admin.includes('href="/workspace/w1/projects/p1/settings/alert-rules"'),
+		// The test build resolves a typed route to its pattern (see support/svelte-ssr.ts).
+		admin.includes(
+			'href="/(app)/workspace/[workspaceId]/projects/[projectId]/settings/alert-rules"'
+		),
 		'admin link to the rules section'
 	);
 	const member = await renderToHtml(AlertPanelView, { ...base, alert: alert() });

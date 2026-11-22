@@ -7,8 +7,8 @@
 	import { SEVERITIES, type Severity } from './wire';
 
 	interface Props {
-		/** A severity word, or the numeric rank (0-4) an event row carries. */
-		severity: Severity | number;
+		/** A severity word, or the numeric rank (0-4) an event row carries; `null` reads as unknown. */
+		severity: Severity | number | null;
 	}
 	let { severity }: Props = $props();
 

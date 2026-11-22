@@ -18,14 +18,6 @@
 		"taskWaitingUntil": "直到 {time}",
 		"taskSuppressed": "未启动：安全限制",
 		"viewTask": "查看任务",
-		"thing": "告警详情",
-		"severity": {
-			"info": "信息",
-			"low": "低",
-			"medium": "中",
-			"high": "高",
-			"critical": "严重",
-			"unknown": "未知"
-		}
+		"thing": "告警详情"
 	}
 }

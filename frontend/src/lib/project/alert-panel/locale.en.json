@@ -18,14 +18,6 @@
 		"taskWaitingUntil": "until {time}",
 		"taskSuppressed": "Not started: safety limit",
 		"viewTask": "View task",
-		"thing": "alert details",
-		"severity": {
-			"info": "Info",
-			"low": "Low",
-			"medium": "Medium",
-			"high": "High",
-			"critical": "Critical",
-			"unknown": "Unknown"
-		}
+		"thing": "alert details"
 	}
 }

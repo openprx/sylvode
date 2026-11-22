@@ -6,6 +6,7 @@
 	import { inboundApi, type RuleBody } from '#lib/api/inbound.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import Button from '#lib/ui/button/Button.svelte';
+	import RuleTestDialog from './RuleTestDialog.svelte';
 	import MultiSelect from '#lib/ui/multi-select/MultiSelect.svelte';
 	import Radio from '#lib/ui/radio/Radio.svelte';
 	import RadioGroup from '#lib/ui/radio/RadioGroup.svelte';
@@ -23,6 +24,7 @@
 		draftChanged,
 		draftFromRule,
 		draftValid,
+		firstExactKind,
 		isLimitsField,
 		limitsAreDefault,
 		limitsInvalid,
@@ -171,6 +173,22 @@
 		const body = buildBody(draft);
 		if (body === null) return null;
 		return rule !== null ? { draft_rule: body, replaces: rule.id } : { draft_rule: body };
+	}
+
+	let testing = $state<{
+		draftRule: RuleBody;
+		replaces: string | null;
+		sampleKind: string | null;
+	} | null>(null);
+
+	function openTest() {
+		const test = draftForTest();
+		if (test === null) return;
+		testing = {
+			draftRule: test.draft_rule,
+			replaces: test.replaces ?? null,
+			sampleKind: firstExactKind(draft.kindsText)
+		};
 	}
 
 	async function save() {
@@ -476,12 +494,31 @@
 		>
 			{$t('inbound.rules.saveRule')}
 		</Button>
-		<!-- U5 HOOK: the "Test with this rule" button goes here; it reads `draftForTest()`. -->
+		<Button
+			variant="secondary"
+			disabled={submitting || !valid}
+			disabledReason={$t('inbound.rules.invalid')}
+			onclick={openTest}
+		>
+			{$t('inbound.rules.testDraft')}
+		</Button>
 		<Button variant="secondary" disabled={submitting} onclick={() => void cancel()}>
 			{$t('inbound.sources.cancel')}
 		</Button>
 	</div>
 </form>
+
+{#if testing !== null}
+	<RuleTestDialog
+		open
+		onclose={() => (testing = null)}
+		{projectId}
+		sourceId={testing.draftRule.source_id}
+		draftRule={testing.draftRule}
+		replaces={testing.replaces}
+		sampleKind={testing.sampleKind}
+	/>
+{/if}
 
 <style>
 	.form {
