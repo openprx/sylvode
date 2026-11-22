@@ -50,5 +50,11 @@ serde_jcs.workspace = true
 parking_lot = "0.12"
 tracing-subscriber.workspace = true
 
+# The end-to-end test that starts the shipped server from the files and argument vectors the
+# runner itself produces (`tests/runner_launch_e2e.rs`); the runner is Unix only.
+[target.'cfg(unix)'.dev-dependencies]
+sylvode-runner = { path = "../runner", features = ["test-support"] }
+toml.workspace = true
+
 [lints]
 workspace = true
