@@ -12,10 +12,12 @@ use std::time::Duration;
 use serde_json::Value;
 use sylvode_prereq::{Checker, InstallKind};
 
+use super::config::RunnerConfig;
+use super::files::BotFiles;
 use super::paths::AllowedRoots;
 use super::registry::SessionRegistry;
 use super::sv_client::{SvClient, SvError, TASK_PROTOCOL, token_refused};
-use crate::config::Config;
+use crate::config::{AiTaskCallbackTarget, Config};
 
 /// The credentials of the bot a delivery is for, to write its MCP files. `Debug` hides the token.
 #[derive(Clone)]
@@ -25,6 +27,33 @@ pub struct BotCreds {
     /// The workspace the bot belongs to: the MCP server needs it to start.
     pub workspace_id: String,
     pub token: String,
+}
+
+impl BotCreds {
+    /// The credentials of `bot` from its resolved `[ai_task_callback]` target. `None` when the
+    /// target has no workspace (a runner bot always has one: the configuration check refuses it
+    /// otherwise).
+    pub fn for_target(bot: &str, target: &AiTaskCallbackTarget<'_>) -> Option<Self> {
+        Some(Self {
+            bot_id: bot.to_string(),
+            api_url: target.api_url.to_string(),
+            workspace_id: target.workspace_id?.to_string(),
+            token: target.token.to_string(),
+        })
+    }
+
+    /// What goes into this bot's MCP file for a launch of `cli`: the one place the file's
+    /// settings are decided, for the interactive and the headless channel alike.
+    pub fn mcp_files<'a>(&'a self, runner: &'a RunnerConfig, cli: &str) -> BotFiles<'a> {
+        BotFiles {
+            bot_id: &self.bot_id,
+            api_url: &self.api_url,
+            workspace_id: &self.workspace_id,
+            token: &self.token,
+            tool_mode: &runner.mcp.tool_mode,
+            allow_write_call: cli == "claude" && runner.cli.claude.allow_write_call,
+        }
+    }
 }
 
 impl std::fmt::Debug for BotCreds {

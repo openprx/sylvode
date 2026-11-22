@@ -46,3 +46,19 @@ pub(crate) struct AppState {
     pub handshake: handshake::Handshake,
     pub sessions: Option<std::sync::Arc<runner::session::SessionManager>>,
 }
+
+/// The pieces that decide what a launched CLI gets for MCP, for the end-to-end test in the MCP
+/// server's crate that starts the real server from them (feature `test-support`); it is not part
+/// of any interface.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod mcp_launch_for_tests {
+    pub use crate::config::{AiTaskCallback, Config};
+    pub use crate::runner::checks::BotCreds;
+    pub use crate::runner::files::StateDir;
+    pub use crate::runner::launch::{
+        LaunchFiles, Protected, SEARCH_MODE_TOOLS, SERVER_NAME, WRITE_TOOL, claude_argv, claude_headless_argv,
+        codex_argv, codex_headless_argv,
+    };
+    pub use crate::runner::tmux::SessionKey;
+}

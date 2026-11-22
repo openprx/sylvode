@@ -32,7 +32,7 @@ use super::detect::{
     Dialog, awaits_choice, classify_bottom, classify_dialog, cut_for_log, input_is_empty, input_text, looks_busy,
     screens_equal,
 };
-use super::files::{BotFiles, PushedTask, SessionRecord, StateDir};
+use super::files::{PushedTask, SessionRecord, StateDir};
 use super::hooks::{HookEvent, HookMessage};
 use super::launch::{self, LaunchFiles};
 use super::machine::{
@@ -954,19 +954,8 @@ impl Worker {
         let config = &self.shared.config;
         let state = &self.shared.state;
         let runner = &config.runner;
-        let allow_write = task.cli == "claude" && runner.cli.claude.allow_write_call;
         state
-            .write_bot_files(
-                &BotFiles {
-                    bot_id: &task.bot.bot_id,
-                    api_url: &task.bot.api_url,
-                    workspace_id: &task.bot.workspace_id,
-                    token: &task.bot.token,
-                    tool_mode: &runner.mcp.tool_mode,
-                    allow_write_call: allow_write,
-                },
-                &task.mcp_server,
-            )
+            .write_bot_files(&task.bot.mcp_files(runner, &task.cli), &task.mcp_server)
             .map_err(|e| {
                 tracing::error!("could not write the MCP files of bot {}: {e}", task.bot.bot_id);
                 "the runner could not prepare the MCP configuration".to_string()

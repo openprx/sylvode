@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use super::checks::{Accepted, Refusal};
 use super::config::RunnerConfig;
-use super::files::{BotFiles, StateDir};
+use super::files::StateDir;
 use super::launch;
 use super::paths::AllowedRoots;
 use crate::config::Config;
@@ -118,19 +118,8 @@ pub fn prepare(config: &Config, state: &StateDir, accepted: &Accepted, mcp_serve
             ),
         ));
     }
-    let allow_write = accepted.cli == "claude" && runner.cli.claude.allow_write_call;
     state
-        .write_bot_files(
-            &BotFiles {
-                bot_id: &bot.bot_id,
-                api_url: &bot.api_url,
-                workspace_id: &bot.workspace_id,
-                token: &bot.token,
-                tool_mode: &runner.mcp.tool_mode,
-                allow_write_call: allow_write,
-            },
-            mcp_server,
-        )
+        .write_bot_files(&bot.mcp_files(runner, &accepted.cli), mcp_server)
         .map_err(|e| {
             tracing::error!("could not write the MCP files of bot {}: {e}", bot.bot_id);
             refusal(
