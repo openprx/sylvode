@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import Button from '../../ui/button/Button.svelte';
@@ -21,7 +22,12 @@
 		{expanded || !clamped.truncated ? text : `${clamped.text}…`}
 	</p>
 	{#if clamped.truncated}
-		<Button variant="text" size="sm" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
+		<Button
+			variant="text"
+			size="sm"
+			aria-expanded={expanded}
+			onclick={() => (expanded = !expanded)}
+		>
 			{expanded ? $t('agentTasks.showLess') : $t('agentTasks.showMore')}
 		</Button>
 	{/if}

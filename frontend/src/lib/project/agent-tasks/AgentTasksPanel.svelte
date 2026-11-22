@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { aiTasksApi, type AiTask } from '../../api/ai-tasks';
@@ -45,27 +46,27 @@
 <!-- Shown only when the work item has agent tasks, or when loading them failed. -->
 {#if tasks.length > 0 || failed}
 	<section class="panel" data-testid="agent-tasks-panel" aria-labelledby="agent-tasks-title">
-	<header class="head">
-		<h2 id="agent-tasks-title" class="title">{$t('agentTasks.title')}</h2>
-		<Button size="sm" loading={loading && tasks.length > 0} onclick={() => load(issueId)}>
-			{$t('agentTasks.refresh')}
-		</Button>
-	</header>
+		<header class="head">
+			<h2 id="agent-tasks-title" class="title">{$t('agentTasks.title')}</h2>
+			<Button size="sm" loading={loading && tasks.length > 0} onclick={() => load(issueId)}>
+				{$t('agentTasks.refresh')}
+			</Button>
+		</header>
 
-	{#if failed}
-		<StateBlock
-			kind="loadFailed"
-			thing={$t('agentTasks.things')}
-			action={{ run: () => load(issueId) }}
-		/>
-	{:else}
-		<div class="list">
-			{#each tasks as task (task.id)}
-				<TaskRow {task} {names} />
-			{/each}
-		</div>
-	{/if}
-</section>
+		{#if failed}
+			<StateBlock
+				kind="loadFailed"
+				thing={$t('agentTasks.things')}
+				action={{ run: () => load(issueId) }}
+			/>
+		{:else}
+			<div class="list">
+				{#each tasks as task (task.id)}
+					<TaskRow {task} {names} />
+				{/each}
+			</div>
+		{/if}
+	</section>
 {/if}
 
 <style>

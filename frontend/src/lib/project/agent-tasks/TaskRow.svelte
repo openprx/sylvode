@@ -1,4 +1,5 @@
 <svelte:options runes />
+
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import type { AiTask } from '../../api/ai-tasks';
@@ -55,7 +56,11 @@
 <article class="task" data-testid="agent-task" data-status={task.status}>
 	<header class="head">
 		<div class="who">
-			<span class="name">{$t('agentTasks.agent', { values: { name: botName(names, task.ai_participant_id) } })}</span>
+			<span class="name"
+				>{$t('agentTasks.agent', {
+					values: { name: botName(names, task.ai_participant_id) }
+				})}</span
+			>
 			<StatusChip tone={status.tone}>{$t(status.labelKey, { values: status.values })}</StatusChip>
 			{#if attempt}
 				<span class="meta">{$t('agentTasks.attempt', { values: attempt })}</span>
@@ -82,7 +87,9 @@
 			<h4 class="label">
 				{$t('agentTasks.progress')}
 				{#if progress.percent !== null}
-					<span class="meta">{$t('agentTasks.progressPercent', { values: { percent: progress.percent } })}</span>
+					<span class="meta"
+						>{$t('agentTasks.progressPercent', { values: { percent: progress.percent } })}</span
+					>
 				{/if}
 				{#if progress.at}
 					<time
