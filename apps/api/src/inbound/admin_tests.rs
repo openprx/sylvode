@@ -534,6 +534,96 @@ async fn source_creation_validates_its_input() {
     w.scratch.drop_self().await;
 }
 
+/// Connects the world's bot to the world's project, enabled, with the rows a connection makes.
+pub(super) async fn connect_the_bot(w: &World) {
+    let hook = Uuid::new_v4();
+    for (sql, values) in [
+        (
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, permissions, transport_surface) \
+             VALUES ($1, $2, 'alert bot', md5($1::text), 'opr_test', '[\"read\",\"write\"]'::jsonb, 'mcp_stdio')",
+            vec![w.bot.into(), w.tenant.workspace_id.into()],
+        ),
+        (
+            "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, active, created_by, bot_user_id) \
+             VALUES ($1, $2, 'runner', 'https://runner.example.test/webhook', 's', '[]'::jsonb, true, $3, $4)",
+            vec![hook.into(), w.tenant.workspace_id.into(), w.admin.into(), w.bot.into()],
+        ),
+        (
+            "INSERT INTO bot_runners (bot_id, workspace_id, webhook_id, runner_url) \
+             VALUES ($1, $2, $3, 'https://runner.example.test')",
+            vec![w.bot.into(), w.tenant.workspace_id.into(), hook.into()],
+        ),
+        (
+            "INSERT INTO project_execution_settings (project_id, enabled, working_directory) VALUES ($1, true, '/work/a')",
+            vec![w.tenant.project_id.into()],
+        ),
+        (
+            "INSERT INTO project_bot_connections (project_id, bot_id) VALUES ($1, $2)",
+            vec![w.tenant.project_id.into(), w.bot.into()],
+        ),
+    ] {
+        exec(w.db(), sql, values).await;
+    }
+}
+
+/// The warning follows the connection of the bot to the rule's own project: absent and disabled
+/// both warn; an enabled connection of this project does not.
+#[tokio::test]
+async fn the_rule_warning_follows_the_bots_connection_to_the_rules_project() {
+    let w = world!("adm_rule_warning");
+    let body = |version: Option<u32>| {
+        let mut body = json!({
+            "name": "WAF critical",
+            "kind_patterns": ["waf.*"],
+            "min_severity": "critical",
+            "bot_user_id": w.bot,
+            "notify_user_ids": [w.tenant.member_id],
+        });
+        if let Some(version) = version {
+            body["expected_version"] = json!(version);
+        }
+        body
+    };
+    let created = w.as_admin(Method::POST, &w.rules_uri(), Some(&body(None))).await;
+    assert_eq!(
+        created["data"]["warnings"],
+        json!(["bot_not_connected_to_project"]),
+        "{created}"
+    );
+    let uri = format!(
+        "/api/v1/alert-rules/{}",
+        created["data"]["rule"]["id"].as_str().unwrap()
+    );
+
+    connect_the_bot(&w).await;
+    let connected = w.as_admin(Method::PUT, &uri, Some(&body(Some(1)))).await;
+    assert_eq!(connected["data"]["warnings"], json!([]), "{connected}");
+
+    exec(
+        w.db(),
+        "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+        vec![w.tenant.project_id.into()],
+    )
+    .await;
+    let disabled = w.as_admin(Method::PUT, &uri, Some(&body(Some(2)))).await;
+    assert_eq!(
+        disabled["data"]["warnings"],
+        json!(["bot_not_connected_to_project"]),
+        "{disabled}"
+    );
+
+    exec(
+        w.db(),
+        "UPDATE project_execution_settings SET enabled = true WHERE project_id = $1",
+        vec![w.tenant.project_id.into()],
+    )
+    .await;
+    let enabled_again = w.as_admin(Method::PUT, &uri, Some(&body(Some(3)))).await;
+    assert_eq!(enabled_again["data"]["warnings"], json!([]), "{enabled_again}");
+
+    w.scratch.drop_self().await;
+}
+
 #[tokio::test]
 async fn rules_are_created_validated_replaced_with_a_version_reordered_and_deleted() {
     let w = world!("adm_rules");
@@ -559,19 +649,13 @@ async fn rules_are_created_validated_replaced_with_a_version_reordered_and_delet
     assert_eq!(rule["position"], 20);
     assert_eq!(
         created["data"]["warnings"],
-        json!(["bot_has_no_active_webhook"]),
+        json!(["bot_not_connected_to_project"]),
         "the save warns and does not refuse"
     );
     let rule_id = rule["id"].as_str().unwrap().to_owned();
 
-    // An active webhook subscription of the bot clears the warning.
-    exec(
-        w.db(),
-        "INSERT INTO webhooks (workspace_id, name, url, secret, events, active, created_by, bot_user_id) \
-         VALUES ($1, 'bot hook', 'https://hooks.example.test/x', 's', '[\"issue.assigned\"]'::jsonb, true, $2, $3)",
-        vec![w.tenant.workspace_id.into(), w.admin.into(), w.bot.into()],
-    )
-    .await;
+    // An enabled connection of the bot to the rule's project clears the warning.
+    connect_the_bot(&w).await;
     let uri = format!("/api/v1/alert-rules/{rule_id}");
     let current = w.as_admin(Method::GET, &uri, None).await;
     assert_eq!(current["data"]["name"], "WAF critical");

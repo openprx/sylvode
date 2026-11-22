@@ -100,7 +100,6 @@ struct ScenarioProjectRow {
     type_key: Option<String>,
     type_settings: JsonValue,
     workflow_id: Option<Uuid>,
-    created_by: Uuid,
     created_at: platform::timestamp::Timestamp,
 }
 
@@ -297,13 +296,11 @@ async fn apply_scenario_template(
     workspace_id: Uuid,
     project_id: Uuid,
     actor_id: Option<Uuid>,
-    registered_by: Uuid,
     template: &ScenarioTemplateRow,
     causation_id: Option<Uuid>,
 ) -> Result<(), ApiError> {
     create_template_labels(tx, workspace_id, template).await?;
     create_template_governance_config(tx, project_id, actor_id, template).await?;
-    create_template_ai_placeholders(tx, project_id, registered_by, template).await?;
     create_template_forms(tx, workspace_id, project_id, actor_id, template, causation_id).await?;
     create_template_plugins(tx, workspace_id, project_id, actor_id, template, causation_id).await?;
     Ok(())
@@ -665,97 +662,6 @@ async fn create_template_governance_config(
         vec![project_id.into(), config.into(), actor_id.into()],
     ))
     .await?;
-
-    Ok(())
-}
-
-async fn create_template_ai_placeholders(
-    tx: &DatabaseTransaction,
-    project_id: Uuid,
-    user_id: Uuid,
-    template: &ScenarioTemplateRow,
-) -> Result<(), ApiError> {
-    let Some(roles) = template.ai_roles.as_array() else {
-        return Ok(());
-    };
-    let project_short = project_id.simple().to_string();
-    let project_short = &project_short[..8];
-
-    for role in roles {
-        let role_key = role
-            .get("key")
-            .and_then(JsonValue::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("assistant");
-        let label = role
-            .get("label")
-            .and_then(JsonValue::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(role_key);
-        let agent_type = role
-            .get("agent_type")
-            .and_then(JsonValue::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("template");
-        let provider = role
-            .get("provider")
-            .and_then(JsonValue::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(agent_type);
-        let model = role
-            .get("model")
-            .and_then(JsonValue::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("template-placeholder");
-        let api_endpoint = role
-            .get("api_endpoint")
-            .and_then(JsonValue::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string);
-        let capabilities = role.get("capabilities").cloned().unwrap_or_else(|| json!([]));
-        let participant_id = format!("tpl-{project_short}-{role_key}")
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-            .take(100)
-            .collect::<String>();
-
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"
-                INSERT INTO ai_participants (
-                    id, project_id, name, model, provider, api_endpoint,
-                    capabilities, domain_overrides, max_domain_level,
-                    can_veto_human_consensus, reason_min_length, is_active,
-                    registered_by, created_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'advisor', false, 50, false, $9, now())
-                ON CONFLICT (id) DO NOTHING
-            ",
-            vec![
-                participant_id.into(),
-                project_id.into(),
-                label.to_string().into(),
-                model.to_string().into(),
-                provider.to_string().into(),
-                api_endpoint.into(),
-                capabilities.into(),
-                json!({
-                    "source": "scenario_template",
-                    "scenario_template_key": template.key,
-                    "role": role
-                })
-                .into(),
-                user_id.into(),
-            ],
-        ))
-        .await?;
-    }
 
     Ok(())
 }
@@ -1674,7 +1580,6 @@ pub async fn create_project(
             workspace_id,
             project_id,
             Some(user_id),
-            user_id,
             template,
             Some(project_event_id),
         )
@@ -1740,7 +1645,7 @@ pub async fn install_project_scenario_template(
         DbBackend::Postgres,
         r"
             SELECT id, workspace_id, key, name, description, type_key, type_settings,
-                   workflow_id, created_by, created_at
+                   workflow_id, created_at
             FROM projects
             WHERE id = $1
         ",
@@ -1839,7 +1744,6 @@ pub async fn install_project_scenario_template(
         project.workspace_id,
         project.id,
         event_actor_id,
-        project.created_by,
         &template,
         Some(install_event_id),
     )
@@ -2352,15 +2256,18 @@ pub async fn update_project(
 }
 
 /// Removes the project's blocking content, then the project itself, inside the caller's transaction.
-async fn delete_project_row(tx: &sea_orm::DatabaseTransaction, project_id: Uuid) -> Result<(), ApiError> {
-    crate::services::teardown::delete_project_content(tx, project_id).await?;
+async fn delete_project_row(
+    tx: &sea_orm::DatabaseTransaction,
+    project_id: Uuid,
+) -> Result<Option<(Uuid, i64)>, ApiError> {
+    let released = crate::services::teardown::delete_project_content(tx, project_id).await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "DELETE FROM projects WHERE id = $1",
         vec![project_id.into()],
     ))
     .await?;
-    Ok(())
+    Ok(released)
 }
 
 /// DELETE /api/v1/projects/:id - Delete project
@@ -2446,10 +2353,14 @@ pub async fn delete_project(
         },
     )
     .await?;
-    delete_project_row(&tx, project_id)
+    let released = delete_project_row(&tx, project_id)
         .await
         .map_err(|err| crate::services::teardown::refuse_blocked(err, "project"))?;
     tx.commit().await?;
+    // A connected bot's seat left with its last project: drop its cached permissions and sessions.
+    if let Some((workspace_id, epoch)) = released {
+        crate::services::bot_connections::settle_epoch(&state, workspace_id, Some(epoch)).await;
+    }
 
     trigger_webhooks(
         state.clone(),

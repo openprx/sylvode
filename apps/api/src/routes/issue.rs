@@ -19,7 +19,7 @@ use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
     services::{
-        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task, runner_bot_block},
         bot_identity::is_bot_user,
         issues::{IssueRef, insert_activity},
         work_item_service::{NewWorkItem, insert_work_item},
@@ -135,21 +135,21 @@ fn build_auth_extensions(claims: JwtClaims, bot: Option<Extension<BotAuthContext
 /// inside the workspace. A sprint in another project and a sprint that does not exist produce the
 /// same `BadRequest`, so this does not become an oracle of its own.
 /// One assignment of an issue, as queued by [`queue_assignment_ai_task`].
-struct AssignmentTaskInput {
-    project_id: Uuid,
-    issue_id: Uuid,
-    assignee_id: Uuid,
-    actor_id: Uuid,
-    trigger: &'static str,
-    idempotency_key: String,
+pub(crate) struct AssignmentTaskInput {
+    pub(crate) project_id: Uuid,
+    pub(crate) issue_id: Uuid,
+    pub(crate) assignee_id: Uuid,
+    pub(crate) actor_id: Uuid,
+    pub(crate) trigger: &'static str,
+    pub(crate) idempotency_key: String,
 }
 
 /// What an assignment produced: whether the assignee is a bot, and the bots that received their
 /// task for it as a worker AI task (to pass to `trigger_webhooks_after_ai_tasks`).
 #[derive(Debug, Default)]
-struct AssignmentOutcome {
-    assignee_is_bot: bool,
-    ai_task_bots: Vec<Uuid>,
+pub(crate) struct AssignmentOutcome {
+    pub(crate) assignee_is_bot: bool,
+    pub(crate) ai_task_bots: Vec<Uuid>,
 }
 
 /// Whether assigning `assignee_id` queues an `issue_assigned` AI task.
@@ -162,12 +162,26 @@ const fn assignment_queues_ai_task(actor_id: Uuid, assignee_id: Uuid, assignee_i
     assignee_is_bot && actor_id.as_u128() != assignee_id.as_u128()
 }
 
-async fn queue_assignment_ai_task(
+pub(crate) async fn queue_assignment_ai_task(
     db: &impl ConnectionTrait,
     input: AssignmentTaskInput,
 ) -> Result<AssignmentOutcome, ApiError> {
     let assignee_is_bot = is_bot_user(db, input.assignee_id).await?;
     if !assignment_queues_ai_task(input.actor_id, input.assignee_id, assignee_is_bot) {
+        return Ok(AssignmentOutcome {
+            assignee_is_bot,
+            ai_task_bots: Vec::new(),
+        });
+    }
+    // Assigning a runner bot that this project has not enabled is allowed (the issue is its
+    // assignee) but starts nothing: the bot is not given a task it may not run.
+    if let Some(block) = runner_bot_block(db, input.project_id, input.assignee_id).await? {
+        tracing::info!(
+            issue_id = %input.issue_id,
+            bot_id = %input.assignee_id,
+            reason = block.code(),
+            "assignment queued no task"
+        );
         return Ok(AssignmentOutcome {
             assignee_is_bot,
             ai_task_bots: Vec::new(),

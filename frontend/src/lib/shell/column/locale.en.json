@@ -19,8 +19,7 @@
 				"forms": "forms",
 				"flow": "Flow",
 				"agents": "agents",
-				"bots": "bots",
-				"participants": "AI participants"
+				"bots": "bots"
 			},
 			"home": {
 				"overview": "Overview",
@@ -40,11 +39,10 @@
 			},
 			"agents": {
 				"bots": "Bots",
-				"participants": "AI participants",
+				"connected": "Connected bots",
 				"personalEmpty": "Agents belong to a workspace in this version.",
 				"noBots": "No bots in this workspace.",
-				"noProjects": "No projects in this workspace.",
-				"noParticipants": "No AI participants in this project.",
+				"noConnection": "No bot connected",
 				"choose": "Choose an agent in the list."
 			},
 			"governance": {

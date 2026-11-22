@@ -255,21 +255,22 @@ export class World {
 
 		let botId = cfg.pinned.botId;
 		if (botId === undefined) {
-			const found = itemsOf(
+			// The bot was made by the connection of P1, so it is found among the workspace's bots.
+			const bots = itemsOf(
 				await this.admin.data(
 					rec,
 					'find the bot',
 					'GET',
-					`/api/v1/admin/users?search=${encodeURIComponent(cfg.botEmail)}&limit=20`
+					`/api/v1/workspaces/${workspaceId}/bots`
 				)
 			).map(asRecord);
 			botId = str(
-				found.find((u) => str(u?.email)?.toLowerCase() === cfg.botEmail.toLowerCase())?.id
+				bots.find((bot) => str(bot?.name) === cfg.botName && bot?.is_active === true)?.id
 			);
 		}
 		check(
 			botId !== undefined && roleOf(botId) !== undefined,
-			'the bot user is missing or not a member of the workspace (run the setup first)'
+			'the bot is missing or not a member of the workspace (run the setup first)'
 		);
 		return { workspaceId, p1Id, p2Id, botId, userAId, userBId, adminId };
 	}

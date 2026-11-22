@@ -1937,6 +1937,48 @@ mod dispatcher_database_tests {
         }
     }
 
+    /// The events a project bot connection writes carry the runner's working directory, a path on
+    /// the runner's host. No reader outside the admin group gets one: a webhook delivery withholds
+    /// the payload of any type without a delivery policy, and these types have none.
+    #[test]
+    fn connection_events_reach_a_webhook_without_their_payload() {
+        for event_type in [
+            "project.bot_connected",
+            "project.bot_connection_updated",
+            "project.bot_connection_disabled",
+            "project.bot_connection_enabled",
+            "project.bot_disconnected",
+            "project.execution_settings_updated",
+            "bot.credentials_rotated",
+        ] {
+            let event = BusinessEventRow {
+                id: Uuid::new_v4(),
+                workspace_id: Some(Uuid::new_v4()),
+                source_flow_scope_id: None,
+                project_id: Some(Uuid::new_v4()),
+                event_type: event_type.to_string(),
+                aggregate_type: "project".to_string(),
+                aggregate_id: Uuid::new_v4().to_string(),
+                actor_id: Some(Uuid::new_v4()),
+                source: json!({"type": "user"}),
+                payload: json!({
+                    "working_directory": "/home/dev/SECRET-HOST-PATH",
+                    "before": {"working_directory": "/home/dev/SECRET-OLD-PATH"},
+                    "after": {"working_directory": "/home/dev/SECRET-NEW-PATH"},
+                }),
+                metadata: json!({}),
+                correlation_id: None,
+                causation_id: None,
+                created_at: Timestamp::now(),
+            };
+            let encoded = serde_json::to_string(&envelope_json(&event, None, None, None)).expect("serializes");
+            assert!(
+                !encoded.contains("SECRET-"),
+                "{event_type} leaked a host path: {encoded}"
+            );
+        }
+    }
+
     struct Scratch {
         db: DatabaseConnection,
         name: String,

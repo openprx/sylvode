@@ -38,7 +38,8 @@ export const PROJECT_NAV_KEYS = {
 	allForms: 'shell.projectNav.allForms',
 	apps: 'shell.projectNav.apps',
 	settings: 'shell.projectNav.settings',
-	pluginsSection: 'shell.sections.projectPlugins'
+	pluginsSection: 'shell.sections.projectPlugins',
+	executionSection: 'execution.connection.title'
 } as const;
 
 /** Type key of the form-centred project type: its overview is the forms page. */
@@ -91,7 +92,7 @@ export function settingsSections(
 	options: { base?: string; translate?: NavTranslate } = {}
 ): SettingsSectionEntry[] {
 	if (!isAdmin) return [];
-	void typeKey; // every type has Plugins today; External API, Public forms and Templates join per type later
+	void typeKey; // every type has Plugins and Execution; External API, Public forms and Templates join per type later
 	const base = options.base ?? '';
 	const t = options.translate ?? identity;
 	return [
@@ -100,6 +101,12 @@ export function settingsSections(
 			label: t(PROJECT_NAV_KEYS.pluginsSection),
 			labelKey: PROJECT_NAV_KEYS.pluginsSection,
 			href: `${base}/settings/plugins`
+		},
+		{
+			id: 'execution',
+			label: t(PROJECT_NAV_KEYS.executionSection),
+			labelKey: PROJECT_NAV_KEYS.executionSection,
+			href: `${base}/settings/execution`
 		}
 	];
 }

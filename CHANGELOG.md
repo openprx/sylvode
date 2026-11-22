@@ -44,6 +44,31 @@ name.
 
 ### Added
 
+- **Connect a bot to a project.** A project is connected to one bot that runs its agent tasks on a
+  runner. `POST /api/v1/projects/{id}/bot-connection` creates (or reuses) the bot, its token, a
+  managed webhook, the AI participant registration and the execution settings in one transaction
+  and returns the runner configuration block (token and signing secret) once, with
+  `Cache-Control: no-store`. `GET`, `PATCH`, `DELETE` and `.../disable`, `.../enable`, `.../rotate`
+  complete it; every write carries the connection's `version`. Owners and admins only; bots and
+  connected applications are refused. The runner address is checked with the outbound policy
+  (`[outbound] allowed_hosts`). `GET` answers a status computed from the runner's report
+  (`PUT /api/v1/ai/runner/report`, sanitised, 16 KiB limit), the token's use and the latest delivery.
+  Rows a connection made are reported as `managed_by` on the Bots and Webhooks endpoints and are
+  protected there. After a connection or a rotation the worker holds the bot's tasks until the runner
+  has used the new token (at most one hour); runner refusals carry a stored `reason_code` and read
+  "the runner refused the task (...)". Removing the last connection revokes the token and deletes
+  the webhook and seat; deleting a project does the same. Alert rules warn with
+  `bot_not_connected_to_project` instead of `bot_has_no_active_webhook`.
+  Operations: `docs/runbooks/bot-connections.md`.
+  Hardening: a runner bot receives a project's tasks only while the project has an enabled
+  connection for it (task creation, worker pick-up and delivery; pending tasks without one are
+  failed with a reason and an issue comment); its token reaches only the routes of a fixed table and
+  only the projects it is connected to; it is never seated above member; a delivery connects to the
+  address its URL check resolved, and a runner's answer body is never copied into an issue; plain
+  `http://` runner addresses need a host in `[outbound] allowed_hosts`; rotation, the disable that
+  switches the token off, removal and project deletion re-evaluate cached permissions and open
+  sessions; disabling a bot's user stops its token.
+
 - **MCP tool catalogue and task tools.** One catalogue entry per tool (category, read or write,
   summary, keywords), `annotations.readOnlyHint` in the full listing, `list-tools --json`, and the
   tools `sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress`, `sylvode_task_complete` and
@@ -152,6 +177,19 @@ name.
     `scripts/smoke-runner-routing.sh` and `scripts/smoke-browser-mention-runner.sh`
     (`SYLVODE_RUNNER_DIR`), and the installer manages `sylvode-runner.service` (Linux) or
     `dev.sylvode.runner` (macOS) only.
+
+### Removed
+
+- **The AI participants API and page.** `GET/POST /api/v1/projects/{id}/ai-participants`, its
+  `{id}` routes and `/stats`, the AI participants page, the overview's assistant cards and the
+  placeholder participants a scenario template used to create are gone: a bot is a project's AI
+  participant only through a bot connection. Migration `0112` makes the participant key
+  `(project_id, id)` (one bot, several projects), drops the stored-only columns `model`,
+  `provider`, `api_endpoint` and `capabilities`, and drops the learning records' foreign key.
+  Learning records are read per project: `GET /api/v1/projects/{id}/ai-participants/{bot_id}/learning`
+  and `.../alignment-stats` replace `/api/v1/ai-participants/{id}/...`. `PUT
+  /api/v1/projects/{id}/execution-settings` is removed (the connection writes the settings);
+  `GET` stays. The worker's end reason `receiver_declined` is now `runner_declined`.
 
 ### Fixed
 

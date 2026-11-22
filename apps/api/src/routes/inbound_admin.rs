@@ -564,17 +564,19 @@ async fn check_rule_references<C: ConnectionTrait>(
                 "bot_user_id must be a bot that is a member of this workspace".to_owned(),
             ));
         }
-        let subscribed = Found::find_by_statement(Statement::from_sql_and_values(
+        let connected = Found::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT id FROM webhooks WHERE workspace_id = $1 AND bot_user_id = $2 AND active LIMIT 1",
-            vec![workspace_id.into(), bot.into()],
+            "SELECT c.project_id AS id FROM project_bot_connections c \
+             JOIN project_execution_settings s ON s.project_id = c.project_id \
+              WHERE c.project_id = $1 AND c.bot_id = $2 AND s.enabled",
+            vec![project_id.into(), bot.into()],
         ))
         .one(db)
         .await?;
-        if subscribed.is_none() {
-            // Not refused: the receiver may be registered later, but the worker cannot deliver a
-            // task to a bot without an active subscription.
-            warnings.push("bot_has_no_active_webhook");
+        if connected.is_none() {
+            // Not refused: the bot may be connected later, but a task for a bot that is not
+            // connected to this project cannot reach a runner that will run it.
+            warnings.push("bot_not_connected_to_project");
         }
     }
     if !rule.label_ids.is_empty() {

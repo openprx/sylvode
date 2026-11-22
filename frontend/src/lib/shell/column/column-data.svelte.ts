@@ -1,11 +1,11 @@
 /**
- * Lists the secondary column fetches from the existing API clients: workspaces, bots, AI
- * participants of a project, forms of a project. Each list loads and fails on its own, so one
+ * Lists the secondary column fetches from the existing API clients: workspaces, bots, forms of a
+ * project. Each list loads and fails on its own, so one
  * failed list never blocks the rest of the column. Requests go through `ColumnApis` so tests
  * can pass fakes; `defaultColumnApis` (`column-apis.ts`) calls the real clients.
  */
 import type { ApiResult, PaginatedData } from '#lib/api/client.js';
-import type { AgentLike, BotLike } from './lists';
+import type { BotLike } from './lists';
 import type { WorkspaceRef } from './scope';
 
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error' | 'forbidden';
@@ -25,7 +25,6 @@ export interface FormRef {
 export interface ColumnApis {
 	workspaces(): Promise<ApiResult<PaginatedData<WorkspaceRef>>>;
 	bots(workspaceId: string): Promise<ApiResult<BotLike[]>>;
-	aiAgents(projectId: string): Promise<ApiResult<PaginatedData<AgentLike>>>;
 	forms(projectId: string): Promise<ApiResult<PaginatedData<FormRef>>>;
 }
 
@@ -49,7 +48,6 @@ const fromPage = <T>(page: PaginatedData<T>) => ({
 export class ColumnData {
 	workspaces = $state.raw<Load<WorkspaceRef>>(IDLE);
 	private bots = $state.raw<Record<string, Load<BotLike>>>({});
-	private agents = $state.raw<Record<string, Load<AgentLike>>>({});
 	private forms = $state.raw<Record<string, Load<FormRef>>>({});
 	private apps = $state.raw<Record<string, number | null>>({});
 
@@ -102,19 +100,6 @@ export class ColumnData {
 					items: Array.isArray(items) ? items : [],
 					total: null
 				}))
-		);
-	}
-
-	agentsOf(projectId: string): Load<AgentLike> {
-		return this.agents[projectId] ?? IDLE;
-	}
-	loadAgents(projectId: string, force = false): Promise<void> {
-		return this.run(
-			`agents:${projectId}`,
-			this.agentsOf(projectId),
-			force,
-			(v) => (this.agents = { ...this.agents, [projectId]: v }),
-			async () => loadFromResult(await this.apis.aiAgents(projectId), fromPage)
 		);
 	}
 

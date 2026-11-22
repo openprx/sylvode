@@ -52,7 +52,8 @@ Everything comes from the environment. Nothing is read from a file.
 | `OAUTH_E2E_WORKSPACE_NAME` | `qa-p4-acceptance` | Workspace W; must start with `qa-p4-`. `OAUTH_E2E_WORKSPACE_SLUG` defaults to the same |
 | `OAUTH_E2E_P1_KEY`, `OAUTH_E2E_P1_NAME` | `QPA`, `qa-p4-alpha` | Project P1 (the one the grant covers) |
 | `OAUTH_E2E_P2_KEY`, `OAUTH_E2E_P2_NAME` | `QPB`, `qa-p4-beta` | Project P2 (outside the grant) |
-| `OAUTH_E2E_BOT_EMAIL`, `OAUTH_E2E_BOT_NAME` | `qa-p4-bot@e2e.sylvode.test`, `qa-p4-bot` | The bot user |
+| `OAUTH_E2E_BOT_NAME` | `qa-p4-bot` | The bot made by the connection of P1 |
+| `OAUTH_E2E_RUNNER_URL`, `OAUTH_E2E_WORKING_DIRECTORY` | `http://127.0.0.1:9`, `/tmp/qa-p4` | The runner address and working directory typed on the bot's connection. The address must be listed under `[outbound] allowed_hosts` in the API's `sylvode.toml` (see DEPLOY-NOTES.md) |
 | `OAUTH_E2E_WORKSPACE_ID`, `OAUTH_E2E_P1_ID`, `OAUTH_E2E_P2_ID`, `OAUTH_E2E_BOT_ID` | none | Optional pins; otherwise found by name and key |
 | `OAUTH_E2E_OUT_DIR` | required to run | Where the acceptance record and the case files are written (also Playwright's own artifacts) |
 | `OAUTH_E2E_BUILD_COMMIT` | none | Build commit of the environment (`api --build-info` prints it). The API does not expose it over HTTP |
@@ -66,10 +67,14 @@ Everything comes from the environment. Nothing is read from a file.
 ## Setup
 
 `node tests/e2e/oauth/setup.ts` is idempotent. As the instance administrator it finds or creates:
-users A, B and the bot (accounts that already exist are left alone; a wrong password for an existing
+users A and B (accounts that already exist are left alone; a wrong password for an existing
 account is reported, not changed), workspace W (the administrator owns it), the members (A member,
-B admin, the bot member), projects P1 and P2, the bot as an AI participant of both projects, and
-one work item `qa-p4-seed-p1` / `qa-p4-seed-p2` in each. It prints ids, never a password or a token.
+B admin), projects P1 and P2, and one work item `qa-p4-seed-p1` / `qa-p4-seed-p2` in each. The bot
+is made by connecting P1 (`POST /api/v1/projects/{P1}/bot-connection` with `bot.name`, which creates
+its user, workspace seat, token and webhook) and joins P2 by id (`bot.id`), so it is an AI
+participant of both projects. The configuration block's token is shown once and never printed;
+the setup uses it for one `GET /api/v1/ai/protocol` call, as a starting runner would, because the
+worker holds a new bot's tasks until its token has been used (at most an hour). It prints ids, never a password or a token.
 It refuses a non-loopback host unless `OAUTH_E2E_ALLOW_NON_LOOPBACK=1`.
 
 Every case that changes data does so inside W. The only things outside W the suite touches are user

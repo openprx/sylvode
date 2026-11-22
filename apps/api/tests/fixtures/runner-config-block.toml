@@ -1,0 +1,35 @@
+# Sylvode runner configuration for bot "Build bot" (00000000-0000-0000-0000-000000000000),
+# issued 2026-11-21T10:00:00+00:00 for project SVWL. Shown once: it holds the bot's token and the
+# signing secret. Store it with mode 0600. To add this bot to a runner that already serves
+# another bot, add the secret to [security] webhook_secrets and append the [[ai_task_callback.bots]]
+# and [[agents]] tables; keep the other sections once. The token acts only in projects this
+# bot is connected to and has enabled, and only on the routes the runner needs.
+
+[server]
+# Sylvode delivers to https://runner.example.net:9090/webhook. Listen where that address reaches
+# (behind a TLS proxy, usually loopback).
+listen = "127.0.0.1:9090"
+
+[security]
+webhook_secrets = ["golden-fixture-signing-secret"]
+
+[ai_task_callback]
+enabled = true
+api_url = "https://sylvode.example.net"
+
+[[ai_task_callback.bots]]
+bot_id = "00000000-0000-0000-0000-000000000000"
+token = "opr_golden_fixture_token"
+surface = "mcp_stdio"
+
+[runner]
+# The runner refuses any working directory outside these. Review before use.
+allowed_roots = ["/home/dev/work/svwl"]
+
+[[agents]]
+id = "00000000-0000-0000-0000-000000000000"
+name = "Build bot"
+agent_type = "runner"
+
+[agents.route]
+bot_ids = ["00000000-0000-0000-0000-000000000000"]

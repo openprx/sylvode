@@ -10,6 +10,8 @@ export interface Webhook {
 	is_active: boolean;
 	bot_user_id?: string | null;
 	created_at: string;
+	/** Set when a project bot connection manages this webhook (read it with `parseManagedBy`). */
+	managed_by?: unknown;
 }
 
 /**

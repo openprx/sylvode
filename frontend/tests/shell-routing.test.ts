@@ -33,8 +33,6 @@ suite.check('destinations by route', () => {
 		[`/workspace/${W}/flow/o1`, 'flow'],
 		['/shared-blocks/s1', 'flow'],
 		['/agents', 'agents'],
-		['/ai-agents/a1/learning', 'agents'],
-		[`/workspace/${W}/projects/${P}/ai-agents`, 'agents'],
 		['/governance', 'governance'],
 		['/proposals/abc/chain', 'governance'],
 		['/trust-scores/appeals', 'governance'],
@@ -88,7 +86,7 @@ suite.check('ids are read from the URL', () => {
 	assertEqual(route(`/workspace/${W}/flow/o2/convert`).flowObjectId, 'o2', 'convert');
 	assertEqual(route('/flow/package').flowObjectId, null, 'package is not an object');
 	assertEqual(route('/flow/conversions/j').flowObjectId, null, 'conversions are not objects');
-	assertEqual(route('/projects/legacy/ai-agents').projectId, 'legacy', 'legacy project id');
+	assertEqual(route('/projects/legacy/audit-reports').projectId, 'legacy', 'legacy project id');
 	assertEqual(route('/workspace').workspaceId, null, 'no workspace on the list');
 });
 
@@ -277,11 +275,6 @@ suite.check('page titles', () => {
 		pageTitle(`/workspace/${W}/projects/${P}/apps`, t),
 		'shell.pageTitle.projectApps',
 		'apps'
-	);
-	assertEqual(
-		pageTitle(`/workspace/${W}/projects/${P}/ai-agents`, t),
-		'pageTitle.aiAgents',
-		'moved ai agents'
 	);
 	assertEqual(
 		pageTitle(`/workspace/${W}/projects/${P}/audit-reports/a`, t),

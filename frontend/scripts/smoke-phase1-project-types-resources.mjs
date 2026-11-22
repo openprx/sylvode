@@ -14,9 +14,7 @@ const now = '2026-05-31T12:00:00.000Z';
 
 let createdTypePayload = null;
 let updatedTypePayload = null;
-let createdResourcePayload = null;
-let updatedResourcePayload = null;
-let deletedResourceId = null;
+let resourcesRequested = false;
 
 let projectTypes = [
 	{
@@ -46,8 +44,6 @@ let projectTypes = [
 		updated_at: now
 	}
 ];
-
-let resources = [];
 
 const project = {
 	id: projectId,
@@ -180,30 +176,10 @@ async function navigateWithinApp(path) {
   mark('data-project-type-updated');
 
   await navigateWithinApp('/workspace/${workspaceId}/projects/${projectId}');
-  await waitFor(() => textInElements('Project resources'), 'resources panel');
-  const kind = document.querySelector('select[aria-label="Resource kind"]');
-  kind.value = 'custom';
-  kind.dispatchEvent(new Event('change', { bubbles: true }));
-  setInputByPlaceholder('Name', 'Contract Library');
-  setInputByPlaceholder('Locator', '{"url":"https://docs.example/contracts"}');
-  findButtonExact('Add').click();
-  await waitFor(() => textInElements('Contract Library'), 'created resource');
-  mark('data-resource-created');
-
-  const resourceRow = await waitFor(() => rowWithText('Contract Library'), 'resource row');
-  Array.from(resourceRow.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Edit').click();
-  const editingResourceRow = await waitFor(() => Array.from(document.querySelectorAll('tr')).find((row) => row.querySelector('select') && row.querySelector('input')), 'resource editing row');
-  const resourceNameInput = await waitFor(() => editingResourceRow.querySelector('input[value="Contract Library"], input'), 'resource edit input');
-  resourceNameInput.value = 'Contract Library Updated';
-  resourceNameInput.dispatchEvent(new Event('input', { bubbles: true }));
-  Array.from(editingResourceRow.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Save').click();
-  await waitFor(() => textInElements('Contract Library Updated'), 'updated resource');
-  mark('data-resource-updated');
-
-  const updatedRow = await waitFor(() => rowWithText('Contract Library Updated'), 'updated resource row');
-  Array.from(updatedRow.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Delete').click();
-  await waitFor(() => !textInElements('Contract Library Updated', 'td'), 'deleted resource');
-  mark('data-resource-deleted');
+  // The overview has no project resources panel and makes no resources request.
+  await waitFor(() => textInElements('Phase 1 Contract Project'), 'project overview');
+  if (textInElements('Project resources')) throw new Error('the project resources panel is still shown');
+  mark('data-resources-panel-absent');
   document.body.setAttribute('data-phase1-project-types-smoke', 'done');
 })().catch((error) => {
   document.body.setAttribute('data-phase1-project-types-smoke', 'failed');
@@ -343,56 +319,9 @@ location.replace('/workspace/${workspaceId}/projects?phase1_project_types_smoke=
 		return;
 	}
 
-	if (pathname === `/api/v1/projects/${projectId}/ai-participants`) {
-		json(res, 200, apiResult(paginated([])));
-		return;
-	}
-
-	if (pathname === `/api/v1/projects/${projectId}/resources` && req.method === 'GET') {
-		json(res, 200, apiResult(paginated(resources)));
-		return;
-	}
-
-	if (pathname === `/api/v1/projects/${projectId}/resources` && req.method === 'POST') {
-		createdResourcePayload = await readBody(req);
-		const item = {
-			id: 'resource-phase1-smoke',
-			project_id: projectId,
-			kind: createdResourcePayload.kind,
-			name: createdResourcePayload.name,
-			locator: createdResourcePayload.locator ?? {},
-			permission_policy: {},
-			sync_status: createdResourcePayload.sync_status ?? 'manual',
-			created_by: 'user-smoke',
-			created_at: now,
-			updated_at: now
-		};
-		resources = [item];
-		json(res, 200, apiResult(item));
-		return;
-	}
-
-	if (
-		pathname === `/api/v1/projects/${projectId}/resources/resource-phase1-smoke` &&
-		req.method === 'PATCH'
-	) {
-		updatedResourcePayload = await readBody(req);
-		resources = resources.map((item) =>
-			item.id === 'resource-phase1-smoke'
-				? { ...item, ...updatedResourcePayload, updated_at: now }
-				: item
-		);
-		json(res, 200, apiResult(resources.find((item) => item.id === 'resource-phase1-smoke')));
-		return;
-	}
-
-	if (
-		pathname === `/api/v1/projects/${projectId}/resources/resource-phase1-smoke` &&
-		req.method === 'DELETE'
-	) {
-		deletedResourceId = 'resource-phase1-smoke';
-		resources = [];
-		json(res, 200, apiResult(null));
+	if (pathname.startsWith(`/api/v1/projects/${projectId}/resources`)) {
+		resourcesRequested = true;
+		json(res, 404, apiResult(null));
 		return;
 	}
 
@@ -457,14 +386,8 @@ try {
 	if (!updatedTypePayload || updatedTypePayload.name !== 'Audit Review Updated') {
 		throw new Error('Expected project type update payload');
 	}
-	if (!createdResourcePayload || createdResourcePayload.kind !== 'custom') {
-		throw new Error('Expected custom resource create payload');
-	}
-	if (!updatedResourcePayload || updatedResourcePayload.name !== 'Contract Library Updated') {
-		throw new Error('Expected resource update payload');
-	}
-	if (deletedResourceId !== 'resource-phase1-smoke') {
-		throw new Error('Expected resource delete request');
+	if (resourcesRequested) {
+		throw new Error('The overview requested the project resources');
 	}
 	console.log('Phase 1 project types/resources browser smoke passed');
 } finally {

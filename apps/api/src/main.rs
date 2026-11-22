@@ -1012,7 +1012,41 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
         .route(
             "/api/v1/projects/{project_id}/execution-settings",
             get(routes::project_execution::get_execution_settings)
-                .put(routes::project_execution::put_execution_settings)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connection",
+            get(routes::project_bot_connection::get_bot_connection)
+                .post(routes::project_bot_connection::connect_bot)
+                .patch(routes::project_bot_connection::update_bot_connection)
+                .delete(routes::project_bot_connection::remove_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connection/disable",
+            post(routes::project_bot_connection::disable_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connection/enable",
+            post(routes::project_bot_connection::enable_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connection/rotate",
+            post(routes::project_bot_connection::rotate_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
                     middleware::bot_auth::bot_or_user_auth_middleware,
@@ -1064,34 +1098,6 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
             ),
         )
         .route(
-            "/api/v1/projects/{project_id}/ai-participants",
-            get(routes::ai_agent::list_ai_agents)
-                .post(routes::ai_agent::create_ai_agent)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                )),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/ai-participants/{id}/stats",
-            get(routes::ai_agent::get_ai_agent_stats).route_layer(
-                axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                ),
-            ),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/ai-participants/{id}",
-            get(routes::ai_agent::get_ai_agent)
-                .patch(routes::ai_agent::update_ai_agent)
-                .delete(routes::ai_agent::delete_ai_agent)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                )),
-        )
-        .route(
             "/api/v1/projects/{project_id}/ai/tasks",
             get(routes::ai_callback::list_project_ai_tasks)
                 .post(routes::ai_callback::create_project_ai_task)
@@ -1103,6 +1109,15 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
         .route(
             "/api/v1/ai/protocol",
             get(routes::ai_task_protocol::get_protocol).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/runner/report",
+            put(routes::ai_task_protocol::put_runner_report)
+                .layer(routes::ai_task_protocol::runner_report_body_limit())
+                .route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),
@@ -1644,7 +1659,7 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
             ),
         )
         .route(
-            "/api/v1/ai-participants/{id}/learning",
+            "/api/v1/projects/{project_id}/ai-participants/{bot_id}/learning",
             get(routes::governance_ext::get_ai_participant_learning).route_layer(
                 axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -1653,7 +1668,7 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
             ),
         )
         .route(
-            "/api/v1/ai-participants/{id}/alignment-stats",
+            "/api/v1/projects/{project_id}/ai-participants/{bot_id}/alignment-stats",
             get(routes::governance_ext::get_ai_participant_alignment_stats).route_layer(
                 axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -3804,6 +3819,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0111_alert_chain.sql",
         include_str!("../../../migrations/0111_alert_chain.sql"),
     ),
+    (
+        "0112_bot_connections.sql",
+        include_str!("../../../migrations/0112_bot_connections.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4364,6 +4383,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         SchemaProbe::Relation("project_execution_settings"),
     ),
     ("0111_alert_chain.sql", SchemaProbe::Relation("inbound_events")),
+    (
+        "0112_bot_connections.sql",
+        SchemaProbe::Relation("project_bot_connections"),
+    ),
 ];
 
 /// One recorded migration outcome.
@@ -4929,6 +4952,7 @@ mod tests {
                 "0109_oauth_authorization_server.sql",
                 "0110_runner_task_protocol.sql",
                 "0111_alert_chain.sql",
+                "0112_bot_connections.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -5456,6 +5480,145 @@ mod migration_runner_database_tests {
             assert_eq!(status_of(&ledger, name), "applied", "{name} should have been executed");
         }
         assert_schema_complete(&scratch.db).await;
+
+        scratch.drop_self().await;
+    }
+
+    async fn scalar_text(db: &DatabaseConnection, sql: &str) -> String {
+        db.query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
+            .await
+            .expect("query runs")
+            .expect("query returns a row")
+            .try_get("", "v")
+            .expect("v is text")
+    }
+
+    async fn config_version_of(db: &DatabaseConnection, project: &str, bot: &str) -> String {
+        scalar_text(
+            db,
+            &format!(
+                "SELECT config_updated_at::text AS v FROM ai_participants \
+                 WHERE project_id = '{project}' AND id = '{bot}'"
+            ),
+        )
+        .await
+    }
+
+    /// 0112 is after the adoption cutoff, so it re-runs on an adopted database, and 0092 (edited so
+    /// that its trigger no longer names the dropped columns) re-runs after it on a replay start.
+    /// Both must succeed any number of times and leave the same schema and the same versions.
+    #[tokio::test]
+    async fn bot_connections_migration_reruns_and_replaying_0092_after_it_succeeds() {
+        let scratch = scratch_or_skip!("bot_connections_replay");
+        let db = &scratch.db;
+        run_migrations_with(db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+
+        let dropped = scalar_text(
+            db,
+            "SELECT count(*)::text AS v FROM information_schema.columns \
+             WHERE table_schema = current_schema() AND table_name = 'ai_participants' \
+               AND column_name IN ('model', 'provider', 'api_endpoint', 'capabilities')",
+        )
+        .await;
+        assert_eq!(dropped, "0", "the four stored-only columns are gone");
+        let key = scalar_text(
+            db,
+            "SELECT string_agg(a.attname, ',' ORDER BY k.ord) AS v \
+             FROM pg_index i \
+             CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) \
+             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum \
+             WHERE i.indrelid = 'ai_participants'::regclass AND i.indisprimary",
+        )
+        .await;
+        assert_eq!(key, "project_id,id", "one registration per bot per project");
+        let learning_fk = scalar_text(
+            db,
+            "SELECT count(*)::text AS v FROM pg_constraint \
+             WHERE conrelid = 'ai_learning_records'::regclass AND contype = 'f' \
+               AND confrelid = 'ai_participants'::regclass",
+        )
+        .await;
+        assert_eq!(
+            learning_fk, "0",
+            "learning records keep no foreign key to the participant"
+        );
+
+        // A bot registered in two projects.
+        let user = "00000000-0000-0000-0000-0000000000a1";
+        let ws = "00000000-0000-0000-0000-0000000000b1";
+        let (p1, p2) = (
+            "00000000-0000-0000-0000-0000000000c1",
+            "00000000-0000-0000-0000-0000000000c2",
+        );
+        let bot = "bot-registered-twice";
+        let setup = format!(
+            "INSERT INTO users(id,email,password_hash,name,role,is_active) \
+               VALUES ('{user}','a1@example.test','','Owner','user',true); \
+             INSERT INTO workspaces(id,slug,name,created_by) VALUES ('{ws}','bc-ws','BC',  '{user}'); \
+             INSERT INTO projects(id,workspace_id,key,name,created_by) VALUES \
+               ('{p1}','{ws}','BCA','A','{user}'),('{p2}','{ws}','BCB','B','{user}'); \
+             INSERT INTO ai_participants(id,project_id,name,registered_by) VALUES \
+               ('{bot}','{p1}','Bot','{user}'),('{bot}','{p2}','Bot','{user}');"
+        );
+        db.execute_unprepared(&setup)
+            .await
+            .expect("the same bot id registers in two projects");
+
+        let before = config_version_of(db, p1, bot).await;
+        let heartbeat =
+            format!("UPDATE ai_participants SET last_active_at = clock_timestamp() WHERE project_id = '{p1}'");
+        db.execute_unprepared(&heartbeat).await.expect("heartbeat");
+        assert_eq!(
+            config_version_of(db, p1, bot).await,
+            before,
+            "a heartbeat is not a configuration edit"
+        );
+        let rename = format!("UPDATE ai_participants SET name = 'Renamed' WHERE project_id = '{p1}'");
+        db.execute_unprepared(&rename).await.expect("rename");
+        let after = config_version_of(db, p1, bot).await;
+        assert_ne!(after, before, "a configuration edit advances the version");
+
+        for (name, sql) in [
+            (
+                "0112 again",
+                include_str!("../../../migrations/0112_bot_connections.sql"),
+            ),
+            (
+                "0092 after 0112",
+                include_str!("../../../migrations/0092_ai_participant_config_version.sql"),
+            ),
+            (
+                "0112 after 0092",
+                include_str!("../../../migrations/0112_bot_connections.sql"),
+            ),
+        ] {
+            db.execute_unprepared(sql)
+                .await
+                .unwrap_or_else(|err| panic!("{name} must succeed: {err}"));
+            assert_eq!(
+                config_version_of(db, p1, bot).await,
+                after,
+                "{name} preserves versions and rows"
+            );
+        }
+        let trigger = scalar_text(
+            db,
+            "SELECT pg_get_triggerdef(oid) AS v FROM pg_trigger \
+             WHERE tgrelid = 'ai_participants'::regclass AND tgname = 'ai_participant_config_version'",
+        )
+        .await;
+        for column in ["model", "provider", "api_endpoint", "capabilities"] {
+            assert!(
+                !trigger.contains(column),
+                "the trigger must not name {column}: {trigger}"
+            );
+        }
+        for table in ["bot_runners", "project_bot_connections"] {
+            let present = scalar_text(db, &format!("SELECT (to_regclass('{table}') IS NOT NULL)::text AS v")).await;
+            assert_eq!(present, "true", "{table} exists");
+        }
 
         scratch.drop_self().await;
     }

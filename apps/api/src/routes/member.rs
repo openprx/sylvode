@@ -229,6 +229,10 @@ pub async fn update_member_role(
         return Err(ApiError::Forbidden("cannot change workspace owner role".to_string()));
     }
 
+    // A bot made by a project bot connection keeps the seat it was given: its token must never
+    // pass a workspace-admin check.
+    crate::services::bots::ensure_editable(&tx, target_user_id, crate::services::bots::ManagedPolicy::Refuse).await?;
+
     if operator_role == "admin" && (target_role.role == "admin" || req.role == "admin") {
         return Err(ApiError::Forbidden(
             "only owners can assign or modify admin roles".to_string(),
@@ -385,6 +389,10 @@ pub async fn remove_member(
     if target_role.role == "admin" && remover_role != "owner" {
         return Err(ApiError::Forbidden("only owners can remove admins".to_string()));
     }
+
+    // A bot made by a project bot connection leaves the workspace only when its last connection
+    // is removed.
+    crate::services::bots::ensure_editable(&tx, target_user_id, crate::services::bots::ManagedPolicy::Refuse).await?;
 
     // Remove member
     tx.execute(Statement::from_sql_and_values(

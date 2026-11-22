@@ -36,7 +36,7 @@ use super::{
 use crate::{
     error::ApiError,
     services::{
-        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task, runner_bot_block},
         work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{EffectiveWorkflow, resolve_effective_workflow_for_project},
     },
@@ -409,7 +409,10 @@ async fn decide<C: ConnectionTrait>(
                 decision.outcome = match cap {
                     "task_cap" => "suppressed_task_cap",
                     "active_cap" => "suppressed_active_cap",
-                    _ => "suppressed_workspace_cap",
+                    "workspace_cap" => "suppressed_workspace_cap",
+                    // The runner bot has no enabled connection in this project: like a bot that
+                    // is unavailable, the alert opens and no task starts.
+                    _ => "bot_unavailable",
                 };
                 note_suppression(tx, &rule, source, cap, Some(alert.work_item_id)).await?;
             }
@@ -758,6 +761,14 @@ async fn decide_task<C: ConnectionTrait>(
     let source = &request.source;
     if alert.task_active || alert.rearm_active {
         return Ok(TaskDecision::Skipped);
+    }
+    // A runner bot the rule's project has not enabled gets no task: the alert is still opened and
+    // the event records why (the rule warns about this when it is saved).
+    if let Some(block) = runner_bot_block(tx, source.project_id, bot).await? {
+        return Ok(TaskDecision::Suppressed(match block {
+            crate::services::ai_task_service::RunnerBotBlock::NotConnected => "bot_not_connected_to_project",
+            crate::services::ai_task_service::RunnerBotBlock::Disabled => "connection_disabled",
+        }));
     }
     let rule_id = rule.id;
     let tasks_last_hour = scalar(
