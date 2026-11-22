@@ -5,7 +5,7 @@
 	import { t } from 'svelte-i18n';
 	import { trustApi, type Appeal, type UserTrustScore } from '#lib/api/trust.js';
 	import { toast } from '#lib/stores/toast.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 
 	const userId = $derived(page.params.id || '');
 
@@ -138,7 +138,9 @@
 					placeholder={$t('trustProfile.projectIdPlaceholder')}
 					class="rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				/>
-				<Button onclick={loadAll} loading={loading || loadingAppeals}>{$t('common.search')}</Button>
+				<Button variant="primary" onclick={loadAll} loading={loading || loadingAppeals}
+					>{$t('common.search')}</Button
+				>
 			</div>
 		</div>
 

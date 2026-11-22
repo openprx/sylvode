@@ -14,7 +14,7 @@
 	import { toast } from '#lib/stores/toast.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Modal from '#lib/components/Modal.svelte';
@@ -382,7 +382,7 @@
 			<h1 class="text-2xl font-semibold text-fg">{$t('webhook.title')}</h1>
 			<p class="mt-1 text-sm text-fg-muted">{$t('webhook.subtitle')}</p>
 		</div>
-		<Button onclick={openCreate}>{$t('webhook.create')}</Button>
+		<Button variant="primary" onclick={openCreate}>{$t('webhook.create')}</Button>
 	</div>
 
 	{#if loading}
@@ -470,13 +470,13 @@
 
 										{#if lock.disabled}
 											<Button
-												variant="ghost"
+												variant="text"
 												size="sm"
 												disabled
 												disabledReason={lock.reasonKey ? $t(lock.reasonKey) : undefined}
 												>{$t('common.edit')}</Button
 											>
-											<Button variant="ghost" size="sm" disabled>{$t('common.delete')}</Button>
+											<Button variant="text" size="sm" disabled>{$t('common.delete')}</Button>
 										{:else}
 											<button
 												class="text-sm text-fg-muted hover:text-fg transition-colors"
@@ -577,7 +577,7 @@
 		<div class="flex justify-end gap-2 pt-2">
 			<Button variant="secondary" onclick={() => (showModal = false)}>{$t('common.cancel')}</Button>
 
-			<Button type="submit" loading={submitting}
+			<Button variant="primary" type="submit" loading={submitting}
 				>{editingWebhook ? $t('common.save') : $t('common.create')}</Button
 			>
 		</div>

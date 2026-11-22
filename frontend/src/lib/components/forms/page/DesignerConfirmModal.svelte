@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { AlertTriangle } from '@lucide/svelte';
 	import { t } from 'svelte-i18n';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
 
@@ -89,7 +89,7 @@
 	{#snippet footer()}
 		<Button variant="secondary" onclick={closeDesignerConfirm}>{$t('common.cancel')}</Button>
 
-		<Button variant="dangerSolid" loading={s.designerSaving} onclick={confirmDesignerSchemaSave}
+		<Button variant="danger" loading={s.designerSaving} onclick={confirmDesignerSchemaSave}
 			>{$t('forms.confirmSchemaSave')}</Button
 		>
 	{/snippet}

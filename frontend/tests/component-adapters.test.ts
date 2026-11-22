@@ -7,38 +7,6 @@ const comp = (name: string) => import(`../src/lib/components/${name}.svelte`);
 const text = createRawSnippet(() => ({ render: () => '<span>Label</span>' }));
 const suite = new Suite('component-adapters');
 
-// Button
-const buttonModule = await comp('Button');
-suite.check('Button variants map onto the primitive', () => {
-	const map = buttonModule.mapButtonVariant as (v?: string) => string;
-	assertEqual(map('primary'), 'primary', 'primary');
-	assertEqual(map('secondary'), 'secondary', 'secondary');
-	assertEqual(map('ghost'), 'text', 'ghost');
-	assertEqual(map('danger'), 'danger-quiet', 'danger');
-	assertEqual(map('dangerSolid'), 'danger', 'dangerSolid');
-	assertEqual(map(undefined), 'primary', 'default');
-	assertEqual(map('nope'), 'secondary', 'unknown');
-});
-await suite.checkAsync('Button keeps type, size, aria-expanded, disabled and loading', async () => {
-	const html = await renderToHtml(buttonModule.default, {
-		variant: 'dangerSolid',
-		size: 'sm',
-		type: 'submit',
-		'aria-expanded': true,
-		disabled: true,
-		children: text
-	});
-	assert(html.includes('v-danger') && !html.includes('danger-quiet'), html);
-	assert(html.includes('size-sm') && html.includes('type="submit"'), html);
-	assert(html.includes('aria-expanded="true"') && /\sdisabled/.test(html), html);
-	const busy = await renderToHtml(buttonModule.default, { loading: true, children: text });
-	assert(busy.includes('aria-busy="true"') && busy.includes('loading'), busy);
-});
-await suite.checkAsync('Button without children renders', async () => {
-	const html = await renderToHtml(buttonModule.default, {});
-	assert(html.includes('data-ui="button"'), html);
-});
-
 // Input / Textarea
 await suite.checkAsync('Input maps label, required, helper, error, id and type', async () => {
 	const { default: Input } = await comp('Input');

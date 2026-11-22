@@ -4,7 +4,7 @@
 	import { apiClient } from '#lib/api/client.js';
 	import { pluginLibraryApi, type ProjectPluginRequest } from '#lib/api/plugin-packages.js';
 	import { grantOptionsV3, slotLabelKey } from '#lib/plugins/layout-v3.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 
 	let { projectId, onApproved }: { projectId: string; onApproved: () => Promise<void> } = $props();
 	let requests = $state<ProjectPluginRequest[]>([]);
@@ -138,10 +138,10 @@
 								</ul>
 								<p>{$t('plugins.library.approvalHelp')}</p>
 								<div class="flex flex-wrap gap-2">
-									<Button disabled={busy} onclick={() => review(true)}
+									<Button variant="primary" disabled={busy} onclick={() => review(true)}
 										>{$t('plugins.library.approve')}</Button
 									>
-									<Button variant="danger" disabled={busy} onclick={() => review(false)}
+									<Button variant="danger-quiet" disabled={busy} onclick={() => review(false)}
 										>{$t('plugins.library.reject')}</Button
 									>
 									<Button

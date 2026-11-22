@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { X, Pencil } from '@lucide/svelte';
 	import { inputValue, selectValue } from '#lib/forms/record-format.js';
 	import { fieldHiddenByCondition, fieldReadOnlyByCondition } from '#lib/forms/field-conditions.js';
@@ -331,7 +331,7 @@
 				>{$t('common.cancel')}</Button
 			>
 
-			<Button size="sm" loading={s.childSubmitting} onclick={saveChildRecord}>
+			<Button variant="primary" size="sm" loading={s.childSubmitting} onclick={saveChildRecord}>
 				<Pencil class="mr-2 h-4 w-4" aria-hidden="true" />
 				{$t('forms.saveRecord')}
 			</Button>

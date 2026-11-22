@@ -5,7 +5,7 @@
 	import { t } from 'svelte-i18n';
 	import { trustApi, type TrustScoreRank } from '#lib/api/trust.js';
 	import { toast } from '#lib/stores/toast.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 
 	let loading = $state(false);
 	let items = $state<TrustScoreRank[]>([]);
@@ -151,7 +151,7 @@
 					placeholder={$t('trustBoard.projectIdPlaceholder')}
 					class="rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				/>
-				<Button onclick={search} {loading}>{$t('common.search')}</Button>
+				<Button variant="primary" onclick={search} {loading}>{$t('common.search')}</Button>
 			</div>
 		</div>
 

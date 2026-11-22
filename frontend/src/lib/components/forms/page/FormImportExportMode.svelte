@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { FileDown, FileText, FileUp } from '@lucide/svelte';
 	import { t } from 'svelte-i18n';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
 
 	const fp = getFormsPageContext();
@@ -30,7 +30,7 @@
 			</div>
 		</div>
 
-		<Button size="sm" onclick={openImportRecords}>
+		<Button variant="primary" size="sm" onclick={openImportRecords}>
 			<FileUp class="mr-2 h-4 w-4" aria-hidden="true" />
 			{$t('forms.importRecords')}
 		</Button>

@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { AlertTriangle, Shield } from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { formPermissionActions } from '#lib/forms/page-constants.js';
 	import type { FormRecordScope } from '#lib/forms/page-types.js';
 	import { permissionActionLabel, permissionFieldList } from '#lib/forms/permission-drafts.js';
@@ -37,8 +37,11 @@
 			</p>
 		</div>
 
-		<Button size="sm" loading={s.permissionsSaving} onclick={saveMemberPermissions}
-			>{$t('forms.savePermissions')}</Button
+		<Button
+			variant="primary"
+			size="sm"
+			loading={s.permissionsSaving}
+			onclick={saveMemberPermissions}>{$t('forms.savePermissions')}</Button
 		>
 	</div>
 

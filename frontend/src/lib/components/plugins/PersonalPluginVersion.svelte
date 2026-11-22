@@ -4,7 +4,7 @@
 	import { slotLabelKey } from '#lib/plugins/layout-v3.js';
 	import CreatorPanelPreview from './CreatorPanelPreview.svelte';
 	import { verifyPanelHtml } from '#lib/plugins/bridge.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import {
 		pluginLibraryApi,
 		type LibraryProject,
@@ -235,6 +235,7 @@
 			</div>
 			<div class="flex flex-wrap items-center gap-3">
 				<Button
+					variant="primary"
 					type="submit"
 					loading={pending === 'preview'}
 					disabled={pending !== null && pending !== 'preview'}
@@ -324,7 +325,7 @@
 									)}
 								</p>
 								<Button
-									variant="danger"
+									variant="danger-quiet"
 									size="sm"
 									loading={pending === 'revoke'}
 									onclick={() => revoke(link.project_id)}>{$t('plugins.library.confirm')}</Button
@@ -375,7 +376,11 @@
 						{/each}
 					</select>
 				</label>
-				<Button onclick={attach} loading={pending === 'attach'} disabled={!target || !!pending}
+				<Button
+					variant="primary"
+					onclick={attach}
+					loading={pending === 'attach'}
+					disabled={!target || !!pending}
 					>{$t(
 						target && !target.can_manage
 							? 'plugins.library.requestAccess'

@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { Plus, RefreshCw, Trash2 } from '@lucide/svelte';
 	import { t } from 'svelte-i18n';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { fieldTypeOptions } from '#lib/forms/page-constants.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
 	import {
@@ -91,6 +91,7 @@
 							>
 
 							<Button
+								variant="primary"
 								size="sm"
 								loading={s.installingTemplateKey === template.key}
 								onclick={() => installScenarioTemplate(template)}
@@ -294,6 +295,8 @@
 	</div>
 
 	<div class="mt-4 flex justify-end">
-		<Button loading={s.formSubmitting} onclick={handleCreateForm}>{$t('forms.createForm')}</Button>
+		<Button variant="primary" loading={s.formSubmitting} onclick={handleCreateForm}
+			>{$t('forms.createForm')}</Button
+		>
 	</div>
 </section>

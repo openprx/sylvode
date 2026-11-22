@@ -13,7 +13,7 @@
 		type WorkflowStateResponse
 	} from '#lib/api/workflows.js';
 	import Modal from '#lib/components/Modal.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Card from '#lib/components/Card.svelte';
 
@@ -308,7 +308,7 @@
 				{$t('workflow.subtitle')}
 			</p>
 		</div>
-		<Button onclick={openCreateModal}>{$t('workflow.newWorkflow')}</Button>
+		<Button variant="primary" onclick={openCreateModal}>{$t('workflow.newWorkflow')}</Button>
 	</div>
 
 	{#if loading}
@@ -362,7 +362,7 @@
 								{$t('common.edit')}
 							</Button>
 							<Button
-								variant="danger"
+								variant="danger-quiet"
 								size="sm"
 								disabled={wf.is_system_default}
 								onclick={() => handleDelete(wf)}
@@ -409,7 +409,7 @@
 			>{$t('common.cancel')}</Button
 		>
 
-		<Button loading={saving} onclick={handleCreate}>{$t('common.create')}</Button>
+		<Button variant="primary" loading={saving} onclick={handleCreate}>{$t('common.create')}</Button>
 	{/snippet}
 </Modal>
 
@@ -445,7 +445,7 @@
 			>{$t('common.cancel')}</Button
 		>
 
-		<Button loading={saving} onclick={handleEdit}>{$t('common.save')}</Button>
+		<Button variant="primary" loading={saving} onclick={handleEdit}>{$t('common.save')}</Button>
 	{/snippet}
 </Modal>
 
@@ -548,13 +548,13 @@
 									<td class="px-3 py-2 text-right">
 										<div class="flex items-center justify-end gap-1">
 											<Button
-												variant="ghost"
+												variant="text"
 												size="sm"
 												disabled={statesReadOnly}
 												onclick={() => openEditStateForm(state)}>{$t('common.edit')}</Button
 											>
 											<Button
-												variant="danger"
+												variant="danger-quiet"
 												size="sm"
 												disabled={statesReadOnly}
 												onclick={() => handleDeleteState(state)}>{$t('common.delete')}</Button
@@ -655,7 +655,7 @@
 						<Button variant="secondary" size="sm" onclick={cancelStateForm}
 							>{$t('common.cancel')}</Button
 						>
-						<Button size="sm" loading={savingState} onclick={handleSaveState}
+						<Button variant="primary" size="sm" loading={savingState} onclick={handleSaveState}
 							>{$t('common.save')}</Button
 						>
 					</div>

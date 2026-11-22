@@ -12,7 +12,7 @@
 	import Card from '#lib/components/Card.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Textarea from '#lib/components/Textarea.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { resolveWorkspaceAdmin } from '#lib/flow/flow-settings.js';
 	import ConnectedAppsWorkspace from '#lib/oauth/ConnectedAppsWorkspace.svelte';
 
@@ -122,7 +122,9 @@
 				<Textarea label={$t('workspace.description')} bind:value={form.description} rows={4} />
 			</div>
 			<div class="mt-4 flex justify-end">
-				<Button loading={saving} onclick={saveWorkspace}>{$t('settings.save')}</Button>
+				<Button variant="primary" loading={saving} onclick={saveWorkspace}
+					>{$t('settings.save')}</Button
+				>
 			</div>
 		</Card>
 
@@ -189,7 +191,7 @@
 			<h2 class="text-lg font-semibold text-danger">{$t('workspace.dangerZone')}</h2>
 			<p class="mt-2 text-sm text-fg-muted">{$t('workspace.deleteDesc')}</p>
 			<div class="mt-4">
-				<Button variant="danger" loading={deleting} onclick={handleDeleteWorkspace}
+				<Button variant="danger-quiet" loading={deleting} onclick={handleDeleteWorkspace}
 					>{$t('workspace.deleteWorkspace')}</Button
 				>
 			</div>

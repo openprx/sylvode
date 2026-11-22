@@ -14,7 +14,7 @@
 	import { issuesApi, type Issue } from '#lib/api/issues.js';
 	import { importExportApi } from '#lib/api/import-export.js';
 	import { toast } from '#lib/stores/toast.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import {
 		getProjectScenarioTemplate,

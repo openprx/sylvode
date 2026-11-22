@@ -2,7 +2,7 @@
 
 <script lang="ts">
 	import { t } from 'svelte-i18n';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import FormWorkflowTabs from '#lib/components/forms/FormWorkflowTabs.svelte';
 	import { ChevronLeft } from '@lucide/svelte';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';

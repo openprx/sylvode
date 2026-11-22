@@ -14,7 +14,7 @@
 		X
 	} from '@lucide/svelte';
 	import { t } from 'svelte-i18n';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import type {
 		FormFieldDependency,
 		FormFieldType,
@@ -294,7 +294,7 @@
 					})}
 				</p>
 			</div>
-			<Button size="sm" loading={saving} onclick={onSave}>
+			<Button variant="primary" size="sm" loading={saving} onclick={onSave}>
 				<Save class="mr-2 h-4 w-4" aria-hidden="true" />
 				{$t('forms.saveDesign')}
 			</Button>
@@ -1257,7 +1257,7 @@
 					</Button>
 					<Button
 						size="md"
-						variant="danger"
+						variant="danger-quiet"
 						disabled={fieldDrafts.length === 1 || selectedBlockingDependencyCount > 0}
 						onclick={() => onRemoveField?.(selectedIndex)}
 					>

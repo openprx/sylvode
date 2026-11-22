@@ -9,7 +9,7 @@
 	import { toast } from '#lib/stores/toast.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { isAdminUser } from '#lib/utils/auth.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import Modal from '#lib/components/Modal.svelte';
@@ -320,7 +320,7 @@
 			<h1 class="text-2xl font-semibold text-fg">{$t('admin.users')}</h1>
 			<p class="mt-1 text-sm text-fg-muted">{$t('admin.usersSubtitle')}</p>
 		</div>
-		<Button onclick={openCreateModal}>{$t('admin.createUser')}</Button>
+		<Button variant="primary" onclick={openCreateModal}>{$t('admin.createUser')}</Button>
 	</div>
 
 	<div class="grid grid-cols-1 gap-3 rounded-card border border-line bg-raised p-4 lg:grid-cols-4">
@@ -413,7 +413,7 @@
 							{/if}
 						</div>
 						<div class="mt-3 flex flex-wrap gap-2">
-							<Button variant="ghost" size="sm" onclick={() => openEditUser(user)}
+							<Button variant="text" size="sm" onclick={() => openEditUser(user)}
 								>{$t('common.edit')}</Button
 							>
 							{#if !isBot(user)}
@@ -422,7 +422,7 @@
 								>
 							{/if}
 							<Button
-								variant={user.status === 'active' ? 'danger' : 'primary'}
+								variant={user.status === 'active' ? 'danger-quiet' : 'primary'}
 								size="sm"
 								loading={actionLoadingUserId === user.id}
 								onclick={() => toggleUserStatus(user)}
@@ -500,7 +500,7 @@
 								</td>
 								<td class="px-4 py-3 text-right">
 									<div class="flex justify-end gap-2">
-										<Button variant="ghost" size="sm" onclick={() => openEditUser(user)}
+										<Button variant="text" size="sm" onclick={() => openEditUser(user)}
 											>{$t('common.edit')}</Button
 										>
 										{#if !isBot(user)}
@@ -509,7 +509,7 @@
 											</Button>
 										{/if}
 										<Button
-											variant={user.status === 'active' ? 'danger' : 'primary'}
+											variant={user.status === 'active' ? 'danger-quiet' : 'primary'}
 											size="sm"
 											loading={actionLoadingUserId === user.id}
 											onclick={() => toggleUserStatus(user)}
@@ -630,7 +630,7 @@
 			<Button variant="secondary" onclick={() => (showCreateModal = false)}
 				>{$t('common.cancel')}</Button
 			>
-			<Button type="submit" loading={creating}>{$t('common.create')}</Button>
+			<Button variant="primary" type="submit" loading={creating}>{$t('common.create')}</Button>
 		</div>
 	</form>
 </Modal>
@@ -663,7 +663,7 @@
 				<Button variant="secondary" onclick={() => (showEditModal = false)}
 					>{$t('common.cancel')}</Button
 				>
-				<Button type="submit" loading={editSaving}>{$t('common.save')}</Button>
+				<Button variant="primary" type="submit" loading={editSaving}>{$t('common.save')}</Button>
 			</div>
 		</form>
 	{/if}
@@ -699,7 +699,8 @@
 				<Button variant="secondary" onclick={() => (showPasswordModal = false)}
 					>{$t('common.cancel')}</Button
 				>
-				<Button type="submit" loading={passwordSaving}>{$t('common.save')}</Button>
+				<Button variant="primary" type="submit" loading={passwordSaving}>{$t('common.save')}</Button
+				>
 			</div>
 		</form>
 	{/if}

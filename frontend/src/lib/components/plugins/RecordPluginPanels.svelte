@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { locale, t } from 'svelte-i18n';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import PluginFrameHost from './PluginFrameHost.svelte';
 	import PluginPreferenceMenu from './PluginPreferenceMenu.svelte';
 	import RecordPluginEntryButton from './RecordPluginEntryButton.svelte';
@@ -410,6 +410,6 @@
 	{/if}
 	<div class="mt-4 flex flex-wrap justify-end gap-2">
 		<Button variant="secondary" onclick={() => confirmation?.close()}>{$t('common.cancel')}</Button>
-		<Button onclick={confirmSave}>{$t('plugins.saveAmount')}</Button>
+		<Button variant="primary" onclick={confirmSave}>{$t('plugins.saveAmount')}</Button>
 	</div>
 </dialog>

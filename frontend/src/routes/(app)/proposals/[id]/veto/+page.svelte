@@ -11,7 +11,7 @@
 	import { issuesApi } from '#lib/api/issues.js';
 	import { toast } from '#lib/stores/toast.js';
 	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 
 	const proposalId = $derived(page.params.id || '');
 
@@ -314,10 +314,12 @@
 
 				{#if canVoteEscalation}
 					<div class="mt-4 flex flex-wrap gap-2">
-						<Button variant="danger" onclick={() => voteEscalation(false)} loading={actionLoading}
-							>{$t('vetoDetail.voteUphold')}</Button
+						<Button
+							variant="danger-quiet"
+							onclick={() => voteEscalation(false)}
+							loading={actionLoading}>{$t('vetoDetail.voteUphold')}</Button
 						>
-						<Button onclick={() => voteEscalation(true)} loading={actionLoading}
+						<Button variant="primary" onclick={() => voteEscalation(true)} loading={actionLoading}
 							>{$t('vetoDetail.voteOverturn')}</Button
 						>
 					</div>
@@ -326,7 +328,7 @@
 				<div class="mt-3 rounded border bg-warning-soft p-3 text-sm text-warning">
 					<p>{$t('vetoDetail.canEscalateHint')}</p>
 					<div class="mt-2">
-						<Button onclick={startEscalation} loading={actionLoading}
+						<Button variant="primary" onclick={startEscalation} loading={actionLoading}
 							>{$t('vetoDetail.startEscalation')}</Button
 						>
 					</div>
@@ -347,7 +349,7 @@
 					>{$t('vetoDetail.editProposal')}</Button
 				>
 				{#if meId === vetoEvent.vetoer_id && vetoEvent.status === 'active'}
-					<Button variant="danger" onclick={withdrawVeto} loading={actionLoading}
+					<Button variant="danger-quiet" onclick={withdrawVeto} loading={actionLoading}
 						>{$t('vetoDetail.withdrawVeto')}</Button
 					>
 				{/if}

@@ -2,7 +2,7 @@
 
 <script lang="ts">
 	import { Link, FileText, FileDown } from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { t } from 'svelte-i18n';
 	import { formatDate } from '#lib/forms/record-format.js';
 	import { fieldLabel } from '#lib/forms/field-options.js';

@@ -2,7 +2,7 @@
 
 <script lang="ts">
 	import { t } from 'svelte-i18n';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import FormPluginToolbar from '#lib/components/plugins/FormPluginToolbar.svelte';
 	import { FileText, FileUp, Plus, Shield, TableProperties } from '@lucide/svelte';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
@@ -50,7 +50,7 @@
 				</select>
 			</label>
 
-			<Button size="sm" onclick={openRecordCreateDrawer}>
+			<Button variant="primary" size="sm" onclick={openRecordCreateDrawer}>
 				<Plus class="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
 				{$t('forms.newRecordAction')}
 			</Button>

@@ -12,7 +12,7 @@
 	} from '#lib/api/plugin-packages.js';
 	import { listPersonalDrafts } from '#lib/plugins/creator/personal-drafts.js';
 	import { readPluginUpload } from '#lib/plugins/upload.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import PersonalPluginVersion from '#lib/components/plugins/PersonalPluginVersion.svelte';
 
 	let packages = $state<PersonalPluginPackage[]>([]);
@@ -108,7 +108,9 @@
 					importing = !importing;
 				}}>{$t('plugins.library.import')}</Button
 			>
-			<Button onclick={() => goto(resolve(`/(app)/plugins/creator?draft=${crypto.randomUUID()}`))}
+			<Button
+				variant="primary"
+				onclick={() => goto(resolve(`/(app)/plugins/creator?draft=${crypto.randomUUID()}`))}
 				>{$t('plugins.creator.launch')}</Button
 			>
 			<Button
@@ -150,7 +152,9 @@
 						})}
 					</p>
 					<p>{$t(`plugins.layoutV3.profile.${upload.manifest.profile}`)}</p>
-					<Button loading={importBusy} onclick={saveImport}>{$t('plugins.library.save')}</Button>
+					<Button variant="primary" loading={importBusy} onclick={saveImport}
+						>{$t('plugins.library.save')}</Button
+					>
 				</div>
 			{/if}
 			{#if importError}<p role="alert" class="text-sm text-danger">

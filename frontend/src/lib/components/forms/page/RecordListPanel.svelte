@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { FileText, RefreshCw } from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import RecordGrid from '#lib/components/forms/RecordGrid.svelte';
 	import ViewBar from '#lib/components/forms/ViewBar.svelte';
 	import type { SimpleFilter } from '#lib/components/forms/ViewArrangementControls.svelte';
@@ -146,7 +146,7 @@
 					{$t('forms.restoreRecord')}
 				</Button>
 
-				<Button size="sm" variant="ghost" onclick={dismissLastDeletedRecord}
+				<Button size="sm" variant="text" onclick={dismissLastDeletedRecord}
 					>{$t('common.close')}</Button
 				>
 			</div>

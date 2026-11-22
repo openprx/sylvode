@@ -8,7 +8,7 @@
 	import { trustApi, type Appeal, type AppealStatus } from '#lib/api/trust.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Textarea from '#lib/components/Textarea.svelte';
@@ -188,7 +188,7 @@
 				</h1>
 				<p class="text-sm text-fg-muted">{$t('appeals.subtitle')}</p>
 			</div>
-			<Button onclick={() => (showCreate = true)}>{$t('appeals.create')}</Button>
+			<Button variant="primary" onclick={() => (showCreate = true)}>{$t('appeals.create')}</Button>
 		</div>
 
 		<div class="mb-4 flex flex-wrap gap-2">
@@ -247,13 +247,14 @@
 							<div class="flex flex-wrap gap-2">
 								{#if item.status === 'pending' && canReviewAppeal(item)}
 									<Button
+										variant="primary"
 										size="sm"
 										onclick={() => reviewAppeal(item, 'accepted')}
 										loading={reviewingId === item.id}>{$t('appeals.accept')}</Button
 									>
 									<Button
 										size="sm"
-										variant="danger"
+										variant="danger-quiet"
 										onclick={() => reviewAppeal(item, 'rejected')}
 										loading={reviewingId === item.id}>{$t('appeals.reject')}</Button
 									>
@@ -294,7 +295,7 @@
 		<div class="flex justify-end gap-2">
 			<Button variant="secondary" onclick={() => (showCreate = false)}>{$t('common.cancel')}</Button
 			>
-			<Button type="submit" loading={saving}>{$t('common.submit')}</Button>
+			<Button variant="primary" type="submit" loading={saving}>{$t('common.submit')}</Button>
 		</div>
 	</form>
 </Modal>

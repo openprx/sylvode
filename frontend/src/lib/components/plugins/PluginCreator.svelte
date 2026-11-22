@@ -10,7 +10,7 @@
 		type CreatorTemplateId
 	} from '#lib/plugins/creator/registry.js';
 	import { personalDraftKey } from '#lib/plugins/creator/personal-drafts.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import CreatorPanelPreview from '#lib/components/plugins/CreatorPanelPreview.svelte';
 	import { apiClient } from '#lib/api/client.js';
 	import { formsApi } from '#lib/api/forms.js';
@@ -556,6 +556,7 @@
 						{$t('plugins.creator.invalidDraft')}
 					</p>{/if}
 				<Button
+					variant="primary"
 					type="submit"
 					loading={building}
 					disabled={invalid.length > 0 || installing || !extensionSupported}
@@ -669,6 +670,7 @@
 							>{$t('plugins.creator.export')}</Button
 						>
 						<Button
+							variant="primary"
 							disabled={!reviewed || !sampleRan || installed}
 							loading={installing}
 							onclick={install}

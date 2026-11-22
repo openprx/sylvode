@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { ChevronLeft, ChevronRight, FileDown, FileUp } from '@lucide/svelte';
 	import { t } from 'svelte-i18n';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import { fieldLabel } from '#lib/forms/field-options.js';
 	import { inputValue } from '#lib/forms/record-format.js';
@@ -362,6 +362,7 @@
 
 				{#if s.importWizardStep === 'source'}
 					<Button
+						variant="primary"
 						disabled={!s.importText.trim()}
 						loading={s.importPreviewing}
 						onclick={continueImportFromSource}
@@ -370,12 +371,17 @@
 						<ChevronRight class="ml-2 h-4 w-4" aria-hidden="true" />
 					</Button>
 				{:else if s.importWizardStep === 'mapping'}
-					<Button loading={s.importPreviewing} onclick={continueImportFromMapping}>
+					<Button
+						variant="primary"
+						loading={s.importPreviewing}
+						onclick={continueImportFromMapping}
+					>
 						{$t('forms.previewImport')}
 						<ChevronRight class="ml-2 h-4 w-4" aria-hidden="true" />
 					</Button>
 				{:else}
 					<Button
+						variant="primary"
 						loading={s.importingRecords}
 						disabled={!s.importPreview ||
 							s.importPreview.invalid_rows > 0 ||

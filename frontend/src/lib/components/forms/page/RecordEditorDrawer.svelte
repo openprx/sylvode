@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import { FileDown, FileText, FileUp, Pencil, Plus, X } from '@lucide/svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import FormsSessionNotice from '#lib/components/forms/page/FormsSessionNotice.svelte';
 	import {
 		attachmentAcceptAttr,
@@ -391,7 +391,7 @@
 
 												<Button
 													size="sm"
-													variant="danger"
+													variant="danger-quiet"
 													disabled={fieldReadOnlyByCondition(field, s.recordDraft)}
 													loading={s.deletingAttachmentId === attachment.id}
 													onclick={() => removeAttachment(field, attachment)}
@@ -538,7 +538,7 @@
 			</div>
 
 			<div class="mt-4 flex justify-end">
-				<Button loading={s.recordSubmitting} onclick={handleSaveRecord}>
+				<Button variant="primary" loading={s.recordSubmitting} onclick={handleSaveRecord}>
 					{#if s.editingRecordId}
 						<Pencil class="mr-2 h-4 w-4" aria-hidden="true" />
 						{$t('forms.saveRecord')}

@@ -17,7 +17,7 @@
 	import { toast } from '#lib/stores/toast.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Modal from '#lib/components/Modal.svelte';
@@ -328,7 +328,9 @@
 			<p class="mt-1 text-sm text-fg-muted">{$t('members.subtitle')}</p>
 		</div>
 
-		<Button onclick={() => (showInviteModal = true)}>{$t('members.addInternalUser')}</Button>
+		<Button variant="primary" onclick={() => (showInviteModal = true)}
+			>{$t('members.addInternalUser')}</Button
+		>
 	</div>
 
 	<div class="rounded-card border border-line bg-surface p-4 text-sm text-fg">
@@ -409,7 +411,7 @@
 								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(member.joined_at)}</td>
 								<td class="px-4 py-3 text-right">
 									<Button
-										variant="danger"
+										variant="danger-quiet"
 										size="sm"
 										disabled={member.role === 'owner' || memberLock(member.user_id).disabled}
 										disabledReason={memberLock(member.user_id).reasonKey
@@ -441,7 +443,9 @@
 					{$t('members.apiTokensSubtitle')}
 				</p>
 			</div>
-			<Button size="sm" onclick={openCreateTokenModal}>{$t('members.createToken')}</Button>
+			<Button variant="primary" size="sm" onclick={openCreateTokenModal}
+				>{$t('members.createToken')}</Button
+			>
 		</div>
 
 		{#if botsLoading}
@@ -546,7 +550,7 @@
 								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(bot.created_at)}</td>
 								<td class="px-4 py-3 text-right">
 									<Button
-										variant="danger"
+										variant="danger-quiet"
 										size="sm"
 										disabled={!bot.is_active ||
 											managedLock(parseManagedBy(bot.managed_by)).disabled}
@@ -584,7 +588,9 @@
 				placeholder={$t('members.usernameOrEmailPlaceholder')}
 			/>
 			<div class="flex items-end">
-				<Button type="submit" loading={searchingUsers}>{$t('common.search')}</Button>
+				<Button variant="primary" type="submit" loading={searchingUsers}
+					>{$t('common.search')}</Button
+				>
 			</div>
 		</form>
 
@@ -620,6 +626,7 @@
 							<Button size="sm" variant="secondary" disabled>{$t('members.added')}</Button>
 						{:else}
 							<Button
+								variant="primary"
 								size="sm"
 								loading={addingUserId === user.id}
 								onclick={() => addInternalUser(user.id)}
@@ -730,7 +737,9 @@
 				>{$t('common.cancel')}</Button
 			>
 
-			<Button type="submit" loading={creatingToken}>{$t('members.createToken')}</Button>
+			<Button variant="primary" type="submit" loading={creatingToken}
+				>{$t('members.createToken')}</Button
+			>
 		</div>
 	</form>
 </Modal>
@@ -786,7 +795,7 @@
 
 			<div class="flex justify-end gap-2 pt-2">
 				<Button variant="secondary" onclick={closeCreatedTokenModal}>{$t('common.close')}</Button>
-				<Button onclick={copyCreatedToken}>{$t('members.copyToken')}</Button>
+				<Button variant="primary" onclick={copyCreatedToken}>{$t('members.copyToken')}</Button>
 			</div>
 		</div>
 	{/if}
