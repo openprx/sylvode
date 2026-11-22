@@ -427,7 +427,11 @@ async fn the_headless_cli_gets_the_operators_environment_minus_the_agent_variabl
     let names_file = format!("{}.names", fx.record.display());
     let values_file = format!("{}.values", fx.record.display());
     for _ in 0..100 {
-        if std::fs::metadata(&values_file).is_ok() && std::fs::metadata(&names_file).is_ok_and(|m| m.len() > 0) {
+        // Both files are written after they are created: wait for their content, not for the files.
+        let written = |path: &str, last: &str| {
+            std::fs::read_to_string(path).is_ok_and(|text| text.lines().any(|line| line.starts_with(last)))
+        };
+        if written(&values_file, "SVT_CANARY=") && written(&names_file, "PATH") {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
