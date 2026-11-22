@@ -300,9 +300,10 @@ fn cut_long_strings(payload: Value) -> Value {
     }
 }
 
-/// `GET /api/v1/issues/{issue_id}/ai-tasks`: the agent tasks of one issue, newest first, each with
-/// its newest [`TASK_EVENT_LIMIT`] events oldest first, and `events_omitted` telling that older
-/// ones were left out. Members of the issue's project and bots of its workspace may read it.
+/// `GET /api/v1/issues/{issue_id}/ai-tasks`: the agent tasks of one issue, newest first.
+///
+/// Each task carries its newest [`TASK_EVENT_LIMIT`] events oldest first, and `events_omitted`
+/// telling that older ones were left out. Members of the issue's project and bots of its workspace may read it.
 pub async fn list_issue_ai_tasks(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,

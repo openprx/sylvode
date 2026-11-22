@@ -118,9 +118,11 @@ pub const DEFAULT_AI_TASK_MAX_PROCESSING_SECS: u64 = 86_400;
 /// configured `processing_timeout_secs`.
 pub const AI_TASK_MAX_PROCESSING_CEILING_SECS: u64 = 604_800;
 
-/// Deepest hop of a bot-to-bot chain: a task a human or an inbound event starts is depth 0, a
-/// task a bot's action causes while it runs a task is one deeper than that task. A hop beyond this
-/// depth is refused. Applies unless `[ai_tasks]` overrides it.
+/// Deepest hop of a bot-to-bot chain.
+///
+/// A task a human or an inbound event starts is depth 0, a task a bot's action causes while it
+/// runs a task is one deeper than that task. A hop beyond this depth is refused. Applies unless
+/// `[ai_tasks]` overrides it.
 pub const DEFAULT_AI_TASK_MAX_CHAIN_DEPTH: u32 = 3;
 
 /// Accepted range of `ai_tasks.max_chain_depth`.

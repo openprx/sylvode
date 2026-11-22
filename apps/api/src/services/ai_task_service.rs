@@ -527,7 +527,7 @@ impl ChainRefusal {
 /// What [`dispatch_ai_task`] did.
 #[derive(Debug)]
 pub enum DispatchOutcome {
-    Created(AiTaskRow),
+    Created(Box<AiTaskRow>),
     /// The idempotency key was queued before.
     Duplicate,
     /// A bot's action would have caused the task, and the chain rules refuse it. Nothing was
@@ -679,7 +679,7 @@ pub async fn create_ai_task<C: ConnectionTrait>(
     input: CreateAiTaskInput,
 ) -> Result<Option<AiTaskRow>, ApiError> {
     match dispatch_ai_task(db, input).await? {
-        DispatchOutcome::Created(task) => Ok(Some(task)),
+        DispatchOutcome::Created(task) => Ok(Some(*task)),
         DispatchOutcome::Duplicate => Ok(None),
         DispatchOutcome::ChainRefused(refusal) => Err(ApiError::Conflict(refusal.message().to_string())),
     }
@@ -818,7 +818,7 @@ pub async fn dispatch_ai_task<C: ConnectionTrait>(
     )
     .await?;
 
-    Ok(DispatchOutcome::Created(task))
+    Ok(DispatchOutcome::Created(Box::new(task)))
 }
 
 /// The `source` of the `ai_task.created` business event: the service itself, or the rule and the

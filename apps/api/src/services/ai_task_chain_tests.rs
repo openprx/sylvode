@@ -29,15 +29,16 @@ use crate::scratch_or_skip;
 const LIMIT: i32 = 3;
 
 #[derive(FromQueryResult)]
-struct Chain {
+#[allow(clippy::struct_field_names, reason = "the fields are the columns")]
+struct Placement {
     id: Uuid,
     chain_root_id: Option<Uuid>,
     chain_parent_id: Option<Uuid>,
     chain_depth: i32,
 }
 
-async fn task_of(db: &DatabaseConnection, bot: Uuid) -> Option<Chain> {
-    Chain::find_by_statement(Statement::from_sql_and_values(
+async fn task_of(db: &DatabaseConnection, bot: Uuid) -> Option<Placement> {
+    Placement::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id, chain_root_id, chain_parent_id, chain_depth FROM ai_tasks \
          WHERE ai_participant_id = $1 ORDER BY created_at DESC LIMIT 1",
@@ -61,8 +62,8 @@ async fn tasks_of(db: &DatabaseConnection, bot: Uuid) -> i64 {
 async fn run(db: &DatabaseConnection, bot: Uuid) {
     exec(
         db,
-        "UPDATE ai_tasks SET status = 'processing', started_at = now() WHERE ai_participant_id = $1",
-        vec![bot.into()],
+        "UPDATE ai_tasks SET status = $2, started_at = now() WHERE ai_participant_id = $1",
+        vec![bot.into(), "acknowledged".to_owned().into()],
     )
     .await;
 }
@@ -445,7 +446,7 @@ async fn a_task_from_before_the_migration_is_its_own_root_at_depth_zero() {
             .await
             .expect("the migration re-runs");
     }
-    let row = Chain::find_by_statement(Statement::from_sql_and_values(
+    let row = Placement::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id, chain_root_id, chain_parent_id, chain_depth FROM ai_tasks WHERE id = $1",
         vec![legacy.into()],
