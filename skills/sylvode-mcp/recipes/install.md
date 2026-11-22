@@ -12,7 +12,7 @@ Installers never install another component for you. They print the command.
 1. Install tmux: `brew install tmux`, `sudo apt install tmux`, `sudo dnf install tmux` or `sudo pacman -S tmux`.
 2. Install and log in to your CLI.
 3. Run the MCP server installer: `apps/mcp-server/scripts/install.sh`.
-4. Run the runner installer: `apps/runner/scripts/install.sh`. Add `--headless-only` if you will not use tmux.
+4. Run the runner installer: `apps/runner/scripts/install.sh`.
 5. Set `[runner] allowed_roots` in the runner config to the directories projects may use.
 6. In Sylvode, a workspace admin opens the project, Execution, and sets the working directory and CLI.
 7. Check: `sylvode-runner doctor` and `mcp-server doctor`. Both must show no `fail`.
