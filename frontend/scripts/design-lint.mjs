@@ -16,7 +16,7 @@
 // --root           A directory or a single file; repeat it to lint several, one section each.
 // --rules <list>   Only these categories are counted (default: all). The gate looks at them only.
 // --allow <file>   Per-file, per-category exceptions: a JSON array of
-//                  { "file": "src/lib/shell/brand/brand.ts", "rules": ["hex"], "reason": "..." }
+//                  { "file": "src/lib/shell/example.ts", "rules": ["hex"], "reason": "..." }
 //                  `file` is relative to the working directory (the frontend folder), `reason`
 //                  is required. An allowed category of an allowed file is not counted. An entry
 //                  that matched nothing (file missing, or the category has no hits any more) is

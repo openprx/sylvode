@@ -2,7 +2,6 @@
 	import '#lib/i18n/index.js';
 	import { onMount } from 'svelte';
 	import '../app.css';
-	import { faviconDataUrl } from '#lib/shell/brand/brand.js';
 	import Toast from '#lib/components/Toast.svelte';
 	import { DEFAULT_THEME, applyTheme } from '#lib/theme.js';
 
@@ -17,7 +16,7 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={faviconDataUrl()} />
+	<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 </svelte:head>
 
 {@render children()}

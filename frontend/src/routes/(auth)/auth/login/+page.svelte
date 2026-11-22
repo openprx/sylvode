@@ -9,6 +9,7 @@
 	import { toast } from '#lib/stores/toast.js';
 	import { safeReturnTo } from '#lib/oauth/return-to.js';
 	import { t } from 'svelte-i18n';
+	import BrandMark from '#lib/shell/brand/BrandMark.svelte';
 
 	let email = '';
 	let password = '';
@@ -53,6 +54,9 @@
 <div class="min-h-screen flex items-center justify-center bg-canvas px-4">
 	<div class="max-w-md w-full space-y-8">
 		<div class="text-center">
+			<div class="mb-4 flex justify-center">
+				<BrandMark decorative size={40} />
+			</div>
 			<h1 class="text-3xl font-semibold text-fg">Sylvode</h1>
 			<p class="mt-2 text-sm text-fg-muted">{$t('auth.subtitle')}</p>
 		</div>

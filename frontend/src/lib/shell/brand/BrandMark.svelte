@@ -1,8 +1,8 @@
-<script lang="ts">
-	import { BRAND } from './brand';
+<svelte:options runes />
 
+<script lang="ts">
 	interface Props {
-		/** Width and height in CSS px. */
+		/** Width and height in CSS px. The mark is specified down to 16 px; clear space is 4 grid units. */
 		size?: number;
 		/** Hide from assistive technology when the surrounding link or button already has a name. */
 		decorative?: boolean;
@@ -13,19 +13,21 @@
 
 <svg
 	class="brand-mark"
-	viewBox={BRAND.symbol.viewBox}
+	viewBox="0 0 24 24"
 	width={size}
 	height={size}
-	fill="currentColor"
+	fill="none"
+	stroke="currentColor"
+	stroke-width="2"
+	stroke-linecap="round"
+	stroke-linejoin="round"
 	role={decorative ? undefined : 'img'}
-	aria-label={decorative ? undefined : BRAND.name}
+	aria-label={decorative ? undefined : 'Sylvode'}
 	aria-hidden={decorative ? 'true' : undefined}
 	focusable="false"
 	data-shell="brand-mark"
 >
-	{#each BRAND.symbol.paths as d (d)}
-		<path {d} />
-	{/each}
+	<path d="M18 5H8a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h8a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6" />
 </svg>
 
 <style>
