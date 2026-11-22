@@ -333,6 +333,8 @@ fn the_binary_is_found_in_the_working_directory_and_a_missing_one_is_refused() {
 #[test]
 fn a_fresh_macos_install_writes_the_agent() {
     let sandbox = Sandbox::new(Platform::MacOs);
+    // Not root, whoever runs the test: a root run takes the service-context path of the next test.
+    sandbox.stub("id", "echo 501\n");
     let output = sandbox.install();
     assert!(output.status.success(), "{}", stderr(&output));
     let plist = std::fs::read_to_string(sandbox.plist(LABEL)).expect("agent written");
