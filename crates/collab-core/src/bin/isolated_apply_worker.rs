@@ -123,7 +123,7 @@ fn main() {
         respond_and_exit(&replay_diff_check_and_encode(&base_snapshot, &update));
     }
     if operation == wire::OPERATION_IMPORT {
-        write_marker_or_exit();
+        write_marker_or_exit(None);
         respond_and_exit(&import_check_and_encode(&base_snapshot, &update));
     }
     if operation != wire::OPERATION_APPLY {
@@ -243,7 +243,7 @@ fn import_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> wire::
                 snapshot,
                 window_cpu_us: None,
                 window_report: None,
-                setup_guard: None,
+                touched_blocks: Vec::new(),
             },
             Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
                 reason: format!("import result encoding failed: {error}"),
