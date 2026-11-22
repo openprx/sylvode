@@ -22,6 +22,7 @@ use axum::{
     routing::{get, post},
 };
 use platform::{app::AppState, auth::JwtManager};
+use sea_orm::ConnectionTrait;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
@@ -71,6 +72,14 @@ fn router(state: &AppState) -> Router<AppState> {
         .route(
             "/api/v1/projects/{project_id}/alert-rules/reorder",
             post(inbound_admin::reorder_rules).route_layer(auth()),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/alert-rules/test",
+            post(inbound_admin::test_rules).route_layer(auth()),
+        )
+        .route(
+            "/api/v1/issues/{id}/alert",
+            get(crate::routes::inbound_events::get_issue_alert).route_layer(auth()),
         )
         .route(
             "/api/v1/alert-rules/{id}",
@@ -347,7 +356,9 @@ async fn a_delegated_caller_is_refused_even_with_every_scope() {
     // The routes are not on the delegated allow-list, so the route layer refuses them first.
     for entry in crate::oauth::delegated::DELEGATED_ROUTES {
         assert!(
-            !entry.pattern.contains("inbound") && !entry.pattern.contains("alert-rules"),
+            !entry.pattern.contains("inbound")
+                && !entry.pattern.contains("alert-rules")
+                && !entry.pattern.ends_with("/alert"),
             "{} {} must stay off the allow-list",
             entry.method,
             entry.pattern
@@ -374,12 +385,13 @@ async fn a_source_can_be_edited_taken_over_rotated_and_deleted() {
     assert_eq!(patched["data"]["require_signature"], false);
     assert_eq!(patched["data"]["daily_cap"], 70);
 
-    // Invalid values and fields that do not exist yet are refused.
+    // Invalid values and fields that do not exist are refused.
     for bad in [
         json!({ "rate_per_minute": 0 }),
         json!({ "daily_cap": 1_000_001 }),
         json!({ "name": "" }),
-        json!({ "format_settings": [] }),
+        json!({ "ip_allowlist": ["192.0.2.1/24"] }),
+        json!({ "ip_allowlist": ["::/0"] }),
     ] {
         let answer = w.as_admin(Method::PATCH, &uri, Some(&bad)).await;
         assert_eq!(answer["code"], 400, "{bad}: {answer}");
@@ -390,7 +402,7 @@ async fn a_source_can_be_edited_taken_over_rotated_and_deleted() {
             Method::PATCH,
             &uri,
             Some(&token),
-            Some(&json!({ "ip_allowlist": ["203.0.113.0/24"] })),
+            Some(&json!({ "format_settings": {} })),
         )
         .await;
     assert!(status.is_client_error(), "an unknown field is refused");
@@ -515,7 +527,9 @@ async fn source_creation_validates_its_input() {
         json!({ "name": "x", "format": "prx_waf_v1" }),
         json!({ "name": "x", "rate_per_minute": 6001 }),
         json!({ "name": "x", "daily_cap": 0 }),
-        json!({ "name": "x", "format_settings": "no" }),
+        json!({ "name": "x", "ip_allowlist": ["192.0.2.1/24"] }),
+        json!({ "name": "x", "ip_allowlist": ["0.0.0.0/0"] }),
+        json!({ "name": "x", "ip_allowlist": ["not an address"] }),
     ] {
         let answer = w.as_admin(Method::POST, &w.sources_uri(), Some(&bad)).await;
         assert_eq!(answer["code"], 400, "{bad}: {answer}");
@@ -530,7 +544,107 @@ async fn source_creation_validates_its_input() {
         )
         .await;
     assert!(status.is_client_error());
+    // Adapter settings no longer exist: the field is unknown.
+    let (status, _) = w
+        .call(
+            Method::POST,
+            &w.sources_uri(),
+            Some(&token),
+            Some(&json!({ "name": "x", "format_settings": {} })),
+        )
+        .await;
+    assert!(status.is_client_error(), "format_settings is not a field any more");
     assert_eq!(w.n("SELECT count(*) AS count FROM inbound_sources").await, 1);
+    w.scratch.drop_self().await;
+}
+
+/// Connects the world's bot to the world's project, enabled, with the rows a connection makes.
+pub(super) async fn connect_the_bot(w: &World) {
+    let hook = Uuid::new_v4();
+    for (sql, values) in [
+        (
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, permissions, transport_surface) \
+             VALUES ($1, $2, 'alert bot', md5($1::text), 'opr_test', '[\"read\",\"write\"]'::jsonb, 'mcp_stdio')",
+            vec![w.bot.into(), w.tenant.workspace_id.into()],
+        ),
+        (
+            "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, active, created_by, bot_user_id) \
+             VALUES ($1, $2, 'runner', 'https://runner.example.test/webhook', 's', '[]'::jsonb, true, $3, $4)",
+            vec![hook.into(), w.tenant.workspace_id.into(), w.admin.into(), w.bot.into()],
+        ),
+        (
+            "INSERT INTO bot_runners (bot_id, workspace_id, webhook_id, runner_url) \
+             VALUES ($1, $2, $3, 'https://runner.example.test')",
+            vec![w.bot.into(), w.tenant.workspace_id.into(), hook.into()],
+        ),
+        (
+            "INSERT INTO project_execution_settings (project_id, enabled, working_directory) VALUES ($1, true, '/work/a')",
+            vec![w.tenant.project_id.into()],
+        ),
+        (
+            "INSERT INTO project_bot_connections (project_id, bot_id) VALUES ($1, $2)",
+            vec![w.tenant.project_id.into(), w.bot.into()],
+        ),
+    ] {
+        exec(w.db(), sql, values).await;
+    }
+}
+
+/// The warning follows the connection of the bot to the rule's own project: absent and disabled
+/// both warn; an enabled connection of this project does not.
+#[tokio::test]
+async fn the_rule_warning_follows_the_bots_connection_to_the_rules_project() {
+    let w = world!("adm_rule_warning");
+    let body = |version: Option<u32>| {
+        let mut body = json!({
+            "name": "WAF critical",
+            "kind_patterns": ["waf.*"],
+            "min_severity": "critical",
+            "bot_user_id": w.bot,
+            "notify_user_ids": [w.tenant.member_id],
+        });
+        if let Some(version) = version {
+            body["expected_version"] = json!(version);
+        }
+        body
+    };
+    let created = w.as_admin(Method::POST, &w.rules_uri(), Some(&body(None))).await;
+    assert_eq!(
+        created["data"]["warnings"],
+        json!(["bot_not_connected_to_project"]),
+        "{created}"
+    );
+    let uri = format!(
+        "/api/v1/alert-rules/{}",
+        created["data"]["rule"]["id"].as_str().unwrap()
+    );
+
+    connect_the_bot(&w).await;
+    let connected = w.as_admin(Method::PUT, &uri, Some(&body(Some(1)))).await;
+    assert_eq!(connected["data"]["warnings"], json!([]), "{connected}");
+
+    exec(
+        w.db(),
+        "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+        vec![w.tenant.project_id.into()],
+    )
+    .await;
+    let disabled = w.as_admin(Method::PUT, &uri, Some(&body(Some(2)))).await;
+    assert_eq!(
+        disabled["data"]["warnings"],
+        json!(["bot_not_connected_to_project"]),
+        "{disabled}"
+    );
+
+    exec(
+        w.db(),
+        "UPDATE project_execution_settings SET enabled = true WHERE project_id = $1",
+        vec![w.tenant.project_id.into()],
+    )
+    .await;
+    let enabled_again = w.as_admin(Method::PUT, &uri, Some(&body(Some(3)))).await;
+    assert_eq!(enabled_again["data"]["warnings"], json!([]), "{enabled_again}");
+
     w.scratch.drop_self().await;
 }
 
@@ -559,19 +673,13 @@ async fn rules_are_created_validated_replaced_with_a_version_reordered_and_delet
     assert_eq!(rule["position"], 20);
     assert_eq!(
         created["data"]["warnings"],
-        json!(["bot_has_no_active_webhook"]),
+        json!(["bot_not_connected_to_project"]),
         "the save warns and does not refuse"
     );
     let rule_id = rule["id"].as_str().unwrap().to_owned();
 
-    // An active webhook subscription of the bot clears the warning.
-    exec(
-        w.db(),
-        "INSERT INTO webhooks (workspace_id, name, url, secret, events, active, created_by, bot_user_id) \
-         VALUES ($1, 'bot hook', 'https://hooks.example.test/x', 's', '[\"issue.assigned\"]'::jsonb, true, $2, $3)",
-        vec![w.tenant.workspace_id.into(), w.admin.into(), w.bot.into()],
-    )
-    .await;
+    // An enabled connection of the bot to the rule's project clears the warning.
+    connect_the_bot(&w).await;
     let uri = format!("/api/v1/alert-rules/{rule_id}");
     let current = w.as_admin(Method::GET, &uri, None).await;
     assert_eq!(current["data"]["name"], "WAF critical");
@@ -762,6 +870,337 @@ async fn a_rule_created_through_the_api_drives_the_ingest_path() {
         w.n("SELECT count(*) AS count FROM inbound_events WHERE outcome = 'alert_opened'")
             .await,
         1
+    );
+    w.scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn the_ip_allow_list_is_validated_stored_normalised_listed_and_cleared() {
+    let w = world!("adm_allowlist");
+    let uri = format!("/api/v1/inbound-sources/{}", w.source_id);
+    let patched = w
+        .as_admin(
+            Method::PATCH,
+            &uri,
+            Some(&json!({ "ip_allowlist": ["192.0.2.5", " 198.51.100.0/24 ", "2001:db8::/32", "192.0.2.5/32"] })),
+        )
+        .await;
+    assert_eq!(patched["code"], 0, "{patched}");
+    assert_eq!(
+        patched["data"]["ip_allowlist"],
+        json!(["192.0.2.5/32", "198.51.100.0/24", "2001:db8::/32"])
+    );
+    let shown = w.as_admin(Method::GET, &uri, None).await;
+    assert_eq!(shown["data"]["ip_allowlist"][1], "198.51.100.0/24");
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM inbound_sources WHERE cardinality(ip_allowlist) = 3")
+            .await,
+        1
+    );
+    assert_eq!(
+        w.n(
+            "SELECT count(*) AS count FROM business_events WHERE event_type = 'inbound_source.updated' \
+             AND payload::text LIKE '%198.51.100.0/24%'"
+        )
+        .await,
+        1,
+        "the change is audited with the new list"
+    );
+
+    // A refused entry changes nothing.
+    let refused = w
+        .as_admin(
+            Method::PATCH,
+            &uri,
+            Some(&json!({ "ip_allowlist": ["192.0.2.0/24", "192.0.2.9/24"] })),
+        )
+        .await;
+    assert_eq!(refused["code"], 400, "{refused}");
+    let too_many: Vec<String> = (0..65).map(|index| format!("192.0.2.{index}")).collect();
+    let refused = w
+        .as_admin(Method::PATCH, &uri, Some(&json!({ "ip_allowlist": too_many })))
+        .await;
+    assert_eq!(refused["code"], 400);
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM inbound_sources WHERE cardinality(ip_allowlist) = 3")
+            .await,
+        1
+    );
+
+    // A patch that does not mention the list keeps it; an empty list clears it.
+    w.as_admin(Method::PATCH, &uri, Some(&json!({ "name": "renamed" })))
+        .await;
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM inbound_sources WHERE cardinality(ip_allowlist) = 3")
+            .await,
+        1
+    );
+    let cleared = w
+        .as_admin(Method::PATCH, &uri, Some(&json!({ "ip_allowlist": [] })))
+        .await;
+    assert_eq!(cleared["data"]["ip_allowlist"], json!([]));
+
+    // A list can be given when the source is created.
+    let created = w
+        .as_admin(
+            Method::POST,
+            &w.sources_uri(),
+            Some(&json!({ "name": "with list", "ip_allowlist": ["203.0.113.0/24"] })),
+        )
+        .await;
+    assert_eq!(
+        created["data"]["source"]["ip_allowlist"],
+        json!(["203.0.113.0/24"]),
+        "{created}"
+    );
+    w.scratch.drop_self().await;
+}
+
+/// Row counts of every table a rule test must leave alone.
+async fn footprint(w: &World) -> Vec<i64> {
+    let mut counts = Vec::new();
+    for table in [
+        "inbound_events",
+        "inbound_alerts",
+        "work_items",
+        "ai_tasks",
+        "ai_task_events",
+        "notifications",
+        "business_events",
+        "oauth_rate_hits",
+        "activities",
+    ] {
+        counts.push(w.n(&format!("SELECT count(*) AS count FROM {table}")).await);
+    }
+    counts
+}
+
+#[tokio::test]
+async fn the_rule_test_forecasts_the_outcome_and_creates_nothing() {
+    let w = world!("adm_rule_test");
+    let uri = format!("{}/test", w.rules_uri());
+    let sample = |severity: &str, kind: &str, key: &str| {
+        let mut event = w.event("sample-1", key, severity);
+        event["kind"] = json!(kind);
+        event
+    };
+    let ask = |body: Value| {
+        let uri = uri.clone();
+        let w = &w;
+        async move { w.as_admin(Method::POST, &uri, Some(&body)).await }
+    };
+    let before = footprint(&w).await;
+
+    // A high waf event: the seeded rule matches, a new alert and a task would start at once.
+    let answer = ask(json!({ "source_id": w.source_id, "envelope": sample("high", "waf.attack_detected", "k") })).await;
+    assert_eq!(answer["code"], 0, "{answer}");
+    let data = &answer["data"];
+    assert_eq!(data["matched"], true);
+    assert_eq!(data["rule"]["id"], json!(w.rule_id));
+    assert_eq!(data["alert"], "would_open");
+    assert_eq!(data["task"], "would_start");
+    assert_eq!(data["notify_recipients"], 1);
+    assert_eq!(
+        data["title"],
+        "[HIGH] prx-waf edge-01 · waf.attack_detected · shop.example.com"
+    );
+    assert_eq!(data["caps"]["max_tasks_per_hour"], 6);
+    assert_eq!(data["caps"]["active_for_rule"], 0);
+    assert_eq!(data["rules_evaluated"][0]["reason"], "matched");
+
+    // Below the rule's minimum, and a kind it does not list: nothing matches.
+    let answer =
+        ask(json!({ "source_id": w.source_id, "envelope": sample("medium", "waf.attack_detected", "k") })).await;
+    assert_eq!(answer["data"]["matched"], false);
+    assert_eq!(answer["data"]["alert"], "no_rule");
+    assert_eq!(answer["data"]["rules_evaluated"][0]["reason"], "below_minimum_severity");
+    let answer = ask(json!({ "source_id": w.source_id, "envelope": sample("high", "sd.threat", "k") })).await;
+    assert_eq!(answer["data"]["rules_evaluated"][0]["reason"], "kind_not_listed");
+
+    // The test counts against no limit and writes nothing.
+    assert_eq!(
+        footprint(&w).await,
+        before,
+        "the rule test created or counted something"
+    );
+
+    // With an open alert and a taken slot the forecast follows the real state.
+    assert_eq!(w.post(&w.event("e-1", "k", "medium")).await.0, StatusCode::ACCEPTED);
+    exec(w.db(), "UPDATE alert_rules SET min_severity = 'info'", vec![]).await;
+    assert_eq!(w.post(&w.event("e-2", "k", "medium")).await.0, StatusCode::ACCEPTED);
+    let after_real = footprint(&w).await;
+    let answer =
+        ask(json!({ "source_id": w.source_id, "envelope": sample("critical", "waf.attack_detected", "k") })).await;
+    assert_eq!(answer["data"]["alert"], "would_attach");
+    assert_eq!(answer["data"]["would_escalate"], true);
+    assert_eq!(answer["data"]["task"], "already_active");
+    let answer =
+        ask(json!({ "source_id": w.source_id, "envelope": sample("critical", "waf.attack_detected", "other") })).await;
+    assert_eq!(answer["data"]["alert"], "would_open");
+    assert_eq!(answer["data"]["task"], "would_start");
+    exec(w.db(), "UPDATE alert_rules SET max_active_tasks = 1", vec![]).await;
+    let answer =
+        ask(json!({ "source_id": w.source_id, "envelope": sample("critical", "waf.attack_detected", "other") })).await;
+    assert_eq!(answer["data"]["task"], "would_queue");
+    assert_eq!(answer["data"]["queue_cause"], "active_cap");
+    assert_eq!(answer["data"]["caps"]["active_for_rule"], 1);
+    // A stored event can be tested again by id.
+    let stored = w
+        .scratch
+        .db
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Postgres,
+            "SELECT id FROM inbound_events WHERE event_id = 'e-1'".to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<Uuid>("", "id")
+        .unwrap();
+    let answer = ask(json!({ "source_id": w.source_id, "inbound_event_id": stored })).await;
+    assert_eq!(answer["data"]["matched"], true, "{answer}");
+    assert_eq!(footprint(&w).await, after_real, "still nothing written");
+
+    // Input errors.
+    for bad in [
+        json!({ "source_id": w.source_id }),
+        json!({ "source_id": w.source_id, "envelope": sample("high", "waf.a", "k"), "inbound_event_id": stored }),
+        json!({ "source_id": w.source_id, "envelope": { "spec": "nope" } }),
+        json!({ "source_id": Uuid::new_v4(), "envelope": sample("high", "waf.a", "k") }),
+    ] {
+        let answer = ask(bad.clone()).await;
+        assert_eq!(answer["code"], 400, "{bad}: {answer}");
+    }
+    let answer = ask(json!({ "source_id": w.source_id, "inbound_event_id": Uuid::new_v4() })).await;
+    assert_eq!(answer["code"], 404);
+    assert_eq!(footprint(&w).await, after_real);
+
+    // Members, bots and anonymous callers are refused like the rest of the management API.
+    let member = w.jwt(w.tenant.member_id);
+    let body = json!({ "source_id": w.source_id, "envelope": sample("high", "waf.a", "k") });
+    let (_, answer) = w.call(Method::POST, &uri, Some(&member), Some(&body)).await;
+    assert_eq!(answer["code"], 403, "{answer}");
+    let bot = w.bot_token(r#"["read","write","admin"]"#).await;
+    let (_, answer) = w.call(Method::POST, &uri, Some(&bot), Some(&body)).await;
+    assert_eq!(answer["code"], 403, "{answer}");
+    let (_, answer) = w.call(Method::POST, &uri, None, Some(&body)).await;
+    assert_eq!(answer["code"], 401);
+    w.scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn the_alert_of_a_work_item_is_readable_by_members_and_no_one_else() {
+    let w = world!("adm_alert_view");
+    assert_eq!(w.post(&w.event("e-1", "k", "high")).await.0, StatusCode::ACCEPTED);
+    assert_eq!(w.post(&w.event("e-2", "k", "critical")).await.0, StatusCode::ACCEPTED);
+    let item = w.n("SELECT count(*) AS count FROM work_items").await;
+    assert_eq!(item, 1);
+    use sea_orm::{DbBackend, FromQueryResult, Statement};
+    #[derive(FromQueryResult)]
+    struct Id {
+        id: Uuid,
+    }
+    let issue = Id::find_by_statement(Statement::from_string(
+        DbBackend::Postgres,
+        "SELECT id FROM work_items".to_owned(),
+    ))
+    .one(w.db())
+    .await
+    .unwrap()
+    .unwrap()
+    .id;
+    let uri = format!("/api/v1/issues/{issue}/alert");
+
+    // A member sees the facts, and nothing a source or a rule keeps private.
+    let member = w.jwt(w.tenant.member_id);
+    let (status, answer) = w.call(Method::GET, &uri, Some(&member), None).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let data = &answer["data"];
+    assert_eq!(data["issue_id"], json!(issue));
+    assert_eq!(data["source"]["name"], "prx-waf edge-01");
+    assert_eq!(data["source"]["id"], json!(w.source_id));
+    assert_eq!(data["kind"], "waf.attack_detected");
+    assert_eq!(data["severity"], "critical", "the highest severity seen");
+    assert_eq!(data["occurrences"], 2);
+    assert_eq!(data["open"], true);
+    assert_eq!(data["rule"]["name"], "WAF high to triage");
+    assert_eq!(data["task"]["status"], "pending");
+    assert_eq!(data["task_state"], "created");
+    assert!(data["first_seen_at"].is_string() && data["last_seen_at"].is_string());
+    assert!(data["queued_at"].is_null());
+    let text = answer.to_string();
+    for private in [
+        "instructions",
+        "signing_secret",
+        "token_hash",
+        "payload",
+        "notify_user_ids",
+    ] {
+        assert!(!text.contains(private), "the alert view leaks {private}");
+    }
+
+    // A waiting task shows when it will be suppressed.
+    exec(
+        w.db(),
+        "UPDATE inbound_alerts SET task_state = 'waiting', task_queued_at = now() - interval '10 minutes'",
+        vec![],
+    )
+    .await;
+    let (_, answer) = w.call(Method::GET, &uri, Some(&member), None).await;
+    assert_eq!(answer["data"]["task_state"], "waiting");
+    assert!(answer["data"]["queued_at"].is_string() && answer["data"]["queue_expires_at"].is_string());
+
+    // A read-only bot token may read it; a bot without any permission may not.
+    let bot = w.bot_token(r#"["read"]"#).await;
+    let (status, _) = w.call(Method::GET, &uri, Some(&bot), None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // An outsider of the workspace and an anonymous caller are refused.
+    let outsider = Uuid::new_v4();
+    exec(
+        w.db(),
+        "INSERT INTO users (id, email, password_hash, name, role, is_active) VALUES ($1, $2, '!', 'o', 'user', true)",
+        vec![outsider.into(), format!("{outsider}@inbound.test").into()],
+    )
+    .await;
+    let (_, answer) = w.call(Method::GET, &uri, Some(&w.jwt(outsider)), None).await;
+    assert_eq!(answer["code"], 404, "{answer}");
+    let (_, answer) = w.call(Method::GET, &uri, None, None).await;
+    assert_eq!(answer["code"], 401);
+
+    // A plain work item is not an alert; an unknown id is not found.
+    let plain = Uuid::new_v4();
+    exec(
+        w.db(),
+        "INSERT INTO work_items (id, project_id, title, description, state, priority, created_by, sequence_number) \
+         SELECT $1, project_id, 'plain', '', 'todo', 'low', created_by, 9999 FROM work_items LIMIT 1",
+        vec![plain.into()],
+    )
+    .await;
+    let (_, answer) = w
+        .call(
+            Method::GET,
+            &format!("/api/v1/issues/{plain}/alert"),
+            Some(&member),
+            None,
+        )
+        .await;
+    assert_eq!(answer["code"], 404, "{answer}");
+    let (_, answer) = w
+        .call(
+            Method::GET,
+            &format!("/api/v1/issues/{}/alert", Uuid::new_v4()),
+            Some(&member),
+            None,
+        )
+        .await;
+    assert_eq!(answer["code"], 404);
+
+    // A delegated caller never reaches it: the route is off the allow-list.
+    assert!(
+        crate::oauth::delegated::DELEGATED_ROUTES
+            .iter()
+            .all(|entry| !entry.pattern.ends_with("/alert"))
     );
     w.scratch.drop_self().await;
 }

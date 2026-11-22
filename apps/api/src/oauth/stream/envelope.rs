@@ -401,6 +401,21 @@ pub mod control {
 mod tests {
     use super::*;
 
+    /// A connected application's event stream carries notifications and tasks only: none of the
+    /// events a project bot connection writes (they hold the runner's working directory) is one.
+    #[test]
+    fn connection_events_are_not_stream_events() {
+        for name in [
+            "project.bot_connected",
+            "project.bot_connection_updated",
+            "project.bot_disconnected",
+            "project.execution_settings_updated",
+            "bot.credentials_rotated",
+        ] {
+            assert!(EventKind::from_name(name).is_none(), "{name}");
+        }
+    }
+
     fn grant(projects: ProjectScope, scopes: &[Scope]) -> GrantView {
         GrantView {
             grant_id: Uuid::new_v4(),

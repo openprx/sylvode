@@ -335,9 +335,9 @@ impl Incremental {
         engine.prewarm_for_writes();
         // The setup guard's fault acts while the facts are computed; the others act in the window.
         let setup_fault = match self.defect {
-            Defect::Fault(fault @ (Fault::SetupGuardSkipped | Fault::SetupCpuGuardSkipped)) => {
-                Some(crate::window_check::fault::inject(fault))
-            }
+            Defect::Fault(
+                fault @ (Fault::SetupGuardSkipped | Fault::SetupCpuGuardSkipped | Fault::TextGuardSkipped),
+            ) => Some(crate::window_check::fault::inject(fault)),
             _ => None,
         };
         let mut facts = match from {
@@ -349,6 +349,23 @@ impl Incremental {
                     steps * 1_000_000,
                     crate::setup_guard::stepping_clock::read,
                 );
+                BaseFacts::compute_guarded(&engine, &guard).facts
+            }
+            FactsFrom::TextGuarded(bytes) => {
+                BaseFacts::compute_guarded(
+                    &engine,
+                    &crate::setup_guard::SetupGuard::with_limit(u64::MAX).with_text_limits(*bytes, u64::MAX),
+                )
+                .facts
+            }
+            FactsFrom::TextCpuStepped(steps) => {
+                crate::setup_guard::stepping_clock::install(1_000_000);
+                let guard = crate::setup_guard::SetupGuard::with_limits(
+                    u64::MAX,
+                    u64::MAX,
+                    crate::setup_guard::stepping_clock::read,
+                )
+                .with_text_limits(u64::MAX, steps * 1_000_000);
                 BaseFacts::compute_guarded(&engine, &guard).facts
             }
             FactsFrom::Guarded(limit) => {
@@ -1845,6 +1862,10 @@ fn incremental_mutants() -> Vec<Incremental> {
             defect: Defect::Fault(Fault::SetupCpuGuardSkipped),
         },
         Incremental {
+            name: "mutant: the per-text guard never fires (facts are built for a page with a text that costs more than its budget)",
+            defect: Defect::Fault(Fault::TextGuardSkipped),
+        },
+        Incremental {
             name: "mutant: a refusal by a total reports observed + 1",
             defect: Defect::Fault(Fault::RefusalOffByOne),
         },
@@ -1864,6 +1885,7 @@ fn oracle_expected(mutant: &Incremental) -> bool {
                 | Fault::PieceCountSkipped
                 | Fault::SetupGuardSkipped
                 | Fault::SetupCpuGuardSkipped
+                | Fault::TextGuardSkipped
                 | Fault::RefusalOffByOne
         )
     )

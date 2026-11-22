@@ -20,9 +20,9 @@
 //! directory larger than the backup caps is replaced with an incomplete backup
 //! ([`Outcome::ReplacedBackupIncomplete`]).
 //!
-//! The content comes in through [`GuideContent`]; the generated files of the skills source of truth
-//! (`skills/sylvode-mcp`, work package P3.6) are not in the tree yet, so no embedded constructor
-//! exists here. It is added where the generator's output lands.
+//! The content comes in through [`GuideContent`]; [`EMBEDDED`] is the text of the skills source of
+//! truth (`skills/sylvode-mcp`), compiled into the binary. The CI job `skills-sync` runs when this
+//! file or the skill changes.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -68,6 +68,14 @@ pub struct GuideContent<'a> {
     /// The body of the managed `AGENTS.md` section.
     pub agents_section: &'a str,
 }
+
+/// The guide compiled into the runner: `SKILL.md`, `reference/tools.md` and the generated
+/// `AGENTS.md` section of `skills/sylvode-mcp`.
+pub const EMBEDDED: GuideContent<'static> = GuideContent {
+    skill_md: include_str!("../../../../skills/sylvode-mcp/SKILL.md"),
+    tools_md: include_str!("../../../../skills/sylvode-mcp/reference/tools.md"),
+    agents_section: include_str!("../../../../skills/sylvode-mcp/generated/AGENTS.section.md"),
+};
 
 /// What an install did.
 #[derive(Debug, PartialEq, Eq)]
@@ -149,7 +157,7 @@ const DIR_FLAGS: OFlag = OFlag::O_RDONLY
     .union(OFlag::O_CLOEXEC);
 
 /// What is at a name inside a directory.
-enum Entry {
+pub(super) enum Entry {
     Absent,
     Dir,
     File,
@@ -157,7 +165,7 @@ enum Entry {
     Other,
 }
 
-fn classify(parent: &impl AsFd, name: &str) -> Result<Entry, String> {
+pub(super) fn classify(parent: &impl AsFd, name: &str) -> Result<Entry, String> {
     match fstatat(parent, name, nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW) {
         Ok(stat) => {
             let kind = SFlag::from_bits_truncate(stat.st_mode as nix::libc::mode_t) & SFlag::S_IFMT;
@@ -174,7 +182,7 @@ fn classify(parent: &impl AsFd, name: &str) -> Result<Entry, String> {
     }
 }
 
-fn open_root(project_dir: &Path) -> Result<OwnedFd, String> {
+pub(super) fn open_root(project_dir: &Path) -> Result<OwnedFd, String> {
     nix::fcntl::open(
         project_dir,
         OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
@@ -183,12 +191,12 @@ fn open_root(project_dir: &Path) -> Result<OwnedFd, String> {
     .map_err(|e| errno_err("could not open the project directory", e))
 }
 
-fn open_dir(parent: &impl AsFd, name: &str) -> Result<OwnedFd, String> {
+pub(super) fn open_dir(parent: &impl AsFd, name: &str) -> Result<OwnedFd, String> {
     openat(parent, name, DIR_FLAGS, Mode::empty()).map_err(|e| errno_err("could not open a directory", e))
 }
 
 /// A regular file read in full, up to a cap.
-enum Read_ {
+pub(super) enum Read_ {
     Absent,
     /// A symbolic link or anything that is not a regular file.
     Foreign,
@@ -201,7 +209,7 @@ enum Read_ {
 
 /// Reads `name` in `parent`: never follows a link, never blocks on a FIFO, checks the type on the
 /// opened handle, and reads at most `cap` bytes.
-fn read_regular(parent: &impl AsFd, name: &str, cap: u64) -> Result<Read_, String> {
+pub(super) fn read_regular(parent: &impl AsFd, name: &str, cap: u64) -> Result<Read_, String> {
     let fd = match openat(
         parent,
         name,
@@ -247,7 +255,7 @@ fn mode_of(mode: u32) -> Mode {
 
 /// Creates `name` in `parent` exclusively (never through a link, never over an existing file) with
 /// exactly `mode` and writes `data`.
-fn create_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result<(), String> {
+pub(super) fn create_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result<(), String> {
     let fd = openat(
         parent,
         name,
@@ -263,7 +271,7 @@ fn create_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result
 
 /// Replaces `name` in `parent` with `data` through an exclusively created temporary file and a
 /// rename, with the given fixed mode.
-fn replace_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result<(), String> {
+pub(super) fn replace_file(parent: &impl AsFd, name: &str, data: &[u8], mode: u32) -> Result<(), String> {
     let temp = format!(".{name}.sylvode-tmp-{}", uuid::Uuid::new_v4().simple());
     create_file(parent, &temp, data, mode)?;
     renameat(parent, temp.as_str(), parent, name).map_err(|e| {
@@ -789,4 +797,113 @@ pub fn ensure_git_exclude(project_dir: &Path) -> Result<ExcludeOutcome, String> 
     text.push(b'\n');
     replace_file(&info, "exclude", &text, mode)?;
     Ok(ExcludeOutcome::Added)
+}
+
+// ----- state, for doctor --------------------------------------------------------------------------
+
+/// Whether the guide in `project_dir` is what this runner would install, without writing anything:
+/// `current`, `stale` (ours, other content), `conflict` (markers or marker file that are not ours
+/// to replace) or `absent`.
+#[must_use]
+pub fn guide_state(project_dir: &Path, cli: &str, content: &GuideContent<'_>, version: &str) -> &'static str {
+    let Ok(root) = open_root(project_dir) else {
+        return "absent";
+    };
+    if cli == "claude" {
+        let Ok(Entry::Dir) = classify(&root, ".claude") else {
+            return "absent";
+        };
+        let Ok(claude) = open_dir(&root, ".claude") else {
+            return "absent";
+        };
+        let Ok(Entry::Dir) = classify(&claude, "skills") else {
+            return "absent";
+        };
+        let Ok(skills) = open_dir(&claude, "skills") else {
+            return "absent";
+        };
+        return match classify(&skills, "sylvode-mcp") {
+            Ok(Entry::Absent) | Err(_) => "absent",
+            Ok(Entry::Dir) => {
+                let Ok(target) = open_dir(&skills, "sylvode-mcp") else {
+                    return "conflict";
+                };
+                if !matches!(
+                    read_regular(&target, ".sylvode-managed", MARKER_MAX_BYTES),
+                    Ok(Read_::Data { .. })
+                ) {
+                    "conflict"
+                } else if skill_matches(&target, &skill_files(content, version)) {
+                    "current"
+                } else {
+                    "stale"
+                }
+            }
+            Ok(Entry::File | Entry::Other) => "conflict",
+        };
+    }
+    match read_regular(&root, "AGENTS.md", AGENTS_MAX_BYTES) {
+        Ok(Read_::Absent) | Err(_) => "absent",
+        Ok(Read_::Foreign | Read_::TooLarge) => "conflict",
+        Ok(Read_::Data { bytes, .. }) => {
+            let begins = find_up_to(&bytes, BEGIN_PREFIX.as_bytes(), 2);
+            let ends = find_up_to(&bytes, END_MARKER.as_bytes(), 2);
+            match (begins.as_slice(), ends.as_slice()) {
+                ([], []) => "absent",
+                ([begin], [end]) if begin < end => {
+                    let ending = line_ending(&bytes);
+                    let new_block = block(version, content.agents_section, ending);
+                    match bytes.get(*begin..end + END_MARKER.len()) {
+                        Some(old) if normalise_crlf(old) == normalise_crlf(new_block.as_bytes()) => "current",
+                        Some(_) => "stale",
+                        None => "conflict",
+                    }
+                }
+                _ => "conflict",
+            }
+        }
+    }
+}
+
+/// What installing the guide into a project directory did, for the log and for `doctor`.
+#[derive(Debug)]
+pub struct InstallReport {
+    pub outcome: Result<Outcome, String>,
+    pub exclude: Option<ExcludeOutcome>,
+}
+
+/// Installs the embedded guide for `cli` into `project_dir`: the claude skill (plus the git
+/// exclude line when `git_exclude`), or the managed `AGENTS.md` section for the others.
+#[must_use]
+pub fn install_for_cli(
+    project_dir: &Path,
+    cli: &str,
+    git_exclude: bool,
+    backup_dir: &Path,
+    backup_label: &str,
+) -> InstallReport {
+    let version = env!("CARGO_PKG_VERSION");
+    if cli == "claude" {
+        let outcome = install_claude_skill(project_dir, &EMBEDDED, version, backup_dir, backup_label);
+        let exclude = (git_exclude
+            && matches!(
+                outcome,
+                Ok(Outcome::Created | Outcome::Replaced | Outcome::ReplacedBackupIncomplete | Outcome::Unchanged)
+            ))
+        .then(|| ensure_git_exclude(project_dir).unwrap_or(ExcludeOutcome::Refused));
+        InstallReport { outcome, exclude }
+    } else {
+        InstallReport {
+            outcome: install_agents_section(project_dir, &EMBEDDED, version, backup_dir, backup_label),
+            exclude: None,
+        }
+    }
+}
+
+/// Whether the project's `.git` is a file (a worktree), in which case the exclude line cannot be
+/// written. Read-only, for `doctor`; `None` when it is not a worktree or cannot be told.
+#[must_use]
+pub fn ensure_git_exclude_check(project_dir: &Path) -> Option<ExcludeOutcome> {
+    let root = open_root(project_dir).ok()?;
+    matches!(classify(&root, ".git"), Ok(Entry::File)).then_some(ExcludeOutcome::Worktree)
 }

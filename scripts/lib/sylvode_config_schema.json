@@ -36,7 +36,7 @@
       "tool_mode",
       "allow_write_call"
     ],
-    "flow": ["dispatch_max_attempts", "collab_allowed_origins", "conversion_reap_interval_secs", "body_asset_max_bytes", "incremental_window"],
+    "flow": ["dispatch_max_attempts", "collab_allowed_origins", "conversion_reap_interval_secs", "body_asset_max_bytes", "incremental_window", "setup_cpu_budget_ms"],
     "oauth": [
       "issuer",
       "api_resource",

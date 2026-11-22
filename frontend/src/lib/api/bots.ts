@@ -14,6 +14,8 @@ export interface Bot {
 	last_used_at: string | null;
 	expires_at: string | null;
 	created_at: string;
+	/** Set when a project bot connection manages this token (read it with `parseManagedBy`). */
+	managed_by?: unknown;
 }
 
 export interface CreateBotResponse extends Bot {

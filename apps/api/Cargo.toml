@@ -51,6 +51,8 @@ zip.workspace = true
 # deserialization, and the handler's field mapping) is actually executed rather than bypassed by
 # constructing the request struct in Rust. Already in `Cargo.lock` as a transitive dependency.
 wat = "1"
+# Parses the runner configuration block the way the runner's own loader does.
+toml.workspace = true
 tokio-tungstenite = "0.26"
 # Builds hostile document bytes (a root container with a reserved name and the wrong type) for the
 # package-ingestion tests; the same exact pin as `collab-core`.

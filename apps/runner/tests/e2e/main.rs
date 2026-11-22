@@ -7,8 +7,13 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 
 mod ai_task;
-mod cli;
+mod doctor;
+mod handshake;
+mod hook;
+mod mock_sv;
+mod runner;
 mod startup;
 mod support;
+mod tmux_session;
 mod tunnel;
 mod webhook;

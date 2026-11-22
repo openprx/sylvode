@@ -16,6 +16,7 @@ use crate::error::ApiError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AlertNotification {
     Opened,
+    Escalated,
     TaskCompleted,
     TaskFailed,
     Suppressed,
@@ -26,6 +27,7 @@ impl AlertNotification {
     pub const fn as_type(self) -> &'static str {
         match self {
             Self::Opened => "alert_opened",
+            Self::Escalated => "alert_escalated",
             Self::TaskCompleted => "alert_task_completed",
             Self::TaskFailed => "alert_task_failed",
             Self::Suppressed => "alert_suppressed",
@@ -37,6 +39,7 @@ impl AlertNotification {
     pub const fn title_key(self) -> &'static str {
         match self {
             Self::Opened => "notification.alertOpenedTitle",
+            Self::Escalated => "notification.alertEscalatedTitle",
             Self::TaskCompleted => "notification.alertTaskCompletedTitle",
             Self::TaskFailed => "notification.alertTaskFailedTitle",
             Self::Suppressed => "notification.alertSuppressedTitle",
@@ -48,6 +51,11 @@ impl AlertNotification {
 /// `alert_opened:<SEVERITY>:<work item title>`.
 pub fn opened_content(severity: Severity, title: &str) -> String {
     format!("alert_opened:{}:{title}", severity.label())
+}
+
+/// `alert_escalated:<SEVERITY>:<work item title>`.
+pub fn escalated_content(severity: Severity, title: &str) -> String {
+    format!("alert_escalated:{}:{title}", severity.label())
 }
 
 /// `alert_task_completed:<title>` or `alert_task_failed:<title>`.
@@ -193,6 +201,11 @@ mod tests {
                 "notification.alertOpenedTitle",
             ),
             (
+                AlertNotification::Escalated,
+                "alert_escalated",
+                "notification.alertEscalatedTitle",
+            ),
+            (
                 AlertNotification::TaskCompleted,
                 "alert_task_completed",
                 "notification.alertTaskCompletedTitle",
@@ -223,6 +236,10 @@ mod tests {
         assert_eq!(
             opened_content(Severity::High, "[HIGH] s · k"),
             "alert_opened:HIGH:[HIGH] s · k"
+        );
+        assert_eq!(
+            escalated_content(Severity::Critical, "[CRITICAL] s · k"),
+            "alert_escalated:CRITICAL:[CRITICAL] s · k"
         );
         assert_eq!(
             task_outcome_content(AlertNotification::TaskFailed, "t"),

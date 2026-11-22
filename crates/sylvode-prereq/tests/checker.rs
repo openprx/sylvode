@@ -761,3 +761,53 @@ mod api {
         assert_eq!(forward.status, Status::Warn);
     }
 }
+
+/// Every program a probe starts (`tmux -V`, `<cli> --version`, `<peer> --check`, a service query)
+/// gets the allow-list environment: a canary set in the caller is never seen by it, `PATH` is the
+/// checker's, and the allowed variables still pass.
+#[test]
+fn probed_programs_do_not_see_the_callers_environment() {
+    let dir = TempDir::new();
+    let seen = dir.path().join("seen");
+    // Each fake writes the NAMES of its variables (never values) beside the test's own directory.
+    let record = format!(
+        "/usr/bin/env | /usr/bin/cut -d= -f1 | /usr/bin/sort >> '{}'\n",
+        seen.display()
+    );
+    dir.script("tmux", &format!("{record}echo 'tmux 3.4'"));
+    dir.script("claude", &format!("{record}echo '2.1.330 (Claude Code)'"));
+    dir.script(
+        "mcp-server",
+        &format!(
+            "{record}echo '{{\"schema\":\"sylvode.doctor.v1\",\"generated_by\":{{\"binary\":\"mcp-server\",\"version\":\"0.5.0\",\"task_protocol\":1}},\"components\":[]}}'"
+        ),
+    );
+    // `set_var` is unsafe in edition 2024, so the canary is given to a child test process.
+    let canary = "SVT_PROBE_CANARY";
+    let output = std::process::Command::new(std::env::current_exe().expect("exe"))
+        .args(["--exact", "probe_child_runs_the_probes", "--nocapture", "--ignored"])
+        .env(canary, "must-not-leak")
+        .env("SVT_PROBE_DIR", dir.path())
+        .output()
+        .expect("run the child test");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let names = std::fs::read_to_string(&seen).expect("fakes ran");
+    assert!(
+        !names.lines().any(|n| n == canary),
+        "the canary reached a probed program"
+    );
+    assert!(names.lines().any(|n| n == "PATH"), "the checker's PATH is passed");
+}
+
+/// Run only by [`probed_programs_do_not_see_the_callers_environment`], in a child process that has
+/// the canary in its environment.
+#[test]
+#[ignore = "run by its parent test, with a canary in the environment"]
+fn probe_child_runs_the_probes() {
+    let dir = PathBuf::from(std::env::var("SVT_PROBE_DIR").expect("directory"));
+    assert!(std::env::var("SVT_PROBE_CANARY").is_ok(), "the canary is set here");
+    let checker = Checker::new(InstallKind::RunnerTmux).with_path(dir);
+    let _ = checker.check_tmux("probe");
+    let _ = checker.check_cli(Cli::Claude, true, None);
+    let _ = checker.check_peer(Peer::McpServer, None, Some(1));
+}

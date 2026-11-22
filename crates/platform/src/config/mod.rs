@@ -133,6 +133,20 @@ pub const DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS: u64 = 60;
 pub const DEFAULT_FLOW_BODY_ASSET_MAX_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_FLOW_BODY_ASSET_BYTES: u64 = DEFAULT_FLOW_BODY_ASSET_MAX_BYTES;
 
+/// CPU milliseconds the isolated worker's unmetered setup may consume before it yields no base facts.
+///
+/// Assumed unless `[flow] setup_cpu_budget_ms` overrides it. The setup's own wall timeout is 5 s, so
+/// the budget leaves room for the load and for one text over it.
+pub const DEFAULT_FLOW_SETUP_CPU_BUDGET_MS: u64 = 2_500;
+
+/// Lower bound accepted for `flow.setup_cpu_budget_ms`: below it even honest pages would lose the
+/// incremental window.
+pub const MIN_FLOW_SETUP_CPU_BUDGET_MS: u64 = 500;
+
+/// Upper bound accepted for `flow.setup_cpu_budget_ms`: the setup timeout is 5 s of wall time, and
+/// a budget at or above 4 s would leave no room for the load and the one text that can run past it.
+pub const MAX_FLOW_SETUP_CPU_BUDGET_MS: u64 = 4_000;
+
 /// Upper bound accepted for `flow.conversion_reap_interval_secs` (one day).
 pub const MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS: u64 = 86_400;
 
@@ -568,21 +582,30 @@ impl Default for AiTasksConfig {
 /// `conversion_reap_interval_secs` is the period of the API's sweep that fails conversion jobs
 /// left `started` past the stale threshold (`rest-api-v1.md` v0.7).
 ///
-/// `incremental_window` (default on) lets the collab write window decide the structural limits
-/// from the facts of the page and the units an update touched; off, every write runs the full
-/// computation.
+/// `incremental_window` (experimental, default off) lets the collab write window decide the
+/// structural limits from the facts of the page and the units an update touched; off, every write
+/// runs the full computation, which is what the worker did before the incremental window existed.
+///
+/// `setup_cpu_budget_ms` is the CPU time the worker's unmetered setup (load, prewarm, base facts)
+/// may consume before it yields no facts and the page takes the full window. A slower host than the
+/// reference runner may raise it; a setup that times out at 5 s of wall time with at least 80 % of
+/// it consumed is treated as an exhausted setup (the full window is tried once), below that as a
+/// starved one (retried).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlowConfig {
     pub dispatch_max_attempts: i32,
     pub collab_allowed_origins: Vec<String>,
     pub conversion_reap_interval_secs: u64,
     pub body_asset_max_bytes: u64,
-    /// Whether the collab write window may decide the structural limits incrementally. Off makes
-    /// every write run the full computation (today's bounded cost, without the incremental
-    /// check), whatever the page: the worker's decision is then the full computation's for every
+    /// Whether the collab write window may decide the structural limits incrementally
+    /// (experimental, off by default). Off makes every write run the full computation (the bounded
+    /// cost the worker had before the incremental window), whatever the page: the worker's decision is then the full computation's for every
     /// input, except that an update whose tree ops name a parent that does not exist is refused
     /// with either setting (`collab_core::tree_refs`).
     pub incremental_window: bool,
+    /// CPU budget of the worker's setup, in milliseconds; validated to the range from
+    /// [`MIN_FLOW_SETUP_CPU_BUDGET_MS`] to [`MAX_FLOW_SETUP_CPU_BUDGET_MS`], both included.
+    pub setup_cpu_budget_ms: u64,
 }
 
 impl Default for FlowConfig {
@@ -592,7 +615,8 @@ impl Default for FlowConfig {
             collab_allowed_origins: Vec::new(),
             conversion_reap_interval_secs: DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
             body_asset_max_bytes: DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
-            incremental_window: true,
+            incremental_window: false,
+            setup_cpu_budget_ms: DEFAULT_FLOW_SETUP_CPU_BUDGET_MS,
         }
     }
 }

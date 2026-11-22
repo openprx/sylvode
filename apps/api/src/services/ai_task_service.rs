@@ -422,6 +422,78 @@ struct ProjectWorkspaceRow {
     workspace_id: Uuid,
 }
 
+/// Why a runner bot may not be given a task of a project.
+///
+/// A bot that a project bot connection made (it has a `bot_runners` row) runs a project's tasks
+/// only while that project has an enabled connection for it. The token and the runner are shared
+/// by every project of the bot, so the connection of the task's own project is what decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunnerBotBlock {
+    /// The project has no connection for the bot (never made, or removed while the bot stays
+    /// connected to another project).
+    NotConnected,
+    /// The project's connection exists and is disabled.
+    Disabled,
+}
+
+impl RunnerBotBlock {
+    /// What the refusal and the failed task say.
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::NotConnected => "the bot is not connected to this project",
+            Self::Disabled => "the bot's connection to this project is disabled",
+        }
+    }
+
+    /// The reason stored in the failed task's event.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NotConnected => "bot_not_connected_to_project",
+            Self::Disabled => "connection_disabled",
+        }
+    }
+}
+
+/// `Some(reason)` when `bot_id` is a runner bot without an enabled connection for `project_id`.
+/// A bot no connection made is not a runner bot and is never blocked here.
+pub async fn runner_bot_block<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    bot_id: Uuid,
+) -> Result<Option<RunnerBotBlock>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Gate {
+        runner: bool,
+        enabled: Option<bool>,
+    }
+    let gate = Gate::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            SELECT EXISTS (SELECT 1 FROM bot_runners WHERE bot_id = $2) AS runner,
+                   (SELECT s.enabled
+                      FROM project_bot_connections c
+                      JOIN project_execution_settings s ON s.project_id = c.project_id
+                     WHERE c.project_id = $1 AND c.bot_id = $2) AS enabled
+        ",
+        vec![project_id.into(), bot_id.into()],
+    ))
+    .one(db)
+    .await?;
+    Ok(match gate {
+        Some(Gate {
+            runner: true,
+            enabled: None,
+        }) => Some(RunnerBotBlock::NotConnected),
+        Some(Gate {
+            runner: true,
+            enabled: Some(false),
+        }) => Some(RunnerBotBlock::Disabled),
+        _ => None,
+    })
+}
+
 pub async fn create_ai_task<C: ConnectionTrait>(
     db: &C,
     input: CreateAiTaskInput,
@@ -430,6 +502,10 @@ pub async fn create_ai_task<C: ConnectionTrait>(
         DispatchOrigin::Request | DispatchOrigin::InboundRule { .. } => crate::oauth::delegated::refuse_agent_task()?,
         DispatchOrigin::Delegated => return Err(crate::oauth::delegated::agent_task_refused()),
         DispatchOrigin::System => {}
+    }
+    // Whoever started the task, a runner bot takes it only for a project that has enabled it.
+    if let Some(block) = runner_bot_block(db, input.project_id, input.ai_participant_id).await? {
+        return Err(ApiError::Conflict(block.message().to_string()));
     }
     let now = Timestamp::now();
     let max_attempts = input.max_attempts.max(1);
@@ -664,11 +740,14 @@ pub const fn status_after_failed_attempt(attempts: i32, max_attempts: i32, end: 
 /// Why the worker ended an attempt, recorded in the task and business events as `reason`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerEndReason {
-    /// The receiver answered the delivery that it will not run the task (`no_agent`, `ignored`,
+    /// The runner answered the delivery that it will not run the task (`no_agent`, `ignored`,
     /// `refused`, or an HTTP 4xx that a repeat cannot change).
-    ReceiverDeclined,
-    /// The delivery did not reach a receiver that took it (no webhook, transport error, 5xx).
+    RunnerDeclined,
+    /// The delivery did not reach a runner that took it (no webhook, transport error, 5xx).
     DeliveryFailed,
+    /// The task's project has no enabled connection for the bot: it was never connected, the
+    /// connection was removed, or it is disabled. The task was never delivered.
+    ConnectionUnavailable,
     /// The task's lease ran out: no completion or progress arrived within `[ai_tasks]
     /// processing_timeout_secs` of the delivery, or within the lease a later heartbeat granted.
     ProcessingTimeout,
@@ -677,11 +756,87 @@ pub enum WorkerEndReason {
 impl WorkerEndReason {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ReceiverDeclined => "receiver_declined",
+            Self::RunnerDeclined => "runner_declined",
             Self::DeliveryFailed => "delivery_failed",
+            Self::ConnectionUnavailable => "connection_unavailable",
             Self::ProcessingTimeout => "processing_timeout",
         }
     }
+}
+
+/// Fails pending tasks of runner bots whose project has no enabled connection for them.
+///
+/// Up to `limit` tasks are failed, each with a `failed` event saying why (`reason`
+/// `connection_unavailable`, `reason_code` `bot_not_connected_to_project` or `connection_disabled`).
+///
+/// A disable or removal stops a project's tasks for the bot: tasks already running continue until
+/// they end (the dialog says so), tasks still waiting are failed here instead of waiting for a
+/// connection that may never come back. The caller sends `ai.task_failed` and tells the issue.
+pub async fn fail_tasks_without_connection(
+    db: &impl ConnectionTrait,
+    limit: i64,
+) -> Result<Vec<(AiTaskRow, RunnerBotBlock)>, ApiError> {
+    let rows = EndedAttemptRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            WITH blocked AS (
+                SELECT t.id,
+                       CASE WHEN c.project_id IS NULL THEN $2 ELSE $3 END AS message
+                FROM ai_tasks t
+                INNER JOIN bot_runners r ON r.bot_id = t.ai_participant_id
+                LEFT JOIN project_bot_connections c
+                       ON c.project_id = t.project_id AND c.bot_id = t.ai_participant_id
+                LEFT JOIN project_execution_settings s ON s.project_id = c.project_id
+                WHERE t.status = 'pending' AND (c.project_id IS NULL OR NOT COALESCE(s.enabled, false))
+                ORDER BY t.created_at
+                LIMIT $1
+                FOR UPDATE OF t SKIP LOCKED
+            )
+            UPDATE ai_tasks t
+            SET status = 'failed',
+                error_message = blocked.message,
+                next_retry_at = NULL,
+                completed_at = now(),
+                updated_at = now()
+            FROM blocked
+            WHERE t.id = blocked.id AND t.status = 'pending'
+            RETURNING
+                t.id, t.project_id, t.ai_participant_id, t.task_type, t.reference_type, t.reference_id,
+                t.status, t.priority, t.payload, t.result, t.error_message, t.idempotency_key, t.attempts,
+                t.max_attempts, t.next_retry_at, t.started_at, t.completed_at, t.created_at, t.updated_at,
+                'pending'::text AS previous_status
+        ",
+        vec![
+            limit.into(),
+            RunnerBotBlock::NotConnected.message().into(),
+            RunnerBotBlock::Disabled.message().into(),
+        ],
+    ))
+    .all(db)
+    .await?;
+    let mut failed = Vec::with_capacity(rows.len());
+    for EndedAttemptRow { task, previous_status } in rows {
+        let block = if task.error_message.as_deref() == Some(RunnerBotBlock::Disabled.message()) {
+            RunnerBotBlock::Disabled
+        } else {
+            RunnerBotBlock::NotConnected
+        };
+        record_worker_attempt_end(
+            db,
+            &task,
+            WorkerEndReason::ConnectionUnavailable,
+            Some(block.code()),
+            &previous_status,
+        )
+        .await?;
+        failed.push((task, block));
+    }
+    Ok(failed)
+}
+
+/// Whether `code` is a refusal code a runner may report: 3 to 40 characters of `a-z` and `_`.
+pub fn is_reason_code(code: &str) -> bool {
+    (3..=40).contains(&code.len()) && code.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_')
 }
 
 /// Ends attempt `attempt` of a task the worker delivered, if that attempt is still active.
@@ -692,13 +847,16 @@ impl WorkerEndReason {
 /// attempt twice: `None` means the attempt had already ended and nothing was written. Otherwise
 /// the `retried` or `failed` task event and the matching business event are written, both
 /// carrying `reason` and `error_message`, and the business event records the status the attempt
-/// really had. The caller sends `ai.task_failed` for a failed task (see [`notify_ai_task_failed`]).
+/// really had. `reason_code` is the runner's own refusal code (see [`is_reason_code`]); it is
+/// stored next to `error_message` when it has that shape, and dropped otherwise. The caller sends
+/// `ai.task_failed` for a failed task (see [`notify_ai_task_failed`]).
 pub async fn end_processing_attempt<C: ConnectionTrait>(
     db: &C,
     task_id: Uuid,
     attempt: i32,
     end: AttemptEnd,
     reason: WorkerEndReason,
+    reason_code: Option<&str>,
     error_message: &str,
 ) -> Result<Option<AiTaskRow>, ApiError> {
     let Some(EndedAttemptRow { task, previous_status }) =
@@ -706,7 +864,7 @@ pub async fn end_processing_attempt<C: ConnectionTrait>(
     else {
         return Ok(None);
     };
-    record_worker_attempt_end(db, &task, reason, &previous_status).await?;
+    record_worker_attempt_end(db, &task, reason, reason_code, &previous_status).await?;
     Ok(Some(task))
 }
 
@@ -867,7 +1025,7 @@ pub async fn end_stalled_attempts<C: ConnectionTrait>(db: &C, limit: i64) -> Res
 
     let mut tasks = Vec::with_capacity(ended.len());
     for EndedAttemptRow { task, previous_status } in ended {
-        record_worker_attempt_end(db, &task, WorkerEndReason::ProcessingTimeout, &previous_status).await?;
+        record_worker_attempt_end(db, &task, WorkerEndReason::ProcessingTimeout, None, &previous_status).await?;
         tasks.push(task);
     }
     Ok(tasks)
@@ -878,16 +1036,23 @@ async fn record_worker_attempt_end<C: ConnectionTrait>(
     db: &C,
     task: &AiTaskRow,
     reason: WorkerEndReason,
+    reason_code: Option<&str>,
     previous_status: &str,
 ) -> Result<(), ApiError> {
     let failed = task.status == "failed";
-    let event_payload = json!({
+    let mut event_payload = json!({
         "reason": reason.as_str(),
         "error_message": task.error_message,
         "attempts": task.attempts,
         "max_attempts": task.max_attempts,
         "next_retry_at": task.next_retry_at.map(Timestamp::to_rfc3339),
     });
+    if let (Some(code), Some(object)) = (
+        reason_code.filter(|code| is_reason_code(code)),
+        event_payload.as_object_mut(),
+    ) {
+        object.insert("reason_code".to_string(), json!(code));
+    }
     insert_ai_task_event(
         db,
         task.id,
@@ -1124,7 +1289,7 @@ mod attempt_end_tests {
 
     #[test]
     fn reasons_have_stable_names() {
-        assert_eq!(WorkerEndReason::ReceiverDeclined.as_str(), "receiver_declined");
+        assert_eq!(WorkerEndReason::RunnerDeclined.as_str(), "runner_declined");
         assert_eq!(WorkerEndReason::DeliveryFailed.as_str(), "delivery_failed");
         assert_eq!(WorkerEndReason::ProcessingTimeout.as_str(), "processing_timeout");
     }
@@ -1185,6 +1350,48 @@ mod worker_attempt_database_tests {
         .await
     }
 
+    /// The runner's refusal code is stored from the field the runner sent, in the failed event's
+    /// payload, and only when it has the shape of a code.
+    #[tokio::test]
+    async fn the_refusal_code_is_stored_only_when_it_is_a_code() {
+        let scratch = scratch_or_skip!("ai_task_worker_reason_code");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "rc").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        for (code, stored) in [
+            (Some("path_outside_allowlist"), Some("path_outside_allowlist")),
+            (Some("tmux_unavailable"), Some("tmux_unavailable")),
+            (Some("Bad Code"), None),
+            (Some("ab"), None),
+            (Some("tmux_unavailable (tmux 3.0 < 3.2)"), None),
+            (None, None),
+        ] {
+            let task_id = seed_task(db, &tenant, bot, 1, 0).await;
+            end_processing_attempt(
+                db,
+                task_id,
+                1,
+                AttemptEnd::Terminal,
+                WorkerEndReason::RunnerDeclined,
+                code,
+                "the runner refused the task",
+            )
+            .await
+            .expect("the update runs")
+            .expect("the attempt was processing");
+            let payload = count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM ai_task_events \
+                 WHERE task_id = $1 AND event_type = 'failed' AND payload->>'reason' = 'runner_declined' \
+                   AND payload->>'reason_code' IS NOT DISTINCT FROM $2",
+                vec![task_id.into(), stored.map(str::to_string).into()],
+            )
+            .await;
+            assert_eq!(payload, 1, "{code:?} should store {stored:?}");
+        }
+        scratch.drop_self().await;
+    }
+
     #[tokio::test]
     async fn a_declined_delivery_fails_the_attempt_once() {
         let scratch = scratch_or_skip!("ai_task_worker_declined");
@@ -1198,14 +1405,18 @@ mod worker_attempt_database_tests {
             task_id,
             1,
             AttemptEnd::Terminal,
-            WorkerEndReason::ReceiverDeclined,
-            "receiver answered no_agent",
+            WorkerEndReason::RunnerDeclined,
+            None,
+            "the runner has no agent for bot Build bot",
         )
         .await
         .expect("the update runs")
         .expect("attempt 1 was processing");
         assert_eq!(ended.status, "failed");
-        assert_eq!(ended.error_message.as_deref(), Some("receiver answered no_agent"));
+        assert_eq!(
+            ended.error_message.as_deref(),
+            Some("the runner has no agent for bot Build bot")
+        );
         assert!(ended.completed_at.is_some());
         assert_eq!(events(db, task_id, "failed").await, 1);
         assert_eq!(business_events(db, task_id, "ai_task.failed").await, 1);
@@ -1215,7 +1426,8 @@ mod worker_attempt_database_tests {
             task_id,
             1,
             AttemptEnd::Terminal,
-            WorkerEndReason::ReceiverDeclined,
+            WorkerEndReason::RunnerDeclined,
+            None,
             "again",
         )
         .await
@@ -1239,6 +1451,7 @@ mod worker_attempt_database_tests {
             1,
             AttemptEnd::RetryWhileAttemptsRemain,
             WorkerEndReason::DeliveryFailed,
+            None,
             "late",
         )
         .await
@@ -1251,6 +1464,7 @@ mod worker_attempt_database_tests {
             2,
             AttemptEnd::RetryWhileAttemptsRemain,
             WorkerEndReason::DeliveryFailed,
+            None,
             "HTTP 503",
         )
         .await
@@ -1339,7 +1553,8 @@ mod worker_attempt_database_tests {
             task_id,
             1,
             AttemptEnd::Terminal,
-            WorkerEndReason::ReceiverDeclined,
+            WorkerEndReason::RunnerDeclined,
+            None,
             "declined",
         )
         .await

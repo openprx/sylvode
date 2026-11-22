@@ -6,8 +6,8 @@
 //! see: the workflow states of the project and the labels of its workspace.
 
 use platform::{app::AppState, timestamp::Timestamp};
-use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
-use serde::{Deserialize, Serialize};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -44,42 +44,16 @@ pub struct ExecutionSettings {
     pub updated_at: Timestamp,
 }
 
-/// The body of a `PUT`. A field that is left out takes the database default; the working
-/// directory has none and is required.
-#[derive(Debug, Deserialize)]
+/// The settings a connection asks for, before [`validate`]. The working directory is required.
+#[derive(Debug)]
 pub struct ExecutionSettingsInput {
-    #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "default_channel")]
     pub channel: String,
-    #[serde(default = "default_cli")]
     pub cli: String,
     pub working_directory: Option<String>,
-    #[serde(default = "default_on_complete_state")]
     pub on_complete_state: String,
-    #[serde(default)]
     pub on_fail_label_id: Option<Uuid>,
-    #[serde(default = "default_approval_gate")]
     pub approval_gate: String,
-    /// The version the caller last read; absent when the project has no settings yet.
-    #[serde(default)]
-    pub expected_version: Option<i32>,
-}
-
-fn default_channel() -> String {
-    "tmux".to_string()
-}
-
-fn default_cli() -> String {
-    "claude".to_string()
-}
-
-fn default_on_complete_state() -> String {
-    "auto".to_string()
-}
-
-fn default_approval_gate() -> String {
-    "none".to_string()
 }
 
 /// Settings that passed [`validate`], ready to store.
@@ -139,6 +113,27 @@ pub async fn load<C: ConnectionTrait>(db: &C, project_id: Uuid) -> Result<Option
     .await?)
 }
 
+/// What a name or a path is refused with when it holds a character that hides or reorders text.
+pub const HIDDEN_CHARS_MESSAGE: &str = "must not contain control, bidirectional or zero-width characters";
+
+/// A control character, or one that reorders or hides text: zero-width and invisible format
+/// characters, the bidirectional marks, embeddings, overrides and isolates, and the byte-order mark.
+#[must_use]
+pub const fn is_hidden_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{00ad}'
+                | '\u{061c}'
+                | '\u{180e}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206f}'
+                | '\u{feff}'
+        )
+}
+
 /// Normalises and checks a working directory on the runner machine.
 ///
 /// One trailing `/` is stripped. The result is absolute, 2 to 1024 bytes, free of control
@@ -152,8 +147,11 @@ pub fn normalize_working_directory(raw: &str) -> Result<String, &'static str> {
     if path.len() < 2 || path.len() > MAX_WORKING_DIRECTORY_BYTES {
         return Err("must be 2 to 1024 bytes long");
     }
-    if path.chars().any(char::is_control) {
-        return Err("must not contain control characters");
+    if path.contains('#') {
+        return Err("must not contain #");
+    }
+    if path.chars().any(is_hidden_char) {
+        return Err(HIDDEN_CHARS_MESSAGE);
     }
     if path.contains("//") || path.ends_with('/') {
         return Err("must not contain empty segments or end in a second slash");
@@ -184,7 +182,7 @@ fn complete_state_key(value: &str) -> Result<Option<&str>, &'static str> {
     }
 }
 
-/// Checks a `PUT` body against the rules of the settings and the project's workflow and
+/// Checks the settings of a connection against the rules of the settings and the project's workflow and
 /// workspace. The first refusal names its field.
 pub async fn validate(
     state: &AppState,
@@ -241,24 +239,25 @@ pub async fn validate(
 }
 
 /// Creates or updates the settings as a compare-and-set on `version`, and records
-/// `project.execution_settings_updated` in the same transaction.
+/// `project.execution_settings_updated` on `db`.
 ///
-/// Without a stored row the caller must send no `expected_version`; with one it must send the
-/// stored version. Any other combination is a [`SaveOutcome::Conflict`] and nothing is written.
+/// The project connection service is the only caller: it passes the transaction that holds the
+/// connection, so the settings change commits or rolls back with it. Without a stored row the
+/// caller must send no `expected_version`; with one it must send the stored version. Any other
+/// combination is a [`SaveOutcome::Conflict`] and nothing is written.
 pub async fn upsert(
-    state: &AppState,
+    db: &impl ConnectionTrait,
     project: &ProjectRef,
     valid: &ValidSettings,
     expected_version: Option<i32>,
     actor_id: Uuid,
 ) -> Result<SaveOutcome, ApiError> {
-    let txn = state.db.begin().await?;
     let before = ExecutionSettings::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!("SELECT {SETTINGS_COLUMNS} FROM project_execution_settings WHERE project_id = $1 FOR UPDATE"),
         vec![project.id.into()],
     ))
-    .one(&txn)
+    .one(db)
     .await?;
 
     let saved = match (&before, expected_version) {
@@ -285,7 +284,7 @@ pub async fn upsert(
                     actor_id.into(),
                 ],
             ))
-            .one(&txn)
+            .one(db)
             .await?
         }
         (Some(current), Some(expected)) if current.version == expected => {
@@ -312,20 +311,19 @@ pub async fn upsert(
                     expected.into(),
                 ],
             ))
-            .one(&txn)
+            .one(db)
             .await?
         }
         _ => None,
     };
 
     let Some(after) = saved else {
-        let current = load(&txn, project.id).await?;
-        txn.rollback().await?;
+        let current = load(db, project.id).await?;
         return Ok(SaveOutcome::Conflict { current });
     };
 
     insert_business_event(
-        &txn,
+        db,
         BusinessEventInput {
             workspace_id: project.workspace_id,
             project_id: Some(project.id),
@@ -335,14 +333,17 @@ pub async fn upsert(
             actor_id: Some(actor_id),
             source: json!({ "type": "api", "actor_id": actor_id }),
             payload: json!({ "before": before, "after": after, "actor_id": actor_id }),
-            metadata: json!({ "project_id": project.id, "version": after.version }),
+            metadata: json!({
+                "project_id": project.id,
+                "version": after.version,
+                "managed_by_connection": true
+            }),
             correlation_id: None,
             causation_id: None,
             idempotency_key: None,
         },
     )
     .await?;
-    txn.commit().await?;
     Ok(SaveOutcome::Saved { before, after })
 }
 
@@ -366,6 +367,11 @@ mod tests {
             "/a/.",
             "/a\u{1}b",
             "/a\nb",
+            "/a#b",
+            "/a\u{202e}b",
+            "/a\u{200b}b",
+            "/a\u{feff}b",
+            "/a\u{2066}b",
             "/a//",
             long.as_str(),
         ] {

@@ -500,7 +500,7 @@ impl OpenPrClient {
     }
 
     pub async fn update_project(&self, project_id: &str, body: Value) -> Result<Value, String> {
-        self.patch(&format!("/api/v1/projects/{}", urlencoding::encode(project_id)), &body)
+        self.put(&format!("/api/v1/projects/{}", urlencoding::encode(project_id)), &body)
             .await
     }
 

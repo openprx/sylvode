@@ -79,6 +79,7 @@ pub async fn reconstruct(
         from_frontier: from_frontier.clone(),
         to_frontier: to_frontier.clone(),
         package_updates_base64: None,
+        package_semantic_model: None,
     };
     let snapshot = boot.snapshot;
     let (result, observation) =

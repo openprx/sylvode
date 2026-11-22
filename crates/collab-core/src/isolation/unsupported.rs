@@ -41,6 +41,7 @@ pub const fn isolated_apply_with_observed(
     _base_snapshot: &[u8],
     _update: &[u8],
     _mode: WindowMode,
+    _setup_cpu_budget_ms: u64,
 ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
     (Err(unsupported()), observation())
 }
@@ -53,12 +54,23 @@ pub const fn isolated_diff_observed(
     (Err(unsupported()), observation())
 }
 
+/// Always [`IsolatedApplyError::UnsupportedPlatform`] on this target, with no observation: a
+/// package import is refused where the isolated worker does not run.
+pub const fn isolated_import_observed(
+    _base_snapshot: &[u8],
+    _request: &wire::ReplayDiffRequest,
+) -> (Result<IsolatedDiffSuccess, IsolatedApplyError>, WorkerObservation) {
+    (Err(unsupported()), observation())
+}
+
 const fn observation() -> WorkerObservation {
     WorkerObservation {
         metered_wall_us: None,
         metered_cpu_us: None,
         setup_cpu_us: None,
+        setup_wall_us: None,
         decision: None,
+        setup_guard: None,
     }
 }
 

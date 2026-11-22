@@ -1428,6 +1428,35 @@ impl LoroCollabEngine {
         Some(added)
     }
 
+    /// The first per-text budget (`crate::setup_guard`: 50 ms of this thread's CPU, 48 MiB of
+    /// allocation where the process counts them) that a text of one of `blocks` passes when it is
+    /// decoded and converted now, or `None`. `blocks` are container ids as strings (an id that does
+    /// not parse, or that is not a block map, is skipped).
+    ///
+    /// Call it on an engine that was just loaded: the decode of a text is memoised in its document,
+    /// and the cost that matters is the one of the first decode, which is what the setup of the
+    /// next write pays. It reads only the inline texts the block reader converts.
+    #[must_use]
+    pub fn first_text_over_budget(&self, blocks: &[String]) -> Option<crate::setup_guard::Fired> {
+        use crate::setup_guard::{SetupGuard, TEXT_ALLOCATION_LIMIT_BYTES, TEXT_CPU_BUDGET_NANOS};
+        let guard =
+            SetupGuard::with_limit(u64::MAX).with_text_limits(TEXT_ALLOCATION_LIMIT_BYTES, TEXT_CPU_BUDGET_NANOS);
+        for id in blocks {
+            let Ok(id) = loro::ContainerID::try_from(id.as_str()) else {
+                continue;
+            };
+            let Some(Container::Map(block)) = self.doc.get_container(id) else {
+                continue;
+            };
+            if let Err(crate::work::Stop::Guard(fired)) =
+                crate::work::block_mark_items_guarded(&block, u64::MAX, Some(&guard))
+            {
+                return Some(fired);
+            }
+        }
+        None
+    }
+
     /// The number of elements of the root block list, of any kind: `None` without an editor
     /// document. O(1), and it reads no element.
     #[cfg(test)]
@@ -2149,6 +2178,8 @@ mod window_round4_tests;
 mod window_round6_tests;
 #[cfg(test)]
 mod window_setup_guard_tests;
+#[cfg(test)]
+pub(crate) mod window_text_guard_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

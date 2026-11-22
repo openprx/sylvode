@@ -83,7 +83,22 @@ block registry, block shares and transfers relies on reader-5 processes.
 
 ## The incremental write window
 
-Every Page write is decided inside the isolated worker's 50 ms CPU window. For flat (model 1) and
+**Experimental, off by default (`[flow] incremental_window = false`).** The default is the behaviour
+before the feature existed: every write runs the full computation inside the worker's 50 ms window.
+It is off because, with it on, one crafted update can push a text past the setup's per-text budget
+and leave a page whose later writes are all refused by the content limit, which the full
+computation never does. The rest of this section describes the incremental window for an operator
+who turns it on.
+
+Every Page write is decided inside the isolated worker's 50 ms CPU window. The ceiling is a timer on
+the worker's own CPU clock (`CLOCK_PROCESS_CPUTIME_ID`, user plus system time, the clock the host
+measures it with): the worker is killed once it has consumed the ceiling, never before, and at most
+one scheduler tick (1 to 10 ms, depending on the kernel's `CONFIG_HZ`) after it, however loaded the
+host is. The budget counts from the moment the window opens, and work after the window closes
+(exporting the snapshot, writing the response) is not counted. The same holds for the import
+window's 2 s ceiling, where the head export and the fingerprints come after the window. The worker
+needs the `timer_create`, `timer_settime` and `timer_delete` syscalls; if a sandbox blocks them,
+every write fails closed as a host failure (worker exit status 71). For flat (model 1) and
 legacy tree Pages the window works from facts about the accepted Page that the worker computes
 before the window opens, and evaluates only the units the update touched, but only for an update
 that is a strict causal extension of the Page's current head (the client had received everything
@@ -135,14 +150,14 @@ a log field; the API exports no other counters.
 The worker is started with an empty environment (it inherits nothing from the API process); the
 only variables it sees are the ones the API sets for it.
 
-To make every write run the full computation, set in the API's configuration file:
+To let writes use the incremental window (experimental), set in the API's configuration file:
 
 ```toml
 [flow]
-incremental_window = false
+incremental_window = true
 ```
 
-The default is `true`. With `false` the worker computes no facts and every window is the full
+The default is `false`. With `false` the worker computes no facts and every window is the full
 computation, which is what the worker did before the incremental window existed: its decision and
 the document it accepts are the same for every input except an update whose tree ops name a parent
 that does not exist when the op runs, which is refused with either setting (see "Refused tree
@@ -152,6 +167,68 @@ committed before. With `false`, a Page above roughly 3,000 flat blocks (or the e
 nodes) can again exceed the 50 ms window on small runners, exactly as before the incremental window
 existed.
 The API reads it at startup: restart it to apply the change.
+
+### The worker's setup, its budgets and its backstop
+
+Before its window opens the worker loads the Page, prewarms it and computes the facts (the setup),
+outside the CPU and memory ceilings of the window. Three guards bound it. Each yields no facts when
+it fires, which sends the write to the full window (an ordinary outcome, not a failure), and the
+worker reports which one fired for every attempt it opened its window in, accepted, refused or
+killed (`setup_guard` on the `flow::apply_refusal` line, and the `window_setup_guard` warning):
+
+- `allocation`: the setup requested more than 2 GiB from the allocator.
+- `cpu`: the setup consumed more CPU time than `[flow] setup_cpu_budget_ms` (default 2500, range
+  500 to 4000), or its CPU clock could not be read. The budget is machine-dependent: it was
+  calibrated on a runner about 3.6 times slower than a development machine, with the largest honest
+  pages needing about half of it. A host slower than that, or one whose CPU time is inflated, may
+  raise it; the setup's wall timeout of 5 seconds does not move.
+- `text`: one text cost the setup more than the window's own CPU ceiling (50 ms of CPU time) or 48 MiB
+  of allocation to decode and convert. Before the incremental window existed every write decoded the
+  Page inside that ceiling, so a text above it could never have been accepted; the largest text the
+  limits allow (100,000 characters, heavily formatted, with a long edit history) costs a quarter of
+  it. It is not configurable.
+
+With the incremental window on, the API also measures the texts of the blocks an accepted update
+touched, in the candidate document the worker returned, against the same per-text budget before it
+commits anything. An update that would take a text over it (a few hundred alternating marks on one
+character, say) is refused with `limit_exceeded{text_decode_cost}` (the limit is the budget in
+milliseconds), nothing is applied, and the Page stays writable: no text over the budget is ever
+committed by an incremental window. The full window needs no such measure, because it decodes every
+text inside its own 50 ms ceiling.
+
+A fired guard also puts the document on the full window for the next ten minutes (logged once at
+warning level as `window_setup_cooldown`), so the writes that follow skip the facts computation and
+pay one metered window each, not a setup that can cost seconds. The cooldown is not a divergence and
+ends by itself.
+
+After a fired guard the full window decodes every text again inside its 50 ms window, so a Page with
+a text that is too expensive is refused with the content limit `decode_apply_cpu_ms`, on every
+surface, and the session stays open. Removing the text's formatting does not repair it: that update
+touches the text, so the full window decodes it and the CPU limit kills the window again. Deleting
+the whole block may be accepted (the document's later state no longer holds the text), but that has
+not been verified; there is no operator restore that replaces the document state yet.
+
+Backstop for what the guards cannot interrupt (one library call: a Page that was grown before the
+per-text guard existed can hold a text whose decode alone takes seconds): a setup that times out at
+5 seconds without having been starved is decided again by the same write with the worker told to
+compute no facts (the full window), and the document is decided by the full window directly for the
+next ten minutes. It is logged once at warning level as `window_setup_backstop`. Only if that
+attempt fails too is the write refused, with the answer the full window produces (the content limit,
+or `server_rejected{isolated_setup_exhausted}` when even the load timed out). A setup was starved,
+not heavy, when it consumed less than 80 % of the CPU budget or when its CPU was under 70 % of the
+wall time it was given (a host that did not schedule it, whatever it had consumed): the client is
+told `apply_busy` (`setup_starved`, resend), as before, and nothing is cooled.
+
+A setup that ends without facts for another reason than a guard (a Page over the item budget) has
+also decoded its texts on the engine it holds, so the worker starts the full window from a freshly
+loaded engine in that case too, and the full window meters every decode, as it did before the
+incremental window existed.
+
+Residual bands of the busy classification, documented and not changed: a write that needs 40 to
+50 ms of CPU (the worker killed at the 100 ms wall limit with 40 to 50 ms of CPU) on a worker given
+only 40 to 50 % of a core is answered with the wall content limit although it would be accepted on an
+idle host; and the CPU of a starved worker is read when the host sees the marker, so a late read lowers
+the figure and biases toward `apply_busy`. Both are bounded by the client's retry caps.
 
 ### Refused tree updates
 

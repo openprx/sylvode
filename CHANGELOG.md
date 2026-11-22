@@ -10,8 +10,49 @@ name.
 
 ## [Unreleased]
 
+### Added
+
+- **Runner `doctor`, `--check` and `config check`; degraded start-up; installer checks.**
+  `sylvode-runner doctor` prints the shared prerequisite report (exit 0, 2 or 1); a missing
+  prerequisite degrades the service (`/health` `prereq` and `degraded`) instead of refusing it;
+  `scripts/install.sh` runs doctor with the service's `PATH` before installing, takes
+  `--headless-only` and `--dry-run`, warns about missing linger, rewrites an unchanged unit never,
+  and runs doctor again in the service context.
+- **Runner tmux channel.** `sylvode-runner` keeps one tmux session per project key, queues tasks
+  first in first out, types each into an idle, empty prompt as a bracketed paste, follows turns
+  through CLI hooks (`sylvode-runner hook`), reminds and fails forgotten acknowledgements and
+  completions, and rebuilds its state from `GET /ai/tasks/active` after a restart. New
+  subcommands: `sessions [--prune]`, `trust KEY`, `release KEY`.
+
+### Removed
+
+- **Legacy task callbacks and `agent_type = "cli"`.** The API no longer serves
+  `POST /api/v1/ai/callbacks/task/{id}/complete`, `.../fail` or `.../progress`; a task ends through
+  the task protocol (`POST /api/v1/ai/tasks/{id}/complete` or `.../fail?attempt=N`). The runner
+  refuses `agent_type = "cli"` (use `agent_type = "runner"` with the headless channel), and the
+  keys that only it used: `[agents.cli]`, `[agents.ai_task_callback]`, `[features] cli_enabled`
+  and `callback_enabled`, and `[ai_task_callback] max_output_chars`. A forwarding agent
+  (`webhook`, `openclaw`, `openprx`, `custom`) completes the task through the protocol when the hand-over works (so it runs once) and fails
+  the task with `source: "runner"` when it does not. Tasks sent over the tunnel are answered
+  `failed`.
+
 ### Changed
 
+- **Runner hardening, third review.** Busy, choice and dialog detection reads only the CLI's own
+  chrome at the bottom of the screen; a screen hold is bounded (`screen_hold_secs`, default 600) and
+  then fails the waiting tasks as retryable; an acknowledged task is busy even if its
+  `UserPromptSubmit` hook was lost; a CLI is restarted for a changed directory only when its screen
+  is calm. Hook messages are checked against the launch's nonce before any work is spent, the
+  sender's ancestry is read without a `ps` per hop (`/proc` on Linux, one `ps -A` snapshot on
+  macOS), at most 32 connections are read at once, and an unreadable `session.json` admits nothing.
+  Hooks are ordered by a per-session counter, not the clock. The configuration file and the
+  canonical state directory are denied to the CLI, and no allowed root may contain the file. Extra
+  read rules count as confined only as `Read|Glob|Grep(/{dir}/...)`. A pushed task that cannot be
+  adopted after a restart fails as retryable. `--prune` never ends a working CLI. A successful
+  forward completes the task. The installer follows `[runner.tmux] enabled` (`--headless-only` is
+  removed), skips the macOS service-context check unless root, and `/health` returns only `status`
+  and `protocol`. The stand-in CLI of the tests never writes environment values, and every probe
+  starts with an allow-listed environment.
 - **MCP search mode is the default tool listing.** `tools/list` offers nine tools:
   `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the five task tools.
   Registry tools are found with `sylvode_search` and called through `sylvode_read` or
@@ -43,6 +84,31 @@ name.
   parked: they are no longer registered, listed or callable.
 
 ### Added
+
+- **Connect a bot to a project.** A project is connected to one bot that runs its agent tasks on a
+  runner. `POST /api/v1/projects/{id}/bot-connection` creates (or reuses) the bot, its token, a
+  managed webhook, the AI participant registration and the execution settings in one transaction
+  and returns the runner configuration block (token and signing secret) once, with
+  `Cache-Control: no-store`. `GET`, `PATCH`, `DELETE` and `.../disable`, `.../enable`, `.../rotate`
+  complete it; every write carries the connection's `version`. Owners and admins only; bots and
+  connected applications are refused. The runner address is checked with the outbound policy
+  (`[outbound] allowed_hosts`). `GET` answers a status computed from the runner's report
+  (`PUT /api/v1/ai/runner/report`, sanitised, 16 KiB limit), the token's use and the latest delivery.
+  Rows a connection made are reported as `managed_by` on the Bots and Webhooks endpoints and are
+  protected there. After a connection or a rotation the worker holds the bot's tasks until the runner
+  has used the new token (at most one hour); runner refusals carry a stored `reason_code` and read
+  "the runner refused the task (...)". Removing the last connection revokes the token and deletes
+  the webhook and seat; deleting a project does the same. Alert rules warn with
+  `bot_not_connected_to_project` instead of `bot_has_no_active_webhook`.
+  Operations: `docs/runbooks/bot-connections.md`.
+  Hardening: a runner bot receives a project's tasks only while the project has an enabled
+  connection for it (task creation, worker pick-up and delivery; pending tasks without one are
+  failed with a reason and an issue comment); its token reaches only the routes of a fixed table and
+  only the projects it is connected to; it is never seated above member; a delivery connects to the
+  address its URL check resolved, and a runner's answer body is never copied into an issue; plain
+  `http://` runner addresses need a host in `[outbound] allowed_hosts`; rotation, the disable that
+  switches the token off, removal and project deletion re-evaluate cached permissions and open
+  sessions; disabling a bot's user stops its token.
 
 - **MCP tool catalogue and task tools.** One catalogue entry per tool (category, read or write,
   summary, keywords), `annotations.readOnlyHint` in the full listing, `list-tools --json`, and the
@@ -153,7 +219,37 @@ name.
     (`SYLVODE_RUNNER_DIR`), and the installer manages `sylvode-runner.service` (Linux) or
     `dev.sylvode.runner` (macOS) only.
 
+### Removed
+
+- **The AI participants API and page.** `GET/POST /api/v1/projects/{id}/ai-participants`, its
+  `{id}` routes and `/stats`, the AI participants page, the overview's assistant cards and the
+  placeholder participants a scenario template used to create are gone: a bot is a project's AI
+  participant only through a bot connection. Migration `0112` makes the participant key
+  `(project_id, id)` (one bot, several projects), drops the stored-only columns `model`,
+  `provider`, `api_endpoint` and `capabilities`, and drops the learning records' foreign key.
+  Learning records are read per project: `GET /api/v1/projects/{id}/ai-participants/{bot_id}/learning`
+  and `.../alignment-stats` replace `/api/v1/ai-participants/{id}/...`. `PUT
+  /api/v1/projects/{id}/execution-settings` is removed (the connection writes the settings);
+  `GET` stays. The worker's end reason `receiver_declined` is now `runner_declined`.
+
 ### Fixed
+
+- **A Flow package import validates every uploaded document in the isolated worker.** The
+  workspace package import used to decode the uploaded snapshot and update tail inside the API
+  process and the import transaction, with no content limit and no meter, and stored the uploaded
+  snapshot as it was. Both package imports (workspace and personal scope) now run each document
+  through the import operation of the worker (load, replay, scans of the whole history for reserved
+  roots and unresolved tree references, projection, every content limit) before the transaction
+  opens, and store the head the worker returned after the API process has loaded it again and
+  compared its own projection, title, reference verdict and fingerprint with the worker's report.
+  A package that exceeds a content limit or an import ceiling is refused as `limit_exceeded`
+  naming the limit, and nothing is stored. The import window has its own named budget
+  (`IMPORT_DECODE_CPU_MS_MAX` 2,000 ms, `IMPORT_DECODE_WALL_MS_MAX` 5,000 ms,
+  `IMPORT_ISOLATED_MEMORY_BYTES_MAX` 512 MiB), applied by that operation only; the write window
+  keeps 50 ms, 100 ms and 128 MiB. Off Linux a package import is refused as
+  `isolated_apply_unsupported_platform`. A portable graph package whose versions need more than
+  16,384 mark edits to replay is refused (`portable_graph_replay_work`), at export too, and the
+  replay no longer runs on the async executor.
 
 - **Deleting a workspace or a project that holds content works.** A workspace with a Flow Page
   that had an accepted collaboration update answered `database error` and stayed, because the

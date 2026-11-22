@@ -1658,4 +1658,131 @@ mod tests {
         };
         assert!(serde_json::to_value(&tool).is_ok_and(|value| value.get("annotations").is_none()));
     }
+
+    // ---- Runner bot scope ----
+
+    /// Tools whose request is refused to the token of a managed runner bot, and why. A runner bot's
+    /// token is limited to the projects where it has an enabled connection
+    /// (`api::middleware::runner_bot_scope`); these tools act on the workspace or on nothing that
+    /// belongs to a project, so an agent that works on a task does not use them. Every other tool of
+    /// the catalogue must resolve to an allowed route, and every entry here must really be refused:
+    /// the test fails for a tool that lost its route and for a stale entry alike.
+    const REFUSED_FOR_A_RUNNER_BOT: &[(&str, &str)] = &[
+        // Workspace administration.
+        ("projects.create", "creates a project"),
+        ("projects.delete", "deletes a project"),
+        ("members.list", "lists the workspace's members"),
+        ("bot_operation_logs.list", "reads the workspace's bot operation log"),
+        ("labels.create", "creates a workspace label"),
+        ("labels.update", "changes a workspace label"),
+        ("labels.delete", "deletes a workspace label"),
+        ("project_types.list", "lists the workspace's project types"),
+        ("flow.feature_get", "reads the workspace's Flow switch"),
+        ("flow.feature_set", "changes the workspace's Flow switch"),
+        // Workspace-wide listings: the project-scoped tool is the one to use.
+        ("projects.list", "lists every project of the workspace"),
+        (
+            "labels.list",
+            "lists the workspace's labels; labels.list_by_project is allowed",
+        ),
+        ("proposals.list", "lists every proposal of the workspace"),
+        // Workspace-wide Flow reads: project-scoped versions are a follow-up.
+        ("objects.query", "lists the workspace's Flow objects"),
+        ("objects.search", "searches the workspace's Flow"),
+        ("flow.trash.list", "lists the workspace's Flow trash"),
+        ("collab.projection_lag", "reads the workspace's Flow projection lag"),
+        // Flow administration, imports and workspace exports.
+        ("objects.export_workspace", "exports the whole workspace's Flow"),
+        ("objects.import_artifact", "imports into the workspace's Flow"),
+        ("objects.import_preview", "imports into the workspace's Flow"),
+        ("objects.import_commit", "imports into the workspace's Flow"),
+        ("objects.import_status", "reads a workspace Flow import"),
+        ("collab.rebuild_projection", "Flow administration"),
+        ("collab.compact", "Flow administration"),
+        ("collab.repair_quarantine", "Flow administration"),
+        ("collab.status", "Flow administration"),
+        ("objects.integrity", "Flow administration"),
+        ("deliveries.replay", "Flow administration"),
+    ];
+
+    fn pattern_matches(pattern: &str, path: &str) -> bool {
+        let path = path.split('?').next().unwrap_or(path);
+        let (mut a, mut b) = (pattern.split('/'), path.split('/'));
+        loop {
+            match (a.next(), b.next()) {
+                (None, None) => return true,
+                (Some(segment), Some(_)) if segment.starts_with("{*") => {
+                    let _ = segment;
+                    return true;
+                }
+                (Some(segment), Some(actual)) if segment.starts_with('{') && !actual.is_empty() => {}
+                (Some(segment), Some(actual)) if segment == actual => {}
+                _ => return false,
+            }
+        }
+    }
+
+    /// The class of the most specific route that a request matches (a literal segment beats a
+    /// parameter, and the catch-all comes last), `None` when no route matches.
+    fn class_of(method: &str, path: &str) -> Option<api::middleware::runner_bot_scope::Class> {
+        api::middleware::runner_bot_scope::RUNNER_BOT_ROUTES
+            .iter()
+            .filter(|route| route.method == method && pattern_matches(route.pattern, path))
+            .max_by_key(|route| {
+                (
+                    !route.pattern.contains("{*"),
+                    route
+                        .pattern
+                        .split('/')
+                        .filter(|segment| !segment.starts_with('{'))
+                        .count(),
+                )
+            })
+            .map(|route| route.class)
+    }
+
+    #[tokio::test]
+    async fn every_tool_a_runner_agent_uses_reaches_an_allowed_route() -> Result<(), Box<dyn std::error::Error>> {
+        use api::middleware::runner_bot_scope::Class;
+        let intended: BTreeSet<&str> = REFUSED_FOR_A_RUNNER_BOT.iter().map(|(name, _)| *name).collect();
+        for (name, reason) in REFUSED_FOR_A_RUNNER_BOT {
+            assert!(!reason.is_empty(), "{name} has no reason");
+            assert!(
+                super::meta(name).is_some(),
+                "{name} is not a catalogue tool: drop the stale entry"
+            );
+        }
+        let mut surprises = Vec::new();
+        let mut refused_tools = BTreeSet::new();
+        for (name, requests) in requests_per_tool().await? {
+            if super::meta(&name).is_none() {
+                continue;
+            }
+            for (method, path) in &requests {
+                let class = class_of(method, path);
+                let Some(class) = class else {
+                    surprises.push(format!("{name}: {method} {path} matches no classified route"));
+                    continue;
+                };
+                if !matches!(class, Class::Admin | Class::Refused) {
+                    continue;
+                }
+                refused_tools.insert(name.clone());
+                if !intended.contains(name.as_str()) {
+                    surprises.push(format!(
+                        "{name}: {method} {path} is refused for a runner bot ({class:?})"
+                    ));
+                }
+            }
+        }
+        for name in &intended {
+            if !refused_tools.contains(*name) {
+                surprises.push(format!(
+                    "{name} is listed as refused but none of its requests is: drop the entry"
+                ));
+            }
+        }
+        assert!(surprises.is_empty(), "{surprises:#?}");
+        Ok(())
+    }
 }

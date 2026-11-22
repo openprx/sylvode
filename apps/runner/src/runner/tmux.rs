@@ -64,6 +64,10 @@
 //! on is newer than 3.2 except `#{bracket_paste_flag}` (3.7), which is optional as described
 //! above. Since 3.4 `paste-buffer` refuses a dead pane, which is reported as an ordinary failure.
 
+// The driver is also exposed (feature `test-support`) to its integration test, which makes its
+// items reachable; the long first paragraphs of their docs are deliberate.
+#![allow(clippy::too_long_first_doc_paragraph)]
+
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -98,10 +102,32 @@ pub const ENV_ALLOWED: [&str; 10] = [
     "TMUX_TMPDIR",
 ];
 
+/// The variables a process of the runner's gets from the runner's own environment: the
+/// allow-list of [`ENV_ALLOWED`] and `LC_*`, the names in `extra` (an operator's explicit
+/// pass-through list), and for the `systemd-run --user` wrapper the two variables it needs. The
+/// agent variables are never passed. This one definition serves the tmux server and the headless
+/// CLI, so the two channels give a CLI the same environment.
+pub fn allowed_environment(extra: &[String], for_systemd_run: bool) -> Vec<(OsString, OsString)> {
+    std::env::vars_os()
+        .filter(|(name, _)| {
+            let name = name.to_string_lossy();
+            let allowed = ENV_ALLOWED.contains(&&*name)
+                || name.starts_with("LC_")
+                || extra.iter().any(|wanted| *wanted == *name)
+                || (for_systemd_run && ENV_ALLOWED_SYSTEMD.contains(&&*name));
+            allowed && !ENV_REMOVED.contains(&&*name)
+        })
+        .collect()
+}
+
 /// Needed only by the `systemd-run --user` wrapper.
 const ENV_ALLOWED_SYSTEMD: [&str; 2] = ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"];
 
 const ENV_REMOVED: [&str; 3] = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "TMUX"];
+
+/// The user option set on a tmux server the runner started, so a server somebody else started on
+/// the runner's socket (with that person's environment) is recognised and refused.
+pub const OWNER_OPTION: &str = "@sylvode_runner";
 
 /// The name of the pane window the runner owns.
 pub const WINDOW_NAME: &str = "cli";
@@ -121,6 +147,9 @@ pub enum Refusal {
     BracketedPasteOff,
     /// This tmux cannot report bracketed paste (before 3.7) and no confirmation was given.
     BracketedPasteUnconfirmed,
+    /// A tmux server runs on the runner's socket that the runner did not start (it carries no
+    /// owner mark), so its environment and options are not the runner's.
+    ForeignServer,
 }
 
 /// Why a tmux call did not work.
@@ -589,6 +618,15 @@ impl Tmux {
         Ok(call)
     }
 
+    /// The owner mark the runner sets on a server it starts.
+    fn owner_mark_call(&self) -> Call {
+        self.call(&["set-option", "-g", OWNER_OPTION, "1"])
+    }
+
+    fn show_owner_call(&self) -> Call {
+        self.call(&["show-option", "-gqv", OWNER_OPTION])
+    }
+
     fn remain_on_exit_call(&self, pane: &PaneId) -> Call {
         self.call(&["set-option", "-w", "-t", pane.as_str(), "remain-on-exit", "on"])
     }
@@ -660,14 +698,8 @@ impl Tmux {
             Command::new(&self.program)
         };
         command.env_clear();
-        for (name, value) in std::env::vars_os() {
-            let name_text = name.to_string_lossy();
-            let allowed = ENV_ALLOWED.contains(&&*name_text)
-                || name_text.starts_with("LC_")
-                || (wrap_in_scope && ENV_ALLOWED_SYSTEMD.contains(&&*name_text));
-            if allowed {
-                command.env(&name, &value);
-            }
+        for (name, value) in allowed_environment(&[], wrap_in_scope) {
+            command.env(name, value);
         }
         for (key, value) in &self.extra_env {
             command.env(key, value);
@@ -693,7 +725,22 @@ impl Tmux {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = command.spawn().map_err(|e| TmuxError::Spawn(e.kind().to_string()))?;
+        // A program file that was written a moment ago can be "busy" (ETXTBSY) while another
+        // thread's forked child still holds the write descriptor before its own exec; that ends in
+        // milliseconds, so the spawn is tried again a few times. Any other error is final.
+        let mut child = {
+            let mut attempts = 0;
+            loop {
+                match command.spawn() {
+                    Ok(child) => break child,
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 50 => {
+                        attempts += 1;
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => return Err(TmuxError::Spawn(e.kind().to_string())),
+                }
+            }
+        };
         let writer = child.stdin.take().zip(call.stdin.clone()).map(|(mut stdin, data)| {
             thread::spawn(move || {
                 let _ = stdin.write_all(&data);
@@ -771,6 +818,25 @@ impl Tmux {
         Ok(self.run(&self.list_sessions_call())?.code == Some(0))
     }
 
+    /// Refuses to use a tmux server on the runner's own socket that the runner did not start: a
+    /// running server without the owner mark was started by something else, with its environment.
+    /// The default server (empty socket name) is the user's own and is not checked.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::ForeignServer`], or a tmux failure.
+    pub fn verify_server(&self) -> Result<(), TmuxError> {
+        if self.socket.as_str().is_empty() || !self.server_running()? {
+            return Ok(());
+        }
+        let output = self.run_ok(&self.show_owner_call())?;
+        if output.stdout.trim() == "1" {
+            Ok(())
+        } else {
+            Err(TmuxError::Refused(Refusal::ForeignServer))
+        }
+    }
+
     /// Creates session `key` with one window running `argv` and returns its pane (the caller
     /// records it). Then sets `remain-on-exit` so a CLI that exits leaves a dead pane. When the
     /// server is not yet running and the process is a systemd service, the server is started in
@@ -788,7 +854,8 @@ impl Tmux {
         argv: &[String],
     ) -> Result<Pane, TmuxError> {
         let call = self.new_session_call(key, dir, width, height, argv)?;
-        let scope = self.under_systemd && !self.server_running()?;
+        let started_server = !self.server_running()?;
+        let scope = self.under_systemd && started_server;
         let output = self.run_command(self.command(scope), &call)?;
         if output.code != Some(0) {
             return Err(failed(&output));
@@ -798,6 +865,9 @@ impl Tmux {
             key: key.clone(),
             id: PaneId::new(id)?,
         };
+        if started_server {
+            self.run_ok(&self.owner_mark_call())?;
+        }
         self.run_ok(&self.remain_on_exit_call(&pane.id))?;
         Ok(pane)
     }
@@ -976,6 +1046,27 @@ impl Tmux {
             return Err(TmuxError::Refused(Refusal::PaneInMode));
         }
         self.run_ok(&self.send_enter_call(&pane.id)).map(|_| ())
+    }
+
+    /// Ends session `key` (exact match). Only for sessions the runner created.
+    ///
+    /// # Errors
+    ///
+    /// A failure status or a timeout.
+    pub fn kill_session(&self, key: &SessionKey) -> Result<(), TmuxError> {
+        self.run_ok(&self.call(&["kill-session", "-t", &key.session_target()]))
+            .map(|_| ())
+    }
+
+    /// The command that attaches the operator's terminal to session `key`. It keeps the caller's
+    /// environment (the terminal needs `TERM`) and standard streams.
+    pub fn attach_command(&self, key: &SessionKey) -> Command {
+        let mut command = Command::new(&self.program);
+        if !self.socket.as_str().is_empty() {
+            command.args(["-L", self.socket.as_str()]);
+        }
+        command.args(["attach", "-t", &key.session_target()]);
+        command
     }
 
     /// Stops the server on a socket of the runner's own. Refused for the user's default server

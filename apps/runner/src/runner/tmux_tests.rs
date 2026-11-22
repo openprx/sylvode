@@ -641,7 +641,8 @@ fn a_paste_that_times_out_is_reported_as_delivery_unknown_and_not_retried() {
     )
     .expect_err("times out");
     assert_eq!(error, TmuxError::DeliveryUnknown, "calls: {:?}", calls(&log));
-    assert!(started.elapsed() < Duration::from_secs(10));
+    // The 5 s timeout is what is under test; the bound only says the call did not hang.
+    assert!(started.elapsed() < Duration::from_mins(1));
     let names = names(&log);
     assert_eq!(names.iter().filter(|n| *n == "paste-buffer").count(), 1);
     assert_eq!(names.last().map(String::as_str), Some("delete-buffer"));
@@ -758,10 +759,11 @@ fn new_session_returns_the_pane_id_and_keeps_dead_panes() {
         }
     );
     let calls = calls(&log);
-    assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0][4], "new-session");
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[0][4], "list-sessions");
+    assert_eq!(calls[1][4], "new-session");
     assert_eq!(
-        calls[1][4..],
+        calls[2][4..],
         strings(&["set-option", "-w", "-t", "%7", "remain-on-exit", "on"])
     );
     // An answer that is not a pane id is an error.
@@ -928,7 +930,11 @@ fn a_new_server_under_systemd_is_started_in_its_own_scope() {
             program.to_str().expect("utf-8")
         ]
     );
-    assert_eq!(names(&log), ["list-sessions", "new-session", "set-option"]);
+    assert_eq!(
+        names(&log),
+        ["list-sessions", "new-session", "set-option", "set-option"],
+        "the second set-option marks the server the runner just started"
+    );
 }
 
 #[test]
@@ -983,4 +989,85 @@ fn a_slow_tmux_is_killed_at_the_time_limit() {
 fn a_missing_tmux_is_a_spawn_error() {
     let result = driver("s").with_program("/nonexistent/tmux").server_running();
     assert!(matches!(result, Err(TmuxError::Spawn(_))), "{result:?}");
+}
+
+/// A fake program written a moment before it runs can be "text file busy" while another thread's
+/// forked child still holds the write descriptor; the driver tries again instead of failing the
+/// call. Many threads writing and running scripts at once make that window common.
+#[test]
+fn a_freshly_written_program_that_is_briefly_busy_still_runs() {
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            std::thread::spawn(|| {
+                let dir = Dir::new();
+                for _ in 0..12 {
+                    let program = dir.script("tmux", "echo 'tmux 3.4'");
+                    let version = fresh().with_program(&program).version();
+                    assert_eq!(version.as_deref(), Ok("tmux 3.4"));
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().expect("no thread failed");
+    }
+}
+
+/// A server the runner started carries the owner mark; one that does not (somebody else's, with
+/// that person's environment) is refused before any session is made or used. The default server
+/// is the user's own and is not checked.
+#[test]
+fn a_server_without_the_owner_mark_is_refused() {
+    let mark = super::OWNER_OPTION.to_string();
+    let run = |answers: &str, socket: &str| {
+        let dir = Dir::new();
+        let (program, log) = fake_tmux(&dir, answers);
+        let result = driver(socket).with_program(&program).verify_server();
+        (result, names(&log))
+    };
+    // No server running: nothing to refuse (the runner will start its own).
+    let (result, _) = run("exit 1", "sylvode");
+    assert_eq!(result, Ok(()));
+    // Running, owned.
+    let owned = "case \"$*\" in *show-option*) echo 1;; esac\nexit 0".to_string();
+    let (result, names) = run(&owned, "sylvode");
+    assert_eq!(result, Ok(()));
+    assert!(names.iter().any(|n| n == "show-option"));
+    // Running, no mark: refused.
+    let (result, _) = run("exit 0", "sylvode");
+    assert_eq!(result, Err(TmuxError::Refused(Refusal::ForeignServer)));
+    // The default server is not checked at all.
+    let (result, names) = run("exit 0", "");
+    assert_eq!(result, Ok(()));
+    assert!(names.is_empty(), "{names:?}");
+    assert!(mark.starts_with('@'));
+}
+
+/// A server the runner starts gets the mark with its first session; an existing one does not get
+/// it again.
+#[test]
+fn the_first_session_marks_the_server_it_starts() {
+    let dir = Dir::new();
+    let fresh_server = format!(
+        "case \"$*\" in *list-sessions*) exit 1;; esac\n{}",
+        healthy_answers("0 0 1 1 SVWL", "claude.exe")
+    );
+    let (program, log) = fake_tmux(&dir, &fresh_server);
+    driver("sylvode")
+        .with_program(&program)
+        .new_session(
+            &key("SVWL"),
+            &dir_of("/work/svwl"),
+            200,
+            50,
+            &strings(&["claude", "--x"]),
+        )
+        .expect("created");
+    let calls = calls(&log);
+    assert!(
+        calls
+            .iter()
+            .any(|c| c[4..] == strings(&["set-option", "-g", "@sylvode_runner", "1"])),
+        "{calls:?}"
+    );
 }

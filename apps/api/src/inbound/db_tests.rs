@@ -223,10 +223,23 @@ impl World {
             .with_state(self.state.clone())
     }
 
-    /// Sends a raw request to the route and returns status, headers and JSON body.
+    /// Sends a raw request to the route and returns status, headers and JSON body. The request
+    /// carries no peer address, as a direct handler test does.
     pub async fn send(
         &self,
         config: InboundConfig,
+        headers: &[(&str, String)],
+        body: &[u8],
+        uri: &str,
+    ) -> (StatusCode, HeaderMap, Value) {
+        self.send_from(config, None, headers, body, uri).await
+    }
+
+    /// [`Self::send`] from a TCP peer, the way the server's connection info reaches the layer.
+    pub async fn send_from(
+        &self,
+        config: InboundConfig,
+        peer: Option<std::net::SocketAddr>,
         headers: &[(&str, String)],
         body: &[u8],
         uri: &str,
@@ -235,11 +248,11 @@ impl World {
         for (name, value) in headers {
             builder = builder.header(*name, value);
         }
-        let response = self
-            .router(config)
-            .oneshot(builder.body(Body::from(body.to_vec())).unwrap())
-            .await
-            .unwrap();
+        let mut request = builder.body(Body::from(body.to_vec())).unwrap();
+        if let Some(peer) = peer {
+            request.extensions_mut().insert(axum::extract::ConnectInfo(peer));
+        }
+        let response = self.router(config).oneshot(request).await.unwrap();
         let status = response.status();
         let headers = response.headers().clone();
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -277,6 +290,38 @@ macro_rules! world {
         let scratch = crate::scratch_or_skip!($label);
         World::new(scratch, "in").await
     }};
+}
+
+/// An alert rule names a runner bot the project has not enabled (a disabled connection): the alert
+/// and its work item are still opened, but the bot is given no task.
+#[tokio::test]
+async fn an_alert_for_a_runner_bot_the_project_has_not_enabled_opens_no_task() {
+    let w = world!("inbound_gate");
+    super::admin_tests::connect_the_bot(&w).await;
+    crate::routes::context::tenant_fixture::exec(
+        w.db(),
+        "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+        vec![w.tenant.project_id.into()],
+    )
+    .await;
+    let (status, body) = w.post(&w.event("e-gate", "waf:shop", "high")).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(w.n("SELECT count(*) AS count FROM inbound_alerts WHERE open").await, 1);
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM work_items").await,
+        1,
+        "the work item is opened"
+    );
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM ai_tasks").await,
+        0,
+        "the bot is given no task"
+    );
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM inbound_events WHERE task_id IS NULL AND outcome = 'bot_unavailable'")
+            .await,
+        1
+    );
 }
 
 #[tokio::test]
@@ -542,8 +587,8 @@ async fn credentials_other_than_a_live_source_token_get_the_same_401_and_store_n
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["message"], "credential_in_query");
-    // The prx-waf header belongs to a later stage and is no credential here.
-    let (status, _, _) = w
+    // A product-specific secret header is no credential: only `Authorization: Bearer` is read.
+    let (status, _, body) = w
         .send(
             enabled(),
             &[
@@ -555,6 +600,7 @@ async fn credentials_other_than_a_live_source_token_get_the_same_401_and_store_n
         )
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["message"], "invalid_credentials");
     assert_eq!(w.n("SELECT count(*) AS count FROM inbound_events").await, 0);
 
     // A disabled source answers like an unknown token.
@@ -897,7 +943,8 @@ async fn the_first_matching_rule_in_position_order_handles_the_event() {
 }
 
 #[tokio::test]
-async fn the_task_cap_per_rule_per_hour_suppresses_the_second_alerts_task_with_one_notice() {
+async fn the_task_cap_per_rule_per_hour_queues_the_next_alerts_tasks_without_a_suppression_notice() {
+    use super::followup::run_once;
     let w = world!("inbound_cap_task");
     exec(w.db(), "UPDATE alert_rules SET max_tasks_per_hour = 1", vec![]).await;
     assert_eq!(w.post(&w.event("e-1", "k-1", "high")).await.0, StatusCode::ACCEPTED);
@@ -910,18 +957,26 @@ async fn the_task_cap_per_rule_per_hour_suppresses_the_second_alerts_task_with_o
     );
     assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 1);
     assert_eq!(
-        w.n("SELECT count(*) AS count FROM inbound_events WHERE outcome = 'suppressed_task_cap'")
+        w.n("SELECT count(*) AS count FROM inbound_events WHERE outcome = 'task_queued'")
             .await,
+        2
+    );
+    assert_eq!(
+        w.n(
+            "SELECT count(*) AS count FROM inbound_alerts WHERE task_state = 'waiting' AND task_queued_at IS NOT NULL \
+             AND queued_event_id IS NOT NULL"
+        )
+        .await,
         2
     );
     assert_eq!(
         w.n("SELECT count(*) AS count FROM notifications WHERE type = 'alert_suppressed'")
             .await,
-        1,
-        "at most one notice per rule per hour"
+        0,
+        "a queued task is not a suppression"
     );
     assert_eq!(
-        w.n("SELECT count(*) AS count FROM business_events WHERE event_type = 'alert_rule.suppressed'")
+        w.n("SELECT count(*) AS count FROM business_events WHERE event_type = 'alert_rule.queued'")
             .await,
         2
     );
@@ -930,24 +985,76 @@ async fn the_task_cap_per_rule_per_hour_suppresses_the_second_alerts_task_with_o
             .await,
         3
     );
+
+    // The hourly allowance is spent until the first task is more than an hour old.
+    exec(w.db(), "UPDATE ai_tasks SET status = 'completed'", vec![]).await;
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().started, 0);
+    exec(
+        w.db(),
+        "UPDATE inbound_events SET task_created_at = now() - interval '2 hours' WHERE task_created_at IS NOT NULL",
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        run_once(w.db(), &enabled()).await.unwrap().started,
+        1,
+        "one slot of the allowance is free, so the oldest waiting alert starts"
+    );
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM inbound_alerts WHERE dedup_key = 'k-2' AND task_state = 'created'")
+            .await,
+        1,
+        "oldest first"
+    );
+    assert_eq!(
+        w.n(
+            "SELECT count(*) AS count FROM inbound_events WHERE event_id = 'e-2' AND task_id IS NOT NULL \
+             AND task_created_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM inbound_alerts WHERE task_state = 'waiting'")
+            .await,
+        1
+    );
     w.scratch.drop_self().await;
 }
 
 #[tokio::test]
-async fn the_active_task_cap_per_rule_and_the_workspace_cap_apply() {
+async fn the_active_task_cap_per_rule_and_the_workspace_cap_queue_and_drain() {
+    use super::followup::run_once;
     let w = world!("inbound_cap_active");
     exec(w.db(), "UPDATE alert_rules SET max_active_tasks = 1", vec![]).await;
     assert_eq!(w.post(&w.event("e-1", "k-1", "high")).await.0, StatusCode::ACCEPTED);
     assert_eq!(w.post(&w.event("e-2", "k-2", "high")).await.0, StatusCode::ACCEPTED);
     assert_eq!(
-        w.n("SELECT count(*) AS count FROM inbound_events WHERE outcome = 'suppressed_active_cap'")
+        w.n("SELECT count(*) AS count FROM inbound_events WHERE outcome = 'task_queued'")
             .await,
         1
     );
     assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 1);
+    assert_eq!(
+        run_once(w.db(), &enabled()).await.unwrap().started,
+        0,
+        "the rule's one slot is taken"
+    );
 
-    // Free the rule's slot, then lower the workspace cap to the one task that is active.
+    // Free the rule's slot: the queue drains.
     exec(w.db(), "UPDATE ai_tasks SET status = 'completed'", vec![]).await;
+    let report = run_once(w.db(), &enabled()).await.unwrap();
+    assert_eq!(report.started, 1);
+    assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 2);
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM inbound_alerts WHERE task_state = 'waiting'")
+            .await,
+        0
+    );
+
+    // The workspace cap: lower it to the one task that is active.
+    exec(w.db(), "UPDATE ai_tasks SET status = 'completed'", vec![]).await;
+    exec(w.db(), "UPDATE alert_rules SET max_active_tasks = 5", vec![]).await;
     let config = InboundConfig {
         max_active_alert_tasks_per_workspace: 1,
         ..enabled()
@@ -956,18 +1063,21 @@ async fn the_active_task_cap_per_rule_and_the_workspace_cap_apply() {
         w.post_with(config, &w.event("e-3", "k-3", "high")).await.0,
         StatusCode::ACCEPTED
     );
-    assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 2);
+    assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 3);
     assert_eq!(
         w.post_with(config, &w.event("e-4", "k-4", "high")).await.0,
         StatusCode::ACCEPTED
     );
     assert_eq!(
-        w.n("SELECT count(*) AS count FROM inbound_events WHERE outcome IN ('suppressed_active_cap', 'suppressed_workspace_cap') \
-             AND event_id = 'e-4'")
+        w.n("SELECT count(*) AS count FROM inbound_events WHERE outcome = 'task_queued' AND event_id = 'e-4'")
             .await,
         1
     );
-    assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 2);
+    assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 3);
+    assert_eq!(run_once(w.db(), &config).await.unwrap().started, 0);
+    exec(w.db(), "UPDATE ai_tasks SET status = 'completed'", vec![]).await;
+    assert_eq!(run_once(w.db(), &config).await.unwrap().started, 1);
+    assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 4);
     w.scratch.drop_self().await;
 }
 
@@ -1342,9 +1452,9 @@ async fn a_completed_task_is_announced_once_and_a_retry_is_not_an_outcome() {
         "SELECT count(*) AS count FROM notifications WHERE type = 'alert_task_completed' OR type = 'alert_task_failed'";
 
     // Pending and processing tasks announce nothing.
-    assert_eq!(run_once(w.db()).await.unwrap(), FollowupReport::default());
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap(), FollowupReport::default());
     exec(w.db(), "UPDATE ai_tasks SET status = $1", vec!["processing".into()]).await;
-    assert_eq!(run_once(w.db()).await.unwrap().announced, 0);
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().announced, 0);
     // A failed attempt that goes back to pending is not an outcome.
     exec(
         w.db(),
@@ -1352,7 +1462,7 @@ async fn a_completed_task_is_announced_once_and_a_retry_is_not_an_outcome() {
         vec![],
     )
     .await;
-    assert_eq!(run_once(w.db()).await.unwrap().announced, 0);
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().announced, 0);
     assert_eq!(w.n(announced).await, 0);
 
     exec(
@@ -1361,7 +1471,7 @@ async fn a_completed_task_is_announced_once_and_a_retry_is_not_an_outcome() {
         vec![],
     )
     .await;
-    assert_eq!(run_once(w.db()).await.unwrap().announced, 1);
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().announced, 1);
     assert_eq!(
         w.n(&format!(
             "SELECT count(*) AS count FROM notifications WHERE type = 'alert_task_completed' AND user_id = '{}' \
@@ -1381,7 +1491,7 @@ async fn a_completed_task_is_announced_once_and_a_retry_is_not_an_outcome() {
         1
     );
     // A second tick announces nothing.
-    assert_eq!(run_once(w.db()).await.unwrap().announced, 0);
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().announced, 0);
     assert_eq!(w.n(announced).await, 1);
     w.scratch.drop_self().await;
 }
@@ -1398,8 +1508,8 @@ async fn a_failed_task_is_announced_once_and_a_second_task_is_announced_separate
         vec![],
     )
     .await;
-    assert_eq!(run_once(w.db()).await.unwrap().announced, 1);
-    assert_eq!(run_once(w.db()).await.unwrap().announced, 0);
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().announced, 1);
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().announced, 0);
     assert_eq!(
         w.n("SELECT count(*) AS count FROM notifications WHERE type = 'alert_task_failed'")
             .await,
@@ -1415,7 +1525,7 @@ async fn a_failed_task_is_announced_once_and_a_second_task_is_announced_separate
         vec![],
     )
     .await;
-    assert_eq!(run_once(w.db()).await.unwrap().announced, 1);
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().announced, 1);
     assert_eq!(
         w.n("SELECT count(*) AS count FROM notifications WHERE type = 'alert_task_completed'")
             .await,
@@ -1430,7 +1540,11 @@ async fn the_tick_closes_alerts_in_a_terminal_state_or_past_their_window() {
     let w = world!("inbound_followup_close");
     assert_eq!(w.post(&w.event("e-1", "k-1", "high")).await.0, StatusCode::ACCEPTED);
     assert_eq!(w.post(&w.event("e-2", "k-2", "high")).await.0, StatusCode::ACCEPTED);
-    assert_eq!(run_once(w.db()).await.unwrap().closed, 0, "both are open and fresh");
+    assert_eq!(
+        run_once(w.db(), &enabled()).await.unwrap().closed,
+        0,
+        "both are open and fresh"
+    );
     exec(
         w.db(),
         "UPDATE work_items SET state = 'done' WHERE id = (SELECT work_item_id FROM inbound_alerts WHERE dedup_key = 'k-1')",
@@ -1443,7 +1557,7 @@ async fn the_tick_closes_alerts_in_a_terminal_state_or_past_their_window() {
         vec![],
     )
     .await;
-    assert_eq!(run_once(w.db()).await.unwrap().closed, 2);
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().closed, 2);
     assert_eq!(w.n("SELECT count(*) AS count FROM inbound_alerts WHERE open").await, 0);
     assert_eq!(
         w.n(
@@ -1461,7 +1575,7 @@ async fn the_tick_closes_alerts_in_a_terminal_state_or_past_their_window() {
         .await,
         1
     );
-    assert_eq!(run_once(w.db()).await.unwrap().closed, 0);
+    assert_eq!(run_once(w.db(), &enabled()).await.unwrap().closed, 0);
     w.scratch.drop_self().await;
 }
 

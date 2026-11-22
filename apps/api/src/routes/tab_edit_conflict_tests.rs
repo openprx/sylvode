@@ -1,13 +1,8 @@
 //! Real `PostgreSQL` optimistic-edit contracts for retained workspace tabs.
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use super::{ai_agent, context::tenant_fixture, form, project, project_type};
-use axum::{
-    Extension, Router,
-    body::Body,
-    http::Request,
-    routing::{get, patch},
-};
+use super::{context::tenant_fixture, form, project, project_type};
+use axum::{Extension, Router, body::Body, http::Request, routing::patch};
 use platform::{
     app::{AppState, FlowPermissionCacheSlot},
     auth::{JwtClaims, TokenType},
@@ -26,7 +21,6 @@ struct Fixture {
     record: Uuid,
     view: Uuid,
     resource: Uuid,
-    assistant: String,
 }
 async fn exec(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
     db.execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
@@ -45,7 +39,6 @@ async fn fixture() -> Fixture {
     let record = Uuid::new_v4();
     let view = Uuid::new_v4();
     let resource = Uuid::new_v4();
-    let assistant = format!("tab-agent-{}", Uuid::new_v4().simple());
     exec(
         db,
         "INSERT INTO users(id,email,password_hash,name,role,is_active) VALUES($1,$2,'','Tab fixture','user',true)",
@@ -79,7 +72,6 @@ async fn fixture() -> Fixture {
         vec![resource.into(), project.into(), user.into()],
     )
     .await;
-    exec(db,"INSERT INTO ai_participants(id,project_id,name,model,provider,capabilities,registered_by) VALUES($1,$2,'Assistant','fixture-model','fixture','[]',$3)",vec![assistant.clone().into(),project.into(),user.into()]).await;
     let state = AppState {
         db: db.clone(),
         cfg: AppConfig {
@@ -113,14 +105,6 @@ async fn fixture() -> Fixture {
             "/projects/{project_id}/resources/{resource_id}",
             patch(project_type::update_project_resource),
         )
-        .route(
-            "/projects/{project_id}/ai-participants/{agent_id}",
-            patch(ai_agent::update_ai_agent).get(ai_agent::get_ai_agent),
-        )
-        .route(
-            "/projects/{project_id}/ai-participants",
-            get(ai_agent::list_ai_agents).post(ai_agent::create_ai_agent),
-        )
         .layer(Extension(claims))
         .with_state(state);
     Fixture {
@@ -131,7 +115,6 @@ async fn fixture() -> Fixture {
         record,
         view,
         resource,
-        assistant,
     }
 }
 async fn request(router: Router, path: String, body: Value) -> (u16, Value) {
@@ -149,22 +132,6 @@ async fn request(router: Router, path: String, body: Value) -> (u16, Value) {
     let status = r.status().as_u16();
     let body = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1024 * 1024).await.unwrap()).unwrap();
     (status, body)
-}
-async fn post_json(router: Router, path: String, body: Value) -> (u16, Value) {
-    let response = router
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(path)
-                .header("Content-Type", "application/json")
-                .body(Body::from(serde_json::to_vec(&body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap())
 }
 async fn version(db: &DatabaseConnection, table: &str, id: Uuid) -> String {
     db.query_one(Statement::from_sql_and_values(
@@ -337,72 +304,10 @@ async fn record_validation_holds_schema_stable_until_write_and_tokens_always_adv
     f.scratch.drop_self().await;
 }
 
-async fn read_json(router: Router, path: String) -> Value {
-    let response = router
-        .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(response.status(), axum::http::StatusCode::OK);
-    serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
-}
-async fn assistant_version(db: &DatabaseConnection, id: &str) -> String {
-    db.query_one(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT config_updated_at FROM ai_participants WHERE id=$1",
-        vec![id.into()],
-    ))
-    .await
-    .unwrap()
-    .unwrap()
-    .try_get::<platform::timestamp::Timestamp>("", "config_updated_at")
-    .unwrap()
-    .to_rfc3339()
-}
 #[tokio::test]
-async fn project_resource_and_assistant_config_use_atomic_original_versions() {
+async fn project_resource_config_uses_atomic_original_versions() {
     let f = fixture().await;
     let db = &f.scratch.db;
-    let created=post_json(f.router.clone(),format!("/projects/{}/ai-participants",f.project),json!({"id":format!("created-{}",Uuid::new_v4().simple()),"name":"Created assistant","model":"fixture-model","provider":"fixture","capabilities":[]})).await;
-    assert_eq!(created.0, 200, "{created:?}");
-    assert_eq!(created.1.get("code"), Some(&json!(0)));
-    assert!(
-        created
-            .1
-            .get("data")
-            .and_then(|v| v.get("config_updated_at"))
-            .and_then(Value::as_str)
-            .is_some()
-    );
-    let created_id = created
-        .1
-        .get("data")
-        .and_then(|v| v.get("id"))
-        .and_then(Value::as_str)
-        .unwrap();
-    let detail = read_json(
-        f.router.clone(),
-        format!("/projects/{}/ai-participants/{created_id}", f.project),
-    )
-    .await;
-    assert!(
-        detail
-            .get("data")
-            .and_then(|v| v.get("config_updated_at"))
-            .and_then(Value::as_str)
-            .is_some()
-    );
-    let listed = read_json(f.router.clone(), format!("/projects/{}/ai-participants", f.project)).await;
-    let agents = listed
-        .get("data")
-        .and_then(|v| v.get("items"))
-        .and_then(Value::as_array)
-        .unwrap();
-    assert!(
-        agents
-            .iter()
-            .any(|v| v.get("id").and_then(Value::as_str) == Some(created_id)
-                && v.get("config_updated_at").and_then(Value::as_str).is_some())
-    );
     let token = version(db, "project_resources", f.resource).await;
     race(
         &f,
@@ -413,68 +318,5 @@ async fn project_resource_and_assistant_config_use_atomic_original_versions() {
         json!({"name":"Resource B","expected_updated_at":token}),
     )
     .await;
-    let token = assistant_version(db, &f.assistant).await;
-    exec(
-        db,
-        "UPDATE ai_participants SET last_active_at=clock_timestamp() WHERE id=$1",
-        vec![f.assistant.clone().into()],
-    )
-    .await;
-    assert_eq!(
-        assistant_version(db, &f.assistant).await,
-        token,
-        "heartbeat is not a configuration edit"
-    );
-    let blocker = db.begin().await.unwrap();
-    blocker
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id FROM ai_participants WHERE id=$1 FOR UPDATE",
-            vec![f.assistant.clone().into()],
-        ))
-        .await
-        .unwrap();
-    let path = format!("/projects/{}/ai-participants/{}", f.project, f.assistant);
-    // Both PATCHes intentionally set an unchanged value. Accepted config intents still rotate CAS.
-    let body = json!({"provider":"fixture","expected_config_updated_at":token});
-    let one = tokio::spawn(request(f.router.clone(), path.clone(), body.clone()));
-    let two = tokio::spawn(request(f.router.clone(), path.clone(), body.clone()));
-    waits(db, 2).await;
-    blocker.commit().await.unwrap();
-    let outcomes = [one.await.unwrap(), two.await.unwrap()];
-    assert_eq!(outcomes.iter().filter(|r| r.0 == 200).count(), 1, "{outcomes:?}");
-    assert_eq!(outcomes.iter().filter(|r| r.0 == 409).count(), 1, "{outcomes:?}");
-    let current = assistant_version(db, &f.assistant).await;
-    assert_ne!(current, token);
-    let stale = request(
-        f.router.clone(),
-        path,
-        json!({"name":"must not replace","expected_config_updated_at":token}),
-    )
-    .await;
-    assert_eq!(stale.0, 409);
-    assert_eq!(assistant_version(db, &f.assistant).await, current);
-    let name = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT name FROM ai_participants WHERE id=$1",
-            vec![f.assistant.clone().into()],
-        ))
-        .await
-        .unwrap()
-        .unwrap()
-        .try_get::<String>("", "name")
-        .unwrap();
-    assert_eq!(name, "Assistant");
-    db.execute_unprepared(include_str!(
-        "../../../../migrations/0092_ai_participant_config_version.sql"
-    ))
-    .await
-    .unwrap();
-    assert_eq!(
-        assistant_version(db, &f.assistant).await,
-        current,
-        "migration replay preserves versions and config"
-    );
     f.scratch.drop_self().await;
 }

@@ -423,13 +423,12 @@ pub async fn route_failure<C: ConnectionTrait>(
 
 /// The reply to a task the runner refused at delivery.
 ///
-/// For a project whose execution settings are enabled it is a comment `Could not start: {reason}`
-/// where the task came from, written in its own transaction after the worker failed the task.
+/// For a project that has execution settings, enabled or not, it is a comment
+/// `Could not start: {reason}` where the task came from, written in its own transaction after the
+/// worker failed the task. A project whose connection is disabled still wants to know why its
+/// task did not start; a project without settings was never configured and gets no comment.
 pub async fn announce_start_refusal(state: &AppState, task: &AiTaskRow, reason: &str) -> Result<(), ApiError> {
-    let enabled = execution_settings::load(&state.db, task.project_id)
-        .await?
-        .is_some_and(|settings| settings.enabled);
-    if !enabled {
+    if execution_settings::load(&state.db, task.project_id).await?.is_none() {
         return Ok(());
     }
     let txn = state.db.begin().await?;
@@ -1041,27 +1040,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_legacy_callbacks_still_route_nothing() {
-        use crate::routes::ai_callback::{CallbackAttemptQuery, complete_task};
-        let scratch = scratch_or_skip!("reply_legacy");
-        let env = Env::new(&scratch.db, "lg").await;
-        let task = env.assignment("processing").await;
-        complete_task(
-            State(state_for(env.db.clone())),
-            Extension(claims_for(env.bot)),
-            Path(task),
-            Query(CallbackAttemptQuery { attempt: Some(1) }),
-            Json(json!({"status": "success"})),
-        )
-        .await
-        .unwrap_or_else(|err| panic!("legacy complete: {err:?}"));
-        assert!(env.comments().await.is_empty());
-        assert_eq!(env.state().await, "todo");
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn a_start_refusal_is_reported_on_the_issue_for_enabled_projects_only() {
+    async fn a_start_refusal_is_reported_on_the_issue_for_configured_projects() {
         let scratch = scratch_or_skip!("reply_start_refusal");
         let env = Env::new(&scratch.db, "sr").await;
         let state = state_for(env.db.clone());
@@ -1083,8 +1062,25 @@ mod tests {
             vec![env.tenant.project_id.into()],
         )
         .await;
-        announce_start_refusal(&state, &task, "x").await.expect("disabled");
-        assert!(env.comments().await.is_empty(), "a disabled project gets no comment");
+        announce_start_refusal(
+            &state,
+            &task,
+            "the runner refused the task (path_outside_allowlist): the directory is outside the allowed roots",
+        )
+        .await
+        .expect("disabled");
+        let comments = env.comments().await;
+        assert_eq!(
+            comments.len(),
+            1,
+            "a configured project gets the comment even when disabled"
+        );
+        assert_eq!(comments[0].0, env.bot);
+        assert_eq!(
+            comments[0].1,
+            "Could not start: the runner refused the task (path_outside_allowlist): \
+             the directory is outside the allowed roots"
+        );
 
         exec(
             &env.db,
@@ -1092,13 +1088,10 @@ mod tests {
             vec![env.tenant.project_id.into()],
         )
         .await;
-        announce_start_refusal(&state, &task, "directory is outside the allowed roots")
+        announce_start_refusal(&state, &task, "the runner has no agent for bot Build bot")
             .await
             .expect("enabled");
-        let comments = env.comments().await;
-        assert_eq!(comments.len(), 1);
-        assert_eq!(comments[0].0, env.bot);
-        assert_eq!(comments[0].1, "Could not start: directory is outside the allowed roots");
+        assert_eq!(env.comments().await.len(), 2);
         scratch.drop_self().await;
     }
 
@@ -1152,8 +1145,8 @@ mod tests {
             let proposal = format!("PROP-{}", Uuid::new_v4());
             exec(
                 &self.db,
-                "INSERT INTO ai_participants (id, project_id, name, model, provider, capabilities, registered_by) \
-                 VALUES ($1, $2, 'voter', 'm', 'p', '[]', $3) ON CONFLICT (id) DO NOTHING",
+                "INSERT INTO ai_participants (id, project_id, name, registered_by) \
+                 VALUES ($1, $2, 'voter', $3) ON CONFLICT (project_id, id) DO NOTHING",
                 vec![
                     self.bot.to_string().into(),
                     self.tenant.project_id.into(),

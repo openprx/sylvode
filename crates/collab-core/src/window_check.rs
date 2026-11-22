@@ -345,6 +345,9 @@ pub mod fault {
         SetupGuardSkipped,
         /// The setup's CPU guard never fires (`crate::setup_guard`).
         SetupCpuGuardSkipped,
+        /// The setup's per-text budget never fires (`crate::setup_guard`): a text that alone costs
+        /// more than the window's CPU ceiling still yields facts.
+        TextGuardSkipped,
         /// The window never tells its caller what the check decided: the worker writes no decision
         /// record, so the host cannot know the update was not sequential once a ceiling kills it.
         DecisionNotReported,
@@ -467,10 +470,15 @@ fallback_reasons! {
 
 /// The outcome of one window: the report when the incremental check decided, the reason when the
 /// full computation did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowAccepted {
     pub report: Option<WindowReport>,
     pub fallback: Option<FallbackReason>,
+    /// The container ids (as strings, sorted) of the editor blocks the update touched, when the
+    /// incremental check decided; empty when the full computation did. The full window decodes every
+    /// text inside its ceiling, so only the incremental one needs the host to look at the texts of
+    /// the blocks the update touched (`LoroCollabEngine::first_text_over_budget`).
+    pub touched_blocks: Vec<String>,
 }
 
 /// Imports `update` into `engine`, which holds the trusted base the `facts` describe, and decides
@@ -503,9 +511,10 @@ pub fn run_window(
         });
     }
     match checked {
-        Ok(report) => Ok(WindowAccepted {
+        Ok((report, touched_blocks)) => Ok(WindowAccepted {
             report: Some(report),
             fallback: None,
+            touched_blocks,
         }),
         // A write of the logical id of a node that existed before the update: refused, see
         // `rewrites_an_existing_nodes_id`.
@@ -534,6 +543,7 @@ pub fn run_window(
             Ok(WindowAccepted {
                 report: None,
                 fallback: Some(reason),
+                touched_blocks: Vec::new(),
             })
         }
     }
@@ -898,7 +908,11 @@ const LOGICAL_ID_KEY: &str = "logical_id";
 
 /// `Ok(report)` when the update is certainly accepted by the full computation too, and otherwise
 /// either the reason the check did not decide or the refusal of a total.
-fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTrace) -> Result<WindowReport, Undecided> {
+fn check(
+    engine: &LoroCollabEngine,
+    facts: Option<&BaseFacts>,
+    trace: &ImportTrace,
+) -> Result<(WindowReport, Vec<String>), Undecided> {
     let facts = facts.ok_or(FallbackReason::FactsAbsent)?;
     if !injected!(IdRewriteSkipped) && trace.summary.rewrites_an_existing_nodes_id(engine) {
         return Err(Undecided::IdRewrite);
@@ -972,7 +986,10 @@ fn check(engine: &LoroCollabEngine, facts: Option<&BaseFacts>, trace: &ImportTra
     let mark_items = recount_marks(engine, facts, &touched, summary, work_added)?;
     evaluate_blocks(engine, facts, &touched, &limits, &mut delta)?;
     evaluate_tree_nodes(engine, facts, &created, &touched, &limits, &mut delta)?;
-    finish(facts, work_added, mark_items, &delta, &limits)
+    let report = finish(facts, work_added, mark_items, &delta, &limits)?;
+    let mut blocks: Vec<String> = touched.blocks.iter().map(ToString::to_string).collect();
+    blocks.sort_unstable();
+    Ok((report, blocks))
 }
 
 /// The growth of the touched blocks' mark items (see `crate::work`), or the work-budget fallback when

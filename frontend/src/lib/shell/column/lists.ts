@@ -189,10 +189,6 @@ export interface BotLike {
 	id: string;
 	name: string;
 }
-export interface AgentLike {
-	id: string;
-	name: string;
-}
 
 /** Bots link to the members page until bots move to their own settings section. */
 export function botRows(workspaceId: string, bots: readonly BotLike[]): NavRow[] {
@@ -205,51 +201,6 @@ export function botRows(workspaceId: string, bots: readonly BotLike[]): NavRow[]
 		parentId: null,
 		attrs: { 'data-agent-kind': 'bot', 'data-bot-id': bot.id }
 	}));
-}
-
-export function projectAgentsHref(workspaceId: string, projectId: string): string {
-	return `/workspace/${enc(workspaceId)}/projects/${enc(projectId)}/ai-agents`;
-}
-
-/**
- * AI participants: one row per project of the workspace; an expanded project lists its
- * participants as children (each links to the project's agents page).
- */
-export function participantRows(input: {
-	workspaceId: string;
-	projects: readonly ProjectLike[];
-	expanded: ReadonlySet<string>;
-	agentsOf: (projectId: string) => readonly AgentLike[] | null;
-}): NavRow[] {
-	const rows: NavRow[] = [];
-	for (const project of input.projects) {
-		const href = projectAgentsHref(input.workspaceId, project.id);
-		const open = input.expanded.has(project.id);
-		rows.push({
-			id: `ai-project:${project.id}`,
-			label: project.name,
-			href,
-			glyph: 'folder',
-			level: 0,
-			parentId: null,
-			expandable: true,
-			expanded: open,
-			attrs: { 'data-agent-kind': 'project', 'data-project-id': project.id }
-		});
-		if (!open) continue;
-		for (const agent of input.agentsOf(project.id) ?? [])
-			rows.push({
-				id: `ai-agent:${project.id}:${agent.id}`,
-				label: agent.name,
-				href,
-				glyph: 'sparkles',
-				level: 1,
-				parentId: `ai-project:${project.id}`,
-				selectable: false,
-				attrs: { 'data-agent-kind': 'ai', 'data-project-id': project.id, 'data-agent-id': agent.id }
-			});
-	}
-	return rows;
 }
 
 // --- Governance ---

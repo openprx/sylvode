@@ -1029,6 +1029,7 @@ def finalize(out: Path) -> int:
         "github_repository": os.environ.get("GITHUB_REPOSITORY", ""),
         "github_server_url": os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
         "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+        "incremental_window": os.environ.get("FLOW_BENCH_INCREMENTAL_WINDOW", ""),
     }
     run_url = ""
     if meta["github_repository"] and meta["github_run_id"]:
@@ -1052,6 +1053,13 @@ def finalize(out: Path) -> int:
     return 0
 
 
+def incremental_window_line(meta: dict) -> str:
+    """What the servers under measurement were configured with, for the summary."""
+    if meta.get("incremental_window") == "true":
+        return "measured with incremental_window = true (experimental, off by default)"
+    return "incremental_window was not set by the benchmark (the server default applies: off)"
+
+
 def render_markdown(summary: dict) -> str:
     meta = summary["meta"]
     api = summary.get("api") or {}
@@ -1068,6 +1076,7 @@ def render_markdown(summary: dict) -> str:
         f"- 分支：`{meta.get('github_ref') or '未知'}`",
         f"- 运行：{summary.get('run_url') or '本地状态目录，没有 Actions 运行号'}",
         f"- PostgreSQL：{explain.get('postgres') or '未采集'}",
+        f"- {incremental_window_line(meta)}",
         "",
         "## 接口",
         "",

@@ -120,11 +120,18 @@ suite.check('node ids are unique within a tree', () => {
 suite.check('settings sections and landing', () => {
 	assertDeepEqual(settingsSections('custom_form', false), [], 'members get none');
 	const sections = settingsSections('custom_form', true, { base: base('p2'), translate: t });
-	assertEqual(sections.length, 1, 'plugins only today');
+	assertEqual(sections.length, 2, 'plugins, then execution');
 	assertEqual(sections[0].id, 'plugins', 'id');
 	assertEqual(sections[0].href, `${base('p2')}/settings/plugins`, 'href');
 	assertEqual(sections[0].label, 'T(shell.sections.projectPlugins)', 'label');
-	assertEqual(settingsLanding(W, 'p2', 'custom_form'), `${base('p2')}/settings/plugins`, 'landing');
+	assertEqual(sections[1].id, 'execution', 'execution follows plugins');
+	assertEqual(sections[1].href, `${base('p2')}/settings/execution`, 'execution href');
+	assertEqual(sections[1].label, 'T(execution.connection.title)', 'execution label');
+	assertEqual(
+		settingsLanding(W, 'p2', 'custom_form'),
+		`${base('p2')}/settings/plugins`,
+		'landing stays Plugins'
+	);
 });
 
 finish(suite.result());

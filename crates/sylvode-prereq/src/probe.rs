@@ -192,6 +192,20 @@ fn is_executable_file(path: &Path) -> bool {
 /// Spawns `command`. A program that was written a moment ago can still be reported busy while
 /// another thread's `fork` holds the file open for writing; that clears within milliseconds, so it
 /// is retried a few times.
+/// The variables of the caller's environment a probed program is given (and `LC_*`); `PATH` is set
+/// separately. The same list the runner gives every CLI it starts.
+const ENV_ALLOWED: [&str; 9] = [
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LANGUAGE",
+    "TERM",
+    "TZ",
+    "SHELL",
+    "TMUX_TMPDIR",
+];
+
 fn spawn_retrying(command: &mut Command) -> Option<std::process::Child> {
     for _ in 0..10 {
         match command.spawn() {
@@ -281,7 +295,16 @@ impl Checker {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        if let Some(path) = &self.path {
+        // A probed program gets the allow-list environment and nothing else of the caller's: the
+        // caller may hold tokens that no probe has any business seeing.
+        command.env_clear();
+        for (name, value) in std::env::vars_os() {
+            let text = name.to_string_lossy();
+            if ENV_ALLOWED.contains(&&*text) || text.starts_with("LC_") {
+                command.env(&name, value);
+            }
+        }
+        if let Some(path) = self.path_var() {
             command.env("PATH", path);
         }
         let Some(mut child) = spawn_retrying(&mut command) else {

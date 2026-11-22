@@ -10873,6 +10873,10 @@ mod flow_database_tests {
     #[tokio::test]
     async fn flow_package_import_export_upload_preview_commit_status_runs_through_real_http_shapes() {
         use tower::ServiceExt as _;
+        if !cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+            return;
+        }
 
         let scratch = scratch_or_skip!("package-route-chain");
         let state = state_for(scratch.db.clone());
@@ -11342,6 +11346,10 @@ mod flow_database_tests {
 
     #[tokio::test]
     async fn preview_manifest_summary_lists_the_package_source_projects() {
+        if !cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+            return;
+        }
         let scratch = scratch_or_skip!("package-manifest-summary");
         let state = state_for(scratch.db.clone());
         let fixture = exported_project_package(&state).await;
@@ -11478,6 +11486,10 @@ mod flow_database_tests {
 
     #[tokio::test]
     async fn package_roundtrip_reports_unmapped_projects_and_lineage_conflicts_in_preview() {
+        if !cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+            return;
+        }
         let scratch = scratch_or_skip!("package-roundtrip");
         let state = state_for(scratch.db.clone());
         let fixture = exported_project_package(&state).await;

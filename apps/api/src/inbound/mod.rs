@@ -21,18 +21,23 @@
 use platform::app::AppState;
 use platform::config::InboundConfig;
 
+pub mod alert_view;
+pub mod allowlist;
 pub mod audit;
 pub mod auth;
 pub mod credentials;
 pub mod description;
+pub mod dry_run;
 pub mod envelope;
 pub mod followup;
 pub mod ingest;
 pub mod notify;
+pub mod queue;
 pub mod response;
 pub mod rule_input;
 pub mod rules;
 pub mod severity;
+pub mod tasks;
 
 /// The path of the inbound endpoint.
 pub const INBOUND_EVENTS_PATH: &str = "/api/v1/inbound/events";
@@ -54,3 +59,5 @@ pub fn auth_state(state: &AppState, config: InboundConfig) -> auth::InboundAuthS
 mod admin_tests;
 #[cfg(test)]
 mod db_tests;
+#[cfg(test)]
+mod queue_tests;

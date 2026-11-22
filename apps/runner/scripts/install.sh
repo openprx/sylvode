@@ -8,7 +8,7 @@
 # Running it again rewrites the unit or agent in place.
 #
 # Usage:
-#   ./scripts/install.sh [--binary-path <path>] [--config-dir <path>]
+#   ./scripts/install.sh [--binary-path <path>] [--config-dir <path>] [--dry-run]
 #
 # Options:
 #   --binary-path PATH   Path to the sylvode-runner binary.
@@ -18,6 +18,13 @@
 #   --config-dir  PATH   Directory that contains config.toml (and will be
 #                        used as the service working directory).
 #                        Default: current working directory
+#   --dry-run            Run the prerequisite check and stop: nothing is
+#                        installed.
+#
+# Before anything is installed the installer runs `sylvode-runner doctor` with
+# the PATH the service will have; a failed row stops the installation and its
+# hint names what to install. After the unit is installed, doctor runs once more
+# in the service's context.
 #
 # Examples:
 #   # Use defaults (binary in cwd, config in cwd)
@@ -60,6 +67,7 @@ resolve_path() {
 
 BINARY_PATH=""
 CONFIG_DIR=""
+DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -72,6 +80,10 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2-}" ]] || die "--config-dir requires an argument"
             CONFIG_DIR="$(resolve_path "$2")"
             shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
             ;;
         -h|--help)
             sed -n '2,/^set -/p' "$0" | grep '^#' | sed 's/^# \?//'
@@ -189,6 +201,71 @@ done
 log "Embedded PATH: $SERVICE_PATH"
 
 # ---------------------------------------------------------------------------
+# Prerequisites: doctor, with the PATH the service will have (not the shell's)
+#
+# The mode is `auto`: the runner follows its configuration. tmux is needed only when
+# `[runner.tmux] enabled = true`; headless runs need none, so no flag is involved.
+# Exit 2 means a row failed: its hint is printed and nothing is installed. Nothing is ever
+# installed silently.
+# ---------------------------------------------------------------------------
+
+DOCTOR_MODE="auto"
+
+log "Checking prerequisites (mode: $DOCTOR_MODE, PATH of the service)"
+set +e
+DOCTOR_OUT="$(PATH="$SERVICE_PATH" "$BINARY_PATH" doctor --mode "$DOCTOR_MODE" --config "$CONFIG_DIR/config.toml" --as-service 2>&1)"
+DOCTOR_RC=$?
+set -e
+printf '%s\n' "$DOCTOR_OUT"
+case "$DOCTOR_RC" in
+    0) ;;
+    2) die "a prerequisite is missing (see the rows above and their hints); nothing was installed" ;;
+    *) die "doctor could not run (exit $DOCTOR_RC); nothing was installed" ;;
+esac
+
+# On Linux the service and the tmux server stop at logout unless the user lingers.
+check_linger() {
+    [[ "$PLATFORM" == "linux" ]] || return 0
+    command -v loginctl &>/dev/null || return 0
+    local user="${USER:-$(id -un)}" state
+    state="$(loginctl show-user "$user" -p Linger 2>/dev/null || true)"
+    if [[ "$state" == *"Linger=no"* ]]; then
+        warn "linger is off: the service and its tmux sessions stop when you log out. Run: loginctl enable-linger $user"
+    fi
+}
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+    check_linger
+    log "Dry run: nothing was installed."
+    exit 0
+fi
+
+# After the unit is installed: doctor once more, in the service's context. A failure here is a
+# warning (the service may not be running yet).
+doctor_in_service_context() {
+    local runner=()
+    case "$PLATFORM" in
+        linux)
+            command -v systemd-run &>/dev/null || return 0
+            runner=(systemd-run --user --pipe --wait "--setenv=PATH=$SERVICE_PATH")
+            ;;
+        macos)
+            # `launchctl asuser` works for root only; as the user, the check in the service's own
+            # context is skipped (the first check above already used the service's PATH).
+            if [[ "$(id -u)" -ne 0 ]]; then
+                warn "skipping the check in the service context: it needs root on macOS (the check above used the service PATH)"
+                return 0
+            fi
+            runner=(launchctl asuser "${SUDO_UID:-$(stat -f %u /dev/console)}")
+            ;;
+    esac
+    log "Checking prerequisites in the service context"
+    if ! "${runner[@]}" "$BINARY_PATH" doctor --mode "$DOCTOR_MODE" --config "$CONFIG_DIR/config.toml" --as-service; then
+        warn "doctor reported a problem in the service context (see above); the service may not work yet"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Locate template files
 # ---------------------------------------------------------------------------
 
@@ -272,23 +349,35 @@ install_linux() {
 
     mkdir -p "$service_dir"
 
-    render_template "$SYSTEMD_TEMPLATE" "$service_file" systemd_quoted_escape \
+    # Rendered beside the unit and put in place only when it differs: an unchanged unit is not
+    # rewritten and the daemon is not reloaded.
+    local staged
+    staged="$(mktemp "$service_dir/.$unit_name.XXXXXX")"
+    render_template "$SYSTEMD_TEMPLATE" "$staged" systemd_quoted_escape \
         "BINARY_PATH=$BINARY_PATH" \
         "PATH=$SERVICE_PATH" \
         "UNIT_NAME=$unit_name"
-    render_template "$service_file" "$service_file" systemd_arg_escape \
+    render_template "$staged" "$staged" systemd_arg_escape \
         "CONFIG_DIR=$CONFIG_DIR"
-    render_template "$service_file" "$service_file" systemd_path_escape \
+    render_template "$staged" "$staged" systemd_path_escape \
         "WORKING_DIRECTORY=$CONFIG_DIR"
-    log "Installed service file: $service_file"
-
-    # Reload the systemd daemon so it picks up the new unit file.
-    if command -v systemctl &>/dev/null; then
-        systemctl --user daemon-reload
-        log "systemd user daemon reloaded"
+    if [[ -f "$service_file" ]] && cmp -s "$staged" "$service_file"; then
+        rm -f "$staged"
+        log "Service file unchanged: $service_file"
     else
-        warn "systemctl not found; skipping daemon-reload. Run manually later."
+        chmod 644 "$staged"
+        mv -f "$staged" "$service_file"
+        log "Installed service file: $service_file"
+        # Reload the systemd daemon so it picks up the new unit file.
+        if command -v systemctl &>/dev/null; then
+            systemctl --user daemon-reload
+            log "systemd user daemon reloaded"
+        else
+            warn "systemctl not found; skipping daemon-reload. Run manually later."
+        fi
     fi
+    check_linger
+    doctor_in_service_context
 
     cat <<EOF
 
@@ -325,32 +414,48 @@ install_macos() {
 
     mkdir -p "$agents_dir" "$log_dir"
 
-    render_template "$LAUNCHD_TEMPLATE" "$plist_file" xml_escape \
+    local staged
+    staged="$(mktemp "$agents_dir/.$label.XXXXXX")"
+    render_template "$LAUNCHD_TEMPLATE" "$staged" xml_escape \
         "BINARY_PATH=$BINARY_PATH" \
         "CONFIG_DIR=$CONFIG_DIR" \
         "PATH=$SERVICE_PATH" \
         "LOG_DIR=$log_dir" \
         "LABEL=$label" \
         "LOG_NAME=$log_name"
-    log "Installed plist file: $plist_file"
 
-    # Validate the generated plist before loading it.
+    # Validate the generated plist before putting it in place.
     if command -v plutil &>/dev/null; then
-        if plutil -lint "$plist_file" &>/dev/null; then
+        if plutil -lint "$staged" &>/dev/null; then
             log "Plist syntax OK"
         else
-            warn "plutil reported issues with $plist_file — check and reload manually."
+            warn "plutil reported issues with the generated plist — check and reload manually."
         fi
     fi
 
-    # If the agent is already loaded, unload it first to pick up changes.
+    # An unchanged agent that is loaded is left alone; a changed one is unloaded and loaded again.
+    local loaded=0 changed=1
     if launchctl list 2>/dev/null | grep -q "$label"; then
+        loaded=1
+    fi
+    if [[ -f "$plist_file" ]] && cmp -s "$staged" "$plist_file"; then
+        changed=0
+        rm -f "$staged"
+        log "Plist file unchanged: $plist_file"
+    else
+        mv -f "$staged" "$plist_file"
+        log "Installed plist file: $plist_file"
+    fi
+    if [[ "$loaded" -eq 1 && "$changed" -eq 1 ]]; then
         warn "Agent already loaded; unloading first to apply changes."
         launchctl unload "$plist_file" 2>/dev/null || true
+        loaded=0
     fi
-
-    launchctl load "$plist_file"
-    log "Agent loaded via launchctl"
+    if [[ "$loaded" -eq 0 ]]; then
+        launchctl load "$plist_file"
+        log "Agent loaded via launchctl"
+    fi
+    doctor_in_service_context
 
     cat <<EOF
 

@@ -64,11 +64,8 @@ versions (older servers still send them, which is why the values are still accep
   - `openprx` — Send the rendered message via an OpenPRX Signal API or a command
   - `webhook` — Forward the delivery JSON unchanged to an HTTP endpoint
   - `custom` — Run a command with the rendered message as an argument
-  - `cli` — Run codex, claude-code or opencode with a rendered prompt (fixed executor whitelist)
-- **MCP closed-loop automation** — AI agents read full issue context (description, comments, labels) via Sylvode MCP tools and write results back directly
-- **CLI callbacks** — Report a CLI run back to Sylvode via MCP or the REST API (see [Callbacks](#callbacks))
-- **AI task callbacks** — Complete or fail the worker AI task an agent ran, off by default (see [AI task callbacks](#ai-task-callbacks))
-- **Per-agent environment variables** — Inject extra environment variables into each CLI executor
+  - `runner` — Run a CLI agent (claude, codex, opencode) in the project's directory, in a tmux session or headless, as Sylvode's execution settings say (see [`runner` agents](#runner-agents-project-execution))
+- **Task protocol** — A `runner` agent ends its tasks through the task tools; a forwarding agent whose hand-over fails fails the task with `POST /api/v1/ai/tasks/{id}/fail` (see [Ending tasks](#ending-tasks))
 - **WSS tunnel client (Phase B MVP)** — Active ws/wss connection with Bearer auth, heartbeat, auto-reconnect. No Sylvode server endpoint exists yet, so it has nothing to connect to (see [the tunnel section](#phase-b-tunnel-wss-mvp))
 - **Tunnel envelope + HMAC** — Minimal envelope (`id/type/ts/agent_id/payload/sig`) with optional HMAC-SHA256
 - **Task bridge** — Handles `task.dispatch` -> immediate `task.ack` -> async `task.result`
@@ -104,8 +101,7 @@ first build. The crate uses the workspace `[lints]`; CI runs clippy with `-D war
 building with a different compiler version can fail there on a lint that version added.
 
 The example configuration is secure by default: it listens on loopback only, verifies every
-signature (`allow_unsigned = false`) and contains no agent that runs a command without
-`[features].cli_enabled`. Change `listen` once the secret is set, or put a reverse proxy in front.
+signature (`allow_unsigned = false`) and contains no agent. Change `listen` once the secret is set, or put a reverse proxy in front.
 
 `sylvode-runner [CONFIG]` reads `config.toml` in the working directory when no path is given.
 `--help` and `--version` print usage and the version.
@@ -133,15 +129,12 @@ webhook_secrets = ["a-long-random-secret"]  # blank entries and example placehol
 allow_unsigned = false  # true only for local development; see below
 max_delivery_age_secs = 300  # refuse signed deliveries whose timestamp is further from now; 0 = off
 
-# Feature gates (safe defaults). A cli agent does nothing unless cli_enabled is
-# true, and no callback is sent unless callback_enabled is true.
+# Feature gates (safe defaults).
 [features]
 tunnel_enabled = false
-cli_enabled = false
-callback_enabled = false
 
 [runtime]
-cli_max_concurrency = 1               # cli executors running at once, webhook and tunnel together; others wait
+cli_max_concurrency = 1               # headless CLI runs of `runner` agents at once; others wait
 http_timeout_secs = 15                # outbound HTTP; commands get max(this, 60) seconds
 tunnel_reconnect_backoff_max_secs = 60
 
@@ -206,40 +199,6 @@ message_template = "{event} {key}"
 command = "logger"                     # one program, no shell: put arguments in args
 args = ["-t", "sylvode", "--", "{message}"]
 
-# Agent: CLI executor with MCP closed-loop
-[[agents]]
-id = "ai-fixer"
-name = "AI Issue Fixer"
-agent_type = "cli"
-
-[agents.cli]
-executor = "claude-code" # codex | claude-code | opencode
-workdir = "/path/to/your/repository"
-timeout_secs = 900
-max_output_chars = 12000
-prompt_template = "Fix issue {issue_id}: {title}\nContext: {reason}"
-callback = "mcp" # mcp (default) | api
-callback_url = "http://127.0.0.1:8090/mcp/rpc" # no callback is sent without it
-callback_token = "opr_xxx"                     # sent as Authorization: Bearer <token>
-# Issue state to set through the callback (ignored when skip_callback_state = true):
-# update_state_on_start = "in_progress"
-# update_state_on_success = "done"
-# update_state_on_fail = "todo"
-
-# MCP closed-loop: AI reads full issue context and updates state via MCP tools,
-# so skip_callback_state prevents duplicate state updates from the callback.
-skip_callback_state = true
-
-# Optional: custom MCP instructions (overrides built-in default).
-# mcp_instructions = "Use work_items.get to read issue {issue_id}, then fix it."
-
-# Path to an MCP config for claude-code (--mcp-config flag). Setting it (or
-# mcp_instructions, or env_vars) also appends the default MCP instructions.
-mcp_config_path = "/path/to/mcp-config.json"
-
-# Extra environment variables injected into the executor subprocess.
-# [agents.cli.env_vars]
-# HTTPS_PROXY = "http://proxy.internal:3128"
 ```
 
 `allow_unsigned = true` turns signature verification off and logs a warning at start-up. On a
@@ -326,74 +285,20 @@ for either of them therefore matches only those tasks, or none.
   at the start of `message_template` such as `- {title}`, is left alone.
 - `webhook` posts the delivery JSON unchanged to `url`, signed with `X-Webhook-Signature:
   sha256=<hex>` when `secret` is set.
-- `cli` runs the whitelisted executor with the rendered prompt in the background and answers at
-  once: `codex exec --sandbox <sandbox> --skip-git-repo-check <prompt>`,
-  `claude -p <prompt> --permission-mode <mode> [--allowedTools ...] [--disallowedTools ...]
-  [--mcp-config <path> [--strict-mcp-config]]` or `opencode run <prompt>` (see [Executor
-  permissions](#executor-permissions)), in `workdir`, stopped after `timeout_secs` (see below). A rendered prompt that
-  starts with `-` would be read as an option of the executor, so such a run is not started and
-  reports `failed`; begin `prompt_template` with fixed text (the default does).
-
-### Executor permissions
-
-Each `cli` agent sets how much its executor may do, in `[agents.cli]`. The default lets an agent
-use the MCP tools it is configured with and read its working directory, but not run shell commands
-or edit files. **Bypassing the executor's permission checks is never the default**; it needs
-`dangerously_bypass_permissions = true` and is logged as a warning at start-up. Start-up also logs
-one line per `cli` agent with the settings it runs with (`cli executor permissions: ...`).
-
-| Executor | Key | Values | Default |
-|---|---|---|---|
-| `claude-code` | `permission_mode` | `acceptEdits`, `auto`, `dontAsk`, `manual`, `plan`, `bypassPermissions` (passed as `--permission-mode`) | `dontAsk` |
-| `claude-code` | `allowed_tools` | tool rules passed as `--allowedTools`, such as `mcp__sylvode`, `Read`, `Edit(//repo/**)`, `Bash(cargo test *)` | every server named in `mcp_config_path`, as `mcp__<server>`; nothing without one |
-| `claude-code` | `disallowed_tools` | tool rules passed as `--disallowedTools` | none |
-| `claude-code` | `strict_mcp_config` | `true` passes `--strict-mcp-config` with `mcp_config_path`, so only its servers load | `true` |
-| `codex` | `sandbox` | `read-only`, `workspace-write`, `danger-full-access` (passed as `--sandbox`) | `read-only` |
-| `codex`, `claude-code` | `dangerously_bypass_permissions` | `true` acknowledges `permission_mode = "bypassPermissions"` or `sandbox = "danger-full-access"`; for codex without `sandbox` it passes `--dangerously-bypass-approvals-and-sandbox` | `false` |
-
-- With `dontAsk`, a tool that would ask for permission is denied at once, so a run never waits for
-  an answer. Listing a tool in `allowed_tools` replaces the default list: include the MCP servers
-  (`mcp__<server>`) yourself. `allowed_tools = []` allows nothing beyond what `dontAsk` permits.
-- The default list is read from `mcp_config_path` (relative to `workdir` when relative) each time a
-  task runs. If the file cannot be read or has no `mcpServers` object the run fails with that
-  error instead of starting an agent that cannot use its tools; start-up only warns.
-- `opencode` has no permission settings here and is started as before (`opencode run`); configure
-  opencode itself. Setting any key above for it, or a key of another executor (`sandbox` for
-  claude-code, `permission_mode` for codex), refuses start-up, as does an unknown mode, an entry
-  that is blank or starts with `-`, `bypassPermissions` or `danger-full-access` without
-  `dangerously_bypass_permissions = true`, and `dangerously_bypass_permissions = true` with a mode
-  it does not apply to.
-- The codex MCP servers come from codex's own configuration. Whether codex runs MCP tool calls
-  without asking in its sandbox depends on that configuration and its approval settings; check it
-  before relying on a codex agent for an MCP closed loop.
-
-To keep the behaviour of earlier releases (no permission checks at all), set:
-
-```toml
-[agents.cli]
-executor = "claude-code"
-permission_mode = "bypassPermissions"
-dangerously_bypass_permissions = true
-
-# or, for codex:
-# executor = "codex"
-# dangerously_bypass_permissions = true
-```
 
 Commands are run directly, never through a shell, so `command` names one program and everything
-else goes in `args`. Their stdin is `/dev/null`; they inherit the service's environment (a `cli`
-agent adds its `env_vars`).
+else goes in `args`. Their stdin is `/dev/null`; they inherit the service's environment.
 
 #### Stopping commands
 
-On Linux and macOS every command (`cli` executors and the commands of `openclaw`, `openprx` and
-`custom` agents) is started as the leader of its own process group. When it times out
-(`timeout_secs` for `cli`, `max(http_timeout_secs, 60)` seconds for the others), when the service
+On Linux and macOS every command (the commands of `openclaw`, `openprx`, `custom` agents and the
+headless runs of `runner` agents) is started as the leader of its own process group. When it times out
+(`max(http_timeout_secs, 60)` seconds for the forwarding agents), when the service
 shuts down, and also when it exits by itself, the whole group is sent `SIGTERM` and, if anything
 in it is still alive 5 seconds later, `SIGKILL`. This stops the processes an executor started
 (an npm-installed `codex` launcher's native binary, an agent's tool calls), not only the executor
 itself. A process that deliberately leaves its process group (`setsid`, `daemon`) is not
-reached. The timeout or cancellation callback is sent only after the group is gone.
+reached. The failure report of a headless run is sent only after the group is gone.
 
 The group is signalled only while its leader (the command itself) has not been reaped, because
 until then the kernel cannot give the group id to another process. On Linux the service notices
@@ -411,178 +316,178 @@ zombies.
 ### Shutdown
 
 On `SIGTERM` or `SIGINT` the service stops accepting connections and lets the requests in flight
-finish. Every running `cli` executor (webhook-triggered or tunnel task) is stopped as above and
-then sends its terminal callback with `status = "cancelled"`, which sets `update_state_on_fail`
-like a failure, so no issue is left `in_progress` by a run that no longer exists. On the webhook
-path this callback follows the same rules as a failure (it is not sent with
-`skip_callback_state = true`, which also suppresses the start callback). The whole shutdown, the
-requests in flight and these callbacks together, takes at most `5 + 2 × http_timeout_secs + 5`
-seconds (40 seconds by default) from the signal: a request still open then (a client that stalled
-half-way, say) is closed, a callback not yet sent is dropped, and the service exits 0. Give the service manager at least that long: systemd's default `TimeoutStopSec` (90 s)
-is enough, `docker stop` needs `--time 45` (its default is 10 s).
+finish. Every running headless CLI run is stopped as above and its task is failed (`retryable`
+when the run was cut short), so no task is left open by a run that no longer exists. tmux
+sessions keep running. The whole shutdown, the requests in flight and these reports together,
+takes at most `5 + 2 × http_timeout_secs + 5` seconds (40 seconds by default) from the signal: a
+request still open then is closed, a report not yet sent is dropped, and the service exits 0. Give
+the service manager at least that long: systemd's default `TimeoutStopSec` (90 s) is enough,
+`docker stop` needs `--time 45` (its default is 10 s).
 
 ### Environment
 
 | Variable | Effect |
 |----------|--------|
-| `SYLVODE_RUNNER_SAFE_MODE` | `1`/`true`/`yes`/`on` forces the tunnel, CLI and callback paths off at runtime — a one-switch rollback to webhook-only behavior. `openclaw`, `openprx` and `custom` agents still run their commands |
+| `SYLVODE_RUNNER_SAFE_MODE` | `1`/`true`/`yes`/`on` forces the tunnel and the `[ai_task_callback]` reports off at runtime. `openclaw`, `openprx` and `custom` agents still run their commands |
 | `RUST_LOG` | Log filter. This service's events use the `sylvode_runner` target, e.g. `RUST_LOG=sylvode_runner=debug`; the default is `sylvode_runner=info` |
 
 Logs are written to stdout.
 
-## MCP Closed-Loop Automation
+## `runner` agents: project execution
 
-When a CLI agent has Sylvode MCP tools available (via global config or `mcp_config_path`), it can autonomously:
-
-1. **Read full issue context** — title, description, comments, labels, state, priority via `work_items.get` / `comments.list`
-2. **Fix the problem** — analyze context, write code, run tests
-3. **Write results back** — post a summary comment via `comments.create`, update state via `work_items.update`
-
-This eliminates the need for the webhook callback to update issue state (use `skip_callback_state = true`).
-
-Default MCP instructions are appended to the prompt when the agent has MCP-related config
-(`mcp_instructions`, `mcp_config_path`, or `env_vars`); a form event gets form-specific
-instructions instead. You can replace them with `mcp_instructions`. With MCP-related config the
-prompt also asks the agent to read the project context (`context.get_project`) when the task
-carries a project id, and describes the form record for a form event.
-
-### MCP Setup
-
-The Sylvode MCP server reads its API URL, bot token and workspace from its own configuration
-file, not from environment variables. Point the agent's MCP client at it with an absolute path; see
-the [Sylvode README](https://github.com/openprx/sylvode#readme) for the `[mcp]` section.
-
-For **Codex**, add to `~/.codex/config.toml`:
+Connecting a bot to a project in Sylvode issues a configuration block (`[security]`,
+`[ai_task_callback]` with the bot's token, `[runner]`, and an `[[agents]]` entry with
+`agent_type = "runner"`). A `runner` agent executes the task according to the project's execution
+settings in Sylvode (channel and CLI), in the project's working directory; it takes no agent type table,
+because the permissions come from `[runner.cli.*]` and the directory from Sylvode. (`agent_type =
+"cli"` was removed: use a `runner` agent with the project's channel set to `headless`.) Every
+`[runner]` table refuses unknown keys, so a block written for a newer runner is refused naming the
+key.
 
 ```toml
-[mcp_servers.sylvode]
-type = "stdio"
-command = "/path/to/mcp-server"
-args = ["serve", "--config", "/absolute/path/to/config/sylvode.toml"]
+[runner]
+state_dir = "~/.local/state/sylvode-runner"   # macOS default: ~/Library/Application Support/sylvode-runner
+allowed_roots = ["~/work"]                    # project directories must lie below one of these; state_dir must NOT
+# A runner agent may carry its own `allowed_roots` in its [[agents]] table; with more than one
+# runner agent each needs its own, and they must not overlap.
+delivery_check_timeout_secs = 5               # task fetch and checks before the answer; slower is HTTP 503
+heartbeat_secs = 600
+# report_interval_secs = 600                  # overrides the interval Sylvode advertises
+
+[runner.tmux]
+enabled = false                               # the tmux channel is an operator opt-in (see below)
+
+[runner.cli.claude]                           # claude is always enabled
+binary = "claude"
+permission_mode = "dontAsk"                   # the only mode a runner agent accepts
+allow_write_call = false
+[runner.cli.codex]
+enabled = false
+[runner.cli.opencode]
+enabled = false
+[runner.mcp]
+tool_mode = "search"
 ```
 
-For **Claude Code**, add to `~/.claude.json`:
+A `runner` agent is refused at start-up (the other agents still start) unless
+`[ai_task_callback] enabled = true`, `allowed_roots` is not empty, and every bot of its route has a
+token registered for the `mcp_stdio` transport (`surface = "mcp_stdio"`): `bot <id>: runner bots
+need a token registered for mcp_stdio`. The entry also carries `workspace_id`, the workspace the bot
+belongs to: the runner writes it into the per-bot MCP file, and the MCP server it starts for the
+CLI refuses to start without it.
 
-```json
-"sylvode": {
-  "type": "stdio",
-  "command": "/path/to/mcp-server",
-  "args": ["serve", "--config", "/absolute/path/to/config/sylvode.toml"]
-}
-```
+**Allowed roots.** Each entry is checked once at start-up: only a leading `~/` is expanded; the path
+must be absolute, exist and be a directory, and is canonicalised. `/`, the home directory (or a
+directory that contains it), system directories (`/etc`, `/usr`, `/System`, `/Library`,
+`/opt/homebrew`, `/private/etc` and the like) and any path containing `#` (tmux reads a directory as
+a format) are refused. A world-writable root is warned about. One invalid entry makes every `runner`
+agent refuse its tasks with `reason_code = "runner_agent_disabled"`, and the log says why.
 
-### Callbacks
+**Per delivery**, before the answer, in this order: the `protocol` field (`protocol_mismatch` when
+missing or different); the task view, fetched with the bot's token (a timeout or a 5xx is HTTP
+`503` so the worker re-queues; a task that is no longer active is answered `ignored`); the cross-check
+of project id and key (`delivery_mismatch`); `execution.enabled` (`execution_disabled`); the project
+key `^[A-Z0-9]{1,32}$` (`invalid_project_key`) and that no other project on this runner uses it
+(`session_name_collision`); the working directory (`path_missing`, `path_unreadable`,
+`path_not_directory`, `path_outside_allowlist`); the channel (`tmux_unavailable`: tmux missing or older than 3.2) and the CLI (`cli_disabled`, `cli_unavailable`). The directory is
+canonicalised (every symbolic link resolved) and must lie below an allowed root, compared by path
+components (`/work/svwl-evil` is not under `/work/svwl`); only that canonical path is used from then
+on. A refusal is `{"status":"refused","reason_code":"...","reason":"...","agent":"..."}`; the reason
+never contains a path (the path is in the runner log at `info`). A directory replaced by a link
+between the check and the use is out of scope: only a process that can write inside an allowed root
+(the same OS user) can do that.
 
-A callback is sent only when `[features].callback_enabled = true` and the agent has a
-`callback_url`.
+**What a task can do, and what protects what.** A `runner` agent keeps a CLI agent running in the project's working directory, as the runner's OS user. Anyone who can assign an issue to the bot, mention the bot in a comment, or request its vote (in Sylvode today, any workspace member) can make that agent act, and anyone who can edit an issue title, description or comment can put text in front of it. The defaults let the agent read files in the project directory (`Read`, `Glob` and `Grep` confined to it) and use the Sylvode task tools, nothing else. Read this plainly: **file modes do not protect one bot's token from an agent running as the same OS user.** The state directory is 0700 and the token files are 0600, but the CLI runs as that same user, so inside one OS user the only barrier is the CLI's permission posture (the allow list, the deny rule that keeps the state directory unreadable, `dontAsk`). If you allow shell commands (`Bash`) or file writes, a task can run commands with the runner user's rights, including everything that user's credentials reach and every other session on the tmux socket (`TMUX` is set in each pane, and any agent with a shell can drive the other sessions). Separate trust domains (workspaces, or bots whose assigners you do not trust equally) therefore need **separate OS users, or separate hosts**; one runner OS user is one trust domain. Widen the defaults only for a bot whose assigners you would trust with a shell on that machine. Per-agent `allowed_roots` and the refusal of a `state_dir` inside a root only keep one project from being *named* as another's directory; they are not a sandbox. codex's `read-only` sandbox restricts writes and network, not reads: it can read the whole disk, which is one reason codex stays refused on the tmux channel (`cli_unverified`) and why its headless use is for trusted bots only.
 
-- **When.** For a `cli` agent selected from a webhook delivery: before the run, a start callback
-  carrying `update_state_on_start`, if that is set. It is sent in the background once the run has
-  a `cli_max_concurrency` slot, so the `/webhook` answer never waits for it (Sylvode's worker gives
-  up after 10 seconds and retries the task, which would run it again); shutdown abandons a start
-  callback still in flight and the executor is not started. After the run, a final callback only when the
-  run failed, timed out or was cancelled by shutdown (a successful agent reports through MCP
-  itself), and only when `skip_callback_state` is `false`. For a tunnel task: a final callback after
-  every run; with `skip_callback_state = true` it carries no state.
-- **`skip_callback_state = true`** means the agent reports through MCP itself: no callback carries
-  a state, so no start callback is sent, and on the webhook path no callback is sent at all, even
-  for a failure. `callback_url` and `callback_token` are then only used by tunnel tasks.
-- **`callback = "mcp"`** (the default) sends JSON-RPC `tools/call` requests: `comments.create`
-  with an execution report, then `work_items.update` when there is a state to set
-  (`update_state_on_success`, or `update_state_on_fail` for a failure or timeout).
-- **`callback = "api"`** posts the result as JSON (`issue_id`, `run_id`, `executor`, `status`,
-  `summary`, `exit_code`, `duration_ms`, `stdout_tail`, `stderr_tail`, `state`).
+**Interactive session command lines.** claude runs as `/usr/bin/env CLAUDE_CONFIG_DIR=<state_dir>/claude/<bot> claude --permission-mode dontAsk --mcp-config <state_dir>/mcp/<bot>.claude.json --strict-mcp-config --setting-sources user --settings <state_dir>/sessions/<KEY>/claude-settings.json --allowedTools ... --disallowedTools Read(<state_dir>/**) ...`: the allow list is the eight search-mode Sylvode tools plus `Read`, `Glob` and `Grep` confined to the canonical working directory; `allow_write_call = true` adds `sylvode_write`; `allowed_tools` and `disallowed_tools` add entries (`{dir}` stands for the canonical directory); the state directory (in the configured and the canonical form) and the configuration file are always denied to reads, and a configuration file inside an allowed root refuses that root. Extra read rules count as confined only in the exact form `Read|Glob|Grep(/{dir}/...)` with no `..` or `~`; anything else is a widening and is reported as such. A project's own `.mcp.json` is ignored. A runner agent accepts only `permission_mode = "dontAsk"` (anything that would ask is denied); any other value is a configuration error. codex and opencode on the tmux channel are refused whatever the settings say. No command line holds a token, and none is run by a shell. The state directory is created with mode 0700; the per-bot MCP file that holds the token and the hook settings are created with mode 0600, exclusively, and are rewritten only when they differ.
 
-`callback_token` is sent as `Authorization: Bearer <token>`.
+**What a CLI run is given.** Both channels start claude with `--mcp-config <state_dir>/mcp/<bot>.claude.json --strict-mcp-config` (MCP servers only from the runner's file: no `.mcp.json`, no project or user servers), `--setting-sources user` (checked against `claude --help` of 2.1.330: the help names `user`, `project` and `local` as the sources; the project and local files of a project, which could add allow rules, hooks or MCP servers, are not loaded; this README does not claim that `CLAUDE.md`, project skills or commands are excluded: hand check V3) and an explicit `--allowedTools` list. **The operator's own `~/.claude` is not loaded**: the runner sets `CLAUDE_CONFIG_DIR` to `<state_dir>/claude/<bot>` (created 0700, one per bot, holding only what claude writes there), the documented way to relocate claude's configuration directory (user settings, hooks, plugins, credentials and trust state live there; `claude --help` of 2.1.330 lists no flag for it, so this rests on the documented environment variable and hand check V16). The consequence: claude has no login in that directory, so **once per bot** the operator logs in with it (`CLAUDE_CONFIG_DIR=<state_dir>/claude/<bot> claude`, then `/login`), or gives the CLI an API key through `[runner.cli.claude] env_passthrough = ["ANTHROPIC_API_KEY"]`. `CLAUDE_CONFIG_DIR` itself cannot be passed through. codex and opencode have no verified equivalent, so a headless run of them is refused (`workspace_untrusted`) in a directory with `.codex` or `opencode.json`/`.opencode` unless the project key is in `[runner] trust_project_files`. The CLI's environment is the runner's allow-list (`PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LANGUAGE`, `LC_*`, `TERM`, `TZ`, `SHELL`, `TMUX_TMPDIR`) plus the names in `[runner.cli.<cli>] env_passthrough` (an API key, a proxy); nothing else of the runner's environment reaches it. A tmux pane inherits the environment of the tmux server on the runner's socket: a server that was started by something other than the runner (a shell of the operator) is not covered by this list.
 
-#### Callback attribution
+**The tmux channel (off by default).** `[runner.tmux] enabled = false` is the default: a project whose execution settings ask for the tmux channel is refused at delivery with `reason_code = tmux_channel_disabled`, and the headless channel keeps working. codex and opencode on the tmux channel are refused entirely (`cli_unverified`), whatever the switch says. **Do not enable it on a machine that matters before the hand checks V1 to V16 below have been done on the pinned claude version**: nothing in its screen and prompt logic has met a real CLI.
 
-A plain API callback (`callback = "api"`) reports its surface as `cli` in both
-`X-Sylvode-MCP-Surface`.
+With the switch on, a delivery is queued on the session named by the project key (one worker per key, first in first out). The runner creates the session (`tmux -L <socket_name> -f /dev/null`, window 0, the CLI as one argument vector); on a socket of its own it never adopts a session it did not create (no matching `session.json`), and it checks the directory again before it creates or restarts one. It types a task only when the CLI is idle by its hooks, its prompt is on the screen and empty, and no attached client typed within `user_idle_secs`. Turn events come from the CLI's hooks through `sylvode-runner hook --cli C --session K --event E --socket P --nonce N`, registered in the per-session settings file (`SessionStart` for `startup` only and `Notification` for permission prompts only; a session start after compaction, `/clear` or resume means nothing); the nonce is random, written into the hook command of that launch only, compared in constant time, and the hook socket (`<state_dir>/hook.sock`, mode 0600) hears only the runner's own user. The push is recorded in `session.json`, synced, before it is typed, so a restart never types a task again: an acknowledged task, a recorded push or a message in the scrollback counts as pushed (supervised, or failed as retryable when its session is gone), and a second open task of one session is failed. The one Enter retry re-reads the screen and the foreground command and requires the pasted text to still be on the input line; otherwise nothing is pressed and the session is reported blocked. What the runner reads from the screen (busy, a choice, a dialog) is read from the CLI's own chrome at the bottom of the screen, never from the transcript above it, so text in an issue cannot pose as a marker. A screen that reads busy or waiting while the hooks say idle holds the queue back for at most `screen_hold_secs` (default 600); then the waiting tasks fail as retryable with the reason. A pushed task that the CLI acknowledged on the screen counts as running even if its `UserPromptSubmit` hook was lost. A hook message must carry the launch's nonce, come from the runner's own user, and (where the platform names the sender) from below the session's pane process; with the session record unreadable nothing is admitted, and connections are capped (32 at once). On Linux the sender's parents are read from `/proc`; macOS has no safe call for that in this code base, so one `ps -A` snapshot is read per admitted message. Hook messages are ordered by a per-session counter file (`sessions/<KEY>/hook.seq`, reset per launch), not by the clock. A trust, login or model-chooser dialog fails the waiting tasks without a retry and names `sylvode-runner trust KEY`. A second runner on the same state directory refuses to start (`runner.lock`). Sessions keep running when the runner stops; after a restart the runner rebuilds its state from `GET /ai/tasks/active`.
 
-### AI task callbacks
+**Hand checks before the tmux channel is enabled** (pinned claude version, a throwaway directory, the runner user, a socket of its own):
+
+- **V1.** Start claude exactly as the runner builds it (`--setting-sources user --settings <file with the four hooks>`); confirm that `SessionStart`, `UserPromptSubmit`, `Stop` and `Notification` each reach `hook.sock`.
+- **V2.** In a directory with `.claude/settings.json` = `{"permissions":{"allow":["Bash(touch:*)"]},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"touch /tmp/v2-hook"}]}]}}` and a `.mcp.json`, interactive and `-p`: ask for `touch /tmp/v2-bash`. Neither file may appear, and no MCP approval prompt may show.
+- **V3.** In the same directory: `.claude/skills/x/SKILL.md` with `allowed-tools: Bash(touch:*)`, `.claude/commands/x.md` with `allowed-tools: Bash(touch:*)`, `.claude/agents/x.md`, and a `CLAUDE.md` with a marker sentence. Record which load under `--setting-sources user` and whether invoking the skill or command grants `Bash`; also whether the runner's own `.claude/skills/sylvode-mcp/` loads.
+- **V4.** With the operator's real `~/.claude/settings.json`: confirm that its allow rules, hooks and plugins do NOT apply (the runner's `CLAUDE_CONFIG_DIR` is in effect).
+- **V5.** With the default `--allowedTools` and `dontAsk`: commit `link -> <state_dir>/mcp/<bot>.toml` and `dirlink -> ~/.ssh` into the project. Ask the agent to Read `./link` and to Glob or Grep `./dirlink`. Both must be denied; repeat with the `--disallowedTools` rule on the state directory to see whether deny rules see resolved paths.
+- **V6.** `/compact`, an automatic compaction (fill the context), `/clear` and `--resume`: does `SessionStart` fire for each, and does the `startup` matcher keep it away?
+- **V7.** Leave the prompt idle for 70 s: does `Notification` fire, with which `notification_type`; does the narrow matcher keep it away?
+- **V8.** `capture-pane -p` of each screen: idle; busy (spinner, "esc to interrupt", input box); busy with a typed draft; a multi-line draft whose first line is empty; the placeholder text in an empty box; the trust dialog and the login prompt; a permission dialog under `default` mode; an `AskUserQuestion` dialog; plan approval. For each, record what `input_is_empty` and `classify_dialog` return. Every dialog must give `None` or `Some(false)`, busy must be distinguishable, and an empty box with placeholder text must give `Some(true)`.
+- **V9.** `#{pane_current_command}` for the native installer and for an npm install of claude, on macOS and Linux (`claude`, `claude.exe`, `node`, a version-number name?). Set `process_names` accordingly, and never include `node` or a shell.
+- **V10.** `#{bracket_paste_flag}` with claude on tmux 3.7. On 3.2 to 3.6, confirm claude enables bracketed paste before the first prompt, so that the per-push confirmation is not a lie.
+- **V11.** Paste a message and press Enter while claude is busy: queued, interrupting, or lost?
+- **V12.** Interrupt a turn with Esc: does `Stop` fire?
+- **V13.** codex `-s read-only -a never` (relevant before codex is ever allowed on tmux): can a command read `<state_dir>/mcp/*.toml`, connect to `hook.sock`, and run `tmux -L sylvode list-sessions`?
+- **V14.** The trust flow: a fresh directory shows the dialog, `sylvode-runner trust KEY` attaches, answering it gives `SessionStart`, and the next task is typed.
+- **V15.** Start the runner while a `-L sylvode` server already runs from a full shell; check `tmux -L sylvode show-environment -g` and a pane's `env`.
+- **V16.** With the runner's `CLAUDE_CONFIG_DIR`: the one-time login persists (macOS keychain, Linux `.credentials.json`), and the trust state is kept per configuration directory.
+
+**Operator commands.** `sylvode-runner sessions [--prune] [--config PATH]` lists the sessions this runner created (key, project id, CLI, state); `--prune` (runner stopped) ends the idle ones whose key is no longer reserved or whose project now uses headless, and never touches a session whose pane id and PID are not the ones in `session.json`. `sylvode-runner trust KEY` prints what to answer and attaches (`tmux -L <socket> attach -t =KEY`). `sylvode-runner release KEY` frees a reserved session name, only when its tmux session no longer exists and the runner is stopped.
+
+**Signing secrets and URLs.** A runner that serves more than one bot needs `webhook_secret` on every `[[ai_task_callback.bots]]` entry: a delivery for a bot is verified only with that bot's secret (with one bot, `security.webhook_secrets` serves as before). The Sylvode API URL must be `https://` unless its host is loopback. A `runner` agent takes no `[agents.ai_task_callback]`, and a delivery for a bot the agent does not serve is refused (`runner_agent_disabled`). The report interval Sylvode advertises is kept between 60 and 3600 seconds. At start-up one `runner CLI posture` line per CLI says what it may do; opencode is warned about (its permissions are not controlled by sylvode-runner).
+
+**Headless channel.** The CLI runs once in the canonical directory with the permissions of
+`[runner.cli.*]`. Its prompt is `[Sylvode task] id=... attempt=n/max` followed by the task procedure
+(get, ack, progress, complete or fail). The runner reports `runner.pushed` and, while the CLI runs,
+`runner.alive` every `heartbeat_secs`. When the process ends and Sylvode still shows the task
+active, the runner fails it (`source: "runner"`, not retryable): `agent ended without completing or
+failing the task`.
+
+**Handshake and report.** At start-up and every report interval the runner calls
+`GET /api/v1/ai/protocol` with each bot's token and compares `task_protocol` with its own (1), then
+sends `PUT /api/v1/ai/runner/report`: component names, statuses and versions only. A mismatch shows in
+`/health` and refuses every `runner` agent with `protocol_mismatch`; other agents keep working. A bot
+without a runner connection in Sylvode (404) is logged once and not reported again until restart; a
+refused token is logged as `bot <id>: token refused by Sylvode (revoked, rotated or wrong surface)`.
+Tokens are never logged, never part of an error, and never follow a redirect.
+
+## Ending tasks
 
 The Sylvode worker marks an AI task `processing` when it delivers it (a delivery that carries
-`task_id` and `ai_participant_id`), and only the API's
-`POST /api/v1/ai/callbacks/task/{task_id}/complete` or `.../fail` ends that state. With
-`[ai_task_callback]` enabled, sylvode-runner calls one of them when the agent's run ends. It is off
-by default, and safe mode turns it off. The worker does not depend on it alone: it fails a task this
-receiver declines in its answer (`no_agent`, `ignored`, `refused`), and takes back a task nobody ended
-within its `[ai_tasks] processing_timeout_secs` (see "Bot tasks" in the root README).
+`task_id` and `ai_participant_id`), and only the task protocol ends that state:
+`POST /api/v1/ai/tasks/{task_id}/complete` or `.../fail?attempt=N`, with the bot's token. There is
+one way to end a task:
+
+- **`runner` agents.** The CLI agent ends the task itself with the task tools
+  (`sylvode_task_complete` or `sylvode_task_fail`); the runner fails a task only when it cannot
+  go on (the session was killed, a dialog is blocking, the agent did not acknowledge it; see the
+  [`runner` agents](#runner-agents-project-execution) section).
+- **Forwarding agents** (`webhook`, `openclaw`, `openprx`, `custom`). When the hand-over worked the
+  runner completes the task (`outcome: done`, a summary naming the agent), so it runs once: its
+  lease never expires into a redelivery that would run the forwarded work again. When the hand-over
+  itself fails, or no agent matches the task, the runner fails the task with `source: "runner"`
+  and the token of the task's bot (`retryable: true` for a failure a repeat may fix, `false` for
+  a task no agent takes). The reason is a fixed summary (`error: the command exited with status
+  3`), never command output.
+
+The reports need `[ai_task_callback]` (the bots' tokens). A token works only for the tasks of the
+bot that owns it, so a task whose bot has no token is not reported (and logged); the worker then
+ends it by its processing timeout. The worker also fails a task this receiver declines in its
+answer (`no_agent`, `ignored`, `refused`).
 
 ```toml
 [ai_task_callback]
-enabled = false                 # default
+enabled = false                     # default
 api_url = "http://127.0.0.1:8080"   # base URL of the Sylvode API; required when enabled
-token = "replace-with-the-bot-token-of-the-ai-participant"
-bot_id = "0b7e2d4c-2f0a-4b8e-8f6c-3a1d9e5c7b20"   # optional: the bot that owns `token`
-surface = "rest"                # default
-max_attempts = 3                # default; 1 to 10
-retry_delay_ms = 1000           # default; at most 60000
-max_output_chars = 4000         # default
+token = "opr_..."                   # the bot's token; bot_id = "<uuid>" limits it to that bot
+surface = "rest"                    # the transport the token is registered with
+max_attempts = 3                    # attempts per report, including the first (1 to 10)
+retry_delay_ms = 1000               # before the first retry, doubled each time (at most 60000)
 
-# Further bots this receiver serves (optional, repeatable):
-[[ai_task_callback.bots]]
-bot_id = "5989a9a2-c7f1-4a74-ba05-cffe01e33ad4"   # the bot's user id (the tasks' ai_participant_id)
-token = "replace-with-the-bot-token-of-that-bot"
-surface = "mcp_stdio"           # default: ai_task_callback.surface
-
-# Per agent (optional):
-[agents.ai_task_callback]
-enabled = true                  # default: true, except for agent_type = "webhook"
-token = "replace-with-the-bot-token-of-this-agents-bot"
+[[ai_task_callback.bots]]           # one entry per further bot; mcp_stdio for a `runner` agent
+bot_id = "00000000-0000-0000-0000-000000000000"
+workspace_id = "00000000-0000-0000-0000-000000000000"   # the bot's workspace; a `runner` agent needs it
+token = "opr_..."
 surface = "mcp_stdio"
 ```
 
-- **A token works only for the bot that owns it.** The token is sent as
-  `Authorization: Bearer <token>`, and the API accepts only the task's AI participant (that bot's
-  token) or a system administrator; any other bot's token is refused with code 403. A receiver that
-  serves several bots therefore needs one token per bot. For each task the first that applies is
-  used: the agent's own `[agents.ai_task_callback].token`, the `[[ai_task_callback.bots]]` entry
-  whose `bot_id` is the task's bot (also for a task no agent matches), then the global `token`. With
-  `bot_id` set the global token is used only for that bot's tasks; without it, it is used for every
-  task the others do not cover, as before, and start-up logs a warning that it works only for its
-  owner. A task whose bot has no token is not reported (calling the API with another bot's token
-  would only be refused): it is logged once at warn level, the `/webhook` answer says
-  `"ai_task_callback": "no_token"`, and the worker ends the task. An agent's own token is used for
-  every bot routed to it, so give such an agent no token and list the bots instead.
-- **Start-up checks.** With the callback enabled, start-up is refused while an agent that reports
-  has a placeholder token, or has none and neither a global token nor any `bots` entry exists; while
-  a `bots` entry has a blank or placeholder token; while `bot_id` is set without `token`. A `bot_id`
-  that is not a UUID, or a bot listed twice, is always refused. Tokens are never logged.
-- **`surface`** is the transport the token is registered with in Sylvode: `rest` sends no surface
-  header; `mcp_http`, `mcp_sse`, `mcp_stdio`, `cli` or `cli_tools_call` is sent in
-  `X-Sylvode-MCP-Surface`.
-- **When.** A `cli` agent reports once its background run ends: `complete` after exit code 0,
-  `fail` after a failure, a timeout or a cancellation by shutdown. Other agent types report right
-  after their dispatch: `complete` when it succeeded, `fail` otherwise. A `webhook` agent forwards
-  the task to another receiver, which owns it, so it does not report unless its
-  `[agents.ai_task_callback].enabled = true`.
-- **No agent, or not started.** A worker AI task that no agent matches is answered `no_agent` with a
-  `reason` naming the bot; one whose agent cannot start (safe mode, `cli_enabled = false`, an
-  incomplete agent section) is answered `refused` with the reason. The worker fails such a task at
-  once on that answer. When a token of the task's bot is configured, the receiver also calls `fail`
-  with `"retry": false`; whichever arrives first ends the task and the other is refused as no longer
-  `processing`.
-- **Attempts.** Every callback carries `?attempt=N`, the delivery's `attempts`. The API accepts it
-  only while that attempt is `processing`; a callback that arrives after the worker timed the
-  attempt out and re-queued or failed the task is refused with code 400, logged at warn level and
-  not retried. An agent that runs longer than the worker's `processing_timeout_secs` (one hour by
-  default) can therefore have its task delivered again: keep `timeout_secs` and the queue wait for
-  a `cli_max_concurrency` slot well below it.
-- **Answers.** The `/webhook` answer to a worker AI task carries `ai_task_callback`: `report` (the
-  outcome will be reported), `no_token` or `off`.
-- **Bodies.** `complete` receives `{source, agent_id, agent_type, status, summary, exit_code,
-  duration_ms, output}`, which the API stores as the task's result; `fail` receives
-  `{error_message, payload, retry}` with the same report as `payload`. `output` is the tail of stdout
-  after a success and of stderr otherwise, at most `max_output_chars` characters.
-- **Retries.** Both endpoints answer HTTP 200 with a `{code, message}` envelope even when they
-  refuse. A transport error, HTTP 5xx or 429, or an API code of 500 or more is retried up to
-  `max_attempts` attempts in all, the delay doubling from `retry_delay_ms` (never more than 30
-  seconds between two attempts); a refusal, such as code 400 for a task that is no longer
-  `processing` or code 403 for a token of another bot, is logged and not retried. A callback that
-  gives up after its last attempt leaves the task to the worker's processing timeout. Shutdown
-  waits for a callback in flight but schedules no further retry.
+A report names the attempt (`?attempt=N`, the delivery's `attempts`): it is accepted only while
+that attempt is active. A refusal is never retried; a timeout, a transport error and an HTTP 5xx
+are, `max_attempts` times in all.
 
 ## Outbound webhook signature
 
@@ -604,7 +509,9 @@ webhook path for Sylvode.
 
 Enable both `[features].tunnel_enabled = true` and `[tunnel].enabled = true` in `config.toml` to
 let `sylvode-runner` actively connect to a control plane. The tunnel needs `url` (`wss://`, or
-`ws://`), `agent_id` and `auth_token`, and its tasks also need `[features].cli_enabled = true`.
+`ws://`), `agent_id` and `auth_token`. The tunnel runs no tasks any more: `agent_type = "cli"` was
+removed, so every `task.dispatch` is acknowledged and answered with a `failed` `task.result` that
+says so.
 `ws://` sends the bearer token and every task unencrypted, so a `ws://` URL whose host is not
 loopback refuses start-up unless `allow_insecure_transport = true` acknowledges it.
 
@@ -641,10 +548,8 @@ Current task bridge behavior:
 
 1. Receive `task.dispatch`; its payload may carry `run_id`, `issue_id`, `agent` and `body`
 2. Send `task.ack` immediately (`run_id`, `issue_id`, `status=accepted`)
-3. Run the `cli` agent whose `id` equals `agent`, or the first `cli` agent when `agent` is absent,
-   on `body` (or the whole payload); at most `[runtime].cli_max_concurrency` executors run at once,
-   counting webhook-triggered runs too
-4. Send `task.result` when done (`run_id`, `issue_id`, `status`, `summary`)
+3. Run nothing: the runner no longer runs tasks over the tunnel
+4. Send `task.result` (`run_id`, `issue_id`, `status = failed`, `summary`)
 
 Other envelope types received are ignored.
 
@@ -680,49 +585,46 @@ Safety toggles:
 ## Templates
 
 `message_template` sets the message of `openclaw`, `openprx` and `custom` agents; `webhook` agents
-send no message and `cli` agents use `prompt_template`. Without a template these defaults are used:
+send no message. Without a template this default is used:
 
 | Template | Default |
 |----------|---------|
 | `message_template` | `[{project}] {event}: {key} {title}` and, on a second line, `{actor} \| Trigger: {reason}` |
-| `prompt_template` | `Fix issue {issue_id}: {title}` and, on a second line, `Context: {reason}` |
 
 A template is rendered in one pass: a placeholder below is replaced by its value, any other text is
 kept as written, and a placeholder that appears inside a value (such as an issue title containing
 `{actor}`) stays literal.
 
-| Placeholder | Value | In `message_template` | In `prompt_template` |
-|-------------|-------|:---:|:---:|
-| `{event}` | Event (`issue.assigned`), or a worker task's `task_type` | yes | yes |
-| `{title}` | Issue title (`untitled` when absent) | yes | yes |
-| `{reason}` | Trigger reason (`assigned`, `mentioned`, ...; see [Agent selection](#agent-selection)) | yes | yes |
-| `{issue_id}` | Issue id | yes | yes |
-| `{project_id}` | Project id | yes | yes |
-| `{form_id}`, `{form_key}`, `{record_id}` | Form identifiers of a form event | yes | yes |
-| `{key}` | Issue key (`BIL-4C3B2A19`) | yes | |
-| `{actor}` | Name of the user who caused the event | yes | |
-| `{project}` | Project name | yes | |
-| `{workspace}` | Workspace name | yes | |
-| `{state}`, `{priority}` | Issue state and priority | yes | |
-| `{url}` | `issue/<issue_id>` | yes | |
+| Placeholder | Value | In `message_template` |
+|-------------|-------|:---:|
+| `{event}` | Event (`issue.assigned`), or a worker task's `task_type` | yes |
+| `{title}` | Issue title (`untitled` when absent) | yes |
+| `{reason}` | Trigger reason (`assigned`, `mentioned`, ...; see [Agent selection](#agent-selection)) | yes |
+| `{issue_id}` | Issue id | yes |
+| `{project_id}` | Project id | yes |
+| `{form_id}`, `{form_key}`, `{record_id}` | Form identifiers of a form event | yes |
+| `{key}` | Issue key (`BIL-4C3B2A19`) | yes |
+| `{actor}` | Name of the user who caused the event | yes |
+| `{project}` | Project name | yes |
+| `{workspace}` | Workspace name | yes |
+| `{state}`, `{priority}` | Issue state and priority | yes |
+| `{url}` | `issue/<issue_id>` | yes |
 
-A value that is missing renders as an empty string in `message_template` (`unknown` for `{event}`,
-`{reason}` and `{actor}`, `untitled` for `{title}`) and as `<project_id>`, `<form_id>`, and so on in
-`prompt_template` (`unknown` for `{issue_id}`, `{event}` and `{reason}`). In a `custom` agent's
-`args`, `{message}` stands for the rendered message.
+A value that is missing renders as an empty string (`unknown` for `{event}`, `{reason}` and
+`{actor}`, `untitled` for `{title}`). In a `custom` agent's `args`, `{message}` stands for the
+rendered message.
 
 ## API
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/webhook` | POST | Receive a webhook delivery or worker AI task |
-| `/health` | GET | Health check; answers `ok` |
+| `/health` | GET | Health check; answers `{"status":"ok","protocol":{"runner":1,"api":1,"state":"ok"}}`. `state` is `ok`, `mismatch`, `unreachable`, `pending` (not checked yet) or `unchecked` (no `runner` agent) |
 
 `/webhook` answers `401` for a missing, invalid or conflicting signature or a stale delivery, `409`
 for a replayed one, and `400` for a body that is not JSON. Otherwise it answers `200` with a JSON status: `ignored` (not a bot task), `no_agent`
 (no agent matched), or `dispatched` with the agent id and a short `result`: `ok`, `error: the
-command exited with status N`, `webhook: 200 OK`, the reason a dispatch was refused, or for a `cli`
-agent the run id (the run continues in the background). The output of a command and the body of a
+command exited with status N`, `webhook: 200 OK`, the reason a dispatch was refused; for a `runner` agent `dispatched` also carries the channel and, for tmux, the queue position. The output of a command and the body of a
 remote error are never part of the answer, because the sender stores it in its delivery log; they
 are written to this service's log (`Dispatch result` with `detail=...`).
 
@@ -777,8 +679,48 @@ What this covers, and what it does not:
 
 The installer creates the user service `sylvode-runner.service` on Linux or the launch agent
 `dev.sylvode.runner` on macOS. When no `--binary-path` is given it looks for `sylvode-runner` in the
-working directory, in `./target/release` and in the workspace `target/release`. Running it again
-rewrites the unit or agent in place, and the uninstaller removes it.
+working directory, in `./target/release` and in the workspace `target/release`. The unit or agent is
+rewritten only when its content differs (an unchanged one is left alone and nothing is reloaded);
+the configuration file is never written. The uninstaller removes the unit or agent.
+
+Before anything is installed the installer runs `sylvode-runner doctor --mode <mode> --as-service`
+with the `PATH` the service will have (not the shell's). A failed row prints its hint and stops the
+installation: nothing is ever installed silently. The mode is always `auto`: the runner follows
+its configuration, so tmux is required only with `[runner.tmux] enabled = true` (a headless-only
+install, the default, needs neither tmux nor a flag). `--dry-run` stops after the check. On Linux a user without linger gets a warning with `loginctl enable-linger <user>` (the
+service and its tmux server stop at logout otherwise). After the unit is installed, doctor runs
+once more in the service's context: on Linux through `systemd-run --user`; on macOS through
+`launchctl asuser`, which works for root only, so as a normal user that second check is skipped with
+a warning (the first check already used the service's `PATH`). A problem there is a warning.
+
+### Doctor
+
+```bash
+sylvode-runner doctor [--json] [--config PATH] [--mode tmux|headless|auto] [--as-service] [--project KEY] [--show-paths]
+sylvode-runner --check                      # doctor --json with no network call and no secret
+sylvode-runner config check [--json] [--config PATH]
+```
+
+`doctor` prints the `sylvode.doctor.v1` report of the shared prerequisite checker: tmux (version
+against 3.2, server on the runner's socket), the CLIs, the MCP server (its `--check` version and
+task protocol), this runner (configuration, service, linger), the API protocol, and with `--project
+KEY` the project's row (directory against the allowed roots, trust, the state of the agent guide,
+and the warning that a git worktree cannot get its exclude line). Exit code 0: no row failed; 2: a
+row failed (warnings never change it); 1: the checker could not run. The output is meant for bug
+reports: no token, no URL credentials, no configuration content, and project directories only as
+labels unless `--show-paths` is given. In a container image the `tmux` row fails (`unsupported in
+container image`) whenever a `runner` agent is configured.
+
+`config check` says whether the configuration loads; it names the key (and table, and line) of each
+problem and never prints a value.
+
+A missing prerequisite does not stop the service: it starts degraded. `/health` is unauthenticated and
+says nothing about it (only `status` and `protocol`); the log, `doctor` and the periodic report to
+Sylvode carry the rows, every delivery that needs the
+missing program is refused at once with a reason code (`tmux_unavailable`, `cli_unavailable`), and
+start-up logs the resolved path of each program. The snapshot is probed at most once a minute, and
+each delivery checks the program it needs again, so installing tmux takes effect without a restart.
+An invalid `allowed_roots` or a protocol mismatch still refuses the `runner` agents only.
 
 ### Systemd
 
@@ -814,7 +756,7 @@ Run it with `--init` (see [Stopping commands](#stopping-commands)) and `--stop-t
 the non-root user `sylvode` (uid 10001), so the mounted `config.toml` must be readable by uid
 10001, and `listen` must not be loopback inside the container (use `0.0.0.0:9090`, with a secret).
 The image contains only the runner executables and CA certificates: no `codex`, `claude`,
-`opencode` or `openclaw`, so `cli`, `openclaw` and command-based agents need an image derived from
+`opencode` or `openclaw`, so `runner`, `openclaw` and command-based agents need an image derived from
 this one that adds them. See [`Dockerfile`](Dockerfile).
 
 ### Versioning
@@ -866,10 +808,8 @@ These configurations still start, but the service behaves differently:
 - **Agents without a template** get the rendered default message or prompt instead of literal
   placeholder text (`[TPL_PROJECT] TPL_EVENT: ...`).
 - **Text from Sylvode that would start an argument with `-`** is not passed: a `custom` agent is
-  not run (`custom_error: ...`) and a `cli` run fails before starting the executor. A leading `-`
+  not run (`custom_error: ...`). A leading `-`
   you wrote in `message_template` or `args` is allowed.
-- **Webhook-triggered `cli` runs wait for `cli_max_concurrency`** (default 1) slots shared with the
-  tunnel, instead of all running at once.
 - **Replays are refused:** a signed delivery whose `id` was already received is answered `409`, and
   one whose `timestamp` is more than `max_delivery_age_secs` (300) from the receiver's clock `401`.
   Keep the clocks in sync, or set `max_delivery_age_secs = 0`.
@@ -884,11 +824,9 @@ These configurations still start, but the service behaves differently:
   `route.trigger_kinds` is matched only against `bot_context.trigger_reason` and a worker task's
   `trigger_kind`, not against `task_type` or the payload.
 - **Timeouts and shutdown stop the executor's whole process group** (see [Stopping
-  commands](#stopping-commands)). On `SIGTERM` or `SIGINT` the service sends each running `cli`
-  executor's terminal callback (`cancelled`, which sets `update_state_on_fail`), takes at most 40
-  seconds by default, open requests included, and exits 0; 0.3.3 had no signal handling and was killed, leaving executors
-  running and issues `in_progress`. Give the service manager enough stop time (see
-  [Shutdown](#shutdown)).
+  commands](#stopping-commands)). On `SIGTERM` or `SIGINT` the service takes at most 40 seconds by
+  default, open requests included, and exits 0; 0.3.3 had no signal handling and was killed. Give
+  the service manager enough stop time (see [Shutdown](#shutdown)).
 - **Tunnel envelopes** for another `agent_id` are refused, and with `hmac_secret` so are envelopes
   more than 300 seconds old and repeated envelope ids.
 - **Logs:** the target is `sylvode_runner`, the listening line is written after binding and names

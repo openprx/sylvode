@@ -1,4 +1,5 @@
-//! The worker's alert follow-up: announces the outcome of alert tasks, closes finished alerts and
+//! The worker's alert follow-up: announces the outcome of alert tasks, starts queued alert tasks
+//! as capacity frees up (and suppresses those that waited an hour), closes finished alerts and
 //! prunes stored inbound events. The logic lives in `api::inbound::followup` so it is tested next
 //! to the data it reads; this loop only schedules it.
 
@@ -21,11 +22,14 @@ pub async fn run(db: DatabaseConnection, config: InboundConfig) {
         "alert follow-up worker started"
     );
     loop {
-        match api::inbound::followup::run_once(&db).await {
-            Ok(report) if report.announced + report.closed > 0 => {
+        match api::inbound::followup::run_once(&db, &config).await {
+            Ok(report) if report != api::inbound::followup::FollowupReport::default() => {
                 tracing::info!(
                     announced = report.announced,
                     closed = report.closed,
+                    started = report.started,
+                    expired = report.expired,
+                    dropped = report.dropped,
                     "alert follow-up tick"
                 );
             }

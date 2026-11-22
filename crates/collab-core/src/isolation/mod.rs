@@ -25,7 +25,7 @@
 //! The workspace root `Cargo.toml` sets `unsafe_code = "deny"` via `[workspace.lints.rust]`, cast
 //! as a crate-level `-D unsafe_code` flag by Cargo -- not `forbid`, so it can be locally
 //! overridden. This module tree is the only place in `collab-core` that needs raw
-//! `setitimer`/`sigaction`/`setrlimit`/`kill`/`poll`-family syscalls; every individual `unsafe`
+//! `timer_create`/`sigaction`/`setrlimit`/`kill`/`poll`-family syscalls; every individual `unsafe`
 //! block still carries its own `// SAFETY:` comment (the workspace clippy lint
 //! `undocumented_unsafe_blocks = "deny"` is *not* overridden and still applies here).
 #![allow(unsafe_code, clippy::too_long_first_doc_paragraph)]
@@ -52,7 +52,7 @@ pub mod wire;
 #[cfg(target_os = "linux")]
 pub use host::{
     WORKER_BINARY_PATH_ENV, isolated_apply, isolated_apply_observed, isolated_apply_with, isolated_apply_with_observed,
-    isolated_diff, isolated_diff_observed,
+    isolated_diff, isolated_diff_observed, isolated_import_observed,
 };
 pub use outcome::{
     HostFailure, HostFailureKind, IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode,
@@ -61,9 +61,12 @@ pub use outcome::{
 #[cfg(not(target_os = "linux"))]
 pub use unsupported::{
     isolated_apply, isolated_apply_observed, isolated_apply_with, isolated_apply_with_observed, isolated_diff,
-    isolated_diff_observed,
+    isolated_diff_observed, isolated_import_observed,
 };
 // Single source of truth for these three (`isolation::limits`'s own module doc explains why):
 // `host`, `alloc`, and `child_runtime` all `use` them from there rather than declaring their own
 // copies, so this re-export and every enforcement site name the identical constant.
-pub use limits::{DECODE_APPLY_CPU_MS_MAX, DECODE_APPLY_WALL_MS_MAX, ISOLATED_APPLY_MEMORY_BYTES_MAX};
+pub use limits::{
+    DECODE_APPLY_CPU_MS_MAX, DECODE_APPLY_WALL_MS_MAX, IMPORT_DECODE_CPU_MS_MAX, IMPORT_DECODE_WALL_MS_MAX,
+    IMPORT_ISOLATED_MEMORY_BYTES_MAX, ISOLATED_APPLY_MEMORY_BYTES_MAX,
+};

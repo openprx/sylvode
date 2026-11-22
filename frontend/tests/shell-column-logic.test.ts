@@ -32,7 +32,6 @@ import {
 	formsGroupToExpand,
 	governanceRows,
 	homeRows,
-	participantRows,
 	projectToExpand,
 	projectsOfWorkspace,
 	recentRows,
@@ -300,11 +299,6 @@ suite.check('scope change: where each destination goes', () => {
 	assertEqual(go('/workspace/w0', 'w1'), '/workspace/w1', 'home with another workspace id');
 	assertEqual(go('/workspace/w0', 'personal'), '/workspace', 'home to personal');
 	assertEqual(go('/inbox', 'w1'), null, 'home without a workspace id stays');
-	assertEqual(
-		go('/workspace/w0/projects/p/ai-agents', 'w1'),
-		'/agents',
-		'agents page of another workspace'
-	);
 	assertEqual(go('/agents', 'w1'), null, 'agents root stays');
 	assertEqual(go('/governance', 'w1'), null, 'governance stays');
 	assertEqual(
@@ -435,40 +429,18 @@ suite.check('flow list: private, workspace, off, unknown and personal-unavailabl
 	);
 });
 
-suite.check(
-	'agents: personal is empty, bots only for admins, participants nest under projects',
-	() => {
-		assertEqual(agentsMode('personal'), 'personal', 'personal');
-		assertEqual(agentsMode(W), 'workspace', 'workspace');
-		assertEqual(showBots(W, true), true, 'admin');
-		assertEqual(showBots(W, false), false, 'member');
-		assertEqual(showBots('personal', true), false, 'personal');
-		assertEqual(
-			botRows(W, [{ id: 'b1', name: 'Deploy bot' }])[0].href,
-			'/workspace/w1/members',
-			'bot link'
-		);
-		const projects = [{ id: 'p1', name: 'Core', workspace_id: W, type_key: 'x' }];
-		const rows = participantRows({
-			workspaceId: W,
-			projects,
-			expanded: new Set(['p1']),
-			agentsOf: () => [{ id: 'a1', name: 'Reviewer' }]
-		});
-		assertEqual(rows.length, 2, 'project and one participant');
-		assertEqual(rows[0].expanded, true, 'project open');
-		assertEqual(rows[1].parentId, 'ai-project:p1', 'participant under project');
-		assertEqual(rows[1].href, '/workspace/w1/projects/p1/ai-agents', 'participant link');
-		assertEqual(rows[1].selectable, false, 'participant rows are not route-selected');
-		const closed = participantRows({
-			workspaceId: W,
-			projects,
-			expanded: emptyIdSet(),
-			agentsOf: () => []
-		});
-		assertEqual(closed.length, 1, 'collapsed project hides participants');
-	}
-);
+suite.check('agents: personal is empty, bots only for admins', () => {
+	assertEqual(agentsMode('personal'), 'personal', 'personal');
+	assertEqual(agentsMode(W), 'workspace', 'workspace');
+	assertEqual(showBots(W, true), true, 'admin');
+	assertEqual(showBots(W, false), false, 'member');
+	assertEqual(showBots('personal', true), false, 'personal');
+	assertEqual(
+		botRows(W, [{ id: 'b1', name: 'Deploy bot' }])[0].href,
+		'/workspace/w1/members',
+		'bot link'
+	);
+});
 
 suite.check('governance rows: admins get config and audit logs', () => {
 	const member = governanceRows({ instanceAdmin: false, tr }).map((r) => r.href);

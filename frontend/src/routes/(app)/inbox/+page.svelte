@@ -93,10 +93,14 @@
 	// The alert chain writes `<kind>:<argument>` content built from Sylvode values only.
 	function alertNotificationContent(content: string): string | null {
 		const translate = get(t);
-		const alertOpened = content.match(/^alert_opened:([A-Z]+):([\s\S]*)$/);
-		if (alertOpened) {
-			return translate('notification.alertOpenedContent', {
-				values: { severity: alertOpened[1], title: alertOpened[2] }
+		const alertSeverity = content.match(/^alert_(opened|escalated):([A-Z]+):([\s\S]*)$/);
+		if (alertSeverity) {
+			const key =
+				alertSeverity[1] === 'opened'
+					? 'notification.alertOpenedContent'
+					: 'notification.alertEscalatedContent';
+			return translate(key, {
+				values: { severity: alertSeverity[2], title: alertSeverity[3] }
 			});
 		}
 		const withArgument: Array<[string, string, string]> = [

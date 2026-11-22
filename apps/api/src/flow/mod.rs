@@ -36,6 +36,7 @@ pub mod export;
 pub mod frontier;
 pub mod grants;
 pub mod import;
+pub mod import_replay;
 pub mod maintenance;
 pub mod model;
 pub mod move_object;

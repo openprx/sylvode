@@ -12,11 +12,14 @@
 mod ai_task;
 mod app;
 mod background;
-mod callback;
 mod config;
 mod dispatcher;
+mod doctor;
+#[cfg(test)]
+mod doctor_tests;
 mod executor_permissions;
 mod handler;
+mod handshake;
 mod process;
 mod replay;
 mod runner;
@@ -27,8 +30,35 @@ mod tunnel;
 
 pub use app::run;
 
+/// The tmux driver, for the integration test that runs it against a real tmux (feature
+/// `test-support`); it is not part of any interface.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod tmux_for_tests {
+    pub use crate::runner::tmux::*;
+}
+
 pub(crate) struct AppState {
     pub config: config::Config,
     pub background: background::Background,
     pub replay: tokio::sync::Mutex<replay::ReplayGuard>,
+    pub runner: runner::RunnerRuntime,
+    pub handshake: handshake::Handshake,
+    pub sessions: Option<std::sync::Arc<runner::session::SessionManager>>,
+}
+
+/// The pieces that decide what a launched CLI gets for MCP, for the end-to-end test in the MCP
+/// server's crate that starts the real server from them (feature `test-support`); it is not part
+/// of any interface.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod mcp_launch_for_tests {
+    pub use crate::config::{AiTaskCallback, Config};
+    pub use crate::runner::checks::BotCreds;
+    pub use crate::runner::files::StateDir;
+    pub use crate::runner::launch::{
+        LaunchFiles, Protected, SEARCH_MODE_TOOLS, SERVER_NAME, WRITE_TOOL, claude_argv, claude_headless_argv,
+        codex_argv, codex_headless_argv,
+    };
+    pub use crate::runner::tmux::SessionKey;
 }

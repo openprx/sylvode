@@ -347,4 +347,52 @@ mod tests {
     fn participant_type_str_human() {
         assert_eq!(participant_type_str(ParticipantType::Human), "human");
     }
+
+    // ── one bot, two projects ─────────────────────────────────────────────────
+
+    /// A bot is a participant of each project it is connected to, with that project's own
+    /// governance level: the registration key is (project, bot), not the bot alone.
+    #[tokio::test]
+    async fn a_bot_registered_in_two_projects_gets_each_projects_level() {
+        use crate::routes::context::tenant_fixture::{exec, seed_bot_user, seed_tenant};
+        use crate::scratch_or_skip;
+
+        let scratch = scratch_or_skip!("perm_two_projects");
+        let db = &scratch.db;
+        let one = seed_tenant(db, "pa").await;
+        let two = seed_tenant(db, "pb").await;
+        let bot = seed_bot_user(db, &one).await;
+        for (tenant, level, name) in [(&one, "advisor", "bot in one"), (&two, "voter", "bot in two")] {
+            exec(
+                db,
+                "INSERT INTO ai_participants (id, project_id, name, max_domain_level, registered_by) \
+                 VALUES ($1, $2, $3, $4, $5)",
+                vec![
+                    bot.to_string().into(),
+                    tenant.project_id.into(),
+                    name.into(),
+                    level.into(),
+                    tenant.member_id.into(),
+                ],
+            )
+            .await;
+        }
+
+        let service = PermissionService::new(db.clone());
+        let level_in = |project| service.get_effective_level(bot, project, "general", ParticipantType::Ai);
+        assert_eq!(level_in(one.project_id).await.unwrap(), TrustLevel::Advisor);
+        assert_eq!(level_in(two.project_id).await.unwrap(), TrustLevel::Voter);
+
+        // Switching one registration off leaves the other untouched.
+        exec(
+            db,
+            "UPDATE ai_participants SET is_active = false WHERE id = $1 AND project_id = $2",
+            vec![bot.to_string().into(), one.project_id.into()],
+        )
+        .await;
+        assert_eq!(level_in(one.project_id).await.unwrap(), TrustLevel::Observer);
+        assert_eq!(level_in(two.project_id).await.unwrap(), TrustLevel::Voter);
+
+        scratch.drop_self().await;
+    }
 }

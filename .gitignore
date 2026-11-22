@@ -78,3 +78,6 @@ deploy/flow-deployed-websocket.json
 
 # Local release-gate evidence; authoritative contracts live in the separate read-only checkout.
 /.flow-gate/
+
+# The e2e stand-in CLI must never leave files in the tree; ignored as a second line of defence.
+standin.*

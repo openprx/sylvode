@@ -140,7 +140,7 @@ being silently ignored.
 | `[ai_tasks]` | worker | `processing_timeout_secs` (`3600`, range `60..=604800`; how long a delivered AI task may stay `processing` before the worker re-queues it, or fails it after its last attempt) |
 | `[migrations]` | api | `replay` (`false`), `continue_on_error` (`false`) — both are escape hatches; turn one on deliberately, then turn it back off |
 | `[outbound]` | api, worker | `allowed_hosts` — a TOML **array of strings** (`[]`), `allow_private` (`false`) |
-| `[flow]` | api, worker | `dispatch_max_attempts` (`10`), `collab_allowed_origins` — a TOML array of `scheme://host[:port]` origins allowed to open live collaboration sessions (`[]`; empty refuses every session, so list the web UI's origin to enable live editing), `conversion_reap_interval_secs` (`60`, range `1..=86400`; how often the api reclaims conversion jobs left `started` for more than 15 minutes), `incremental_window` (`true`; `false` makes every collab write decide its structural limits by the full computation instead of from the page's facts and the units the update touched) |
+| `[flow]` | api, worker | `dispatch_max_attempts` (`10`), `collab_allowed_origins` — a TOML array of `scheme://host[:port]` origins allowed to open live collaboration sessions (`[]`; empty refuses every session, so list the web UI's origin to enable live editing), `conversion_reap_interval_secs` (`60`, range `1..=86400`; how often the api reclaims conversion jobs left `started` for more than 15 minutes), `incremental_window` (experimental, `false`; `true` lets a collab write decide its structural limits from the page's facts and the units the update touched instead of by the full computation), `setup_cpu_budget_ms` (`2500`, range `500..=4000`; CPU time the worker's setup may consume before the page is decided by the full window, raise it on a host slower than the reference runner) |
 | `[mcp]` | mcp-server, sylvode | `api_url` (`http://localhost:8081`), `bot_token` (`opr_` prefix; **required** for `stdio` and the CLI subcommands, unused by `http`/`sse`), `workspace_id` (**required**, real non-nil UUID), `transport` — `stdio` \| `http` \| `sse` (`stdio`), `bind_addr` (`127.0.0.1:8090`) |
 
 > **Eager shape, lazy presence.** Every value the file *does* contain is
@@ -173,7 +173,8 @@ internal address is refused, and redirects are not followed.
 matched literally and case-insensitively — no wildcards, no URLs, no paths, all
 three are rejected at startup because they would silently never match. Internal
 receivers (compose services, in-cluster bots) must be listed there or their
-deliveries are refused. `outbound.allow_private = true` disables the checks
+deliveries are refused. The runner address of a project bot connection is checked the same
+way when it is entered, so a runner on an internal address must be listed too. `outbound.allow_private = true` disables the checks
 entirely and is only for a closed network you control end to end.
 
 ```toml
@@ -248,27 +249,35 @@ exactly one of these ways, each writing the `retried` or `failed` task event and
 the matching `ai_task.*` business event with the reason, and `ai.task_failed`
 when the task is failed:
 
-- **The receiver takes it** (`dispatched`) and reports the outcome through
-  `POST /api/v1/ai/callbacks/task/{id}/complete` or `.../fail`. Only the task's
-  own AI participant (its bot token) or a system administrator may call them.
-  A callback may name its attempt (`?attempt=N`, the delivery's `attempts`); it
-  is then accepted only while that attempt is `processing`, so a late callback
-  never ends a re-queued or later attempt. `fail` with `"retry": false` fails
-  the task at once instead of scheduling a retry.
-- **The receiver declines it** in its answer: `no_agent`, `ignored`, `refused`
+- **The runner takes it** (`dispatched`) and the task ends through the task protocol:
+  the agent (or the runner, for a task it cannot hand over) calls
+  `POST /api/v1/ai/tasks/{id}/complete` or `.../fail?attempt=N`. Only the task's own bot
+  (its token) or a system administrator may call them, and only while that very attempt is
+  active, so a late call never ends a re-queued or later attempt. `fail` with
+  `"retryable": false` fails the task at once instead of scheduling a retry. The older
+  `/api/v1/ai/callbacks/task/...` endpoints no longer exist.
+- **The runner declines it** in its answer: `no_agent`, `ignored`, `refused`
   (for example safe mode), or an HTTP 4xx other than 408, 409, 425 and 429. The
   worker fails the task at once, without using up the remaining attempts, with
-  an error message that quotes the answer: a repeat seconds later would get the
-  same answer, and the receiver may hold no token that can end the task itself.
-  Fix the receiver's configuration and assign the task again.
+  an error message such as `the runner refused the task (path_outside_allowlist): ...`
+  (the runner's own `reason_code` is stored in the event next to the text): a repeat
+  seconds later would get the same answer, and the runner may hold no token that
+  can end the task itself. Fix the runner's configuration and assign the task
+  again. For a project that has execution settings the issue also gets a
+  `Could not start: ...` comment.
 - **The delivery fails** (no active webhook, a transport error, HTTP 5xx, 408,
   409, 425, 429): the task goes back to `pending` with a delay of
   `attempts * 30` seconds while attempts remain, and is failed after the last.
 - **Nothing ends it** within `[ai_tasks] processing_timeout_secs` (default one
   hour): the worker re-queues it while attempts remain and fails it after the
   last, with a message naming the timeout and the attempt. This covers a
-  receiver that stopped, an agent that hangs, and a callback that was refused or
-  lost. Keep the timeout well above the receiver's longest agent run.
+  runner that stopped, an agent that hangs, and a callback that was refused or
+  lost. Keep the timeout well above the runner's longest agent run.
+
+A bot connected to a project (see below) has a **delivery hold**: after the
+connection is made, and after its credentials are rotated, the worker leaves the
+bot's pending tasks `pending` until the runner has used the new token (its
+start-up handshake does), for at most one hour.
 
 Whichever of these commits first wins; the others find the attempt no longer
 `processing` and change nothing.
@@ -282,7 +291,7 @@ and awaits them sequentially.
 
 | Pipeline             | Source                                                                 | Behavior                                                      |
 | -------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
-| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s; fails a task the receiver declines; re-queues or fails a task left `processing` past `[ai_tasks] processing_timeout_secs` |
+| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s; fails a task the runner declines; holds a newly connected bot's tasks until its token has been used; re-queues or fails a task left `processing` past `[ai_tasks] processing_timeout_secs` |
 | Operation-log cleanup | `bot_operation_logs`                                                  | Deletes metadata records older than `[audit]` retention       |
 | Form jobs            | `form_import_jobs`, `form_export_jobs`, `form_attachment_package_jobs` | Plus expiry cleanup of package artifacts and signature values |
 | Proposal settlement  | `proposals`                                                            | Settles expired proposals (moved off the API read path)       |
@@ -329,7 +338,7 @@ MCP authenticates to the API with **bot tokens** (prefix `opr_`), managed under
 activity feeds, is scoped to one workspace, creates a bot user for audit-trail
 integrity (`entity_type = bot`, `agent_type = mcp`; the same kind of identity an
 administrator creates, so it can be assigned work, named as a webhook's bot user
-and registered as an AI participant), and carries `read`, `write` or `admin` permissions that the
+and connected to a project), and carries `read`, `write` or `admin` permissions that the
 API enforces: safe methods need `read`, every other method needs `write`, and
 `admin` implies both.
 
@@ -497,8 +506,9 @@ Flow (`/flow/*`, `/collab/*`, `/workspaces/{id}/flow/*`); forms (`/forms/*`,
 plugins and events (`/plugins/*`, `/check-results/*`);
 governance (`/proposals/*`, `/proposal-comments/*`, `/decisions/*`,
 `/decision-domains/*`, `/governance/*`, `/trust-scores/*`,
-`/impact-reviews/*`, `/vetoers/*`); AI (`/ai/*`, `/ai-participants/*`,
-`/ai-learning/*`); templates (`/scenario-templates/*`, `/project-types/*`,
+`/impact-reviews/*`, `/vetoers/*`); AI (`/ai/*`, `/ai-learning/*`, the
+project-scoped `/projects/{id}/ai-participants/{bot_id}/learning`); bot connections
+(`/projects/{id}/bot-connection`, `.../disable`, `.../enable`, `.../rotate`); templates (`/scenario-templates/*`, `/project-types/*`,
 `/proposal-templates/*`); files and misc (`/upload`, `/uploads/*`, `/search`,
 `/export/*`, `/notifications/*`).
 

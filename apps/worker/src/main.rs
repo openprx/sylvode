@@ -129,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("worker shutting down");
                 break;
             }
-            result = ai_tasks::process_pending_tasks(&state, &client, args.concurrency, ai_task_processing_timeout_secs) => {
+            result = ai_tasks::process_pending_tasks(&state, args.concurrency, ai_task_processing_timeout_secs) => {
                 if let Err(err) = result {
                     tracing::warn!(error = %err, "task polling failed");
                 }
