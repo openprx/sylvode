@@ -2333,17 +2333,17 @@ mod flow_database_tests {
         .await;
         exec(
             state,
-            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, $2)",
+            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, $2) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
             vec![workspace_id.into(), flow_enabled.into()],
         )
         .await;
         (workspace_id, owner_id)
     }
 
-    /// A workspace + owner member with **no** `flow_workspace_settings` row at all — unlike
-    /// [`seed_workspace`], which always inserts one (`flow_enabled` true or false). Used by the
-    /// `features/flow` "never provisioned" default test, where the row's mere absence (not an
-    /// explicit `flow_enabled=false`) is exactly what is under test.
+    /// A workspace + owner member with **no** `flow_workspace_settings` row at all (the row the
+    /// workspace trigger creates is deleted again) — unlike [`seed_workspace`], which always has
+    /// one (`flow_enabled` true or false). Used by the `features/flow` "no row" default test,
+    /// where the row's mere absence is exactly what is under test.
     async fn seed_bare_workspace(state: &AppState) -> (Uuid, Uuid) {
         let workspace_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
@@ -2368,6 +2368,13 @@ mod flow_database_tests {
             state,
             "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
             vec![workspace_id.into(), owner_id.into()],
+        )
+        .await;
+        // The workspace trigger provisions a settings row; this helper wants none.
+        exec(
+            state,
+            "DELETE FROM flow_workspace_settings WHERE workspace_id = $1",
+            vec![workspace_id.into()],
         )
         .await;
         (workspace_id, owner_id)
@@ -4493,7 +4500,7 @@ mod flow_database_tests {
     // ---- `GET|PUT /workspaces/{workspace_id}/features/flow` ----
 
     #[tokio::test]
-    async fn get_feature_on_a_never_provisioned_workspace_returns_the_column_defaults() {
+    async fn get_feature_on_a_workspace_without_a_row_returns_the_column_defaults() {
         let scratch = scratch_or_skip!("feature-default");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_bare_workspace(&state).await;
@@ -4504,7 +4511,7 @@ mod flow_database_tests {
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         let body = body_json(response).await;
         assert_eq!(body["code"], 0, "{body}");
-        assert_eq!(body["data"]["flow_enabled"], false, "{body}");
+        assert_eq!(body["data"]["flow_enabled"], true, "{body}");
         assert_eq!(body["data"]["default_member_level"], "edit", "{body}");
         assert_eq!(body["data"]["authz_epoch"], 0, "{body}");
         assert!(body["data"]["updated_at"].is_null(), "{body}");
@@ -4531,7 +4538,7 @@ mod flow_database_tests {
     async fn admin_put_enables_flow_and_the_change_is_persisted_and_visible_to_a_later_get() {
         let scratch = scratch_or_skip!("feature-put-persist");
         let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_bare_workspace(&state).await;
+        let (workspace_id, owner_id) = seed_workspace(&state, false).await;
         let claims = claims_for(owner_id);
 
         let put_response = to_response(

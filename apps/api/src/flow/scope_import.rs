@@ -700,6 +700,12 @@ mod tests {
             "/tests/fixtures/flow-v2/legacy-browser-package-v1"
         ));
         let bytes = std::fs::read(path.join("package.zip")).unwrap();
+        exec(
+            db,
+            "UPDATE flow_runtime_capabilities SET personal_package_imports=false WHERE singleton",
+            vec![],
+        )
+        .await;
         assert!(
             upload(db, scope_id, user, bytes.clone(), None, "import-upload")
                 .await

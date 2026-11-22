@@ -3819,6 +3819,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0114_multi_bot_connections.sql",
         include_str!("../../../migrations/0114_multi_bot_connections.sql"),
     ),
+    (
+        "0115_flow_default_on.sql",
+        include_str!("../../../migrations/0115_flow_default_on.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -3878,6 +3882,8 @@ enum SchemaProbe {
     /// A constraint marker and a trigger must both exist. Used when one migration creates the
     /// static invariant and the mechanism that preserves it for future parent rows.
     ConstraintAndTrigger(&'static str, &'static str, &'static str, &'static str),
+    /// Non-internal trigger on a table, by table and trigger name.
+    Trigger(&'static str, &'static str),
     /// Complete independent block-sharing registry, private anchors and lifecycle fences.
     BlockSharing,
     PageBlockTransfers,
@@ -3918,6 +3924,18 @@ impl SchemaProbe {
                     ) AS present
                 ",
                 vec![table.into(), column.into()],
+            )),
+            Self::Trigger(table, trigger) => Some(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r"
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgrelid = to_regclass($1)
+                          AND tgname = $2
+                          AND NOT tgisinternal
+                    ) AS present
+                ",
+                vec![table.into(), trigger.into()],
             )),
             Self::EnumLabel(type_name, label) => Some(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -4390,6 +4408,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0114_multi_bot_connections.sql",
         SchemaProbe::Column("project_bot_connections", "channel"),
+    ),
+    (
+        "0115_flow_default_on.sql",
+        SchemaProbe::Trigger("workspaces", "flow_provision_workspace_settings"),
     ),
 ];
 
@@ -4959,6 +4981,7 @@ mod tests {
                 "0112_bot_connections.sql",
                 "0113_ai_task_chain.sql",
                 "0114_multi_bot_connections.sql",
+                "0115_flow_default_on.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -5165,9 +5188,48 @@ mod tests {
         ] {
             assert!(
                 !statements.contains(column),
-                "{column} stays off by default and must not be touched"
+                "{column} belongs to 0115 and must not be touched here"
             );
         }
+    }
+
+    /// 0115 re-runs whenever the ledger has no row for it: the capability switch-on must be claimed
+    /// through its marker and may only raise values, and the backfill must never overwrite a row.
+    #[test]
+    fn flow_default_on_migration_runs_once_and_never_overwrites() {
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "0115_flow_default_on.sql")
+            .map(|(_, sql)| *sql)
+            .expect("0115 must be registered");
+        let statements: String = sql
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let update = statements
+            .split_once("UPDATE flow_runtime_capabilities")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split_once("CREATE OR REPLACE FUNCTION"))
+            .map(|(update, _)| update)
+            .expect("0115 updates the singleton row");
+        assert!(
+            statements.contains("ON CONFLICT (name) DO NOTHING")
+                && update.contains("AND EXISTS (SELECT 1 FROM claimed)"),
+            "the row update must run only in the execution that claims the rollout marker"
+        );
+        assert!(
+            !update.to_lowercase().contains("false"),
+            "the one-time update may only switch capabilities on"
+        );
+        assert!(
+            !statements.contains("UPDATE flow_workspace_settings"),
+            "an existing settings row is never changed"
+        );
+        assert!(
+            statements.matches("ON CONFLICT (workspace_id) DO NOTHING").count() == 2,
+            "the trigger and the backfill both leave an existing row alone"
+        );
     }
 
     #[test]
@@ -6455,7 +6517,9 @@ mod migration_runner_database_tests {
         "portable_page_packages_enabled",
         "portable_graph_packages_enabled",
     ];
-    const DEFAULT_OFF: [&str; 4] = [
+    /// Switched on by 0115_flow_default_on.sql, which also sets them on every fresh database
+    /// through the original CREATE/ADD COLUMN statements.
+    const DEFAULT_ON_SINCE_0115: [&str; 4] = [
         "scope_native_legacy",
         "personal_package_imports",
         "personal_scope_package_exports",
@@ -6519,8 +6583,8 @@ mod migration_runner_database_tests {
         for column in DEFAULT_ON {
             assert!(capability_flag(&row, column), "{column} is on by default: {row}");
         }
-        for column in DEFAULT_OFF {
-            assert!(!capability_flag(&row, column), "{column} stays off by default: {row}");
+        for column in DEFAULT_ON_SINCE_0115 {
+            assert!(capability_flag(&row, column), "{column} is on by default: {row}");
         }
         assert_eq!(
             reader_floor(&row),
@@ -6629,14 +6693,14 @@ mod migration_runner_database_tests {
         let scratch = scratch_or_skip!("flow_caps_idempotent");
         seed_pre_ledger_schema(&scratch.db, Some(CAPABILITY_DEFAULT_MIGRATION)).await;
         let before = flow_capability_row(&scratch.db).await;
-        for column in DEFAULT_ON.iter().chain(DEFAULT_OFF.iter()) {
+        for column in DEFAULT_ON {
             assert!(!capability_flag(&before, column), "{column} starts off before 0106");
         }
         scratch
             .db
             .execute_unprepared(
-                "UPDATE flow_runtime_capabilities SET minimum_reader_version=6, personal_package_imports=true, \
-                 scope_native_legacy=true WHERE singleton",
+                "UPDATE flow_runtime_capabilities SET minimum_reader_version=6, personal_package_imports=false, \
+                 scope_native_legacy=false WHERE singleton",
             )
             .await
             .expect("the operator settings are applied");
@@ -6656,12 +6720,12 @@ mod migration_runner_database_tests {
             assert!(capability_flag(&first, column), "{column} is switched on: {first}");
         }
         assert!(
-            capability_flag(&first, "personal_package_imports"),
+            !capability_flag(&first, "personal_package_imports"),
             "operator choice kept"
         );
-        assert!(capability_flag(&first, "scope_native_legacy"), "operator choice kept");
-        assert!(!capability_flag(&first, "personal_scope_package_exports"));
-        assert!(!capability_flag(&first, "cross_workspace_forms_conversion"));
+        assert!(!capability_flag(&first, "scope_native_legacy"), "operator choice kept");
+        assert!(capability_flag(&first, "personal_scope_package_exports"));
+        assert!(capability_flag(&first, "cross_workspace_forms_conversion"));
         assert_eq!(reader_floor(&first), 6, "the reader floor is never lowered");
 
         scratch
@@ -6678,13 +6742,168 @@ mod migration_runner_database_tests {
         run_migrations_with(&scratch.db, MigrationOptions::default())
             .await
             .expect("the runner adopts the database and re-executes the post-cutoff files");
+        // The runner also executes 0115 for the first time, which switches the four capabilities
+        // 0106 leaves alone on once; nothing else changes and the reader floor stays.
+        let mut expected = first.clone();
+        for column in DEFAULT_ON_SINCE_0115 {
+            expected[column] = serde_json::Value::Bool(true);
+        }
         assert_eq!(
             flow_capability_row(&scratch.db).await,
-            first,
-            "the runner's execution is a no-op"
+            expected,
+            "the runner's execution only adds the 0115 switch-on"
         );
         assert_schema_complete(&scratch.db).await;
 
+        scratch.drop_self().await;
+    }
+
+    const FLOW_DEFAULT_ON_MIGRATION: &str = "0115_flow_default_on.sql";
+
+    async fn insert_workspace(db: &DatabaseConnection, user: uuid::Uuid) -> uuid::Uuid {
+        let workspace = uuid::Uuid::new_v4();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workspaces(id,slug,name,created_by) VALUES($1,$2,'Flow default',$3)",
+            vec![workspace.into(), format!("fd-{workspace}").into(), user.into()],
+        ))
+        .await
+        .expect("the workspace is created");
+        workspace
+    }
+
+    async fn flow_enabled_row(db: &DatabaseConnection, workspace: uuid::Uuid) -> Option<bool> {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT flow_enabled FROM flow_workspace_settings WHERE workspace_id=$1",
+            vec![workspace.into()],
+        ))
+        .await
+        .expect("the settings row is readable")
+        .map(|row| row.try_get::<bool>("", "flow_enabled").expect("flow_enabled column"))
+    }
+
+    async fn insert_user(db: &DatabaseConnection) -> uuid::Uuid {
+        let user = uuid::Uuid::new_v4();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO users(id,email,password_hash,name,role,is_active) VALUES($1,$2,'!','Flow default','user',true)",
+            vec![user.into(), format!("{user}@flow-default.test").into()],
+        ))
+        .await
+        .expect("the user is created");
+        user
+    }
+
+    /// A fresh database gives every workspace a settings row with Flow on, and deleting the
+    /// workspace removes that row without error.
+    #[tokio::test]
+    async fn a_new_workspace_gets_a_flow_settings_row_with_flow_on() {
+        let scratch = scratch_or_skip!("flow_ws_default");
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+        let user = insert_user(&scratch.db).await;
+        let workspace = insert_workspace(&scratch.db, user).await;
+        assert_eq!(flow_enabled_row(&scratch.db, workspace).await, Some(true));
+
+        scratch
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM workspaces WHERE id=$1",
+                vec![workspace.into()],
+            ))
+            .await
+            .expect("a workspace with its settings row can be deleted");
+        assert_eq!(flow_enabled_row(&scratch.db, workspace).await, None);
+        scratch.drop_self().await;
+    }
+
+    /// An existing database that predates 0115 gets the four capabilities switched on once, a
+    /// settings row for every workspace that had none, and keeps a deliberate `flow_enabled=false`
+    /// row; a later operator switch-off survives executing the file again.
+    #[tokio::test]
+    async fn the_flow_default_on_migration_upgrades_an_existing_database_once() {
+        let scratch = scratch_or_skip!("flow_default_on_upgrade");
+        seed_pre_ledger_schema(&scratch.db, Some(FLOW_DEFAULT_ON_MIGRATION)).await;
+        let user = insert_user(&scratch.db).await;
+        let without_row = insert_workspace(&scratch.db, user).await;
+        let switched_off = insert_workspace(&scratch.db, user).await;
+        scratch
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,false) \
+                 ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled=false",
+                vec![switched_off.into()],
+            ))
+            .await
+            .expect("the deliberate switch-off is stored");
+        scratch
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM flow_workspace_settings WHERE workspace_id=$1",
+                vec![without_row.into()],
+            ))
+            .await
+            .expect("the row of the old workspace is absent, as on an old database");
+        scratch
+            .db
+            .execute_unprepared(
+                "UPDATE flow_runtime_capabilities SET scope_native_legacy=false, personal_package_imports=false, \
+                 personal_scope_package_exports=false, cross_workspace_forms_conversion=false WHERE singleton",
+            )
+            .await
+            .expect("the old defaults are restored");
+
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == FLOW_DEFAULT_ON_MIGRATION)
+            .map(|(_, sql)| *sql)
+            .expect("0115 is registered");
+        scratch
+            .db
+            .execute_unprepared(sql)
+            .await
+            .expect("0115 first execution succeeds");
+        let first = flow_capability_row(&scratch.db).await;
+        for column in DEFAULT_ON_SINCE_0115 {
+            assert!(capability_flag(&first, column), "{column} is switched on: {first}");
+        }
+        assert_eq!(flow_enabled_row(&scratch.db, without_row).await, Some(true));
+        assert_eq!(
+            flow_enabled_row(&scratch.db, switched_off).await,
+            Some(false),
+            "a deliberate switch-off is not flipped"
+        );
+        let created_later = insert_workspace(&scratch.db, user).await;
+        assert_eq!(flow_enabled_row(&scratch.db, created_later).await, Some(true));
+
+        scratch
+            .db
+            .execute_unprepared(
+                "UPDATE flow_runtime_capabilities SET personal_scope_package_exports=false WHERE singleton",
+            )
+            .await
+            .expect("the operator switches an export capability off");
+        let operator = flow_capability_row(&scratch.db).await;
+        scratch
+            .db
+            .execute_unprepared(sql)
+            .await
+            .expect("0115 second execution succeeds");
+        assert_eq!(
+            flow_capability_row(&scratch.db).await,
+            operator,
+            "a second execution keeps the operator's choice"
+        );
+        assert_eq!(flow_enabled_row(&scratch.db, switched_off).await, Some(false));
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("the runner adopts the database and re-executes the post-cutoff files");
+        assert_schema_complete(&scratch.db).await;
         scratch.drop_self().await;
     }
 
@@ -7507,7 +7726,7 @@ mod flow_surface_boundary_tests {
         .await;
         exec(
             db,
-            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true)",
+            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
             vec![workspace_id.into()],
         )
         .await;

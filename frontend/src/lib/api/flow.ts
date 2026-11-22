@@ -1450,9 +1450,8 @@ export const flowApi = {
 	/**
 	 * `GET /workspaces/{workspace_id}/features/flow` (`rest-api-v1.md` v0.4 table; routed in
 	 * `apps/api/src/main.rs`). Callers MUST treat any non-success `ApiResult` (including a
-	 * transport-level failure) as `flow_enabled=false`,
-	 * matching the fail-closed default `flow_workspace_settings.flow_enabled` already has in
-	 * `apps/api/src/flow/repository.rs::fetch_flow_enabled`.
+	 * transport-level failure) as `flow_enabled=false`: Flow is on by default on the server, but a
+	 * failed read is not proof of that, so the client stays fail-closed.
 	 */
 	getFeatureFlags(workspaceId: string): Promise<ApiResult<FlowFeatureFlags>> {
 		return apiClient.get<FlowFeatureFlags>(`/api/v1/workspaces/${workspaceId}/features/flow`);

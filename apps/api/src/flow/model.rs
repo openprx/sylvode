@@ -273,9 +273,9 @@ pub struct FlowSearchResponse {
 /// (`GET|PUT /workspaces/{workspace_id}/features/flow`).
 ///
 /// `updated_at`/`updated_by` are `null` (key still present, matching every other field here) for a
-/// workspace whose `flow_workspace_settings` row does not exist yet — `flow_workspace_settings` is
-/// provisioned lazily by the first `PUT`, and a `GET` must not have the side effect of creating one
-/// (see [`super::policy::require_flow_enabled`]'s "provisioned lazily" doc comment).
+/// workspace whose `flow_workspace_settings` row does not exist (normally every workspace has one,
+/// created with it); a `GET` must not have the side effect of creating one, and answers the column
+/// defaults, `flow_enabled: true` included.
 #[derive(Debug, Clone, Serialize)]
 pub struct FlowFeatureView {
     pub flow_enabled: bool,

@@ -1,7 +1,7 @@
 -- Conversion ownership follows its source Flow scope. workspace_id is the genuine destination
 -- Forms workspace, which may differ from a legacy source binding or have no source binding.
 ALTER TABLE flow_runtime_capabilities ADD COLUMN IF NOT EXISTS personal_forms_conversion BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE flow_runtime_capabilities ADD COLUMN IF NOT EXISTS cross_workspace_forms_conversion BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE flow_runtime_capabilities ADD COLUMN IF NOT EXISTS cross_workspace_forms_conversion BOOLEAN NOT NULL DEFAULT true;
 DO $$ DECLARE tab TEXT; BEGIN
  FOREACH tab IN ARRAY ARRAY['flow_conversion_previews','flow_conversion_jobs','flow_object_lineage'] LOOP
   IF NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name=tab AND column_name='scope_id') THEN

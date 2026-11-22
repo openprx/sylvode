@@ -1,9 +1,9 @@
 # Flow runtime capabilities
 
 Flow features that are rolled out installation-wide are switched in the single row of
-`flow_runtime_capabilities`. Since migration `0106_flow_capabilities_default_on.sql` the features
-the shipped components implement are on by default: on a fresh database and, once, on an existing
-database when it is upgraded. No manual SQL is needed for an ordinary user to open a personal Flow
+`flow_runtime_capabilities`. Since migrations `0106_flow_capabilities_default_on.sql` and
+`0115_flow_default_on.sql` every capability is on by default: on a fresh database and, once, on an
+existing database when it is upgraded. No manual SQL is needed for an ordinary user to open a personal Flow
 space and write Pages in it.
 
 | Column | Default | What it gates |
@@ -16,10 +16,20 @@ space and write Pages in it.
 | `block_transfers_enabled` | on | Moving or copying blocks between Pages (needs `minimum_reader_version` exactly 5). |
 | `portable_page_packages_enabled` | on | Portable single-Page package export and import. |
 | `portable_graph_packages_enabled` | on | Portable multi-object package export and import. |
-| `scope_native_legacy` | off | Scope-native editor initialization of legacy workspace Pages. |
-| `personal_package_imports` | off | Importing archive packages into a personal scope. |
-| `personal_scope_package_exports` | off | Exporting a whole personal scope as a package. |
-| `cross_workspace_forms_conversion` | off | Converting Flow content into a different workspace's Forms. |
+| `scope_native_legacy` | on | Scope-native editor initialization of legacy workspace Pages. |
+| `personal_package_imports` | on | Importing archive packages into a personal scope. |
+| `personal_scope_package_exports` | on | Exporting a whole personal scope as a package. |
+| `cross_workspace_forms_conversion` | on | Converting Flow content into a different workspace's Forms. |
+
+## Flow per workspace
+
+Flow is also on by default for every workspace. `flow_workspace_settings.flow_enabled` defaults to
+`true`, and a trigger on `workspaces` (migration `0115`) creates the settings row together with the
+workspace, so a new workspace has Flow on without any step by an operator. An administrator can
+switch Flow off for one workspace in the workspace's Flow settings, or with
+`PUT /api/v1/workspaces/{id}/features/flow`; that explicit `false` row is never changed by a
+migration. A workspace that somehow has no settings row reads as enabled, but the authorization
+fence needs the row, so keep it: do not delete rows from `flow_workspace_settings`.
 
 A capability only allows a feature; every request is still authorized per user (personal scopes
 are reachable only by their owner and explicit grantees).
@@ -68,10 +78,11 @@ UPDATE flow_runtime_capabilities SET block_transfers_enabled = false, updated_at
 ```
 
 The change takes effect on the next request; no restart is needed. It survives restarts and
-re-running migrations: `0106` switches the row on only in the one execution that records the
-`flow_capabilities_default_on` marker in `flow_runtime_capability_rollouts`, so a later replay
-(`migrations.replay`) or re-execution leaves the operator's values alone. Do not delete that marker
-row; doing so lets the next execution of `0106` switch the defaults on again.
+re-running migrations: `0106` and `0115` switch the row on only in the one execution that records
+their marker (`flow_capabilities_default_on`, `flow_default_on`) in
+`flow_runtime_capability_rollouts`, so a later replay (`migrations.replay`) or re-execution leaves the
+operator's values alone. Do not delete those marker rows; doing so lets the next execution switch
+the defaults on again.
 
 Turning `personal_writes` and `personal_provisioning` off stops new personal scopes and every
 personal write; existing personal content stays readable to its owner and grantees, and owners can

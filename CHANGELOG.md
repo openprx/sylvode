@@ -40,6 +40,13 @@ name.
 
 ### Changed
 
+- **Flow is on by default everywhere.** A workspace has Flow on unless an administrator switches it
+  off: `flow_workspace_settings.flow_enabled` defaults to `true`, a trigger creates the settings row
+  with every workspace, and migration `0115_flow_default_on.sql` backfills the rows of existing
+  workspaces without touching a row that is switched off. The four capabilities
+  `scope_native_legacy`, `personal_package_imports`, `personal_scope_package_exports` and
+  `cross_workspace_forms_conversion` now default on as well (switched on once for an existing
+  database). The switches themselves stay. See `docs/runbooks/flow-runtime-capabilities.md`.
 - **Runner hardening, third review.** Busy, choice and dialog detection reads only the CLI's own
   chrome at the bottom of the screen; a screen hold is bounded (`screen_hold_secs`, default 600) and
   then fails the waiting tasks as retryable; an acknowledged task is busy even if its
@@ -477,7 +484,7 @@ name.
   for 1,400 and 5,000 block pages.
 - **The plugin package concurrency budget** (four concurrent runs per process) is now covered by
   a unit test.
-- **Flow: personal Flow and the shipped installation-wide Flow capabilities are on by default.** Migration `0106_flow_capabilities_default_on.sql` defaults `personal_provisioning`, `personal_writes`, `external_mounts`, `personal_forms_conversion`, `block_transfers_enabled`, `portable_page_packages_enabled` and `portable_graph_packages_enabled` on and raises `minimum_reader_version` to 5, so a fresh installation needs no manual SQL before users can open a personal Flow space and write Pages. `scope_native_legacy`, `personal_package_imports`, `personal_scope_package_exports` and `cross_workspace_forms_conversion` stay off. See `docs/runbooks/flow-runtime-capabilities.md`.
+- **Flow: personal Flow and the shipped installation-wide Flow capabilities are on by default.** Migration `0106_flow_capabilities_default_on.sql` defaults `personal_provisioning`, `personal_writes`, `external_mounts`, `personal_forms_conversion`, `block_transfers_enabled`, `portable_page_packages_enabled` and `portable_graph_packages_enabled` on and raises `minimum_reader_version` to 5, so a fresh installation needs no manual SQL before users can open a personal Flow space and write Pages. `scope_native_legacy`, `personal_package_imports`, `personal_scope_package_exports` and `cross_workspace_forms_conversion` were switched on later by `0115_flow_default_on.sql`. See `docs/runbooks/flow-runtime-capabilities.md`.
 
 ### Fixed
 

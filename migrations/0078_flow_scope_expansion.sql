@@ -35,7 +35,7 @@ CREATE TABLE flow_scope_revocations (
 CREATE TABLE flow_runtime_capabilities (
   singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK(singleton),
   minimum_reader_version INTEGER NOT NULL DEFAULT 2 CHECK(minimum_reader_version>=2),
-  scope_native_legacy BOOLEAN NOT NULL DEFAULT false,
+  scope_native_legacy BOOLEAN NOT NULL DEFAULT true,
   personal_provisioning BOOLEAN NOT NULL DEFAULT false,
   personal_writes BOOLEAN NOT NULL DEFAULT false,
   external_mounts BOOLEAN NOT NULL DEFAULT false,

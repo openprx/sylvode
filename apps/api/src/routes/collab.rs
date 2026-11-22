@@ -637,7 +637,7 @@ mod collab_database_tests {
         .await;
         exec(
             state,
-            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true)",
+            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
             vec![workspace_id.into()],
         )
         .await;
@@ -2114,29 +2114,15 @@ mod collab_database_tests {
 
         scratch.drop_self().await;
     }
-    /// The fail-**closed** half of the gate: a workspace that has never had a
-    /// `flow_workspace_settings` row written at all.
+    /// A workspace whose `flow_workspace_settings` row is missing.
     ///
-    /// `repository::fetch_flow_enabled` ends in `Ok(row.is_some_and(|r| r.flow_enabled))` — a
-    /// missing row reads as "off". Both `policy::require_flow_enabled` and
-    /// `policy::require_flow_enabled_on` document that as an invariant ("a missing row is
-    /// deliberately treated the same as an explicit `false` ... fail closed, not fail open on
-    /// absence"), and all three of the `flow_enabled` gates on the collab path — ticket issuance,
-    /// the WebSocket upgrade, and the `open` frame — bottom out in that single `is_some_and`.
-    ///
-    /// Nothing tested it. Flipping that one call to `is_none_or` left the entire `-p api --lib`
-    /// suite green, because every seed helper in this crate unconditionally inserts a settings row
-    /// and nothing anywhere deletes one, so the row-absent state was never exercised. The
-    /// consequence of that mutation is the worst case for a rollout flag: a never-provisioned
-    /// workspace — the default state of every workspace that predates Flow — walks straight
-    /// through all three gates.
-    ///
-    /// Only the issuance gate is reachable in this state by design, and that is the point rather
-    /// than a gap: doors two and three sit behind a ticket, and a ticket can only exist if
-    /// issuance already saw `flow_enabled = true`, which requires the row. Absence is therefore
-    /// naturally reachable at this door and at no other.
+    /// Flow is on by default and a trigger gives every workspace a settings row, so this state does
+    /// not occur in normal operation. If it ever does, `repository::fetch_flow_enabled` reads the
+    /// absence as enabled (the column default), but the authorization epoch fence locks that row
+    /// and refuses with `NotFound`: no ticket is issued from a workspace that has nothing to fence
+    /// against. The explicit `flow_enabled = false` refusal is covered by the tests above.
     #[tokio::test]
-    async fn a_never_provisioned_workspace_cannot_obtain_a_collab_ticket() {
+    async fn a_workspace_without_a_settings_row_cannot_obtain_a_collab_ticket() {
         let scratch = scratch_or_skip!("ticket-never-provisioned");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
@@ -2187,8 +2173,8 @@ mod collab_database_tests {
         assert_eq!(response.status(), reqwest::StatusCode::OK);
         let body: Value = response.json().await.expect("ticket response is JSON");
         assert_eq!(
-            body["code"], 403,
-            "an absent settings row must fail exactly like an explicit flow_enabled=false: {body}"
+            body["code"], 404,
+            "an absent settings row leaves nothing to fence against and is refused: {body}"
         );
         assert!(
             !body.to_string().contains("ticket"),
@@ -2197,7 +2183,7 @@ mod collab_database_tests {
         assert_eq!(
             count_tickets(&state, workspace_id).await,
             0,
-            "a never-provisioned workspace must not leave a collab_tickets row behind"
+            "a workspace without a settings row must not leave a collab_tickets row behind"
         );
 
         scratch.drop_self().await;

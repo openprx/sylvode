@@ -1,5 +1,5 @@
-ALTER TABLE flow_runtime_capabilities ADD COLUMN IF NOT EXISTS personal_package_imports BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE flow_runtime_capabilities ADD COLUMN IF NOT EXISTS personal_scope_package_exports BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE flow_runtime_capabilities ADD COLUMN IF NOT EXISTS personal_package_imports BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE flow_runtime_capabilities ADD COLUMN IF NOT EXISTS personal_scope_package_exports BOOLEAN NOT NULL DEFAULT true;
 -- Import destination ownership is a real Flow scope; optional workspace is only its legacy
 -- binding. Source scope/workspace IDs are opaque archive provenance, never local ownership.
 DO $$ BEGIN

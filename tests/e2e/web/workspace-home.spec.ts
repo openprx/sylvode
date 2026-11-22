@@ -119,6 +119,13 @@ test('workspace home: entry from the list, cards by role and Flow flag, titles',
 		);
 		projectIds.push(created.id);
 	}
+	// Flow is on by default; this scenario starts with Flow switched off.
+	await unwrap(
+		await request.put(`/api/v1/workspaces/${workspace.id}/features/flow`, {
+			headers: ownerAuth,
+			data: { enabled: false, idempotency_key: crypto.randomUUID() }
+		})
+	);
 	const homeUrl = `/workspace/${workspace.id}`;
 
 	// ---- owner, Flow off ----
