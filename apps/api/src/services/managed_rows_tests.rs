@@ -373,6 +373,74 @@ async fn a_webhook_cannot_name_a_managed_bot() {
     scratch.drop_self().await;
 }
 
+/// Creating, updating and deleting a webhook each write exactly one business event of their own,
+/// for the Webhooks routes (`Refuse`) and for the connection service (`Allow`); only the
+/// connection's events say so.
+#[tokio::test]
+async fn every_webhook_write_emits_its_business_event_once_for_both_callers() {
+    let scratch = scratch_or_skip!("webhook_events");
+    let db = &scratch.db;
+    let w = world(db, "we").await;
+    let ws = w.tenant.workspace_id;
+    let actor = w.tenant.member_id;
+
+    for policy in [ManagedPolicy::Refuse, ManagedPolicy::Allow] {
+        let tx = db.begin().await.expect("begin");
+        let created = webhooks::create(
+            &tx,
+            NewWebhook {
+                workspace_id: ws,
+                actor_id: actor,
+                name: format!("{policy:?}"),
+                url: "https://events.example.net/webhook".to_string(),
+                secret: None,
+                events: Vec::new(),
+                active: false,
+                bot_user_id: None,
+            },
+            policy,
+        )
+        .await
+        .expect("create");
+        let id = created.webhook.id;
+        webhooks::update(
+            &tx,
+            ws,
+            id,
+            actor,
+            serde_json::from_value(json!({"url": "https://events-moved.example.net/webhook"})).expect("request"),
+            policy,
+        )
+        .await
+        .expect("update");
+        webhooks::delete(&tx, ws, id, actor, policy).await.expect("delete");
+        tx.commit().await.expect("commit");
+
+        for event in ["webhook.created", "webhook.updated", "webhook.deleted"] {
+            let once = count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM business_events WHERE aggregate_id = $1 AND event_type = $2",
+                vec![id.to_string().into(), event.into()],
+            )
+            .await;
+            assert_eq!(once, 1, "{policy:?}: {event} is written once");
+            let marked = count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM business_events \
+                 WHERE aggregate_id = $1 AND event_type = $2 AND metadata->>'managed_by_connection' = 'true'",
+                vec![id.to_string().into(), event.into()],
+            )
+            .await;
+            assert_eq!(
+                marked,
+                i64::from(policy == ManagedPolicy::Allow),
+                "{policy:?}: {event} marker"
+            );
+        }
+    }
+    scratch.drop_self().await;
+}
+
 /// The connection's own writes pass the guards, are marked in their events, and no event of any
 /// bot or webhook write carries the token or a signing secret.
 #[tokio::test]

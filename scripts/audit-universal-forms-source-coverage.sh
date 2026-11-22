@@ -148,6 +148,7 @@ for path in \
   apps/api/src/routes/form.rs \
   apps/api/src/routes/plugin.rs \
   apps/api/src/routes/webhook.rs \
+  apps/api/src/services/webhooks.rs \
   apps/api/src/routes/check_result.rs \
   apps/api/src/routes/project_type.rs \
   apps/api/src/routes/scenario_template.rs \
@@ -242,9 +243,9 @@ contains "auth route persists notification preferences" "apps/api/src/routes/aut
 
 printf '\nWorker and event delivery coverage:\n'
 contains "worker emits AI task business events" "apps/worker/src/ai_tasks.rs" "ai_task.picked_up"
-contains "legacy webhook route emits created business events" "apps/api/src/routes/webhook.rs" "webhook.created"
-contains "legacy webhook route emits updated business events" "apps/api/src/routes/webhook.rs" "webhook.updated"
-contains "legacy webhook route emits deleted business events" "apps/api/src/routes/webhook.rs" "webhook.deleted"
+contains "webhook service emits created business events" "apps/api/src/services/webhooks.rs" "webhook.created"
+contains "webhook service emits updated business events" "apps/api/src/services/webhooks.rs" "webhook.updated"
+contains "webhook service emits deleted business events" "apps/api/src/services/webhooks.rs" "webhook.deleted"
 contains "check result route emits created business events" "apps/api/src/routes/check_result.rs" "check_result.created"
 contains "check result route emits proposed business events" "apps/api/src/routes/check_result.rs" "check_result.proposed"
 contains "check result route emits proposal business events" "apps/api/src/routes/check_result.rs" "proposal.created_from_check_result"
