@@ -43,7 +43,7 @@ struct BuildInfo {
 #[derive(Parser)]
 #[command(name = "api", about = "Sylvode API server")]
 struct Args {
-    /// Path to the configuration file. Defaults to config/sylvode.toml, with legacy fallback.
+    /// Path to the configuration file. Defaults to config/sylvode.toml.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -82,10 +82,6 @@ async fn main() -> anyhow::Result<()> {
     // startup rather than leaving half the service reading the fallback settings.
     api::config::install(&config).map_err(|err| anyhow::anyhow!("{err}"))?;
     logging::init(&config.logging, "api")?;
-    // Emitted only now: the logger it goes through did not exist while the file was loading.
-    if let Some(notice) = platform::config::take_legacy_discovery_notice() {
-        tracing::warn!("{notice}");
-    }
     warn_if_flow_collab_writes_unsupported();
 
     // from_config first: it reports a missing database url and signing key together, so the

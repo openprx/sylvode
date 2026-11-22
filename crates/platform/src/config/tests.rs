@@ -1,11 +1,10 @@
 //! Behavioural tests for the file backed configuration.
 
 use std::path::{Path, PathBuf};
-use std::{fs, process};
 
 use super::{
-    AppConfig, ConfigError, DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH, LogFormat, LogOutput, McpToolMode, McpTransport,
-    OpenPrConfig, REDACTED, StdoutRole, StorageBackend, resolve_config_path, resolve_default_config_path,
+    AppConfig, ConfigError, DEFAULT_CONFIG_PATH, LogFormat, LogOutput, McpToolMode, McpTransport, OpenPrConfig,
+    REDACTED, StdoutRole, StorageBackend,
 };
 
 const WORKSPACE: &str = "0f8a1b2c-3d4e-4f60-8182-93a4b5c6d7e8";
@@ -567,24 +566,6 @@ fn the_shipped_example_is_structurally_valid_toml_for_this_schema() {
     AppConfig::from_config(&config, "api", "0.0.0.0:8081").expect("the filled in example is enough to start the api");
 }
 
-#[test]
-fn sylvode_and_legacy_shipped_examples_have_the_same_valid_schema() {
-    for example in [
-        include_str!("../../../../config/sylvode.example.toml"),
-        include_str!("../../../../config/openpr.example.toml"),
-    ] {
-        let filled = example
-            .replace("replace_with_postgres_password", "s3cret")
-            .replace("replace_with_a_64_character_hex_secret", &"a".repeat(64))
-            .replace("replace_with_s3_access_key_id", "AKIAEXAMPLE")
-            .replace("replace_with_s3_secret_access_key", "s3-secret")
-            .replace("replace_with_opr_bot_token", "opr_live_token")
-            .replace("replace_with_mcp_inbound_token", "mcp-inbound-token-value")
-            .replace("replace_with_connector_credential", "connector-credential");
-        parse(&filled).expect("both shipped names must retain the same validated TOML schema");
-    }
-}
-
 // ---- uuids ----
 
 #[test]
@@ -859,69 +840,6 @@ fn a_directory_in_place_of_the_file_is_reported_as_unreadable() {
         matches!(error, ConfigError::Unreadable { .. } | ConfigError::Malformed { .. }),
         "{error}"
     );
-}
-
-#[test]
-fn sylvode_default_legacy_discovery_and_conflict_are_explicit() {
-    let root = std::env::temp_dir().join(format!("sylvode-config-compat-{}", process::id()));
-    let config_dir = root.join("config");
-    fs::create_dir_all(&config_dir).expect("test config directory");
-    let canonical = root.join(DEFAULT_CONFIG_PATH);
-    let legacy = root.join(LEGACY_CONFIG_PATH);
-
-    assert_eq!(
-        resolve_default_config_path(&root).expect("missing files select the new default"),
-        canonical
-    );
-    fs::write(&legacy, "[logging]\nformat='json'\n").expect("legacy fixture");
-    assert_eq!(
-        resolve_default_config_path(&root).expect("legacy-only config is discovered"),
-        legacy
-    );
-    fs::write(&canonical, "[logging]\nformat='json'\n").expect("canonical fixture");
-    let conflict = resolve_default_config_path(&root).expect_err("two implicit configs must fail closed");
-    assert!(
-        conflict
-            .to_string()
-            .contains("both config/sylvode.toml and legacy config/openpr.toml exist")
-    );
-    assert!(conflict.to_string().contains("--config explicitly"));
-
-    fs::remove_dir_all(root).expect("remove test config directory");
-}
-
-/// Only default discovery that falls back to the legacy file is marked for the ADR-0020 D2
-/// notice: not the canonical default, and not an explicit `--config` naming the legacy file.
-#[test]
-fn sylvode_only_default_discovery_of_the_legacy_file_is_marked_for_the_notice() {
-    let root = std::env::temp_dir().join(format!("sylvode-config-notice-{}", process::id()));
-    let config_dir = root.join("config");
-    fs::create_dir_all(&config_dir).expect("test config directory");
-    let canonical = root.join(DEFAULT_CONFIG_PATH);
-    let legacy = root.join(LEGACY_CONFIG_PATH);
-
-    fs::write(&legacy, "[logging]\nformat='json'\n").expect("legacy fixture");
-    assert_eq!(
-        resolve_config_path(None, &root).expect("legacy-only config is discovered"),
-        (legacy.clone(), true)
-    );
-    assert_eq!(
-        resolve_config_path(Some(&legacy), &root).expect("an explicit legacy path is accepted"),
-        (legacy.clone(), false)
-    );
-    assert_eq!(
-        resolve_config_path(Some(Path::new(LEGACY_CONFIG_PATH)), &root).expect("an explicit relative legacy path"),
-        (PathBuf::from(LEGACY_CONFIG_PATH), false)
-    );
-
-    fs::remove_file(&legacy).expect("remove legacy fixture");
-    fs::write(&canonical, "[logging]\nformat='json'\n").expect("canonical fixture");
-    assert_eq!(
-        resolve_config_path(None, &root).expect("canonical config is discovered"),
-        (canonical, false)
-    );
-
-    fs::remove_dir_all(root).expect("remove test config directory");
 }
 
 // ---- projection onto AppConfig ----

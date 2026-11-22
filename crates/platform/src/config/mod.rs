@@ -52,7 +52,6 @@ mod secret;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use uuid::Uuid;
 
@@ -72,9 +71,6 @@ pub use secret::{REDACTED, Secret};
 /// Relative to the process working directory, so a container that mounts the file at
 /// `/app/config/sylvode.toml` and runs with `/app` as its working directory needs no flag.
 pub const DEFAULT_CONFIG_PATH: &str = "config/sylvode.toml";
-
-/// v0.8 and older default. It is discovered only when the new default does not exist.
-pub const LEGACY_CONFIG_PATH: &str = "config/openpr.toml";
 
 /// Shortest accepted `auth.jwt_secret`.
 ///
@@ -186,13 +182,8 @@ impl OpenPrConfig {
     ///
     /// `explicit` is the path a `--config` flag carried. When it is `None`,
     /// [`DEFAULT_CONFIG_PATH`] is used, relative to the process working directory.
-    ///
-    /// When `explicit` is `None` and only the legacy [`LEGACY_CONFIG_PATH`] exists, the legacy
-    /// file is used and the process is marked so that [`take_legacy_discovery_notice`] returns
-    /// the deprecation notice once. An explicit path is the operator's deliberate choice and is
-    /// never marked, whatever it is called.
     pub fn load(explicit: Option<&Path>) -> Result<Self, ConfigError> {
-        let (path, legacy_discovered) = resolve_config_path(explicit, Path::new("."))?;
+        let path = explicit.map_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH), Path::to_path_buf);
         let source = match fs::read_to_string(&path) {
             Ok(source) => source,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -205,11 +196,7 @@ impl OpenPrConfig {
                 });
             }
         };
-        let config = Self::parse(&source, &absolute(&path))?;
-        if legacy_discovered {
-            LEGACY_DISCOVERED.store(true, Ordering::Relaxed);
-        }
-        Ok(config)
+        Self::parse(&source, &absolute(&path))
     }
 
     /// Validates configuration already held in memory. `origin` only labels diagnostics.
@@ -241,54 +228,6 @@ impl OpenPrConfig {
     /// load time; a value that *is* present is already known to be well formed.
     pub fn mcp_runtime(&self) -> Result<McpRuntime, ConfigError> {
         self.mcp.runtime(&self.origin)
-    }
-}
-
-/// Whether this process loaded the legacy configuration file through default discovery.
-static LEGACY_DISCOVERED: AtomicBool = AtomicBool::new(false);
-
-/// Whether the legacy discovery notice has already been handed out in this process.
-static LEGACY_NOTICE_TAKEN: AtomicBool = AtomicBool::new(false);
-
-/// The ADR-0020 D2 notice for a legacy configuration file found by default discovery, the
-/// first time it is asked for in a process that loaded one; `None` otherwise.
-///
-/// A binary calls this right after installing its logger and writes the result as one `warn`
-/// line. Loading happens before the logger exists — the logger is configured by the file — so
-/// the notice waits here rather than being emitted into a subscriber that is not there yet.
-/// The swap makes "once per process" structural: a second caller gets `None`.
-pub fn take_legacy_discovery_notice() -> Option<String> {
-    if !LEGACY_DISCOVERED.load(Ordering::Relaxed) || LEGACY_NOTICE_TAKEN.swap(true, Ordering::Relaxed) {
-        return None;
-    }
-    Some(crate::deprecation::legacy_config_discovery(
-        LEGACY_CONFIG_PATH,
-        DEFAULT_CONFIG_PATH,
-    ))
-}
-
-/// The file to read, and whether it is the legacy file reached by default discovery.
-fn resolve_config_path(explicit: Option<&Path>, base: &Path) -> Result<(PathBuf, bool), ConfigError> {
-    if let Some(path) = explicit {
-        return Ok((path.to_path_buf(), false));
-    }
-    let path = resolve_default_config_path(base)?;
-    let legacy = path == base.join(LEGACY_CONFIG_PATH);
-    Ok((path, legacy))
-}
-
-fn resolve_default_config_path(base: &Path) -> Result<PathBuf, ConfigError> {
-    let canonical = base.join(DEFAULT_CONFIG_PATH);
-    let legacy = base.join(LEGACY_CONFIG_PATH);
-    match (canonical.exists(), legacy.exists()) {
-        (true, true) => Err(ConfigError::Invalid {
-            path: absolute(&canonical),
-            issues: vec![format!(
-                "both {DEFAULT_CONFIG_PATH} and legacy {LEGACY_CONFIG_PATH} exist; pass --config explicitly or remove one so configuration precedence is never silent"
-            )],
-        }),
-        (false, true) => Ok(legacy),
-        (_, false) => Ok(canonical),
     }
 }
 

@@ -40,16 +40,10 @@ MODE="${1:-}"
 # only source of their configuration. `.env` survives for docker-compose's own interpolation and
 # for the postgres image, which initialises itself from POSTGRES_PASSWORD.
 ENV_FILE=".env"
-# shellcheck source=scripts/lib/sylvode_compat.sh
-source "$PROJECT_ROOT/scripts/lib/sylvode_compat.sh"
-CANONICAL_APP_CONFIG="./config/sylvode.compose.toml"
-LEGACY_APP_CONFIG="./config/openpr.compose.toml"
-CANONICAL_MCP_CONFIG="./config/sylvode.compose.mcp.toml"
-LEGACY_MCP_CONFIG="./config/openpr.compose.mcp.toml"
-
-# A legacy file still works; picking one prints its deprecation notice on stderr.
-sylvode_select_config_into APP_CONFIG "$CANONICAL_APP_CONFIG" "$LEGACY_APP_CONFIG"
-sylvode_select_config_into MCP_CONFIG "$CANONICAL_MCP_CONFIG" "$LEGACY_MCP_CONFIG"
+# shellcheck source=scripts/lib/sylvode_env.sh
+source "$PROJECT_ROOT/scripts/lib/sylvode_env.sh"
+APP_CONFIG="./config/sylvode.compose.toml"
+MCP_CONFIG="./config/sylvode.compose.mcp.toml"
 export SYLVODE_APP_CONFIG_PATH="$APP_CONFIG"
 export SYLVODE_MCP_CONFIG_PATH="$MCP_CONFIG"
 
@@ -118,14 +112,12 @@ if [ ! -f "$ENV_FILE" ]; then
   chmod 600 "$ENV_FILE"
 fi
 
-# Resolved in this shell, not in command substitutions, so each legacy variable that is set
-# prints its deprecation notice once per run.
-sylvode_resolve_env_into SYLVODE_BIND_HOST "$ENV_FILE" SYLVODE_BIND_HOST OPENPR_BIND_HOST 127.0.0.1
-sylvode_resolve_env_into SYLVODE_API_PORT "$ENV_FILE" SYLVODE_API_PORT OPENPR_API_PORT 8081
-sylvode_resolve_env_into SYLVODE_FRONTEND_PORT "$ENV_FILE" SYLVODE_FRONTEND_PORT OPENPR_FRONTEND_PORT 3000
-sylvode_resolve_env_into SYLVODE_MCP_PORT "$ENV_FILE" SYLVODE_MCP_PORT MCP_SERVER_PORT 8090
-sylvode_resolve_env_into SYLVODE_RUNTIME_BASE "$ENV_FILE" SYLVODE_RUNTIME_BASE OPENPR_RUNTIME_BASE ''
-sylvode_resolve_env_into SYLVODE_FRONTEND_DOCKERFILE "$ENV_FILE" SYLVODE_FRONTEND_DOCKERFILE OPENPR_FRONTEND_DOCKERFILE Dockerfile
+sylvode_resolve_env_into SYLVODE_BIND_HOST "$ENV_FILE" SYLVODE_BIND_HOST 127.0.0.1
+sylvode_resolve_env_into SYLVODE_API_PORT "$ENV_FILE" SYLVODE_API_PORT 8081
+sylvode_resolve_env_into SYLVODE_FRONTEND_PORT "$ENV_FILE" SYLVODE_FRONTEND_PORT 3000
+sylvode_resolve_env_into SYLVODE_MCP_PORT "$ENV_FILE" SYLVODE_MCP_PORT 8090
+sylvode_resolve_env_into SYLVODE_RUNTIME_BASE "$ENV_FILE" SYLVODE_RUNTIME_BASE ''
+sylvode_resolve_env_into SYLVODE_FRONTEND_DOCKERFILE "$ENV_FILE" SYLVODE_FRONTEND_DOCKERFILE Dockerfile
 # The runner variables have one name each: a value from the environment or .env, else the default.
 SYLVODE_RUNNER_PORT=$(sylvode_configured_env_value "$ENV_FILE" SYLVODE_RUNNER_PORT)
 SYLVODE_RUNNER_PORT=${SYLVODE_RUNNER_PORT:-9090}
@@ -209,7 +201,7 @@ collab_origins_toml() {
 }
 
 # ---------------------------------------------------------------------------------------------
-# config/sylvode.compose.toml — read by the api and the worker (legacy filename is auto-discovered).
+# config/sylvode.compose.toml — read by the api and the worker.
 # ---------------------------------------------------------------------------------------------
 if [ ! -f "$APP_CONFIG" ]; then
   echo "📝 Generating $APP_CONFIG (api + worker)"
@@ -285,7 +277,7 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------------------------
-# config/sylvode.compose.mcp.toml — read by the mcp-server (legacy filename is auto-discovered).
+# config/sylvode.compose.mcp.toml — read by the mcp-server.
 #
 # Separate from the file above on purpose: the MCP server is the published, agent facing surface
 # and it needs neither the database URL nor the signing key. It reaches the API over HTTP with a

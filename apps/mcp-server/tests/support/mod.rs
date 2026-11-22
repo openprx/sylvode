@@ -110,7 +110,7 @@ pub fn write_config_with_extra_mcp_keys(
     }
     source.push_str(extra_mcp_keys);
 
-    let path = dir.join("openpr.toml");
+    let path = dir.join("sylvode.toml");
     fs::write(&path, source)?;
     Ok(ConfigFile { dir, path })
 }

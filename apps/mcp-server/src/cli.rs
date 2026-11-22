@@ -81,7 +81,7 @@ pub struct BusinessCli {
 /// The options every workspace command and `serve` accept, wherever they appear on the line.
 #[derive(Debug, Args)]
 pub struct GlobalArgs {
-    /// Path to the configuration file [default: config/sylvode.toml; legacy config/openpr.toml fallback]
+    /// Path to the configuration file [default: config/sylvode.toml]
     ///
     /// Global because every subcommand needs it: the settings it carries are read before
     /// the subcommand is dispatched, so `mcp-server projects list --config <path>` has to
@@ -729,10 +729,6 @@ pub fn prepare_runtime(global: &GlobalArgs, serve: Option<&ServeArgs>) -> anyhow
             platform::logging::StreamOverride::MESSAGE
         );
     }
-    // Emitted only now: the logger it goes through did not exist while the file was loading.
-    if let Some(notice) = platform::config::take_legacy_discovery_notice() {
-        tracing::warn!("{notice}");
-    }
 
     apply_cli_overrides(&mut config.mcp, global, serve)?;
 
@@ -1333,10 +1329,7 @@ mod tests {
             .find(|(path, _)| path == "sylvode projects list")
             .map(|(_, help)| help.as_str())
             .unwrap_or_default();
-        assert!(
-            config_help.contains("[default: config/sylvode.toml; legacy config/openpr.toml fallback]"),
-            "{config_help}"
-        );
+        assert!(config_help.contains("[default: config/sylvode.toml]"), "{config_help}");
     }
 
     #[test]
@@ -1418,17 +1411,17 @@ mod tests {
     #[test]
     fn the_config_flag_parses_on_every_subcommand() {
         for args in [
-            vec!["mcp-server", "serve", "--config", "/etc/openpr.toml"],
-            vec!["mcp-server", "projects", "list", "--config", "/etc/openpr.toml"],
+            vec!["mcp-server", "serve", "--config", "/etc/sylvode.toml"],
+            vec!["mcp-server", "projects", "list", "--config", "/etc/sylvode.toml"],
             vec![
                 "mcp-server",
                 "work-items",
                 "get",
                 "PRX-1",
                 "--config",
-                "/etc/openpr.toml",
+                "/etc/sylvode.toml",
             ],
-            vec!["mcp-server", "search", "anything", "--config", "/etc/openpr.toml"],
+            vec!["mcp-server", "search", "anything", "--config", "/etc/sylvode.toml"],
             vec![
                 "mcp-server",
                 "tools",
@@ -1436,14 +1429,14 @@ mod tests {
                 "--name",
                 "forms.list",
                 "--config",
-                "/etc/openpr.toml",
+                "/etc/sylvode.toml",
             ],
-            vec!["mcp-server", "--config", "/etc/openpr.toml", "projects", "list"],
+            vec!["mcp-server", "--config", "/etc/sylvode.toml", "projects", "list"],
         ] {
             let cli = Cli::try_parse_from(&args).unwrap_or_else(|error| panic!("{args:?} should parse: {error}"));
             assert_eq!(
                 cli.global.config.as_deref(),
-                Some(std::path::Path::new("/etc/openpr.toml")),
+                Some(std::path::Path::new("/etc/sylvode.toml")),
                 "{args:?} did not carry the config path"
             );
         }

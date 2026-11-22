@@ -12,7 +12,7 @@
 //! any of the above, because they never run the binary: nothing there reaches a config loader,
 //! an API call or a process exit status. So every test here spawns the real executable with a
 //! real configuration file, in a working directory that deliberately holds no
-//! `config/openpr.toml` — a command that failed to pick up its `--config` would fail with
+//! `config/sylvode.toml` — a command that failed to pick up its `--config` would fail with
 //! "configuration file not found" rather than silently falling back onto some file that
 //! happened to be there.
 //!
@@ -159,8 +159,8 @@ async fn spawn_api() -> Result<(String, ApiProbe), Box<dyn Error>> {
 
 /// A configuration file carrying `bot_token`, plus the empty directory commands run from.
 ///
-/// The directory is the file's own private one, which holds nothing but `openpr.toml` — no
-/// `config/openpr.toml`, so the default configuration path cannot resolve there.
+/// The directory is the file's own private one, which holds nothing but `sylvode.toml` — no
+/// `config/sylvode.toml`, so the default configuration path cannot resolve there.
 fn cli_config(api_url: &str, bot_token: &str) -> Result<ConfigFile, Box<dyn Error>> {
     write_config(&McpSettings {
         api_url,
@@ -174,7 +174,7 @@ fn cli_config(api_url: &str, bot_token: &str) -> Result<ConfigFile, Box<dyn Erro
 
 /// Runs the shipped binary once and collects its exit status, stdout and stderr.
 ///
-/// `cwd` is always a directory with no `config/openpr.toml` in it, so nothing succeeds by
+/// `cwd` is always a directory with no `config/sylvode.toml` in it, so nothing succeeds by
 /// accident of where the test happened to run.
 async fn run_cli(cwd: &FsPath, args: &[&str], envs: &[(&str, &str)]) -> Result<Output, Box<dyn Error>> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mcp-server"));
@@ -507,7 +507,7 @@ async fn a_rejected_bot_token_is_reported_readably_without_leaking_the_backend()
 async fn a_missing_configuration_file_is_explained_and_the_environment_is_not_a_fallback() -> TestResult {
     let (api_url, probe) = spawn_api().await?;
     // A real file, used only for the empty directory it lives in — the command below is run
-    // there without `--config`, so the default `config/openpr.toml` cannot resolve.
+    // there without `--config`, so the default `config/sylvode.toml` cannot resolve.
     let config = cli_config(&api_url, CONFIGURED_TOKEN)?;
     let cwd = dir_of(&config)?;
 

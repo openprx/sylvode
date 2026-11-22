@@ -462,7 +462,7 @@ async fn the_retired_environment_variables_no_longer_configure_the_server() -> T
         transport: Some("stdio"),
         bind_addr: None,
     })?;
-    // A directory that holds no `config/openpr.toml`, so the default path misses too.
+    // A directory that holds no `config/sylvode.toml`, so the default path misses too.
     let empty_dir = empty.path().parent().ok_or("config file has no parent directory")?;
 
     let child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
