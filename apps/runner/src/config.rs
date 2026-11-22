@@ -1673,7 +1673,7 @@ url = "http://127.0.0.1:9000/hook"
             agent.route.as_ref().map(|r| r.bot_ids.clone()),
             Some(vec![GOLDEN_BOT.to_string()])
         );
-        assert_eq!(cfg.runner.allowed_roots, vec!["/home/dev/work/svwl".to_string()]);
+        assert_eq!(cfg.runner.allowed_roots, vec!["/srv/dev/work/svwl".to_string()]);
         assert!(cfg.ai_task_callback.enabled);
         let bot = cfg.ai_task_callback.bots.first().expect("bot");
         assert_eq!(
@@ -1733,7 +1733,7 @@ url = "http://127.0.0.1:9000/hook"
             error.contains("ai_task_callback") && error.contains("enabled"),
             "{error}"
         );
-        let error = Config::from_toml(&swap("allowed_roots = [\"/home/dev/work/svwl\"]", "allowed_roots = []"))
+        let error = Config::from_toml(&swap("allowed_roots = [\"/srv/dev/work/svwl\"]", "allowed_roots = []"))
             .expect_err("no roots");
         assert!(error.contains("allowed_roots"), "{error}");
         for surface in ["rest", "mcp_http", "cli"] {

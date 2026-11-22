@@ -175,7 +175,7 @@ fn the_directory_in_rules_is_the_canonical_path_and_only_plain_characters() {
     for good in [
         "/work/svwl",
         "/work/my project",
-        "/Users/a.b/work-1/x_y+z@host",
+        "/srv/a.b/work-1/x_y+z@host",
         "/work/Überprüfung",
     ] {
         assert_eq!(rule_safe_dir(Path::new(good)), Ok(good));

@@ -24,7 +24,7 @@ surface = "mcp_stdio"
 
 [runner]
 # The runner refuses any working directory outside these. Review before use.
-allowed_roots = ["/home/dev/work/svwl"]
+allowed_roots = ["/srv/dev/work/svwl"]
 
 [[agents]]
 id = "00000000-0000-0000-0000-000000000000"

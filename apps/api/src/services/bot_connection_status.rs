@@ -613,7 +613,7 @@ mod tests {
     fn a_report_keeps_only_known_components_states_and_short_versions() {
         let hostile = json!({
             "schema": "sylvode.doctor.v1",
-            "generated_by": {"binary": "sylvode-runner", "version": "0.5.1", "task_protocol": 1, "path": "/home/dev/bin"},
+            "generated_by": {"binary": "sylvode-runner", "version": "0.5.1", "task_protocol": 1, "path": "/srv/dev/bin"},
             "components": [
                 {"component": "tmux", "status": "ok", "version": "3.4", "detail": "/usr/bin/tmux", "hint": "install it"},
                 {"component": "cli.claude", "status": "warn", "version": "v".repeat(65), "path": "/opt/claude"},
@@ -622,7 +622,7 @@ mod tests {
                 {"component": "api_protocol", "status": "fail"},
                 "not an object",
             ],
-            "projects": [{"working_directory": "/home/dev/work"}],
+            "projects": [{"working_directory": "/srv/dev/work"}],
             "summary": {"ok": 1}
         });
         let kept = sanitize_report(&hostile);

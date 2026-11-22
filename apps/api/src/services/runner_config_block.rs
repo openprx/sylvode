@@ -218,7 +218,7 @@ mod tests {
             project_key: "SVWL",
             issued_at: Timestamp::parse_rfc3339("2026-11-21T10:00:00Z").expect("time"),
             runner_url: url,
-            working_directory: "/home/dev/work/svwl",
+            working_directory: "/srv/dev/work/svwl",
             cli,
             token,
             token_prefix: "opr_abab",
@@ -280,10 +280,7 @@ mod tests {
         assert_eq!(bots[0]["bot_id"].as_str(), Some(BOT));
         assert_eq!(bots[0]["token"].as_str(), Some(token.as_str()));
         assert_eq!(bots[0]["surface"].as_str(), Some("mcp_stdio"));
-        assert_eq!(
-            table["runner"]["allowed_roots"][0].as_str(),
-            Some("/home/dev/work/svwl")
-        );
+        assert_eq!(table["runner"]["allowed_roots"][0].as_str(), Some("/srv/dev/work/svwl"));
         let agents = table["agents"].as_array().expect("agents");
         assert_eq!(agents[0]["agent_type"].as_str(), Some("runner"));
         assert_eq!(agents[0]["id"].as_str(), Some(BOT));

@@ -1962,9 +1962,9 @@ mod dispatcher_database_tests {
                 actor_id: Some(Uuid::new_v4()),
                 source: json!({"type": "user"}),
                 payload: json!({
-                    "working_directory": "/home/dev/SECRET-HOST-PATH",
-                    "before": {"working_directory": "/home/dev/SECRET-OLD-PATH"},
-                    "after": {"working_directory": "/home/dev/SECRET-NEW-PATH"},
+                    "working_directory": "/srv/dev/SECRET-HOST-PATH",
+                    "before": {"working_directory": "/srv/dev/SECRET-OLD-PATH"},
+                    "after": {"working_directory": "/srv/dev/SECRET-NEW-PATH"},
                 }),
                 metadata: json!({}),
                 correlation_id: None,

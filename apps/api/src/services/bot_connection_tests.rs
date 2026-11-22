@@ -90,7 +90,7 @@ pub fn new_bot(name: &str) -> Value {
         "bot": {"name": name},
         "runner_url": RUNNER,
         "cli": "claude",
-        "working_directory": "/home/dev/work/svwl",
+        "working_directory": "/srv/dev/work/svwl",
     })
 }
 
@@ -99,7 +99,7 @@ pub fn existing_bot(id: Uuid) -> Value {
         "bot": {"id": id},
         "runner_url": RUNNER,
         "cli": "claude",
-        "working_directory": "/home/dev/work/other",
+        "working_directory": "/srv/dev/work/other",
     })
 }
 
@@ -693,7 +693,7 @@ async fn every_field_is_validated_and_a_refusal_writes_nothing() {
             "bot.name: must not contain control, bidirectional or zero-width characters",
         ));
     }
-    for directory in ["/home/dev/a#b", "/home/dev/a\u{202e}b", "/home/dev/a\u{200b}b"] {
+    for directory in ["/srv/dev/a#b", "/srv/dev/a\u{202e}b", "/srv/dev/a\u{200b}b"] {
         cases.push((
             with("working_directory", json!(directory)),
             if directory.contains('#') {
@@ -1374,9 +1374,9 @@ async fn the_runner_report_is_limited_sanitised_and_for_runner_bots_only() {
         "generated_by": {"binary": "sylvode-runner", "version": "0.5.1", "task_protocol": 1},
         "components": [
             {"component": "tmux", "status": "ok", "version": "3.4", "detail": "/usr/bin/tmux"},
-            {"component": "cli.claude", "status": "ok", "version": "2.1.0", "hint": "/home/dev/.claude"}
+            {"component": "cli.claude", "status": "ok", "version": "2.1.0", "hint": "/srv/dev/.claude"}
         ],
-        "projects": [{"working_directory": "/home/dev/work"}]
+        "projects": [{"working_directory": "/srv/dev/work"}]
     }))
     .expect("json");
 

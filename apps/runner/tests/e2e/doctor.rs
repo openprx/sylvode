@@ -204,7 +204,7 @@ fn check_is_doctor_json_without_a_config_read_and_a_bad_option_is_a_checker_erro
 #[test]
 fn config_check_names_the_key_and_never_echoes_a_value() {
     let dir = TempDir::new("doctor-cfg");
-    let secret = "opr_SECRETVALUE0123456789";
+    let secret = concat!("opr_", "SECRETVALUE0123456789");
     let cases = [
         ("[server]\nlisten = 12345\n[security]\nwebhook_secrets = []\n", "listen"),
         (

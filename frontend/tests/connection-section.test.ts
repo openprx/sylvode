@@ -77,7 +77,7 @@ const connectionJson = {
 	execution: {
 		channel: 'tmux',
 		cli: 'claude',
-		working_directory: '/home/dev/work',
+		working_directory: '/srv/dev/work',
 		on_complete_state: 'state:done',
 		on_fail_label_id: null,
 		approval_gate: 'none'
@@ -130,7 +130,7 @@ suite.check('runner address: http(s), no credentials, query or fragment; one sla
 });
 
 suite.check('working directory: absolute, no . or .. segments, no //', () => {
-	for (const ok of ['/a', '/home/you/work/project', '/a/b/', '/a/.hidden', '/a/b..c'])
+	for (const ok of ['/a', '/srv/you/work/project', '/a/b/', '/a/.hidden', '/a/b..c'])
 		assertEqual(validateWorkingDirectory(ok), null, ok);
 	assertEqual(validateWorkingDirectory('relative'), ERRORS.dirAbsolute, 'relative');
 	assertEqual(validateWorkingDirectory(''), ERRORS.dirAbsolute, 'empty');
