@@ -671,10 +671,10 @@ mod tests {
         assert_eq!(
             counts,
             BTreeMap::from([
-                ("no project", 17),
-                ("project-resolved", 290),
+                ("no project", 14),
+                ("project-resolved", 291),
                 ("own resource", 13),
-                ("admin", 85),
+                ("admin", 86),
                 ("refused", 40),
             ]),
             "the classes of the {} routes changed",
