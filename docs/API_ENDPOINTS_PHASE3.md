@@ -71,10 +71,11 @@ Authorization: Bearer <token>
 
 ## Bot Connections
 
-A project is connected to **one** bot, which runs its agent tasks on a runner. A connection owns the
-rows it makes: the bot user, its workspace seat, an `opr_` token (surface `mcp_stdio`, `read` and
-`write`), a webhook (`events = []`, URL = runner address + `/webhook`), the bot's AI participant
-registration for the project and the project's execution settings. They are shown as
+A project is connected to **one or several** bots, each running its agent tasks on a runner. A
+connection is identified by (project, bot) and owns the rows it makes: the bot user, its workspace
+seat, an `opr_` token (surface `mcp_stdio`, `read` and `write`), a webhook (`events = []`, URL =
+runner address + `/webhook`), the bot's AI participant registration for the project and the
+execution settings of the connection (enabled flag, channel, CLI, working directory). They are shown as
 `managed_by` on the Bots and Webhooks endpoints and cannot be edited, revoked or deleted there.
 Every write is one transaction and carries the connection's `version`.
 
@@ -83,19 +84,32 @@ refused. Project members read a reduced view. The token and the webhook's signin
 returned once, inside `config_block.text` (a `sylvode-runner.toml`), with `Cache-Control: no-store`;
 no read returns them again.
 
-### Read the Connection
+### List and Read Connections
 ```http
-GET /api/v1/projects/:project_id/bot-connection
+GET /api/v1/projects/:project_id/bot-connections
+GET /api/v1/projects/:project_id/bot-connections/:bot_id
 Authorization: Bearer <token>
 ```
-Owners and admins: `{"connection": {...}, "status": {...}}`, or `null` for both. Members:
-`{"connection": {"bot": {"id", "name"}, "enabled", "cli", "channel"}}`. `status` is computed on
-read: the runner (`waiting`, `online`, `not_reporting`, `unreachable`), the CLI and tmux
-(`ready`, `warning`, `missing`, `disabled`, `unknown`) and the last delivery.
+A project may have several connections, one per bot, ordered by bot name. A connection carries its
+own `enabled` flag, channel, CLI and working directory. Within one project at most one **tmux**
+connection exists per CLI type; headless connections are not limited.
+
+The list answers `{"connections": [{"connection": {...}, "status": {...}}]}` for owners and admins
+and `{"connections": [{"bot": {"id", "name"}, "enabled", "cli", "channel"}]}` for other members. The
+single read answers `{"connection": {...}, "status": {...}}` (members: `{"connection": {...}}` with
+the reduced view) and 404 `project has no connection for this bot`.
+
+`connection.execution` holds `channel`, `cli`, `working_directory`, `on_complete_state`,
+`on_fail_label_id`, `approval_gate` and, for the tmux channel, `session_name` (`<KEY>-<cli>`).
+`status` is computed on read: the runner (`waiting`, `online`, `not_reporting`, `unreachable`), the
+CLI and tmux (`ready`, `warning`, `missing`, `disabled`, `unknown`), the last delivery, and from a
+fresh runner report `tmux_session` (the session row of this connection: `session_name`, `status`,
+`state`, `created_by`, `hooks`, `permissions`, `mcp`) and `bypass` (`true` when tasks of the
+connection run with permission checks off on its channel, `false`, or `null` when unknown).
 
 ### Connect a Bot
 ```http
-POST /api/v1/projects/:project_id/bot-connection
+POST /api/v1/projects/:project_id/bot-connections
 Content-Type: application/json
 
 {"bot": {"name": "Build bot"}, "runner_url": "https://runner.example.net:9090",
@@ -106,29 +120,37 @@ Content-Type: application/json
 ```
 `bot` is exactly one of `{"name"}` (a new bot) or `{"id"}` (a bot already connected to another
 project of the workspace, with the same `runner_url`). `channel`, `on_complete_state`,
-`on_fail_label_id` and `governance` are optional. The runner address must pass the outbound policy
-(`[outbound] allowed_hosts`). The answer is `{connection, status, config_block}`; `config_block` is
-`null` when an existing bot was added.
+`on_fail_label_id` and `governance` are optional. `working_directory` is required for both
+channels (for tmux it is where the runner starts the session). The tmux channel needs
+`cli: "claude"` (400 `cli: only claude can use the tmux channel`). The runner address must pass the
+outbound policy (`[outbound] allowed_hosts`). The answer is `{connection, status, config_block}`;
+`config_block` is `null` when an existing bot was added.
+
+Refusals (409): `project already has a connection for this bot`, and
+`channel: project already has a tmux connection for <cli> (bot <name>)`.
 
 ### Update, Disable, Enable, Rotate
 ```http
-PATCH /api/v1/projects/:project_id/bot-connection            {"expected_version": 3, "cli": "codex"}
-POST  /api/v1/projects/:project_id/bot-connection/disable    {"expected_version": 3}
-POST  /api/v1/projects/:project_id/bot-connection/enable     {"expected_version": 3}
-POST  /api/v1/projects/:project_id/bot-connection/rotate     {"expected_version": 3}
+PATCH /api/v1/projects/:project_id/bot-connections/:bot_id          {"expected_version": 3, "cli": "claude"}
+POST  /api/v1/projects/:project_id/bot-connections/:bot_id/disable  {"expected_version": 3}
+POST  /api/v1/projects/:project_id/bot-connections/:bot_id/enable   {"expected_version": 3}
+POST  /api/v1/projects/:project_id/bot-connections/:bot_id/rotate   {"expected_version": 3}
 ```
 A stale version answers business code 409 `connection changed; reload` with the current
-connection. Changing the address or rotating bumps the version of every connection of the bot.
-Rotate replaces the token and the signing secret and returns a new `config_block`; the bot's tasks
-wait (at most one hour) until the runner has used the new token.
+connection. Changing `channel` or `cli` is checked against the tmux rule (the 409 above). Changing
+the address or rotating bumps the version of every connection of the bot. Disabling one connection
+leaves the project's other connections running; the bot's token and webhook go off only when its
+last enabled connection is disabled. Rotate replaces the token and the signing secret of the bot
+(shared by all its projects) and returns a new `config_block`; the bot's tasks wait (at most one
+hour) until the runner has used the new token.
 
-### Remove the Connection
+### Remove a Connection
 ```http
-DELETE /api/v1/projects/:project_id/bot-connection?expected_version=3
+DELETE /api/v1/projects/:project_id/bot-connections/:bot_id?expected_version=3
 ```
-Removes the connection, the project's participant registration and its execution settings. When it
-was the bot's last connection the token is revoked, the webhook deleted and the workspace seat
-removed; the bot's user row is kept. Deleting a project does the same.
+Removes that connection and the bot's participant registration in the project. When it was the
+bot's last connection the token is revoked, the webhook deleted and the workspace seat removed; the
+bot's user row is kept. Deleting a project does the same for every connection of it.
 
 ### Runner Report
 ```http
@@ -136,12 +158,12 @@ PUT /api/v1/ai/runner/report
 Authorization: Bearer <bot token>
 ```
 The runner's self-report (a subset of `sylvode.doctor.v1`), sent after its handshake and every
-600 seconds. Only component names, states and versions are kept; larger than 16 KiB answers 413.
+600 seconds. Only component names, states and versions are kept, plus the `tmux_session` rows (project key, CLI and five fixed-vocabulary fields) and the `posture` row (`bypass` per channel); larger than 16 KiB answers 413.
 `GET /api/v1/ai/protocol` lists the `runner_report` feature and `runner_report_interval_secs`.
 
 ### Removed
 The AI participants API (`/projects/:id/ai-participants` and its `{id}` routes) and
-`PUT /projects/:id/execution-settings` are gone. `GET .../execution-settings` stays. Learning
+the project-level execution settings (read and write) are gone: they are part of each connection. Learning
 records are read per project: `GET /projects/:id/ai-participants/:bot_id/learning` and
 `.../alignment-stats`.
 

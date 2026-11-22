@@ -4,11 +4,14 @@ Operating notes for migration `0110_runner_task_protocol.sql` and the settings t
 
 ## What migration 0110 adds
 
-- Table `project_execution_settings`: one optional row per project (enabled flag, channel, CLI,
-  working directory on the runner machine, what happens to the issue on completion, an optional
-  failure label, approval gate, a version for compare-and-set writes). Its checks mirror the API
-  validation: absolute path of 2 to 1024 bytes without control characters, `.` or `..` segments or
-  `//`; channel `tmux` or `headless`; CLI `claude`, `codex` or `opencode`; approval gate `none`.
+- The execution settings of a bot connection (enabled flag, channel, CLI, working directory on the
+  runner machine, what happens to the issue on completion, an optional failure label, approval
+  gate) are columns of `project_bot_connections` (created by `0112`, brought forward by `0114`
+  for a database that still has the earlier `project_execution_settings` table). Their checks
+  mirror the API validation: absolute path of 2 to 1024 bytes without control characters, `.` or
+  `..` segments or `//`; channel `tmux` or `headless`; CLI `claude`, `codex` or `opencode`; the
+  tmux channel only with `claude`; approval gate `none`. A project has at most one tmux connection
+  per CLI type (`pbc_one_tmux_per_cli`).
 - Five nullable columns on `ai_tasks`: `acknowledged_at`, `plan`, `last_progress_at`,
   `lease_expires_at`, `runner_phase`. No defaults, so no rewrite.
 - Two checks on `ai_tasks`, added `NOT VALID` so a historical value cannot fail the migration:
@@ -49,10 +52,11 @@ Both the API and the worker read them from the same file.
   `plan`, `acknowledged_at`, `last_progress_at` and `runner_phase`.
 - **Configuration default.** If `max_processing_secs` is not set and `processing_timeout_secs` is
   above 86400, the cap defaults to the timeout instead of failing the configuration.
-- **Execution settings versions.** A save is a compare-and-set on `version`. Without a stored row
-  the caller sends no `expected_version`; with one it sends the stored version. Any other
-  combination answers business code 409 `execution settings changed; reload` with the current
-  version, and writes nothing.
+- **Connection versions.** The settings of a connection are written with the connection, as a
+  compare-and-set on its `version`: a stale `expected_version` answers business code 409
+  `connection changed; reload` with the current connection, and writes nothing.
+- **Which connection a task uses.** The connection of (the task's project, the task's bot). The
+  task view's `execution` is that connection, with `session_name` (`<KEY>-<cli>`) for tmux.
 - **Progress coalescing.** Reports of one kind (`progress`, `runner.alive`, ...) less than 30
   seconds apart extend the lease but write a single event. The window is per kind and is read from
   the events, so an acknowledge does not swallow the first progress report.
@@ -73,7 +77,7 @@ Both the API and the worker read them from the same file.
   proposal not in voting) is a 400 and the task stays active. A vote the bot already cast completes
   the task with the warning `vote already recorded`. `no_change` and a missing `vote` are 400.
 - **Refused at delivery.** When the runner declines a task at delivery, the worker fails it and,
-  for a project whose execution settings are enabled, posts `Could not start: <reason>` on the work
+  for a task whose connection exists, enabled or not, posts `Could not start: <reason>` on the work
   item (or as a reply to the mention).
 
 ## Rolling back
@@ -89,19 +93,18 @@ ALTER TABLE ai_tasks DROP CONSTRAINT IF EXISTS ai_tasks_runner_phase_check;
 UPDATE ai_tasks SET status = 'processing' WHERE status = 'acknowledged';
 ALTER TABLE ai_tasks DROP COLUMN IF EXISTS runner_phase, DROP COLUMN IF EXISTS lease_expires_at,
   DROP COLUMN IF EXISTS last_progress_at, DROP COLUMN IF EXISTS plan, DROP COLUMN IF EXISTS acknowledged_at;
-DROP TABLE IF EXISTS project_execution_settings;
 ```
 
 Then remove the migration's row from `schema_migrations` (name
 `0110_runner_task_protocol.sql`); otherwise the migration runner reports the missing objects at the
-next start. Execution settings are lost with the table: export them first if they are needed
-(`SELECT * FROM project_execution_settings`).
+next start. The execution settings live in `project_bot_connections`; see `bot-connections.md` for
+removing that table.
 
 ## Renumbering the migration
 
 If another migration takes `0110` first, rename the file to the next free number and change the
 three places that name it in `apps/api/src/main.rs`: the embedded list (`include_str!` path and
-name), the schema probe table (`SchemaProbe::Relation("project_execution_settings")`), and the
+name), the schema probe table (`SchemaProbe::Column("ai_tasks", "runner_phase")`), and the
 list in the replay-safety test. Keep the numeric order in all three lists. A database that already
 recorded the old name has the objects but no row under the new one: the probe finds the table, the
 runner adopts it, and because the file is idempotent re-running it is harmless. Do not edit an

@@ -653,9 +653,13 @@ async fn only_owners_and_admins_manage_and_machines_never_do() {
     );
 
     // An admin connects.
-    call(admin, None, new_bot("Admin bot"))
+    let admin_connect = call(admin, None, new_bot("Admin bot"))
         .await
         .expect("an admin connects");
+    let admin_bot: Uuid = body_of(admin_connect).await.1["data"]["connection"]["bot"]["id"]
+        .as_str()
+        .and_then(|id| id.parse().ok())
+        .expect("the bot id");
 
     // Reading: owners and admins see the full view, members the reduced one, machines nothing.
     let get = |user: Uuid, bot: Option<crate::middleware::bot_auth::BotAuthContext>| {
@@ -665,7 +669,7 @@ async fn only_owners_and_admins_manage_and_machines_never_do() {
                 State(state),
                 Extension(claims_for(user)),
                 bot.map(Extension),
-                Path(project),
+                Path((project, admin_bot)),
             )
             .await
         }
@@ -695,16 +699,44 @@ async fn only_owners_and_admins_manage_and_machines_never_do() {
         Err(ApiError::Forbidden(message)) => assert_eq!(message, "project access denied"),
         other => panic!("expected a 403, got {:?}", other.map(|_| ())),
     }
-    // A project with no connection reads as null.
+    // A project with no connection for the bot is a 404; the list is empty.
     let none = route::get_bot_connection(
+        State(w.state.clone()),
+        Extension(claims_for(stranger.member_id)),
+        None,
+        Path((stranger.project_id, admin_bot)),
+    )
+    .await;
+    assert!(
+        matches!(none, Err(ApiError::NotFound(ref message)) if message == "project has no connection for this bot"),
+        "{:?}",
+        none.map(|_| ())
+    );
+    let listed = route::list_bot_connections(
         State(w.state.clone()),
         Extension(claims_for(stranger.member_id)),
         None,
         Path(stranger.project_id),
     )
     .await
-    .expect("a member of that workspace reads");
-    assert_eq!(body_of(none).await.1["data"]["connection"], Value::Null);
+    .expect("a member of that workspace lists");
+    assert_eq!(body_of(listed).await.1["data"]["connections"], json!([]));
+    // The list shows the connection too, in each reader's view.
+    let list = |user: Uuid| {
+        let state = w.state.clone();
+        async move {
+            let answer = route::list_bot_connections(State(state), Extension(claims_for(user)), None, Path(project))
+                .await
+                .expect("list");
+            body_of(answer).await.1["data"]["connections"].clone()
+        }
+    };
+    let full = list(w.owner).await;
+    assert_eq!(full[0]["connection"]["bot"]["name"], "Admin bot");
+    assert!(full[0]["status"].is_object());
+    let reduced = list(member).await;
+    assert_eq!(reduced[0]["bot"]["name"], "Admin bot");
+    assert!(reduced[0].get("runner").is_none());
     scratch.drop_self().await;
 }
 
@@ -1273,6 +1305,10 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
     );
     assert_eq!(block["token_prefix"].as_str().map(str::len), Some(8));
     let version = i32::try_from(body["data"]["connection"]["version"].as_i64().expect("version")).expect("small");
+    let bot_id: Uuid = body["data"]["connection"]["bot"]["id"]
+        .as_str()
+        .and_then(|id| id.parse().ok())
+        .expect("the bot id");
 
     // Reading never returns a token or a secret, whoever reads.
     let token = block_token(&crate::services::runner_config_block::ConfigBlock {
@@ -1288,9 +1324,14 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
         .expect("secret")
         .to_string();
     for user in [w.owner, seed_member(db, &w.tenant, "member").await] {
-        let read = route::get_bot_connection(State(w.state.clone()), Extension(claims_for(user)), None, Path(project))
-            .await
-            .expect("read");
+        let read = route::get_bot_connection(
+            State(w.state.clone()),
+            Extension(claims_for(user)),
+            None,
+            Path((project, bot_id)),
+        )
+        .await
+        .expect("read");
         let (_, read) = body_of(read).await;
         let printed = read.to_string();
         assert!(
@@ -1316,7 +1357,7 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
         State(w.state.clone()),
         Extension(claims_for(w.owner)),
         None,
-        Path(project),
+        Path((project, bot_id)),
         headers,
         Json(route::VersionBody {
             expected_version: version,
@@ -1335,7 +1376,7 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
         State(w.state.clone()),
         Extension(claims_for(w.owner)),
         None,
-        Path(project),
+        Path((project, bot_id)),
         HeaderMap::new(),
         Json(route::VersionBody {
             expected_version: version,
@@ -1353,7 +1394,7 @@ async fn the_answers_say_no_store_and_the_block_is_never_readable_again() {
         State(w.state.clone()),
         Extension(claims_for(w.owner)),
         None,
-        Path(project),
+        Path((project, bot_id)),
         Query(route::RemoveQuery {
             expected_version: version + 1,
         }),
@@ -1384,11 +1425,12 @@ async fn report_as(
 }
 
 async fn status_json(w: &W, project: Uuid) -> Value {
+    let bot = sole_bot(&w.state.db, project).await.expect("one connection");
     let read = route::get_bot_connection(
         State(w.state.clone()),
         Extension(claims_for(w.owner)),
         None,
-        Path(project),
+        Path((project, bot)),
     )
     .await
     .expect("read");
@@ -1551,6 +1593,37 @@ async fn the_status_follows_token_use_reports_and_deliveries() {
         online["tmux"],
         json!({"state": "ready", "source": "report", "version": "3.4"})
     );
+    assert_eq!(
+        online["tmux_session"],
+        Value::Null,
+        "the report has no row for this session"
+    );
+    assert_eq!(online["bypass"], Value::Null);
+    // A report with the session row of this connection and the posture row.
+    let key: String = text_of(db, "SELECT key AS v FROM projects WHERE id = $1", vec![project.into()]).await;
+    exec(
+        db,
+        "UPDATE bot_runners SET report = jsonb_set(report, '{components}', report->'components' || $2::jsonb) \
+         WHERE bot_id = $1",
+        vec![
+            bot.into(),
+            json!([
+                {"component": "tmux_session", "project_key": key, "cli": "claude", "status": "warn",
+                 "state": "running", "created_by": "operator", "hooks": "seen", "permissions": "bypass",
+                 "mcp": "ok"},
+                {"component": "posture", "status": "warn", "bypass": {"tmux": true}}
+            ])
+            .into(),
+        ],
+    )
+    .await;
+    let with_session = status_json(&w, project).await;
+    assert_eq!(
+        with_session["tmux_session"],
+        json!({"session_name": format!("{key}-claude"), "status": "warn", "state": "running",
+               "created_by": "operator", "hooks": "seen", "permissions": "bypass", "mcp": "ok"})
+    );
+    assert_eq!(with_session["bypass"], true);
     // A stale report stops counting.
     exec(
         db,
@@ -1561,6 +1634,8 @@ async fn the_status_follows_token_use_reports_and_deliveries() {
     let stale = status_json(&w, project).await;
     assert_eq!(stale["runner"]["state"], "not_reporting");
     assert_eq!(stale["cli"]["state"], "unknown");
+    assert_eq!(stale["tmux_session"], Value::Null);
+    assert_eq!(stale["bypass"], Value::Null);
 
     // Deliveries: a refusal with its code, then a failed delivery.
     let task = Uuid::new_v4();
@@ -1842,11 +1917,13 @@ async fn an_outsider_cannot_tell_a_missing_project_from_one_that_exists() {
         Err(error) => format!("{error:?}"),
         Ok(_) => "answered".to_string(),
     };
+    let bot = Uuid::new_v4();
     for project in [w.tenant.project_id, missing] {
         let claims = || Extension(claims_for(stranger));
         let state = || State(w.state.clone());
         let answers = [
-            describe(route::get_bot_connection(state(), claims(), None, Path(project)).await),
+            describe(route::get_bot_connection(state(), claims(), None, Path((project, bot))).await),
+            describe(route::list_bot_connections(state(), claims(), None, Path(project)).await),
             describe(
                 route::connect_bot(
                     state(),
@@ -1858,13 +1935,15 @@ async fn an_outsider_cannot_tell_a_missing_project_from_one_that_exists() {
                 )
                 .await,
             ),
-            describe(route::disable_bot_connection(state(), claims(), None, Path(project), Json(version(1))).await),
+            describe(
+                route::disable_bot_connection(state(), claims(), None, Path((project, bot)), Json(version(1))).await,
+            ),
             describe(
                 route::rotate_bot_connection(
                     state(),
                     claims(),
                     None,
-                    Path(project),
+                    Path((project, bot)),
                     HeaderMap::new(),
                     Json(version(1)),
                 )
@@ -1875,7 +1954,7 @@ async fn an_outsider_cannot_tell_a_missing_project_from_one_that_exists() {
                     state(),
                     claims(),
                     None,
-                    Path(project),
+                    Path((project, bot)),
                     Query(route::RemoveQuery { expected_version: 1 }),
                 )
                 .await,

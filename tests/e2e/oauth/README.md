@@ -70,7 +70,7 @@ Everything comes from the environment. Nothing is read from a file.
 users A and B (accounts that already exist are left alone; a wrong password for an existing
 account is reported, not changed), workspace W (the administrator owns it), the members (A member,
 B admin), projects P1 and P2, and one work item `qa-p4-seed-p1` / `qa-p4-seed-p2` in each. The bot
-is made by connecting P1 (`POST /api/v1/projects/{P1}/bot-connection` with `bot.name`, which creates
+is made by connecting P1 (`POST /api/v1/projects/{P1}/bot-connections` with `bot.name`, which creates
 its user, workspace seat, token and webhook) and joins P2 by id (`bot.id`), so it is an AI
 participant of both projects. The configuration block's token is shown once and never printed;
 the setup uses it for one `GET /api/v1/ai/protocol` call, as a starting runner would, because the

@@ -138,7 +138,7 @@ export class Fake {
 	private readonly issues = new Map<string, Issue>();
 	private readonly participants = new Set<string>();
 	/** One connection per project: the bot it is connected to. */
-	private readonly connections = new Map<string, string>();
+	private readonly connections = new Map<string, string[]>();
 	/** The bots a connection made, by user id. */
 	private readonly bots = new Map<string, { workspaceId: string; name: string }>();
 	private readonly tasks = new Map<string, Task>();
@@ -654,24 +654,25 @@ export class Fake {
 				return this.ok(res, project);
 			}
 		}
-		const connection = /^\/projects\/([^/]+)\/bot-connection$/.exec(path);
+		const connection = /^\/projects\/([^/]+)\/bot-connections$/.exec(path);
 		if (connection?.[1] !== undefined) {
 			const projectId = connection[1];
 			const project = this.projects.get(projectId);
 			const role = project === undefined ? undefined : this.roleIn(project.workspaceId, user.id);
 			if (project === undefined || (role !== 'admin' && role !== 'owner'))
 				return this.deny(res, 403, 'only workspace owners and admins can manage bot connections');
-			const botId = this.connections.get(projectId);
-			const view = () => {
-				const bot = botId === undefined ? undefined : this.bots.get(botId);
-				return bot === undefined || botId === undefined
+			const connected = this.connections.get(projectId) ?? [];
+			const view = (botId: string) => {
+				const bot = this.bots.get(botId);
+				return bot === undefined
 					? null
 					: { project_id: projectId, version: 1, enabled: true, bot: { id: botId, name: bot.name } };
 			};
-			if (method === 'GET') return this.ok(res, { connection: view(), status: null });
+			if (method === 'GET')
+				return this.ok(res, {
+					connections: connected.map((botId) => ({ connection: view(botId), status: null }))
+				});
 			if (method === 'POST') {
-				if (botId !== undefined)
-					return this.deny(res, 409, 'project already has a bot connection; reload');
 				const ref = (body.bot ?? {}) as Record<string, unknown>;
 				let connectedId: string;
 				let block: Record<string, unknown> | null = null;
@@ -680,6 +681,8 @@ export class Fake {
 					if (known === undefined || known.workspaceId !== project.workspaceId)
 						return this.deny(res, 400, 'bot.id: not a connected bot of this workspace');
 					connectedId = ref.id;
+					if (connected.includes(connectedId))
+						return this.deny(res, 409, 'project already has a connection for this bot');
 				} else {
 					const created = this.addUser(
 						`${randomUUID()}@bot.sylvode.local`,
@@ -700,9 +703,9 @@ export class Fake {
 						text: `[[ai_task_callback.bots]]\nbot_id = "${connectedId}"\nworkspace_id = "00000000-0000-4000-8000-000000000001"\ntoken = "${token}"\nsurface = "mcp_stdio"\n`
 					};
 				}
-				this.connections.set(projectId, connectedId);
+				this.connections.set(projectId, [...connected, connectedId]);
 				this.participants.add(`${projectId}:${connectedId}`);
-				return this.ok(res, { connection: view(), status: null, config_block: block });
+				return this.ok(res, { connection: view(connectedId), status: null, config_block: block });
 			}
 		}
 		const botsOf = /^\/workspaces\/([^/]+)\/bots$/.exec(path);

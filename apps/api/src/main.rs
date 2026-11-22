@@ -1006,17 +1006,17 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
             ),
         )
         .route(
-            "/api/v1/projects/{project_id}/execution-settings",
-            get(routes::project_execution::get_execution_settings)
+            "/api/v1/projects/{project_id}/bot-connections",
+            get(routes::project_bot_connection::list_bot_connections)
+                .post(routes::project_bot_connection::connect_bot)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
                     middleware::bot_auth::bot_or_user_auth_middleware,
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/bot-connection",
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}",
             get(routes::project_bot_connection::get_bot_connection)
-                .post(routes::project_bot_connection::connect_bot)
                 .patch(routes::project_bot_connection::update_bot_connection)
                 .delete(routes::project_bot_connection::remove_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
@@ -1025,7 +1025,7 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/bot-connection/disable",
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}/disable",
             post(routes::project_bot_connection::disable_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -1033,7 +1033,7 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/bot-connection/enable",
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}/enable",
             post(routes::project_bot_connection::enable_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -1041,7 +1041,7 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/bot-connection/rotate",
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}/rotate",
             post(routes::project_bot_connection::rotate_bot_connection)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
