@@ -19,7 +19,7 @@ use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
     services::{
-        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task, runner_bot_block},
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         bot_identity::is_bot_user,
         issues::{IssueRef, insert_activity},
         work_item_service::{NewWorkItem, insert_work_item},
@@ -187,7 +187,7 @@ pub(crate) async fn queue_assignment_ai_task(
             ai_task_bots: Vec::new(),
         });
     }
-    let queued = create_ai_task(
+    let queued = dispatch_ai_task(
         db,
         CreateAiTaskInput {
             origin: DispatchOrigin::Request,
@@ -209,9 +209,22 @@ pub(crate) async fn queue_assignment_ai_task(
         },
     )
     .await?;
-    if queued.is_none() {
+    match queued {
+        DispatchOutcome::Created(_) => {}
         // The same key was queued before: the bot already holds its task for this assignment.
-        tracing::debug!(issue_id = %input.issue_id, bot_id = %input.assignee_id, "assignment task already queued");
+        DispatchOutcome::Duplicate => {
+            tracing::debug!(issue_id = %input.issue_id, bot_id = %input.assignee_id, "assignment task already queued");
+        }
+        // The assignment stands and the bot stays in the list below: it is also the bots whose
+        // webhook delivery must not carry `bot_context`, which would start the bot.
+        DispatchOutcome::ChainRefused(refusal) => {
+            tracing::info!(
+                issue_id = %input.issue_id,
+                bot_id = %input.assignee_id,
+                reason = refusal.code(),
+                "assignment queued no task"
+            );
+        }
     }
     Ok(AssignmentOutcome {
         assignee_is_bot,

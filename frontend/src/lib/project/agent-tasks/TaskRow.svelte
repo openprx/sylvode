@@ -18,9 +18,6 @@
 	} from './status';
 	import { absoluteTime, relativeTime } from './time';
 
-	/** The API returns at most this many events per task (`TASK_EVENT_LIMIT`). */
-	const EVENT_LIMIT = 100;
-
 	interface Props {
 		task: AiTask;
 		/** Member names by user id, from the members list the page already loads. */
@@ -146,8 +143,8 @@
 			</Button>
 			{#if showEvents}
 				<EventChain events={task.events} />
-				{#if task.events.length >= EVENT_LIMIT}
-					<p class="meta">{$t('agentTasks.eventsCapped', { values: { count: EVENT_LIMIT } })}</p>
+				{#if task.events_omitted}
+					<p class="meta">{$t('agentTasks.eventsOmitted')}</p>
 				{/if}
 			{/if}
 		</div>

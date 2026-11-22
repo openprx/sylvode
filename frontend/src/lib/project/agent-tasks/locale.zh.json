@@ -17,7 +17,7 @@
 		"events": "事件链",
 		"showEvents": "查看事件（{count}）",
 		"hideEvents": "收起事件",
-		"eventsCapped": "仅显示前 {count} 条事件。",
+		"eventsOmitted": "更早的事件未显示。",
 		"nextRetry": "下次尝试 {time}",
 		"status": {
 			"queued": "排队中",

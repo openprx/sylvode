@@ -231,6 +231,24 @@ fn ai_task_processing_timeout_is_bounded() {
 }
 
 #[test]
+fn ai_task_chain_depth_defaults_and_is_bounded() {
+    let config = parse("").expect("an empty file is valid");
+    assert_eq!(config.ai_tasks.max_chain_depth, 3);
+    for depth in [0, 11] {
+        let reported = issues(&format!("[ai_tasks]\nmax_chain_depth = {depth}\n"));
+        assert!(
+            reported.iter().any(|issue| issue.contains("ai_tasks.max_chain_depth")),
+            "invalid chain depth {depth} was not rejected: {reported:?}"
+        );
+    }
+    for depth in [1, 10] {
+        let config = parse(&format!("[ai_tasks]\nmax_chain_depth = {depth}\n"))
+            .unwrap_or_else(|error| panic!("valid chain depth {depth} was rejected: {error}"));
+        assert_eq!(config.ai_tasks.max_chain_depth, depth);
+    }
+}
+
+#[test]
 fn ai_task_lease_settings_default_and_are_bounded() {
     let config = parse("").expect("an empty file is valid");
     assert_eq!(config.ai_tasks.lease_extension_secs, 1_800);

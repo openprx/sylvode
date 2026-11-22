@@ -17,7 +17,7 @@
 		"events": "Event chain",
 		"showEvents": "Show events ({count})",
 		"hideEvents": "Hide events",
-		"eventsCapped": "Only the first {count} events are shown.",
+		"eventsOmitted": "Older events are not shown.",
 		"nextRetry": "Next attempt {time}",
 		"status": {
 			"queued": "Queued",

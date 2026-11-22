@@ -262,7 +262,7 @@ pub async fn list_project_ai_tasks(
 
 /// At most this many tasks are listed for one issue.
 const ISSUE_TASK_LIMIT: i64 = 50;
-/// At most this many events are listed for one task, oldest first.
+/// At most this many events are listed for one task: its newest, oldest first within the window.
 const TASK_EVENT_LIMIT: i64 = 100;
 /// A string inside an event payload is cut to this many characters.
 const EVENT_STRING_CHARS: usize = 2000;
@@ -279,6 +279,8 @@ struct TaskEventRow {
     event_type: String,
     payload: Value,
     created_at: Timestamp,
+    /// How many events the task has in all.
+    total: i64,
 }
 
 /// `payload` with every string value cut to [`EVENT_STRING_CHARS`] characters.
@@ -298,8 +300,10 @@ fn cut_long_strings(payload: Value) -> Value {
     }
 }
 
-/// `GET /api/v1/issues/{issue_id}/ai-tasks`: the agent tasks of one issue, newest first, each with
-/// its events oldest first. Members of the issue's project and bots of its workspace may read it.
+/// `GET /api/v1/issues/{issue_id}/ai-tasks`: the agent tasks of one issue, newest first.
+///
+/// Each task carries its newest [`TASK_EVENT_LIMIT`] events oldest first, and `events_omitted`
+/// telling that older ones were left out. Members of the issue's project and bots of its workspace may read it.
 pub async fn list_issue_ai_tasks(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -341,9 +345,10 @@ pub async fn list_issue_ai_tasks(
     let task_ids: Vec<Uuid> = tasks.iter().map(|entry| entry.task.id).collect();
     let events = TaskEventRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT task_id, event_type, payload, created_at FROM ( \
+        "SELECT task_id, event_type, payload, created_at, total FROM ( \
              SELECT task_id, event_type, payload, created_at, id, \
-                    ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY created_at, id) AS position \
+                    ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY created_at DESC, id DESC) AS position, \
+                    COUNT(*) OVER (PARTITION BY task_id) AS total \
              FROM ai_task_events WHERE task_id = ANY($1) \
          ) ranked WHERE position <= $2 ORDER BY created_at, id",
         vec![task_ids.into(), TASK_EVENT_LIMIT.into()],
@@ -365,9 +370,13 @@ pub async fn list_issue_ai_tasks(
                     })
                 })
                 .collect();
+            let events_omitted = events
+                .iter()
+                .any(|event| event.task_id == entry.task.id && event.total > TASK_EVENT_LIMIT);
             let mut item = json!(AiTaskResponse::from(entry));
             if let Some(object) = item.as_object_mut() {
                 object.insert("events".to_string(), Value::Array(task_events));
+                object.insert("events_omitted".to_string(), Value::Bool(events_omitted));
             }
             item
         })
@@ -857,7 +866,7 @@ mod issue_timeline_tests {
             db,
             "INSERT INTO ai_task_events (id, task_id, event_type, payload, created_at) \
              SELECT gen_random_uuid(), $1, 'progress', \
-                    jsonb_build_object('n', n, 'note', CASE WHEN n = 1 THEN repeat('y', 2500) ELSE 'ok' END), \
+                    jsonb_build_object('n', n, 'note', CASE WHEN n = 105 THEN repeat('y', 2500) ELSE 'ok' END), \
                     now() - interval '1 day' + make_interval(secs => n) \
              FROM generate_series(1, 105) AS n",
             vec![assignment.into()],
@@ -882,10 +891,15 @@ mod issue_timeline_tests {
 
         let events = items[1]["events"].as_array().expect("events");
         assert_eq!(events.len(), 100, "at most 100 events");
-        assert_eq!(events[0]["payload"]["n"], 1, "oldest first");
-        assert_eq!(events[99]["payload"]["n"], 100);
         assert_eq!(
-            events[0]["payload"]["note"].as_str().expect("note").chars().count(),
+            events[0]["payload"]["n"], 6,
+            "the newest 100 of 105, oldest first within them"
+        );
+        assert_eq!(events[99]["payload"]["n"], 105, "the newest event is kept");
+        assert_eq!(items[1]["events_omitted"], true);
+        assert_eq!(items[0]["events_omitted"], false);
+        assert_eq!(
+            events[99]["payload"]["note"].as_str().expect("note").chars().count(),
             2000
         );
         assert_eq!(items[1]["plan"], "the plan");

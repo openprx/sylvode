@@ -22,9 +22,10 @@ use super::inbound::RawInbound;
 use super::oauth::{RawOAuth, UrlRole, validate_forward_secret, validate_url};
 use super::secret::Secret;
 use super::{
-    AI_TASK_LEASE_EXTENSION_RANGE_SECS, AI_TASK_MAX_PROCESSING_CEILING_SECS, AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS,
-    AiTasksConfig, AuditConfig, AuthConfig, ConfigError, DEFAULT_AI_TASK_LEASE_EXTENSION_SECS,
-    DEFAULT_AI_TASK_MAX_PROCESSING_SECS, DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
+    AI_TASK_LEASE_EXTENSION_RANGE_SECS, AI_TASK_MAX_CHAIN_DEPTH_RANGE, AI_TASK_MAX_PROCESSING_CEILING_SECS,
+    AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS, AiTasksConfig, AuditConfig, AuthConfig, ConfigError,
+    DEFAULT_AI_TASK_LEASE_EXTENSION_SECS, DEFAULT_AI_TASK_MAX_CHAIN_DEPTH, DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
+    DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
     DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS,
     DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
     LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
@@ -154,6 +155,7 @@ struct RawAiTasks {
     processing_timeout_secs: Option<u64>,
     lease_extension_secs: Option<u64>,
     max_processing_secs: Option<u64>,
+    max_chain_depth: Option<u32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -577,10 +579,19 @@ impl RawAiTasks {
             }
             Some(secs) => secs,
         };
+        let max_chain_depth = self.max_chain_depth.map_or(DEFAULT_AI_TASK_MAX_CHAIN_DEPTH, |depth| {
+            if AI_TASK_MAX_CHAIN_DEPTH_RANGE.contains(&depth) {
+                depth
+            } else {
+                issues.push("ai_tasks.max_chain_depth must be between 1 and 10");
+                DEFAULT_AI_TASK_MAX_CHAIN_DEPTH
+            }
+        });
         AiTasksConfig {
             processing_timeout_secs,
             lease_extension_secs,
             max_processing_secs,
+            max_chain_depth,
         }
     }
 }

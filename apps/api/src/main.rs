@@ -3815,6 +3815,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0112_bot_connections.sql",
         include_str!("../../../migrations/0112_bot_connections.sql"),
     ),
+    (
+        "0113_ai_task_chain.sql",
+        include_str!("../../../migrations/0113_ai_task_chain.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4378,6 +4382,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0112_bot_connections.sql",
         SchemaProbe::Relation("project_bot_connections"),
+    ),
+    (
+        "0113_ai_task_chain.sql",
+        SchemaProbe::Column("ai_tasks", "chain_root_id"),
     ),
 ];
 
@@ -4945,6 +4953,7 @@ mod tests {
                 "0110_runner_task_protocol.sql",
                 "0111_alert_chain.sql",
                 "0112_bot_connections.sql",
+                "0113_ai_task_chain.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );

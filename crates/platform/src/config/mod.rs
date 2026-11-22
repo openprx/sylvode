@@ -118,6 +118,16 @@ pub const DEFAULT_AI_TASK_MAX_PROCESSING_SECS: u64 = 86_400;
 /// configured `processing_timeout_secs`.
 pub const AI_TASK_MAX_PROCESSING_CEILING_SECS: u64 = 604_800;
 
+/// Deepest hop of a bot-to-bot chain.
+///
+/// A task a human or an inbound event starts is depth 0, a task a bot's action causes while it
+/// runs a task is one deeper than that task. A hop beyond this depth is refused. Applies unless
+/// `[ai_tasks]` overrides it.
+pub const DEFAULT_AI_TASK_MAX_CHAIN_DEPTH: u32 = 3;
+
+/// Accepted range of `ai_tasks.max_chain_depth`.
+pub const AI_TASK_MAX_CHAIN_DEPTH_RANGE: std::ops::RangeInclusive<u32> = 1..=10;
+
 /// `event_dispatch` expansion-failure retry ceiling assumed unless `[flow]` overrides it.
 ///
 /// `limits-v1.md`'s own `dispatch_max_attempts` rationale ("与 `delivery_max_attempts` 同量级即可")
@@ -549,11 +559,15 @@ impl Default for AuditConfig {
 /// `lease_extension_secs` is how far an acknowledge, a progress report or a runner heartbeat moves
 /// the lease of an active task; `max_processing_secs` is the hard cap from `started_at` that no
 /// extension passes.
+///
+/// `max_chain_depth` is the deepest hop of a bot-to-bot chain (see
+/// [`DEFAULT_AI_TASK_MAX_CHAIN_DEPTH`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AiTasksConfig {
     pub processing_timeout_secs: u64,
     pub lease_extension_secs: u64,
     pub max_processing_secs: u64,
+    pub max_chain_depth: u32,
 }
 
 impl Default for AiTasksConfig {
@@ -562,6 +576,7 @@ impl Default for AiTasksConfig {
             processing_timeout_secs: DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS,
             lease_extension_secs: DEFAULT_AI_TASK_LEASE_EXTENSION_SECS,
             max_processing_secs: DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
+            max_chain_depth: DEFAULT_AI_TASK_MAX_CHAIN_DEPTH,
         }
     }
 }
