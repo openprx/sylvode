@@ -136,7 +136,6 @@ export const createCursorPlugin = (
 							anchor,
 							focus
 						});
-					} else {
 					}
 				} else if (current?.focus != null) {
 					store.setLocal({});
