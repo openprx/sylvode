@@ -135,7 +135,7 @@ fn row_for(env: &Env, record: &SessionRecord) -> Option<Row> {
             Ok(state) if state.dead => RowState::Dead,
             Ok(state) if state.pid == record.pane_pid && state.session_name == name.as_str() => env
                 .tmux
-                .capture_pane(&pane, None)
+                .capture_pane_styled(&pane, None)
                 .map_or(RowState::Busy, |screen| live_state(&record.cli, &screen)),
             Ok(_) | Err(_) => RowState::Gone,
         }

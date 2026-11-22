@@ -175,3 +175,55 @@ fn the_bottom_is_the_last_non_blank_lines() {
     assert_eq!(bottom("a\n\nb\n\n\nc\n\n", 2), "b\nc");
     assert_eq!(bottom("", 3), "");
 }
+
+const IDLE_PLACEHOLDER_PLAIN: &str = include_str!("fixtures/claude-idle-placeholder.txt");
+const IDLE_PLACEHOLDER_STYLED: &str = include_str!("fixtures/claude-idle-placeholder.ansi");
+
+/// A real v2.1.330 idle screen: the prompt shows a dim suggestion, which is not a draft.
+#[test]
+fn a_faint_placeholder_in_the_real_capture_counts_as_empty() {
+    assert_eq!(input_is_empty("claude", IDLE_PLACEHOLDER_STYLED), Some(true));
+    assert_eq!(input_text("claude", IDLE_PLACEHOLDER_STYLED).as_deref(), Some(""));
+    // Plain text carries no attribute: the suggestion looks like a draft there, so the decision
+    // must be made on the styled capture.
+    assert_eq!(input_is_empty("claude", IDLE_PLACEHOLDER_PLAIN), Some(false));
+    // Every other classification reads the same on both captures.
+    assert!(!looks_busy("claude", IDLE_PLACEHOLDER_STYLED));
+    assert!(!awaits_choice("claude", IDLE_PLACEHOLDER_STYLED));
+    assert_eq!(classify_bottom("claude", IDLE_PLACEHOLDER_STYLED), None);
+    assert!(screens_equal(IDLE_PLACEHOLDER_STYLED, IDLE_PLACEHOLDER_PLAIN));
+    assert!(!cut_for_log(IDLE_PLACEHOLDER_STYLED).contains('\u{1b}'));
+}
+
+#[test]
+fn only_faint_text_is_a_placeholder() {
+    for (screen, want) in [
+        // The fixture line with normal intensity: a draft.
+        (
+            "\u{1b}[39m\u{276f}\u{a0}Try \"how do I log an error?\"\u{1b}[0m",
+            Some(false),
+        ),
+        ("\u{1b}[39m\u{276f}\u{a0}\u{1b}[2mTry \"x\"\u{1b}[0m", Some(true)),
+        // Faint ended by SGR 22.
+        ("\u{276f} \u{1b}[2msuggest\u{1b}[22m", Some(true)),
+        // Real text followed by a faint ghost completion.
+        ("\u{276f}\u{a0}git sta\u{1b}[2mtus\u{1b}[0m", Some(false)),
+        // Faint text followed by real text.
+        ("\u{276f}\u{a0}\u{1b}[2mfa\u{1b}[0mreal", Some(false)),
+        // Faint reset by SGR 0 and a bare reset; extended colours do not turn faint on.
+        ("\u{276f} \u{1b}[2mx\u{1b}[m typed", Some(false)),
+        ("\u{276f} \u{1b}[38;2;1;2;3mtyped\u{1b}[0m", Some(false)),
+        // Plain screens.
+        ("\u{276f}\u{a0}", Some(true)),
+        ("> ", Some(true)),
+        ("> draft", Some(false)),
+        ("\u{1b}[2mno prompt here\u{1b}[0m", None),
+        ("", None),
+    ] {
+        assert_eq!(input_is_empty("claude", screen), want, "{screen:?}");
+    }
+    assert_eq!(
+        input_text("claude", "\u{276f}\u{a0}git sta\u{1b}[2mtus\u{1b}[0m").as_deref(),
+        Some("git status")
+    );
+}

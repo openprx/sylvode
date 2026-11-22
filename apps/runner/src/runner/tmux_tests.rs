@@ -259,11 +259,15 @@ fn every_call_is_an_argument_vector_with_the_socket_and_an_exact_target() {
         with(&["display-message", "-p", "-t", "%7", "#{pane_current_command}"])
     );
     assert_eq!(
-        t.capture_pane_call(&p, None).args,
+        t.capture_pane_call(&p, None, false).args,
         with(&["capture-pane", "-p", "-t", "%7"])
     );
     assert_eq!(
-        t.capture_pane_call(&p, Some(200)).args,
+        t.capture_pane_call(&p, None, true).args,
+        with(&["capture-pane", "-p", "-e", "-t", "%7"])
+    );
+    assert_eq!(
+        t.capture_pane_call(&p, Some(200), false).args,
         with(&["capture-pane", "-p", "-t", "%7", "-S", "-200"])
     );
     assert_eq!(
@@ -303,7 +307,8 @@ fn only_the_listed_tmux_calls_exist_and_none_passes_a_config_file() {
         new_session,
         t.state_call(&p),
         t.field_call(&p, "#{pane_current_command}"),
-        t.capture_pane_call(&p, Some(5)),
+        t.capture_pane_call(&p, Some(5), false),
+        t.capture_pane_call(&p, Some(5), true),
         t.list_clients_call(&k),
         t.load_buffer_call(&buffer, &text),
         t.paste_buffer_call(&buffer, &p),

@@ -810,7 +810,7 @@ impl Worker {
     async fn capture(&self) -> Option<String> {
         let pane = self.pane.clone()?;
         let tmux = self.tmux();
-        tokio::task::spawn_blocking(move || tmux.capture_pane(&pane, None).ok())
+        tokio::task::spawn_blocking(move || tmux.capture_pane_styled(&pane, None).ok())
             .await
             .ok()
             .flatten()
@@ -1344,7 +1344,7 @@ fn ensure_blocking(
 /// being the last thing on the input line. Pressing Enter blind could submit a person's draft or
 /// confirm a dialog's default.
 fn enter_retry_allowed(tmux: &Tmux, pane: &Pane, cli: &str, process_names: &[String], user_idle_secs: u64) -> bool {
-    let Ok(screen) = tmux.capture_pane(pane, None) else {
+    let Ok(screen) = tmux.capture_pane_styled(pane, None) else {
         return false;
     };
     if classify_bottom(cli, &screen).is_some() {
@@ -1407,7 +1407,7 @@ fn push_blocking(
     task_id: &Uuid,
     text: &str,
 ) -> PushTry {
-    let Ok(screen) = tmux.capture_pane(pane, None) else {
+    let Ok(screen) = tmux.capture_pane_styled(pane, None) else {
         return PushTry::SessionGone;
     };
     if let Some(dialog) = classify_bottom(cli, &screen) {

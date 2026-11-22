@@ -713,9 +713,13 @@ impl Tmux {
         self.call(&["display-message", "-p", "-t", pane.as_str(), format])
     }
 
-    fn capture_pane_call(&self, pane: &PaneId, scrollback_lines: Option<u32>) -> Call {
+    fn capture_pane_call(&self, pane: &PaneId, scrollback_lines: Option<u32>, styled: bool) -> Call {
         let start = scrollback_lines.map(|lines| format!("-{lines}"));
-        let mut rest = vec!["capture-pane", "-p", "-t", pane.as_str()];
+        let mut rest = vec!["capture-pane", "-p"];
+        if styled {
+            rest.push("-e");
+        }
+        rest.extend(["-t", pane.as_str()]);
         if let Some(start) = &start {
             rest.push("-S");
             rest.push(start);
@@ -1019,7 +1023,17 @@ impl Tmux {
     ///
     /// A failure status.
     pub fn capture_pane(&self, pane: &Pane, scrollback_lines: Option<u32>) -> Result<String, TmuxError> {
-        Ok(self.run_ok(&self.capture_pane_call(&pane.id, scrollback_lines))?.stdout)
+        Ok(self
+            .run_ok(&self.capture_pane_call(&pane.id, scrollback_lines, false))?
+            .stdout)
+    }
+
+    /// The pane as text with escape sequences (`capture-pane -e`): the input-line decision reads the
+    /// faint attribute from it. [`super::detect`] strips the escapes for every other use.
+    pub fn capture_pane_styled(&self, pane: &Pane, scrollback_lines: Option<u32>) -> Result<String, TmuxError> {
+        Ok(self
+            .run_ok(&self.capture_pane_call(&pane.id, scrollback_lines, true))?
+            .stdout)
     }
 
     /// The `client_activity` timestamps (seconds) of the clients attached to the session.
