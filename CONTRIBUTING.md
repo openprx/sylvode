@@ -282,8 +282,8 @@ The workspace lints in `Cargo.toml` and the settings in `clippy.toml` enforce th
 
 ## Compatibility
 
-Sylvode keeps no alias for an OpenPR name: a legacy configuration file, environment variable,
-header, URI or archive name is simply unknown, and no change adds one back. Identifiers that
+Sylvode keeps no alias for a name from before the rename: a legacy configuration file,
+environment variable, header, URI or archive name is simply unknown, and no change adds one back. Identifiers that
 are stored or on the wire were not renamed and stay as they are: the REST paths and schema
 identifiers, MCP tool names, database objects and migrations, the plugin ABI, the `opr_` token
 prefix, compose service labels and `OPENPR_TEST_DATABASE_URL`.

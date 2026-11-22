@@ -564,7 +564,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 - `docs/universal-forms-production.md` — production runbook
 - `docs/universal-forms-implementation-map.md` — source module / verification command map
 - `docs/plugins/openpr-plugin-v1.wit` — plugin ABI v1
-- `docs/sylvode-v1.0-compatibility.md` — the v1.0 compatibility matrix (a release-gate record of the retired OpenPR names)
+- `docs/sylvode-v1.0-compatibility.md` — the v1.0 compatibility matrix (a release-gate record of the retired names)
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` — release notes, contributor guide, security policy
 - `apps/mcp-server/AGENTS.md` — coding-agent workflow patterns and tool examples
 - `skills/sylvode-mcp/SKILL.md` — the MCP skill package (single hand-written source; generated files are checked by `sylvode-skillgen --check`)

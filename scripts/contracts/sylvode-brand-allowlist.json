@@ -48,7 +48,7 @@
         "**"
       ],
       "pattern": "[Xx]-(?:OpenPR|openpr)-[A-Za-z*-]*",
-      "explanation": "The X-OpenPR-Attachment-* count headers, sent next to the X-Sylvode-* spelling throughout 1.x (ADR-0020 D3; CHANGELOG Deprecated table), and the retired X-OpenPR-MCP-* attribution spelling, which only tests and history name: it is neither sent nor read."
+      "explanation": "The X-OpenPR-* header spellings (attachment count and MCP attribution), no longer sent or read; only history, the frozen compatibility records and documentation of the removal name them."
     },
     {
       "id": "sylvode-webhook-user-agent",
@@ -58,7 +58,7 @@
         "**"
       ],
       "pattern": "OpenPR-Webhook/(?:1\\.0)?",
-      "explanation": "The compatibility token kept in the outbound webhook User-Agent comment section (`Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)`), required by ADR-0020 D3."
+      "explanation": "The compatibility token the outbound webhook User-Agent used to carry (`Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)`), no longer sent; only history and the frozen compatibility records name it."
     },
     {
       "id": "sylvode-legacy-config-files",
@@ -68,7 +68,7 @@
         "**"
       ],
       "pattern": "(?:[\\w.$/{}-]*/)?openpr\\.(?:compose|mcp|example|toml)[\\w.*:]*|`openpr\\.\\*`",
-      "explanation": "The legacy config/openpr.toml and config/openpr.compose*.toml names, still discovered with a deprecation warning until v2.0 (ADR-0020 D1/D2), and the documentation and tests that name them."
+      "explanation": "The legacy config/openpr.toml and config/openpr.compose*.toml names, no longer discovered; only history, the frozen compatibility records and documentation of the removal name them."
     },
     {
       "id": "sylvode-legacy-resource-uris",
@@ -78,16 +78,14 @@
         "**"
       ],
       "pattern": "openpr://[\\w{}/<>.?=&$-]*",
-      "explanation": "The retired openpr:// MCP resource URI spelling, which is no longer served: only tests that prove it is unknown, history and the frozen v0.9 gate name it."
+      "explanation": "The retired openpr:// MCP resource URI spelling, which is no longer served: only history and the frozen v0.9 gate name it."
     },
     {
       "id": "sylvode-legacy-release-archives",
       "reason": "legacy_alias_documented",
       "repo": "sylvode",
       "paths": [
-        ".github/workflows/release.yml",
         "CHANGELOG.md",
-        "SECURITY.md",
         "README.md",
         "docs/sylvode-v0.9-compatibility.md",
         "docs/sylvode-v1.0-compatibility.md",
@@ -95,17 +93,7 @@
         "scripts/verify-sylvode-brand-compat.sh"
       ],
       "pattern": "openpr-(?:<target>|\\*|frontend\\.tar\\.gz|\\$\\{\\{ matrix\\.suffix \\}\\}[\\w.]*|mcp-server-<target>)|`openpr-\\*`",
-      "explanation": "The openpr-<target> and openpr-frontend.tar.gz release archive aliases published next to the sylvode-* archives (ADR-0020 D1), and the removed openpr-mcp-server-<target> archives in the release notes."
-    },
-    {
-      "id": "sylvode-legacy-release-aliases",
-      "reason": "legacy_alias_documented",
-      "repo": "sylvode",
-      "paths": [
-        ".github/workflows/release.yml"
-      ],
-      "pattern": "openpr-(?:linux-\\*|macos-\\*)",
-      "explanation": "The openpr-linux-*/openpr-macos-* archive globs the release job checks (ADR-0020 D1)."
+      "explanation": "The openpr-<target> and openpr-frontend.tar.gz release archive aliases, no longer published, and the removed openpr-mcp-server-<target> archives; only history, the frozen compatibility records and documentation of the removal name them."
     },
     {
       "id": "sylvode-database-names",
@@ -315,20 +303,6 @@
       ],
       "pattern": "(?i:openpr)",
       "explanation": "Tests and gates whose subject is the legacy behaviour: legacy config discovery, the deprecation notices, the URI aliases, the v0.9 rename matrix and the install/upgrade path from OpenPR releases."
-    },
-    {
-      "id": "sylvode-legacy-config-example",
-      "reason": "legacy_alias_documented",
-      "repo": "sylvode",
-      "paths": [
-        "config/openpr.example.toml"
-      ],
-      "pattern": "(?i:openpr)",
-      "explanation": "The retained legacy configuration example for deployments that keep config/openpr.toml (ADR-0020 D1); it describes the legacy path as such. Also covers the tracked file names that carry the identifier.",
-      "applies_to": [
-        "content",
-        "path"
-      ]
     },
     {
       "id": "sylvode-legacy-negative-checks",
@@ -735,7 +709,7 @@
         "**"
       ],
       "pattern": "OPENPR_(?:BIND_HOST|API_PORT|FRONTEND_PORT|MCP_PORT|RUNTIME_BASE|FRONTEND_DOCKERFILE)\\b|`OPENPR_\\*`",
-      "explanation": "Legacy compose variables that scripts/start.sh still reads with a deprecation warning (ADR-0020 D2), as listed in the compose row of the v1.0 compatibility matrix."
+      "explanation": "Legacy compose variables that scripts/start.sh no longer reads; only history and the frozen compatibility records name them."
     },
     {
       "id": "sylvode-script-environment-inputs",
@@ -825,16 +799,6 @@
       ],
       "pattern": "[Ff]ormerly (?:`OpenPR`|OpenPR) Webhook|called OpenPR Webhook|from OpenPR Webhook",
       "explanation": "Notes in the runner (apps/runner, imported from the openpr-webhook repository) that its earlier standalone releases were called OpenPR Webhook, in the README upgrade section and the frozen release history (ADR-0020 D4)."
-    },
-    {
-      "id": "sylvode-apps-runner-dispatcher-test-environment",
-      "reason": "legacy_behaviour_test",
-      "repo": "sylvode",
-      "paths": [
-        "apps/runner/src/dispatcher.rs"
-      ],
-      "pattern": "OPENPR_API_URL = \"http://localhost:3000\"",
-      "explanation": "An environment entry in the apps/runner dispatcher's test configurations, passed through to an agent unchanged; the test checks pass-through, not the name."
     },
     {
       "id": "sylvode-apps-runner-changelog-history",
