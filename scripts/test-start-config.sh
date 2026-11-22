@@ -5,8 +5,7 @@
 #   - a fresh generation validates and lists the origins the stack is published at in
 #     [flow] collab_allowed_origins (an empty list kills live editing), never a wildcard;
 #   - a re-run leaves the generated files byte-for-byte alone;
-#   - a legacy config/openpr.compose*.toml pair is discovered, used and not rewritten, and the
-#     check says what its missing collab_allowed_origins means;
+#   - a file without collab_allowed_origins is used as it is, and the check says what that means;
 #   - keys the binaries accept ([flow], [audit], auth.allow_insecure_cookies) are not refused;
 #   - an origin that is not scheme://host[:port] is refused.
 #
@@ -27,7 +26,7 @@ fresh_copy() {
   local dir="$WORK/$1"
   mkdir -p "$dir/scripts/lib" "$dir/config"
   cp "$ROOT_DIR/scripts/start.sh" "$dir/scripts/start.sh"
-  cp "$ROOT_DIR"/scripts/lib/sylvode_compat.sh "$ROOT_DIR"/scripts/lib/sylvode_config_schema.json "$dir/scripts/lib/"
+  cp "$ROOT_DIR"/scripts/lib/sylvode_env.sh "$ROOT_DIR"/scripts/lib/sylvode_config_schema.json "$dir/scripts/lib/"
   cp "$ROOT_DIR/.env.example" "$dir/.env.example"
   printf '%s' "$dir"
 }
@@ -38,7 +37,7 @@ check() {
   local dir="$1"
   shift
   local status=0
-  (cd "$dir" && env -u SYLVODE_BIND_HOST -u OPENPR_BIND_HOST -u SYLVODE_FRONTEND_PORT -u OPENPR_FRONTEND_PORT \
+  (cd "$dir" && env -u SYLVODE_BIND_HOST -u SYLVODE_FRONTEND_PORT \
     "$@" bash scripts/start.sh --check-config) >"$dir/out" 2>&1 || status=$?
   printf '%s' "$status" >"$dir/status"
 }
@@ -94,25 +93,22 @@ check "$dir" SYLVODE_BIND_HOST=192.0.2.10 SYLVODE_FRONTEND_PORT=80
 origins="$(origins_of "$dir/config/sylvode.compose.toml")"
 if [[ "$origins" == "http://192.0.2.10" ]]; then ok "a specific host on port 80 is listed without the port"; else bad "a specific host on port 80 is listed without the port" "got: $origins"; fi
 
-# 5. Legacy files are discovered, used as they are, and the check explains the empty origins.
-dir="$(fresh_copy legacy)"
+# 5. A file without collab_allowed_origins is used as it is, and the check explains the empty origins.
+dir="$(fresh_copy empty-origins)"
 check "$dir"
-mv "$dir/config/sylvode.compose.toml" "$dir/config/openpr.compose.toml"
-mv "$dir/config/sylvode.compose.mcp.toml" "$dir/config/openpr.compose.mcp.toml"
-python3 - "$dir/config/openpr.compose.toml" <<'PY'
+python3 - "$dir/config/sylvode.compose.toml" <<'PY'
 import re, sys
 path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
 open(path, "w", encoding="utf-8").write(re.sub(r"\n\[flow\][\s\S]*?collab_allowed_origins = [^\n]*\n", "\n", text))
 PY
-legacy_before="$(sha256sum "$dir/config/openpr.compose.toml")"
+before="$(sha256sum "$dir/config/sylvode.compose.toml")"
 check "$dir"
-if [[ "$(cat "$dir/status")" == 0 && ! -e "$dir/config/sylvode.compose.toml" && "$legacy_before" == "$(sha256sum "$dir/config/openpr.compose.toml")" ]]; then
-  ok "legacy openpr.compose*.toml files are used and not rewritten"
+if [[ "$(cat "$dir/status")" == 0 && "$before" == "$(sha256sum "$dir/config/sylvode.compose.toml")" ]]; then
+  ok "an existing sylvode.compose*.toml file is used and not rewritten"
 else
-  bad "legacy openpr.compose*.toml files are used and not rewritten" "$(cat "$dir/out")"
+  bad "an existing sylvode.compose*.toml file is used and not rewritten" "$(cat "$dir/out")"
 fi
-if grep -q "openpr.compose.toml" "$dir/out" && grep -qi "deprecat" "$dir/out"; then ok "the legacy file prints its deprecation notice"; else bad "the legacy file prints its deprecation notice" "$(cat "$dir/out")"; fi
 if grep -q "collab_allowed_origins is empty, so the api refuses every live-editing" "$dir/out"; then
   ok "the check explains an empty collab_allowed_origins"
 else
@@ -174,15 +170,16 @@ else
   bad "a non-numeric port is refused before generation" "$(cat "$dir/out")"
 fi
 
-# 10. A legacy variable set only in the process environment works with a fresh .env: the example
-# file does not preset the canonical names it would conflict with.
-dir="$(fresh_copy legacyenv)"
-check "$dir" OPENPR_FRONTEND_PORT=3111
+# 10. A canonical variable set only in the process environment works with a fresh .env, and a
+# legacy OPENPR_* variable is not read.
+dir="$(fresh_copy processenv)"
+check "$dir" SYLVODE_FRONTEND_PORT=3111 OPENPR_FRONTEND_PORT=3222
 origins="$(origins_of "$dir/config/sylvode.compose.toml" 2>&1 || true)"
-if [[ "$(cat "$dir/status")" == 0 && "$origins" == "http://localhost:3111 http://127.0.0.1:3111" ]]; then
-  ok "a legacy variable in the process environment works with a fresh .env"
+if [[ "$(cat "$dir/status")" == 0 && "$origins" == "http://localhost:3111 http://127.0.0.1:3111" ]] \
+  && ! grep -qi "deprecat" "$dir/out"; then
+  ok "a canonical variable in the process environment works with a fresh .env; a legacy one is ignored"
 else
-  bad "a legacy variable in the process environment works with a fresh .env" "got: $origins
+  bad "a canonical variable in the process environment works with a fresh .env; a legacy one is ignored" "got: $origins
 $(cat "$dir/out")"
 fi
 

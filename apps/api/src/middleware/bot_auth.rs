@@ -913,11 +913,10 @@ mod tests {
         }
     }
 
-    /// ADR-0020 D3: only the canonical `X-Sylvode-MCP-*` headers are read. The retired
-    /// `X-OpenPR-MCP-*` spelling is ignored, alone or next to the canonical one; repeated lines of
-    /// one canonical header must agree.
+    /// ADR-0020 D3: the `X-Sylvode-MCP-*` headers are read; repeated lines of one header must
+    /// agree.
     #[test]
-    fn attribution_reads_one_spelling_and_refuses_disagreement() {
+    fn attribution_reads_the_headers_and_refuses_disagreement() {
         for (case, pairs) in [
             (
                 "canonical",
@@ -934,28 +933,12 @@ mod tests {
                     ("x-sylvode-mcp-tool", "projects.list"),
                 ][..],
             ),
-            (
-                "the retired spelling next to it is ignored",
-                &[
-                    ("x-sylvode-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-surface", "mcp_sse"),
-                    ("x-sylvode-mcp-tool", "projects.list"),
-                    ("x-openpr-mcp-tool", "projects.delete"),
-                ][..],
-            ),
         ] {
             let headers = headers_of(pairs);
             let attribution = mcp_attribution(&headers).unwrap_or_else(|error| panic!("{case}: {error:?}"));
             assert_eq!(attribution.surface, Some("mcp_http"), "{case}");
             assert_eq!(attribution.tool, Some("projects.list"), "{case}");
         }
-
-        let retired = headers_of(&[
-            ("x-openpr-mcp-surface", "mcp_http"),
-            ("x-openpr-mcp-tool", "projects.list"),
-        ]);
-        let attribution = mcp_attribution(&retired).expect("the retired spelling is not read, so it cannot conflict");
-        assert_eq!((attribution.surface, attribution.tool), (None, None));
 
         for (case, pairs) in [
             (

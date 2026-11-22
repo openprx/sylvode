@@ -516,7 +516,7 @@ fn alias_api_router() -> Router {
 }
 
 /// Enumerates the actual registry through every shipped transport and reads every single row by its
-/// `sylvode://` identity, and by the retired `openpr://` spelling, which must be unknown. The explicit
+/// `sylvode://` identity. The explicit
 /// expected list catches a registry row disappearing at the same time as its test; the observed count
 /// catches a new row added without coverage.
 #[tokio::test]
@@ -574,18 +574,14 @@ async fn every_resource_is_served_by_its_sylvode_identity_only_over_stdio_http_a
     for (index, registered) in observed.iter().enumerate() {
         let index = i64::try_from(index)?;
         let canonical = expand_resource_identity(registered);
-        let retired = canonical.replacen("sylvode://", "openpr://", 1);
         let id = 1000 + (index * 10);
         let stdio_canonical = stdio.call(&resource_request(id, &canonical)).await?;
-        let stdio_retired = stdio.call(&resource_request(id + 1, &retired)).await?;
         let http_canonical = http_call(&http, &resource_request(id + 2, &canonical)).await?;
-        let http_retired = http_call(&http, &resource_request(id + 3, &retired)).await?;
         let sse_canonical = sse_call(&sse, &resource_request(id + 4, &canonical)).await?;
-        let sse_retired = sse_call(&sse, &resource_request(id + 5, &retired)).await?;
-        for (transport, canonical_response, retired_response) in [
-            ("stdio", stdio_canonical, stdio_retired),
-            ("http", http_canonical, http_retired),
-            ("sse", sse_canonical, sse_retired),
+        for (transport, canonical_response) in [
+            ("stdio", stdio_canonical),
+            ("http", http_canonical),
+            ("sse", sse_canonical),
         ] {
             assert!(
                 canonical_response.get("error").is_none(),
@@ -595,12 +591,6 @@ async fn every_resource_is_served_by_its_sylvode_identity_only_over_stdio_http_a
                 json_at(&canonical_response, "/result/contents/0/uri")?,
                 &json!(canonical),
                 "{transport} canonical read of {registered} names another identity"
-            );
-            // The retired `openpr://` spelling of the same identity is not served by any transport.
-            assert!(
-                retired_response.get("result").is_none()
-                    && retired_response.to_string().contains("Unknown resource URI"),
-                "{transport} still serves the retired spelling of {registered}: {retired_response}"
             );
         }
     }

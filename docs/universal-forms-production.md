@@ -250,9 +250,9 @@ postgres image. Nothing in it reaches Sylvode's own code:
 
 ```bash
 POSTGRES_PASSWORD=replace_with_postgres_password
-OPENPR_FRONTEND_PORT=3000
-OPENPR_API_PORT=8081
-MCP_SERVER_PORT=8090
+SYLVODE_FRONTEND_PORT=3000
+SYLVODE_API_PORT=8081
+SYLVODE_MCP_PORT=8090
 VITE_API_BASE_URL=
 ```
 

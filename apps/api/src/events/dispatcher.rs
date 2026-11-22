@@ -3364,7 +3364,7 @@ mod dispatcher_database_tests {
             })
             .expect("user-agent header exists");
         assert_eq!(
-            user_agent, "Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)",
+            user_agent, "Sylvode-Webhook/1.0",
             "the dispatcher sends the same User-Agent as every other webhook delivery"
         );
         assert_eq!(

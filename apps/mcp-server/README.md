@@ -139,10 +139,7 @@ commands and the workspace commands (`projects`, `work-items`, `comments`,
 `labels`, `sprints`, `search`, `files`, `operation-logs`, `tools`). Those
 workspace commands under `mcp-server` are the same commands with the same output
 and exit codes, but print a deprecation warning on stderr; `mcp-server serve`
-does not warn. The legacy `config/openpr.toml` default also warns when it is
-discovered. None of these is removed before Sylvode v2.0, and MCP tool names are
-not renamed; see the
-[compatibility matrix](../../docs/sylvode-v1.0-compatibility.md).
+does not warn. MCP tool names are not renamed.
 
 | Config key | Required | Purpose |
 | --- | --- | --- |
@@ -350,8 +347,7 @@ The Flow tools carry the Flow contracts (`objects.*`, `collections.*`, `records.
 
 The registry exposes five static resources (the skill `sylvode://skills/sylvode-mcp`, its tool reference `sylvode://skills/sylvode-mcp/tools`, `sylvode://guides/agents`, `sylvode://guides/workflows`, `sylvode://scenario-templates`) and 21 templates under the canonical
 `sylvode://` scheme, including all five frozen Flow resource templates. The matching
-identity of every registry row is the `sylvode://` one; the retired `openpr://` spelling is not
-served. The native `sylvode`
+identity of every registry row is the `sylvode://` one. The native `sylvode`
 CLI (a second `[[bin]]` in this package) shares the same client and command contracts.
 
 ## Usage Examples

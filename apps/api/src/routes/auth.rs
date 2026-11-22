@@ -610,7 +610,7 @@ fn build_auth_response(
 
 /// `Secure` is dropped only when `allow_insecure_cookies` is true, which
 /// [`platform::config::AppConfig::from_config`] only ever sets when `server.bind_addr` also
-/// resolves to a loopback host — see `auth.allow_insecure_cookies` in `config/openpr.example.toml`.
+/// resolves to a loopback host — see `auth.allow_insecure_cookies` in `config/sylvode.example.toml`.
 /// Every other deployment gets `Secure` unconditionally (fail closed).
 const fn secure_attribute(allow_insecure_cookies: bool) -> &'static str {
     if allow_insecure_cookies { "" } else { "; Secure" }

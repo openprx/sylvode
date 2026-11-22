@@ -29,14 +29,12 @@ export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-v09-openpr-rc}"
 # one combined graph. Start the real compose services in dependency order.
 export SYLVODE_COMPOSE_STAGED=1
 # E2E builds binaries on this host, so its runtime image must carry at least
-# the host glibc. Override both names together to avoid a stale legacy value in
-# a developer .env becoming either a conflict or an older runtime.
+# the host glibc.
 if [[ -r /etc/os-release ]]; then
   e2e_host_id=$(. /etc/os-release && printf '%s' "${ID:-}")
   e2e_host_codename=$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-}")
   if [[ $e2e_host_id == debian && -n $e2e_host_codename ]]; then
     export SYLVODE_RUNTIME_BASE="debian:${e2e_host_codename}-slim"
-    export OPENPR_RUNTIME_BASE="$SYLVODE_RUNTIME_BASE"
   fi
 fi
 
@@ -83,9 +81,8 @@ docker compose down -v --remove-orphans
 # The generated configuration files outlive the database volume, and the workspace id and bot
 # token they carry name rows that the wipe just deleted. Leaving them in place makes the MCP
 # server authenticate as a bot that no longer exists, so drop them and let start.sh regenerate
-# a matching set. Only the generated files go; config/openpr.example.toml is untouched.
-rm -f config/sylvode.compose.toml config/sylvode.compose.mcp.toml \
-  config/openpr.compose.toml config/openpr.compose.mcp.toml
+# a matching set. Only the generated files go; config/sylvode.example.toml is untouched.
+rm -f config/sylvode.compose.toml config/sylvode.compose.mcp.toml
 echo "✅ Environment reset"
 echo ""
 
@@ -101,8 +98,7 @@ cleanup() {
   echo ""
   echo "🧹 Cleaning up..."
   docker compose down -v --remove-orphans
-  rm -f config/sylvode.compose.toml config/sylvode.compose.mcp.toml \
-    config/openpr.compose.toml config/openpr.compose.mcp.toml
+  rm -f config/sylvode.compose.toml config/sylvode.compose.mcp.toml
   echo "✅ Cleanup complete"
 }
 

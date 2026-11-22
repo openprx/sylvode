@@ -33,8 +33,8 @@ interface Spec {
 }
 
 /**
- * scripts/test-mcp.sh needs bash 4 or later (scripts/lib/sylvode_compat.sh declares an associative
- * array with `declare -gA`). macOS ships bash 3.2 as /bin/bash, so the Homebrew bash is preferred
+ * scripts/test-mcp.sh needs bash 4 or later (scripts/lib/sylvode_env.sh uses `[[ -v ]]` and
+ * namerefs). macOS ships bash 3.2 as /bin/bash, so the Homebrew bash is preferred
  * when it is installed; elsewhere `bash` on the PATH is the one the script is run with.
  */
 function bashBinary(): string {

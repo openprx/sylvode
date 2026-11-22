@@ -21,7 +21,7 @@ services:
     image: postgres:18
     # The postgres image initialises itself from these; they are read by the image's entrypoint,
     # not by Sylvode. POSTGRES_PASSWORD must match the password inside database.url in
-    # config/sylvode.compose.toml (or the legacy config/openpr.compose.toml).
+    # config/sylvode.compose.toml.
     environment:
       POSTGRES_DB: openpr
       POSTGRES_USER: openpr

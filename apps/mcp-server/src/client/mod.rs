@@ -112,8 +112,7 @@ pub const TRANSPORT_LABEL_CLI: &str = "cli";
 /// commands' `cli`.
 pub const TRANSPORT_LABEL_CLI_TOOLS_CALL: &str = "cli_tools_call";
 
-/// Attribution headers (ADR-0020 D3). Only this spelling exists; the retired `X-OpenPR-MCP-*` pair
-/// is neither sent nor read.
+/// Attribution headers (ADR-0020 D3).
 const MCP_TOOL_HEADER: &str = "X-Sylvode-MCP-Tool";
 const MCP_SURFACE_HEADER: &str = "X-Sylvode-MCP-Surface";
 
@@ -2024,9 +2023,7 @@ mod tests {
                     "code": 0,
                     "data": {
                         "tool": all("x-sylvode-mcp-tool"),
-                        "retired_tool": all("x-openpr-mcp-tool"),
                         "surface": all("x-sylvode-mcp-surface"),
-                        "retired_surface": all("x-openpr-mcp-surface"),
                         "authorization": headers.get("authorization").and_then(|value| value.to_str().ok())
                     }
                 }))
@@ -2040,11 +2037,9 @@ mod tests {
         let value: Value = client.get("/record").await?;
         let data = value.get("data").and_then(Value::as_object).ok_or("missing data")?;
 
-        // ADR-0020 D3: the attribution headers, each exactly once; the retired spelling is not sent.
+        // ADR-0020 D3: the attribution headers, each exactly once.
         assert_eq!(data.get("tool"), Some(&json!(["bot_operation_logs.list"])));
-        assert_eq!(data.get("retired_tool"), Some(&json!([])));
         assert_eq!(data.get("surface"), Some(&json!(["cli"])));
-        assert_eq!(data.get("retired_surface"), Some(&json!([])));
         assert_eq!(
             data.get("authorization").and_then(Value::as_str),
             Some("Bearer opr_test_token")

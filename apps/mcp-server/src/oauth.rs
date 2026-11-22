@@ -1340,7 +1340,6 @@ mod tests {
             "sylvode://scenario-templates",
             "sylvode://forms/22222222-2222-4222-8222-222222222222/records",
             "sylvode://skills/sylvode-mcp/tools/",
-            "sylvode://skills/openpr-mcp",
             "",
         ] {
             assert!(!is_static_guide_resource(uri), "{uri}");

@@ -17,9 +17,8 @@ the advisory unless you prefer otherwise.
 
 ## Scope notes
 
-- Inbound webhooks are authenticated by an HMAC-SHA256 signature in `X-Sylvode-Signature`,
-  `X-Webhook-Signature` or the legacy `X-OpenPR-Signature`. Requests whose signature headers
-  disagree are refused. `allow_unsigned = true` disables verification and is meant for
+- Inbound webhooks are authenticated by an HMAC-SHA256 signature in `X-Sylvode-Signature`
+  or `X-Webhook-Signature`. Requests whose signature headers disagree are refused. `allow_unsigned = true` disables verification and is meant for
   development only.
 - `allow_unsigned = true` is refused on an address other than loopback unless
   `allow_unsigned_non_loopback = true` acknowledges it. Blank secrets and the example placeholders
