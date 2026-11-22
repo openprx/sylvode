@@ -87,8 +87,14 @@ export const INVALID_UPDATE_REASONS = [
 /** Reasons only this client mints (never on the wire, so not part of the approved server table):
  * `rebase_state_mismatch` -- the re-encoded unsent edits did not reproduce the document the editor
  * shows, so they stay in the recovery draft instead of being sent. `sending_paused` -- the server
- * kept answering `contention`, so sending is parked and the changes are kept on this device. */
-export const CLIENT_INVALID_UPDATE_REASONS = ['rebase_state_mismatch', 'sending_paused'] as const;
+ * kept answering `contention`, so sending is parked and the changes are kept on this device.
+ * `remote_update_unreadable` -- the document engine failed on bytes the server provided, even
+ * after the document was rebuilt, so editing is stopped. */
+export const CLIENT_INVALID_UPDATE_REASONS = [
+	'rebase_state_mismatch',
+	'sending_paused',
+	'remote_update_unreadable'
+] as const;
 export type InvalidUpdateReason =
 	| (typeof INVALID_UPDATE_REASONS)[number]
 	| (typeof CLIENT_INVALID_UPDATE_REASONS)[number];
@@ -131,7 +137,8 @@ const INVALID_UPDATE_ACTIONS: Readonly<Record<InvalidUpdateReason, InvalidUpdate
 	// (`error-mapping-v1.md` `cross_workspace_relation` row, narrowed 2026-10-10).
 	cross_workspace_relation: 'integrity_repair',
 	rebase_state_mismatch: 'keep_in_recovery_draft',
-	sending_paused: 'surface_error'
+	sending_paused: 'surface_error',
+	remote_update_unreadable: 'surface_error'
 };
 
 /**

@@ -201,6 +201,34 @@ function unreadableRemoteUpdate(): FlowError {
 	};
 }
 
+/**
+ * The ONE place remote bytes enter a doc that is (or may become) bound to the editor. Returns
+ * false when the engine threw: a failed `import` can panic the WASM module (a tree op under a
+ * parent that does not exist), after which every call on that doc throws too, so the caller must
+ * treat the doc as poisoned and never touch it again. A try/catch only: no copy, no decoding.
+ */
+function importRemote(doc: LoroDocType, chunks: readonly Uint8Array[]): boolean {
+	try {
+		for (const bytes of chunks) doc.import(bytes);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** A fresh doc holding exactly `chunks`; one the engine cannot import is freed and refused. */
+async function freshDocFrom(chunks: readonly Uint8Array[]): Promise<LoroDocType> {
+	const { LoroDoc } = await loadLoro();
+	const fresh = new LoroDoc() as unknown as LoroDocType;
+	if (importRemote(fresh, chunks)) return fresh;
+	try {
+		fresh.free();
+	} catch {
+		// Nothing left to release.
+	}
+	throw unreadableRemoteUpdate();
+}
+
 function docRebuildStarted(): FlowError {
 	return {
 		code: 'resync_required',
@@ -504,10 +532,13 @@ export class FlowObjectRepository {
 						return;
 					}
 					const target = liveDoc();
-					target.import(payload.snapshotBytes);
-					for (const update of payload.tailUpdates) {
-						target.import(update.bytes);
-					}
+					if (
+						!importRemote(target, [
+							payload.snapshotBytes,
+							...payload.tailUpdates.map((u) => u.bytes)
+						])
+					)
+						throw unreadableRemoteUpdate();
 					lastKnownFrontierBase64 = payload.headFrontier;
 					projection.applyEngineDiff(
 						{ documentId: object.document_id } satisfies EngineDiff,
@@ -525,7 +556,8 @@ export class FlowObjectRepository {
 					// A peer's committed update arrives with its bytes and is applied in seq order
 					// (the session already checked `seq == last+1`). `import` is not a local
 					// change, so it never re-enters the outbox below.
-					if (notice.remoteBytes) liveDoc().import(notice.remoteBytes);
+					if (notice.remoteBytes && !importRemote(liveDoc(), [notice.remoteBytes]))
+						throw unreadableRemoteUpdate();
 					lastKnownFrontierBase64 = notice.headFrontier;
 					if (
 						entry &&
@@ -625,9 +657,7 @@ export class FlowObjectRepository {
 				await Promise.race([rebuilt, new Promise<void>((resolve) => setTimeout(resolve, 15_000))]);
 			},
 			importIntoLive: (bytes) => {
-				try {
-					liveDoc().import(bytes);
-				} catch {
+				if (!importRemote(liveDoc(), [bytes])) {
 					// Replay stops; the rebuild below reconnects, and the next connect replays the
 					// queue onto the fresh doc.
 					if (entry) void this.recoverUnreadableDoc(entry);
@@ -1033,10 +1063,7 @@ export class FlowObjectRepository {
 				!apiClient.isAuthSessionEpoch(epoch)
 			)
 				return false;
-			try {
-				doc.import(fromBase64(bootstrap.snapshot_base64));
-				for (const update of bootstrap.tail_updates) doc.import(fromBase64(update.bytes));
-			} catch {
+			if (!importRemote(doc, bootstrapChunks(bootstrap))) {
 				void this.recoverUnreadableDoc(entry);
 				return false;
 			}
@@ -1278,10 +1305,20 @@ export class FlowObjectRepository {
 		entry: OpenEntry,
 		payload: SnapshotPayload
 	): Promise<void> {
-		const { LoroDoc } = await loadLoro();
-		const fresh = new LoroDoc() as unknown as LoroDocType;
-		fresh.import(payload.snapshotBytes);
-		for (const update of payload.tailUpdates) fresh.import(update.bytes);
+		let fresh: LoroDocType;
+		try {
+			fresh = await freshDocFrom([
+				payload.snapshotBytes,
+				...payload.tailUpdates.map((u) => u.bytes)
+			]);
+		} catch {
+			// The snapshot itself cannot be read; the bounded recovery decides between one more
+			// rebuild and stopping.
+			entry.rebuildDone?.();
+			entry.rebuildDone = null;
+			await this.recoverUnreadableDoc(entry);
+			return;
+		}
 		this.swapDoc(entry, fresh, payload.headSeq, () => payload.headFrontier);
 		entry.rebuildDone?.();
 		entry.rebuildDone = null;
@@ -1314,10 +1351,7 @@ export class FlowObjectRepository {
 	async rebuildFromAccepted(bootstrap: FlowBootstrap): Promise<void> {
 		const entry = this.open_.get(bootstrap.object_id);
 		if (!entry) return;
-		const { LoroDoc } = await loadLoro();
-		const fresh = new LoroDoc() as unknown as LoroDocType;
-		fresh.import(fromBase64(bootstrap.snapshot_base64));
-		for (const update of bootstrap.tail_updates) fresh.import(fromBase64(update.bytes));
+		const fresh = await freshDocFrom(bootstrapChunks(bootstrap));
 		this.swapDoc(entry, fresh, bootstrap.head_seq, () => bootstrap.head_frontier);
 	}
 
@@ -1334,7 +1368,7 @@ export class FlowObjectRepository {
 		const now = Date.now();
 		entry.poisonRebuilds = entry.poisonRebuilds.filter((at) => now - at < POISON_WINDOW_MS);
 		if (entry.poisonRebuilds.length >= POISON_REBUILDS_MAX) {
-			entry.reportEditorFailure(unreadableRemoteUpdate());
+			this.stopOnUnreadableDoc(entry);
 			return;
 		}
 		entry.poisonRebuilds.push(now);
@@ -1346,8 +1380,16 @@ export class FlowObjectRepository {
 			else entry.rebuildOnSnapshot = true;
 			await entry.session.reconnect('stale_frontier');
 		} catch {
-			entry.reportEditorFailure(unreadableRemoteUpdate());
+			this.stopOnUnreadableDoc(entry);
 		}
+	}
+
+	/** The rebuild budget is spent: show the error, stop editing and sending, keep the queue. The
+	 * unsent edits stay in the outbox (IndexedDB) and the recovery draft; the rest of the app runs. */
+	private stopOnUnreadableDoc(entry: OpenEntry): void {
+		entry.offline.setReadOnly(true);
+		entry.readOnlyStore.set(true);
+		entry.reportEditorFailure(unreadableRemoteUpdate());
 	}
 
 	async close(objectId: string): Promise<void> {
@@ -1509,12 +1551,7 @@ export class FlowObjectRepository {
 	async replaceWithAccepted(bootstrap: FlowBootstrap): Promise<void> {
 		const entry = this.open_.get(bootstrap.object_id);
 		if (!entry) return;
-		try {
-			entry.doc.import(fromBase64(bootstrap.snapshot_base64));
-			for (const update of bootstrap.tail_updates) {
-				entry.doc.import(fromBase64(update.bytes));
-			}
-		} catch {
+		if (!importRemote(entry.doc, bootstrapChunks(bootstrap))) {
 			void this.recoverUnreadableDoc(entry);
 			throw docRebuildStarted();
 		}
@@ -1705,6 +1742,13 @@ function objectToProjection(object: FlowObjectView): ObjectProjection {
 /** A throwaway Loro replica of one accepted bootstrap, used by the outbox to tell whether a
  * queued update is new to the server, already accepted, or dependent on something the server
  * never accepted (`offline-sync.ts`). Never bound to an editor, never sent anywhere. */
+function bootstrapChunks(bootstrap: FlowBootstrap): Uint8Array[] {
+	return [
+		fromBase64(bootstrap.snapshot_base64),
+		...bootstrap.tail_updates.map((update) => fromBase64(update.bytes))
+	];
+}
+
 async function scratchReplicaFrom(bootstrap: FlowBootstrap): Promise<ScratchReplica> {
 	const { LoroDoc } = await loadLoro();
 	const replica = new LoroDoc();

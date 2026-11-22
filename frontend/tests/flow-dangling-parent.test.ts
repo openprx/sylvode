@@ -48,10 +48,15 @@ function seedServer(server: FakeCollabServer): void {
 
 /** One update by the peer of the server doc's head, depending on the head, that creates a node
  * under a parent that exists nowhere (the hand-encoded shape the library's API refuses to author). */
-function hostileUpdate(server: FakeCollabServer): Uint8Array {
-	const head = server.doc.frontiers()[0];
-	const base = server.doc.export({ mode: 'snapshot' });
-	const from = server.doc.version();
+function hostileUpdate(server: FakeCollabServer, clientHead?: LoroDoc): Uint8Array {
+	// With `clientHead`, the update extends that doc's head (an unsent local edit on top of the
+	// server state) instead of the server's own.
+	const source = new LoroDoc();
+	source.import(server.doc.export({ mode: 'snapshot' }));
+	if (clientHead) source.import(clientHead.export({ mode: 'update' }));
+	const head = source.frontiers()[0];
+	const base = source.export({ mode: 'snapshot' });
+	const from = source.version();
 	const attacker = new LoroDoc();
 	attacker.import(base);
 	attacker.setPeerId(head.peer);
@@ -237,6 +242,67 @@ async function scenarioE(): Promise<void> {
 	}
 }
 
+async function scenarioF(): Promise<void> {
+	const { server, entry, generation, error, close } = await open();
+	try {
+		// An unsent local edit sits in the outbox, outside the doc that is about to die.
+		server.setOnline(false);
+		const live = entry.doc as unknown as LoroDoc;
+		live.getText('body').insert(live.getText('body').length, '+mine');
+		live.commit();
+		let pending = 0;
+		entry.pending.subscribe((n) => (pending = n));
+		await waitFor(() => pending === 1, 'the edit is pending');
+		server.setOnline(true);
+		await waitFor(() => server.connections.size === 1, 'back online');
+		server.commitFromPeer(hostileUpdate(server, live));
+		await waitFor(() => generation() >= 1, 'the doc is rebuilt');
+		await waitFor(() => pending === 0, 'the unsent edit was replayed onto the new doc');
+		assertEqual(error(), null, 'no error');
+		assert(
+			server.doc.getText('body').toString().includes('+mine'),
+			'the unsent edit reached the server'
+		);
+		assert(
+			(entry.doc as unknown as LoroDoc).getText('body').toString().includes('+mine'),
+			'and is in the new doc'
+		);
+	} finally {
+		await close();
+	}
+}
+
+async function scenarioG(): Promise<void> {
+	const { server, entry, generation, error, close } = await open();
+	const proto = LoroDoc.prototype as unknown as { import: (bytes: Uint8Array) => unknown };
+	const original = proto.import;
+	try {
+		let readOnly = false;
+		entry.readOnly.subscribe((v) => (readOnly = v));
+		const dead = entry.doc as unknown;
+		server.commitFromPeer(hostileUpdate(server));
+		// From here on every doc other than the poisoned one refuses to import, as if the stored
+		// history itself trapped the rebuilt doc.
+		proto.import = function (this: unknown, bytes: Uint8Array) {
+			if (this !== dead) throw new Error('injected import failure');
+			return original.call(this, bytes);
+		};
+		await waitFor(() => error() !== null, 'the rebuild fails and the load error is shown');
+		assertEqual(error()?.code, 'invalid_update', 'the error code');
+		assertEqual(
+			(error()?.details as { reason?: string } | undefined)?.reason,
+			'remote_update_unreadable',
+			'the error reason'
+		);
+		assert(readOnly, 'editing is stopped');
+		await new Promise((r) => setTimeout(r, 100));
+		assertEqual(generation(), 0, 'no doc was swapped in');
+	} finally {
+		proto.import = original;
+		await close();
+	}
+}
+
 function scenarioD(): void {
 	const server = new FakeCollabServer();
 	seedServer(server);
@@ -262,5 +328,13 @@ await suite.checkAsync(
 );
 await suite.checkAsync('C. repeated failures are bounded and end in the load error', scenarioC);
 await suite.checkAsync('E. a throwing import does not advance the applied sequence', scenarioE);
+await suite.checkAsync(
+	'F. unsent edits are conserved through the rebuild (replayed onto the new doc)',
+	scenarioF
+);
+await suite.checkAsync(
+	'G. a rebuilt doc that cannot import stops with the error state and no loop',
+	scenarioG
+);
 suite.check('D. importing before subscribing is safe', scenarioD);
 finish(suite.result());
