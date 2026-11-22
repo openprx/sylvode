@@ -71,8 +71,7 @@ same directory when installing them (or point `COLLAB_ISOLATED_APPLY_WORKER_PATH
 Flow collaborative writes and object diffs require a Linux API server (the isolated-apply
 boundary of ADR-0014 is Linux-only); on macOS and Windows they are refused with `server_rejected`
 (`isolated_apply_unsupported_platform`). Projects, Forms, MCP, the CLI and Flow reads work on
-every release platform; see the
-[platform matrix](docs/sylvode-v1.0-compatibility.md#platform-matrix).
+every release platform.
 The generated `[flow] collab_allowed_origins` lists the addresses the frontend
 is published at (for the default bind, `http://localhost:3000` and
 `http://127.0.0.1:3000`), so live editing works on first start; replace it with
@@ -564,7 +563,6 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 - `docs/universal-forms-production.md` — production runbook
 - `docs/universal-forms-implementation-map.md` — source module / verification command map
 - `docs/plugins/openpr-plugin-v1.wit` — plugin ABI v1
-- `docs/sylvode-v1.0-compatibility.md` — the v1.0 compatibility matrix (a release-gate record of the retired names)
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` — release notes, contributor guide, security policy
 - `apps/mcp-server/AGENTS.md` — coding-agent workflow patterns and tool examples
 - `skills/sylvode-mcp/SKILL.md` — the MCP skill package (single hand-written source; generated files are checked by `sylvode-skillgen --check`)
