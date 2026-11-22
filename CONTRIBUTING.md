@@ -238,7 +238,6 @@ treating the missing input as a pass.
 | `SYLVODE_SCRATCH_ROOT` | Scratch trees, mutation copies and separate cargo target directories | `.flow-gate/cache` |
 | `SYLVODE_UF_REPORT_ROOT` | Universal Forms acceptance reports (`docs/`) and screenshots (`artifacts/`) | `.flow-gate/universal-forms` |
 | `SYLVODE_RUNNER_DIR` | A separate Sylvode runner checkout for the runner smokes to build and run instead of the in-repository `apps/runner` | none: `apps/runner`, built with `cargo build -p sylvode-runner` |
-| `SYLVODE_FLOW_V05_CONTRACT_GAPS` | The v0.5 contract-gap register read by `verify-flow-authz-v0.5.sh`, or `none` | none, required |
 
 The scripts need bash 4.3 or newer and GNU coreutils; macOS's bash 3.2 cannot run
 them.

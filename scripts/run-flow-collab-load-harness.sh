@@ -11,7 +11,7 @@ JSON_MODE=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run-flow-collab-load-harness-v0.5.sh --clients 10 --evidence-root DIR --json [OPTIONS]
+Usage: scripts/run-flow-collab-load-harness.sh --clients 10 --evidence-root DIR --json [OPTIONS]
 
 Runs the v0.5 official collaboration workload in release mode against the
 fixed real PostgreSQL test endpoint. The runner refuses to start while another

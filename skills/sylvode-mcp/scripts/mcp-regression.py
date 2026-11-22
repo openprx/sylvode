@@ -278,8 +278,7 @@ def search_mode_checks(proto, rpc):
           tools_call("projects.list", {}), _is_tool_error)
 
 print("=" * 60)
-# Single-source marker: scripts/verify-flow-tool-registry-v0.4.sh requires this banner to render
-# "{EXPECTED_TOOL_COUNT} registered tools" from the derived count, never a literal number.
+# The banner renders the derived count, never a literal number.
 print(f"  Sylvode MCP core regression ({EXPECTED_TOOL_COUNT} registered tools x 3 transports)")
 print(f"  {time.strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 60)

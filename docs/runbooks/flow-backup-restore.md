@@ -1,4 +1,4 @@
-# Flow v0.8 backup and restore
+# Flow backup and restore
 
 Use a maintenance window: stop API writes, compaction, retention, and import promotion before the
 source fingerprint and keep them stopped through `pg_dump`. Object/package exports are a separate
@@ -7,7 +7,7 @@ portable recovery layer; the PostgreSQL drill below verifies the complete canoni
 Set `OPENPR_BACKUP_SOURCE_DATABASE_URL` to the database being backed up and
 `OPENPR_BACKUP_RESTORE_ADMIN_URL` to that cluster's `postgres` database. Credentials belong in the
 environment or a PostgreSQL password file, never in the repository. The verifier only permits a
-disposable restore database whose name starts with `v08_restore_`, drops it on exit, and keeps its
+disposable restore database whose name starts with `restore_drill_`, drops it on exit, and keeps its
 dump and comparison material under `.flow-gate/cache` in the checkout (override with
 `SYLVODE_SCRATCH_ROOT`). Run it with the PostgreSQL 18 `pg_dump` and `psql` client tools: `pg_dump`
 refuses to dump a server newer than itself, and the source and restore servers must both be 18.
@@ -15,8 +15,8 @@ refuses to dump a server newer than itself, and the source and restore servers m
 ```bash
 export OPENPR_BACKUP_SOURCE_DATABASE_URL='postgresql://.../openpr'
 export OPENPR_BACKUP_RESTORE_ADMIN_URL='postgresql://.../postgres'
-export OPENPR_BACKUP_RESTORE_DATABASE_NAME='v08_restore_drill'
-scripts/verify-flow-backup-restore-v0.8.sh evidence/v0.8/backup-restore-result.json
+export OPENPR_BACKUP_RESTORE_DATABASE_NAME='restore_drill_main'
+scripts/verify-flow-backup-restore.sh evidence/backup-restore-result.json
 ```
 
 The command takes a checksummed PostgreSQL plain-SQL backup, restores it with one transaction and

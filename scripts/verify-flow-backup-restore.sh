@@ -1,97 +1,110 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SYLVODE_SCRATCH="${SYLVODE_SCRATCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/cache}"
+mkdir -p "$SYLVODE_SCRATCH"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CONTRACTS_ROOT="${SYLVODE_CONTRACTS_ROOT:-}"
-EVIDENCE_ROOT=
-GATE_YAML=
-JSON_MODE=0
-while (($#)); do
-  case "$1" in
-    --repo-root) REPO_ROOT=${2:?}; shift 2 ;;
-    --contracts-root) CONTRACTS_ROOT=${2:?}; shift 2 ;;
-    --evidence-root) EVIDENCE_ROOT=${2:?}; shift 2 ;;
-    --gate-yaml) GATE_YAML=${2:?}; shift 2 ;;
-    --json) JSON_MODE=1; shift ;;
-    *) echo "FAIL: unsupported argument: $1" >&2; exit 2 ;;
-  esac
-done
-[[ -n $CONTRACTS_ROOT && -d $CONTRACTS_ROOT ]] || { echo "FAIL: contracts checkout not found (${CONTRACTS_ROOT:-unset}); pass --contracts-root DIR or set SYLVODE_CONTRACTS_ROOT" >&2; exit 2; }
-[[ -n $GATE_YAML ]] || GATE_YAML="$CONTRACTS_ROOT/gates/v0.8-gate.yaml"
-[[ $JSON_MODE -eq 1 ]] || { echo 'FAIL: --json is required' >&2; exit 2; }
-for name in OPENPR_TEST_DATABASE_URL OPENPR_BACKUP_SOURCE_DATABASE_URL OPENPR_BACKUP_RESTORE_ADMIN_URL; do
-  [[ -n ${!name:-} ]] || { echo "FAIL: $name is required" >&2; exit 2; }
-done
-[[ -n $EVIDENCE_ROOT ]] || EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.8"
-[[ -s $GATE_YAML ]] || { echo "FAIL: authoritative v0.8 gate missing: $GATE_YAML" >&2; exit 2; }
-mkdir -p "$EVIDENCE_ROOT/logs"
-DRILL="$EVIDENCE_ROOT/backup-restore-drill.json"
-EXPORT_LOG="$EVIDENCE_ROOT/logs/backup-object-export.log"
-MUTATION_LOG="$EVIDENCE_ROOT/logs/backup-restore-mutations.log"
+: "${OPENPR_BACKUP_SOURCE_DATABASE_URL:?OPENPR_BACKUP_SOURCE_DATABASE_URL is required}"
+: "${OPENPR_BACKUP_RESTORE_ADMIN_URL:?OPENPR_BACKUP_RESTORE_ADMIN_URL is required}"
 
-set +e
-env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
-  OPENPR_BACKUP_SOURCE_DATABASE_URL="$OPENPR_BACKUP_SOURCE_DATABASE_URL" \
-  OPENPR_BACKUP_RESTORE_ADMIN_URL="$OPENPR_BACKUP_RESTORE_ADMIN_URL" \
-  OPENPR_BACKUP_RESTORE_DATABASE_NAME=v08_restore_official \
-  "$REPO_ROOT/scripts/verify-flow-backup-restore-v0.8.sh" "$DRILL" \
-  >"$EVIDENCE_ROOT/logs/backup-restore-drill.log" 2>&1
-DRILL_STATUS=$?
-env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 OPENPR_TEST_DATABASE_URL="$OPENPR_TEST_DATABASE_URL" \
-  cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p api --lib \
-    flow::export::tests::workspace_and_object_exports_reconstruct_exact_head_and_freeze_idempotency \
-    -- --exact --nocapture >"$EXPORT_LOG" 2>&1
-EXPORT_STATUS=$?
-env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
-  OPENPR_TEST_DATABASE_URL="$OPENPR_TEST_DATABASE_URL" \
-  OPENPR_BACKUP_SOURCE_DATABASE_URL="$OPENPR_BACKUP_SOURCE_DATABASE_URL" \
-  OPENPR_BACKUP_RESTORE_ADMIN_URL="$OPENPR_BACKUP_RESTORE_ADMIN_URL" \
-  "$REPO_ROOT/scripts/verify-flow-backup-restore-mutations-v0.8.sh" >"$MUTATION_LOG" 2>&1
-MUTATION_STATUS=$?
-set -e
+RESTORE_DATABASE_NAME=${OPENPR_BACKUP_RESTORE_DATABASE_NAME:-restore_drill_main}
+RESULT_PATH=${1:-"${SYLVODE_SCRATCH}/flow-backup-restore"/result.json}
+WORK_DIR="${SYLVODE_SCRATCH}/flow-backup-restore"
+DUMP_PATH="$WORK_DIR/source.sql"
+BEFORE_PATH="$WORK_DIR/before.json"
+AFTER_PATH="$WORK_DIR/after.json"
+TARGET_DIR=${CARGO_TARGET_DIR:-$REPO_ROOT/target}
+FINGERPRINT_BIN="$TARGET_DIR/debug/flow-document-fingerprints"
 
-python3 - "$REPO_ROOT" "$GATE_YAML" "$EVIDENCE_ROOT" "$DRILL_STATUS" "$EXPORT_STATUS" "$MUTATION_STATUS" <<'PY'
-import datetime as dt, hashlib, json, os, pathlib, re, subprocess, sys, tempfile
-repo,gate,evidence=map(lambda value:pathlib.Path(value).resolve(),sys.argv[1:4])
-drill_status,export_status,mutation_status=map(int,sys.argv[4:7])
-drill_path=evidence/"backup-restore-drill.json"; export_log=evidence/"logs/backup-object-export.log"; mutation_log=evidence/"logs/backup-restore-mutations.log"
-drill=json.loads(drill_path.read_text()) if drill_path.is_file() and drill_path.stat().st_size else {}
-summaries=re.findall(r"^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed;",export_log.read_text(errors="replace"),re.M)
-export_executed=sum(int(p)+int(f) for _,p,f in summaries)
-export_ok=export_status==0 and export_executed>0 and all(state=="ok" and int(f)==0 for state,_,f in summaries)
-rows=re.findall(r"^([a-z0-9_]+) status=(\d+) expected=(green|red) log=(\S+)$",mutation_log.read_text(errors="replace"),re.M)
-expected={"checksum_green_control":("green",0),"corrupted_snapshot_accepted":("red",None),"restore_green_control":("green",0),"retained_updates_omitted_from_backup":("red",None)}
-mutation_executed=0; mutation_ok=mutation_status==0 and {row[0] for row in rows}==set(expected)
-cases=[]
-for label,code,kind,raw_path in rows:
-    path=pathlib.Path(raw_path); text=path.read_text(errors="replace") if path.is_file() else ""
-    nested=re.findall(r"^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed;",text,re.M)
-    executed=sum(int(p)+int(f) for _,p,f in nested)
-    if label.startswith("restore_") or label.startswith("retained_"):
-        executed=max(executed, int(bool(text.strip())))
-    mutation_executed+=executed; code=int(code)
-    detected=executed>0 and ((kind=="green" and code==0) or (kind=="red" and code!=0))
-    mutation_ok &= detected
-    cases.append({"id":label,"expected":kind,"exit_code":code,"executed_count":executed,"detected":detected,"log":str(path)})
-drill_ok=drill_status==0 and drill.get("status")=="passed" and drill.get("verification",{}).get("document_count",0)>0 and drill.get("verification",{}).get("exact_match") is True
-gate_text=gate.read_text(); budget_unset=bool(re.search(r"recovery_time_seconds_max:\s*\n\s*status: unset",gate_text))
-dirty=subprocess.check_output(["git","-C",str(repo),"status","--porcelain=v1","--","apps","crates","migrations","scripts","testing","Cargo.toml","Cargo.lock"],text=True).splitlines()
-functional=drill_ok and export_ok and mutation_ok and not dirty
-passed=functional and not budget_unset
-checks=[
- {"id":"postgres_restore_exact_document_fingerprints","status":"passed" if drill_ok else "failed","exit_code":drill_status,"executed_count":drill.get("verification",{}).get("executed_count",0)},
- {"id":"object_package_export","status":"passed" if export_ok else "failed","exit_code":export_status,"executed_count":export_executed},
- {"id":"backup_restore_mutations","status":"passed" if mutation_ok else "failed","exit_code":mutation_status,"executed_count":mutation_executed},
- {"id":"recovery_time_budget_locked","status":"failed" if budget_unset else "passed","executed_count":1,"reason":"authoritative v0.8 recovery_time_seconds_max is unset" if budget_unset else None},
-]
-result={"schema_version":"sylvode.flow.backup-restore-result.v1","release":"0.8.0",
- "source_head":subprocess.check_output(["git","-C",str(repo),"rev-parse","HEAD"],text=True).strip(),
- "drill":drill,"mutation_cases":cases,"checks":checks,"functional_passed":functional,
- "approved_recovery_budget_locked":not budget_unset,"executed_count":sum(c["executed_count"] for c in checks),
- "source_dirty":bool(dirty),"dirty_entries":dirty,"passed":passed,"generated_at":dt.datetime.now(dt.timezone.utc).isoformat()}
-fd,tmp=tempfile.mkstemp(prefix=".backup-restore.",dir=evidence)
-with os.fdopen(fd,"w") as handle: json.dump(result,handle,sort_keys=True,indent=2); handle.write("\n")
-os.replace(tmp,evidence/"backup-restore-result.json")
-print(json.dumps(result,sort_keys=True))
-raise SystemExit(0 if passed else 1)
-PY
+if [[ ! $RESTORE_DATABASE_NAME =~ ^restore_drill_[a-z0-9_]+$ ]]; then
+  echo "restore database name must match ^restore_drill_[a-z0-9_]+$" >&2
+  exit 2
+fi
+case "$OPENPR_BACKUP_RESTORE_ADMIN_URL" in
+  */*) RESTORE_DATABASE_URL="${OPENPR_BACKUP_RESTORE_ADMIN_URL%/*}/$RESTORE_DATABASE_NAME" ;;
+  *) echo "OPENPR_BACKUP_RESTORE_ADMIN_URL must be a PostgreSQL URL" >&2; exit 2 ;;
+esac
+
+cleanup() {
+  psql "$OPENPR_BACKUP_RESTORE_ADMIN_URL" -v ON_ERROR_STOP=1 \
+    -c "DROP DATABASE IF EXISTS \"$RESTORE_DATABASE_NAME\" WITH (FORCE)" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+mkdir -p "$WORK_DIR" "$(dirname "$RESULT_PATH")"
+command -v pg_dump >/dev/null
+command -v psql >/dev/null
+command -v jq >/dev/null
+command -v sha256sum >/dev/null
+
+env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
+  cargo build --manifest-path "$REPO_ROOT/Cargo.toml" -p api --bin flow-document-fingerprints >/dev/null
+
+OPENPR_DATABASE_URL="$OPENPR_BACKUP_SOURCE_DATABASE_URL" "$FINGERPRINT_BIN" | jq -S . >"$BEFORE_PATH"
+DOCUMENT_COUNT=$(jq 'length' "$BEFORE_PATH")
+if [[ $DOCUMENT_COUNT -le 0 ]]; then
+  echo "backup/restore drill requires at least one real collaboration document" >&2
+  exit 1
+fi
+
+# Plain-SQL dump taken with the PostgreSQL 18 client and restored into PostgreSQL 18, so the
+# header SET statements need no filtering. The restored SQL remains the checksummed backup.
+pg_dump --dbname="$OPENPR_BACKUP_SOURCE_DATABASE_URL" --format=plain --no-owner --no-acl >"$DUMP_PATH"
+DUMP_SHA256=$(sha256sum "$DUMP_PATH" | awk '{print $1}')
+
+cleanup
+psql "$OPENPR_BACKUP_RESTORE_ADMIN_URL" -v ON_ERROR_STOP=1 \
+  -c "CREATE DATABASE \"$RESTORE_DATABASE_NAME\"" >/dev/null
+
+START_NS=$(date +%s%N)
+psql "$RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 --single-transaction \
+  --file="$DUMP_PATH" >/dev/null
+END_NS=$(date +%s%N)
+RESTORE_NS=$((END_NS - START_NS))
+RESTORE_MS=$(((RESTORE_NS + 999999) / 1000000))
+RESTORE_SECONDS=$(((RESTORE_NS + 999999999) / 1000000000))
+
+OPENPR_DATABASE_URL="$RESTORE_DATABASE_URL" "$FINGERPRINT_BIN" | jq -S . >"$AFTER_PATH"
+if ! cmp -s "$BEFORE_PATH" "$AFTER_PATH"; then
+  diff -u "$BEFORE_PATH" "$AFTER_PATH" >&2 || true
+  echo "restored per-document head/frontier/semantic-hash/projection-seq differs" >&2
+  exit 1
+fi
+
+# Determine the best observed positive tick of the exact clock used above. A restore duration at
+# or below twice that resolution is reported as inconclusive rather than promoted to an RTO fact.
+CLOCK_RESOLUTION_NS=1000000000
+previous=$(date +%s%N)
+for _ in $(seq 1 100); do
+  current=$(date +%s%N)
+  delta=$((current - previous))
+  if [[ $delta -gt 0 && $delta -lt $CLOCK_RESOLUTION_NS ]]; then
+    CLOCK_RESOLUTION_NS=$delta
+  fi
+  previous=$current
+done
+if [[ $RESTORE_NS -le $((CLOCK_RESOLUTION_NS * 2)) ]]; then
+  MEASUREMENT_STATUS=inconclusive_below_instrument_resolution
+else
+  MEASUREMENT_STATUS=measured
+fi
+
+jq -n \
+  --arg status passed \
+  --arg measurement_status "$MEASUREMENT_STATUS" \
+  --arg dump_sha256 "$DUMP_SHA256" \
+  --argjson document_count "$DOCUMENT_COUNT" \
+  --argjson restore_ns "$RESTORE_NS" \
+  --argjson restore_ms "$RESTORE_MS" \
+  --argjson restore_seconds "$RESTORE_SECONDS" \
+  --argjson clock_resolution_ns "$CLOCK_RESOLUTION_NS" \
+  '{schema:"openpr.flow.backup_restore.v1",status:$status,
+    backup:{format:"postgresql_plain_sql",sha256:$dump_sha256},
+    restore:{measurement_status:$measurement_status,elapsed_ns:$restore_ns,
+      elapsed_ms:$restore_ms,elapsed_seconds_ceiling:$restore_seconds,
+      clock_resolution_ns:$clock_resolution_ns},
+    verification:{document_count:$document_count,executed_count:$document_count,
+      per_document_fields:["head_seq","head_frontier","semantic_hash","projection_seq"],
+      exact_match:true,rpo_lost_documents:0}}' >"$RESULT_PATH"
+
+cat "$RESULT_PATH"
