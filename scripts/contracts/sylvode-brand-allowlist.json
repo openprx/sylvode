@@ -200,19 +200,6 @@
       "explanation": "File names of the signed 2026-05-31 Universal Forms acceptance bundle; its manifest, checksums and the report generators identify the bundle by these names."
     },
     {
-      "id": "sylvode-frozen-receipt-repository",
-      "reason": "frozen_evidence",
-      "repo": "sylvode",
-      "paths": [
-        "docs/schemas/sylvode-flow-gate-v0.4.schema.json",
-        "docs/schemas/sylvode-flow-gate-v1.schema.json",
-        "scripts/report-flow-v0.3-json.sh",
-        "scripts/test-no-machine-paths.sh"
-      ],
-      "pattern": "\\/opt\\/worker\\/code\\/openpr\\b",
-      "explanation": "The repository path pinned as a const in the frozen v0.3/v0.4 gate receipt schemas, and the producer and exemption that must match it."
-    },
-    {
       "id": "sylvode-migration-pages",
       "reason": "migration_page",
       "repo": "sylvode",
@@ -689,11 +676,10 @@
       "paths": [
         "apps/**/*.rs",
         "crates/**/*.rs",
-        "scripts/audit-universal-forms-production-readiness.sh",
-        "scripts/verify-flow-cli-contract-v0.4.sh"
+        "scripts/audit-universal-forms-production-readiness.sh"
       ],
       "pattern": "\\bOpenPr[A-Za-z0-9_]*",
-      "explanation": "Rust type names of the internal API client and configuration (OpenPrClient, OpenPrConfig); not visible to users, renamed only with a refactor that touches every caller. Two scripts name OpenPrConfig::load when they check or describe the Rust source."
+      "explanation": "Rust type names of the internal API client and configuration (OpenPrClient, OpenPrConfig); not visible to users, renamed only with a refactor that touches every caller. One script names OpenPrConfig::load when it checks the Rust source."
     },
     {
       "id": "webhook-legacy-environment",
