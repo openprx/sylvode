@@ -388,7 +388,5 @@ test('slash Convert to Forms opens the conversion wizard', async ({ page, reques
 	await expect(option).toContainText('the record belongs to Forms');
 	await option.click();
 	await expect(page).toHaveURL(new RegExp(`/flow/${objectId}/convert$`));
-	// The workspace conversion capability is on by default, so the destination is chosen first.
-	await page.getByLabel('Destination workspace').selectOption(f.workspaceId);
 	await expect(page.getByTestId('flow-convert')).toBeVisible();
 });

@@ -136,9 +136,8 @@ async function openPageInfo(page: Page): Promise<void> {
 }
 
 /**
- * A Page of a workspace is converted through an explicit destination: with the workspace
- * conversion capability on (the default) the convert route asks for the destination workspace
- * before the wizard appears.
+ * With the workspace conversion capability on (the default) the convert route offers a destination
+ * picker that starts on the Page's own workspace; this switches it to another workspace.
  */
 async function chooseDestination(page: Page, workspaceId: string): Promise<void> {
 	await page.getByLabel('Destination workspace').selectOption(workspaceId);
@@ -257,7 +256,6 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	const step = page.getByTestId('flow-convert-step');
 	const next = page.getByTestId('flow-convert-next');
 
-	await chooseDestination(page, workspace.id);
 	// ---- 1. source ----
 	await expect(step).toHaveText('Step 1 of 4: Source');
 	// Read after the object page was open: opening the editor itself can advance the document, so
@@ -765,7 +763,6 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	// ---- 1. the wizard commit fails after its job exists: the wizard hands over to the job ----
 	await signInAs(page, setup.ownerLogin);
 	await page.goto(`/flow/${setup.objectId}/convert`);
-	await chooseDestination(page, setup.workspaceId);
 	const step = page.getByTestId('flow-convert-step');
 	const next = page.getByTestId('flow-convert-next');
 	await expect(step).toHaveText('Step 1 of 4: Source');
@@ -1081,7 +1078,6 @@ test('390x844: the navigator is a closed drawer and the object, convert and job 
 
 	// ---- convert wizard ----
 	await page.goto(`/flow/${setup.objectId}/convert`);
-	await chooseDestination(page, setup.workspaceId);
 	const next = page.getByTestId('flow-convert-next');
 	await expect(next).toBeVisible();
 	await expectFullWidthLayout('convert');
@@ -1098,4 +1094,87 @@ test('390x844: the navigator is a closed drawer and the object, convert and job 
 	for (const [index, button] of (await content.getByRole('button').all()).entries()) {
 		if (await button.isVisible()) await expectTarget(button, `job: button ${index + 1}`);
 	}
+});
+
+test('changing the destination workspace resets the wizard and converts into the other workspace', async ({
+	page,
+	request
+}) => {
+	const setup = await conversionSetup(request, 'switch');
+	// A second workspace of the same owner with its own project and a form the owner may write to.
+	const other = await unwrap<{ id: string }>(
+		await request.post('/api/v1/workspaces', {
+			headers: setup.auth,
+			data: { slug: `cnv-switch-b-${runId}`, name: `Convert switch target ${runId}` }
+		})
+	);
+	const otherProject = await unwrap<{ id: string }>(
+		await request.post(`/api/v1/workspaces/${other.id}/projects`, {
+			headers: setup.auth,
+			data: { name: `Target ${runId}`, key: 'TGT' }
+		})
+	);
+	const otherForm = await unwrap<{ id: string }>(
+		await request.post(`/api/v1/projects/${otherProject.id}/forms`, {
+			headers: setup.auth,
+			data: {
+				key: 'targets',
+				name: 'Targets',
+				schema: {
+					version: 'openpr.form.schema.v1',
+					fields: [{ field_id: 'fld_note', key: 'note', label: 'Note', type: 'text' }]
+				}
+			}
+		})
+	);
+	await unwrap(
+		await request.patch(`/api/v1/forms/${otherForm.id}/permissions`, {
+			headers: setup.auth,
+			data: {
+				policies: [
+					{
+						subject_type: 'role',
+						subject_id: 'owner',
+						policy: { actions: { 'form.view': true, 'record.create': true } }
+					}
+				]
+			}
+		})
+	);
+
+	await signInAs(page, setup.ownerLogin);
+	await page.goto(`/flow/${setup.objectId}/convert`);
+	const picker = page.getByLabel('Destination workspace');
+	const step = page.getByTestId('flow-convert-step');
+	const next = page.getByTestId('flow-convert-next');
+	// The Page's own workspace is selected, so the wizard is there at once.
+	await expect(picker).toHaveValue(setup.workspaceId);
+	await expect(step).toHaveText('Step 1 of 4: Source');
+	await next.click();
+	await page.getByLabel('Project').selectOption(setup.projectId);
+	await expect(page.getByLabel('Form', { exact: true })).toBeEnabled();
+
+	// Another destination starts the wizard over: its project list replaces the first one.
+	await chooseDestination(page, other.id);
+	await expect(step).toHaveText('Step 1 of 4: Source');
+	await next.click();
+	const project = page.getByLabel('Project');
+	await expect(project.locator(`option[value="${otherProject.id}"]`)).toHaveCount(1);
+	await expect(project.locator(`option[value="${setup.projectId}"]`)).toHaveCount(0);
+	await project.selectOption(otherProject.id);
+	const formSelect = page.getByLabel('Form', { exact: true });
+	await expect(formSelect).toBeEnabled();
+	await formSelect.selectOption(otherForm.id);
+	const preview = page.waitForResponse(
+		(res) =>
+			res.request().method() === 'POST' &&
+			new URL(res.url()).pathname === '/api/v2/flow/conversions/preview'
+	);
+	await next.click();
+	const body = (await (await preview).json()) as Envelope<Preview>;
+	expect(body.code).toBe(0);
+	await expect(step).toHaveText('Step 3 of 4: Preview');
+	await expect(page.getByTestId('flow-convert-preview')).toContainText(
+		'This is a preview. Nothing has been created yet.'
+	);
 });
