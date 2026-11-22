@@ -649,16 +649,17 @@ fn r8_1_a_text_grown_through_accepted_windows_is_removed_from_the_facts_and_the_
     );
 }
 
-/// A page whose texts the count decodes (60 texts of 400 nested marks: about 7 ms each, inside the
-/// per-text budget, 0.4 s in all, far inside the page budget) and whose items are over the budget
+/// A page whose texts the count decodes (20 texts of 400 nested marks: about 7 ms each, inside the
+/// per-text budget, 0.14 s in all, which still passes the 50 ms CPU ceiling of a window almost three
+/// times, and keeps the setup far from the host's 5 s setup timeout on a slow machine) and whose items are over the budget
 /// (one block of 100,000 reverse-typed characters), so the setup ends without facts and without a
 /// guard after it has read every text.
 pub fn over_the_item_budget_with_decoded_texts() -> Vec<u8> {
     let raw = LoroDoc::new();
-    raw.import(&anchor_page(62, 60, 400, Anchors::NestedSameKey)).unwrap();
+    raw.import(&anchor_page(22, 20, 400, Anchors::NestedSameKey)).unwrap();
     raw.set_peer_id(48_960).unwrap();
     // The last block: 100,000 characters typed in reverse, one piece each.
-    let text = first_text(&raw, 61);
+    let text = first_text(&raw, 21);
     for _ in 0..crate::limits::TEXT_BLOCK_CHARS_MAX - text.len_unicode() {
         text.insert(0, "y").unwrap();
     }
@@ -674,7 +675,8 @@ fn r9_3_a_setup_without_facts_that_read_the_texts_needs_a_fresh_engine() {
     let over = over_the_item_budget_with_decoded_texts();
     let (items, budget) = items_and_budget(&over);
     assert!(items > budget, "{items} items against a budget of {budget}");
-    let setup = BaseFacts::compute_guarded(&loaded(&over), &SetupGuard::start());
+    // The deterministic guard: this is about the item budget, not about how fast a text decodes.
+    let setup = BaseFacts::compute_guarded(&loaded(&over), &allocation_guard());
     assert!(
         setup.facts.is_none() && setup.guard.is_none(),
         "over the item budget, no guard: facts {} guard {:?}",
@@ -692,7 +694,7 @@ fn r9_3_a_setup_without_facts_that_read_the_texts_needs_a_fresh_engine() {
     assert!(setup.facts.is_none() && setup.needs_fresh_engine());
 
     // Facts mean the incremental window runs on the engine that was read, by design.
-    let setup = BaseFacts::compute_guarded(&loaded(&forty_texts()), &SetupGuard::start());
+    let setup = BaseFacts::compute_guarded(&loaded(&forty_texts()), &allocation_guard());
     assert!(setup.facts.is_some() && !setup.needs_fresh_engine());
     // The full mode computes nothing (it is `SetupFacts::none(None)`): nothing was read.
     let none = crate::facts::SetupFacts::none(None);

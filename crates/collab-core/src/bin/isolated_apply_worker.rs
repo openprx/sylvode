@@ -135,6 +135,17 @@ fn main() {
     let setup_guard = SetupGuard::start_with_cpu_budget(setup_guard::cpu_budget_nanos_from_setting(
         std::env::var(wire::SETUP_CPU_BUDGET_ENV).ok().as_deref(),
     ));
+    // Debug builds only (see `wire::TEXT_CPU_BUDGET_TEST_ENV`).
+    #[cfg(debug_assertions)]
+    let setup_guard = std::env::var(wire::TEXT_CPU_BUDGET_TEST_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(setup_guard, |millis| {
+            setup_guard.with_text_limits(
+                setup_guard::TEXT_ALLOCATION_LIMIT_BYTES,
+                millis.saturating_mul(1_000_000),
+            )
+        });
 
     // `LoroCollabEngine::load`'s error is reported via the normal response frame (it is a real,
     // well-typed `CollabError` a caller-facing rejection can be built from), not treated as a
