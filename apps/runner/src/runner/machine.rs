@@ -281,7 +281,7 @@ impl<T: Task> Machine<T> {
         {
             actions.push(Action::Fail {
                 reason: dialog.reason(&self.key),
-                retryable: false,
+                retryable: dialog.retryable(),
                 task,
             });
             return actions;
@@ -426,7 +426,7 @@ impl<T: Task> Machine<T> {
                     actions.push(Action::Fail {
                         task: entry.item,
                         reason: dialog.reason(&self.key),
-                        retryable: false,
+                        retryable: dialog.retryable(),
                     });
                 }
             }

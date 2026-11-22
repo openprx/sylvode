@@ -59,6 +59,9 @@ pub struct TmuxTask {
     pub project_id: String,
     pub project_key: String,
     pub dir: PathBuf,
+    /// The directory passed the allowed roots at delivery (it did not when the session existed
+    /// then, and the runner must not create one in it).
+    pub dir_checked: bool,
     pub cli: String,
     pub program: PathBuf,
     pub mcp_server: PathBuf,
@@ -87,6 +90,7 @@ impl TmuxTask {
             project_id: accepted.project_id.clone(),
             project_key: accepted.project_key.clone(),
             dir: accepted.dir.clone(),
+            dir_checked: accepted.dir_checked,
             cli: accepted.cli.clone(),
             program: accepted.program.clone(),
             mcp_server: accepted.mcp_server.clone(),
@@ -1265,6 +1269,16 @@ fn ensure_blocking(
                 Ok(create) => create,
                 Err(reason) => return Ok(declined(reason, false)),
             };
+            if !task.dir_checked {
+                return Ok(declined(
+                    format!(
+                        "tmux session {} is gone and its working directory is not inside this runner's allowed roots, \
+                         so the runner will not start one there",
+                        name.as_str()
+                    ),
+                    true,
+                ));
+            }
             // The session is created long after the delivery was checked: the directory must still
             // be the canonical path that was accepted (no link swapped in meanwhile).
             if !dir_unchanged(&task.dir) {

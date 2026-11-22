@@ -3,25 +3,29 @@ use super::detect::{
     looks_busy, screens_equal,
 };
 
+/// The confirmation screen of claude's bypass-permissions mode, from `fixtures/` (reconstructed from
+/// the text the CLI shows; the capture of hand check A5 replaces it).
+const BYPASS_CONFIRMATION: &str = include_str!("fixtures/claude-bypass-confirmation.txt");
+
 #[test]
 fn dialogs_are_recognised_by_the_verified_texts() {
     for (cli, screen, want) in [
         (
             "claude",
             "Is this a project you created or one you trust? (Like your own code)\n 1. Yes, I trust this folder",
-            Some(Dialog::Untrusted),
+            Some(Dialog::Trust),
         ),
-        (
-            "claude",
-            "  Yes, I trust this folder\n  No, exit",
-            Some(Dialog::Untrusted),
-        ),
+        ("claude", "  Yes, I trust this folder\n  No, exit", Some(Dialog::Trust)),
         (
             "claude",
             "Select login method:\n 1. Claude account",
             Some(Dialog::NotLoggedIn),
         ),
         ("claude", "Please run /login", Some(Dialog::NotLoggedIn)),
+        // The bypass-permissions confirmation the default launch command meets on its first start.
+        ("claude", BYPASS_CONFIRMATION, Some(Dialog::BypassConfirm)),
+        ("claude", "In Bypass Permissions mode, nothing asks", None),
+        ("codex", BYPASS_CONFIRMATION, None),
         ("claude", "> ", None),
         ("claude", "", None),
         (
@@ -42,11 +46,17 @@ fn dialogs_are_recognised_by_the_verified_texts() {
     ] {
         assert_eq!(classify_dialog(cli, screen), want, "{cli}: {screen:?}");
     }
-    let reason = Dialog::Untrusted.reason("SVWL-claude");
+    let reason = Dialog::Trust.reason("SVWL-claude");
     assert!(
         reason.contains("tmux attach -t SVWL-claude") && !reason.contains("trust SVWL") && !reason.contains('/'),
         "{reason}"
     );
+    // The confirmation is a dialog at the bottom of a screen too, and an answered one is gone.
+    assert_eq!(
+        classify_bottom("claude", BYPASS_CONFIRMATION),
+        Some(Dialog::BypassConfirm)
+    );
+    assert_eq!(classify_bottom("claude", "done\n> "), None);
 }
 
 #[test]
@@ -147,7 +157,7 @@ fn the_clis_own_chrome_counts() {
     let elicitation = "Which option?\n \u{276f} 1. Alpha\n   2. Beta\n Enter to select \u{b7} Esc to cancel";
     assert!(awaits_choice("claude", elicitation));
     let trust = "old lines\nIs this a project you created or one you trust?\n  Yes, I trust this folder";
-    assert_eq!(classify_bottom("claude", trust), Some(Dialog::Untrusted));
+    assert_eq!(classify_bottom("claude", trust), Some(Dialog::Trust));
     // A spinner needs the glyph, the text and the parenthesised part, ending the line.
     for not_spinner in [
         "esc to interrupt",

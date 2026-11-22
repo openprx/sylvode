@@ -553,7 +553,7 @@ async fn a_session_without_the_cli_fails_the_task_and_nothing_is_typed() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
-async fn an_untrusted_directory_fails_the_task_without_a_retry() {
+async fn a_first_start_dialog_fails_the_task_as_retryable_with_the_attach_hint() {
     if !enabled() {
         return;
     }
@@ -567,10 +567,11 @@ async fn an_untrusted_directory_fails_the_task_without_a_retry() {
     );
     let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
     assert_eq!(fails.len(), 1, "{fails:?}");
-    assert_eq!(fails[0].body["retryable"], false);
+    assert_eq!(fails[0].body["retryable"], true);
     let reason = fails[0].body["reason"].as_str().expect("reason");
     assert!(
-        reason.contains("tmux attach -t SVWL-claude") && !reason.contains('/'),
+        reason.contains("shows a dialog; attach with tmux attach -t SVWL-claude and answer it")
+            && !reason.contains('/'),
         "{reason}"
     );
     assert_eq!(fails[0].body["source"], "runner");
@@ -1114,5 +1115,64 @@ async fn the_trust_dialog_flow_ends_with_the_next_task_typed() {
     let typed = fx.wait_typed(1, 40).await;
     assert_eq!(typed.len(), 1, "{typed:?}");
     assert!(typed[0].contains(T2));
+    drop(server);
+}
+
+/// The allowed roots matter only when the runner would create the session: with none, a working
+/// directory outside them is refused synchronously and no session is made; with the operator's
+/// session in place the same task is typed into it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_directory_outside_the_roots_matters_only_when_the_runner_would_create_the_session() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    let outside = fx
+        .root
+        .path()
+        .parent()
+        .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    let outside = std::fs::canonicalize(outside).expect("outside");
+    let set_outside = |task: &str| {
+        let mut view = fx.view(task, true, true);
+        view["execution"]["working_directory"] = json!(outside.to_string_lossy());
+        fx.api.script(|s| {
+            s.views.insert(task.to_string(), vec![(200, view.clone())]);
+        });
+    };
+    set_outside(T1);
+    let server = fx.serve();
+    let refused = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert_eq!(refused["reason_code"], "path_outside_allowlist", "{refused}");
+    assert!(
+        !fx.tmux.raw(&["has-session", "-t", "=SVWL-claude"]).status.success(),
+        "no session was created"
+    );
+    // The operator's own session exists: the directory is not the runner's concern.
+    let settings = fx.tmux.state().join("sessions/SVWL-claude/claude-settings.json");
+    assert!(
+        fx.tmux
+            .raw(&[
+                "new-session",
+                "-d",
+                "-s",
+                "SVWL-claude",
+                "-c",
+                &fx.project.to_string_lossy(),
+                "--",
+                &fx.bin.file("claude").to_string_lossy(),
+                "--settings",
+                &settings.to_string_lossy(),
+            ])
+            .status
+            .success()
+    );
+    set_outside(T2);
+    let answer = Fixture::deliver(server.url("/webhook"), T2).await;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
     drop(server);
 }

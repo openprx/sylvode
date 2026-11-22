@@ -18,7 +18,7 @@ Installers never install another component for you. They print the command.
 7. Check: `sylvode-runner doctor` and `mcp-server doctor`. Both must show no `fail`.
 
 ## Watch a session
-`tmux -L sylvode attach -t =<PROJECTKEY>`. Detach with `Ctrl-b d`. Typing there is fine. The runner waits until you are idle before it sends the next task.
+`tmux attach -t <PROJECTKEY>-claude` (the session of the project's tmux connection; add `-L <socket>` when `[runner.tmux] socket_name` is set). Detach with `Ctrl-b d`. Typing there is fine. The runner waits until you are idle before it sends the next task. If the session exists the runner uses it as it is; if not, it starts it with your own login.
 
 ## Tool mode
 The MCP server lists nine tools by default (search mode). Set `[mcp] tool_mode = "full"` or start it with `serve --tools full` to list every tool by name instead. `[mcp] allow_write_call = false` disables every write tool except the task lifecycle tools: the server answers that writes are disabled.
@@ -30,7 +30,7 @@ The MCP server lists nine tools by default (search mode). Set `[mcp] tool_mode =
 | `path_missing` | Create the directory on the runner machine, or fix the setting |
 | `tmux_unavailable` | Install tmux 3.2+ where the service can find it, then re-run the installer |
 | `cli_unavailable` | Install the CLI, or set `[runner.cli.<name>] binary` to its absolute path |
-| `workspace_untrusted` | Run `sylvode-runner trust <PROJECTKEY>` and accept the CLI's trust prompt once |
+| `shows a dialog` | Attach with `tmux attach -t <PROJECTKEY>-claude` and answer the CLI's trust or confirmation prompt once |
 | `protocol_mismatch` | Upgrade the component with the lower version named in the error |
 | `did not acknowledge` / `ended its turn without completing` | Attach to the session, read what the agent did, then reassign the issue to retry |
-| `waiting for a permission decision` | Attach and answer, or widen the runner's allowed tools for this CLI |
+| `waiting for a permission decision` | Attach and answer it, or start the CLI in a permission mode that does not ask |

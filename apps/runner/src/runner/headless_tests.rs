@@ -56,6 +56,7 @@ fn accepted(cli: &str, dir: &Path, key: &str, program: &Path) -> Accepted {
         project_id: "22222222-2222-4222-8222-222222222222".to_string(),
         message: "[Sylvode task] id=x".to_string(),
         dir: dir.to_path_buf(),
+        dir_checked: true,
         channel: Channel::Headless,
         cli: cli.to_string(),
         program: program.to_path_buf(),

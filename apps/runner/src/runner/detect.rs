@@ -7,7 +7,9 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialog {
     /// The CLI asks whether to trust the directory.
-    Untrusted,
+    Trust,
+    /// claude asks to confirm bypass-permissions mode (the default launch command starts it).
+    BypassConfirm,
     /// The CLI asks to log in.
     NotLoggedIn,
     /// A chooser the runner cannot answer (codex's rate-limit chooser).
@@ -20,21 +22,27 @@ impl Dialog {
     /// The `reason_code` of the failure this dialog causes.
     pub const fn code(self) -> &'static str {
         match self {
-            Self::Untrusted => "workspace_untrusted",
+            Self::Trust | Self::BypassConfirm | Self::Chooser => "cli_dialog",
             Self::NotLoggedIn => "cli_not_logged_in",
-            Self::Chooser => "cli_dialog",
             Self::UsageLimit => "cli_usage_limit",
         }
     }
 
-    /// The failure text, with the fix. Never holds a path.
-    pub fn reason(self, key: &str) -> String {
+    /// Whether the failed task may be tried again: everything but a usage limit waits for the
+    /// operator to answer in the session once.
+    pub const fn retryable(self) -> bool {
+        !matches!(self, Self::UsageLimit)
+    }
+
+    /// The failure text, with the fix. Names the session, never a path.
+    pub fn reason(self, session: &str) -> String {
         match self {
-            Self::Untrusted => {
-                format!("the CLI in tmux session {key} shows a dialog; attach with tmux attach -t {key} and answer it")
+            Self::Trust | Self::BypassConfirm | Self::Chooser => format!(
+                "the CLI in tmux session {session} shows a dialog; attach with tmux attach -t {session} and answer it"
+            ),
+            Self::NotLoggedIn => {
+                format!("the CLI in tmux session {session} is not logged in; attach and log in")
             }
-            Self::NotLoggedIn => format!("the CLI is not logged in; attach to tmux session {key} and log in"),
-            Self::Chooser => format!("the CLI shows a dialog the runner cannot answer; attach to tmux session {key}"),
             Self::UsageLimit => "the CLI reports that its usage limit is reached".to_string(),
         }
     }
@@ -47,7 +55,9 @@ pub fn classify_dialog(cli: &str, screen: &str) -> Option<Dialog> {
             if screen.contains("Is this a project you created or one you trust")
                 || screen.contains("Yes, I trust this folder")
             {
-                Some(Dialog::Untrusted)
+                Some(Dialog::Trust)
+            } else if screen.contains("Bypass Permissions mode") && screen.contains("Yes, I accept") {
+                Some(Dialog::BypassConfirm)
             } else if screen.contains("Select login method") || screen.contains("Please run /login") {
                 Some(Dialog::NotLoggedIn)
             } else {

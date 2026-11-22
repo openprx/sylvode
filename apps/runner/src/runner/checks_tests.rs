@@ -663,3 +663,58 @@ async fn the_tmux_channel_has_no_switch_and_only_claude_is_verified() {
         assert_eq!(code, "cli_unverified", "{cli}");
     }
 }
+
+/// The allowed roots decide only when the runner would have to create the session: one that
+/// exists is used as it is, wherever its CLI runs. A headless run always needs them.
+#[tokio::test]
+async fn the_roots_are_checked_only_when_the_session_is_absent() {
+    let fx = Fixture::new();
+    let outside = fx.base.sub("elsewhere");
+    let marker = fx.base.path().join("session-exists");
+    let tmux = fx.base.path().join("tmux");
+    fs::write(
+        &tmux,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = -V ] && {{ echo 'tmux 3.7b'; exit 0; }}; done\n\
+             for a in \"$@\"; do [ \"$a\" = has-session ] && {{ [ -f '{}' ]; exit $?; }}; done\nexit 0\n",
+            marker.display()
+        ),
+    )
+    .expect("tmux");
+    fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let run = |dir: PathBuf, channel: &'static str| {
+        let fx = &fx;
+        let tmux = tmux.clone();
+        async move {
+            let m = ok_mock(task_view(&dir, channel, "claude"));
+            let (addr, _server) = serve(m.clone()).await;
+            let mut config = fx.config(addr);
+            config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+            fx.run(&config, m, addr, &delivery()).await
+        }
+    };
+    // No session: a directory outside the roots, or missing, is refused with the path code.
+    assert_eq!(refused(&run(outside.clone(), "tmux").await).0, "path_outside_allowlist");
+    assert_eq!(refused(&run(fx.root.join("absent"), "tmux").await).0, "path_missing");
+    let Verdict::Run(inside) = run(fx.project_dir.clone(), "tmux").await else {
+        panic!("a directory inside the roots is accepted")
+    };
+    assert!(inside.dir_checked);
+    // The session exists: the directory is not checked, the task goes to the session.
+    fs::write(&marker, "").expect("marker");
+    let Verdict::Run(outside_accepted) = run(outside.clone(), "tmux").await else {
+        panic!("an existing session is used wherever its CLI runs")
+    };
+    assert!(!outside_accepted.dir_checked);
+    assert_eq!(outside_accepted.dir, outside);
+    let Verdict::Run(missing_accepted) = run(fx.root.join("absent"), "tmux").await else {
+        panic!("an existing session is used whatever its recorded directory")
+    };
+    assert!(!missing_accepted.dir_checked);
+    let Verdict::Run(inside_again) = run(fx.project_dir.clone(), "tmux").await else {
+        panic!("accepted")
+    };
+    assert!(inside_again.dir_checked, "a directory that passes is marked as checked");
+    // A headless run has no session: the roots always apply.
+    assert_eq!(refused(&run(outside, "headless").await).0, "path_outside_allowlist");
+}

@@ -578,32 +578,58 @@ fn start_up_waits_for_readiness_checks_dialogs_and_times_out_retryably() {
     assert_eq!(h.m.on_ready(h.now), vec![Action::TryPush(T("b", 1))]);
 }
 
+/// A first-start dialog (trust, bypass confirmation, chooser) fails every waiting task as
+/// retryable with the attach hint: the operator answers it once in the session and the next
+/// attempt goes in.
 #[test]
-fn an_untrusted_directory_fails_every_waiting_task_without_retry() {
-    let mut h = H::new();
-    h.enqueue(T("a", 1));
-    h.enqueue(T("b", 1));
-    h.m.on_ensure(EnsureOutcome::Started, h.now);
-    let actions = h.m.on_dialog(Dialog::Untrusted, h.now);
-    let failed = fails(&actions);
-    assert_eq!(failed.len(), 2);
-    assert!(
-        failed.iter().all(|f| !f.2 && f.1.contains("tmux attach -t SVWL")),
-        "{failed:?}"
-    );
-    assert!(h.m.queue.is_empty());
-    // A task arriving while the dialog is up fails at once.
-    let later = fails(&h.enqueue(T("c", 1)));
-    assert_eq!(later.len(), 1);
-    assert!(!later[0].2);
-    // After the operator answered, the CLI becomes ready and tasks queue again.
-    h.m.on_ready(h.now);
-    assert!(kinds(&h.enqueue(T("d", 1))).contains(&"try_push"));
-    // The other dialogs name their own codes.
+fn a_first_start_dialog_fails_every_waiting_task_as_retryable() {
+    for dialog in [Dialog::Trust, Dialog::BypassConfirm, Dialog::Chooser] {
+        let mut h = H::new();
+        h.enqueue(T("a", 1));
+        h.enqueue(T("b", 1));
+        h.m.on_ensure(EnsureOutcome::Started, h.now);
+        let actions = h.m.on_dialog(dialog, h.now);
+        let failed = fails(&actions);
+        assert_eq!(failed.len(), 2, "{dialog:?}");
+        assert!(
+            failed
+                .iter()
+                .all(|f| f.2 && f.1.contains("shows a dialog; attach with tmux attach -t SVWL")),
+            "{failed:?}"
+        );
+        assert!(h.m.queue.is_empty());
+        // A task arriving while the dialog is up fails at once, retryably.
+        let later = fails(&h.enqueue(T("c", 1)));
+        assert_eq!(later.len(), 1);
+        assert!(later[0].2);
+        // After the operator answered, the CLI becomes ready and tasks queue again.
+        h.m.on_ready(h.now);
+        assert!(kinds(&h.enqueue(T("d", 1))).contains(&"try_push"));
+    }
+}
+
+/// Each dialog names its own code and failure text; only a usage limit is not retried.
+#[test]
+fn dialogs_have_their_codes_texts_and_retryability() {
     assert_eq!(Dialog::NotLoggedIn.code(), "cli_not_logged_in");
     assert_eq!(Dialog::UsageLimit.code(), "cli_usage_limit");
-    assert_eq!(Dialog::Chooser.code(), "cli_dialog");
-    assert_eq!(Dialog::Untrusted.code(), "workspace_untrusted");
+    for dialog in [Dialog::Trust, Dialog::BypassConfirm, Dialog::Chooser] {
+        assert_eq!(dialog.code(), "cli_dialog");
+        assert!(dialog.retryable());
+    }
+    assert!(Dialog::NotLoggedIn.retryable() && !Dialog::UsageLimit.retryable());
+    assert_eq!(
+        Dialog::NotLoggedIn.reason("QLA-claude"),
+        "the CLI in tmux session QLA-claude is not logged in; attach and log in"
+    );
+    assert_eq!(
+        Dialog::BypassConfirm.reason("QLA-claude"),
+        "the CLI in tmux session QLA-claude shows a dialog; attach with tmux attach -t QLA-claude and answer it"
+    );
+    assert_eq!(
+        Dialog::UsageLimit.reason("QLA-claude"),
+        "the CLI reports that its usage limit is reached"
+    );
 }
 
 #[test]
@@ -738,7 +764,8 @@ fn every_state_meets_every_input() {
             )
         }),
         ("ready", |h| h.m.on_ready(h.now)),
-        ("dialog untrusted", |h| h.m.on_dialog(Dialog::Untrusted, h.now)),
+        ("dialog trust", |h| h.m.on_dialog(Dialog::Trust, h.now)),
+        ("dialog bypass", |h| h.m.on_dialog(Dialog::BypassConfirm, h.now)),
         ("dialog cli", |h| h.m.on_dialog(Dialog::Chooser, h.now)),
         ("session gone", |h| h.m.on_session_gone(h.now)),
         ("reminder sent", |h| {
@@ -778,7 +805,7 @@ fn every_state_meets_every_input() {
             let _ = h.tick(1);
         }
     }
-    assert_eq!(combinations, 8 * 28);
+    assert_eq!(combinations, 8 * 29);
 }
 
 /// `Dead` and `NoSession` leave only through an ensure, and `Idle` with queued work always pushes.
