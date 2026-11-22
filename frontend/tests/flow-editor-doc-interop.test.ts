@@ -311,7 +311,7 @@ test('actual API command planner structure output renders updated heading and re
 test('duplicating one block creates a distinct CID without replacing the source', () => {
 	const { doc } = fixture();
 	const mapping = new Map();
-	let node = read(doc);
+	const node = read(doc);
 	let state = EditorState.create({ schema, doc: node });
 	updateLoroToPmState(doc, mapping, state);
 	const original = (blocks(doc).get(0) as LoroMap).id;

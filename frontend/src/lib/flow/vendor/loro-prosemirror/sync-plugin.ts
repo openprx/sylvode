@@ -198,7 +198,7 @@ function updateNodeOnLoroEvent(view: EditorView, event: LoroEventBatch) {
 		state
 	);
 
-	let tr = view.state.tr.replace(
+	const tr = view.state.tr.replace(
 		0,
 		view.state.doc.content.size,
 		new Slice(Fragment.from(node), 0, 0)

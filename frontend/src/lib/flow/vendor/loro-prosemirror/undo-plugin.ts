@@ -74,7 +74,7 @@ export const LoroUndoPlugin = (props: LoroUndoPluginProps): Plugin => {
 				}
 
 				const cursors: Cursor[] = [];
-				let selection = lastSelection;
+				const selection = lastSelection;
 				if (!isUndo) {
 					const loroState = loroSyncPluginKey.getState(view.state);
 					if (loroState) {

@@ -104,7 +104,7 @@ export const createCursorPlugin = (
 						if (view.isDestroyed) {
 							return;
 						}
-						let tr = view.state.tr;
+						const tr = view.state.tr;
 						tr.setMeta(pluginKey, {
 							presenceUpdated: true
 						});
@@ -260,7 +260,7 @@ export function convertPmSelectionToCursors(
 }
 
 function getByValue(map: Map<ContainerID, Node | Node[]>, searchValue: Node) {
-	for (let [key, value] of map.entries()) {
+	for (const [key, value] of map.entries()) {
 		if (value === searchValue) return key;
 	}
 }

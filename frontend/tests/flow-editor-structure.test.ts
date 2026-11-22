@@ -53,7 +53,7 @@ test('Tree move preserves physical CID and next logical edits target the moved c
 	const nodes = tree.roots();
 	tree.move(nodes[2].id, undefined, 0);
 	doc.commit();
-	let node = read(doc, mapping);
+	const node = read(doc, mapping);
 	assert.deepEqual(
 		node.content.content.map((n) => n.textContent),
 		['three', 'one', 'two']
@@ -76,7 +76,7 @@ test('nested subtree move, insert, duplicate and delete maintain physical refere
 	const roots = tree.roots();
 	tree.move(roots[1].id, roots[0].id, 0);
 	doc.commit();
-	let node = read(doc, mapping);
+	const node = read(doc, mapping);
 	assert.deepEqual(
 		node.content.content.map((n) => n.attrs.indent),
 		[0, 1, 0]
