@@ -457,6 +457,10 @@
 			try {
 				const navigatorObjectId = await loadNavigatorRoot();
 				await loadObjects();
+				// The tree needs only the REST reads above (created_at order until the order map
+				// arrives). Waiting for the collaborative navigator document to connect would hide
+				// every Page for as long as that socket is slow.
+				loading = false;
 				navEntry = await repository.open({
 					scopeId,
 					objectId: navigatorObjectId,
@@ -477,6 +481,8 @@
 						void refreshNavigatorMetadata();
 					}
 				);
+				// The stored order is now readable; re-derive the tree even if nothing needs seeding.
+				orderVersion += 1;
 				await ensureOrderEntries();
 			} catch (error) {
 				navigatorFailureKey = flowErrorDetailKey(error as FlowError);
