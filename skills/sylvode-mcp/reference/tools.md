@@ -234,7 +234,7 @@ Pages, collections, shares, comments, imports, exports and maintenance of Flow
 - `flow.appearance.set` (write) — Set the icon and cover of a Flow page
 - `flow.appearance.upload` (write) — Upload an image for a Flow page icon or cover
 - `objects.restore` (write) — Restore a Flow page to an earlier history point
-- `flow.trash.list` (read) — List the archived Flow objects of a workspace
+- `flow.trash.list` (read) — List the archived Flow objects of a workspace or project
 - `objects.purge` (write) — Permanently delete an archived Flow object
 - `flow.mentions.list` (read) — List the people who can be mentioned on a Flow object
 - `legacy_pages.inventory` (read) — Read the inventory of the legacy Markdown page table
