@@ -371,7 +371,7 @@
 										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									>
 										<option value="">{$t('issue.selectPlaceholder')}</option>
-										{#each field.options as option}
+										{#each field.options as option, index (index)}
 											<option value={option}>{option.replaceAll('_', ' ')}</option>
 										{/each}
 									</select>

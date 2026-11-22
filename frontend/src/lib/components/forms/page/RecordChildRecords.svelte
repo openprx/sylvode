@@ -35,7 +35,7 @@
 		</div>
 
 		<div class="flex flex-wrap items-center gap-2">
-			{#each parentChildRelationFields() as relationField}
+			{#each parentChildRelationFields() as relationField, idx (idx)}
 				<Button size="sm" variant="secondary" onclick={() => startAddChildRecord(relationField)}>
 					<Plus class="mr-2 h-4 w-4" aria-hidden="true" />
 					{$t('forms.addChildRecord')} · {fieldLabel(relationField)}
@@ -50,7 +50,7 @@
 
 	{#if parentChildRelationFields().length > 0}
 		<div class="space-y-3" data-child-table-grids>
-			{#each parentChildRelationFields() as relationField}
+			{#each parentChildRelationFields() as relationField, idx (idx)}
 				{@const childRecords = childRecordsForRelationField(relationField)}
 				{@const childFields = childGridFieldsForRelationField(relationField)}
 				{@const childForm = childFormForRelationField(relationField)}
@@ -103,7 +103,7 @@
 											>{$t('forms.recordTitle')}</th
 										>
 
-										{#each childFields as childField}
+										{#each childFields as childField, idx (idx)}
 											<th
 												class="min-w-32 px-3 py-2 text-left font-medium text-fg-muted"
 												data-child-table-grid-column={`${relationField.key}:${childField.key}`}
@@ -118,11 +118,11 @@
 								</thead>
 
 								<tbody class="divide-y divide-line">
-									{#each childRecords as child}
+									{#each childRecords as child (child.link_id)}
 										<tr data-child-table-grid-row={`${relationField.key}:${child.record.id}`}>
 											<td class="px-3 py-2 font-medium text-fg">{child.record.title}</td>
 
-											{#each childFields as childField}
+											{#each childFields as childField, idx (idx)}
 												<td
 													class="max-w-56 px-3 py-2 text-fg"
 													data-child-table-grid-cell={`${child.record.id}:${childField.key}`}
@@ -186,14 +186,14 @@
 				</thead>
 
 				<tbody class="divide-y divide-line">
-					{#each s.selectedRecordChildren as child}
+					{#each s.selectedRecordChildren as child (child.link_id)}
 						<tr>
 							<td class="px-3 py-2 font-medium text-fg">{child.record.title}</td>
 
 							<td class="px-3 py-2 font-mono text-fg-muted">{child.relation_key}</td>
 
 							<td class="px-3 py-2 text-fg">
-								{#each childRecordFields(child).slice(0, 4) as childField, index}
+								{#each childRecordFields(child).slice(0, 4) as childField, index (index)}
 									{#if index > 0}
 										<span class="mx-1 text-fg-muted">/</span>
 									{/if}

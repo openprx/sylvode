@@ -147,7 +147,7 @@
 						class="grid divide-x divide-line"
 						style={`grid-template-columns: repeat(${s.ganttTimeline.dates.length}, minmax(72px, 1fr));`}
 					>
-						{#each s.ganttTimeline.dates as date}
+						{#each s.ganttTimeline.dates as date, index (index)}
 							<div
 								class="px-2 py-3 text-center text-xs font-medium text-fg-muted"
 								data-gantt-date={date}
@@ -163,7 +163,7 @@
 					</div>
 				</div>
 
-				{#each s.ganttTimeline.lanes as lane}
+				{#each s.ganttTimeline.lanes as lane, index (index)}
 					<div class="border-b border-line last:border-b-0" data-gantt-lane={lane.label}>
 						<div class="bg-nav px-4 py-2 text-xs font-semibold uppercase text-fg-muted">
 							{lane.label}
@@ -178,7 +178,7 @@
 							</div>
 						{/if}
 
-						{#each lane.tasks as task}
+						{#each lane.tasks as task, index (index)}
 							<div class="grid grid-cols-[180px_minmax(0,1fr)] items-center border-t border-line">
 								<div class="min-w-0 px-4 py-3">
 									<div class="truncate font-medium text-fg">

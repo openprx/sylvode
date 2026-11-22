@@ -290,7 +290,7 @@
 							bind:value={proposalType}
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 						>
-							{#each proposalTypeOptions as option}
+							{#each proposalTypeOptions as option, index (index)}
 								<option value={option.value}>{$t(option.labelKey)}</option>
 							{/each}
 						</select>
@@ -304,7 +304,7 @@
 							bind:value={votingRule}
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 						>
-							{#each votingRuleOptions as option}
+							{#each votingRuleOptions as option, index (index)}
 								<option value={option.value}>{$t(option.labelKey)}</option>
 							{/each}
 						</select>
@@ -321,7 +321,7 @@
 							bind:value={cycleTemplate}
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 						>
-							{#each cycleTemplateOptions as option}
+							{#each cycleTemplateOptions as option, index (index)}
 								<option value={option.value}>{$t(option.labelKey)}</option>
 							{/each}
 						</select>

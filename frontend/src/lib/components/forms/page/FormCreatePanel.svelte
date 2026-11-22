@@ -63,7 +63,7 @@
 
 		{#if s.scenarioTemplates.length > 0}
 			<div class="mt-3 grid gap-2 lg:grid-cols-3">
-				{#each s.scenarioTemplates as template}
+				{#each s.scenarioTemplates as template (template.id)}
 					<div class="rounded-card border border-line bg-raised p-3">
 						<div class="flex items-start justify-between gap-3">
 							<div class="min-w-0">
@@ -169,7 +169,7 @@
 		</div>
 
 		<div class="divide-y divide-line">
-			{#each s.fieldDrafts as field, index}
+			{#each s.fieldDrafts as field, index (index)}
 				<div class="grid gap-3 p-3 md:grid-cols-[1fr_1fr_160px_90px_44px]">
 					<label class="space-y-1">
 						<span class="text-xs font-medium text-fg-muted">{$t('forms.fieldKey')}</span>
@@ -198,7 +198,7 @@
 							class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 							bind:value={field.type}
 						>
-							{#each fieldTypeOptions as type}
+							{#each fieldTypeOptions as type, idx (idx)}
 								<option value={type}>{$t(`forms.fieldTypes.${type}`)}</option>
 							{/each}
 						</select>

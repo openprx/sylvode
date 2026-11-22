@@ -94,7 +94,7 @@
 		data-calendar-hide-empty-days={s.selectedCalendarHideEmptyDays}
 		data-calendar-focus-date={viewCalendarFocusDate()}
 	>
-		{#each calendarResourceRows() as resource}
+		{#each calendarResourceRows() as resource, index (index)}
 			<section
 				class={s.calendarResourceField ? 'rounded-card border border-line bg-surface p-3' : ''}
 				data-calendar-resource={s.calendarResourceField ? resource.label : undefined}
@@ -162,7 +162,7 @@
 						data-calendar-agenda-resource={s.calendarResourceField ? resource.label : '__all__'}
 						data-record-count={calendarAgendaRecordCount(resource)}
 					>
-						{#each calendarAgendaGroups(resource) as group}
+						{#each calendarAgendaGroups(resource) as group, index (index)}
 							<section
 								class="rounded-card border border-line bg-raised"
 								data-calendar-agenda-date={group.date}
@@ -332,7 +332,7 @@
 								: 'lg:grid-cols-7'
 						}`}
 					>
-						{#each resource.groups as group}
+						{#each resource.groups as group, index (index)}
 							<section
 								class="min-h-48 rounded-card border border-line bg-nav"
 								data-calendar-date={group.date}

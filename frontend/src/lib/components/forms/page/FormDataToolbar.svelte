@@ -44,7 +44,7 @@
 					onchange={handleFormChange}
 					class="h-8 min-w-40 rounded-control border border-input bg-field px-2 text-xs text-fg"
 				>
-					{#each s.forms as form}
+					{#each s.forms as form (form.id)}
 						<option value={form.id}>{form.name}</option>
 					{/each}
 				</select>

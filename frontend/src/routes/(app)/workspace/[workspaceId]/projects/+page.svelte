@@ -449,7 +449,7 @@
 		/>
 	{:else}
 		<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-			{#each filteredProjects as project}
+			{#each filteredProjects as project (project.id)}
 				<article
 					class="group rounded-card border border-line bg-raised p-5 transition-all hover:-translate-y-0.5 hover:border-line-strong"
 				>

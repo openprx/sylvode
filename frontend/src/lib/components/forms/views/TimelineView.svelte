@@ -159,7 +159,7 @@
 				</div>
 			</div>
 
-			{#each s.timelineEventRows as event}
+			{#each s.timelineEventRows as event (event.id)}
 				{@const linkedRecord = timelineEventRecord(event)}
 				{@const pinned = timelineEventPinned(event)}
 
@@ -426,7 +426,7 @@
 			{/each}
 		{/if}
 	{:else}
-		{#each s.timelineRecords as record}
+		{#each s.timelineRecords as record (record.id)}
 			<article class="grid grid-cols-[8rem_minmax(0,1fr)] gap-4 px-4 py-3">
 				<div class="text-xs text-fg-muted">
 					{formatDate(record.updated_at)}
@@ -534,7 +534,7 @@
 
 					{#if s.timelineEditableSelectFields.length > 0}
 						<div class="mt-3 grid gap-2 sm:grid-cols-2">
-							{#each s.timelineEditableSelectFields as field}
+							{#each s.timelineEditableSelectFields as field (field.key)}
 								<label class="block space-y-1">
 									<span
 										class="flex flex-wrap items-center gap-1.5 text-xs font-medium text-fg-muted"
@@ -583,7 +583,7 @@
 											updateTimelineRecordSelectField(record, field, selectValue(event))}
 										class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 									>
-										{#each kanbanMoveOptions(field) as option}
+										{#each kanbanMoveOptions(field) as option, index (index)}
 											<option value={option}>{option}</option>
 										{/each}
 									</select>

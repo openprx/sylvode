@@ -252,13 +252,13 @@
 			</button>
 		</div>
 		<div class="space-y-4 overflow-y-auto p-3 xl:max-h-[calc(100vh-11rem)]">
-			{#each fieldGroups as group}
+			{#each fieldGroups as group, idx (idx)}
 				<div>
 					<p class="px-1 text-xs font-medium uppercase text-fg-muted">
 						{group.label}
 					</p>
 					<div class="mt-2 grid gap-1">
-						{#each group.types as type}
+						{#each group.types as type, idx (idx)}
 							<button
 								type="button"
 								class="flex min-h-10 items-center justify-between gap-2 rounded-row px-3 text-left text-sm text-fg hover:bg-surface"
@@ -306,7 +306,7 @@
 				</div>
 			{:else}
 				<div class="mx-auto grid max-w-3xl gap-2">
-					{#each fieldDrafts as field, index}
+					{#each fieldDrafts as field, index (index)}
 						<div
 							role="button"
 							tabindex="0"
@@ -471,7 +471,7 @@
 										: 'text'
 							})}
 					>
-						{#each fieldTypeOptions as type}
+						{#each fieldTypeOptions as type, idx (idx)}
 							<option value={type}>{$t(`forms.fieldTypes.${type}`)}</option>
 						{/each}
 					</select>
@@ -1235,7 +1235,7 @@
 						</div>
 						{#if selectedFieldDependencies.length > 0}
 							<ul class="mt-2 space-y-1 text-xs">
-								{#each selectedFieldDependencies.slice(0, 4) as dependency}
+								{#each selectedFieldDependencies.slice(0, 4) as dependency, idx (idx)}
 									<li class="break-words">
 										<span class="font-medium">{dependency.source_type}</span>
 										{#if dependency.source_key}

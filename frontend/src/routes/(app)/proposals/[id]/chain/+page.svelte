@@ -148,7 +148,7 @@
 						{#if events.length === 0}
 							<p class="text-sm text-fg-muted">{$t('common.noData')}</p>
 						{:else}
-							{#each events as event}
+							{#each events as event, index (index)}
 								<div class="flex gap-2 rounded-control border border-line p-3">
 									<span class={`rounded px-2 py-0.5 text-xs ${eventTone(event.event_type)}`}
 										>{event.event_type}</span
@@ -175,7 +175,7 @@
 						{$t('governanceExt.voteCount', { values: { count: data.votes.length } })}
 					</p>
 					<div class="mt-2 max-h-72 space-y-2 overflow-auto">
-						{#each data.votes as vote}
+						{#each data.votes as vote, index (index)}
 							<div class="rounded border border-line px-2 py-1 text-xs">
 								<p>{vote.voter_id} · {vote.choice}</p>
 								<p class="text-fg-muted">{new Date(vote.voted_at).toLocaleString()}</p>
@@ -192,7 +192,7 @@
 						<p class="text-xs text-fg-muted">{$t('common.noData')}</p>
 					{:else}
 						<div class="space-y-2">
-							{#each data.feedback_proposals as feedback}
+							{#each data.feedback_proposals as feedback (feedback.proposal_id)}
 								<a
 									href={`/proposals/${feedback.proposal_id}`}
 									class="block rounded border border-line px-2 py-1 text-xs hover:bg-surface"

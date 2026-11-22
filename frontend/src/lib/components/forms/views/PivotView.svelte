@@ -256,7 +256,7 @@
 						</div>
 					</th>
 
-					{#each s.pivotTable.columns as column}
+					{#each s.pivotTable.columns as column, index (index)}
 						<th class="px-4 py-3 text-right font-medium" data-pivot-column={column.label}>
 							<div class="flex flex-wrap items-center justify-end gap-1.5">
 								<span>{column.label}</span>
@@ -287,7 +287,7 @@
 			</thead>
 
 			<tbody class="divide-y divide-line">
-				{#each s.pivotTable.rows as row}
+				{#each s.pivotTable.rows as row, index (index)}
 					<tr class="hover:bg-surface" data-pivot-row={row.label}>
 						<th class="px-4 py-3 text-left font-medium text-fg">
 							<div class="flex flex-wrap items-center gap-1.5">
@@ -311,7 +311,7 @@
 							</div>
 						</th>
 
-						{#each s.pivotTable.columns as column}
+						{#each s.pivotTable.columns as column, index (index)}
 							{@const cellValue = row.cells[column.key] ?? 0}
 
 							<td
@@ -399,7 +399,7 @@
 					<tr>
 						<th class="px-4 py-3 text-left">{$t('forms.pivotTotal')}</th>
 
-						{#each s.pivotTable.columns as column}
+						{#each s.pivotTable.columns as column, index (index)}
 							<td class="px-4 py-3 text-right" data-pivot-column-total={column.label}>
 								<button
 									type="button"
@@ -531,7 +531,7 @@
 					</p>
 				{:else}
 					<div class="divide-y divide-line">
-						{#each s.pivotDrilldownRecords as record}
+						{#each s.pivotDrilldownRecords as record (record.id)}
 							<div
 								class="flex items-center justify-between gap-3 py-2"
 								data-pivot-drilldown-record={record.id}

@@ -155,7 +155,7 @@
 		</div>
 
 		<div class="mb-4 flex flex-wrap gap-2">
-			{#each domains as domain}
+			{#each domains as domain, index (index)}
 				<button
 					type="button"
 					onclick={() => (selectedDomain = domain)}

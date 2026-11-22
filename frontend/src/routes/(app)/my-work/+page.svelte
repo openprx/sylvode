@@ -133,7 +133,7 @@
 		<!-- Issues by Status -->
 	{:else}
 		<div class="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-4">
-			{#each ['backlog', 'todo', 'in_progress', 'done'] as status}
+			{#each ['backlog', 'todo', 'in_progress', 'done'] as status, index (index)}
 				{@const issues = groupedIssues[status]}
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
@@ -203,7 +203,7 @@
 					<div class="mt-1 text-sm text-fg-muted">{$t('common.total')}</div>
 				</div>
 			</Card>
-			{#each ['backlog', 'todo', 'in_progress', 'done'] as status}
+			{#each ['backlog', 'todo', 'in_progress', 'done'] as status, index (index)}
 				<Card>
 					<div class="text-center">
 						<div class="text-3xl font-semibold text-fg">

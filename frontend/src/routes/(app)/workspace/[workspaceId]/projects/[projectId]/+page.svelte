@@ -308,7 +308,7 @@
 							{$t('project.scenarioFields')}
 						</h3>
 						<div class="space-y-2">
-							{#each scenarioFields.slice(0, 5) as field}
+							{#each scenarioFields.slice(0, 5) as field (field.key)}
 								<div
 									class="flex items-center justify-between rounded-control border border-line px-3 py-2 text-sm"
 								>
@@ -330,7 +330,7 @@
 				<p class="text-fg-muted">{$t('project.noRecentWorkItems')}</p>
 			{:else}
 				<div class="space-y-3">
-					{#each recentIssues as issue}
+					{#each recentIssues as issue (issue.id)}
 						<a
 							href={`/workspace/${workspaceId}/projects/${projectId}/issues/${issue.id}`}
 							class="block rounded-control p-3 hover:bg-surface"
@@ -351,7 +351,7 @@
 								</div>
 								{#if issue.labels?.length}
 									<div class="flex flex-wrap gap-1">
-										{#each issue.labels as label}
+										{#each issue.labels as label, index (index)}
 											<span
 												class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
 												style={`background-color: ${label.color}20; color: ${label.color}; border: 1px solid ${label.color}40;`}

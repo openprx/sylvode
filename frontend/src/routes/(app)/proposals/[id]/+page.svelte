@@ -721,7 +721,7 @@
 				</div>
 				<div class="mb-4 space-y-3">
 					<div class="grid grid-cols-4 gap-2">
-						{#each progressStages as stage, idx}
+						{#each progressStages as stage, idx (idx)}
 							<div class="space-y-1">
 								<div
 									class={`h-1.5 rounded ${idx <= stageIndex(proposal.status) ? 'bg-primary' : 'bg-surface'}`}
@@ -758,7 +758,7 @@
 					{#if comments.length === 0}
 						<p class="text-sm text-fg-muted">{$t('governance.noComments')}</p>
 					{:else}
-						{#each comments as comment}
+						{#each comments as comment (comment.id)}
 							<div class="rounded-control border border-line p-3">
 								<div class="mb-2 flex items-start gap-3">
 									{#if comment.author_avatar}
@@ -1110,7 +1110,7 @@
 					{#if links.length === 0}
 						<p class="text-xs text-fg-muted">{$t('governance.noIssueLinks')}</p>
 					{:else}
-						{#each links as link}
+						{#each links as link (link.issue_id)}
 							<div class="rounded border border-line px-2 py-1 text-xs">
 								#{link.issue_id.slice(0, 8)} · {link.issue_title} · {link.issue_state}
 							</div>
@@ -1137,7 +1137,7 @@
 							<p class="text-xs text-fg-muted">{$t('governance.searchingIssues')}</p>
 						{:else if issueResults.length > 0}
 							<div class="space-y-1">
-								{#each issueResults as issue}
+								{#each issueResults as issue (issue.id)}
 									<div
 										class="flex items-center justify-between rounded border border-line px-2 py-1 text-xs"
 									>

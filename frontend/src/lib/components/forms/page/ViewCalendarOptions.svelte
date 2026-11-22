@@ -36,7 +36,7 @@
 	>
 		<option value="">{$t('forms.viewNoRule')}</option>
 
-		{#each viewDraftCalendarEndFieldCandidates() as field}
+		{#each viewDraftCalendarEndFieldCandidates() as field (field.key)}
 			<option value={field.key}>{fieldLabel(field)}</option>
 		{/each}
 	</select>
@@ -58,7 +58,7 @@
 	>
 		<option value="">{$t('forms.viewNoRule')}</option>
 
-		{#each viewDraftCalendarResourceFieldCandidates() as field}
+		{#each viewDraftCalendarResourceFieldCandidates() as field (field.key)}
 			<option value={field.key}>{fieldLabel(field)}</option>
 		{/each}
 	</select>

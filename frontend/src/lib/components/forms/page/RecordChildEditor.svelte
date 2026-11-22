@@ -68,7 +68,7 @@
 				/>
 			</label>
 
-			{#each childFieldsForForm(s.childEditor.childFormId) as childField}
+			{#each childFieldsForForm(s.childEditor.childFormId) as childField, index (index)}
 				<label
 					class="space-y-1 text-sm {fieldHiddenByCondition(childField, s.childEditor.draft)
 						? 'hidden'
@@ -116,7 +116,7 @@
 						>
 							<option value="">{$t('forms.selectPlaceholder')}</option>
 
-							{#each recordSelectOptions(childField, s.childEditor.draft) as option}
+							{#each recordSelectOptions(childField, s.childEditor.draft) as option, index (index)}
 								<option
 									value={option}
 									disabled={optionDisabledForChildSingleDraft(childField, option)}
@@ -130,7 +130,7 @@
 						</select>
 					{:else if fieldType(childField) === 'multi_select' && fieldOptions(childField).length > 0}
 						<div class="grid gap-2 rounded-control border border-input bg-field p-2 text-sm">
-							{#each recordSelectOptions(childField, s.childEditor.draft) as option}
+							{#each recordSelectOptions(childField, s.childEditor.draft) as option, index (index)}
 								<label
 									class="flex items-start gap-2 text-fg"
 									data-option-description={optionDescription(childField, option) || undefined}

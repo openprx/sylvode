@@ -31,7 +31,7 @@
 		>
 			<option value="">{$t('forms.viewNoRule')}</option>
 
-			{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
+			{#each s.fields.filter((field) => field.visibility?.list !== false) as field (field.key)}
 				<option value={field.key}>{fieldLabel(field)}</option>
 			{/each}
 		</select>
@@ -74,7 +74,7 @@
 		>
 			<option value="">{$t('forms.viewNoRule')}</option>
 
-			{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
+			{#each s.fields.filter((field) => field.visibility?.list !== false) as field (field.key)}
 				<option value={field.key}>{fieldLabel(field)}</option>
 			{/each}
 		</select>
@@ -103,7 +103,7 @@
 			>
 				<option value="">{$t('forms.viewNoRule')}</option>
 
-				{#each viewDraftSwimlaneFieldCandidates() as field}
+				{#each viewDraftSwimlaneFieldCandidates() as field (field.key)}
 					<option value={field.key}>{fieldLabel(field)}</option>
 				{/each}
 			</select>
@@ -131,7 +131,7 @@
 		>
 			<option value="">{$t('forms.viewNoRule')}</option>
 
-			{#each s.fields.filter( (field) => ['date', 'datetime'].includes(field.type ?? 'text') ) as field}
+			{#each s.fields.filter( (field) => ['date', 'datetime'].includes(field.type ?? 'text') ) as field (field.key)}
 				<option value={field.key}>{fieldLabel(field)}</option>
 			{/each}
 		</select>

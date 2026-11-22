@@ -46,7 +46,7 @@
 	</div>
 
 	<div class="space-y-2">
-		{#each s.selectedDetailPageWidgetEntries as widget, index}
+		{#each s.selectedDetailPageWidgetEntries as widget, index (index)}
 			{@const option = detailPageWidgetOption(widget.key)}
 
 			<div

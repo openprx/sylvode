@@ -142,7 +142,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each reports as report}
+						{#each reports as report (report.id)}
 							<tr class="border-b border-line">
 								<td class="px-2 py-2 text-xs text-fg-muted">{report.id}</td>
 								<td class="px-2 py-2 text-xs">

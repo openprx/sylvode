@@ -52,7 +52,7 @@
 	</div>
 
 	<div class="space-y-3">
-		{#each s.detailLayoutSectionDrafts as section, sectionIndex}
+		{#each s.detailLayoutSectionDrafts as section, sectionIndex (sectionIndex)}
 			<div class="rounded-card border border-line p-3" data-detail-layout-section-row={section.key}>
 				<div
 					class="mb-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 md:grid-cols-[minmax(0,1fr)_120px_132px_auto]"
@@ -240,7 +240,7 @@
 				</div>
 
 				<div class="space-y-1.5">
-					{#each s.detailVisibleFields as field}
+					{#each s.detailVisibleFields as field (field.key)}
 						{@const assignedSectionKey = detailLayoutFieldAssignedTo(field.key)}
 						{@const fieldIndex = section.fields.indexOf(field.key)}
 

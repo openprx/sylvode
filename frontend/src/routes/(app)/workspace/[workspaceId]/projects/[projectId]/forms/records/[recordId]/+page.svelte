@@ -763,7 +763,7 @@
 						.map((field) => field.key)
 						.join('|')}
 				>
-					{#each detailHighlightFields as field}
+					{#each detailHighlightFields as field (field.key)}
 						<div
 							class="min-w-0 rounded-card border border-line bg-raised p-4"
 							data-durable-record-detail-highlight={`${record.id}:${field.key}`}
@@ -809,7 +809,7 @@
 							/>
 						{/key}
 					{/if}
-					{#each detailSections as section}
+					{#each detailSections as section, index (index)}
 						<details
 							class={detailLayoutSectionContainerClass(section.density)}
 							open={!section.collapsible || !section.defaultCollapsed}
@@ -841,7 +841,7 @@
 								data-durable-record-detail-field-columns={`${record.id}:${section.columns}`}
 								data-durable-record-detail-section-columns={`${record.id}:${section.key}:${section.columns}`}
 							>
-								{#each sectionFieldsForRecord(section, record) as field}
+								{#each sectionFieldsForRecord(section, record) as field (field.key)}
 									<div
 										class={detailLayoutSectionFieldClass(field, section.columns)}
 										data-durable-record-detail-field={`${record.id}:${field.key}`}
@@ -891,7 +891,7 @@
 					data-durable-record-detail-widget-order={pageWidgetKeys.join('|')}
 					data-durable-record-detail-widget-region={pageWidgetRegion}
 				>
-					{#each pageWidgetKeys as widgetKey}
+					{#each pageWidgetKeys as widgetKey, index (index)}
 						{#if widgetKey === 'children'}
 							{@const childrenWidgetDescription = detailPageWidgetDescription('children')}
 							{#if !detailPageWidgetHideEmpty('children') || children.length > 0}
@@ -950,7 +950,7 @@
 													</tr>
 												</thead>
 												<tbody class="divide-y divide-line">
-													{#each children.slice(0, detailPageWidgetLimit('children', 50)) as child}
+													{#each children.slice(0, detailPageWidgetLimit('children', 50)) as child (child.link_id)}
 														<tr data-durable-record-detail-child={child.record.id}>
 															<td class="px-3 py-2 font-medium text-fg">
 																{child.record.title}
@@ -1018,7 +1018,7 @@
 										</div>
 									</summary>
 									<div class={detailPageWidgetBodyClass('links')}>
-										{#each links.slice(0, detailPageWidgetLimit('links', 50)) as item}
+										{#each links.slice(0, detailPageWidgetLimit('links', 50)) as item (item.id)}
 											<div class="rounded-card border border-line px-3 py-2 text-xs">
 												<div class="font-medium text-fg">
 													{item.relation_key} / {item.relation_type}
@@ -1085,7 +1085,7 @@
 										</div>
 									</summary>
 									<div class={detailPageWidgetBodyClass('comments')}>
-										{#each comments.slice(0, detailPageWidgetLimit('comments', 5)) as comment}
+										{#each comments.slice(0, detailPageWidgetLimit('comments', 5)) as comment (comment.id)}
 											<div
 												class="rounded-card border border-line px-3 py-2 text-xs"
 												data-durable-record-detail-comment={comment.id}
@@ -1181,7 +1181,7 @@
 											? 'space-y-2'
 											: 'space-y-3'}
 									>
-										{#each attachmentFields as field}
+										{#each attachmentFields as field (field.key)}
 											{@const metadataAttachments = fieldAttachments(field.key)}
 											{@const valueUrls = recordAttachmentValueUrls(field)}
 											<div
@@ -1193,7 +1193,7 @@
 													{fieldLabel(field)}
 												</div>
 												<div class={detailPageWidgetBodyClass('attachments')}>
-													{#each metadataAttachments as attachment}
+													{#each metadataAttachments as attachment (attachment.id)}
 														<div
 															class="flex flex-wrap items-center gap-2 rounded-control bg-surface px-2 py-1.5"
 															data-durable-record-detail-attachment={attachment.id}
@@ -1226,7 +1226,7 @@
 															</a>
 														</div>
 													{/each}
-													{#each valueUrls as url}
+													{#each valueUrls as url, index (index)}
 														{#if safeLinkUrl(url)}
 															<a
 																href={safeLinkUrl(url)}
@@ -1259,7 +1259,7 @@
 											</div>
 										{/each}
 										{#if attachmentFields.length === 0 && activeAttachments.length > 0}
-											{#each activeAttachments as attachment}
+											{#each activeAttachments as attachment (attachment.id)}
 												<div
 													class="flex flex-wrap items-center gap-2 rounded-card border border-line px-3 py-2 text-xs"
 													data-durable-record-detail-attachment={attachment.id}
@@ -1354,7 +1354,7 @@
 										</div>
 									</summary>
 									<div class={detailPageWidgetBodyClass('events')}>
-										{#each recordEvents.slice(0, detailPageWidgetLimit('events', 5)) as event}
+										{#each recordEvents.slice(0, detailPageWidgetLimit('events', 5)) as event (event.id)}
 											<details
 												class="rounded-card border border-line px-3 py-2 text-xs"
 												data-durable-record-detail-event={event.id}

@@ -26,7 +26,7 @@
 	</div>
 
 	<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-		{#each s.forms as form}
+		{#each s.forms as form (form.id)}
 			<button
 				type="button"
 				class="min-h-40 rounded-card border border-line bg-nav p-4 text-left transition-colors hover:border-input hover:bg-surface"

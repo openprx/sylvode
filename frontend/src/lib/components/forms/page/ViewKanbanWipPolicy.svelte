@@ -22,7 +22,7 @@
 	</div>
 
 	<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-		{#each viewDraftKanbanWipOptions() as option}
+		{#each viewDraftKanbanWipOptions() as option, index (index)}
 			<label class="space-y-1">
 				<span class="text-xs font-medium uppercase text-fg-muted"
 					>{$t('forms.kanbanWipLimitFor', {

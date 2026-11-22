@@ -63,7 +63,7 @@
 									class="whitespace-pre-wrap">{s.formsSessionRemoteRecord.title}</td
 								></tr
 							>
-							{#each Object.entries(s.recordDraft) as [key, value]}<tr
+							{#each Object.entries(s.recordDraft) as [key, value] (key)}<tr
 									><th>{key}</th><td class="whitespace-pre-wrap">{formsReviewText(value)}</td><td
 										class="whitespace-pre-wrap"
 										>{formsReviewText(s.formsSessionRemoteRecord.values[key])}</td

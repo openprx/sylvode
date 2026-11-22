@@ -143,7 +143,7 @@
 				{$t('admin.systemStatus')}
 			</h2>
 			<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-				{#each statusItems as item}
+				{#each statusItems as item, index (index)}
 					<div class="rounded-control border border-line p-3">
 						<p class="text-sm text-fg-muted">{item.label}</p>
 						<span

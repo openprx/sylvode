@@ -380,9 +380,9 @@
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
 						<option value="">{`- ${$t('proposalTemplates.project')} -`}</option>
-						{#each groupedProjectOptions as group}
+						{#each groupedProjectOptions as group, index (index)}
 							<optgroup label={group.workspaceName}>
-								{#each group.items as project}
+								{#each group.items as project (project.id)}
 									<option value={project.id}>{project.name}</option>
 								{/each}
 							</optgroup>
@@ -399,7 +399,7 @@
 						onchange={handleTypeChange}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
-						{#each proposalTypeOptions as option}
+						{#each proposalTypeOptions as option, index (index)}
 							<option value={option.value}>{$t(option.labelKey)}</option>
 						{/each}
 					</select>
@@ -413,7 +413,7 @@
 						bind:value={votingRule}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
-						{#each votingRuleOptions as option}
+						{#each votingRuleOptions as option, index (index)}
 							<option value={option.value}>{$t(option.labelKey)}</option>
 						{/each}
 					</select>
@@ -430,7 +430,7 @@
 						bind:value={cycleTemplate}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
-						{#each cycleTemplateOptions as option}
+						{#each cycleTemplateOptions as option, index (index)}
 							<option value={option.value}>{$t(option.labelKey)}</option>
 						{/each}
 					</select>
@@ -459,7 +459,7 @@
 					disabled={loadingTemplates || templateOptions.length === 0}
 				>
 					<option value="">{`- ${$t('proposalTemplates.none')} -`}</option>
-					{#each templateOptions as template}
+					{#each templateOptions as template (template.id)}
 						<option value={template.id}
 							>{template.name}{template.is_default
 								? ` (${$t('proposalTemplates.default')})`

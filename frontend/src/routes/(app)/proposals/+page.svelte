@@ -188,7 +188,7 @@
 			<div class="py-8 text-center text-fg-muted">{$t('governance.empty')}</div>
 		{:else}
 			<div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-				{#each items as item}
+				{#each items as item (item.id)}
 					<button
 						type="button"
 						onclick={() => goto(`/proposals/${item.id}`)}

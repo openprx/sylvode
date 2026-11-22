@@ -230,7 +230,7 @@
 					? 'grid gap-x-4 gap-y-1 border-t border-line px-3 py-2 sm:grid-cols-3 xl:grid-cols-5'
 					: 'mt-4 space-y-2 px-4'}
 		>
-			{#each cardDisplayFields(record) as field}
+			{#each cardDisplayFields(record) as field (field.key)}
 				<div
 					class={s.selectedCardLayout === 'compact' || s.selectedCardLayout === 'list'
 						? 'min-w-0 text-xs'
@@ -286,7 +286,7 @@
 
 		{#if s.cardEditableSelectFields.length > 0}
 			<div class="mt-4 space-y-2 border-t border-line px-4 py-3">
-				{#each s.cardEditableSelectFields as field}
+				{#each s.cardEditableSelectFields as field (field.key)}
 					<label class="block space-y-1">
 						<span class="flex flex-wrap items-center gap-1.5 text-xs font-medium text-fg-muted">
 							<span>{fieldLabel(field)}</span>
@@ -332,7 +332,7 @@
 							onchange={(event) => updateCardRecordSelectField(record, field, selectValue(event))}
 							class="w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 						>
-							{#each kanbanMoveOptions(field) as option}
+							{#each kanbanMoveOptions(field) as option, index (index)}
 								<option value={option}>{option}</option>
 							{/each}
 						</select>
@@ -359,7 +359,7 @@
 	data-card-group-field={s.cardGroupField?.key}
 >
 	{#if s.cardGroupField}
-		{#each s.cardGroups as group}
+		{#each s.cardGroups as group, index (index)}
 			{@const collapsed = cardGroupCollapsed(group)}
 
 			<section
@@ -474,7 +474,7 @@
 								? 'space-y-2'
 								: 'grid gap-3 md:grid-cols-2 xl:grid-cols-3'}
 					>
-						{#each group.records as record}
+						{#each group.records as record (record.id)}
 							{@render cardRecord(record)}
 						{/each}
 					</div>
@@ -482,7 +482,7 @@
 			</section>
 		{/each}
 	{:else}
-		{#each s.viewRecords as record}
+		{#each s.viewRecords as record (record.id)}
 			{@render cardRecord(record)}
 		{/each}
 	{/if}

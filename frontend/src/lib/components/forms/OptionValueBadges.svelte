@@ -98,7 +98,7 @@
 
 {#if items.length > 0}
 	<span class="inline-flex max-w-full flex-wrap gap-1 align-middle">
-		{#each items as item}
+		{#each items as item, index (index)}
 			<span
 				class={optionColor(item)
 					? 'inline-flex max-w-full items-center gap-1 rounded-control px-1.5 py-0.5 text-xs font-medium text-fg ring-1 ring-[color:var(--option-color)]/30'

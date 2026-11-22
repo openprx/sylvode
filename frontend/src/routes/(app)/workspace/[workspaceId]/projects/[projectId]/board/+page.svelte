@@ -393,7 +393,7 @@
 					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="all">{$t('issue.all')}</option>
-					{#each assigneeOptions as assigneeId}
+					{#each assigneeOptions as assigneeId, idx (idx)}
 						<option value={assigneeId}>{getAssigneeLabel(assigneeId)}</option>
 					{/each}
 				</select>
@@ -418,7 +418,7 @@
 
 	{#if loading}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-			{#each columns as column}
+			{#each columns as column, idx (idx)}
 				<div class="rounded-card border border-line bg-surface p-3">
 					<div class="mb-3 h-5 w-24 animate-pulse rounded bg-surface"></div>
 					<div class="space-y-3">
@@ -431,7 +431,7 @@
 		</div>
 	{:else}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-			{#each columns as column}
+			{#each columns as column, idx (idx)}
 				<div
 					class={`rounded-card border p-3 transition-colors ${
 						dropTargetStatus === column ? 'border-fg bg-surface' : 'border-line bg-surface'
@@ -477,7 +477,7 @@
 									</div>
 									{#if issue.labels?.length}
 										<div class="flex flex-wrap gap-1">
-											{#each issue.labels as label}
+											{#each issue.labels as label, idx (idx)}
 												<span
 													class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
 													style={`background-color: ${label.color}20; color: ${label.color}; border: 1px solid ${label.color}40;`}

@@ -299,7 +299,7 @@
 		</div>
 	{/if}
 
-	{#each visibleViewDraftFilterGroups() as group, groupIndex}
+	{#each visibleViewDraftFilterGroups() as group, groupIndex (groupIndex)}
 		{@const groupMatchCount = viewDraftFilterGroupMatchCount(group)}
 
 		<div
@@ -419,7 +419,7 @@
 				{/if}
 			</div>
 
-			{#each group.filters as filter, filterIndex}
+			{#each group.filters as filter, filterIndex (filterIndex)}
 				{@const filterMatchCount = viewDraftFilterMatchCount(filter)}
 
 				<div
@@ -442,7 +442,7 @@
 						>
 							<option value="">{$t('forms.viewNoRule')}</option>
 
-							{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
+							{#each s.fields.filter((field) => field.visibility?.list !== false) as field (field.key)}
 								<option value={field.key}>{fieldLabel(field)}</option>
 							{/each}
 						</select>

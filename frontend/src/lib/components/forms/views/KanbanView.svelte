@@ -73,7 +73,7 @@
 				>
 					<option value="">{$t('forms.viewNoRule')}</option>
 
-					{#each kanbanMoveOptions(s.kanbanGroupField) as option}
+					{#each kanbanMoveOptions(s.kanbanGroupField) as option, index (index)}
 						<option value={option}>{option}</option>
 					{/each}
 				</select>
@@ -100,7 +100,7 @@
 	{/if}
 
 	<div class="min-w-[760px] space-y-4">
-		{#each kanbanSwimlaneRows() as swimlane}
+		{#each kanbanSwimlaneRows() as swimlane, index (index)}
 			<section
 				class={s.kanbanSwimlaneField ? 'rounded-card border border-line bg-surface p-3' : ''}
 				data-kanban-swimlane={s.kanbanSwimlaneField ? swimlane.label : undefined}
@@ -129,7 +129,7 @@
 				{/if}
 
 				<div class="grid gap-3 lg:grid-cols-3 xl:grid-cols-4">
-					{#each swimlane.groups as group}
+					{#each swimlane.groups as group, index (index)}
 						<section
 							class={`rounded-card border bg-nav transition-colors ${
 								kanbanColumnWipExceeded(group.label) ? 'border-line' : 'border-line'
@@ -156,7 +156,7 @@
 							</div>
 
 							<div class="space-y-2 p-2">
-								{#each group.records as record}
+								{#each group.records as record (record.id)}
 									<article
 										class={`rounded-card border border-line bg-raised p-3 transition-opacity ${s.draggingKanbanRecordId === record.id ? 'opacity-60' : ''}`}
 										draggable={Boolean(s.kanbanGroupField)}
@@ -202,7 +202,7 @@
 										</div>
 
 										<div class="mt-2 space-y-1">
-											{#each s.cardFields.slice(0, 3) as field}
+											{#each s.cardFields.slice(0, 3) as field (field.key)}
 												<p class="truncate text-xs text-fg-muted">
 													<span class="inline-flex items-center gap-1 font-medium">
 														<span>{fieldLabel(field)}:</span>
@@ -255,7 +255,7 @@
 													updateKanbanRecordField(record, kanbanField, selectValue(event))}
 												class="mt-3 w-full rounded-control border border-input bg-field px-2 py-1.5 text-xs text-fg disabled:bg-surface disabled:text-fg-muted"
 											>
-												{#each kanbanMoveOptions(s.kanbanGroupField) as option}
+												{#each kanbanMoveOptions(s.kanbanGroupField) as option, index (index)}
 													<option value={option}>{option}</option>
 												{/each}
 											</select>

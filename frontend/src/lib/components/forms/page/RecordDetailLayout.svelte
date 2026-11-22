@@ -35,7 +35,7 @@
 
 {#if s.selectedRecord}
 	<div class="divide-y divide-line" data-record-detail-layout={s.selectedRecord.id}>
-		{#each detailLayoutSections() as section}
+		{#each detailLayoutSections() as section, index (index)}
 			<details
 				class={section.density === 'compact' ? 'px-4 py-3' : 'px-4 py-4'}
 				open={!section.collapsible || !section.defaultCollapsed}
@@ -66,7 +66,7 @@
 					class={detailLayoutSectionGridClass(section.columns, section.density)}
 					data-record-detail-section-columns={`${s.selectedRecord.id}:${section.key}:${section.columns}`}
 				>
-					{#each detailLayoutSectionFieldsForRecord(section, s.selectedRecord) as field}
+					{#each detailLayoutSectionFieldsForRecord(section, s.selectedRecord) as field (field.key)}
 						<div
 							class={detailLayoutSectionFieldClass(field, section.columns)}
 							data-record-detail-field={`${s.selectedRecord.id}:${section.key}:${field.key}`}
@@ -163,7 +163,7 @@
 																>{$t('forms.recordTitle')}</th
 															>
 
-															{#each childFields as childField}
+															{#each childFields as childField, index (index)}
 																<th
 																	class="min-w-32 px-3 py-2 text-left font-medium text-fg-muted"
 																	data-record-detail-child-table-column={`${field.key}:${childField.key}`}
@@ -178,13 +178,13 @@
 													</thead>
 
 													<tbody class="divide-y divide-line">
-														{#each childRecords as child}
+														{#each childRecords as child (child.link_id)}
 															<tr
 																data-record-detail-child-table-row={`${field.key}:${child.record.id}`}
 															>
 																<td class="px-3 py-2 font-medium text-fg">{child.record.title}</td>
 
-																{#each childFields as childField}
+																{#each childFields as childField, index (index)}
 																	<td
 																		class="max-w-56 px-3 py-2 text-fg"
 																		data-record-detail-child-table-cell={`${child.record.id}:${childField.key}`}
@@ -247,7 +247,7 @@
 				</h4>
 
 				<div class="space-y-3" data-record-detail-child-table-widgets>
-					{#each parentChildRelationFields() as relationField}
+					{#each parentChildRelationFields() as relationField, index (index)}
 						{@const childRecords = childRecordsForRelationField(relationField)}
 						{@const childFields = childGridFieldsForRelationField(relationField)}
 						{@const childForm = childFormForRelationField(relationField)}
@@ -300,7 +300,7 @@
 													>{$t('forms.recordTitle')}</th
 												>
 
-												{#each childFields as childField}
+												{#each childFields as childField, index (index)}
 													<th
 														class="min-w-32 px-3 py-2 text-left font-medium text-fg-muted"
 														data-record-detail-child-table-column={`${relationField.key}:${childField.key}`}
@@ -315,13 +315,13 @@
 										</thead>
 
 										<tbody class="divide-y divide-line">
-											{#each childRecords as child}
+											{#each childRecords as child (child.link_id)}
 												<tr
 													data-record-detail-child-table-row={`${relationField.key}:${child.record.id}`}
 												>
 													<td class="px-3 py-2 font-medium text-fg">{child.record.title}</td>
 
-													{#each childFields as childField}
+													{#each childFields as childField, index (index)}
 														<td
 															class="max-w-56 px-3 py-2 text-fg"
 															data-record-detail-child-table-cell={`${child.record.id}:${childField.key}`}

@@ -34,7 +34,7 @@
 >
 	<div class="space-y-4" data-import-wizard data-import-wizard-step={s.importWizardStep}>
 		<div class="grid gap-2 sm:grid-cols-4" aria-label={$t('forms.importWizardSteps')}>
-			{#each ['source', 'mapping', 'preview', 'commit'] as step, index}
+			{#each ['source', 'mapping', 'preview', 'commit'] as step, index (index)}
 				{@const current = s.importWizardStep === step}
 				{@const complete =
 					(step === 'source' && s.importText.trim().length > 0) ||
@@ -176,7 +176,7 @@
 				</div>
 
 				<div class="grid max-h-[46vh] gap-2 overflow-auto pr-1 sm:grid-cols-2">
-					{#each s.importMappingHeaders as header, index}
+					{#each s.importMappingHeaders as header, index (index)}
 						<label class="block space-y-1 text-xs" data-import-mapping-row={index}>
 							<span class="font-medium text-fg-muted"
 								>{header || $t('forms.importUnnamedColumn')}</span
@@ -193,7 +193,7 @@
 								<option value="__skip">{$t('forms.importMappingSkip')}</option>
 								<option value="__title">{$t('forms.recordTitle')}</option>
 
-								{#each s.fields as field}
+								{#each s.fields as field (field.key)}
 									<option value={field.key}>{fieldLabel(field)}</option>
 								{/each}
 							</select>
@@ -290,7 +290,7 @@
 								</thead>
 
 								<tbody class="divide-y divide-line">
-									{#each s.importPreview.rows as row}
+									{#each s.importPreview.rows as row, idx (idx)}
 										<tr>
 											<td class="px-3 py-2 font-mono text-xs text-fg-muted">{row.row_number}</td>
 

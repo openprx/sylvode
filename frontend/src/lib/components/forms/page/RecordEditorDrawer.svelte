@@ -107,7 +107,7 @@
 					/>
 				</label>
 
-				{#each s.fields as field}
+				{#each s.fields as field (field.key)}
 					<label
 						class="space-y-1 {fieldType(field) === 'textarea' ||
 						fieldType(field) === 'rich_text' ||
@@ -170,7 +170,7 @@
 							>
 								<option value="">{$t('forms.selectPlaceholder')}</option>
 
-								{#each recordSelectOptions(field, s.recordDraft) as option}
+								{#each recordSelectOptions(field, s.recordDraft) as option, index (index)}
 									<option
 										value={option}
 										disabled={optionDisabledForSingleDraft(field, option)}
@@ -184,7 +184,7 @@
 							</select>
 						{:else if fieldType(field) === 'multi_select' && fieldOptions(field).length > 0}
 							<div class="grid gap-2 rounded-control border border-input bg-field p-2 text-sm">
-								{#each recordSelectOptions(field, s.recordDraft) as option}
+								{#each recordSelectOptions(field, s.recordDraft) as option, index (index)}
 									<label
 										class="flex items-start gap-2 text-fg"
 										data-option-description={optionDescription(field, option) || undefined}
@@ -234,7 +234,7 @@
 										: $t('forms.selectRelationTarget')}
 								</option>
 
-								{#each relationTargetOptions(field) as target}
+								{#each relationTargetOptions(field) as target, index (index)}
 									<option value={target.record_id}>{target.display || target.title}</option>
 								{/each}
 							</select>
@@ -336,7 +336,7 @@
 
 								{#if fieldAttachments(field.key).length > 0}
 									<div class="space-y-2">
-										{#each fieldAttachments(field.key) as attachment}
+										{#each fieldAttachments(field.key) as attachment (attachment.id)}
 											<div
 												class="flex flex-wrap items-center gap-2 rounded-card border border-line bg-nav px-3 py-2 text-xs"
 												data-attachment-item={attachment.id}

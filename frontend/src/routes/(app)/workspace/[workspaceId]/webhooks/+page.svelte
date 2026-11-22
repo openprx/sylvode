@@ -667,7 +667,7 @@
 					>
 						{$t('webhook.prevPage')}
 					</button>
-					{#each getPageNumbers(deliveriesPage, deliveriesTotalPages) as pageNum}
+					{#each getPageNumbers(deliveriesPage, deliveriesTotalPages) as pageNum, index (index)}
 						{#if pageNum === '...'}
 							<span class="px-2 py-1 text-fg-muted">...</span>
 						{:else}

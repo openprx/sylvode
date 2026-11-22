@@ -362,7 +362,7 @@
 					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="all">{$t('issue.all')}</option>
-					{#each assigneeOptions as assigneeId}
+					{#each assigneeOptions as assigneeId, idx (idx)}
 						<option value={assigneeId}>{getAssigneeLabel(assigneeId)}</option>
 					{/each}
 				</select>
@@ -517,7 +517,7 @@
 										</p>
 										{#if issue.labels?.length}
 											<div class="mt-1 flex flex-wrap gap-1">
-												{#each issue.labels as label}
+												{#each issue.labels as label, idx (idx)}
 													<span
 														class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
 														style={`background-color: ${label.color}20; color: ${label.color}; border: 1px solid ${label.color}40;`}
@@ -588,7 +588,7 @@
 								</p>
 								{#if issue.labels?.length}
 									<div class="mt-1 flex flex-wrap gap-1">
-										{#each issue.labels as label}
+										{#each issue.labels as label, idx (idx)}
 											<span
 												class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
 												style={`background-color: ${label.color}20; color: ${label.color}; border: 1px solid ${label.color}40;`}
@@ -663,7 +663,7 @@
 					>
 						{$t('issue.prevPage')}
 					</button>
-					{#each getPageNumbers(currentPage, totalPages) as p}
+					{#each getPageNumbers(currentPage, totalPages) as p, idx (idx)}
 						{#if p === '...'}
 							<span class="px-2 text-fg-muted">...</span>
 						{:else}

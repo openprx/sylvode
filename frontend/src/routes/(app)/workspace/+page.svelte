@@ -382,7 +382,7 @@
 		<!-- Workspace Grid -->
 	{:else}
 		<div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-			{#each workspaces as workspace}
+			{#each workspaces as workspace (workspace.id)}
 				<Card clickable hover onclick={() => goToWorkspace(workspace.id)}>
 					<div class="flex items-center justify-between mb-3">
 						<div

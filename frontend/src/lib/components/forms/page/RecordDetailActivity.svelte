@@ -39,7 +39,7 @@
 	</div>
 
 	<div class="space-y-2">
-		{#each s.selectedRecordLinks as item}
+		{#each s.selectedRecordLinks as item (item.id)}
 			<div class="rounded-card border border-line px-3 py-2 text-xs">
 				<div class="font-medium text-fg">
 					{item.relation_key} / {item.relation_type}
@@ -105,7 +105,7 @@
 		</div>
 
 		<div class="space-y-2">
-			{#each s.selectedRecordComments.slice(0, 5) as comment}
+			{#each s.selectedRecordComments.slice(0, 5) as comment (comment.id)}
 				<div
 					class="rounded-card border border-line px-3 py-2 text-xs"
 					data-record-detail-comment={comment.id}
@@ -180,7 +180,7 @@
 			</div>
 
 			<div class="space-y-3">
-				{#each selectedRecordAttachmentFields() as field}
+				{#each selectedRecordAttachmentFields() as field (field.key)}
 					{@const metadataAttachments = fieldAttachments(field.key)}
 					{@const valueUrls = selectedRecordAttachmentValueUrls(field)}
 
@@ -194,7 +194,7 @@
 						</div>
 
 						<div class="space-y-2">
-							{#each metadataAttachments as attachment}
+							{#each metadataAttachments as attachment (attachment.id)}
 								<div
 									class="flex flex-wrap items-center gap-2 rounded bg-nav px-2 py-1.5"
 									data-record-detail-attachment-item={attachment.id}
@@ -242,7 +242,7 @@
 								</div>
 							{/each}
 
-							{#each valueUrls as url}
+							{#each valueUrls as url, index (index)}
 								<div
 									class="flex flex-wrap items-center gap-2 rounded bg-nav px-2 py-1.5"
 									data-record-detail-attachment-value={`${field.key}:${url}`}
@@ -296,7 +296,7 @@
 		</div>
 
 		<div class="space-y-2">
-			{#each s.selectedRecordEvents.slice(0, 5) as event}
+			{#each s.selectedRecordEvents.slice(0, 5) as event (event.id)}
 				<details
 					class="rounded-card border border-line px-3 py-2 text-xs"
 					data-record-detail-event={event.id}

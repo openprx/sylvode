@@ -43,7 +43,7 @@
 	>
 		<option value="">{$t('forms.viewNoRule')}</option>
 
-		{#each viewDraftPivotDimensionFieldCandidates() as field}
+		{#each viewDraftPivotDimensionFieldCandidates() as field (field.key)}
 			<option value={field.key}>{fieldLabel(field)}</option>
 		{/each}
 	</select>
@@ -63,7 +63,7 @@
 	>
 		<option value="">{$t('forms.viewNoRule')}</option>
 
-		{#each viewDraftPivotDimensionFieldCandidates().filter((field) => field.key !== s.viewDraft.pivotRowField) as field}
+		{#each viewDraftPivotDimensionFieldCandidates().filter((field) => field.key !== s.viewDraft.pivotRowField) as field (field.key)}
 			<option value={field.key}>{fieldLabel(field)}</option>
 		{/each}
 	</select>
@@ -83,7 +83,7 @@
 	>
 		<option value="">{$t('forms.viewNoRule')}</option>
 
-		{#each viewDraftPivotValueFieldCandidates() as field}
+		{#each viewDraftPivotValueFieldCandidates() as field (field.key)}
 			<option value={field.key}>{fieldLabel(field)}</option>
 		{/each}
 	</select>
