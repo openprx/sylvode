@@ -2,7 +2,7 @@
 //! `sylvode-runner hook ...`, which sends one JSON line to `state_dir/hook.sock`.
 //!
 //! The socket accepts exactly one message shape, `{"v":1,"cli","session","event","nonce","ts"}` with a known
-//! CLI, a valid session key and an event that CLI can send, in at most [`MAX_LINE`] bytes. Anything
+//! CLI, a valid session name and an event that CLI can send, in at most [`MAX_LINE`] bytes. Anything
 //! else is dropped with a `debug` log of its length only: hook input can hold prompt text, which
 //! must not reach logs. The socket lives in the private state directory and is set to mode 0600.
 //!
@@ -22,7 +22,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 
-use super::tmux::SessionKey;
+use super::tmux::SessionName;
 
 /// The longest hook line accepted, in bytes (newline included).
 pub const MAX_LINE: usize = 1024;
@@ -167,7 +167,7 @@ pub fn chain_allows(chain: Option<&[u32]>, pane_pid: Option<u32>) -> bool {
     }
 }
 
-/// The next number of the session's own counter, kept in `<state_dir>/sessions/<KEY>/hook.seq`
+/// The next number of the session's own counter, kept in `<state_dir>/sessions/<NAME>/hook.seq`
 /// under a lock. Every hook of a session takes the next number, so numbers follow the order the
 /// hooks ran in, whatever the wall clock does. `None` when the counter cannot be used.
 pub fn next_seq(state_dir: &Path, session: &str) -> Option<u64> {
@@ -261,7 +261,7 @@ pub fn parse_line(line: &[u8]) -> Result<HookMessage, Reject> {
     if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(Reject::Shape);
     }
-    SessionKey::new(session).map_err(|_| Reject::Shape)?;
+    SessionName::parse(session).map_err(|_| Reject::Shape)?;
     let event = HookEvent::parse(cli, event).ok_or(Reject::Shape)?;
     Ok(HookMessage {
         cli: cli.to_string(),

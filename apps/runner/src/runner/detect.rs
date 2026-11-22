@@ -30,9 +30,9 @@ impl Dialog {
     /// The failure text, with the fix. Never holds a path.
     pub fn reason(self, key: &str) -> String {
         match self {
-            Self::Untrusted => format!(
-                "the CLI asks to trust the project directory; run `sylvode-runner trust {key}` and answer the dialog"
-            ),
+            Self::Untrusted => {
+                format!("the CLI in tmux session {key} shows a dialog; attach with tmux attach -t {key} and answer it")
+            }
             Self::NotLoggedIn => format!("the CLI is not logged in; attach to tmux session {key} and log in"),
             Self::Chooser => format!("the CLI shows a dialog the runner cannot answer; attach to tmux session {key}"),
             Self::UsageLimit => "the CLI reports that its usage limit is reached".to_string(),

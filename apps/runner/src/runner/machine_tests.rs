@@ -588,7 +588,7 @@ fn an_untrusted_directory_fails_every_waiting_task_without_retry() {
     let failed = fails(&actions);
     assert_eq!(failed.len(), 2);
     assert!(
-        failed.iter().all(|f| !f.2 && f.1.contains("sylvode-runner trust SVWL")),
+        failed.iter().all(|f| !f.2 && f.1.contains("tmux attach -t SVWL")),
         "{failed:?}"
     );
     assert!(h.m.queue.is_empty());
@@ -727,7 +727,6 @@ fn every_state_meets_every_input() {
         ("push gone", |h| h.push(PushOutcome::SessionGone)),
         ("push failed", |h| h.push(PushOutcome::Failed)),
         ("ensure started", |h| h.m.on_ensure(EnsureOutcome::Started, h.now)),
-        ("ensure restarted", |h| h.m.on_ensure(EnsureOutcome::Restarted, h.now)),
         ("ensure running", |h| h.m.on_ensure(EnsureOutcome::Running, h.now)),
         ("ensure declined", |h| {
             h.m.on_ensure(
@@ -779,7 +778,7 @@ fn every_state_meets_every_input() {
             let _ = h.tick(1);
         }
     }
-    assert_eq!(combinations, 8 * 29);
+    assert_eq!(combinations, 8 * 28);
 }
 
 /// `Dead` and `NoSession` leave only through an ensure, and `Idle` with queued work always pushes.

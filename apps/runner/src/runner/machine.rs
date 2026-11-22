@@ -141,9 +141,7 @@ pub enum Action<T> {
 pub enum EnsureOutcome {
     /// A new session was created; its CLI is starting.
     Started,
-    /// The CLI of an existing session was restarted.
-    Restarted,
-    /// An existing session already runs the CLI.
+    /// An existing session runs the CLI and is used as it is.
     Running,
     /// The session cannot be used.
     Declined { reason: String, retryable: bool },
@@ -360,7 +358,7 @@ impl<T: Task> Machine<T> {
         self.ensuring = false;
         let mut actions = Vec::new();
         match outcome {
-            EnsureOutcome::Started | EnsureOutcome::Restarted => {
+            EnsureOutcome::Started => {
                 self.state = State::Starting { since: now };
                 self.starting_dialog = None;
             }

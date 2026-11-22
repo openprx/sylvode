@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use super::{
-    BracketedPasteConfirmed, BufferName, MAX_PUSH_BYTES, PaneId, PasteGuard, PushText, Refusal, SessionKey, SocketName,
-    Tmux, TmuxError, WorkDir, exec_argv, one_line, parse_pane_state,
+    BracketedPasteConfirmed, BufferName, LIST_PANES_FORMAT, MAX_PUSH_BYTES, PaneId, PasteGuard, PushText, Refusal,
+    SessionName, SocketName, Tmux, TmuxError, WorkDir, exec_argv, one_line, parse_listed_pane, parse_pane_state,
 };
 use super::{Pane, STATE_FORMAT};
 
@@ -40,14 +40,17 @@ impl Drop for Dir {
     }
 }
 
-fn key(value: &str) -> SessionKey {
-    SessionKey::new(value).expect("key")
+/// The session `<key>-claude`.
+fn name(key: &str) -> SessionName {
+    SessionName::new(key, "claude").expect("name")
 }
 
+/// The recorded pane of session SVWL-claude: pane id as given, process 1 (what the fake answers).
 fn pane(session: &str, id: &str) -> Pane {
     Pane {
-        key: key(session),
+        name: name(session),
         id: PaneId::new(id).expect("pane id"),
+        pid: 1,
     }
 }
 
@@ -86,11 +89,20 @@ fn socket_names_are_validated() {
 }
 
 #[test]
-fn session_keys_and_pane_ids_are_validated() {
-    for good in ["A", "SVWL", "123", "AB12", &"K".repeat(32)] {
-        assert!(SessionKey::new(good).is_ok(), "{good}");
+fn session_names_and_pane_ids_are_validated() {
+    for (key, cli) in [
+        ("A", "claude"),
+        ("SVWL", "codex"),
+        ("123", "opencode"),
+        ("AB12", "claude"),
+        (&"K".repeat(32), "claude"),
+    ] {
+        let name = SessionName::new(key, cli).expect("valid");
+        assert_eq!(name.as_str(), format!("{key}-{cli}"));
+        assert_eq!((name.key(), name.cli()), (key, cli));
+        assert_eq!(SessionName::parse(name.as_str()), Ok(name));
     }
-    for bad in [
+    for bad_key in [
         "",
         "svwl",
         "SV WL",
@@ -108,10 +120,36 @@ fn session_keys_and_pane_ids_are_validated() {
         "é",
         &"K".repeat(33),
     ] {
-        assert!(matches!(SessionKey::new(bad), Err(TmuxError::Invalid(_))), "{bad:?}");
+        assert!(
+            matches!(SessionName::new(bad_key, "claude"), Err(TmuxError::Invalid(_))),
+            "{bad_key:?}"
+        );
     }
-    assert_eq!(key("SVWL").session_target(), "=SVWL");
-    assert_eq!(key("123").session_target(), "=123");
+    for bad_cli in ["", "Claude", "gemini", "claude ", "claude-x", "cla.ude"] {
+        assert!(
+            matches!(SessionName::new("SVWL", bad_cli), Err(TmuxError::Invalid(_))),
+            "{bad_cli:?}"
+        );
+    }
+    // Parsing a name back needs exactly the pattern `^[A-Z0-9]{1,32}-(claude|codex|opencode)$`.
+    for bad in [
+        "SVWL",
+        "SVWL-",
+        "-claude",
+        "SVWL-claude-x",
+        "svwl-claude",
+        "SVWL-Claude",
+        "SVWL_claude",
+        "SVWL-claude\n",
+        "=SVWL-claude",
+        "SVWL-claude:0",
+        "SV-WL-claude",
+    ] {
+        assert!(SessionName::parse(bad).is_err(), "{bad:?}");
+    }
+    // The exact target cannot match another session.
+    assert_eq!(name("SVWL").session_target(), "=SVWL-claude");
+    assert_eq!(name("123").session_target(), "=123-claude");
     for good in ["%0", "%12", "%123456789"] {
         assert!(PaneId::new(good).is_ok(), "{good}");
     }
@@ -159,17 +197,31 @@ fn buffer_names_are_per_task() {
 }
 
 #[test]
-fn every_call_is_an_argument_vector_with_the_socket_the_empty_config_and_an_exact_target() {
+fn every_call_is_an_argument_vector_with_the_socket_and_an_exact_target() {
     let t = driver("sylvode");
-    let k = key("SVWL");
+    let k = name("SVWL");
     let p = PaneId::new("%7").expect("id");
     let d = dir("/work/svwl");
-    let argv = strings(&["claude", "--permission-mode", "dontAsk"]);
-    let g = ["-L", "sylvode", "-f", "/dev/null"];
+    let argv = strings(&["claude", "--permission-mode", "bypassPermissions"]);
+    let g = ["-L", "sylvode"];
     let with = |rest: &[&str]| -> Vec<String> { g.iter().chain(rest.iter()).map(|s| (*s).to_string()).collect() };
     assert_eq!(Tmux::version_call().args, strings(&["-V"]));
-    assert_eq!(t.has_session_call(&k).args, with(&["has-session", "-t", "=SVWL"]));
-    assert_eq!(t.list_sessions_call().args, with(&["list-sessions"]));
+    assert_eq!(
+        t.has_session_call(&k).args,
+        with(&["has-session", "-t", "=SVWL-claude"])
+    );
+    assert_eq!(
+        t.server_probe_call().args,
+        with(&["list-panes", "-a", "-F", "#{pane_id}"])
+    );
+    assert_eq!(
+        t.list_panes_call(&k).args,
+        with(&["list-panes", "-s", "-t", "=SVWL-claude", "-F", LIST_PANES_FORMAT])
+    );
+    assert_eq!(
+        LIST_PANES_FORMAT,
+        "#{pane_id} #{pane_pid} #{pane_dead} #{pane_current_command}"
+    );
     assert_eq!(
         t.new_session_call(&k, &d, 200, 50, &argv).expect("call").args,
         with(&[
@@ -177,9 +229,9 @@ fn every_call_is_an_argument_vector_with_the_socket_the_empty_config_and_an_exac
             "-d",
             "-P",
             "-F",
-            "#{pane_id}",
+            "#{pane_id} #{pane_pid}",
             "-s",
-            "SVWL",
+            "SVWL-claude",
             "-n",
             "cli",
             "-x",
@@ -191,26 +243,7 @@ fn every_call_is_an_argument_vector_with_the_socket_the_empty_config_and_an_exac
             "--",
             "claude",
             "--permission-mode",
-            "dontAsk"
-        ])
-    );
-    assert_eq!(
-        t.remain_on_exit_call(&p).args,
-        with(&["set-option", "-w", "-t", "%7", "remain-on-exit", "on"])
-    );
-    assert_eq!(
-        t.respawn_pane_call(&p, &d, &argv).expect("call").args,
-        with(&[
-            "respawn-pane",
-            "-k",
-            "-t",
-            "%7",
-            "-c",
-            "/work/svwl",
-            "--",
-            "claude",
-            "--permission-mode",
-            "dontAsk"
+            "bypassPermissions"
         ])
     );
     assert_eq!(
@@ -235,11 +268,7 @@ fn every_call_is_an_argument_vector_with_the_socket_the_empty_config_and_an_exac
     );
     assert_eq!(
         t.list_clients_call(&k).args,
-        with(&["list-clients", "-F", "#{client_activity}", "-t", "=SVWL"])
-    );
-    assert_eq!(
-        t.adopt_call(&k).args,
-        with(&["list-panes", "-t", "=SVWL:0", "-F", "#{pane_id}"])
+        with(&["list-clients", "-F", "#{client_activity}", "-t", "=SVWL-claude"])
     );
     let buffer = BufferName::for_task(&task());
     assert_eq!(
@@ -253,6 +282,76 @@ fn every_call_is_an_argument_vector_with_the_socket_the_empty_config_and_an_exac
     assert_eq!(t.send_enter_call(&p).args, with(&["send-keys", "-t", "%7", "Enter"]));
 }
 
+/// The runner types into a session it did not start and shares the operator's tmux server, so the
+/// calls that exist are exactly the harmless ones: no `-f`, no option, no respawn, kill, rename,
+/// resize or other key than Enter.
+#[test]
+fn only_the_listed_tmux_calls_exist_and_none_passes_a_config_file() {
+    let t = driver("sylvode");
+    let k = name("SVWL");
+    let p = PaneId::new("%7").expect("id");
+    let buffer = BufferName::for_task(&task());
+    let text = PushText::new("x").expect("text");
+    let new_session = t
+        .new_session_call(&k, &dir("/w"), 80, 24, &strings(&["claude", "x"]))
+        .expect("call");
+    let all = [
+        Tmux::version_call(),
+        t.has_session_call(&k),
+        t.server_probe_call(),
+        t.list_panes_call(&k),
+        new_session,
+        t.state_call(&p),
+        t.field_call(&p, "#{pane_current_command}"),
+        t.capture_pane_call(&p, Some(5)),
+        t.list_clients_call(&k),
+        t.load_buffer_call(&buffer, &text),
+        t.paste_buffer_call(&buffer, &p),
+        t.delete_buffer_call(&buffer),
+        t.send_enter_call(&p),
+    ];
+    let mut commands: Vec<String> = Vec::new();
+    for call in &all {
+        // After the global options (`-L <socket>`), the first word is the tmux command.
+        let rest: Vec<&String> = if call.args.first().is_some_and(|a| a == "-L") {
+            call.args.iter().skip(2).collect()
+        } else {
+            call.args.iter().collect()
+        };
+        assert!(!call.args.iter().any(|a| a == "-f"), "{:?}", call.args);
+        let command = rest.first().map(|c| (*c).clone()).unwrap_or_default();
+        if command == "send-keys" {
+            assert_eq!(rest.last().map(|a| a.as_str()), Some("Enter"), "{:?}", call.args);
+            assert_eq!(rest.len(), 4, "send-keys takes only `-t %N Enter`: {:?}", call.args);
+        }
+        commands.push(command);
+    }
+    commands.sort();
+    commands.dedup();
+    assert_eq!(
+        commands,
+        [
+            "-V",
+            "capture-pane",
+            "delete-buffer",
+            "display-message",
+            "has-session",
+            "list-clients",
+            "list-panes",
+            "load-buffer",
+            "new-session",
+            "paste-buffer",
+            "send-keys"
+        ]
+    );
+    // The new session sets no option and names no window beyond its first.
+    assert!(
+        !all.iter()
+            .flat_map(|c| c.args.iter())
+            .any(|a| a == "set-option" || a == "respawn-pane" || a == "kill-session" || a == "remain-on-exit")
+    );
+}
+
 #[test]
 fn no_call_but_load_buffer_carries_stdin_and_no_argument_carries_the_text() {
     let t = driver("sylvode");
@@ -261,23 +360,14 @@ fn no_call_but_load_buffer_carries_stdin_and_no_argument_carries_the_text() {
     let call = t.load_buffer_call(&buffer, &PushText::new(text).expect("text"));
     assert_eq!(
         call.args,
-        strings(&[
-            "-L",
-            "sylvode",
-            "-f",
-            "/dev/null",
-            "load-buffer",
-            "-b",
-            &format!("sv-{TASK}"),
-            "-"
-        ])
+        strings(&["-L", "sylvode", "load-buffer", "-b", &format!("sv-{TASK}"), "-"])
     );
     assert_eq!(call.stdin.as_deref(), Some(text.as_bytes()));
     let p = PaneId::new("%1").expect("id");
     for other in [
         t.paste_buffer_call(&buffer, &p),
         t.send_enter_call(&p),
-        t.has_session_call(&key("A")),
+        t.has_session_call(&name("A")),
         t.state_call(&p),
         t.delete_buffer_call(&buffer),
     ] {
@@ -293,18 +383,10 @@ fn no_call_but_load_buffer_carries_stdin_and_no_argument_carries_the_text() {
 
 #[test]
 fn an_empty_socket_name_uses_the_default_server_and_omits_the_flag() {
+    // The default server, and the operator's own tmux.conf: neither `-L` nor `-f`.
     assert_eq!(
-        driver("").has_session_call(&key("A")).args,
-        strings(&["-f", "/dev/null", "has-session", "-t", "=A"])
-    );
-}
-
-#[test]
-fn a_config_file_can_be_given_for_tests() {
-    let t = driver("s").with_config_file("/tmp/x.conf");
-    assert_eq!(
-        t.list_sessions_call().args,
-        strings(&["-L", "s", "-f", "/tmp/x.conf", "list-sessions"])
+        driver("").has_session_call(&name("A")).args,
+        strings(&["has-session", "-t", "=A-claude"])
     );
 }
 
@@ -323,12 +405,12 @@ fn a_single_argument_command_is_never_given_to_a_shell() {
     assert!(exec_argv(&strings(&["a", ""])).is_err());
     let t = driver("s");
     let call = t
-        .new_session_call(&key("A"), &dir("/w"), 80, 24, &strings(&["cat"]))
+        .new_session_call(&name("A"), &dir("/w"), 80, 24, &strings(&["cat"]))
         .expect("call");
     assert_eq!(&call.args[call.args.len() - 4..], ["--", "/usr/bin/env", "--", "cat"]);
     // An option-looking argument stays one argument after `--`.
     let call = t
-        .new_session_call(&key("A"), &dir("/w"), 80, 24, &strings(&["cli", "-c", "$(id)"]))
+        .new_session_call(&name("A"), &dir("/w"), 80, 24, &strings(&["cli", "-c", "$(id)"]))
         .expect("call");
     assert_eq!(&call.args[call.args.len() - 4..], ["--", "cli", "-c", "$(id)"]);
 }
@@ -376,7 +458,7 @@ fn pushed_text_refuses_unsafe_characters_and_long_text() {
 
 #[test]
 fn pane_state_parses_every_field() {
-    let state = parse_pane_state("0 0 1 4242 SVWL").expect("state");
+    let state = parse_pane_state("0 0 1 1 SVWL-claude").expect("state");
     assert_eq!(
         (
             state.dead,
@@ -385,7 +467,7 @@ fn pane_state_parses_every_field() {
             state.pid,
             state.session_name.as_str()
         ),
-        (false, 0, Some(true), 4242, "SVWL")
+        (false, 0, Some(true), 1, "SVWL-claude")
     );
     // Before tmux 3.7 the bracketed-paste field is empty.
     assert_eq!(parse_pane_state("0 0  7 A").map(|s| s.bracket_paste), Some(None));
@@ -466,7 +548,7 @@ fn calls(log: &Path) -> Vec<Vec<String>> {
 fn names(log: &Path) -> Vec<String> {
     calls(log)
         .iter()
-        .map(|c| c.get(4).cloned().unwrap_or_default())
+        .map(|c| c.get(2).cloned().unwrap_or_default())
         .collect()
 }
 
@@ -482,7 +564,7 @@ fn push(t: &Tmux, text: &str) -> Result<(), TmuxError> {
 #[test]
 fn a_push_checks_the_pane_loads_through_stdin_pastes_and_presses_enter() {
     let dir = Dir::new();
-    let (program, log) = fake_tmux(&dir, &healthy_answers("0 0 1 4242 SVWL", "claude.exe"));
+    let (program, log) = fake_tmux(&dir, &healthy_answers("0 0 1 1 SVWL-claude", "claude.exe"));
     let text = "[Sylvode task] id=1\nIssue: A-1";
     push(&fresh().with_program(&program), text).expect("pushed");
     assert_eq!(
@@ -497,14 +579,14 @@ fn a_push_checks_the_pane_loads_through_stdin_pastes_and_presses_enter() {
     );
     let calls = calls(&log);
     assert_eq!(
-        calls[2][4..],
+        calls[2][2..],
         strings(&["load-buffer", "-b", &format!("sv-{TASK}"), "-"])
     );
     assert_eq!(
-        calls[3][4..],
+        calls[3][2..],
         strings(&["paste-buffer", "-p", "-d", "-b", &format!("sv-{TASK}"), "-t", "%7"])
     );
-    assert_eq!(calls[4][4..], strings(&["send-keys", "-t", "%7", "Enter"]));
+    assert_eq!(calls[4][2..], strings(&["send-keys", "-t", "%7", "Enter"]));
     assert_eq!(fs::read_to_string(dir.path().join("stdin")).expect("stdin"), text);
 }
 
@@ -530,26 +612,32 @@ fn refused(state: &str, command: &str, guard: &PasteGuard<'_>) -> Result<(), Tmu
 
 #[test]
 fn the_gate_refuses_every_pane_that_cannot_take_a_bracketed_paste() {
-    assert_eq!(refused("0 0 1 1 SVWL", "claude.exe", &GUARD), Ok(()));
+    assert_eq!(refused("0 0 1 1 SVWL-claude", "claude.exe", &GUARD), Ok(()));
     assert_eq!(
-        refused("1 0 1 1 SVWL", "claude.exe", &GUARD),
+        refused("1 0 1 1 SVWL-claude", "claude.exe", &GUARD),
         Err(TmuxError::Refused(Refusal::PaneDead))
     );
     assert_eq!(
-        refused("0 1 1 1 SVWL", "claude.exe", &GUARD),
+        refused("0 1 1 1 SVWL-claude", "claude.exe", &GUARD),
         Err(TmuxError::Refused(Refusal::PaneInMode))
     );
     assert_eq!(
-        refused("0 0 0 1 SVWL", "claude.exe", &GUARD),
+        refused("0 0 0 1 SVWL-claude", "claude.exe", &GUARD),
         Err(TmuxError::Refused(Refusal::BracketedPasteOff))
     );
     assert_eq!(
-        refused("0 0 1 1 OTHER", "claude.exe", &GUARD),
+        refused("0 0 1 1 OTHER-claude", "claude.exe", &GUARD),
+        Err(TmuxError::Refused(Refusal::NotOwned))
+    );
+    // The pane id is right and the session too, but the pane's process is not the recorded one
+    // (the pane was replaced, or the server restarted and reused the id): refused.
+    assert_eq!(
+        refused("0 0 1 2 SVWL-claude", "claude.exe", &GUARD),
         Err(TmuxError::Refused(Refusal::NotOwned))
     );
     for shell in ["zsh", "bash", "sh", "vim", "claude.exe x", ""] {
         assert_eq!(
-            refused("0 0 1 1 SVWL", shell, &GUARD),
+            refused("0 0 1 1 SVWL-claude", shell, &GUARD),
             Err(TmuxError::Refused(Refusal::CommandNotAllowed)),
             "{shell:?}"
         );
@@ -560,25 +648,25 @@ fn the_gate_refuses_every_pane_that_cannot_take_a_bracketed_paste() {
 fn a_tmux_that_cannot_report_bracketed_paste_needs_the_confirmation() {
     // Before 3.7 the field is empty.
     assert_eq!(
-        refused("0 0  1 SVWL", "claude.exe", &GUARD),
+        refused("0 0  1 SVWL-claude", "claude.exe", &GUARD),
         Err(TmuxError::Refused(Refusal::BracketedPasteUnconfirmed))
     );
     let confirmed = PasteGuard {
         bracketed_confirmed: Some(BracketedPasteConfirmed::from_readiness_check()),
         ..GUARD
     };
-    assert_eq!(refused("0 0  1 SVWL", "claude.exe", &confirmed), Ok(()));
+    assert_eq!(refused("0 0  1 SVWL-claude", "claude.exe", &confirmed), Ok(()));
     // A confirmation never overrides a pane that reports bracketed paste as off, nor any other check.
     assert_eq!(
-        refused("0 0 0 1 SVWL", "claude.exe", &confirmed),
+        refused("0 0 0 1 SVWL-claude", "claude.exe", &confirmed),
         Err(TmuxError::Refused(Refusal::BracketedPasteOff))
     );
     assert_eq!(
-        refused("1 0  1 SVWL", "claude.exe", &confirmed),
+        refused("1 0  1 SVWL-claude", "claude.exe", &confirmed),
         Err(TmuxError::Refused(Refusal::PaneDead))
     );
     assert_eq!(
-        refused("0 0  1 SVWL", "zsh", &confirmed),
+        refused("0 0  1 SVWL-claude", "zsh", &confirmed),
         Err(TmuxError::Refused(Refusal::CommandNotAllowed))
     );
 }
@@ -586,7 +674,7 @@ fn a_tmux_that_cannot_report_bracketed_paste_needs_the_confirmation() {
 #[test]
 fn text_that_is_refused_never_reaches_tmux() {
     let dir = Dir::new();
-    let (program, log) = fake_tmux(&dir, &healthy_answers("0 0 1 1 SVWL", "claude.exe"));
+    let (program, log) = fake_tmux(&dir, &healthy_answers("0 0 1 1 SVWL-claude", "claude.exe"));
     for bad in [
         "hello \u{1b}[201~ /exit",
         "a\u{2028}b",
@@ -602,7 +690,7 @@ fn text_that_is_refused_never_reaches_tmux() {
 #[test]
 fn a_failed_load_or_paste_deletes_the_buffer() {
     let dir = Dir::new();
-    let healthy = healthy_answers("0 0 1 1 SVWL", "claude.exe");
+    let healthy = healthy_answers("0 0 1 1 SVWL-claude", "claude.exe");
     let (program, log) = fake_tmux(
         &dir,
         &format!("for a in \"$@\"; do [ \"$a\" = load-buffer ] && exit 1; done\n{healthy}"),
@@ -620,7 +708,7 @@ fn a_failed_load_or_paste_deletes_the_buffer() {
     assert!(matches!(error, TmuxError::Failed { code: Some(1), .. }));
     let calls = calls(&log);
     assert_eq!(
-        calls.last().map(|c| c[4..].to_vec()),
+        calls.last().map(|c| c[2..].to_vec()),
         Some(strings(&["delete-buffer", "-b", &format!("sv-{TASK}")]))
     );
     assert!(!names(&log).iter().any(|n| n == "send-keys"));
@@ -629,7 +717,7 @@ fn a_failed_load_or_paste_deletes_the_buffer() {
 #[test]
 fn a_paste_that_times_out_is_reported_as_delivery_unknown_and_not_retried() {
     let dir = Dir::new();
-    let healthy = healthy_answers("0 0 1 1 SVWL", "claude.exe");
+    let healthy = healthy_answers("0 0 1 1 SVWL-claude", "claude.exe");
     let (program, log) = fake_tmux(
         &dir,
         &format!("for a in \"$@\"; do [ \"$a\" = paste-buffer ] && exec /bin/sleep 30; done\n{healthy}"),
@@ -652,7 +740,7 @@ fn a_paste_that_times_out_is_reported_as_delivery_unknown_and_not_retried() {
 #[test]
 fn an_enter_that_fails_after_the_paste_says_so() {
     let dir = Dir::new();
-    let healthy = healthy_answers("0 0 1 1 SVWL", "claude.exe");
+    let healthy = healthy_answers("0 0 1 1 SVWL-claude", "claude.exe");
     let (program, _) = fake_tmux(
         &dir,
         &format!("for a in \"$@\"; do [ \"$a\" = send-keys ] && exit 1; done\n{healthy}"),
@@ -666,7 +754,7 @@ fn an_enter_that_fails_after_the_paste_says_so() {
 #[test]
 fn pushes_to_one_session_never_interleave() {
     let dir = Dir::new();
-    let healthy = healthy_answers("0 0 1 1 SVWL", "claude.exe");
+    let healthy = healthy_answers("0 0 1 1 SVWL-claude", "claude.exe");
     // Pasting is slow enough for a second push to start meanwhile.
     let (program, log) = fake_tmux(
         &dir,
@@ -699,16 +787,17 @@ fn pushes_to_one_session_never_interleave() {
 #[test]
 fn enter_can_be_retried_only_on_a_live_owned_pane() {
     let dir = Dir::new();
-    let (program, log) = fake_tmux(&dir, &healthy_answers("0 0 1 1 SVWL", "claude.exe"));
+    let (program, log) = fake_tmux(&dir, &healthy_answers("0 0 1 1 SVWL-claude", "claude.exe"));
     fresh()
         .with_program(&program)
         .retry_enter(&pane("SVWL", "%7"))
         .expect("sent");
     assert_eq!(names(&log), ["display-message", "send-keys"]);
     for (state, want) in [
-        ("1 0 1 1 SVWL", Refusal::PaneDead),
-        ("0 1 1 1 SVWL", Refusal::PaneInMode),
-        ("0 0 1 1 OTHER", Refusal::NotOwned),
+        ("1 0 1 1 SVWL-claude", Refusal::PaneDead),
+        ("0 1 1 1 SVWL-claude", Refusal::PaneInMode),
+        ("0 0 1 1 OTHER-claude", Refusal::NotOwned),
+        ("0 0 1 2 SVWL-claude", Refusal::NotOwned),
     ] {
         let dir = Dir::new();
         let (program, log) = fake_tmux(&dir, &healthy_answers(state, "claude.exe"));
@@ -725,11 +814,11 @@ fn has_session_maps_exit_statuses() {
     let dir = Dir::new();
     for (code, want) in [(0, Ok(true)), (1, Ok(false))] {
         let (program, _) = fake_tmux(&dir, &format!("exit {code}"));
-        assert_eq!(driver("s").with_program(&program).has_session(&key("A")), want);
+        assert_eq!(driver("s").with_program(&program).has_session(&name("A")), want);
     }
     let (program, _) = fake_tmux(&dir, "echo boom >&2; exit 2");
     assert_eq!(
-        driver("s").with_program(&program).has_session(&key("A")),
+        driver("s").with_program(&program).has_session(&name("A")),
         Err(TmuxError::Failed {
             code: Some(2),
             stderr: "boom".to_string()
@@ -738,13 +827,13 @@ fn has_session_maps_exit_statuses() {
 }
 
 #[test]
-fn new_session_returns_the_pane_id_and_keeps_dead_panes() {
+fn new_session_returns_the_pane_id_and_pid_and_sets_no_option() {
     let dir = Dir::new();
-    let (program, log) = fake_tmux(&dir, &healthy_answers("0 0 1 1 SVWL", "claude.exe"));
+    let (program, log) = fake_tmux(&dir, "case \"$*\" in *new-session*) echo '%7 4242';; esac\nexit 0");
     let pane = driver("sylvode")
         .with_program(&program)
         .new_session(
-            &key("SVWL"),
+            &name("SVWL"),
             &dir_of("/work/svwl"),
             200,
             50,
@@ -754,26 +843,112 @@ fn new_session_returns_the_pane_id_and_keeps_dead_panes() {
     assert_eq!(
         pane,
         super::Pane {
-            key: key("SVWL"),
-            id: PaneId::new("%7").expect("id")
+            name: name("SVWL"),
+            id: PaneId::new("%7").expect("id"),
+            pid: 4242
         }
     );
-    let calls = calls(&log);
-    assert_eq!(calls.len(), 3);
-    assert_eq!(calls[0][4], "list-sessions");
-    assert_eq!(calls[1][4], "new-session");
-    assert_eq!(
-        calls[2][4..],
-        strings(&["set-option", "-w", "-t", "%7", "remain-on-exit", "on"])
+    // Only the probe for a running server and the creation: no option is set on anything.
+    assert_eq!(names(&log), ["list-panes", "new-session"]);
+    // An answer that is not a pane id and a pid is an error.
+    for junk in ["oops", "%7", "%7 x", "7 1"] {
+        let (bad, _) = fake_tmux(&dir, &format!("echo '{junk}'; exit 0"));
+        assert!(
+            driver("s")
+                .with_program(&bad)
+                .new_session(&name("A"), &dir_of("/w"), 80, 24, &strings(&["a", "b"]))
+                .is_err(),
+            "{junk}"
+        );
+    }
+}
+
+/// The CLI in a session the runner creates inherits the operator's environment: `new-session`
+/// gets the runner's own variables minus the three agent ones, while every other call gets only the
+/// allow-list.
+#[test]
+fn new_session_has_the_operators_environment_and_other_calls_the_allow_list() {
+    let dir = Dir::new();
+    let env_new = dir.path().join("env-new");
+    let env_other = dir.path().join("env-other");
+    let program = dir.script(
+        "tmux",
+        &format!(
+            "case \"$*\" in *new-session*) /usr/bin/env > '{}'; echo '%1 2';; *) /usr/bin/env > '{}';; esac\nexit 0",
+            env_new.display(),
+            env_other.display()
+        ),
     );
-    // An answer that is not a pane id is an error.
-    let (bad, _) = fake_tmux(&dir, "echo 'oops'; exit 0");
+    let t = driver("s")
+        .with_program(&program)
+        .with_env("CLAUDECODE", "1")
+        .with_env("TMUX", "/tmp/x,1,0")
+        .with_env("OPERATOR_SETTING", "kept");
+    t.new_session(&name("A"), &dir_of("/w"), 80, 24, &strings(&["a", "b"]))
+        .expect("created");
+    let vars = |path: &Path| -> Vec<String> {
+        fs::read_to_string(path)
+            .expect("env")
+            .lines()
+            .filter_map(|l| l.split_once('=').map(|(n, _)| n.to_string()))
+            .collect()
+    };
+    let new = vars(&env_new);
+    // The operator's variables (cargo's, here) reach the session; the agent ones do not.
+    assert!(new.iter().any(|n| n == "CARGO_MANIFEST_DIR"), "{new:?}");
+    for gone in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "TMUX"] {
+        assert!(!new.iter().any(|n| n == gone), "{gone}");
+    }
+    // A variable set on the driver is passed on as well.
+    assert!(new.iter().any(|n| n == "OPERATOR_SETTING"));
+    // The probe before it ran with the allow-list only.
+    let other = vars(&env_other);
     assert!(
-        driver("s")
-            .with_program(&bad)
-            .new_session(&key("A"), &dir_of("/w"), 80, 24, &strings(&["a", "b"]))
-            .is_err()
+        other.iter().any(|n| n == "PATH") && !other.iter().any(|n| n == "CARGO_MANIFEST_DIR"),
+        "{other:?}"
     );
+}
+
+/// `list-panes` is parsed pane by pane: id, process id, dead flag, and the foreground command last
+/// (it may hold spaces).
+#[test]
+fn the_panes_of_a_session_are_listed_with_their_foreground_command() {
+    let dir = Dir::new();
+    let (program, log) = fake_tmux(
+        &dir,
+        "printf '%%0 100 0 zsh\\n%%3 200 0 claude\\n%%4 300 1 claude.exe\\n%%5 400 0 my tool\\n'",
+    );
+    let panes = driver("s")
+        .with_program(&program)
+        .list_panes(&name("A"))
+        .expect("panes");
+    let shown: Vec<(String, u32, bool, String)> = panes
+        .iter()
+        .map(|p| (p.id.as_str().to_string(), p.pid, p.dead, p.command.clone()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("%0".to_string(), 100, false, "zsh".to_string()),
+            ("%3".to_string(), 200, false, "claude".to_string()),
+            ("%4".to_string(), 300, true, "claude.exe".to_string()),
+            ("%5".to_string(), 400, false, "my tool".to_string()),
+        ]
+    );
+    assert_eq!(names(&log), ["list-panes"]);
+    for bad in ["junk", "%1 x 0 a", "%1 5 2 a", "1 5 0 a", "%1 5 0"] {
+        assert_eq!(parse_listed_pane(bad), None, "{bad:?}");
+    }
+    for junk in ["echo junk", "echo '%1 5 0'"] {
+        let (program, _) = fake_tmux(&dir, junk);
+        assert!(
+            driver("s").with_program(&program).list_panes(&name("A")).is_err(),
+            "{junk}"
+        );
+    }
+    // No such session: a failure, not an empty list.
+    let (program, _) = fake_tmux(&dir, "echo \"can't find session\" >&2; exit 1");
+    assert!(driver("s").with_program(&program).list_panes(&name("A")).is_err());
 }
 
 fn dir_of(path: &str) -> WorkDir {
@@ -792,7 +967,7 @@ fn a_directory_with_a_hash_never_reaches_tmux() {
 #[test]
 fn pane_information_comes_from_separate_calls() {
     let dir = Dir::new();
-    let (program, log) = fake_tmux(&dir, &healthy_answers("0 0 1 99 SVWL", "claude.exe"));
+    let (program, log) = fake_tmux(&dir, &healthy_answers("0 0 1 99 SVWL-claude", "claude.exe"));
     let info = driver("s")
         .with_program(&program)
         .pane_info(&pane("SVWL", "%7"))
@@ -812,7 +987,7 @@ fn pane_information_comes_from_separate_calls() {
 #[test]
 fn a_command_name_with_a_space_or_a_newline_cannot_shift_a_field() {
     let dir = Dir::new();
-    let (program, _) = fake_tmux(&dir, &healthy_answers("0 0 1 99 SVWL", "claude.exe /fake/path"));
+    let (program, _) = fake_tmux(&dir, &healthy_answers("0 0 1 99 SVWL-claude", "claude.exe /fake/path"));
     let info = driver("s")
         .with_program(&program)
         .pane_info(&pane("SVWL", "%7"))
@@ -832,26 +1007,11 @@ fn a_command_name_with_a_space_or_a_newline_cannot_shift_a_field() {
 }
 
 #[test]
-fn adopting_reads_the_first_pane_of_window_zero() {
-    let dir = Dir::new();
-    let (program, _) = fake_tmux(&dir, "printf '%%3\\n%%4\\n'");
-    assert_eq!(
-        driver("s").with_program(&program).adopt_pane(&key("A")),
-        Ok(super::Pane {
-            key: key("A"),
-            id: PaneId::new("%3").expect("id")
-        })
-    );
-    let (program, _) = fake_tmux(&dir, "echo 'junk'");
-    assert!(driver("s").with_program(&program).adopt_pane(&key("A")).is_err());
-}
-
-#[test]
 fn client_activity_lists_timestamps() {
     let dir = Dir::new();
     let (program, _) = fake_tmux(&dir, "printf '1700000000\\n1700000100\\n'");
     assert_eq!(
-        driver("s").with_program(&program).client_activity(&key("A")),
+        driver("s").with_program(&program).client_activity(&name("A")),
         Ok(vec![1_700_000_000, 1_700_000_100])
     );
 }
@@ -900,7 +1060,7 @@ fn a_new_server_under_systemd_is_started_in_its_own_scope() {
     let dir = Dir::new();
     let (program, log) = fake_tmux(
         &dir,
-        "case \"$*\" in *list-sessions*) exit 1;; *new-session*) echo %2;; esac\nexit 0",
+        "case \"$*\" in *list-panes*) exit 1;; *new-session*) echo '%2 99';; esac\nexit 0",
     );
     let scope_log = dir.path().join("scope");
     let systemd_run = dir.script(
@@ -914,7 +1074,7 @@ fn a_new_server_under_systemd_is_started_in_its_own_scope() {
         .with_program(&program)
         .with_systemd(true)
         .with_systemd_run(&systemd_run)
-        .new_session(&key("SVWL"), &dir_of("/w"), 80, 24, &strings(&["claude", "x"]))
+        .new_session(&name("SVWL"), &dir_of("/w"), 80, 24, &strings(&["claude", "x"]))
         .expect("created");
     let scope: Vec<String> = fs::read_to_string(&scope_log)
         .expect("scope")
@@ -932,15 +1092,15 @@ fn a_new_server_under_systemd_is_started_in_its_own_scope() {
     );
     assert_eq!(
         names(&log),
-        ["list-sessions", "new-session", "set-option", "set-option"],
-        "the second set-option marks the server the runner just started"
+        ["list-panes", "new-session"],
+        "no option is set on the new server"
     );
 }
 
 #[test]
 fn a_running_server_is_not_wrapped_again() {
     let dir = Dir::new();
-    let (program, log) = fake_tmux(&dir, "case \"$*\" in *new-session*) echo %2;; esac\nexit 0");
+    let (program, log) = fake_tmux(&dir, "case \"$*\" in *new-session*) echo '%2 99';; esac\nexit 0");
     let scope_log = dir.path().join("scope");
     let systemd_run = dir.script(
         "systemd-run",
@@ -950,26 +1110,10 @@ fn a_running_server_is_not_wrapped_again() {
         .with_program(&program)
         .with_systemd(true)
         .with_systemd_run(&systemd_run)
-        .new_session(&key("SVWL"), &dir_of("/w"), 80, 24, &strings(&["claude", "x"]))
+        .new_session(&name("SVWL"), &dir_of("/w"), 80, 24, &strings(&["claude", "x"]))
         .expect("created");
     assert!(!scope_log.exists());
-    assert_eq!(calls(&log).len(), 3);
-}
-
-#[test]
-fn the_default_server_is_never_killed() {
-    let dir = Dir::new();
-    let (program, log) = fake_tmux(&dir, "exit 0");
-    assert!(matches!(
-        driver("").with_program(&program).kill_server(),
-        Err(TmuxError::Invalid(_))
-    ));
-    assert!(!log.exists());
-    driver("svtest-x").with_program(&program).kill_server().expect("killed");
-    assert_eq!(
-        calls(&log)[0][..],
-        strings(&["-L", "svtest-x", "-f", "/dev/null", "kill-server"])
-    );
+    assert_eq!(calls(&log).len(), 2);
 }
 
 #[test]
@@ -1011,63 +1155,4 @@ fn a_freshly_written_program_that_is_briefly_busy_still_runs() {
     for handle in handles {
         handle.join().expect("no thread failed");
     }
-}
-
-/// A server the runner started carries the owner mark; one that does not (somebody else's, with
-/// that person's environment) is refused before any session is made or used. The default server
-/// is the user's own and is not checked.
-#[test]
-fn a_server_without_the_owner_mark_is_refused() {
-    let mark = super::OWNER_OPTION.to_string();
-    let run = |answers: &str, socket: &str| {
-        let dir = Dir::new();
-        let (program, log) = fake_tmux(&dir, answers);
-        let result = driver(socket).with_program(&program).verify_server();
-        (result, names(&log))
-    };
-    // No server running: nothing to refuse (the runner will start its own).
-    let (result, _) = run("exit 1", "sylvode");
-    assert_eq!(result, Ok(()));
-    // Running, owned.
-    let owned = "case \"$*\" in *show-option*) echo 1;; esac\nexit 0".to_string();
-    let (result, names) = run(&owned, "sylvode");
-    assert_eq!(result, Ok(()));
-    assert!(names.iter().any(|n| n == "show-option"));
-    // Running, no mark: refused.
-    let (result, _) = run("exit 0", "sylvode");
-    assert_eq!(result, Err(TmuxError::Refused(Refusal::ForeignServer)));
-    // The default server is not checked at all.
-    let (result, names) = run("exit 0", "");
-    assert_eq!(result, Ok(()));
-    assert!(names.is_empty(), "{names:?}");
-    assert!(mark.starts_with('@'));
-}
-
-/// A server the runner starts gets the mark with its first session; an existing one does not get
-/// it again.
-#[test]
-fn the_first_session_marks_the_server_it_starts() {
-    let dir = Dir::new();
-    let fresh_server = format!(
-        "case \"$*\" in *list-sessions*) exit 1;; esac\n{}",
-        healthy_answers("0 0 1 1 SVWL", "claude.exe")
-    );
-    let (program, log) = fake_tmux(&dir, &fresh_server);
-    driver("sylvode")
-        .with_program(&program)
-        .new_session(
-            &key("SVWL"),
-            &dir_of("/work/svwl"),
-            200,
-            50,
-            &strings(&["claude", "--x"]),
-        )
-        .expect("created");
-    let calls = calls(&log);
-    assert!(
-        calls
-            .iter()
-            .any(|c| c[4..] == strings(&["set-option", "-g", "@sylvode_runner", "1"])),
-        "{calls:?}"
-    );
 }

@@ -1,6 +1,6 @@
 //! The synchronous checks of a delivery to a `runner` agent (design section 7.1), in order:
 //! the protocol field, the task view fetched with the task bot's token, the cross-check of project
-//! id and key, execution enabled, the project key and its session-name registry, the working
+//! id and key, execution enabled, the project key and its key registry, the working
 //! directory against the allowed roots, and the channel and CLI prerequisites.
 //!
 //! A refusal carries a code from the design's list and a one-line reason without any path; the
@@ -42,16 +42,16 @@ impl BotCreds {
         })
     }
 
-    /// What goes into this bot's MCP file for a launch of `cli`: the one place the file's
-    /// settings are decided, for the interactive and the headless channel alike.
-    pub fn mcp_files<'a>(&'a self, runner: &'a RunnerConfig, cli: &str) -> BotFiles<'a> {
+    /// What goes into this bot's MCP file: the one place the file's settings are decided, for the
+    /// interactive and the headless channel alike.
+    pub fn mcp_files<'a>(&'a self, runner: &'a RunnerConfig) -> BotFiles<'a> {
         BotFiles {
             bot_id: &self.bot_id,
             api_url: &self.api_url,
             workspace_id: &self.workspace_id,
             token: &self.token,
             tool_mode: &runner.mcp.tool_mode,
-            allow_write_call: cli == "claude" && runner.cli.claude.allow_write_call,
+            allow_write_call: runner.mcp.allow_write_call,
         }
     }
 }
@@ -126,7 +126,7 @@ pub enum Verdict {
     Unavailable,
 }
 
-/// Whether `key` is a valid session name: `^[A-Z0-9]{1,32}$`.
+/// Whether `key` is a valid project key (the first part of a session name): `^[A-Z0-9]{1,32}$`.
 pub fn valid_project_key(key: &str) -> bool {
     !key.is_empty() && key.len() <= 32 && key.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
@@ -263,12 +263,6 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
             return refuse(
                 "cli_unverified",
                 format!("the {cli} CLI is not verified for the tmux channel; use the headless channel"),
-            );
-        }
-        if !runner.tmux.enabled {
-            return refuse(
-                "tmux_channel_disabled",
-                "the tmux channel is not enabled on this runner (operator opt-in: [runner.tmux] enabled = true)",
             );
         }
     }

@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 
 use super::checks::{Accepted, BotCreds, Channel};
 use super::files::StateDir;
-use super::headless::prepare;
+use super::headless::{Prepared, execute, prepare};
 use super::sv_client::SvClient;
-use super::tmux::allowed_environment;
+use super::tmux::agent_environment_from;
 use crate::config::Config;
 
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
@@ -63,85 +63,105 @@ fn accepted(cli: &str, dir: &Path, key: &str, program: &Path) -> Accepted {
     }
 }
 
+/// A headless claude run: `-p <prompt>` first, the operator's `headless_args`, the runner's MCP
+/// file, then the allow list of the eight Sylvode tools. No setting-source, strict-config or
+/// permission flag of the runner's own.
 #[test]
-fn a_directory_with_cli_configuration_that_cannot_be_switched_off_is_refused_unless_trusted() {
+fn the_claude_argv_is_the_prompt_the_operators_arguments_the_mcp_file_and_the_tool_list() {
     let base = Dir::new();
     let state = StateDir::open(&base.0.join("state")).expect("state");
     let project = base.0.join("project");
+    fs::create_dir_all(&project).expect("mkdir");
+    let accepted = accepted("claude", &project, "SVWL", Path::new("/usr/bin/claude"));
+    let prepared = prepare(&config(""), &state, &accepted, Path::new("/opt/mcp-server")).expect("prepared");
+    let json = state.claude_mcp_json(BOT).to_string_lossy().into_owned();
+    let mut expected: Vec<String> = [
+        "/usr/bin/claude",
+        "-p",
+        "[Sylvode task] id=x",
+        "--permission-mode",
+        "bypassPermissions",
+        "--mcp-config",
+        &json,
+        "--allowedTools",
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+    expected.extend(
+        super::launch::SEARCH_MODE_TOOLS
+            .iter()
+            .map(|t| format!("mcp__sylvode__{t}")),
+    );
+    assert_eq!(prepared.args, expected);
+    assert!(
+        !prepared
+            .args
+            .iter()
+            .any(|a| a.starts_with("--strict") || a == "--setting-sources")
+    );
+    // The operator's arguments replace the default; the write call is added by `allow_write_call`.
+    let custom =
+        config("[runner.cli.claude]\nheadless_args = [\"--model\", \"x\"]\n[runner.mcp]\nallow_write_call = true\n");
+    let prepared = prepare(&custom, &state, &accepted, Path::new("/opt/mcp-server")).expect("prepared");
+    assert_eq!(&prepared.args[3..5], ["--model", "x"]);
+    assert!(!prepared.args.iter().any(|a| a == "bypassPermissions"));
+    assert_eq!(
+        prepared.args.last().map(String::as_str),
+        Some("mcp__sylvode__sylvode_write")
+    );
+    let toml = fs::read_to_string(state.mcp_toml(BOT)).expect("toml");
+    assert!(toml.contains("allow_write_call = true"), "{toml}");
+}
+
+/// codex: `exec`, the MCP server through `-c`, the operator's `headless_args` and the prompt last;
+/// opencode: `run <prompt>`.
+#[test]
+fn the_codex_and_opencode_argvs() {
+    let base = Dir::new();
+    let state = StateDir::open(&base.0.join("state")).expect("state");
+    let project = base.0.join("project");
+    fs::create_dir_all(&project).expect("mkdir");
+    // A project that holds codex configuration is no longer refused: the operator's choice.
     fs::create_dir_all(project.join(".codex")).expect("mkdir");
-    fs::write(
-        project.join(".codex/config.toml"),
-        "[mcp_servers.evil]\ncommand = \"/bin/false\"\n",
-    )
-    .expect("write");
-    let plain = base.0.join("plain");
-    fs::create_dir_all(&plain).expect("mkdir");
-    let bin = Path::new("/usr/bin/codex");
-    let cfg = config("[runner.cli.codex]\nenabled = true\n");
-    let refused = prepare(
+    let cfg = config("[runner.cli.codex]\nenabled = true\nheadless_args = [\"--sandbox\", \"read-only\"]\n");
+    let prepared = prepare(
         &cfg,
         &state,
-        &accepted("codex", &project, "SVWL", bin),
+        &accepted("codex", &project, "SVWL", Path::new("/usr/bin/codex")),
         Path::new("/opt/mcp-server"),
     )
-    .expect_err("refused");
-    assert_eq!(refused.code, "workspace_untrusted");
-    assert!(
-        !refused.reason.contains(&*project.to_string_lossy()),
-        "{}",
-        refused.reason
-    );
-    // A directory without such files runs; so does the project once the operator trusts it.
-    assert!(
-        prepare(
-            &cfg,
-            &state,
-            &accepted("codex", &plain, "SVWL", bin),
-            Path::new("/opt/mcp-server")
-        )
-        .is_ok()
-    );
-    let trusted = config("trust_project_files = [\"SVWL\"]\n[runner.cli.codex]\nenabled = true\n");
-    assert!(
-        prepare(
-            &trusted,
-            &state,
-            &accepted("codex", &project, "SVWL", bin),
-            Path::new("/opt/mcp-server")
-        )
-        .is_ok()
+    .expect("codex");
+    assert_eq!(&prepared.args[..3], ["/usr/bin/codex", "exec", "--skip-git-repo-check"]);
+    let n = prepared.args.len();
+    assert_eq!(
+        &prepared.args[n - 3..],
+        ["--sandbox", "read-only", "[Sylvode task] id=x"]
     );
     assert!(
-        prepare(
-            &trusted,
-            &state,
-            &accepted("codex", &project, "OTHER", bin),
-            Path::new("/opt/mcp-server")
-        )
-        .is_err()
+        prepared
+            .args
+            .iter()
+            .any(|a| a.starts_with("mcp_servers.sylvode.command="))
     );
-    // opencode likewise.
-    fs::write(plain.join("opencode.json"), "{}").expect("write");
-    assert!(
-        prepare(
-            &cfg,
-            &state,
-            &accepted("opencode", &plain, "SVWL", Path::new("/usr/bin/opencode")),
-            Path::new("/m")
-        )
-        .is_err()
-    );
-    // claude is controlled by its flags and needs no such refusal.
-    fs::create_dir_all(project.join(".claude")).expect("mkdir");
-    assert!(
-        prepare(
-            &cfg,
-            &state,
-            &accepted("claude", &project, "SVWL", Path::new("/usr/bin/claude")),
-            Path::new("/m")
-        )
-        .is_ok()
-    );
+    let plain = prepare(
+        &config(""),
+        &state,
+        &accepted("codex", &project, "SVWL", Path::new("/usr/bin/codex")),
+        Path::new("/opt/mcp-server"),
+    )
+    .expect("codex");
+    assert_eq!(plain.args.last().map(String::as_str), Some("[Sylvode task] id=x"));
+    assert!(!plain.args.iter().any(|a| a == "--sandbox"));
+    fs::write(project.join("opencode.json"), "{}").expect("write");
+    let opencode = prepare(
+        &config(""),
+        &state,
+        &accepted("opencode", &project, "SVWL", Path::new("/usr/bin/opencode")),
+        Path::new("/m"),
+    )
+    .expect("opencode");
+    assert_eq!(opencode.args, ["/usr/bin/opencode", "run", "[Sylvode task] id=x"]);
 }
 
 #[test]
@@ -159,7 +179,6 @@ fn prepare_writes_private_files_and_an_argv_without_the_token() {
     )
     .expect("prepared");
     assert!(prepared.args.iter().all(|a| !a.contains("opr_")), "{:?}", prepared.args);
-    assert!(prepared.args.contains(&"--strict-mcp-config".to_string()));
     let toml = state.mcp_toml(BOT);
     assert_eq!(fs::metadata(&toml).expect("meta").permissions().mode() & 0o777, 0o600);
     assert!(fs::read_to_string(&toml).expect("toml").contains("opr_"));
@@ -168,83 +187,126 @@ fn prepare_writes_private_files_and_an_argv_without_the_token() {
             .expect("json")
             .contains("opr_")
     );
+    // The runner forces no configuration directory of its own.
+    assert!(!state.root().join("claude").exists());
 }
 
+/// The CLI gets the operator's environment: everything but the three agent variables, nothing
+/// added (no `CLAUDE_CONFIG_DIR` of the runner's).
 #[test]
-fn the_environment_is_the_allow_list_plus_the_named_extras() {
-    let names = |extra: &[String]| -> Vec<String> {
-        allowed_environment(extra, false)
-            .into_iter()
-            .map(|(n, _)| n.to_string_lossy().into_owned())
-            .collect()
+fn the_environment_is_the_operators_minus_the_three_agent_variables() {
+    let vars = |names: &[&str]| -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        names.iter().map(|n| ((*n).into(), "v".into())).collect()
     };
-    let plain = names(&[]);
-    assert!(plain.iter().any(|n| n == "PATH"));
-    // The test runs under cargo, which sets many variables; none passes unless named.
-    assert!(
-        plain.iter().all(|n| !n.starts_with("CARGO") && !n.starts_with("RUST")),
-        "{plain:?}"
+    let kept: Vec<String> = agent_environment_from(vars(&[
+        "PATH",
+        "HOME",
+        "ANTHROPIC_API_KEY",
+        "HTTPS_PROXY",
+        "CLAUDE_CONFIG_DIR",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "TMUX",
+        "TMUX_PANE",
+    ]))
+    .into_iter()
+    .map(|(n, _)| n.to_string_lossy().into_owned())
+    .collect();
+    assert_eq!(
+        kept,
+        [
+            "PATH",
+            "HOME",
+            "ANTHROPIC_API_KEY",
+            "HTTPS_PROXY",
+            "CLAUDE_CONFIG_DIR",
+            "TMUX_PANE"
+        ]
     );
-    let with = names(&["CARGO_MANIFEST_DIR".to_string()]);
-    assert!(with.iter().any(|n| n == "CARGO_MANIFEST_DIR"));
-    // The agent variables are never passed, even when named.
+}
+
+/// A run really starts with that environment: a stand-in program (not a CLI agent) writes what it
+/// sees. The test process runs under cargo, so cargo's variables are the operator's here.
+#[tokio::test]
+async fn a_headless_run_has_the_operators_variables_and_none_of_the_agent_ones() {
+    let base = Dir::new();
+    let out = base.0.join("env.txt");
+    let script = base.0.join("standin.sh");
+    fs::write(&script, "#!/bin/sh\nenv > \"$1\"\n").expect("script");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let prepared = Prepared {
+        program: script.clone(),
+        args: vec![
+            script.to_string_lossy().into_owned(),
+            out.to_string_lossy().into_owned(),
+        ],
+    };
+    let end = execute(
+        &prepared,
+        &base.0,
+        std::time::Duration::from_secs(20),
+        std::future::pending(),
+    )
+    .await;
+    assert_eq!(end.status, "success");
+    let text = fs::read_to_string(&out).expect("env");
+    let names: Vec<&str> = text.lines().filter_map(|l| l.split_once('=')).map(|(n, _)| n).collect();
     assert!(
-        names(&["TMUX".to_string(), "CLAUDECODE".to_string()])
-            .iter()
-            .all(|n| n != "TMUX" && n != "CLAUDECODE")
+        names.contains(&"PATH") && names.contains(&"CARGO_MANIFEST_DIR"),
+        "{names:?}"
+    );
+    for gone in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "TMUX"] {
+        assert!(!names.contains(&gone), "{gone}");
+    }
+    // Nothing is added: the child has CLAUDE_CONFIG_DIR exactly when the runner's own environment
+    // has it.
+    assert_eq!(
+        names.contains(&"CLAUDE_CONFIG_DIR"),
+        std::env::var_os("CLAUDE_CONFIG_DIR").is_some()
     );
 }
 
 #[test]
-fn the_start_up_posture_has_one_line_per_cli_and_warns_about_opencode() {
+fn the_start_up_posture_has_one_line_per_cli_and_warns_about_bypass_and_opencode() {
     let lines = super::posture(&config(""));
     assert_eq!(lines.len(), 3);
+    // The defaults turn permission checks off: a warning, naming both commands.
     assert!(
-        lines[0].text.starts_with("claude: permission_mode = dontAsk"),
+        lines[0].warn && lines[0].text.contains("PERMISSION CHECKS ARE OFF") && lines[0].text.contains("claude"),
         "{:?}",
         lines[0]
     );
-    assert!(lines[0].text.contains("8 search-mode Sylvode tools") && !lines[0].warn);
-    assert_eq!(lines[1].text, "codex: disabled, sandbox = read-only, approvals never");
+    assert!(lines[1].text.starts_with("codex: disabled") && !lines[1].warn);
     assert_eq!(lines[2].text, "opencode: disabled");
-    let wide = super::posture(&config(
-        "[runner.cli.opencode]\nenabled = true\n[runner.cli.claude]\nallow_write_call = true\n",
+    let normal = super::posture(&config(
+        "[runner.cli.claude]\nlaunch_command = [\"claude\", \"--model\", \"x\"]\nheadless_args = []\n\
+         [runner.cli.opencode]\nenabled = true\n",
     ));
-    assert!(wide[0].text.contains("sylvode_write"), "{:?}", wide[0]);
+    assert!(!normal[0].warn && !normal[0].text.contains("OFF"), "{:?}", normal[0]);
     assert!(
-        wide[2].warn
-            && wide[2]
+        normal[2].warn
+            && normal[2]
                 .text
                 .contains("opencode permissions are not controlled by sylvode-runner")
     );
 }
 
-/// The posture line names every extra allowed tool, and warns for any that is not a read rule
-/// confined to the project directory.
 #[test]
-fn the_posture_line_names_the_extra_tools_and_warns_when_they_widen() {
-    let plain = super::posture(&config(""));
-    assert!(plain[0].text.contains("extra allowed tools none") && !plain[0].warn);
-    let confined = super::posture(&config(
-        "[runner.cli.claude]\nallowed_tools = [\"Read(/{dir}/docs/**)\"]\n",
-    ));
-    assert!(
-        confined[0].text.contains("[Read(/{dir}/docs/**)]") && !confined[0].warn,
-        "{:?}",
-        confined[0]
-    );
-    for tool in [
-        "Bash(git status)",
-        "Edit({dir}/src/**)",
-        "WebFetch",
-        "mcp__other__thing",
-        "Read(/etc/**)",
+fn bypass_is_recognised_in_command_words() {
+    let words = |text: &str| -> Vec<String> { text.split_whitespace().map(str::to_string).collect() };
+    for yes in [
+        "claude --dangerously-skip-permissions",
+        "claude --permission-mode bypassPermissions",
+        "claude --permission-mode=bypassPermissions --model x",
     ] {
-        let wide = super::posture(&config(&format!("[runner.cli.claude]\nallowed_tools = [\"{tool}\"]\n")));
-        assert!(
-            wide[0].warn && wide[0].text.contains(tool) && wide[0].text.contains("WIDEN"),
-            "{tool}: {:?}",
-            wide[0]
-        );
+        assert!(super::words_bypass_permissions(&words(yes)), "{yes}");
+    }
+    for no in [
+        "claude",
+        "claude --permission-mode acceptEdits",
+        "claude --permission-mode",
+        "claude --model bypassPermissions",
+    ] {
+        assert!(!super::words_bypass_permissions(&words(no)), "{no}");
     }
 }

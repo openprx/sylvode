@@ -7,7 +7,8 @@
 //!   hook.sock                      the hook socket
 //!   mcp/<bot_id>.toml              0600: the bot's token and the MCP server's settings
 //!   mcp/<bot_id>.claude.json       0600: references the TOML, holds no token
-//!   sessions/<KEY>/claude-settings.json   0600: the hook commands
+//!   sessions/<NAME>/session.json  0600: what the runner knows about a session (NAME = <KEY>-<cli>)
+//!   sessions/<NAME>/claude-settings.json   0600: the hook commands
 //! ```
 //!
 //! Every directory the runner creates is made with mode 0700 and every file with mode 0600 at
@@ -15,7 +16,7 @@
 //! temporary name followed by a rename, so no reader sees a half-written file and no moment exists
 //! at which a secret is group- or world-readable. A file is rewritten only when its content (or
 //! its mode) differs. Directories are opened without following symbolic links, so a link planted
-//! under the state directory is refused. A path component is a validated bot UUID or session key,
+//! under the state directory is refused. A path component is a validated bot UUID or session name,
 //! never text from a task. Tokens are never logged: the types that hold them redact `Debug`.
 
 use std::fs::File;
@@ -29,7 +30,7 @@ use serde_json::json;
 
 use super::guide::{Entry, Read_, classify, create_file, open_dir, open_root, read_regular, replace_file};
 use super::launch::{LaunchError, LaunchFiles, SERVER_NAME, claude_hook_command};
-use super::tmux::SessionKey;
+use super::tmux::SessionName;
 
 /// The most bytes of one of these files that are read back.
 const MAX_FILE_BYTES: u64 = 64 * 1024;
@@ -65,21 +66,40 @@ impl std::fmt::Debug for BotFiles<'_> {
     }
 }
 
-/// What the runner knows about a session it created: which project, which pane, which CLI.
+/// Who started a session: the runner (and the recorded pane id and PID still match), or the
+/// operator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CreatedBy {
+    Runner,
+    Operator,
+}
+
+impl CreatedBy {
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Runner => "runner",
+            Self::Operator => "operator",
+        }
+    }
+}
+
+/// What the runner knows about a session it uses: which project and bot, which pane, which CLI.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionRecord {
-    pub key: String,
+    /// `<KEY>-<cli>`.
+    pub name: String,
     pub project_id: String,
+    /// The bot of the connection that serves the session.
+    pub bot_id: String,
+    pub cli: String,
     pub pane_id: String,
     pub pane_pid: u32,
-    pub cli: String,
+    /// The working directory the task that last used the session named (for `doctor`).
     pub dir: String,
-    pub started_at: u64,
-    /// The project's last delivery went to the headless channel: the session is idle for good and
-    /// `sessions --prune` may remove it.
-    #[serde(default)]
-    pub headless: bool,
-    /// The per-launch secret the session's hooks present (see `LaunchFiles::nonce`).
+    pub created_by: CreatedBy,
+    /// The per-launch secret the hooks of a session the runner created present (see
+    /// `LaunchFiles::nonce`); empty for a session the operator started.
     #[serde(default)]
     pub nonce: String,
     /// The task whose text was typed (or was about to be) into this session. Written and synced
@@ -172,35 +192,14 @@ impl StateDir {
         self.root.join("mcp").join(format!("{bot_id}.toml"))
     }
 
-    /// The configuration directory the runner gives claude for `bot_id`
-    /// (`CLAUDE_CONFIG_DIR`): it holds only what claude and the runner write there, never the
-    /// operator's own `~/.claude`.
-    pub fn claude_config_dir(&self, bot_id: &str) -> PathBuf {
-        self.root.join("claude").join(bot_id)
-    }
-
-    /// Creates (mode 0700) and returns the claude configuration directory of `bot_id`.
-    ///
-    /// # Errors
-    ///
-    /// A message when `bot_id` is not a plain id or the directories cannot be made private.
-    pub fn ensure_claude_config_dir(&self, bot_id: &str) -> Result<PathBuf, String> {
-        if bot_id.is_empty() || !bot_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-            return Err("the bot id is not a plain id".to_string());
-        }
-        let claude = private_dir(&self.fd, "claude")?;
-        private_dir(&claude, bot_id)?;
-        Ok(self.claude_config_dir(bot_id))
-    }
-
     pub fn claude_mcp_json(&self, bot_id: &str) -> PathBuf {
         self.root.join("mcp").join(format!("{bot_id}.claude.json"))
     }
 
-    pub fn claude_settings(&self, key: &SessionKey) -> PathBuf {
+    pub fn claude_settings(&self, name: &SessionName) -> PathBuf {
         self.root
             .join("sessions")
-            .join(key.as_str())
+            .join(name.as_str())
             .join("claude-settings.json")
     }
 
@@ -282,15 +281,15 @@ impl StateDir {
         })
     }
 
-    /// Writes `sessions/<KEY>/claude-settings.json`: the four hooks, each the `hook` subcommand.
+    /// Writes `sessions/<NAME>/claude-settings.json`: the four hooks, each the `hook` subcommand.
     ///
     /// # Errors
     ///
     /// A message when a path cannot be used or a file cannot be written.
-    pub fn write_session_settings(&self, key: &SessionKey, files: &LaunchFiles<'_>) -> Result<Written, String> {
+    pub fn write_session_settings(&self, name: &SessionName, files: &LaunchFiles<'_>) -> Result<Written, String> {
         let mut hooks = serde_json::Map::new();
         for event in CLAUDE_EVENTS {
-            let command = claude_hook_command(files, key, event).map_err(|e: LaunchError| e.to_string())?;
+            let command = claude_hook_command(files, name, event).map_err(|e: LaunchError| e.to_string())?;
             // `SessionStart` also fires after compaction, `/clear` and resume, and `Notification`
             // also for an idle prompt: only the first start and the permission prompts are wanted.
             let matcher = match event {
@@ -306,43 +305,43 @@ impl StateDir {
         }
         let text = serde_json::to_string_pretty(&json!({"hooks": hooks})).map_err(|e| e.to_string())?;
         let sessions = private_dir(&self.fd, "sessions")?;
-        let dir = private_dir(&sessions, key.as_str())?;
+        let dir = private_dir(&sessions, name.as_str())?;
         write_private(&dir, "claude-settings.json", format!("{text}\n").as_bytes()).map(|changed| Written { changed })
     }
 
-    /// Writes `sessions/<KEY>/session.json`: what the runner knows about a session it created.
+    /// Writes `sessions/<NAME>/session.json`: what the runner knows about a session it uses.
     ///
     /// # Errors
     ///
     /// A message when it cannot be written.
     pub fn write_session_record(&self, record: &SessionRecord) -> Result<(), String> {
-        let key = SessionKey::new(&record.key).map_err(|e| e.to_string())?;
+        let name = SessionName::parse(&record.name).map_err(|e| e.to_string())?;
         let text = serde_json::to_string_pretty(record).map_err(|e| e.to_string())?;
         let sessions = private_dir(&self.fd, "sessions")?;
-        let dir = private_dir(&sessions, key.as_str())?;
+        let dir = private_dir(&sessions, name.as_str())?;
         write_private(&dir, "session.json", format!("{text}\n").as_bytes()).map(|_| ())
     }
 
-    /// Reads `sessions/<KEY>/session.json`; `None` when there is none or it is not ours (a link, a
+    /// Reads `sessions/<NAME>/session.json`; `None` when there is none or it is not ours (a link, a
     /// special file, unreadable or not the expected shape).
-    pub fn read_session_record(&self, key: &SessionKey) -> Option<SessionRecord> {
+    pub fn read_session_record(&self, name: &SessionName) -> Option<SessionRecord> {
         let sessions = open_dir(&self.fd, "sessions").ok()?;
-        let dir = open_dir(&sessions, key.as_str()).ok()?;
+        let dir = open_dir(&sessions, name.as_str()).ok()?;
         match read_regular(&dir, "session.json", MAX_FILE_BYTES).ok()? {
             Read_::Data { bytes, .. } => serde_json::from_slice(&bytes).ok(),
             _ => None,
         }
     }
 
-    /// Records, durably, that `task_id` at `attempt` is about to be typed into session `key`.
+    /// Records, durably, that `task_id` at `attempt` is about to be typed into session `name`.
     ///
     /// # Errors
     ///
     /// A message when there is no `session.json` or it cannot be written; the caller must then not
     /// paste.
-    pub fn mark_pushed(&self, key: &SessionKey, pushed: Option<PushedTask>) -> Result<(), String> {
+    pub fn mark_pushed(&self, name: &SessionName, pushed: Option<PushedTask>) -> Result<(), String> {
         let record = self
-            .read_session_record(key)
+            .read_session_record(name)
             .ok_or_else(|| "the session has no session.json".to_string())?;
         if record.pushed == pushed {
             return Ok(());
@@ -350,31 +349,17 @@ impl StateDir {
         self.write_session_record(&SessionRecord { pushed, ..record })
     }
 
-    /// Sets or clears the `headless` flag of an existing `session.json`.
-    ///
-    /// # Errors
-    ///
-    /// A message when the record cannot be written.
-    pub fn set_headless(&self, key: &SessionKey, headless: bool) -> Result<(), String> {
-        match self.read_session_record(key) {
-            Some(record) if record.headless != headless => {
-                self.write_session_record(&SessionRecord { headless, ..record })
-            }
-            _ => Ok(()),
-        }
-    }
-
-    /// The keys that have a `session.json`, for the `sessions` command.
-    pub fn recorded_keys(&self) -> Vec<String> {
+    /// The names that have a `session.json`, for the `sessions` command.
+    pub fn recorded_names(&self) -> Vec<String> {
         let Ok(sessions) = open_dir(&self.fd, "sessions") else {
             return Vec::new();
         };
-        let mut keys: Vec<String> = std::fs::read_dir(self.root.join("sessions"))
+        let mut names: Vec<String> = std::fs::read_dir(self.root.join("sessions"))
             .into_iter()
             .flatten()
             .filter_map(Result::ok)
             .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| SessionKey::new(name).is_ok())
+            .filter(|name| SessionName::parse(name).is_ok())
             .filter(|name| {
                 open_dir(&sessions, name).ok().is_some_and(|dir| {
                     matches!(
@@ -384,8 +369,8 @@ impl StateDir {
                 })
             })
             .collect();
-        keys.sort();
-        keys
+        names.sort();
+        names
     }
 
     /// Modes that are wider than allowed, for `doctor`: the state directory, its subdirectories

@@ -17,7 +17,6 @@ mod dispatcher;
 mod doctor;
 #[cfg(test)]
 mod doctor_tests;
-mod executor_permissions;
 mod handler;
 mod handshake;
 mod process;
@@ -57,8 +56,8 @@ pub mod mcp_launch_for_tests {
     pub use crate::runner::checks::BotCreds;
     pub use crate::runner::files::StateDir;
     pub use crate::runner::launch::{
-        LaunchFiles, Protected, SEARCH_MODE_TOOLS, SERVER_NAME, WRITE_TOOL, claude_argv, claude_headless_argv,
-        codex_argv, codex_headless_argv,
+        LaunchFiles, SEARCH_MODE_TOOLS, SERVER_NAME, WRITE_TOOL, claude_headless_argv, codex_headless_argv,
+        session_argv,
     };
-    pub use crate::runner::tmux::SessionKey;
+    pub use crate::runner::tmux::SessionName;
 }

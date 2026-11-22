@@ -42,10 +42,9 @@ fn dialogs_are_recognised_by_the_verified_texts() {
     ] {
         assert_eq!(classify_dialog(cli, screen), want, "{cli}: {screen:?}");
     }
-    assert_eq!(Dialog::Untrusted.code(), "workspace_untrusted");
-    let reason = Dialog::Untrusted.reason("SVWL");
+    let reason = Dialog::Untrusted.reason("SVWL-claude");
     assert!(
-        reason.contains("sylvode-runner trust SVWL") && !reason.contains('/'),
+        reason.contains("tmux attach -t SVWL-claude") && !reason.contains("trust SVWL") && !reason.contains('/'),
         "{reason}"
     );
 }

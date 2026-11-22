@@ -21,7 +21,7 @@ fn line(value: &serde_json::Value) -> Vec<u8> {
 const NONCE: &str = "0123456789abcdef0123456789abcdef";
 
 fn good() -> serde_json::Value {
-    json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "nonce": NONCE, "ts": 1_700_000_000})
+    json!({"v": 1, "cli": "claude", "session": "SVWL-claude", "event": "Stop", "nonce": NONCE, "ts": 1_700_000_000})
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn only_the_documented_message_shape_is_accepted() {
     let message = parse_line(&line(&good())).expect("valid");
     assert_eq!(
         (message.cli.as_str(), message.session.as_str(), message.event),
-        ("claude", "SVWL", HookEvent::Stop)
+        ("claude", "SVWL-claude", HookEvent::Stop)
     );
     for (cli, event, want) in [
         ("claude", "SessionStart", HookEvent::SessionStart),
@@ -63,8 +63,8 @@ fn only_the_documented_message_shape_is_accepted() {
         with("nonce", json!("short")),
         with("nonce", json!("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")),
         with("nonce", json!(7)),
-        json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "ts": 1}),
-        json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "ts": 1, "nonce": NONCE, "prompt": "secret text"}),
+        json!({"v": 1, "cli": "claude", "session": "SVWL-claude", "event": "Stop", "ts": 1}),
+        json!({"v": 1, "cli": "claude", "session": "SVWL-claude", "event": "Stop", "ts": 1, "nonce": NONCE, "prompt": "secret text"}),
         json!([]),
         json!("text"),
         json!(5),
@@ -86,7 +86,7 @@ impl Dir {
         // Short: a unix socket path is limited to about 100 bytes on macOS.
         let dir = PathBuf::from("/tmp").join(format!("svh-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]));
         // The session's private directory, where its hook counter lives.
-        std::fs::create_dir_all(dir.join("sessions").join("SVWL")).expect("mkdir");
+        std::fs::create_dir_all(dir.join("sessions").join("SVWL-claude")).expect("mkdir");
         Self(dir)
     }
 }
@@ -119,7 +119,7 @@ async fn the_socket_is_private_forwards_good_lines_and_drops_the_rest() {
         b"garbage\n".to_vec(),
         format!(
             "{}\n",
-            json!({"v": 1, "cli": "claude", "session": "SVWL", "event": "Stop", "ts": 1, "nonce": NONCE, "prompt": "p"})
+            json!({"v": 1, "cli": "claude", "session": "SVWL-claude", "event": "Stop", "ts": 1, "nonce": NONCE, "prompt": "p"})
         )
         .into_bytes(),
         vec![b'a'; 100_000],
@@ -130,7 +130,7 @@ async fn the_socket_is_private_forwards_good_lines_and_drops_the_rest() {
     }
     {
         let path = socket.clone();
-        tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
+        tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL-claude", "Stop", NONCE))
             .await
             .expect("sent");
     }
@@ -155,7 +155,7 @@ async fn a_stale_socket_file_is_replaced() {
     let (tx, mut rx) = mpsc::channel(4);
     let _server = listen(&socket, tx).expect("listen");
     let path = socket.clone();
-    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
+    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL-claude", "Stop", NONCE))
         .await
         .expect("sent");
     let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
@@ -169,14 +169,14 @@ async fn a_stale_socket_file_is_replaced() {
 fn the_client_returns_quickly_without_a_socket_or_with_a_stuck_one() {
     let dir = Dir::new();
     let started = Instant::now();
-    send(&dir.0.join("absent.sock"), "claude", "SVWL", "Stop", NONCE);
+    send(&dir.0.join("absent.sock"), "claude", "SVWL-claude", "Stop", NONCE);
     assert!(started.elapsed() < CLIENT_BUDGET, "{:?}", started.elapsed());
     // A socket that accepts and never reads does not hold it either (the line is small, so the
     // write completes; the budget bounds the rest).
     let socket = dir.0.join("stuck.sock");
     let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind");
     let started = Instant::now();
-    send(&socket, "claude", "SVWL", "Stop", NONCE);
+    send(&socket, "claude", "SVWL-claude", "Stop", NONCE);
     assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
 }
 
@@ -198,7 +198,7 @@ async fn a_peer_of_another_user_is_not_heard() {
     let (tx, mut rx) = mpsc::channel(4);
     let _server = listen(&socket, tx).expect("listen");
     let path = socket.clone();
-    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
+    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL-claude", "Stop", NONCE))
         .await
         .expect("sent");
     let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
@@ -239,7 +239,7 @@ async fn a_removed_or_replaced_socket_is_bound_again() {
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
         let path = socket.clone();
-        tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
+        tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL-claude", "Stop", NONCE))
             .await
             .expect("sent");
         let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
@@ -282,7 +282,7 @@ async fn the_listener_names_the_senders_ancestry() {
     let (tx, mut rx) = mpsc::channel(4);
     let _server = listen(&socket, tx).expect("listen");
     let path = socket.clone();
-    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", "Stop", NONCE))
+    tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL-claude", "Stop", NONCE))
         .await
         .expect("sent");
     let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
@@ -321,7 +321,7 @@ async fn a_message_with_a_wrong_nonce_never_reaches_the_session() {
     let wrong = "ffffffffffffffffffffffffffffffff";
     for (nonce, event) in [(wrong, "Notification"), (NONCE, "Stop")] {
         let path = socket.clone();
-        tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL", event, nonce))
+        tokio::task::spawn_blocking(move || send(&path, "claude", "SVWL-claude", event, nonce))
             .await
             .expect("sent");
     }
@@ -344,7 +344,11 @@ fn the_hook_counter_is_strictly_increasing_across_concurrent_hooks() {
     let handles: Vec<_> = (0..8)
         .map(|_| {
             let state = state.clone();
-            std::thread::spawn(move || (0..10).filter_map(|_| next_seq(&state, "SVWL")).collect::<Vec<u64>>())
+            std::thread::spawn(move || {
+                (0..10)
+                    .filter_map(|_| next_seq(&state, "SVWL-claude"))
+                    .collect::<Vec<u64>>()
+            })
         })
         .collect();
     let mut all: Vec<u64> = handles.into_iter().flat_map(|h| h.join().expect("thread")).collect();

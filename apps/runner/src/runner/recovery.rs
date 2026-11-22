@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::checks::{self, BotCreds, Channel, Context, Verdict};
 use super::session::{Adopt, Probe, TmuxTask};
 use super::sv_client::{SvClient, TASK_PROTOCOL};
-use super::tmux::SessionKey;
+use super::tmux::SessionName;
 use crate::AppState;
 
 /// What to do with one active task after a restart.
@@ -129,9 +129,11 @@ async fn recover_bot(
         if str_at(&view, &["execution", "channel"]) != Some("tmux") || !checks::valid_project_key(key_text) {
             continue;
         }
-        let Ok(key) = SessionKey::new(key_text) else { continue };
+        let Ok(name) = SessionName::new(key_text, "claude") else {
+            continue;
+        };
         let attempt = view.get("attempt").and_then(Value::as_i64).unwrap_or(0);
-        let probe: Probe = sessions.probe(&key, task_id, attempt).await;
+        let probe: Probe = sessions.probe(&name, task_id, attempt).await;
         let step = plan_task(&Facts {
             phase: view.get("runner_phase").and_then(Value::as_str),
             status: str_at(&view, &["status"]).unwrap_or_default(),
@@ -141,7 +143,7 @@ async fn recover_bot(
             recorded_pushed: probe.recorded_pushed,
         });
         if step == Step::FailGone {
-            let reason = format!("runner restarted and session {key_text} was gone");
+            let reason = format!("runner restarted and session {} was gone", name.as_str());
             if let Err(e) = client.fail(task_id, attempt, &reason, true, timeout).await {
                 tracing::warn!("restart recovery: could not fail a task: {e}");
             }
@@ -176,7 +178,7 @@ async fn recover_bot(
             // A session has one open task: a second one that may have been typed in is failed,
             // never typed again.
             Step::Adopt { .. } | Step::Blocked => {
-                let reason = format!("runner restarted with two open tasks in session {key_text}");
+                let reason = format!("runner restarted with two open tasks in session {}", name.as_str());
                 if let Err(e) = client.fail(task_id, attempt, &reason, false, timeout).await {
                     tracing::warn!("restart recovery: could not fail a task: {e}");
                 }
@@ -186,9 +188,9 @@ async fn recover_bot(
     }
     let mut by_key: HashMap<String, PerKey> = keys.into_iter().collect();
     for (key_text, entry) in by_key.drain() {
-        if let Ok(key) = SessionKey::new(&key_text) {
-            tracing::info!(session = %key_text, adopted = entry.adopt.is_some(), requeued = entry.requeue.len(), "restart recovery");
-            sessions.recover(key, entry.adopt, entry.requeue).await;
+        if let Ok(name) = SessionName::new(&key_text, "claude") {
+            tracing::info!(session = %name.as_str(), adopted = entry.adopt.is_some(), requeued = entry.requeue.len(), "restart recovery");
+            sessions.recover(name, entry.adopt, entry.requeue).await;
         }
     }
 }

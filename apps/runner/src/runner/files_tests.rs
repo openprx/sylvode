@@ -4,9 +4,9 @@ use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use super::files::{BotFiles, CLAUDE_EVENTS, StateDir};
+use super::files::{BotFiles, CLAUDE_EVENTS, CreatedBy, PushedTask, SessionRecord, StateDir};
 use super::launch::LaunchFiles;
-use super::tmux::SessionKey;
+use super::tmux::SessionName;
 
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
 // Built so no token-shaped literal sits in the source.
@@ -214,24 +214,20 @@ fn debug_output_hides_the_token() {
 fn session_settings_hold_the_four_hooks_and_are_private() {
     let base = Dir::new();
     let state = StateDir::open(&base.state()).expect("open");
-    let key = SessionKey::new("SVWL").expect("key");
-    let (exe, server, socket) = launch_files(&state);
-    let toml = state.mcp_toml(BOT);
+    let name = SessionName::new("SVWL", "claude").expect("name");
+    let (exe, _server, socket) = launch_files(&state);
     let json = state.claude_mcp_json(BOT);
-    let settings = state.claude_settings(&key);
+    let settings = state.claude_settings(&name);
+    assert_eq!(settings, state.root().join("sessions/SVWL-claude/claude-settings.json"));
     let files = LaunchFiles {
-        mcp_server: &server,
-        mcp_toml: &toml,
         claude_mcp_json: &json,
         claude_settings: &settings,
         runner_exe: &exe,
         hook_socket: &socket,
         nonce: "0123456789abcdef0123456789abcdef",
-        state_dir: state.root(),
-        config_file: None,
     };
-    assert!(state.write_session_settings(&key, &files).expect("write").changed);
-    assert!(!state.write_session_settings(&key, &files).expect("again").changed);
+    assert!(state.write_session_settings(&name, &files).expect("write").changed);
+    assert!(!state.write_session_settings(&name, &files).expect("again").changed);
     assert_eq!(mode(&settings), 0o600);
     assert_eq!(mode(settings.parent().expect("dir")), 0o700);
     let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&settings).expect("read")).expect("json");
@@ -240,7 +236,7 @@ fn session_settings_hold_the_four_hooks_and_are_private() {
             .as_str()
             .expect("command");
         assert!(
-            command.starts_with("'/opt/x/sylvode-runner' 'hook' '--cli' 'claude' '--session' 'SVWL' '--event' "),
+            command.starts_with("'/opt/x/sylvode-runner' 'hook' '--cli' 'claude' '--session' 'SVWL-claude' '--event' "),
             "{command}"
         );
         assert!(command.contains(&format!("'--event' '{event}'")), "{command}");
@@ -266,38 +262,70 @@ fn the_lock_admits_one_runner_per_state_directory() {
     assert_eq!(mode(&state.root().join("runner.lock")), 0o600);
 }
 
-#[test]
-fn the_headless_mark_is_set_cleared_and_ignored_without_a_record() {
-    use super::files::SessionRecord;
-    let dir = Dir::new();
-    let state = StateDir::open(&dir.state()).expect("open");
-    let key = SessionKey::new("SVWL").expect("key");
-    // No record: nothing is created.
-    state.set_headless(&key, true).expect("no-op");
-    assert!(state.read_session_record(&key).is_none());
-    let record = SessionRecord {
-        key: "SVWL".to_string(),
+fn record() -> SessionRecord {
+    SessionRecord {
+        name: "SVWL-claude".to_string(),
         project_id: "p".to_string(),
+        bot_id: BOT.to_string(),
+        cli: "claude".to_string(),
         pane_id: "%1".to_string(),
         pane_pid: 7,
-        cli: "claude".to_string(),
         dir: "/x".to_string(),
-        started_at: 1,
-        headless: false,
+        created_by: CreatedBy::Operator,
         nonce: String::new(),
         pushed: None,
+    }
+}
+
+/// The record is kept under the session's derived name, round-trips with who started the session,
+/// and a `pushed` mark needs a record to exist.
+#[test]
+fn a_session_record_is_kept_by_name_with_who_started_the_session() {
+    let dir = Dir::new();
+    let state = StateDir::open(&dir.state()).expect("open");
+    let name = SessionName::new("SVWL", "claude").expect("name");
+    assert!(state.read_session_record(&name).is_none());
+    assert!(
+        state
+            .mark_pushed(
+                &name,
+                Some(PushedTask {
+                    task_id: "t".to_string(),
+                    attempt: 1
+                })
+            )
+            .is_err(),
+        "no record, no push"
+    );
+    assert!(state.recorded_names().is_empty());
+    state.write_session_record(&record()).expect("write");
+    assert_eq!(state.read_session_record(&name), Some(record()));
+    assert_eq!(state.recorded_names(), vec!["SVWL-claude".to_string()]);
+    assert_eq!(mode(&state.root().join("sessions/SVWL-claude/session.json")), 0o600);
+    let pushed = PushedTask {
+        task_id: "t".to_string(),
+        attempt: 2,
     };
-    state.write_session_record(&record).expect("write");
-    state.set_headless(&key, true).expect("set");
+    state.mark_pushed(&name, Some(pushed.clone())).expect("mark");
     assert_eq!(
-        state.read_session_record(&key),
+        state.read_session_record(&name),
         Some(SessionRecord {
-            headless: true,
-            ..record.clone()
+            pushed: Some(pushed),
+            ..record()
         })
     );
-    state.set_headless(&key, false).expect("clear");
-    assert_eq!(state.read_session_record(&key), Some(record));
+    state.mark_pushed(&name, None).expect("clear");
+    assert_eq!(state.read_session_record(&name), Some(record()));
+    // The stored form names who started it, in words.
+    let text = fs::read_to_string(state.root().join("sessions/SVWL-claude/session.json")).expect("read");
+    assert!(text.contains("\"created_by\": \"operator\""), "{text}");
+    assert!(!text.contains("started_at") && !text.contains("headless"), "{text}");
+    // A record under a name that is not a derived session name is refused.
+    let bad = SessionRecord {
+        name: "SVWL".to_string(),
+        ..record()
+    };
+    assert!(state.write_session_record(&bad).is_err());
 }
 
 /// `SessionStart` fires again after compaction, `/clear` and resume, and `Notification` also for an
@@ -306,25 +334,17 @@ fn the_headless_mark_is_set_cleared_and_ignored_without_a_record() {
 fn session_start_and_notification_hooks_have_narrow_matchers() {
     let base = Dir::new();
     let state = StateDir::open(&base.state()).expect("open");
-    let key = SessionKey::new("SVWL").expect("key");
-    let (exe, server, socket) = launch_files(&state);
-    let (toml, json, settings) = (
-        state.mcp_toml(BOT),
-        state.claude_mcp_json(BOT),
-        state.claude_settings(&key),
-    );
+    let name = SessionName::new("SVWL", "claude").expect("name");
+    let (exe, _server, socket) = launch_files(&state);
+    let (json, settings) = (state.claude_mcp_json(BOT), state.claude_settings(&name));
     let files = LaunchFiles {
-        mcp_server: &server,
-        mcp_toml: &toml,
         claude_mcp_json: &json,
         claude_settings: &settings,
         runner_exe: &exe,
         hook_socket: &socket,
         nonce: "0123456789abcdef0123456789abcdef",
-        state_dir: state.root(),
-        config_file: None,
     };
-    state.write_session_settings(&key, &files).expect("write");
+    state.write_session_settings(&name, &files).expect("write");
     let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&settings).expect("read")).expect("json");
     assert_eq!(value["hooks"]["SessionStart"][0]["matcher"], "startup");
     assert_eq!(
@@ -333,26 +353,4 @@ fn session_start_and_notification_hooks_have_narrow_matchers() {
     );
     assert!(value["hooks"]["Stop"][0].get("matcher").is_none());
     assert!(value["hooks"]["UserPromptSubmit"][0].get("matcher").is_none());
-}
-
-/// claude's configuration directory is the runner's own: one per bot under the state directory,
-/// private, and refused for an id that is not a plain id.
-#[test]
-fn the_claude_config_dir_is_private_per_bot_and_only_for_plain_ids() {
-    let base = Dir::new();
-    let state = StateDir::open(&base.state()).expect("open");
-    let one = state.ensure_claude_config_dir(BOT).expect("dir");
-    let two = state
-        .ensure_claude_config_dir("22222222-2222-4222-8222-222222222222")
-        .expect("dir");
-    assert_ne!(one, two);
-    assert_eq!(one, state.root().join("claude").join(BOT));
-    for dir in [state.root().join("claude"), one.clone(), two] {
-        assert_eq!(mode(&dir), 0o700, "{dir:?}");
-    }
-    // Idempotent.
-    assert_eq!(state.ensure_claude_config_dir(BOT).expect("again"), one);
-    for bad in ["", "../x", "a/b", "a b", ".hidden"] {
-        assert!(state.ensure_claude_config_dir(bad).is_err(), "{bad:?}");
-    }
 }

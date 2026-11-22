@@ -2,10 +2,11 @@
 //!
 //! Ignored unless run with `SV_TMUX_TESTS=1 cargo test -p sylvode-runner --test tmux_integration
 //! -- --ignored`. The server uses a random socket name (`svtest-<random>`), a short temporary
-//! `TMUX_TMPDIR` under `/tmp` (a unix socket path is limited to about 100 bytes on macOS) and
-//! `-f /dev/null` (or a configuration of the test's own), so it never meets the user's server,
-//! sessions or configuration; it is killed when the test ends, on every path. Nothing here starts
-//! a CLI agent: the sessions run `cat`.
+//! `TMUX_TMPDIR` under `/tmp` (a unix socket path is limited to about 100 bytes on macOS) and a
+//! scratch `HOME` (the driver passes no `-f`, so tmux reads `~/.tmux.conf`: that is the test's own
+//! file or none), so it never meets the user's default server, sessions or configuration; it is
+//! killed when the test ends, on every path. Nothing here starts a CLI agent: the sessions run
+//! `cat`.
 //!
 //! Needs `tmux` (3.2 or newer), `/usr/bin/env`, `sh`, `cat` and `kill` on the `PATH`; it passes on
 //! Linux and macOS. A CI job runs it with tmux installed from the distribution's package.
@@ -21,7 +22,7 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use tmux::{BracketedPasteConfirmed, Pane, PasteGuard, Refusal, SessionKey, SocketName, Tmux, TmuxError, WorkDir};
+use tmux::{BracketedPasteConfirmed, Pane, PasteGuard, Refusal, SessionName, SocketName, Tmux, TmuxError, WorkDir};
 
 /// The server of one test; killed on drop.
 struct Server {
@@ -35,12 +36,18 @@ impl Server {
         let socket = format!("svtest-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
         let dir = PathBuf::from("/tmp").join(format!("svt-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]));
         std::fs::create_dir_all(&dir).expect("create the scratch directory");
-        let mut tmux = Tmux::new(SocketName::new(&socket).expect("socket name"))
-            .with_env("TMUX_TMPDIR", &dir)
-            .with_systemd(false);
+        // The driver passes no `-f`: tmux reads `~/.tmux.conf` of this scratch home, which is the
+        // test's own configuration or nothing.
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).expect("create the scratch home");
         if let Some(config) = config {
-            tmux = tmux.with_config_file(config);
+            std::fs::copy(config, home.join(".tmux.conf")).expect("copy the configuration");
         }
+        let tmux = Tmux::new(SocketName::new(&socket).expect("socket name"))
+            .with_env("TMUX_TMPDIR", &dir)
+            .with_env("HOME", &home)
+            .with_env("XDG_CONFIG_HOME", home.join("xdg"))
+            .with_systemd(false);
         Self { tmux, socket, dir }
     }
 
@@ -49,9 +56,10 @@ impl Server {
     fn raw(&self, args: &[&str]) -> std::process::Output {
         assert!(self.socket.starts_with("svtest-"));
         Command::new("tmux")
-            .args(["-L", &self.socket, "-f", "/dev/null"])
+            .args(["-L", &self.socket])
             .args(args)
             .env("TMUX_TMPDIR", &self.dir)
+            .env("HOME", self.dir.join("home"))
             .env_remove("TMUX")
             .output()
             .expect("run tmux")
@@ -64,13 +72,16 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.tmux.kill_server();
+        // The driver has no way to end a server, on purpose: the test does it on its own socket.
+        assert!(self.socket.starts_with("svtest-"));
+        let _ = self.raw(&["kill-server"]);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
-fn key(value: &str) -> SessionKey {
-    SessionKey::new(value).expect("key")
+/// The session `<key>-claude`.
+fn key(value: &str) -> SessionName {
+    SessionName::new(value, "claude").expect("name")
 }
 
 fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
@@ -132,6 +143,7 @@ fn the_driver_against_a_real_tmux() {
 
     // No server yet: no session, no running server.
     assert_eq!(t.server_running(), Ok(false));
+    assert!(t.list_panes(&key("ABC")).is_err());
     assert_eq!(t.has_session(&key("ABC")), Ok(false));
 
     // `=AB` never reaches `ABC`. A single-element command runs without a shell, as `cat`.
@@ -145,8 +157,9 @@ fn the_driver_against_a_real_tmux() {
     assert!(info.pid > 1);
     // A pane id that exists but belongs to another session is refused for the wrong key.
     let wrong = Pane {
-        key: key("AB"),
+        name: key("AB"),
         id: abc.id.clone(),
+        pid: abc.pid,
     };
     assert_eq!(t.retry_enter(&wrong), Err(TmuxError::Refused(Refusal::NotOwned)));
 
@@ -162,9 +175,32 @@ fn the_driver_against_a_real_tmux() {
         Err(TmuxError::Failed { .. })
     ));
 
-    // The pane id of window 0 is found again when adopting.
-    assert_eq!(t.adopt_pane(&key("ABC")).expect("adopt"), abc);
-    assert!(t.adopt_pane(&key("AB")).is_err());
+    // The pane is found again by listing the session: its id, its process, the foreground command.
+    let panes = t.list_panes(&key("ABC")).expect("list");
+    assert_eq!(panes.len(), 1);
+    assert_eq!(
+        (
+            panes[0].id.clone(),
+            panes[0].pid,
+            panes[0].dead,
+            panes[0].command.as_str()
+        ),
+        (abc.id.clone(), abc.pid, false, "cat")
+    );
+    assert_eq!(info.pid, abc.pid, "the pid new-session printed is the pane's process");
+    assert!(t.list_panes(&key("AB")).is_err());
+    // The runner sets no option on the server or the session it created.
+    let options = server.raw(&["show-options", "-g"]);
+    assert!(
+        !String::from_utf8_lossy(&options.stdout).contains("remain-on-exit on"),
+        "the runner set remain-on-exit"
+    );
+    // The pane id with another PID is not the recorded pane.
+    let other_pid = Pane {
+        pid: abc.pid + 1,
+        ..abc.clone()
+    };
+    assert_eq!(t.retry_enter(&other_pid), Err(TmuxError::Refused(Refusal::NotOwned)));
 
     // Nobody is attached; scrollback can be captured.
     assert_eq!(t.client_activity(&key("ABC")), Ok(Vec::new()));
@@ -262,7 +298,7 @@ fn a_push_is_a_bracketed_paste_and_is_refused_where_that_cannot_be_promised() {
     // A pane that moved to another session name is not ours any more.
     assert!(
         server
-            .raw(&["rename-session", "-t", "=GOOD", "RENAMED"])
+            .raw(&["rename-session", "-t", "=GOOD-claude", "RENAMED"])
             .status
             .success()
     );
@@ -275,36 +311,63 @@ fn a_push_is_a_bracketed_paste_and_is_refused_where_that_cannot_be_promised() {
 
 #[test]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
-fn a_dead_pane_is_detected_refused_and_respawned() {
+fn a_dead_pane_is_detected_and_refused_and_an_exited_cli_ends_the_session() {
     if !enabled() {
         return;
     }
     let server = Server::new(None);
     let t = &server.tmux;
     let work = server.workdir();
+    // The runner sets no `remain-on-exit`: when the CLI of a session it created exits, the session
+    // is gone and the next delivery creates it again.
+    let gone = t
+        .new_session(&key("GONE"), &work, 100, 30, &bracketed_cat())
+        .expect("create");
+    wait_for("the program to run", || {
+        t.pane_info(&gone).is_ok_and(|i| i.current_command == "cat")
+    });
+    assert!(
+        Command::new("kill")
+            .arg(gone.pid.to_string())
+            .status()
+            .expect("kill")
+            .success()
+    );
+    wait_for("the session to end", || t.has_session(&key("GONE")) == Ok(false));
+    assert!(t.list_panes(&key("GONE")).is_err());
+    // An operator who keeps dead panes (their own `remain-on-exit`) is served as well: a dead pane
+    // is seen as dead and nothing is typed into it. (The server ended with its last session, so a
+    // keeper session holds it up while the option is set.)
+    t.new_session(&key("KEEP"), &work, 100, 30, &strings(&["sleep", "300"]))
+        .expect("create keeper");
+    assert!(
+        server
+            .raw(&["set-option", "-g", "remain-on-exit", "on"])
+            .status
+            .success()
+    );
     let pane = t
         .new_session(&key("DEAD"), &work, 100, 30, &bracketed_cat())
         .expect("create");
     wait_for("the program to run", || {
         t.pane_info(&pane).is_ok_and(|i| i.current_command == "cat")
     });
-    let pid = t.pane_info(&pane).expect("pane").pid;
-    let status = Command::new("kill").arg(pid.to_string()).status().expect("kill");
-    assert!(status.success());
-    wait_for("the pane to be dead", || t.pane_info(&pane).expect("pane").dead);
-    assert_eq!(
-        t.has_session(&key("DEAD")),
-        Ok(true),
-        "the window must survive the program"
+    let pid = pane.pid;
+    assert!(
+        Command::new("kill")
+            .arg(pid.to_string())
+            .status()
+            .expect("kill")
+            .success()
     );
+    wait_for("the pane to be dead", || t.pane_info(&pane).expect("pane").dead);
+    assert_eq!(t.has_session(&key("DEAD")), Ok(true));
+    assert!(t.list_panes(&key("DEAD")).expect("list")[0].dead);
     let guard = guard_for(&server, &pane, true);
     assert_eq!(
         push(&server, &pane, "text", &guard),
         Err(TmuxError::Refused(Refusal::PaneDead))
     );
-    t.respawn_pane(&pane, &work, &bracketed_cat()).expect("respawn");
-    wait_for("the pane to run again", || !t.pane_info(&pane).expect("pane").dead);
-    assert_ne!(t.pane_info(&pane).expect("pane").pid, pid);
 }
 
 #[test]
@@ -337,7 +400,7 @@ fn the_pane_is_found_by_id_under_a_user_configuration_and_after_window_moves() {
     // Moving the window does not redirect anything.
     assert!(
         server
-            .raw(&["move-window", "-s", "=BASE:1", "-t", "=BASE:9"])
+            .raw(&["move-window", "-s", "=BASE-claude:1", "-t", "=BASE-claude:9"])
             .status
             .success()
     );

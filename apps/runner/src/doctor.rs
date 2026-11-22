@@ -50,26 +50,22 @@ pub fn install_kind(config: Option<&Config>, mode: Mode) -> InstallKind {
     match mode {
         Mode::Tmux => InstallKind::RunnerTmux,
         Mode::Headless => InstallKind::RunnerHeadless,
-        // `auto` follows what the service will do: tmux only when the channel is switched on.
-        Mode::Auto if runner_agents && config.is_some_and(|c| c.runner.tmux.enabled) => InstallKind::RunnerTmux,
-        Mode::Auto if runner_agents => InstallKind::RunnerHeadless,
+        // The channel is chosen per project in Sylvode, so a runner with agents may be asked for
+        // tmux sessions at any time.
+        Mode::Auto if runner_agents => InstallKind::RunnerTmux,
         Mode::Auto => InstallKind::RunnerForwardOnly,
     }
 }
 
-/// The mode the running service needs: tmux only when the operator turned the channel on.
-pub const fn service_mode(config: &Config) -> Mode {
-    if config.runner.tmux.enabled {
-        Mode::Tmux
-    } else {
-        Mode::Headless
-    }
+/// The mode the running service needs: tmux sessions are always possible, so tmux.
+pub const fn service_mode() -> Mode {
+    Mode::Tmux
 }
 
 /// The rows that need no network: tmux, the CLIs, the MCP server and this runner.
 pub fn components(config: Option<&Config>, config_state: ConfigState, mode: Mode, checker: &Checker) -> Vec<Component> {
     let runner_agents = config.is_some_and(|c| c.agents.iter().any(|a| a.agent_type == "runner"));
-    let socket = config.map_or("sylvode", |c| c.runner.tmux.socket_name.as_str());
+    let socket = config.map_or("", |c| c.runner.tmux.socket_name.as_str());
     let mut rows = Vec::new();
     let mut tmux = checker.check_tmux(socket);
     if sylvode_prereq::in_container() && runner_agents {
@@ -159,7 +155,7 @@ pub async fn api_component(config: &Config, http: &reqwest::Client) -> Option<Co
     let target = crate::handshake::targets(config).into_iter().next()?;
     let client = crate::runner::sv_client::SvClient::new(http.clone(), &target.api_url, &target.token, &target.surface);
     let answer = client.protocol(Duration::from_secs(5)).await;
-    let kind = install_kind(Some(config), service_mode(config));
+    let kind = install_kind(Some(config), service_mode());
     let unreachable = (
         Finding::Unparsable,
         None,
@@ -196,9 +192,9 @@ pub fn project_row(config: &Config, key: &str, show_paths: bool) -> Component {
     let record = runtime_state
         .and_then(|dir| crate::runner::files::StateDir::open(&dir).ok())
         .and_then(|state| {
-            crate::runner::tmux::SessionKey::new(key)
+            crate::runner::tmux::SessionName::new(key, "claude")
                 .ok()
-                .and_then(|k| state.read_session_record(&k))
+                .and_then(|name| state.read_session_record(&name))
         });
     let Some(record) = record else {
         let check = ProjectCheck {
@@ -225,15 +221,10 @@ pub fn project_row(config: &Config, key: &str, show_paths: bool) -> Component {
         "conflict" => AgentGuide::Conflict,
         _ => AgentGuide::Absent,
     };
-    let trusted = if config.runner.trust_project_files.iter().any(|k| k == key) {
-        Trusted::Yes
-    } else {
-        Trusted::Unknown
-    };
     let check = ProjectCheck {
         key,
         directory: directory_state(&dir, &root_refs),
-        trusted,
+        trusted: Trusted::Unknown,
         agent_guide: guide,
         directory_path: Some(&dir),
     };
@@ -436,7 +427,7 @@ impl Prereq {
     /// The current rows for the running service (blocking: it runs programs).
     pub fn rows(&self, config: &Config) -> Vec<Component> {
         self.rows_at(Instant::now(), || {
-            let mode = service_mode(config);
+            let mode = service_mode();
             let checker = Checker::new(install_kind(Some(config), mode));
             components(Some(config), ConfigState::Found, mode, &checker)
         })
