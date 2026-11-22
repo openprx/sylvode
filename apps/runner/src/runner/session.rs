@@ -229,7 +229,7 @@ struct Shared {
     background: Background,
     /// The nonce of each session's current launch, for the hook listener (which checks a message
     /// before it spends anything on it).
-    nonces: Arc<Mutex<HashMap<String, String>>>,
+    nonces: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
 
 /// The sessions of this runner.
@@ -274,7 +274,7 @@ impl SessionManager {
             nonces
                 .lock()
                 .get(&message.session)
-                .is_some_and(|nonce| super::hooks::ct_eq(nonce, &message.nonce))
+                .is_some_and(|known| known.iter().any(|nonce| super::hooks::ct_eq(nonce, &message.nonce)))
         })
     }
 
@@ -469,7 +469,10 @@ impl Worker {
             .map(|record| record.nonce)
             .filter(|nonce| nonce.len() == 32)
             .unwrap_or_else(fresh_nonce);
-        shared.nonces.lock().insert(key.as_str().to_string(), nonce.clone());
+        shared
+            .nonces
+            .lock()
+            .insert(key.as_str().to_string(), vec![nonce.clone()]);
         let machine = Machine::new(
             Timers::from_config(&shared.config.runner),
             key.as_str(),
@@ -923,12 +926,17 @@ impl Worker {
 
     // ----- ensure -----
 
-    /// A launch began: its nonce is published to the listener and the order counter starts over.
-    fn launched(&mut self) {
+    /// The listener knows exactly this worker's current secret.
+    fn publish_nonce(&self) {
         self.shared
             .nonces
             .lock()
-            .insert(self.key.as_str().to_string(), self.nonce.clone());
+            .insert(self.key.as_str().to_string(), vec![self.nonce.clone()]);
+    }
+
+    /// A launch began: its nonce is published to the listener and the order counter starts over.
+    fn launched(&mut self) {
+        self.publish_nonce();
         self.seq_gate = super::hooks::SeqGate::default();
     }
 
@@ -1027,6 +1035,15 @@ impl Worker {
         let record = self.shared.state.read_session_record(&key);
         let task = task.clone();
         let job = self.settings_job(&task);
+        // The launch's secret is known to the listener before the CLI starts: its first hook
+        // (`SessionStart`) may arrive before this call returns.
+        let launch_nonce = fresh_nonce();
+        self.shared
+            .nonces
+            .lock()
+            .entry(self.key.as_str().to_string())
+            .or_default()
+            .push(launch_nonce.clone());
         let result = tokio::task::spawn_blocking(move || {
             ensure_blocking(
                 &tmux,
@@ -1038,12 +1055,18 @@ impl Worker {
                 record.as_ref(),
                 &job,
                 &tmux_cfg,
+                &launch_nonce,
             )
         })
         .await;
         let Ok(result) = result else {
+            self.publish_nonce();
             return declined("the tmux session could not be checked");
         };
+        if !matches!(&result, Ok(EnsureResult { record: Some(_), .. })) {
+            // No launch took place: the pending secret is forgotten.
+            self.publish_nonce();
+        }
         match result {
             Ok(EnsureResult { outcome, pane, record }) => {
                 self.pane = pane;
@@ -1327,10 +1350,11 @@ fn ensure_blocking(
     record: Option<&SessionRecord>,
     job: &SettingsJob,
     cfg: &super::config::RunnerTmuxConfig,
+    launch_nonce: &str,
 ) -> Result<EnsureResult, TmuxError> {
     // A server on the runner's socket that the runner did not start is not used.
     tmux.verify_server()?;
-    let launch_nonce = fresh_nonce();
+    let launch_nonce = launch_nonce.to_string();
     let new_record = |pane: &Pane, pid: u32| SessionRecord {
         nonce: launch_nonce.clone(),
         pushed: None,

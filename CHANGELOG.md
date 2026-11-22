@@ -38,6 +38,21 @@ name.
 
 ### Changed
 
+- **Runner hardening, third review.** Busy, choice and dialog detection reads only the CLI's own
+  chrome at the bottom of the screen; a screen hold is bounded (`screen_hold_secs`, default 600) and
+  then fails the waiting tasks as retryable; an acknowledged task is busy even if its
+  `UserPromptSubmit` hook was lost; a CLI is restarted for a changed directory only when its screen
+  is calm. Hook messages are checked against the launch's nonce before any work is spent, the
+  sender's ancestry is read without a `ps` per hop (`/proc` on Linux, one `ps -A` snapshot on
+  macOS), at most 32 connections are read at once, and an unreadable `session.json` admits nothing.
+  Hooks are ordered by a per-session counter, not the clock. The configuration file and the
+  canonical state directory are denied to the CLI, and no allowed root may contain the file. Extra
+  read rules count as confined only as `Read|Glob|Grep(/{dir}/...)`. A pushed task that cannot be
+  adopted after a restart fails as retryable. `--prune` never ends a working CLI. A successful
+  forward completes the task. The installer follows `[runner.tmux] enabled` (`--headless-only` is
+  removed), skips the macOS service-context check unless root, and `/health` returns only `status`
+  and `protocol`. The stand-in CLI of the tests never writes environment values, and every probe
+  starts with an allow-listed environment.
 - **MCP search mode is the default tool listing.** `tools/list` offers nine tools:
   `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the five task tools.
   Registry tools are found with `sylvode_search` and called through `sylvode_read` or
