@@ -158,7 +158,7 @@ jobs:
         run: cargo run --locked -p mcp-server --bin sylvode-skillgen -- --lint
       - name: Catalogue tests
         if: steps.filter.outputs.changed == 'true'
-        run: cargo test --locked -p mcp-server --lib catalog::
+        run: cargo test --locked -p mcp-server --lib "catalog::"
       - name: Agent policy names are catalogue names
         if: steps.filter.outputs.changed == 'true'
         run: cargo test --locked -p api --lib routes::context
