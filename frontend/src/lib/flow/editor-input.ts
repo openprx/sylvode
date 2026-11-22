@@ -261,6 +261,7 @@ function decodeMark(entry: unknown, text: string): ClipboardMark | null {
 /** Addresses the link mark and the link popover will accept. */
 export function safeHref(href: string): boolean {
 	if (href.length === 0 || href.length > 2048) return false;
+	// eslint-disable-next-line no-control-regex -- rejects control characters on purpose
 	if (/[\s\u0000-\u001f\u007f]/.test(href)) return false;
 	const lower = href.toLowerCase();
 	if (lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:'))

@@ -112,6 +112,7 @@ function label(value: unknown): value is string {
 		value.length > 0 &&
 		encoder.encode(value).length <= 120 &&
 		value === value.trim() &&
+		// eslint-disable-next-line no-control-regex -- rejects control characters on purpose
 		!/[\u0000-\u001f\u007f-\u009f]/.test(value)
 	);
 }

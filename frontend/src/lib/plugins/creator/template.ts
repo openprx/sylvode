@@ -59,6 +59,7 @@ export function invalidDraftFields(draft: CreatorDraft): (keyof CreatorDraft)[] 
 		if (field === 'version') return !releasePattern.test(value);
 		const limit = field.endsWith('Text') ? 320 : 120;
 		return (
+			// eslint-disable-next-line no-control-regex -- rejects control characters on purpose
 			!value || encoder.encode(value).length > limit || /[\u0000-\u001f\u007f-\u009f]/.test(value)
 		);
 	});
