@@ -325,6 +325,22 @@
 				"below_minimum_severity": "低于最低严重级别",
 				"notChecked": "未检查",
 				"draft": "此规则（未保存）"
+			},
+			"more": {
+				"nothingCreated": "测试不会创建任何内容：不创建告警、事项、机器人任务或通知，也不计入任何限额。",
+				"draftIncluded": "正在编辑的规则会按当前内容（未保存）一并参与测试。",
+				"loadFailed": "无法加载来源或事件。",
+				"retry": "重试",
+				"failed": "无法运行测试。",
+				"loadingEvents": "正在加载事件…",
+				"recentOption": "{time} · {kind} · {severity}",
+				"sampleHelp": "符合 Sylvode 事件格式的 JSON 对象：spec、event_id、occurred_at、kind、severity 和 title。",
+				"sampleError": {
+					"empty": "请输入示例事件。",
+					"notJson": "不是有效的 JSON。",
+					"notObject": "示例必须是 JSON 对象。",
+					"tooLarge": "示例超过 {max} KiB。"
+				}
 			}
 		},
 		"extra": {

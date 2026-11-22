@@ -327,6 +327,22 @@
 				"below_minimum_severity": "Below the minimum severity",
 				"notChecked": "Not checked",
 				"draft": "This rule (unsaved)"
+			},
+			"more": {
+				"nothingCreated": "A test creates nothing: no alert, no work item, no bot task and no notification, and no limit is counted.",
+				"draftIncluded": "The rule you are editing is included as it is now, unsaved.",
+				"loadFailed": "The sources or events could not be loaded.",
+				"retry": "Retry",
+				"failed": "The test could not be run.",
+				"loadingEvents": "Loading events…",
+				"recentOption": "{time} · {kind} · {severity}",
+				"sampleHelp": "A JSON object in the Sylvode event format: spec, event_id, occurred_at, kind, severity and title.",
+				"sampleError": {
+					"empty": "Enter a sample event.",
+					"notJson": "This is not valid JSON.",
+					"notObject": "The sample must be a JSON object.",
+					"tooLarge": "The sample is larger than {max} KiB."
+				}
 			}
 		},
 		"extra": {
