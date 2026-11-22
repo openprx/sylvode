@@ -169,6 +169,11 @@ lease_extension_secs = 1800
 # No extension moves a task's deadline past this many seconds after it was picked up. Must not be
 # below processing_timeout_secs. Default: 86400. Accepted range: processing_timeout_secs..=604800.
 max_processing_secs = 86400
+# Deepest hop of a bot-to-bot chain. A task a human or an inbound alert starts is depth 0; a task
+# a bot causes while it runs a task (a mention or an assignment) is one deeper. A hop beyond this
+# depth, or one that brings the same bot into a chain twice for the same work item, creates no
+# task and is recorded as an `ai_task.chain_refused` event. Default: 3. Accepted range: 1..=10.
+max_chain_depth = 3
 
 
 # ---------------------------------------------------------------------------------------------

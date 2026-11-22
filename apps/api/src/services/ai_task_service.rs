@@ -494,10 +494,208 @@ pub async fn runner_bot_block<C: ConnectionTrait>(
     })
 }
 
+/// Why the guard refused a task that a bot's action would have caused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainRefusal {
+    /// The task would be `depth` hops from the task a human or an inbound event started; `max` is
+    /// `[ai_tasks] max_chain_depth`.
+    TooDeep { depth: i32, max: i32 },
+    /// The bot already has a task in this chain for the same work item.
+    SameBotInChain,
+}
+
+impl ChainRefusal {
+    /// The reason stored in the `ai_task.chain_refused` event.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::TooDeep { .. } => "chain_too_deep",
+            Self::SameBotInChain => "chain_cycle",
+        }
+    }
+
+    /// What a refused caller is told.
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::TooDeep { .. } => "the bot-to-bot chain is too deep: no task was created",
+            Self::SameBotInChain => "the bot already took part in this chain for this work item: no task was created",
+        }
+    }
+}
+
+/// What [`dispatch_ai_task`] did.
+#[derive(Debug)]
+pub enum DispatchOutcome {
+    Created(AiTaskRow),
+    /// The idempotency key was queued before.
+    Duplicate,
+    /// A bot's action would have caused the task, and the chain rules refuse it. Nothing was
+    /// created; the refusal is recorded as an `ai_task.chain_refused` event.
+    ChainRefused(ChainRefusal),
+}
+
+/// The task a bot is executing when it acts.
+#[derive(Debug, FromQueryResult)]
+struct ActingTask {
+    id: Uuid,
+    chain_root_id: Uuid,
+    chain_depth: i32,
+}
+
+/// The task whose action `input` is, when a bot acts: the bot's active task of the deepest chain.
+///
+/// The actor is the authenticated identity of the request (a bot's token resolves to the bot's
+/// user), and the active tasks are rows only the server writes (`create_ai_task`, the protocol
+/// routes). Neither comment text, task payload nor a request header takes part, so the content a
+/// bot writes cannot name, hide or reset its chain. A bot with several active tasks is placed at
+/// the deepest of them, so running one more task cannot lower its depth. An inbound alert starts
+/// a chain whoever the actor is, and a human or a bot with no active task starts one too.
+async fn acting_task<C: ConnectionTrait>(db: &C, input: &CreateAiTaskInput) -> Result<Option<ActingTask>, ApiError> {
+    if matches!(input.origin, DispatchOrigin::InboundRule { .. }) {
+        return Ok(None);
+    }
+    let Some(actor_id) = input.actor_id else {
+        return Ok(None);
+    };
+    Ok(ActingTask::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!(
+            "SELECT t.id, COALESCE(t.chain_root_id, t.id) AS chain_root_id, t.chain_depth \
+             FROM ai_tasks t \
+             INNER JOIN users u ON u.id = t.ai_participant_id AND u.entity_type = 'bot' \
+             WHERE t.ai_participant_id = $1 AND t.status IN {ACTIVE_TASK_STATUSES_SQL} \
+             ORDER BY t.chain_depth DESC, t.started_at DESC NULLS LAST, t.id \
+             LIMIT 1"
+        ),
+        vec![actor_id.into()],
+    ))
+    .one(db)
+    .await?)
+}
+
+/// The work item a task is about: the item itself, or the item of a comment task.
+fn work_item_of(reference_type: Option<&str>, reference_id: Option<Uuid>, payload: &Value) -> Option<Uuid> {
+    if reference_type == Some("work_item") {
+        return reference_id;
+    }
+    payload
+        .get("issue_id")
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+}
+
+/// The refusal for a task `depth` hops deep for `input`, if the chain rules refuse it.
+async fn chain_refusal<C: ConnectionTrait>(
+    db: &C,
+    input: &CreateAiTaskInput,
+    parent: &ActingTask,
+    depth: i32,
+) -> Result<Option<ChainRefusal>, ApiError> {
+    let max = i32::try_from(crate::config::runtime().ai_tasks.max_chain_depth).unwrap_or(i32::MAX);
+    if depth > max {
+        return Ok(Some(ChainRefusal::TooDeep { depth, max }));
+    }
+    let Some(item) = work_item_of(input.reference_type.as_deref(), input.reference_id, &input.payload) else {
+        return Ok(None);
+    };
+    let repeated = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r"
+                SELECT 1
+                FROM ai_tasks
+                WHERE COALESCE(chain_root_id, id) = $1
+                  AND ai_participant_id = $2
+                  AND COALESCE(
+                        CASE WHEN reference_type = 'work_item' THEN reference_id::text END,
+                        payload ->> 'issue_id'
+                      ) = $3
+                LIMIT 1
+            ",
+            vec![
+                parent.chain_root_id.into(),
+                input.ai_participant_id.into(),
+                item.to_string().into(),
+            ],
+        ))
+        .await?
+        .is_some();
+    Ok(repeated.then_some(ChainRefusal::SameBotInChain))
+}
+
+/// Records a refusal: a business event, and an event on the task whose action was refused (the
+/// work item's agent task listing shows it).
+async fn record_chain_refusal<C: ConnectionTrait>(
+    db: &C,
+    input: &CreateAiTaskInput,
+    parent: &ActingTask,
+    refusal: ChainRefusal,
+    depth: i32,
+) -> Result<(), ApiError> {
+    let project = ProjectWorkspaceRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT workspace_id FROM projects WHERE id = $1",
+        vec![input.project_id.into()],
+    ))
+    .one(db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("project not found".to_string()))?;
+    let detail = json!({
+        "reason": refusal.code(),
+        "refused_bot_id": input.ai_participant_id,
+        "task_type": input.task_type,
+        "reference_type": input.reference_type,
+        "reference_id": input.reference_id,
+        "acting_task_id": parent.id,
+        "chain_root_id": parent.chain_root_id,
+        "depth": depth,
+        "max_depth": crate::config::runtime().ai_tasks.max_chain_depth,
+    });
+    insert_business_event(
+        db,
+        BusinessEventInput {
+            workspace_id: project.workspace_id,
+            project_id: Some(input.project_id),
+            event_type: "ai_task.chain_refused".to_string(),
+            aggregate_type: "ai_task".to_string(),
+            aggregate_id: parent.id.to_string(),
+            actor_id: input.actor_id,
+            source: created_event_source(input.origin, input.actor_id),
+            payload: detail.clone(),
+            metadata: json!({ "ai_task_id": parent.id, "reason": refusal.code() }),
+            correlation_id: Some(parent.chain_root_id),
+            causation_id: Some(parent.id),
+            idempotency_key: None,
+        },
+    )
+    .await?;
+    insert_ai_task_event(db, parent.id, "chain_refused", detail).await
+}
+
+/// [`dispatch_ai_task`] for a caller that has no use for the outcome: a chain refusal is an error.
 pub async fn create_ai_task<C: ConnectionTrait>(
     db: &C,
     input: CreateAiTaskInput,
 ) -> Result<Option<AiTaskRow>, ApiError> {
+    match dispatch_ai_task(db, input).await? {
+        DispatchOutcome::Created(task) => Ok(Some(task)),
+        DispatchOutcome::Duplicate => Ok(None),
+        DispatchOutcome::ChainRefused(refusal) => Err(ApiError::Conflict(refusal.message().to_string())),
+    }
+}
+
+/// The central agent-dispatch guard: every AI task is created here, and only here.
+///
+/// Besides the origin and the runner-bot connection checks, it places the task in a chain. A task
+/// a human or an inbound event starts is the root of a new chain at depth 0. A task caused by a
+/// bot's action while the bot runs a task ([`acting_task`]) is a child of that task, one deeper;
+/// it is refused beyond `[ai_tasks] max_chain_depth` and when the bot already has a task in the
+/// chain for the same work item. A refusal creates no task.
+pub async fn dispatch_ai_task<C: ConnectionTrait>(
+    db: &C,
+    input: CreateAiTaskInput,
+) -> Result<DispatchOutcome, ApiError> {
     match input.origin {
         DispatchOrigin::Request | DispatchOrigin::InboundRule { .. } => crate::oauth::delegated::refuse_agent_task()?,
         DispatchOrigin::Delegated => return Err(crate::oauth::delegated::agent_task_refused()),
@@ -507,6 +705,19 @@ pub async fn create_ai_task<C: ConnectionTrait>(
     if let Some(block) = runner_bot_block(db, input.project_id, input.ai_participant_id).await? {
         return Err(ApiError::Conflict(block.message().to_string()));
     }
+    let task_id = Uuid::new_v4();
+    let parent = acting_task(db, &input).await?;
+    let (chain_root_id, chain_parent_id, chain_depth) = match &parent {
+        Some(parent) => {
+            let depth = parent.chain_depth.saturating_add(1);
+            if let Some(refusal) = chain_refusal(db, &input, parent, depth).await? {
+                record_chain_refusal(db, &input, parent, refusal, depth).await?;
+                return Ok(DispatchOutcome::ChainRefused(refusal));
+            }
+            (parent.chain_root_id, Some(parent.id), depth)
+        }
+        None => (task_id, None, 0),
+    };
     let now = Timestamp::now();
     let max_attempts = input.max_attempts.max(1);
 
@@ -526,9 +737,12 @@ pub async fn create_ai_task<C: ConnectionTrait>(
                 idempotency_key,
                 max_attempts,
                 created_at,
-                updated_at
+                updated_at,
+                chain_root_id,
+                chain_parent_id,
+                chain_depth
             )
-            VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12)
+            VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT (idempotency_key) DO NOTHING
             RETURNING
                 id,
@@ -552,7 +766,7 @@ pub async fn create_ai_task<C: ConnectionTrait>(
                 updated_at
         ",
         vec![
-            Uuid::new_v4().into(),
+            task_id.into(),
             input.project_id.into(),
             input.ai_participant_id.into(),
             input.task_type.into(),
@@ -564,13 +778,16 @@ pub async fn create_ai_task<C: ConnectionTrait>(
             max_attempts.into(),
             now.into(),
             now.into(),
+            chain_root_id.into(),
+            chain_parent_id.into(),
+            chain_depth.into(),
         ],
     ))
     .one(db)
     .await?;
 
     let Some(task) = created else {
-        return Ok(None);
+        return Ok(DispatchOutcome::Duplicate);
     };
 
     insert_ai_task_event(
@@ -601,7 +818,7 @@ pub async fn create_ai_task<C: ConnectionTrait>(
     )
     .await?;
 
-    Ok(Some(task))
+    Ok(DispatchOutcome::Created(task))
 }
 
 /// The `source` of the `ai_task.created` business event: the service itself, or the rule and the

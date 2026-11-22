@@ -21,7 +21,7 @@ use crate::{
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
     response::{ApiResponse, PaginatedData},
     services::{
-        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task, runner_bot_block},
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         comments::insert_comment,
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
@@ -267,8 +267,11 @@ pub async fn create_comment(
             tracing::info!(%comment_id, %bot_id, reason = block.code(), "mention queued no task");
             continue;
         }
+        // A mention a bot's chain rules refuse queues no task, and the bot is still listed: the
+        // list is also the bots whose webhook delivery must not carry `bot_context`, which would
+        // start the bot through its webhook.
         task_bots.push(bot_id);
-        let _ = create_ai_task(
+        let outcome = dispatch_ai_task(
             &state.db,
             CreateAiTaskInput {
                 origin: DispatchOrigin::Request,
@@ -296,6 +299,9 @@ pub async fn create_comment(
             },
         )
         .await?;
+        if let DispatchOutcome::ChainRefused(refusal) = outcome {
+            tracing::info!(%comment_id, %bot_id, reason = refusal.code(), "mention queued no task");
+        }
     }
 
     trigger_webhooks_after_ai_tasks(
