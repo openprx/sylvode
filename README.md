@@ -5,14 +5,11 @@ business-form engine, collaborative Flow pages, WASM plugins, and a first-class
 MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, and
 **PostgreSQL 18**.
 
-> **Formerly OpenPR.** Releases up to 0.2.21 were published as OpenPR. Existing
-> OpenPR names (the `mcp-server` CLI commands, `config/openpr.toml`, `OPENPR_*`
-> compose variables, `openpr-*` release archives) keep
-> working with a deprecation warning and are not removed before Sylvode v2.0;
-> stable identifiers such as the REST API, MCP tool names, database names and the
-> plugin ABI are not renamed at all. See the
-> [v1.0 compatibility matrix](docs/sylvode-v1.0-compatibility.md) and
-> [CHANGELOG.md](CHANGELOG.md).
+> **Formerly OpenPR.** Releases up to 0.2.21 were published as OpenPR. The old
+> OpenPR names (`config/openpr.toml`, `OPENPR_*` compose variables, `openpr-*`
+> release archives, `X-OpenPR-*` headers, `openpr://` resource URIs) are not
+> supported. Stable identifiers such as the REST API, MCP tool names, database
+> names and the plugin ABI were not renamed. See [CHANGELOG.md](CHANGELOG.md).
 
 ## What It Provides
 
@@ -64,10 +61,8 @@ local user who can traverse `config/` can therefore read them, so protect the
 directory instead, for example `chmod 750 config` (or the deployment directory
 above it) with the deploying user as owner.
 Services publish on `${SYLVODE_BIND_HOST:-127.0.0.1}`: frontend `:3000`, API
-`:8081`, MCP `:8090`. `scripts/start.sh` maps the documented legacy environment
-aliases to these canonical compose inputs. `bash scripts/start.sh --check-config`
-only generates and validates the configuration, without building or starting
-anything.
+`:8081`, MCP `:8090`. `bash scripts/start.sh --check-config` only generates and
+validates the configuration, without building or starting anything.
 The `api` image ships `collab-isolated-apply-worker` next to `/app/api`: the API spawns it for
 every Flow collaborative write and looks for it in its own directory, so without it every edit
 fails. `--no-build` therefore expects `api`, `collab-isolated-apply-worker`, `worker` and
@@ -87,7 +82,7 @@ empty, which refuses every live-editing session.
 For demo data once healthy, `scripts/bootstrap-restaurant-demo.sh` creates a
 demo account, workspace, `restaurant_ordering_default` project with sample
 records, and a workspace-scoped bot token; it refuses non-local API URLs unless
-`SYLVODE_DEMO_ALLOW_REMOTE=1` (legacy `OPENPR_DEMO_ALLOW_REMOTE` still accepted).
+`SYLVODE_DEMO_ALLOW_REMOTE=1`.
 
 ### Local development
 
@@ -111,9 +106,8 @@ cargo run --bin mcp-server -- serve --config config/sylvode.toml --transport htt
 > `mcp.api_url` follows the same rule: `http://localhost:8081` from the host,
 > the `api` service address from inside the compose network.
 >
-> `--config` is optional; every binary first looks for `config/sylvode.toml`.
-> A legacy `config/openpr.toml` is discovered when the new path is absent. If both
-> exist, startup fails until `--config` explicitly selects one.
+> `--config` is optional; every binary looks for `config/sylvode.toml` when it is
+> absent.
 
 ## Configuration
 
@@ -123,8 +117,7 @@ variable at all**. The path comes from `--config <PATH>`, defaulting to
 `config/sylvode.toml` relative to the process working directory. A missing file
 is a startup error, never a silent fallback: the binaries never invent a
 database URL or a signing key. `config/sylvode.example.toml` is the annotated
-reference. The old `config/openpr.toml` default remains a compatibility fallback,
-but never silently wins over the new path.
+reference.
 
 Unknown keys are rejected, so a misspelled setting fails startup instead of
 being silently ignored.
@@ -378,11 +371,6 @@ names. An absolute path is what makes this work — the default
 `config/sylvode.toml` is relative to whatever working directory the MCP client
 happens to launch the process in.
 
-The legacy `mcp-server` CLI commands and `config/openpr.toml` remain supported
-and print a deprecation warning; they are not removed before Sylvode v2.0. See
-[the compatibility matrix](docs/sylvode-v1.0-compatibility.md) for conflict
-handling, the warnings and the earliest possible removal versions.
-
 > `--api-url`, `--bot-token`, `--workspace-id`, `--transport` and `--bind-addr`
 > exist as command-line overrides and win over the file. Prefer the file for
 > anything secret: a token in `argv` is readable by any local process through
@@ -487,8 +475,7 @@ sylvode objects get <object-uuid> --render markdown
 `mcp-server` is the MCP server (`mcp-server serve`). It still accepts the nine
 workspace groups as a deprecated alias: `mcp-server <group> ...` runs the same
 command with byte-identical stdout and the same exit code, and prints one
-deprecation warning on stderr. It is not removed before Sylvode v2.0; switch
-scripts to `sylvode <group> ...`. The Flow groups exist only under `sylvode`, and
+deprecation warning on stderr; use `sylvode <group> ...`. The Flow groups exist only under `sylvode`, and
 `serve` only under `mcp-server`.
 
 ## API
@@ -533,7 +520,7 @@ All under `scripts/`.
 
 | Group       | Scripts                                                                   |
 | ----------- | ------------------------------------------------------------------------- |
-| Lifecycle   | `start.sh` (first-run `config/sylvode.compose.toml` + `config/sylvode.compose.mcp.toml` + compose `.env`, random bootstrap secrets, build release binaries, `compose up -d`; legacy OpenPR filenames are discovered), `dev-up.sh` (PostgreSQL only, for host-side Rust), `stop.sh`, `clean.sh` (**tears down volumes** — destroys database data, asks to confirm) |
+| Lifecycle   | `start.sh` (first-run `config/sylvode.compose.toml` + `config/sylvode.compose.mcp.toml` + compose `.env`, random bootstrap secrets, build release binaries, `compose up -d`), `dev-up.sh` (PostgreSQL only, for host-side Rust), `stop.sh`, `clean.sh` (**tears down volumes** — destroys database data, asks to confirm) |
 | Database    | `init-db.sh` (apply migrations in order), `backup-db.sh` (gzipped dump into `backups/`), `restore-db.sh`                                                                                                                              |
 | Verification | `e2e-test.sh` (one-shot end-to-end with automatic teardown), `test-api.sh`, `test-mcp.sh` (legacy v0.4 integration checks), `verify.sh` (component health check)                                                                            |
 | Development | `dev-check.sh` (`cargo fmt --check`, `check`, `clippy -D warnings`, `test`), `ci-universal-forms-gates.sh` (reproduce the CI-only `Universal Forms Gates` bundle locally)                                                              |
@@ -577,7 +564,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 - `docs/universal-forms-production.md` — production runbook
 - `docs/universal-forms-implementation-map.md` — source module / verification command map
 - `docs/plugins/openpr-plugin-v1.wit` — plugin ABI v1
-- `docs/sylvode-v1.0-compatibility.md` — OpenPR compatibility names, deprecation warnings and upgrade sequence
+- `docs/sylvode-v1.0-compatibility.md` — the v1.0 compatibility matrix (a release-gate record of the retired OpenPR names)
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` — release notes, contributor guide, security policy
 - `apps/mcp-server/AGENTS.md` — coding-agent workflow patterns and tool examples
 - `skills/sylvode-mcp/SKILL.md` — the MCP skill package (single hand-written source; generated files are checked by `sylvode-skillgen --check`)

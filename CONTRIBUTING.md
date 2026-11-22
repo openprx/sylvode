@@ -282,11 +282,11 @@ The workspace lints in `Cargo.toml` and the settings in `clippy.toml` enforce th
 
 ## Compatibility
 
-Sylvode keeps its OpenPR-era identifiers stable. Do not rename anything listed in
-[docs/sylvode-v1.0-compatibility.md](docs/sylvode-v1.0-compatibility.md): the REST paths and
-schema identifiers, MCP tool names, database objects and migrations, the plugin ABI, the `opr_`
-token prefix, compose service labels and `OPENPR_TEST_DATABASE_URL`. Legacy entry points stay
-working with a deprecation warning and are not removed before Sylvode v2.0.
+Sylvode keeps no alias for an OpenPR name: a legacy configuration file, environment variable,
+header, URI or archive name is simply unknown, and no change adds one back. Identifiers that
+are stored or on the wire were not renamed and stay as they are: the REST paths and schema
+identifiers, MCP tool names, database objects and migrations, the plugin ABI, the `opr_` token
+prefix, compose service labels and `OPENPR_TEST_DATABASE_URL`.
 
 Migrations are append-only. Add a new `migrations/NNNN_description.sql` with the next number;
 never edit one that has been released.

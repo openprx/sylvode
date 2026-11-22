@@ -15,11 +15,6 @@ fix.
 | Latest release | Yes |
 | Any earlier release | No, upgrade to the latest release |
 
-The legacy names that the compatibility matrix keeps (the `mcp-server` CLI subcommands,
-`config/openpr.toml`, `OPENPR_*` compose variables and
-`openpr-<target>` release archives) are part of the same build and receive the same fixes. See
-[the compatibility matrix](docs/sylvode-v1.0-compatibility.md).
-
 ## Reporting a vulnerability
 
 Please do not open a public issue, pull request or discussion for a security problem.
