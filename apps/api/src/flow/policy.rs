@@ -450,12 +450,12 @@ pub async fn require_flow_workspace_admin_access(
     Ok(actor)
 }
 
-/// `feature_disabled` (`error-mapping-v1.md`: `Forbidden`/403/HTTP 200) when the workspace has no
-/// `flow_workspace_settings` row yet, or has one with `flow_enabled = false`.
+/// `feature_disabled` (`error-mapping-v1.md`: `Forbidden`/403/HTTP 200) when the workspace has a
+/// `flow_workspace_settings` row with `flow_enabled = false`.
 ///
-/// A missing row is deliberately treated the same as an explicit `false`: `flow_workspace_settings`
-/// is provisioned lazily (nothing in this package inserts a default row), so "never turned on" and
-/// "turned off" must fail exactly the same way (fail closed, not fail open on absence).
+/// Flow is on by default: a trigger gives every workspace a settings row at `flow_enabled = true`,
+/// and a workspace that somehow has no row is read as enabled, like the column default. Only an
+/// admin's explicit switch-off (or a database failure) refuses.
 pub async fn require_flow_enabled(state: &AppState, workspace_id: Uuid) -> Result<(), ApiError> {
     require_flow_enabled_on(&state.db, workspace_id).await
 }
@@ -469,8 +469,7 @@ pub async fn require_flow_enabled(state: &AppState, workspace_id: Uuid) -> Resul
 /// 403 / HTTP 200) rather than each caller re-spelling the message.
 ///
 /// # Errors
-/// `Forbidden` when the workspace has no `flow_workspace_settings` row or has one with
-/// `flow_enabled = false`. Propagates a database failure otherwise.
+/// `Forbidden` when the workspace has a `flow_workspace_settings` row with `flow_enabled = false`. Propagates a database failure otherwise.
 pub async fn require_flow_enabled_on<C: sea_orm::ConnectionTrait>(
     conn: &C,
     workspace_id: Uuid,

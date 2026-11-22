@@ -426,6 +426,12 @@ pub async fn list_projection_lag_candidates<C: ConnectionTrait>(
     )
 }
 
+/// Whether Flow is on for the workspace.
+///
+/// Every workspace owns a settings row (a trigger creates it with the workspace, at
+/// `flow_enabled = true`). A workspace without one is read as enabled, the same as the column
+/// default; only an explicit `false` row switches Flow off. A database failure is an error, never
+/// "enabled".
 pub async fn fetch_flow_enabled<C: ConnectionTrait>(conn: &C, workspace_id: Uuid) -> Result<bool, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
@@ -438,7 +444,7 @@ pub async fn fetch_flow_enabled<C: ConnectionTrait>(conn: &C, workspace_id: Uuid
     ))
     .one(conn)
     .await?;
-    Ok(row.is_some_and(|r| r.flow_enabled))
+    Ok(row.is_none_or(|r| r.flow_enabled))
 }
 
 /// `Some(workspace_id)` when `project_id` exists at all, regardless of which workspace it belongs
@@ -908,7 +914,7 @@ pub struct FlowSettingsRow {
 /// Reads a `flow_workspace_settings` row.
 ///
 /// `None` when the workspace has never had a row written — the handler synthesizes the column
-/// defaults (`flow_enabled=false`, `default_member_level='edit'`, `authz_epoch=0`) with
+/// defaults (`flow_enabled=true`, `default_member_level='edit'`, `authz_epoch=0`) with
 /// `updated_at`/`updated_by` as `null` rather than this function inventing a timestamp for a write
 /// that never happened.
 pub async fn fetch_flow_settings<C: ConnectionTrait>(
@@ -927,7 +933,7 @@ pub async fn fetch_flow_settings<C: ConnectionTrait>(
 
 /// Provisions the `flow_workspace_settings` row on first write, at column defaults.
 ///
-/// (`flow_enabled=false`, `default_member_level='edit'`), so the subsequent `FOR UPDATE` read in
+/// (`flow_enabled=true`, `default_member_level='edit'`), so the subsequent `FOR UPDATE` read in
 /// the same transaction always finds a row regardless of whether one existed before this call.
 pub async fn ensure_flow_settings_row<C: ConnectionTrait>(conn: &C, workspace_id: Uuid) -> Result<(), ApiError> {
     conn.execute(Statement::from_sql_and_values(

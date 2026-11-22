@@ -208,7 +208,7 @@ mod tests {
         .await;
         exec(
             &scratch.db,
-            "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled,default_member_level) VALUES($1,true,'edit')",
+            "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled,default_member_level) VALUES($1,true,'edit') ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled, default_member_level = EXCLUDED.default_member_level",
             vec![workspace.into()],
         )
         .await;

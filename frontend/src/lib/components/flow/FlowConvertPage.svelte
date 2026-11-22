@@ -10,6 +10,7 @@
 	import { FlowCommandService } from '#lib/flow/command-service.js';
 	import {
 		conversionAvailability,
+		defaultConversionDestination,
 		type ConversionAvailability
 	} from '#lib/flow/convert-availability.js';
 	const repository = getContext<FlowObjectRepository>(FLOW_REPOSITORY_CONTEXT);
@@ -52,8 +53,7 @@
 				allowed.mode === 'same_workspace'
 					? visible.filter((workspace) => workspace.id === allowed.workspaceId)
 					: visible;
-			if (allowed.mode === 'same_workspace' && workspaces.length === 1)
-				destination = allowed.workspaceId;
+			destination = defaultConversionDestination(allowed, source.data.workspace_id, workspaces);
 		} catch {
 			if (current === generation) failed = true;
 		} finally {

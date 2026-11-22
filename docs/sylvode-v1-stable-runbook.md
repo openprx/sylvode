@@ -7,7 +7,7 @@ This runbook is the executable checklist for a staged Flow rollout. The named pe
 1. Freeze the source commit, migration version, release binary SHA-256 values (`api`, `collab-isolated-apply-worker`, `worker`, `mcp-server`, `sylvode`), dashboard snapshot, and database restore point.
 2. Rehearse migration, backup restore, and rollback against a production copy. Compare document fingerprints, head sequence/frontier, projections, relations, lineage, and audit events.
 3. Deploy API, worker, and MCP before Web. `collab-isolated-apply-worker` is deployed with the API, in the same directory as the `api` executable; confirm one Flow edit is saved before expanding. Confirm protocol capability negotiation and the old-client window.
-4. Enable the Flow feature flag for one internal workspace, then expand by workspace. Never enable all workspaces in one step. Personal Flow and the other installation-wide Flow capabilities are on by default; to hold any of them back during the rollout, switch it off before opening traffic as described in `runbooks/flow-runtime-capabilities.md`.
+4. Flow is on by default for every workspace and every installation-wide Flow capability is on by default. To stage a rollout, switch Flow off for the workspaces that must wait (`PUT /api/v1/workspaces/{id}/features/flow` with `enabled: false`) and any capability you want to hold back before opening traffic, as described in `runbooks/flow-runtime-capabilities.md`, then switch workspaces on in small groups.
 5. Stop rollout on any data-integrity alarm, error-budget exhaustion, unexplained rejected-update increase, or projection/search lag budget breach.
 
 ## Sync degraded or hot document

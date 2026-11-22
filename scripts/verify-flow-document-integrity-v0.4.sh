@@ -173,7 +173,8 @@ VALUES ('$WORKSPACE_ID', 'integrity-$RUN_ID', 'Integrity Verify', '$OWNER_USER',
 INSERT INTO workspace_members (workspace_id, user_id, role, created_at)
 VALUES ('$WORKSPACE_ID', '$OWNER_USER', 'owner', now());
 INSERT INTO flow_workspace_settings (workspace_id, flow_enabled, default_member_level, authz_epoch, updated_at)
-VALUES ('$WORKSPACE_ID', true, 'edit', 0, now());
+VALUES ('$WORKSPACE_ID', true, 'edit', 0, now())
+ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = true, default_member_level = 'edit', authz_epoch = 0, updated_at = now();
 SQL
 
 USER_JWT="$(python3 -c '

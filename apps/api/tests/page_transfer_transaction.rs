@@ -1005,7 +1005,7 @@ async fn workspace_transfer_keeps_admission_and_write_guards() {
     .await;
     fixture::exec(
         db,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     )
     .await;

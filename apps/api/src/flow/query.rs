@@ -1007,7 +1007,7 @@ pub async fn get_projection_lag(
 pub fn feature_view_from_row(row: Option<FlowSettingsRow>) -> FlowFeatureView {
     row.map_or_else(
         || FlowFeatureView {
-            flow_enabled: false,
+            flow_enabled: true,
             default_member_level: "edit".to_string(),
             authz_epoch: 0,
             updated_at: None,

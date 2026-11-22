@@ -80,7 +80,7 @@ COMMENT ON COLUMN flow_objects.inherit_from_parent IS
 
 CREATE TABLE IF NOT EXISTS flow_workspace_settings (
   workspace_id UUID PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
-  flow_enabled BOOLEAN NOT NULL DEFAULT false,
+  flow_enabled BOOLEAN NOT NULL DEFAULT true,
   -- v0.4 always the default value; only the v0.5 authorization surface may change it.
   default_member_level TEXT NOT NULL DEFAULT 'edit',
   -- ADR-0012 s3.1: the row every grant/inheritance/membership/parent_id change takes

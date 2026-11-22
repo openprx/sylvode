@@ -16,7 +16,7 @@
 --   portable_graph_packages_enabled portable multi-object packages
 --
 -- scope_native_legacy, personal_package_imports, personal_scope_package_exports and
--- cross_workspace_forms_conversion keep their off default.
+-- cross_workspace_forms_conversion are left alone here; 0115_flow_default_on.sql switches them on.
 --
 -- The column defaults change unconditionally. The singleton row is switched on exactly once,
 -- recorded in flow_runtime_capability_rollouts: this file re-runs whenever the ledger has no row

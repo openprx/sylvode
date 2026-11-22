@@ -94,6 +94,13 @@ test('owner toggles Flow and its baseline; a member gets the forbidden-safe stat
 			data: { user_id: memberLogin.user.id, role: 'member' }
 		})
 	);
+	// Flow is on by default; start from the explicit off state this scenario walks through.
+	await unwrap(
+		await request.put(`/api/v1/workspaces/${workspace.id}/features/flow`, {
+			headers: ownerAuth,
+			data: { enabled: false, idempotency_key: `start-off-${runId}` }
+		})
+	);
 	const settingsUrl = `/workspace/${workspace.id}/settings/flow`;
 	const flowUrl = `/workspace/${workspace.id}/flow`;
 
