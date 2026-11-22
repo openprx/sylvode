@@ -827,16 +827,6 @@
       "explanation": "Notes in the runner (apps/runner, imported from the openpr-webhook repository) that its earlier standalone releases were called OpenPR Webhook, in the README upgrade section and the frozen release history (ADR-0020 D4)."
     },
     {
-      "id": "sylvode-apps-runner-dispatcher-test-environment",
-      "reason": "legacy_behaviour_test",
-      "repo": "sylvode",
-      "paths": [
-        "apps/runner/src/dispatcher.rs"
-      ],
-      "pattern": "OPENPR_API_URL = \"http://localhost:3000\"",
-      "explanation": "An environment entry in the apps/runner dispatcher's test configurations, passed through to an agent unchanged; the test checks pass-through, not the name."
-    },
-    {
       "id": "sylvode-apps-runner-changelog-history",
       "reason": "historical_document",
       "repo": "sylvode",
