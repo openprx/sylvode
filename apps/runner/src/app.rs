@@ -50,9 +50,25 @@ Commands:
   setup claude   Print (or with --apply write) the Sylvode MCP entry and hooks for a claude you start yourself
 ";
 
+/// Help text of `setup`.
+const SETUP_HELP: &str = "\
+Print (or with --apply write) the Sylvode MCP entry and hooks for a claude you start yourself.
+
+Usage: sylvode-runner setup claude --project KEY [--dir D] [--bot ID] [--apply] [--config PATH]
+
+Options:
+  --project KEY  The Sylvode project key (required)
+  --dir D        The working directory of the claude whose settings are changed
+  --bot ID       The bot identity to use
+  --apply        Write the entries; without it they are only printed
+  --config PATH  Path to the TOML configuration file [default: config.toml]
+  -h, --help     Print this help and exit
+";
+
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
     Help,
+    SetupHelp,
     Version,
     Serve {
         config_path: String,
@@ -126,6 +142,9 @@ fn parse_operator(word: &str, rest: &[OsString]) -> Result<Command, String> {
 
 /// `setup claude --project KEY [--config P] [--dir D] [--bot ID] [--apply]`.
 fn parse_setup(rest: &[OsString]) -> Result<Command, String> {
+    if rest.iter().any(|item| item == "-h" || item == "--help") {
+        return Ok(Command::SetupHelp);
+    }
     let mut items = rest.iter();
     match items.next().and_then(|item| item.to_str()) {
         Some("claude") => {}
@@ -303,6 +322,7 @@ pub fn run() -> ExitCode {
 
     match command {
         Command::Help => write_stdout(HELP),
+        Command::SetupHelp => write_stdout(SETUP_HELP),
         Command::Version => write_stdout(&version_line()),
         Command::Serve { config_path } => serve_blocking(&config_path),
         Command::Doctor(options) => crate::doctor::run(&options),
@@ -713,6 +733,15 @@ mod tests {
     fn flags_and_paths_are_told_apart() {
         assert_eq!(parse_command(&["--help".into()]), Ok(Command::Help));
         assert_eq!(parse_command(&["-h".into()]), Ok(Command::Help));
+        for args in [
+            &["setup", "--help"][..],
+            &["setup", "claude", "--help"],
+            &["setup", "claude", "-h"],
+        ] {
+            let args: Vec<OsString> = args.iter().map(OsString::from).collect();
+            assert_eq!(parse_command(&args), Ok(Command::SetupHelp));
+        }
+        assert!(SETUP_HELP.contains("setup claude --project KEY"));
         assert_eq!(parse_command(&["--version".into()]), Ok(Command::Version));
         assert_eq!(parse_command(&["-V".into()]), Ok(Command::Version));
         assert_eq!(
