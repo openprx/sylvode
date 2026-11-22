@@ -23,8 +23,8 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # Keep the destructive compose lifecycle isolated from developer/demo stacks and make every
-# container created by this RC gate visibly owned by v0.9.
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-v09-openpr-rc}"
+# container created by this gate visibly owned by it.
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sylvode-e2e}"
 # podman-compose 1.3 can lose already-created dependencies while constructing
 # one combined graph. Start the real compose services in dependency order.
 export SYLVODE_COMPOSE_STAGED=1

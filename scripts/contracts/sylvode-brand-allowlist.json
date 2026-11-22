@@ -200,20 +200,6 @@
       "explanation": "File names of the signed 2026-05-31 Universal Forms acceptance bundle; its manifest, checksums and the report generators identify the bundle by these names."
     },
     {
-      "id": "sylvode-v09-frozen-matrix",
-      "reason": "frozen_evidence",
-      "repo": "sylvode",
-      "paths": [
-        "**"
-      ],
-      "pattern": "v09-openpr-[\\w.-]+|openpr_uri_alias_all_resources_three_transports|v08_openpr_registry",
-      "explanation": "The v0.9 rc compose project name used by scripts/e2e-test.sh and the gate keys that remain in the source. Also covers the tracked file names that carry the identifier.",
-      "applies_to": [
-        "content",
-        "path"
-      ]
-    },
-    {
       "id": "sylvode-frozen-receipt-repository",
       "reason": "frozen_evidence",
       "repo": "sylvode",
