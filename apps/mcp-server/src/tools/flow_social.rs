@@ -431,11 +431,12 @@ pub fn list_trash_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "flow.trash.list".to_string(),
-        description: "List archived Flow objects in a workspace that the caller can view.".to_string(),
+        description: "List archived Flow objects in a workspace that the caller can view. With project_id the listing is limited to the archived objects of that project; a runner bot must name one of its connected projects.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "workspace_id": { "type": "string" },
+                "project_id": { "type": "string", "description": "Project UUID; limits the listing to that project's archived objects" },
                 "cursor": { "type": "string" },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
             },
@@ -448,6 +449,7 @@ pub fn list_trash_tool() -> ToolDefinition {
 #[derive(Debug, Deserialize)]
 struct TrashInput {
     workspace_id: String,
+    project_id: Option<String>,
     cursor: Option<String>,
     limit: Option<u64>,
 }
@@ -459,7 +461,12 @@ pub async fn list_trash(client: &OpenPrClient, args: Value) -> CallToolResult {
     };
     respond_data(
         client
-            .list_flow_trash(&input.workspace_id, input.cursor.as_deref(), input.limit)
+            .list_flow_trash(
+                &input.workspace_id,
+                input.project_id.as_deref(),
+                input.cursor.as_deref(),
+                input.limit,
+            )
             .await,
     )
 }
