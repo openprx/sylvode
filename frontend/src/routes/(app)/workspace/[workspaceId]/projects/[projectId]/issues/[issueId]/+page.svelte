@@ -1356,6 +1356,7 @@
 										<div>
 											<p class="text-sm text-fg">
 												<span class="font-medium">{getActivityAuthor(activity)}</span>
+												<!-- eslint-disable-next-line svelte/no-useless-mustaches -- keeps the space between the author and the activity text -->
 												{' '}
 												{formatActivity(activity)}
 											</p>
