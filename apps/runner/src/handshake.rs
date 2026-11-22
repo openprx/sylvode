@@ -191,7 +191,11 @@ impl Handshake {
 
 /// The report body: the subset Sylvode keeps. Information counts as ok; paths, hints and details
 /// never leave the process.
-pub fn report_body(rows: &[Component]) -> Value {
+pub fn report_body(
+    rows: &[Component],
+    sessions: &[crate::runner::session_report::Assessment],
+    posture: crate::runner::session_report::Posture,
+) -> Value {
     let components: Vec<Value> = rows
         .iter()
         .map(|row| {
@@ -209,10 +213,51 @@ pub fn report_body(rows: &[Component]) -> Value {
             Value::Object(kept)
         })
         .collect();
+    let mut components = components;
+    components.push(posture_row(posture));
+    components.extend(sessions.iter().map(session_row));
     json!({
         "generated_by": {"version": env!("CARGO_PKG_VERSION"), "task_protocol": TASK_PROTOCOL},
         "components": components,
     })
+}
+
+/// The `posture` row: whether the launch settings of each channel run with permission checks off.
+fn posture_row(posture: crate::runner::session_report::Posture) -> Value {
+    json!({
+        "component": "posture",
+        "status": if posture.tmux || posture.headless { "warn" } else { "ok" },
+        "bypass": {"tmux": posture.tmux, "headless": posture.headless},
+    })
+}
+
+/// A `tmux_session` row: the project key, the CLI type and fields of fixed vocabularies; no session
+/// name, path or pane id.
+fn session_row(session: &crate::runner::session_report::Assessment) -> Value {
+    let status = match session.status {
+        Status::Ok | Status::Info => "ok",
+        Status::Warn => "warn",
+        Status::Fail => "fail",
+    };
+    let mut row = serde_json::Map::new();
+    row.insert("component".to_string(), json!("tmux_session"));
+    row.insert("project_key".to_string(), json!(session.name.key()));
+    row.insert("cli".to_string(), json!(session.name.cli()));
+    row.insert("status".to_string(), json!(status));
+    row.insert("state".to_string(), json!(session.state.word()));
+    if let Some(created_by) = session.created_by {
+        row.insert("created_by".to_string(), json!(created_by.word()));
+    }
+    if let Some(hooks) = session.hooks {
+        row.insert("hooks".to_string(), json!(if hooks { "seen" } else { "none" }));
+    }
+    if let Some(permissions) = session.permissions {
+        row.insert("permissions".to_string(), json!(permissions.word()));
+    }
+    if let Some(mcp) = session.mcp {
+        row.insert("mcp".to_string(), json!(mcp.word()));
+    }
+    Value::Object(row)
 }
 
 fn api_row(api_protocol: u64, api_version: Option<&str>) -> Component {
@@ -233,6 +278,14 @@ pub async fn run_once(config: &Config, http: &reqwest::Client, handshake: &Hands
     let mut interval = config.runner.report_interval_secs.unwrap_or(DEFAULT_INTERVAL_SECS);
     let mut mismatch: Option<u64> = None;
     let mut answered = false;
+    // The sessions are looked at once a round (read-only calls that run programs).
+    let sessions = {
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || crate::runner::session_report::assess_recorded(&config))
+            .await
+            .unwrap_or_default()
+    };
+    let posture = crate::runner::session_report::posture_of(&config.runner);
     for target in targets(config) {
         let client = SvClient::new(http.clone(), &target.api_url, &target.token, &target.surface);
         let data = match client.protocol(CALL_TIMEOUT).await {
@@ -259,7 +312,16 @@ pub async fn run_once(config: &Config, http: &reqwest::Client, handshake: &Hands
         if handshake.memory.lock().no_runner_row.contains(&target.bot_id) {
             continue;
         }
-        match client.put_report(&report_body(&rows), CALL_TIMEOUT).await {
+        // Only the sessions this bot serves.
+        let own: Vec<_> = sessions
+            .iter()
+            .filter(|session| session.bot_id.eq_ignore_ascii_case(&target.bot_id))
+            .cloned()
+            .collect();
+        match client
+            .put_report(&report_body(&rows, &own, posture), CALL_TIMEOUT)
+            .await
+        {
             Ok(()) => {}
             Err(SvError::Status(404)) => {
                 tracing::warn!(
@@ -345,13 +407,21 @@ mod tests {
         tmux.path = Some("/opt/homebrew/bin/tmux".to_string());
         let warn = Component::new("cli.claude", true, Status::Warn, false);
         let fail = Component::new("mcp_server", false, Status::Fail, true).with_hint("secret hint");
-        let body = report_body(&[tmux, warn, fail]);
+        let body = report_body(
+            &[tmux, warn, fail],
+            &[],
+            crate::runner::session_report::Posture {
+                tmux: false,
+                headless: false,
+            },
+        );
         assert_eq!(
             body["components"],
             json!([
                 {"component": "tmux", "status": "ok", "version": "3.7b"},
                 {"component": "cli.claude", "status": "warn"},
                 {"component": "mcp_server", "status": "fail"},
+                {"component": "posture", "status": "ok", "bypass": {"tmux": false, "headless": false}},
             ])
         );
         assert_eq!(
@@ -364,6 +434,64 @@ mod tests {
         }
         // Small enough for the API's 16 KiB limit with room to spare.
         assert!(text.len() < 1024);
+    }
+
+    /// The rows the API's sanitiser keeps (`bot_connection_status.rs`): `posture` with a boolean per
+    /// channel, and `tmux_session` keyed by project key and CLI with five fixed-vocabulary fields.
+    #[test]
+    fn the_posture_and_session_rows_have_exactly_the_shape_the_api_keeps() {
+        use crate::runner::files::CreatedBy;
+        use crate::runner::session_report::{Assessment, Mcp, Permissions, Posture, SessionState};
+        use crate::runner::tmux::SessionName;
+        let name = SessionName::new("QLA", "claude").expect("name");
+        let running = Assessment {
+            name,
+            bot_id: "b".to_string(),
+            state: SessionState::Running,
+            created_by: Some(CreatedBy::Operator),
+            hooks_seen: None,
+            hooks: Some(true),
+            permissions: Some(Permissions::Bypass),
+            mcp: Some(Mcp::Stale),
+            pane_id: Some("%3".to_string()),
+            foreground: Some("claude".to_string()),
+            status: Status::Warn,
+        };
+        let absent = Assessment {
+            state: SessionState::Absent,
+            created_by: None,
+            hooks: None,
+            permissions: None,
+            mcp: None,
+            pane_id: None,
+            foreground: None,
+            status: Status::Ok,
+            ..running.clone()
+        };
+        let body = report_body(
+            &[],
+            &[running, absent],
+            Posture {
+                tmux: true,
+                headless: false,
+            },
+        );
+        assert_eq!(
+            body["components"],
+            json!([
+                {"component": "posture", "status": "warn", "bypass": {"tmux": true, "headless": false}},
+                {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "warn",
+                 "state": "running", "created_by": "operator", "hooks": "seen", "permissions": "bypass",
+                 "mcp": "stale"},
+                {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "ok",
+                 "state": "absent"},
+            ])
+        );
+        // No session name, pane id or foreground command leaves the process.
+        let text = body.to_string();
+        for leaked in ["QLA-claude", "%3", "pane", "foreground", "\"b\""] {
+            assert!(!text.contains(leaked), "{leaked}: {text}");
+        }
     }
 
     #[test]

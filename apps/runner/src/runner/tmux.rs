@@ -975,6 +975,17 @@ impl Tmux {
         }
     }
 
+    /// The process id of the tmux server the pane lives on (for the pane's hook counter file).
+    ///
+    /// # Errors
+    ///
+    /// A failure status or an unreadable answer.
+    pub fn server_pid(&self, pane: &Pane) -> Result<u32, TmuxError> {
+        self.field(pane, "#{pid}")?
+            .parse()
+            .map_err(|_| unreadable("server pid"))
+    }
+
     /// State, foreground command and directory of the pane, each from its own call.
     ///
     /// # Errors

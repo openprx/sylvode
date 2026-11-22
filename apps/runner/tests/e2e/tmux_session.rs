@@ -422,6 +422,18 @@ async fn a_task_is_typed_into_a_session_the_runner_created_and_the_next_waits_it
     );
     let log = server.stdout().join("\n");
     assert!(!log.contains(TOKEN));
+    // The session the runner started: hooks were seen, the MCP file is in its arguments, and the
+    // default launch command runs with permission checks off.
+    let row = fx.session_row();
+    let detail = &row["detail"];
+    assert_eq!(detail["state"], "running", "{row}");
+    assert_eq!(detail["created_by"], "runner", "{row}");
+    assert!(
+        detail["hooks"].as_str().is_some_and(|h| h.starts_with("seen ")),
+        "{row}"
+    );
+    assert_eq!(detail["mcp"], "ok", "{row}");
+    assert_eq!(detail["permissions"], "bypass", "{row}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1175,4 +1187,105 @@ async fn a_directory_outside_the_roots_matters_only_when_the_runner_would_create
     assert_eq!(answer["status"], "dispatched", "{answer}");
     assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
     drop(server);
+}
+
+impl Fixture {
+    /// `doctor --json --project SVWL` and its `session.SVWL-claude` row.
+    fn session_row(&self) -> Value {
+        let output = Command::new(RUNNER)
+            .args(["doctor", "--json", "--project", "SVWL", "--config"])
+            .arg(self.config_file())
+            .env("TMUX_TMPDIR", &self.tmux.dir)
+            .env_remove("TMUX")
+            .output()
+            .expect("run doctor");
+        let report: Value = serde_json::from_slice(&output.stdout).expect("doctor json");
+        report["components"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["component"] == "session.SVWL-claude"))
+            .cloned()
+            .unwrap_or_else(|| panic!("no session row: {report}"))
+    }
+}
+
+/// `doctor --project` for a session the operator started: every field of the row, read from tmux
+/// and the CLI's process (the stand-in is started with the bypass flag and this bot's MCP file).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn doctor_describes_the_session_of_a_project() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    // No session yet: absent, and that is fine.
+    let absent = fx.session_row();
+    assert_eq!(absent["detail"]["state"], "absent", "{absent}");
+    assert_eq!(absent["status"], "ok");
+    assert_eq!(absent["found"], false);
+    // The operator's claude, with permission checks off and this bot's MCP file in its arguments.
+    let state = fx.tmux.state();
+    let settings = state.join("sessions/SVWL-claude/claude-settings.json");
+    let mcp_json = state.join(format!("mcp/{BOT}.claude.json"));
+    assert!(
+        fx.tmux
+            .raw(&[
+                "new-session",
+                "-d",
+                "-s",
+                "SVWL-claude",
+                "-c",
+                &fx.project.to_string_lossy(),
+                "--",
+                &fx.bin.file("claude").to_string_lossy(),
+                "--permission-mode",
+                "bypassPermissions",
+                "--mcp-config",
+                &mcp_json.to_string_lossy(),
+                "--settings",
+                &settings.to_string_lossy(),
+            ])
+            .status
+            .success()
+    );
+    fx.set_view(T1, true, true);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    drop(server);
+    let row = fx.session_row();
+    let detail = &row["detail"];
+    assert_eq!(detail["state"], "running", "{row}");
+    assert_eq!(detail["created_by"], "operator", "{row}");
+    assert_eq!(detail["permissions"], "bypass", "{row}");
+    assert_eq!(detail["mcp"], "ok", "{row}");
+    assert_eq!(detail["hooks"], "none", "no hook runs without settings: {row}");
+    assert!(
+        detail["pane"].as_str().is_some_and(|pane| pane.starts_with('%')),
+        "{row}"
+    );
+    assert_eq!(detail["foreground"], "claude", "{row}");
+    // Bypass and no hooks are warnings, not failures.
+    assert_eq!(row["status"], "warn", "{row}");
+    assert_eq!(row["found"], true);
+    // A session that lost its CLI fails the row, with the attach hint.
+    assert!(fx.tmux.raw(&["kill-session", "-t", "=SVWL-claude"]).status.success());
+    assert!(
+        fx.tmux
+            .raw(&["new-session", "-d", "-s", "SVWL-claude", "-c", "/tmp", "--", "cat"])
+            .status
+            .success()
+    );
+    let gone = fx.session_row();
+    assert_eq!(gone["detail"]["state"], "cli_not_running", "{gone}");
+    assert_eq!(gone["status"], "fail");
+    assert!(
+        gone["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("tmux attach -t SVWL-claude")
+    );
 }

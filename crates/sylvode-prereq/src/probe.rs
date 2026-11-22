@@ -355,8 +355,13 @@ impl Checker {
     #[must_use]
     pub fn check_tmux(&self, socket: &str) -> Component {
         let min = format!("{}.{}", TMUX_MIN_VERSION.0, TMUX_MIN_VERSION.1);
-        let socket_ok = valid_socket_name(socket);
-        let detail_socket = if socket_ok { socket } else { "invalid" };
+        // An empty name is the operator's default tmux server: no `-L`.
+        let socket_ok = socket.is_empty() || valid_socket_name(socket);
+        let detail_socket = match (socket_ok, socket.is_empty()) {
+            (false, _) => "invalid",
+            (true, true) => "default",
+            (true, false) => socket,
+        };
         let Some(path) = self.locate("tmux") else {
             let (status, required) = self.status(ComponentKind::Tmux, Finding::Missing);
             return Component::new("tmux", false, status, required)
@@ -377,7 +382,11 @@ impl Checker {
         let (status, required) = self.status(ComponentKind::Tmux, finding);
         let server_running = socket_ok
             && matches!(
-                self.run(&path, &["-L", socket, "list-sessions"]),
+                if socket.is_empty() {
+                    self.run(&path, &["list-sessions"])
+                } else {
+                    self.run(&path, &["-L", socket, "list-sessions"])
+                },
                 RunOutcome::Exited { code: Some(0), .. }
             );
         let mut component = Component::new("tmux", true, status, required)

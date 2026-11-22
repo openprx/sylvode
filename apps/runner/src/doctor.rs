@@ -86,12 +86,12 @@ pub fn components(config: Option<&Config>, config_state: ConfigState, mode: Mode
     rows.push(checker.check_cli(sylvode_prereq::Cli::Opencode, selected_opencode, opencode.as_deref()));
     let server = config.map(|c| PathBuf::from(&c.runner.mcp.server_binary));
     rows.push(checker.check_peer(Peer::McpServer, server.as_deref(), Some(TASK_PROTOCOL)));
-    rows.push(runner_row(config_state, checker));
+    rows.push(runner_row(config, config_state, checker));
     rows
 }
 
 /// The `runner` row: this binary, its configuration, its service and (on Linux) linger.
-fn runner_row(config_state: ConfigState, checker: &Checker) -> Component {
+fn runner_row(config: Option<&Config>, config_state: ConfigState, checker: &Checker) -> Component {
     let (service, linger) = service_state(checker);
     let config_word = match config_state {
         ConfigState::Found => "parsed",
@@ -107,6 +107,24 @@ fn runner_row(config_state: ConfigState, checker: &Checker) -> Component {
         .with_detail("config", json!(config_word))
         .with_detail("service", json!(service))
         .with_detail("linger", json!(linger));
+    // The posture: the launch command and headless arguments, and whether they run with
+    // permission checks off (the defaults do).
+    if let Some(config) = config {
+        let posture = crate::runner::session_report::posture_of(&config.runner);
+        let claude = &config.runner.cli.claude;
+        row = row
+            .with_detail("launch_command", json!(claude.launch_command))
+            .with_detail("headless_args", json!(claude.headless_args))
+            .with_detail("bypass", json!({"tmux": posture.tmux, "headless": posture.headless}));
+        if (posture.tmux || posture.headless) && row.status == Status::Ok {
+            row.status = Status::Warn;
+            row.hint = Some(
+                "permission checks are off in the launch command or the headless arguments: tasks run with every \
+                 permission of this user"
+                    .to_string(),
+            );
+        }
+    }
     row.version = Some(env!("CARGO_PKG_VERSION").to_string());
     row.path = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
     if config_state == ConfigState::Invalid {
@@ -231,6 +249,74 @@ pub fn project_row(config: &Config, key: &str, show_paths: bool) -> Component {
     project_component(&check, show_paths)
 }
 
+/// The `session.<KEY>-claude` row: what the runner can see of the project's tmux session. `None`
+/// for a key that is not a project key.
+pub fn session_row(config: &Config, key: &str) -> Option<Component> {
+    use crate::runner::session_report::{SessionState, assess_named};
+    let name = crate::runner::tmux::SessionName::new(key, "claude").ok()?;
+    let component = format!("session.{}", name.as_str());
+    let Some(session) = assess_named(config, &name) else {
+        return Some(
+            Component::new(component, false, Status::Ok, false)
+                .with_detail("state", json!("unknown"))
+                .with_hint("tmux or the runner's state directory is not available to look at the session"),
+        );
+    };
+    let mut row = Component::new(component, session.state != SessionState::Absent, session.status, false)
+        .with_detail("state", json!(session.state.word()));
+    if let Some(created_by) = session.created_by {
+        row = row.with_detail("created_by", json!(created_by.word()));
+    }
+    row = row.with_detail("pane", json!(session.pane_id.as_deref().unwrap_or("none")));
+    if session.state == SessionState::Ambiguous {
+        row = row.with_detail("pane", json!("ambiguous"));
+    }
+    if let Some(foreground) = &session.foreground {
+        row = row.with_detail("foreground", json!(foreground));
+    }
+    if let Some(hooks) = session.hooks {
+        let seen = session
+            .hooks_seen
+            .and_then(|at| at.elapsed().ok())
+            .map_or_else(|| "none".to_string(), |ago| format!("seen {}s ago", ago.as_secs()));
+        row = row.with_detail("hooks", json!(if hooks { seen } else { "none".to_string() }));
+    }
+    if let Some(permissions) = session.permissions {
+        row = row.with_detail("permissions", json!(permissions.word()));
+    }
+    if let Some(mcp) = session.mcp {
+        row = row.with_detail("mcp", json!(mcp.word()));
+    }
+    let name = name.as_str();
+    row.hint = match session.state {
+        SessionState::CliNotRunning => Some(format!(
+            "attach with tmux attach -t {name} and start the CLI, or end the session so the runner starts it"
+        )),
+        SessionState::Ambiguous => Some(format!("tmux session {name} has more than one pane running the CLI")),
+        SessionState::Dialog => Some(format!(
+            "the CLI shows a dialog; attach with tmux attach -t {name} and answer it"
+        )),
+        SessionState::Absent => Some("not started: the runner starts it with the next task".to_string()),
+        SessionState::Running => match (session.mcp, session.permissions) {
+            (Some(crate::runner::session_report::Mcp::Missing | crate::runner::session_report::Mcp::Other), _) => Some(
+                "the CLI has no Sylvode MCP server for this bot: run `sylvode-runner setup claude --project KEY`"
+                    .to_string(),
+            ),
+            (Some(crate::runner::session_report::Mcp::Stale), _) => {
+                Some("the credentials changed after the CLI started: restart it to load them".to_string())
+            }
+            (_, Some(crate::runner::session_report::Permissions::Bypass)) => {
+                Some("the CLI runs with permission checks off".to_string())
+            }
+            _ if session.hooks == Some(false) => {
+                Some("no hook seen from this pane: turn tracking is from the screen only".to_string())
+            }
+            _ => row.hint.take(),
+        },
+    };
+    Some(row)
+}
+
 /// The worktree warning of the guide installer: a project whose `.git` is a file cannot have its
 /// exclude line written (it belongs to the main repository), so the skill directory could be
 /// committed. Reported for the project's directory when it is a git worktree.
@@ -249,6 +335,7 @@ pub fn report(options: &Options, config: Option<&Config>, state: ConfigState, ap
     }
     if let (Some(config), Some(key)) = (config, &options.project) {
         rows.push(project_row(config, key, options.show_paths));
+        rows.extend(session_row(config, key));
         let dir_known = rows.last().and_then(|r| {
             r.detail
                 .get("directory_path")

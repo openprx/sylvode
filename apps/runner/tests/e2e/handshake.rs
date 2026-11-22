@@ -95,7 +95,8 @@ async fn a_matching_protocol_is_reported_at_start_and_again_after_the_interval()
     let body = &reports[0].body;
     assert_eq!(body["generated_by"]["task_protocol"], 1);
     assert_eq!(body["generated_by"]["version"], env!("CARGO_PKG_VERSION"));
-    // The API row first, then the doctor's rows (tmux, the CLIs, the MCP server, this runner).
+    // The API row first, then the doctor's rows (tmux, the CLIs, the MCP server, this runner) and
+    // the posture of the launch settings (no session rows: no session was ever recorded).
     let names: Vec<&str> = body["components"]
         .as_array()
         .expect("rows")
@@ -111,14 +112,21 @@ async fn a_matching_protocol_is_reported_at_start_and_again_after_the_interval()
             "cli.codex",
             "cli.opencode",
             "mcp_server",
-            "runner"
+            "runner",
+            "posture"
         ]
+    );
+    // The defaults run with permission checks off, on both channels.
+    assert_eq!(
+        body["components"][7],
+        json!({"component": "posture", "status": "warn", "bypass": {"tmux": true, "headless": true}})
     );
     assert_eq!(
         body["components"][0],
         json!({"component": "api_protocol", "status": "ok", "version": "0.5.0"})
     );
-    // Only the keys Sylvode keeps: no path, hint or detail anywhere.
+    // Only the keys Sylvode keeps: no path, hint or detail anywhere. The `runner` row says ok or warn
+    // and nothing of the posture details.
     let mut all = Vec::new();
     keys(body, &mut all);
     all.sort();
@@ -126,11 +134,14 @@ async fn a_matching_protocol_is_reported_at_start_and_again_after_the_interval()
     assert_eq!(
         all,
         [
+            "bypass",
             "component",
             "components",
             "generated_by",
+            "headless",
             "status",
             "task_protocol",
+            "tmux",
             "version"
         ]
     );
