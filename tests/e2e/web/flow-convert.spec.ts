@@ -135,6 +135,15 @@ async function openPageInfo(page: Page): Promise<void> {
 	await page.getByTestId('flow-open-info').click();
 }
 
+/**
+ * A Page of a workspace is converted through an explicit destination: with the workspace
+ * conversion capability on (the default) the convert route asks for the destination workspace
+ * before the wizard appears.
+ */
+async function chooseDestination(page: Page, workspaceId: string): Promise<void> {
+	await page.getByLabel('Destination workspace').selectOption(workspaceId);
+}
+
 test('owner converts a Page into a Forms record through source, mapping, preview and confirm, recovering from a stale frontier', async ({
 	page,
 	request
@@ -248,6 +257,7 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	const step = page.getByTestId('flow-convert-step');
 	const next = page.getByTestId('flow-convert-next');
 
+	await chooseDestination(page, workspace.id);
 	// ---- 1. source ----
 	await expect(step).toHaveText('Step 1 of 4: Source');
 	// Read after the object page was open: opening the editor itself can advance the document, so
@@ -755,6 +765,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	// ---- 1. the wizard commit fails after its job exists: the wizard hands over to the job ----
 	await signInAs(page, setup.ownerLogin);
 	await page.goto(`/flow/${setup.objectId}/convert`);
+	await chooseDestination(page, setup.workspaceId);
 	const step = page.getByTestId('flow-convert-step');
 	const next = page.getByTestId('flow-convert-next');
 	await expect(step).toHaveText('Step 1 of 4: Source');
@@ -1070,6 +1081,7 @@ test('390x844: the navigator is a closed drawer and the object, convert and job 
 
 	// ---- convert wizard ----
 	await page.goto(`/flow/${setup.objectId}/convert`);
+	await chooseDestination(page, setup.workspaceId);
 	const next = page.getByTestId('flow-convert-next');
 	await expect(next).toBeVisible();
 	await expectFullWidthLayout('convert');
