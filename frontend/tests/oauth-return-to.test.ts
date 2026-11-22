@@ -56,7 +56,7 @@ const hostile: Array<[string, string]> = [
 	['leading space', ` ${GOOD}`],
 	['trailing space', `${GOOD} `],
 	['delete character', `/oauth/authorize?request=${ID}\u007f`],
-	['zero-width space', `/oauth/authorize?request=${ID}​`],
+	['zero-width space', `/oauth/authorize?request=${ID}\u200b`],
 	['extra parameter', `${GOOD}&next=https://evil.example`],
 	['parameter first', `/oauth/authorize?next=/x&request=${ID}`],
 	['fragment', `${GOOD}#x`],
