@@ -5,7 +5,7 @@
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
 	import { projectsApi, type Project } from '#lib/api/projects.js';
-	import { membersApi } from '#lib/api/members.js';
+	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
 	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
@@ -130,7 +130,7 @@
 				if (res.code === 0 && res.data) {
 					const nameMap: Record<string, string> = {};
 					const entityMap: Record<string, string> = {};
-					for (const m of (res.data.items ?? []) as any[]) {
+					for (const m of (res.data.items ?? []) as Array<WorkspaceMember & { id: string }>) {
 						const memberId = m.user_id || m.id;
 						nameMap[memberId] = m.name || m.email || memberId.substring(0, 8);
 						entityMap[memberId] = m.entity_type || 'human';

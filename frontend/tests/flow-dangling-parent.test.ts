@@ -58,7 +58,7 @@ function hostileUpdate(server: FakeCollabServer): Uint8Array {
 	const tree = attacker.getTree('tree');
 	tree.createNode(tree.roots()[0].id);
 	attacker.commit();
-	const json: any = attacker.exportJsonUpdates(from);
+	const json = attacker.exportJsonUpdates(from);
 	const ghost = json.peers.push(GHOST_PEER) - 1;
 	let rewritten = 0;
 	for (const change of json.changes) {

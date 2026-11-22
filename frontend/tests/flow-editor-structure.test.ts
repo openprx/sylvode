@@ -7,6 +7,7 @@ import { createPageSchema } from '../src/lib/flow/editor-schema';
 import {
 	updateLoroToPmState,
 	createNodeFromLoroObj,
+	type LoroNodeMapping,
 	type LoroDocType
 } from '../src/lib/flow/vendor/loro-prosemirror';
 import {
@@ -41,7 +42,7 @@ function fixture() {
 	attachStructureContext(mapping, doc);
 	return { doc, mapping, tree };
 }
-function read(doc: LoroDocType, mapping: Map<any, any>) {
+function read(doc: LoroDocType, mapping: LoroNodeMapping) {
 	mapping.clear();
 	attachStructureContext(mapping, doc);
 	return createNodeFromLoroObj(schema, doc.getMap('doc'), mapping) as pm.Node;

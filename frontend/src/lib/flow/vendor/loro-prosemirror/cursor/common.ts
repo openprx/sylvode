@@ -284,7 +284,7 @@ function absolutePositionToCursor(
 		return;
 	}
 
-	const loroMap: LoroNode = doc.getMap(loroId as any);
+	const loroMap = doc.getMap(loroId) as LoroNode;
 	const children = loroMap.get(CHILDREN_KEY);
 	if (children.length == 0) {
 		// This is a new line, so we can use the list cursor instead
