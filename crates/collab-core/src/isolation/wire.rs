@@ -35,6 +35,12 @@ pub const WINDOW_FULL: &str = "full";
 /// value can switch the guard off.
 pub const SETUP_CPU_BUDGET_ENV: &str = "COLLAB_ISOLATION_SETUP_CPU_BUDGET_MS";
 
+/// Test seam: the per-text CPU budget of the setup, in milliseconds. Only a worker built with
+/// `debug_assertions` reads it (a release worker ignores it, so production cannot widen the budget);
+/// tests use it to keep a slow machine from tripping the 50 ms budget on a text that is cheap on
+/// the development machine.
+pub const TEXT_CPU_BUDGET_TEST_ENV: &str = "COLLAB_ISOLATION_TEXT_CPU_BUDGET_MS_TEST";
+
 /// The marker byte a worker writes when it opens its metered window, which also tells the host which
 /// setup guard, if any, fired in that worker: no guard, the allocation guard, the CPU guard, or the
 /// per-text guard. The host reads it for every attempt, accepted or refused, killed or not.

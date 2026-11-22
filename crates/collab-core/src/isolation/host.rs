@@ -1914,6 +1914,11 @@ mod tests {
         mode: WindowMode,
         setup_cpu_budget_ms: u64,
     ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+        with_worker_env(|| isolated_apply_with_observed(base_snapshot, update, mode, setup_cpu_budget_ms))
+    }
+
+    /// Runs `body` with the host pointed at the real debug worker.
+    fn with_worker_env<T>(body: impl FnOnce() -> T) -> T {
         let worker_path = required_debug_worker_binary_for_tests();
         let guard = env_lock().lock();
         // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
@@ -1921,7 +1926,7 @@ mod tests {
         unsafe {
             std::env::set_var(WORKER_BINARY_PATH_ENV, &worker_path);
         }
-        let result = isolated_apply_with_observed(base_snapshot, update, mode, setup_cpu_budget_ms);
+        let result = body();
         // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
         unsafe {
             std::env::remove_var(WORKER_BINARY_PATH_ENV);
@@ -2028,14 +2033,28 @@ mod tests {
 
     /// R9-3 on the real worker: a page over the item budget (no facts, and no guard fired) has had
     /// its texts decoded by the setup's count, and the full window that decides it still meters
-    /// those decodes, because the worker starts it from a freshly loaded engine: 60 texts of 400
-    /// nested marks cost about 0.4 s together, far over the window's ceiling. Without the reload
+    /// those decodes, because the worker starts it from a freshly loaded engine: 20 texts of 400
+    /// nested marks cost about 0.14 s together, nearly three times the window's ceiling. Without the reload
     /// the window would find them decoded and accept.
     #[test]
     fn a_page_over_the_item_budget_meters_the_decode_of_the_texts_the_count_read() {
         let base = crate::engine::window_text_guard_tests::over_the_item_budget_with_decoded_texts();
         let update = a_title_update_on(&base);
-        let (result, observation) = isolated_apply_real_observed(&base, &update, WindowMode::Incremental);
+        // The CPU budgets of the setup are widened for the worker (the allocation budgets, which
+        // do not depend on speed, stay): this test is about the reload that meters the decode, not
+        // about how fast the machine decodes. The page budget is the largest the setting accepts.
+        let (result, observation) = with_worker_env(|| {
+            let budget = crate::setup_guard::SETUP_CPU_BUDGET_MS_RANGE.end().to_string();
+            run_isolated_apply_observed(
+                &base,
+                &update,
+                wire::OPERATION_APPLY,
+                &[
+                    (wire::SETUP_CPU_BUDGET_ENV, budget.as_str()),
+                    (wire::TEXT_CPU_BUDGET_TEST_ENV, "10000"),
+                ],
+            )
+        });
         assert!(
             matches!(
                 result,
