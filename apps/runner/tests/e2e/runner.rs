@@ -182,7 +182,7 @@ async fn a_task_the_agent_ended_is_not_failed_again() {
     wait_lines(&fx.record, 3, Duration::from_secs(10));
     // Two views were read (check and after the run); nothing was failed.
     for _ in 0..100 {
-        if fx.api.requests_to("GET", "/api/v1/ai/tasks/").len() >= 2 {
+        if fx.api.requests_about_a_task("GET").len() >= 2 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -288,7 +288,7 @@ async fn invalid_roots_refuse_runner_agents_only() {
     let (_, answer) = post_signed(&server.url("/webhook"), &delivery()).await;
     assert_eq!(answer["status"], "refused");
     assert_eq!(answer["reason_code"], "runner_agent_disabled");
-    assert!(fx.api.requests_to("GET", "/api/v1/ai/tasks/").is_empty());
+    assert!(fx.api.requests_about_a_task("GET").is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -626,7 +626,7 @@ async fn a_delivery_for_a_bot_the_agent_does_not_serve_is_refused() {
         "{answer}"
     );
     assert!(
-        fx.api.requests_to("GET", "/api/v1/ai/tasks/").is_empty(),
+        fx.api.requests_about_a_task("GET").is_empty(),
         "Sylvode was asked about another bot's task"
     );
 }

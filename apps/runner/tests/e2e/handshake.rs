@@ -167,7 +167,7 @@ async fn another_protocol_refuses_runner_deliveries_with_a_reason_code() {
     assert_eq!(answer["status"], "refused");
     assert_eq!(answer["reason_code"], "protocol_mismatch");
     assert!(answer["reason"].as_str().expect("reason").contains("api 2"), "{answer}");
-    assert!(api.requests_to("GET", "/api/v1/ai/tasks/").is_empty());
+    assert!(api.requests_about_a_task("GET").is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]

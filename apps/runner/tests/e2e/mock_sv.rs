@@ -180,6 +180,16 @@ impl MockSv {
             .collect()
     }
 
+    /// The requests that name one task (`/api/v1/ai/tasks/{id}...`): the restart recovery's list of
+    /// the active tasks (`.../tasks/active`) is not about any one task, and runs at start-up
+    /// wherever the tmux channel is available.
+    pub fn requests_about_a_task(&self, method: &str) -> Vec<Req> {
+        self.requests_to(method, "/api/v1/ai/tasks/")
+            .into_iter()
+            .filter(|r| r.path() != "/api/v1/ai/tasks/active")
+            .collect()
+    }
+
     /// Waits until at least `count` requests match, then returns them.
     pub async fn wait_for(&self, method: &str, path_suffix: &str, count: usize, timeout: Duration) -> Vec<Req> {
         let deadline = Instant::now() + timeout;
