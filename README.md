@@ -471,11 +471,8 @@ sylvode features flow get --workspace <uuid>
 sylvode objects get <object-uuid> --render markdown
 ```
 
-`mcp-server` is the MCP server (`mcp-server serve`). It still accepts the nine
-workspace groups as a deprecated alias: `mcp-server <group> ...` runs the same
-command with byte-identical stdout and the same exit code, and prints one
-deprecation warning on stderr; use `sylvode <group> ...`. The Flow groups exist only under `sylvode`, and
-`serve` only under `mcp-server`.
+`mcp-server` is the MCP server (`mcp-server serve`). The workspace groups and the Flow groups
+exist only under `sylvode`, and `serve` only under `mcp-server`.
 
 ## API
 

@@ -12,7 +12,7 @@ use axum::{
     },
     routing::{get, post},
 };
-use clap::{CommandFactory, FromArgMatches};
+use clap::{CommandFactory, Parser};
 use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
 use mcp_server::oauth::{self, Caller, InboundAuth};
@@ -48,12 +48,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn run() -> anyhow::Result<()> {
-    let mut matches = Cli::command().get_matches();
-    // Read before the conversion below, which moves the subcommand out of `matches`.
-    let subcommand = cli::subcommand_path(&matches);
-    let cli = Cli::from_arg_matches_mut(&mut matches)
-        .map_err(|error| error.format(&mut Cli::command()))
-        .unwrap_or_else(|error| error.exit());
+    let cli = Cli::parse();
 
     if cli.check {
         if cli.command.is_some() {
@@ -92,8 +87,6 @@ async fn run() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        // The executable name is the stable service label of a deployment, so `serve` on any
-        // transport stays silent (ADR-0020 D2).
         Commands::Serve(args) if args.flow_only => {
             if args.tools.is_some() {
                 anyhow::bail!("--tools is not valid with serve --flow-only: Flow-only lists its own bounded tools");
@@ -142,10 +135,6 @@ async fn run() -> anyhow::Result<()> {
                 anyhow::bail!("--access-token is only valid with serve --flow-only");
             }
             serve(&cli::prepare_runtime(&cli.global, Some(args))?).await
-        }
-        Commands::Business(command) => {
-            cli::report_legacy_invocation(&subcommand);
-            cli::run_business(&cli.global, command).await
         }
     }
 }

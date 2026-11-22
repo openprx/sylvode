@@ -134,12 +134,9 @@ pass `--config <path>`:
 mcp-server serve --config config/sylvode.toml
 ```
 
-New installations should invoke the `sylvode` CLI, which carries both the Flow
-commands and the workspace commands (`projects`, `work-items`, `comments`,
-`labels`, `sprints`, `search`, `files`, `operation-logs`, `tools`). Those
-workspace commands under `mcp-server` are the same commands with the same output
-and exit codes, but print a deprecation warning on stderr; `mcp-server serve`
-does not warn. MCP tool names are not renamed.
+The `sylvode` CLI carries both the Flow commands and the workspace commands
+(`projects`, `work-items`, `comments`, `labels`, `sprints`, `search`, `files`,
+`operation-logs`, `tools`). `mcp-server` offers only `serve` and `doctor`.
 
 | Config key | Required | Purpose |
 | --- | --- | --- |

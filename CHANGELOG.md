@@ -26,6 +26,8 @@ name.
 
 ### Removed
 
+- **`mcp-server <command>` workspace form.** `mcp-server` offers only `serve` and `doctor`; the workspace
+  commands exist only under `sylvode`, and the old form fails as an unknown command.
 - **Legacy task callbacks and `agent_type = "cli"`.** The API no longer serves
   `POST /api/v1/ai/callbacks/task/{id}/complete`, `.../fail` or `.../progress`; a task ends through
   the task protocol (`POST /api/v1/ai/tasks/{id}/complete` or `.../fail?attempt=N`). The runner
