@@ -2040,11 +2040,17 @@ mod tests {
     }
 
     /// A-4 on the real worker: the host's setting of the setup CPU budget reaches the worker. A page
-    /// whose setup costs more than half a second of CPU (250 texts of 450 nested marks, 2 s and more)
-    /// trips the CPU guard of a worker given a budget of 500 ms.
+    /// whose setup costs more than half a second of CPU trips the CPU guard of a worker given a
+    /// budget of 500 ms.
+    ///
+    /// The cost is spread over many cheap texts (1,000 texts of 150 nested marks: about 1.5 ms of CPU
+    /// each in a debug build, 2 s together) so that no single text comes near the per-text limit of
+    /// 50 ms. With a few dear texts (250 of 450 marks, 14 ms each, 27 ms under a loaded host) one
+    /// text's CPU clock could pass 50 ms, and the per-text guard would answer `Text` before the
+    /// cumulative budget was reached.
     #[test]
     fn the_setup_cpu_budget_of_the_host_reaches_the_worker() {
-        let base = crate::engine::window_text_guard_tests::nested_marks_page(250, 250, 450);
+        let base = crate::engine::window_text_guard_tests::nested_marks_page(1_000, 1_000, 150);
         let update = a_title_update_on(&base);
         let (_result, observation) =
             isolated_apply_real_observed_with_budget(&base, &update, WindowMode::Incremental, 500);
