@@ -89,8 +89,8 @@ fn sigprof_only_set() -> libc::sigset_t {
 /// Arms the CPU ceiling (`ADR-0014` section 1.1): resets `SIGPROF`'s disposition to `SIG_DFL`
 /// (whose default action is to terminate the process -- this *is* the online CPU-ceiling
 /// enforcement, no signal handler required), unblocks it, and arms a one-shot
-/// [`DECODE_APPLY_CPU_MS_MAX_MICROS`] `ITIMER_PROF` timer, which decrements only while this
-/// process consumes CPU time (user + system), not wall-clock time.
+/// [`DECODE_APPLY_CPU_MS_MAX_MICROS`] CPU timer that delivers it (see [`arm_sigprof_micros`] for
+/// which timer and why).
 ///
 /// Must be called from the single process thread (verified by [`is_single_threaded`] before this
 /// is ever invoked), immediately before the metered decode/apply/shape-validate work begins.
@@ -103,6 +103,14 @@ pub fn arm_sigprof() {
 pub fn arm_sigprof_for_import() {
     arm_sigprof_micros(IMPORT_DECODE_CPU_MS_MAX_MICROS);
 }
+
+/// The exit status of a worker that could not arm its CPU ceiling. The host sees an exit that no
+/// ceiling explains and reports a host failure: running the metered window without a ceiling is
+/// never an option.
+const EXIT_CANNOT_ARM_CPU_CEILING: libc::c_int = 71;
+
+/// The armed CPU timer of this process, as a `timer_t` held in an integer (0 when none).
+static CPU_TIMER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn arm_sigprof_micros(budget_micros: i64) {
     let mut old_action = MaybeUninit::<libc::sigaction>::uninit();
@@ -127,36 +135,57 @@ fn arm_sigprof_micros(budget_micros: i64) {
     unsafe {
         libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const sigprof_set, std::ptr::null_mut());
     }
-
-    let timer_value = libc::itimerval {
-        it_interval: libc::timeval { tv_sec: 0, tv_usec: 0 },
-        // `setitimer` refuses a `tv_usec` of a second or more, so a budget above one second is
-        // split into whole seconds and the remainder.
-        it_value: libc::timeval {
-            tv_sec: budget_micros / 1_000_000,
-            tv_usec: budget_micros % 1_000_000,
-        },
-    };
-    // SAFETY: `&timer_value` is a valid, fully-initialized `itimerval`; passing `null` for the
-    // old-value out-pointer is explicitly allowed by POSIX.
-    unsafe {
-        libc::setitimer(libc::ITIMER_PROF, &raw const timer_value, std::ptr::null_mut());
-    }
+    arm_cpu_timer(budget_micros);
 }
 
-/// Disarms the `ITIMER_PROF` timer (sets it to fire never), so it cannot fire *after* the metered
-/// window has already closed successfully -- e.g. while this process is busy exporting the result
-/// snapshot and writing the response frame, neither of which are protected work.
-pub fn disarm_sigprof() {
-    let timer_value = libc::itimerval {
-        it_interval: libc::timeval { tv_sec: 0, tv_usec: 0 },
-        it_value: libc::timeval { tv_sec: 0, tv_usec: 0 },
+/// Arms the one-shot timer that delivers `SIGPROF` once the process has consumed `budget_micros`
+/// of CPU time (user plus system).
+///
+/// On Linux this is a POSIX timer on `CLOCK_PROCESS_CPUTIME_ID`, the clock the host measures the
+/// worker with and the one the synthetic burn polls. `setitimer(ITIMER_PROF)` is not used: it is
+/// driven by the tick-sampled user/system times, which charge a whole scheduler tick to whatever
+/// runs when the tick fires, so under contention they run ahead of the CPU the process really
+/// consumed. Measured on a loaded 2-CPU machine the 2 s ceiling fired up to 29 ms (1.5%) early.
+/// The process-clock timer is checked against the scheduler's exact runtime: it never fires
+/// before the ceiling is consumed and fires at most about a tick after it.
+fn arm_cpu_timer(budget_micros: i64) {
+    // SAFETY: `libc::sigevent` is a C struct for which all-zero is a valid value; the fields set
+    // below are the ones `timer_create` reads for `SIGEV_SIGNAL`.
+    let mut event: libc::sigevent = unsafe { std::mem::zeroed() };
+    event.sigev_notify = libc::SIGEV_SIGNAL;
+    event.sigev_signo = libc::SIGPROF;
+    let mut timer: libc::timer_t = std::ptr::null_mut();
+    // SAFETY: `event` and `timer` are valid for the call; the clock id is a valid per-process CPU
+    // clock.
+    let created = unsafe { libc::timer_create(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut event, &raw mut timer) };
+    let spec = libc::itimerspec {
+        it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
+        it_value: libc::timespec {
+            tv_sec: budget_micros / 1_000_000,
+            tv_nsec: (budget_micros % 1_000_000) * 1_000,
+        },
     };
-    // SAFETY: `&timer_value` is a valid, fully-initialized, all-zero `itimerval`, which POSIX
-    // defines as "disarm this timer"; passing `null` for the old-value out-pointer is explicitly
-    // allowed.
-    unsafe {
-        libc::setitimer(libc::ITIMER_PROF, &raw const timer_value, std::ptr::null_mut());
+    // SAFETY: only reached with a timer `timer_create` just made; `spec` is fully initialized and
+    // a null old-value pointer is allowed.
+    let armed = created == 0 && unsafe { libc::timer_settime(timer, 0, &raw const spec, std::ptr::null_mut()) } == 0;
+    if !armed {
+        // SAFETY: `_exit` is async-signal-safe and takes no pointers; this process owns its exit.
+        unsafe { libc::_exit(EXIT_CANNOT_ARM_CPU_CEILING) };
+    }
+    CPU_TIMER.store(timer as usize, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Disarms the CPU timer, so it cannot fire *after* the metered window has already closed
+/// successfully -- e.g. while this process is busy exporting the result snapshot and writing the
+/// response frame, neither of which are protected work.
+pub fn disarm_sigprof() {
+    let timer = CPU_TIMER.swap(0, std::sync::atomic::Ordering::SeqCst);
+    if timer != 0 {
+        // SAFETY: `timer` was produced by `timer_create` in `arm_cpu_timer` and is deleted once
+        // (the swap above clears it); deleting also drops a pending expiry.
+        unsafe {
+            libc::timer_delete(timer as libc::timer_t);
+        }
     }
 }
 

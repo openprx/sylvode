@@ -22,7 +22,7 @@
 //! has, because `Command::spawn` on Linux is `fork` immediately followed by `execve` -- the child
 //! never runs any of the parent's code (Tokio's runtime included) between those two calls. This
 //! adopts `ADR-0014`'s *online-enforcement* mechanisms over that different process-creation
-//! primitive: `SIGPROF`/`setitimer(ITIMER_PROF)` for the CPU ceiling (section 1.1, in
+//! primitive: `SIGPROF` from a process-CPU-clock timer for the CPU ceiling (section 1.1, in
 //! `isolation::child_runtime`), a counting `GlobalAlloc` for the memory ceiling (sections 1 and 3,
 //! in `isolation::alloc`), and an independent wall-clock watchdog with `SIGKILL` (section 1,
 //! below).
@@ -988,22 +988,23 @@ mod tests {
     }
 
     /// The coarsest scheduler tick the kernel accounts CPU in (`CONFIG_HZ=100`; 250 and 1000 are
-    /// finer). `ITIMER_PROF` counts whole ticks while the host reads the worker's CPU from
-    /// `rusage` / the worker's own clock, so the two never agree closer than a tick.
+    /// finer).
     const SCHEDULER_TICK_US: u64 = 10_000;
 
-    /// Allowance for the kernel's CPU accounting and `SIGPROF` delivery in the write window: one
-    /// tick, since the worker is killed within about a tick of the ceiling and the 50 ms ceiling
-    /// leaves no room for more (a larger allowance would accept a kill at a fraction of it).
+    /// Allowance when judging a kill against the CPU the host measured, one tick, for both the
+    /// write and the import window.
+    ///
+    /// The ceiling is a timer on the worker's own CPU clock (`child_runtime::arm_cpu_timer`), which
+    /// fires only after the ceiling is consumed and at most about a tick later, so a kill never
+    /// needs an allowance for firing early. (It did when the ceiling was `ITIMER_PROF`: that timer
+    /// counts ticks sampled at the interrupt and, on a loaded 2-CPU machine, fired up to 1.5% of
+    /// the ceiling early, 29 ms of the import window's 2 s, which no fixed number of ticks covers.)
+    /// What is left is the host's own reading: it reads the worker's CPU when it sees the marker,
+    /// a moment after the worker armed the timer, and `wait4` accounts a killed process to a tick.
+    /// Measured on a loaded 2-CPU machine, every kill of 80 runs read at or above the ceiling
+    /// (a shortfall of at most 0 us); one tick is the margin for that reading, and it is far
+    /// smaller than the distance between the ceiling and the CPU the under-ceiling runs consume.
     const CPU_ACCOUNTING_SLACK_US: u64 = SCHEDULER_TICK_US;
-
-    /// The same allowance for the import window: three ticks. The two accountings can disagree by
-    /// up to one tick at each of three edges of a run: the timer is armed after the worker starts
-    /// (CPU the host counts and the timer does not), the signal is delivered at the next tick after
-    /// the ceiling is crossed, and the host's reading of a killed process is rounded to a tick.
-    /// Three ticks is 30 ms, 1.5% of the 2 s import ceiling; the observed shortfalls (a kill
-    /// 13 ms before the ceiling as the host read it) are a little over one tick.
-    const IMPORT_CPU_ACCOUNTING_SLACK_US: u64 = 3 * SCHEDULER_TICK_US;
 
     /// How one injected run relates to the ceiling it targeted, judged from what the host
     /// observed rather than from the clock alone.
@@ -1026,27 +1027,17 @@ mod tests {
         observation: &WorkerObservation,
         ceiling_us: u64,
     ) -> CeilingVerdict {
-        judge_burn_over_cpu_ceiling_within(result, observation, ceiling_us, CPU_ACCOUNTING_SLACK_US)
-    }
-
-    /// [`judge_burn_over_cpu_ceiling`] with the accounting allowance of the window under test.
-    fn judge_burn_over_cpu_ceiling_within(
-        result: &Result<IsolatedApplySuccess, IsolatedApplyError>,
-        observation: &WorkerObservation,
-        ceiling_us: u64,
-        slack_us: u64,
-    ) -> CeilingVerdict {
         let Some(cpu_us) = observation.metered_cpu_us else {
             return CeilingVerdict::Violation("the host could not observe the worker's CPU time".to_string());
         };
         match result {
-            Err(IsolatedApplyError::CpuCeiling) if cpu_us.saturating_add(slack_us) >= ceiling_us => {
+            Err(IsolatedApplyError::CpuCeiling) if cpu_us.saturating_add(CPU_ACCOUNTING_SLACK_US) >= ceiling_us => {
                 CeilingVerdict::Conclusive
             }
             Err(IsolatedApplyError::CpuCeiling) => CeilingVerdict::Violation(format!(
                 "SIGPROF killed the worker after only {cpu_us}us of CPU, below the {ceiling_us}us ceiling"
             )),
-            Err(IsolatedApplyError::WallCeiling) if cpu_us < ceiling_us.saturating_add(slack_us) => {
+            Err(IsolatedApplyError::WallCeiling) if cpu_us < ceiling_us.saturating_add(CPU_ACCOUNTING_SLACK_US) => {
                 CeilingVerdict::Starved
             }
             Err(IsolatedApplyError::WallCeiling) => CeilingVerdict::Violation(format!(
@@ -1389,7 +1380,7 @@ mod tests {
         conclusive_within(4, BOUNDARY_PAUSE, "a burn over the import CPU ceiling", || {
             let (result, observation) =
                 isolated_import_injected_observed(&format!("cpu_burn_micros={}", import_ceiling_us.saturating_mul(2)));
-            judge_burn_over_cpu_ceiling_within(&result, &observation, import_ceiling_us, IMPORT_CPU_ACCOUNTING_SLACK_US)
+            judge_burn_over_cpu_ceiling(&result, &observation, import_ceiling_us)
         });
     }
 

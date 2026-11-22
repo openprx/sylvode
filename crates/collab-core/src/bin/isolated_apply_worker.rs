@@ -22,7 +22,7 @@
 //!    is about to open), not from whenever the full response happens to be ready. See
 //!    [`write_marker_or_exit`]'s doc comment for why this must happen here and not folded into the
 //!    final response write.
-//! 4. Arm the CPU-ceiling timer (`SIGPROF`/`ITIMER_PROF`) and the counting allocator. This opens
+//! 4. Arm the CPU-ceiling timer (`SIGPROF` from a `CLOCK_PROCESS_CPUTIME_ID` timer) and the counting allocator. This opens
 //!    the metered window.
 //! 5. `import_update` the untrusted update, compute the resulting `semantic_snapshot`, and run
 //!    `check_snapshot` against the frozen `contracts/limits-v1.md` structural ceilings -- decode +
@@ -556,7 +556,7 @@ struct Metered {
 }
 
 /// Process CPU time (user plus system, `CLOCK_PROCESS_CPUTIME_ID`) in microseconds -- the clock
-/// `ITIMER_PROF` and `decode_apply_cpu_ms_max` track. `None` only if the clock cannot be read.
+/// the CPU timer and `decode_apply_cpu_ms_max` track. `None` only if the clock cannot be read.
 #[cfg(target_os = "linux")]
 fn process_cpu_micros() -> Option<u64> {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -787,7 +787,7 @@ mod test_injection {
     }
 
     /// Reads `CLOCK_PROCESS_CPUTIME_ID` -- the same POSIX clock `contracts/limits-v1.md`'s
-    /// `decode_apply_cpu_ms_max` and `ITIMER_PROF` (`child_runtime::arm_sigprof`) both track (user
+    /// `decode_apply_cpu_ms_max` and the CPU timer (`child_runtime::arm_sigprof`) both track (user
     /// and system CPU time combined, not wall clock). `None` only if the kernel does not support
     /// this clock id, which does not happen on any Linux this workspace targets.
     fn cpu_time_now() -> Option<Duration> {
