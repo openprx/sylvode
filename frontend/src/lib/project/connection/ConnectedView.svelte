@@ -8,6 +8,7 @@
 	import Button from '#lib/ui/button/Button.svelte';
 	import Select from '#lib/ui/select/Select.svelte';
 	import SettingRow from '#lib/ui/setting-row/SettingRow.svelte';
+	import SecurityWarning from '#lib/ui/security-warning/SecurityWarning.svelte';
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import TextField from '#lib/ui/text-field/TextField.svelte';
 	import { tooltip } from '#lib/ui/tooltip/tooltip.js';
@@ -17,6 +18,8 @@
 	import { changedFields, draftOf, draftValid, validateDraft, type Draft } from './advanced';
 	import { loadDomains, loadLabels, loadStates, type Choice } from './options';
 	import { routeServerMessage } from './server-errors';
+	import { runsWithoutPermissionChecks } from './status';
+	import { attachCommand, channelErrorText, tmuxBlock as tmuxBlockOf } from './tmux';
 	import {
 		normalizeDirectory,
 		normalizeRunnerUrl,
@@ -29,13 +32,15 @@
 		workspaceId: string;
 		projectName: string;
 		connection: Connection;
+		/** Every connection of the project: a CLI with a tmux connection cannot get a second. */
+		connections: Connection[];
 		status: Status | null;
 		now: Date;
 		refreshing: boolean;
 		onrefresh: () => void;
 		/** A write that returned the connection (and, for a rotation, a block). */
 		onchanged: (answer: WriteAnswer) => void;
-		onremoved: () => void;
+		onremoved: (botId: string) => void;
 		/** A stale version: the connection as it now stands. The edited value stays. */
 		onconflict: (current: Connection | null) => void;
 	}
@@ -43,6 +48,7 @@
 		workspaceId,
 		projectName,
 		connection,
+		connections,
 		status,
 		now,
 		refreshing,
@@ -53,6 +59,12 @@
 	}: Props = $props();
 
 	const projectId = $derived(connection.project_id);
+	const botId = $derived(connection.bot.id);
+	const isTmux = $derived(connection.execution.channel === 'tmux');
+	const sessionName = $derived(connection.execution.session_name);
+	const tmuxBlock = $derived(tmuxBlockOf(connections, connection.execution.cli, botId));
+	const warn = $derived(runsWithoutPermissionChecks(status));
+	let channelError = $state<string | undefined>(undefined);
 	const shared = $derived(
 		connection.runner.shared_with_projects.filter((project) => project.id !== projectId)
 	);
@@ -105,6 +117,7 @@
 	/** Runs a write and routes its outcome; returns whether it was applied. */
 	async function run(call: () => Promise<CallResult<WriteAnswer>>): Promise<boolean> {
 		busy = true;
+		channelError = undefined;
 		const result = await call();
 		busy = false;
 		if (result.ok) {
@@ -116,7 +129,12 @@
 			return false;
 		}
 		const routed = routeServerMessage(result.message);
-		if (routed.field === 'other') toast.error(result.message);
+		if (routed.field === 'channel') {
+			channelError = channelErrorText(result.message, connections, (key, values) =>
+				$t(key, { values })
+			);
+			advancedOpen = true;
+		} else if (routed.field === 'other') toast.error(result.message);
 		else editError = routed.text;
 		return false;
 	}
@@ -140,7 +158,10 @@
 					: { cli: CLIS.find((cli) => cli === editValue) ?? connection.execution.cli };
 		if (
 			await run(() =>
-				botConnectionApi.update(projectId, { expected_version: connection.version, ...change })
+				botConnectionApi.update(projectId, botId, {
+					expected_version: connection.version,
+					...change
+				})
 			)
 		)
 			editing = null;
@@ -150,7 +171,7 @@
 		advancedSubmitted = true;
 		if (!draftValid(advancedErrors) || !advancedDirty) return;
 		await run(() =>
-			botConnectionApi.update(projectId, {
+			botConnectionApi.update(projectId, botId, {
 				expected_version: connection.version,
 				...advancedChange
 			})
@@ -158,34 +179,34 @@
 	}
 
 	async function enable() {
-		if (await run(() => botConnectionApi.enable(projectId, connection.version)))
+		if (await run(() => botConnectionApi.enable(projectId, botId, connection.version)))
 			toast.success($t('execution.connection.enabledToast'));
 	}
 
 	async function confirmed(action: 'disable' | 'rotate' | 'remove') {
 		if (action === 'remove') {
 			busy = true;
-			const result = await botConnectionApi.remove(projectId, connection.version);
+			const result = await botConnectionApi.remove(projectId, botId, connection.version);
 			busy = false;
 			pending = null;
 			if (result.ok) {
 				toast.success($t('execution.connection.removed'));
-				onremoved();
+				onremoved(botId);
 			} else if (result.code === 409 && result.current !== null) onconflict(result.current);
 			else toast.error(result.message);
 			return;
 		}
 		const ok = await run(() =>
 			action === 'disable'
-				? botConnectionApi.disable(projectId, connection.version)
-				: botConnectionApi.rotate(projectId, connection.version)
+				? botConnectionApi.disable(projectId, botId, connection.version)
+				: botConnectionApi.rotate(projectId, botId, connection.version)
 		);
 		pending = null;
 		void ok;
 	}
 </script>
 
-<div class="view" data-testid="connected-view">
+<div class="view" data-testid="connected-view" data-bot-id={botId}>
 	<header class="head">
 		<strong>{connection.bot.name}</strong>
 		<StatusChip tone={connection.enabled ? 'success' : 'neutral'}>
@@ -193,6 +214,9 @@
 				? $t('execution.connection.state.enabled')
 				: $t('execution.connection.state.disabled')}
 		</StatusChip>
+		<span class="channel">
+			{$t(`execution.connection.advanced.channel.${connection.execution.channel}`)}
+		</span>
 		{#if shared.length > 0}
 			<button
 				type="button"
@@ -203,6 +227,28 @@
 			</button>
 		{/if}
 	</header>
+
+	{#if warn}
+		<SecurityWarning tone="warning" title={$t('execution.connection.warning.bypassTitle')}>
+			<span data-testid="bypass-warning">{$t('execution.connection.warning.bypassBody')}</span>
+		</SecurityWarning>
+	{/if}
+
+	{#if isTmux}
+		<div class="session" data-testid="tmux-session">
+			{#if sessionName}
+				<p>
+					{$t('execution.connection.tmux.session')}
+					<code data-testid="tmux-session-name">{sessionName}</code>
+				</p>
+				<p>
+					{$t('execution.connection.tmux.attach')}
+					<code data-testid="tmux-attach">{attachCommand(sessionName)}</code>
+				</p>
+			{/if}
+			<p class="hint">{$t('execution.connection.tmux.behaviour')}</p>
+		</div>
+	{/if}
 
 	<section class="settings">
 		<SettingRow
@@ -239,7 +285,11 @@
 				: $t(`execution.connection.cli.${connection.execution.cli}`)}
 		>
 			{#snippet action()}
-				{#if editing !== 'cli'}
+				{#if isTmux}
+					<span class="hint" data-testid="cli-fixed"
+						>{$t('execution.connection.cli.tmuxOnlyClaude')}</span
+					>
+				{:else if editing !== 'cli'}
 					<Button variant="secondary" onclick={() => startEdit('cli')}>
 						{$t('execution.connection.change')}
 					</Button>
@@ -262,7 +312,9 @@
 		{/if}
 
 		<SettingRow
-			label={$t('execution.connection.workingDirectory')}
+			label={isTmux
+				? $t('execution.connection.workingDirectoryTmux')
+				: $t('execution.connection.workingDirectory')}
 			value={editing === 'dir' ? undefined : connection.execution.working_directory}
 		>
 			{#snippet action()}
@@ -323,7 +375,9 @@
 				{states}
 				{labels}
 				{domains}
-				scope="edit"
+				scope={`edit-${botId}`}
+				{tmuxBlock}
+				{channelError}
 			/>
 			<div class="actions">
 				<Button variant="primary" loading={busy} disabled={!advancedDirty} onclick={saveAdvanced}>
@@ -366,12 +420,31 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--rf-space-5);
+		padding: var(--rf-space-5);
+		border: var(--rf-border-width) solid var(--rf-line);
+		border-radius: var(--rf-radius-card);
 	}
 	.head {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--rf-space-4);
+	}
+	.channel {
+		color: var(--rf-secondary);
+		font-size: var(--rf-size-meta);
+	}
+	.session {
+		display: flex;
+		flex-direction: column;
+		gap: var(--rf-space-3);
+		font-size: var(--rf-size-secondary);
+	}
+	.session p {
+		margin: 0;
+	}
+	.session code {
+		font-family: var(--rf-font-mono-stack);
 	}
 	.shared {
 		padding: 0;

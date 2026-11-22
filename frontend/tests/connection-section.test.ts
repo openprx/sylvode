@@ -302,38 +302,35 @@ suite.check(
 	}
 );
 
-suite.check(
-	'reads: none, full, reduced; writes carry the block; removal names what is left',
-	() => {
-		assertEqual(parseRead({ connection: null, status: null })?.kind, 'none', 'none');
-		assertEqual(parseRead({ connection: connectionJson, status: null })?.kind, 'full', 'full');
-		assertEqual(
-			parseRead({
-				connection: { bot: { id: 'b', name: 'x' }, enabled: true, cli: 'claude', channel: 'tmux' }
-			})?.kind,
-			'reduced',
-			'a member sees the reduced view'
-		);
-		assertEqual(parseRead([]), null, 'not an object');
-		const write = parseWrite({
-			connection: connectionJson,
-			status: null,
-			config_block: { text: BLOCK_TEXT }
-		});
-		assertEqual(write?.block?.text, BLOCK_TEXT, 'the block');
-		assertEqual(parseWrite({ connection: connectionJson })?.block, null, 'no block');
-		assertEqual(parseWrite({ connection: 3 }), null, 'bad connection');
-		assertEqual(parseBlock({ text: '' }), null, 'empty block is none');
-		assertEqual(parseBlock(null), null, 'null');
-		assertEqual(
-			parseRemove({ removed: true, bot_still_connected_to: [{ id: 'p2', name: 'Other' }] })?.still
-				.length,
-			1,
-			'still'
-		);
-		assertEqual(parseRemove({ removed: false, bot_still_connected_to: [] }), null, 'not removed');
-	}
-);
+suite.check('reads: full, reduced; writes carry the block; removal names what is left', () => {
+	assertEqual(parseRead({ connection: null, status: null }), null, 'no connection is no answer');
+	assertEqual(parseRead({ connection: connectionJson, status: null })?.kind, 'full', 'full');
+	assertEqual(
+		parseRead({
+			connection: { bot: { id: 'b', name: 'x' }, enabled: true, cli: 'claude', channel: 'tmux' }
+		})?.kind,
+		'reduced',
+		'a member sees the reduced view'
+	);
+	assertEqual(parseRead([]), null, 'not an object');
+	const write = parseWrite({
+		connection: connectionJson,
+		status: null,
+		config_block: { text: BLOCK_TEXT }
+	});
+	assertEqual(write?.block?.text, BLOCK_TEXT, 'the block');
+	assertEqual(parseWrite({ connection: connectionJson })?.block, null, 'no block');
+	assertEqual(parseWrite({ connection: 3 }), null, 'bad connection');
+	assertEqual(parseBlock({ text: '' }), null, 'empty block is none');
+	assertEqual(parseBlock(null), null, 'null');
+	assertEqual(
+		parseRemove({ removed: true, bot_still_connected_to: [{ id: 'p2', name: 'Other' }] })?.still
+			.length,
+		1,
+		'still'
+	);
+	assertEqual(parseRemove({ removed: false, bot_still_connected_to: [] }), null, 'not removed');
+});
 
 suite.check('the server refuses with `field: reason`; the reason lands under its field', () => {
 	assertEqual(routeServerMessage('runner_url: blocked address').field, 'url', 'url');

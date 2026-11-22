@@ -2,7 +2,7 @@
  * How the status of a connection is shown: the chip of every state, relative times, the last
  * delivery line, and when the section keeps asking while it waits for the runner.
  */
-import type { ComponentState, DeliveryState, RunnerState, Status } from './wire';
+import type { ComponentState, DeliveryState, RunnerState, SessionRow, Status } from './wire';
 
 export type Tone = 'success' | 'warning' | 'danger' | 'neutral';
 export interface Chip {
@@ -23,6 +23,57 @@ export function runnerChip(state: RunnerState): Chip {
 		case 'unreachable':
 			return { tone: 'danger', key: `${KEY}runner.unreachable` };
 	}
+}
+
+/**
+ * The "Session" row of a tmux connection (design 6.4 U5): what the runner found, and who started
+ * it. `null` when the status does not say (no report, or a state outside the vocabulary).
+ */
+export function sessionChip(session: SessionRow | null): Chip | null {
+	switch (session?.state) {
+		case 'running':
+			return session.created_by === 'runner'
+				? { tone: 'success', key: `${KEY}session.runningRunner` }
+				: session.created_by === 'operator'
+					? { tone: 'success', key: `${KEY}session.runningOperator` }
+					: { tone: 'success', key: `${KEY}session.running` };
+		case 'absent':
+			return { tone: 'neutral', key: `${KEY}session.absent` };
+		case 'cli_not_running':
+			return { tone: 'danger', key: `${KEY}session.cliNotRunning` };
+		case 'ambiguous':
+			return { tone: 'danger', key: `${KEY}session.ambiguous` };
+		case 'dialog':
+			return { tone: 'warning', key: `${KEY}session.dialog` };
+		default:
+			return null;
+	}
+}
+
+/** The badges of a connection: permission checks off, no hooks, Sylvode tools missing or old. */
+export function statusBadges(status: Status | null): Chip[] {
+	if (status === null) return [];
+	const session = status.tmux_session;
+	const badges: Chip[] = [];
+	if (status.bypass === true || session?.permissions === 'bypass')
+		badges.push({ tone: 'warning', key: `${KEY}badge.bypass` });
+	if (session?.hooks === 'none') badges.push({ tone: 'warning', key: `${KEY}badge.noHooks` });
+	if (session?.mcp === 'missing' || session?.mcp === 'other')
+		badges.push({ tone: 'danger', key: `${KEY}badge.noTools` });
+	if (session?.mcp === 'stale') badges.push({ tone: 'warning', key: `${KEY}badge.staleTools` });
+	return badges;
+}
+
+/**
+ * Whether a card carries the permanent permission warning (design 5.3, 6.4 U4): the report says
+ * checks are off, or it says nothing yet and the default (bypass) applies. Only a report that
+ * says "checks on" removes it.
+ */
+export function runsWithoutPermissionChecks(status: Status | null): boolean {
+	if (status === null) return true;
+	if (status.tmux_session?.permissions === 'bypass') return true;
+	if (status.tmux_session?.permissions === 'normal') return false;
+	return status.bypass !== false;
 }
 
 /** The CLI and tmux rows share their states. */

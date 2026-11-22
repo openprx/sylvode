@@ -31,7 +31,8 @@
 				"label": "CLI",
 				"claude": "Claude Code",
 				"codex": "Codex（实验性）",
-				"opencode": "opencode（实验性）"
+				"opencode": "opencode（实验性）",
+				"tmuxOnlyClaude": "只有 claude 可以在 tmux 会话中运行"
 			},
 			"workingDirectory": "工作目录",
 			"error": {
@@ -97,7 +98,24 @@
 					"failed": "失败",
 					"none": "尚无投递"
 				},
-				"refresh": "刷新状态"
+				"refresh": "刷新状态",
+				"session": {
+					"label": "会话",
+					"running": "运行中",
+					"runningRunner": "运行中（由 runner 启动）",
+					"runningOperator": "运行中（由你启动）",
+					"absent": "未启动（下一个任务时启动）",
+					"cliNotRunning": "CLI 未运行",
+					"ambiguous": "无法确定",
+					"dialog": "等待对话框"
+				},
+				"badge": {
+					"bypass": "权限检查已关闭",
+					"noHooks": "无 hooks",
+					"noTools": "缺少 Sylvode 工具",
+					"staleTools": "Sylvode 工具已过期",
+					"noHooksHint": "仅根据屏幕判断任务进度。"
+				}
 			},
 			"advanced": {
 				"title": "高级",
@@ -106,7 +124,10 @@
 				"channel": {
 					"label": "通道",
 					"tmux": "交互式会话（tmux）",
-					"headless": "一次性（headless）"
+					"headless": "一次性（headless）",
+					"onlyClaude": "只有 claude 可以在 tmux 会话中运行",
+					"taken": "{bot} 已在使用 tmux 会话 {session}",
+					"takenNoSession": "{bot} 已在使用此 CLI 的 tmux 会话"
 				},
 				"onComplete": {
 					"label": "完成后",
@@ -172,6 +193,16 @@
 			"managed": {
 				"chip": "由项目连接管理",
 				"reason": "请在项目的执行设置中修改"
+			},
+			"workingDirectoryTmux": "工作目录（runner 启动会话时使用）",
+			"tmux": {
+				"session": "tmux 会话：",
+				"attach": "接入：",
+				"behaviour": "若该会话已在 runner 机器上存在，任务会原样输入其中。若不存在，runner 会在此处用 `claude --permission-mode bypassPermissions` 和你自己的登录状态启动它。CLI 以该机器人的身份通过 Sylvode 的工具回报。"
+			},
+			"warning": {
+				"bypassTitle": "权限检查已关闭",
+				"bypassBody": "此机器人的任务在关闭所有权限检查的情况下运行。任务要求 CLI 执行的任何操作都以 runner 机器用户的身份运行。"
 			}
 		}
 	}
