@@ -140,9 +140,7 @@ jobs:
           cd staging
           tar czf ../sylvode-${{ matrix.suffix }}.tar.gz -- *
           cd ..
-          cp sylvode-${{ matrix.suffix }}.tar.gz openpr-${{ matrix.suffix }}.tar.gz
           sha256sum sylvode-${{ matrix.suffix }}.tar.gz > sylvode-${{ matrix.suffix }}.tar.gz.sha256
-          sha256sum openpr-${{ matrix.suffix }}.tar.gz > openpr-${{ matrix.suffix }}.tar.gz.sha256
 
       # The runner archive: the executable, flat. The runner is Unix-only, so there is no Windows one.
       - name: Package runner (Unix)
@@ -169,12 +167,10 @@ jobs:
             Copy-Item $src staging/
           }
           Compress-Archive -Path staging/* -DestinationPath sylvode-${{ matrix.suffix }}.zip
-          Copy-Item sylvode-${{ matrix.suffix }}.zip openpr-${{ matrix.suffix }}.zip
           # The same "<hash>  <file>" line sha256sum writes, so `sha256sum -c` checks it.
-          foreach ($archive in @("sylvode-${{ matrix.suffix }}.zip", "openpr-${{ matrix.suffix }}.zip")) {
-            $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-            [System.IO.File]::WriteAllText("$archive.sha256", "$hash  $archive`n")
-          }
+          $archive = "sylvode-${{ matrix.suffix }}.zip"
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$archive.sha256", "$hash  $archive`n")
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -185,10 +181,6 @@ jobs:
             sylvode-${{ matrix.suffix }}.tar.gz.sha256
             sylvode-${{ matrix.suffix }}.zip
             sylvode-${{ matrix.suffix }}.zip.sha256
-            openpr-${{ matrix.suffix }}.tar.gz
-            openpr-${{ matrix.suffix }}.tar.gz.sha256
-            openpr-${{ matrix.suffix }}.zip
-            openpr-${{ matrix.suffix }}.zip.sha256
             sylvode-runner-${{ matrix.suffix }}.tar.gz
             sylvode-runner-${{ matrix.suffix }}.tar.gz.sha256
           if-no-files-found: error
@@ -213,9 +205,7 @@ jobs:
           bun run build
           tar czf ../sylvode-frontend.tar.gz build/ nginx.conf
           cd ..
-          cp sylvode-frontend.tar.gz openpr-frontend.tar.gz
           sha256sum sylvode-frontend.tar.gz > sylvode-frontend.tar.gz.sha256
-          sha256sum openpr-frontend.tar.gz > openpr-frontend.tar.gz.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -224,8 +214,6 @@ jobs:
           path: |
             sylvode-frontend.tar.gz
             sylvode-frontend.tar.gz.sha256
-            openpr-frontend.tar.gz
-            openpr-frontend.tar.gz.sha256
           if-no-files-found: error
 
   # One image per architecture, each built on a native runner (no emulation), checked, and pushed
@@ -340,9 +328,8 @@ jobs:
           done
           (cd artifacts && sha256sum -c ./*.sha256)
           # Flow collaborative writes need collab-isolated-apply-worker beside api, in every
-          # platform archive and its deprecated alias.
-          for archive in artifacts/sylvode-linux-*.tar.gz artifacts/sylvode-macos-*.tar.gz \
-                         artifacts/openpr-linux-*.tar.gz artifacts/openpr-macos-*.tar.gz; do
+          # platform archive.
+          for archive in artifacts/sylvode-linux-*.tar.gz artifacts/sylvode-macos-*.tar.gz; do
             listing="$(tar tzf "$archive")"
             for bin in api collab-isolated-apply-worker; do
               grep -qx "$bin" <<<"$listing" || { echo "::error::$archive lacks $bin"; exit 1; }
@@ -389,19 +376,16 @@ jobs:
             | Runner | Linux and macOS, amd64 and arm64 | `sylvode-runner-<platform>.tar.gz` |
 
             Each archive contains `api`, `collab-isolated-apply-worker`, `worker`,
-            legacy-compatible `mcp-server`, and the new `sylvode` CLI, with a `.sha256` file to
+            `mcp-server`, and the `sylvode` CLI, with a `.sha256` file to
             check it (`sha256sum -c`). Keep `collab-isolated-apply-worker` in the same directory
             as `api`: the API spawns it for every Flow collaborative write.
             Each `sylvode-runner-<platform>.tar.gz` contains the `sylvode-runner` executable; there is
             no Windows build of the runner.
             The runner container image is `ghcr.io/openprx/sylvode-runner:<version>`
             (the release tag without the `v`; also `latest`), for linux/amd64 and linux/arm64.
-            Matching `openpr-*` archive names of the other archives are published as deprecated
-            aliases with the same content; they are not removed before Sylvode v2.0.
 
             Before upgrading, read the "Breaking and behaviour changes" section of
             [CHANGELOG.md](https://github.com/openprx/sylvode/blob/${{ env.RELEASE_TAG }}/CHANGELOG.md)
-            for this release. Legacy OpenPR names keep working with a deprecation warning; see the
-            [compatibility matrix](https://github.com/openprx/sylvode/blob/${{ env.RELEASE_TAG }}/docs/sylvode-v1.0-compatibility.md).
+            for this release.
 
             See [README.md](https://github.com/openprx/sylvode#readme) for setup instructions.
