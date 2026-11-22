@@ -23,7 +23,7 @@ const SAFE_EVENT_SOURCE_KEYS: [&str; 3] = ["type", "actor_id", "origin_event"];
 
 /// Event `metadata` keys written by `insert_form_event`. Metadata is generated server side, but it
 /// is filtered with the same allow list so a future producer cannot widen it silently.
-const SAFE_EVENT_METADATA_KEYS: [&str; 5] = ["form_id", "form_key", "record_id", "legacy_form_events", "derived_from"];
+const SAFE_EVENT_METADATA_KEYS: [&str; 4] = ["form_id", "form_key", "record_id", "derived_from"];
 
 /// What a single event type may expose to a reader with field level read denials.
 pub struct EventPayloadPolicy {
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn metadata_keeps_only_the_generated_keys() {
-        let metadata = json!({ "form_id": "f1", "record_id": "r1", "legacy_form_events": true, "extra": "leak" });
+        let metadata = json!({ "form_id": "f1", "record_id": "r1", "extra": "leak" });
         let filtered = redact_event_metadata(metadata, &denied(&["salary"]));
         assert_eq!(filtered.get("form_id"), Some(&json!("f1")));
         assert!(filtered.get("extra").is_none());

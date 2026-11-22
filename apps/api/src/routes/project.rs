@@ -709,7 +709,6 @@ async fn insert_scenario_form_event(
             metadata: json!({
                 "form_id": form_id,
                 "record_id": record_id,
-                "legacy_form_events": true,
                 "scenario_template_initialized": true,
                 "template_metadata": metadata
             }),

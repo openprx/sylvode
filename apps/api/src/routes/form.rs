@@ -6635,8 +6635,7 @@ where
             metadata: json!({
                 "form_id": form.id,
                 "form_key": form.key,
-                "record_id": record_id,
-                "legacy_form_events": true
+                "record_id": record_id
             }),
             correlation_id: None,
             causation_id: None,
