@@ -1,0 +1,31 @@
+{
+	"alertPanel": {
+		"title": "告警",
+		"refresh": "刷新",
+		"open": "进行中",
+		"closed": "已关闭",
+		"source": "来源",
+		"deletedSource": "已删除的来源",
+		"kind": "类型",
+		"occurrences": "发生次数",
+		"firstSeen": "首次出现",
+		"lastSeen": "最近出现",
+		"rule": "规则",
+		"deletedRule": "已删除的规则",
+		"task": "机器人任务",
+		"taskNone": "无机器人任务",
+		"taskWaiting": "等待空闲名额",
+		"taskWaitingUntil": "直到 {time}",
+		"taskSuppressed": "未启动：安全限制",
+		"viewTask": "查看任务",
+		"thing": "告警详情",
+		"severity": {
+			"info": "信息",
+			"low": "低",
+			"medium": "中",
+			"high": "高",
+			"critical": "严重",
+			"unknown": "未知"
+		}
+	}
+}

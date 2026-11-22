@@ -14,6 +14,7 @@
 	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
 	import { authStore } from '#lib/stores/auth.js';
+	import { isWorkspaceAdminRole } from '#lib/workspace/home.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { renderMarkdown } from '#lib/utils/markdown.js';
@@ -39,6 +40,7 @@
 	import Textarea from '#lib/components/Textarea.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import AgentTasksPanel from '#lib/project/agent-tasks/AgentTasksPanel.svelte';
+	import AlertPanel from '#lib/project/alert-panel/AlertPanel.svelte';
 
 	type SelectOption = {
 		label: string;
@@ -1182,6 +1184,16 @@
 							</div>
 						{/if}
 					</div>
+
+					<AlertPanel
+						{issueId}
+						{workspaceId}
+						{projectId}
+						isAdmin={isWorkspaceAdminRole(
+							workspaceMembers.find((member) => member.user_id === currentUserId)?.role
+						)}
+						refreshKey={agentTasksRefresh}
+					/>
 
 					<AgentTasksPanel {issueId} names={memberNameMap} refreshKey={agentTasksRefresh} />
 
