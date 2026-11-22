@@ -30,7 +30,9 @@ fn run(path: &Path, args: &[&str]) -> Output {
     Command::new(RUNNER)
         .args(args)
         .env_clear()
-        .env("PATH", format!("{}:/usr/bin:/bin", path.display()))
+        // Only the fakes directory: a real tmux in `/usr/bin` (the CI images have one) must stay
+        // invisible, or "tmux missing" depends on what is installed.
+        .env("PATH", path)
         .env("HOME", path)
         .output()
         .expect("run the runner")
