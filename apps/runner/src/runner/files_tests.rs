@@ -224,7 +224,6 @@ fn session_settings_hold_the_four_hooks_and_are_private() {
         claude_settings: &settings,
         runner_exe: &exe,
         hook_socket: &socket,
-        nonce: "0123456789abcdef0123456789abcdef",
     };
     assert!(state.write_session_settings(&name, &files).expect("write").changed);
     assert!(!state.write_session_settings(&name, &files).expect("again").changed);
@@ -236,13 +235,15 @@ fn session_settings_hold_the_four_hooks_and_are_private() {
             .as_str()
             .expect("command");
         assert!(
-            command.starts_with("'/opt/x/sylvode-runner' 'hook' '--cli' 'claude' '--session' 'SVWL-claude' '--event' "),
+            command.starts_with("'/opt/x/sylvode-runner' 'hook' '--cli' 'claude' '--event' "),
             "{command}"
         );
         assert!(command.contains(&format!("'--event' '{event}'")), "{command}");
         assert_eq!(value["hooks"][event][0]["hooks"][0]["type"], "command");
+        // The settings hold no secret: no session name, no nonce, only the socket path.
+        assert!(command.ends_with("'--socket' '/s/hook.sock'"), "{command}");
         assert!(
-            command.ends_with("'--nonce' '0123456789abcdef0123456789abcdef'"),
+            !command.contains("--nonce") && !command.contains("--session"),
             "{command}"
         );
     }
@@ -272,7 +273,6 @@ fn record() -> SessionRecord {
         pane_pid: 7,
         dir: "/x".to_string(),
         created_by: CreatedBy::Operator,
-        nonce: String::new(),
         pushed: None,
     }
 }
@@ -342,7 +342,6 @@ fn session_start_and_notification_hooks_have_narrow_matchers() {
         claude_settings: &settings,
         runner_exe: &exe,
         hook_socket: &socket,
-        nonce: "0123456789abcdef0123456789abcdef",
     };
     state.write_session_settings(&name, &files).expect("write");
     let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&settings).expect("read")).expect("json");

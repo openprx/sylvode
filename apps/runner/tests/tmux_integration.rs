@@ -84,6 +84,32 @@ fn key(value: &str) -> SessionName {
     SessionName::new(value, "claude").expect("name")
 }
 
+/// `new_session`, keeping only the pane.
+trait Make {
+    fn make(
+        &self,
+        name: &SessionName,
+        dir: &WorkDir,
+        width: u16,
+        height: u16,
+        argv: &[String],
+    ) -> Result<Pane, TmuxError>;
+}
+
+impl Make for Tmux {
+    fn make(
+        &self,
+        name: &SessionName,
+        dir: &WorkDir,
+        width: u16,
+        height: u16,
+        argv: &[String],
+    ) -> Result<Pane, TmuxError> {
+        self.new_session(name, dir, width, height, argv)
+            .map(|created| created.pane)
+    }
+}
+
 fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
@@ -147,7 +173,12 @@ fn the_driver_against_a_real_tmux() {
     assert_eq!(t.has_session(&key("ABC")), Ok(false));
 
     // `=AB` never reaches `ABC`. A single-element command runs without a shell, as `cat`.
-    let abc = t.new_session(&key("ABC"), &work, 100, 30, &cat).expect("create ABC");
+    let created = t.new_session(&key("ABC"), &work, 100, 30, &cat).expect("create ABC");
+    let abc = created.pane;
+    // The socket path new-session reports is the one the panes see in `TMUX`.
+    let socket_path = created.socket_path.expect("this tmux reports its socket path");
+    assert_eq!(t.socket_path(&abc), Ok(socket_path.clone()));
+    assert!(socket_path.ends_with(&server.socket), "{socket_path}");
     assert_eq!(t.server_running(), Ok(true));
     assert_eq!(t.has_session(&key("ABC")), Ok(true));
     assert_eq!(t.has_session(&key("AB")), Ok(false));
@@ -164,14 +195,14 @@ fn the_driver_against_a_real_tmux() {
     assert_eq!(t.retry_enter(&wrong), Err(TmuxError::Refused(Refusal::NotOwned)));
 
     // An all-digit key is a name, not an index.
-    let digits = t.new_session(&key("123"), &work, 100, 30, &cat).expect("create 123");
+    let digits = t.make(&key("123"), &work, 100, 30, &cat).expect("create 123");
     assert_eq!(t.has_session(&key("123")), Ok(true));
     assert!(!t.pane_info(&digits).expect("123 pane").dead);
     assert_eq!(t.has_session(&key("12")), Ok(false));
 
     // A duplicate name is refused instead of reaching the other session.
     assert!(matches!(
-        t.new_session(&key("ABC"), &work, 100, 30, &cat),
+        t.make(&key("ABC"), &work, 100, 30, &cat),
         Err(TmuxError::Failed { .. })
     ));
 
@@ -219,9 +250,7 @@ fn a_push_is_a_bracketed_paste_and_is_refused_where_that_cannot_be_promised() {
 
     // A program that enabled bracketed paste: the text arrives between the markers, as one
     // paste, with shell syntax untouched.
-    let good = t
-        .new_session(&key("GOOD"), &work, 100, 30, &bracketed_cat())
-        .expect("create");
+    let good = t.make(&key("GOOD"), &work, 100, 30, &bracketed_cat()).expect("create");
     wait_for("the program to run", || {
         t.pane_info(&good).is_ok_and(|i| i.current_command == "cat")
     });
@@ -248,7 +277,7 @@ fn a_push_is_a_bracketed_paste_and_is_refused_where_that_cannot_be_promised() {
     // refused. On tmux 3.7 and later the pane reports it; on older servers there is no
     // confirmation to give.
     let plain = t
-        .new_session(&key("PLAIN"), &work, 100, 30, &strings(&["cat"]))
+        .make(&key("PLAIN"), &work, 100, 30, &strings(&["cat"]))
         .expect("create");
     wait_for("the program to run", || {
         t.pane_info(&plain).is_ok_and(|i| i.current_command == "cat")
@@ -281,7 +310,7 @@ fn a_push_is_a_bracketed_paste_and_is_refused_where_that_cannot_be_promised() {
 
     // A foreground program that is not the CLI: refused.
     let other = t
-        .new_session(&key("OTHER"), &work, 100, 30, &strings(&["sleep", "300"]))
+        .make(&key("OTHER"), &work, 100, 30, &strings(&["sleep", "300"]))
         .expect("create");
     wait_for("sleep to run", || {
         t.pane_info(&other).is_ok_and(|i| i.current_command == "sleep")
@@ -320,9 +349,7 @@ fn a_dead_pane_is_detected_and_refused_and_an_exited_cli_ends_the_session() {
     let work = server.workdir();
     // The runner sets no `remain-on-exit`: when the CLI of a session it created exits, the session
     // is gone and the next delivery creates it again.
-    let gone = t
-        .new_session(&key("GONE"), &work, 100, 30, &bracketed_cat())
-        .expect("create");
+    let gone = t.make(&key("GONE"), &work, 100, 30, &bracketed_cat()).expect("create");
     wait_for("the program to run", || {
         t.pane_info(&gone).is_ok_and(|i| i.current_command == "cat")
     });
@@ -338,7 +365,7 @@ fn a_dead_pane_is_detected_and_refused_and_an_exited_cli_ends_the_session() {
     // An operator who keeps dead panes (their own `remain-on-exit`) is served as well: a dead pane
     // is seen as dead and nothing is typed into it. (The server ended with its last session, so a
     // keeper session holds it up while the option is set.)
-    t.new_session(&key("KEEP"), &work, 100, 30, &strings(&["sleep", "300"]))
+    t.make(&key("KEEP"), &work, 100, 30, &strings(&["sleep", "300"]))
         .expect("create keeper");
     assert!(
         server
@@ -346,9 +373,7 @@ fn a_dead_pane_is_detected_and_refused_and_an_exited_cli_ends_the_session() {
             .status
             .success()
     );
-    let pane = t
-        .new_session(&key("DEAD"), &work, 100, 30, &bracketed_cat())
-        .expect("create");
+    let pane = t.make(&key("DEAD"), &work, 100, 30, &bracketed_cat()).expect("create");
     wait_for("the program to run", || {
         t.pane_info(&pane).is_ok_and(|i| i.current_command == "cat")
     });
@@ -385,7 +410,7 @@ fn the_pane_is_found_by_id_under_a_user_configuration_and_after_window_moves() {
     let t = &server.tmux;
     let work = server.workdir();
     let pane = t
-        .new_session(&key("BASE"), &work, 100, 30, &bracketed_cat())
+        .make(&key("BASE"), &work, 100, 30, &bracketed_cat())
         .expect("create under base-index 1");
     wait_for("the program to run", || {
         t.pane_info(&pane).is_ok_and(|i| i.current_command == "cat")
@@ -481,7 +506,7 @@ fn directories_commands_and_arguments_are_not_expanded_or_shelled() {
     let out = server.dir.join("argv.out");
     let work = server.workdir();
     let script = format!("printf %s \"$0\" > '{}'; sleep 20", out.display());
-    t.new_session(
+    t.make(
         &key("ARGV"),
         &work,
         80,
@@ -496,7 +521,7 @@ fn directories_commands_and_arguments_are_not_expanded_or_shelled() {
     // 4. A one-element command is not given to a shell.
     let shell_out = server.dir.join("shell.out");
     let single = format!("echo SHELLRAN > '{}'; sleep 20", shell_out.display());
-    let _ = t.new_session(&key("ONE"), &work, 80, 24, &[single]);
+    let _ = t.make(&key("ONE"), &work, 80, 24, &[single]);
     sleep(Duration::from_millis(1500));
     assert!(!shell_out.exists(), "a one-element command ran through a shell");
 }

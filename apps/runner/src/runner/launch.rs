@@ -16,7 +16,6 @@
 use std::path::Path;
 
 use super::config::{RunnerClaudeConfig, RunnerCodexConfig};
-use super::tmux::SessionName;
 
 /// The name of the MCP server in the per-bot files and in tool names (`mcp__sylvode__...`).
 pub const SERVER_NAME: &str = "sylvode";
@@ -70,15 +69,22 @@ pub struct LaunchFiles<'a> {
     pub runner_exe: &'a Path,
     /// `state_dir/hook.sock`.
     pub hook_socket: &'a Path,
-    /// The per-launch secret the hooks present (32 hex characters, random, never from task
-    /// content): it binds a hook message to the launch that wrote it.
-    pub nonce: &'a str,
 }
+
+/// The placeholder of a launch command for the path of the bot's MCP file.
+pub const PLACEHOLDER_MCP_CONFIG: &str = "{mcp_config}";
+
+/// The placeholder of a launch command for the path of the session's hook settings.
+pub const PLACEHOLDER_SETTINGS: &str = "{settings}";
 
 /// The argument vector of the CLI in a session the runner creates, `program` first.
 ///
-/// The words of `launch_command` after the program, then `--mcp-config <file>` and, with `hooks`,
-/// `--settings <file>`.
+/// The words of `launch_command` after the program, in order. A word that is exactly
+/// `{mcp_config}` or `{settings}` is replaced by the path of that file (whole words only: a word
+/// that merely contains one is left as it is). What the template does not place itself is
+/// appended: `--mcp-config <file>` unless the template has `{mcp_config}`, and with `hooks` on
+/// `--settings <file>` unless it has `{settings}`. A template that has a placeholder owns its
+/// position, so nothing is appended for that file.
 ///
 /// # Errors
 ///
@@ -91,13 +97,23 @@ pub fn session_argv(
     let Some((_, rest)) = cfg.launch_command.split_first() else {
         return Err(LaunchError::Unsafe("the launch command is empty".to_string()));
     };
+    let mcp_config = utf8(files.claude_mcp_json)?;
+    let settings = utf8(files.claude_settings)?;
+    let has = |placeholder: &str| rest.iter().any(|word| word == placeholder);
+    let (places_mcp, places_settings) = (has(PLACEHOLDER_MCP_CONFIG), has(PLACEHOLDER_SETTINGS));
     let mut argv = vec![utf8(program)?];
-    argv.extend(rest.iter().cloned());
-    argv.push("--mcp-config".to_string());
-    argv.push(utf8(files.claude_mcp_json)?);
-    if cfg.hooks {
+    argv.extend(rest.iter().map(|word| match word.as_str() {
+        PLACEHOLDER_MCP_CONFIG => mcp_config.clone(),
+        PLACEHOLDER_SETTINGS => settings.clone(),
+        other => other.to_string(),
+    }));
+    if !places_mcp {
+        argv.push("--mcp-config".to_string());
+        argv.push(mcp_config);
+    }
+    if cfg.hooks && !places_settings {
         argv.push("--settings".to_string());
-        argv.push(utf8(files.claude_settings)?);
+        argv.push(settings);
     }
     Ok(argv)
 }
@@ -157,37 +173,24 @@ pub fn toml_array(items: &[String]) -> String {
     toml::Value::Array(items.iter().map(|item| toml::Value::String(item.clone())).collect()).to_string()
 }
 
-/// The words of a hook run by the CLI: this executable's `hook` subcommand for one event.
-pub fn hook_words(
-    files: &LaunchFiles<'_>,
-    cli: &str,
-    name: &SessionName,
-    event: &str,
-) -> Result<Vec<String>, LaunchError> {
+/// The words of a hook run by the CLI: this executable's `hook` subcommand for one event. They
+/// hold no secret: the runner knows the sender by the tmux pane it runs in.
+pub fn hook_words(files: &LaunchFiles<'_>, cli: &str, event: &str) -> Result<Vec<String>, LaunchError> {
     let text = |p: &Path| -> Result<String, LaunchError> {
         p.to_str()
             .filter(|t| !t.chars().any(char::is_control))
             .map(str::to_string)
             .ok_or_else(|| LaunchError::Unsafe("a runner file path is not UTF-8 or has control characters".to_string()))
     };
-    if files.nonce.len() != 32 || !files.nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(LaunchError::Unsafe(
-            "the hook nonce is not 32 hex characters".to_string(),
-        ));
-    }
     Ok(vec![
         text(files.runner_exe)?,
         "hook".to_string(),
         "--cli".to_string(),
         cli.to_string(),
-        "--session".to_string(),
-        name.as_str().to_string(),
         "--event".to_string(),
         event.to_string(),
         "--socket".to_string(),
         text(files.hook_socket)?,
-        "--nonce".to_string(),
-        files.nonce.to_string(),
     ])
 }
 
@@ -249,8 +252,8 @@ pub fn shell_quote(word: &str) -> String {
 /// # Errors
 ///
 /// [`LaunchError::Unsafe`] for a path with control characters.
-pub fn claude_hook_command(files: &LaunchFiles<'_>, name: &SessionName, event: &str) -> Result<String, LaunchError> {
-    Ok(hook_words(files, "claude", name, event)?
+pub fn claude_hook_command(files: &LaunchFiles<'_>, event: &str) -> Result<String, LaunchError> {
+    Ok(hook_words(files, "claude", event)?
         .iter()
         .map(|word| shell_quote(word))
         .collect::<Vec<_>>()

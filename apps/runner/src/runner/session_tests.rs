@@ -31,7 +31,6 @@ fn record(bot: &str, pane: &str, pid: u32, created_by: CreatedBy) -> SessionReco
         pane_pid: pid,
         dir: "/x".to_string(),
         created_by,
-        nonce: String::new(),
         pushed: None,
     }
 }
@@ -196,28 +195,18 @@ fn the_executable_path_survives_an_in_place_upgrade() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-const OWN: &str = "0123456789abcdef0123456789abcdef";
-const OTHER: &str = "ffffffffffffffffffffffffffffffff";
-
-/// A hook message is dropped unless it carries this launch's nonce and, where the platform names
-/// the sender, comes from below the session's pane process; an unknown pane is a refusal.
+/// A hook message is dropped unless, where the platform names the sender, it comes from below the
+/// session's pane process; an unknown pane is a refusal. (The pane pair was checked before.)
 #[test]
-fn a_hook_message_from_the_wrong_nonce_or_outside_the_pane_is_dropped() {
+fn a_hook_message_from_outside_the_pane_is_dropped() {
     let pane = 4000;
-    // Right nonce, a chain through the pane.
-    assert_eq!(admit_hook(OWN, OWN, Some(&[9, 8, pane, 1]), Some(pane)), Ok(()));
-    // Wrong nonce, whatever the chain.
-    assert_eq!(admit_hook(OWN, OTHER, Some(&[9, pane]), Some(pane)), Err("wrong nonce"));
-    assert_eq!(admit_hook(OWN, "", None, Some(pane)), Err("wrong nonce"));
+    assert_eq!(admit_hook(Some(&[9, 8, pane, 1]), Some(pane)), Ok(()));
     // A sender outside the pane's process tree.
-    assert_eq!(
-        admit_hook(OWN, OWN, Some(&[9, 8, 7, 1]), Some(pane)),
-        Err("not from the pane")
-    );
+    assert_eq!(admit_hook(Some(&[9, 8, 7, 1]), Some(pane)), Err("not from the pane"));
     // Fail closed: a chain was read but the pane is not known (session.json unreadable).
-    assert_eq!(admit_hook(OWN, OWN, Some(&[9, pane]), None), Err("not from the pane"));
-    // A platform that cannot name the sender leaves the nonce to decide.
-    assert_eq!(admit_hook(OWN, OWN, None, None), Ok(()));
+    assert_eq!(admit_hook(Some(&[9, pane]), None), Err("not from the pane"));
+    // A platform that cannot name the sender leaves the pane pair to decide.
+    assert_eq!(admit_hook(None, None), Ok(()));
 }
 
 /// The directory accepted at delivery must still be the same canonical path before a tmux session

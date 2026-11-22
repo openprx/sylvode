@@ -1,4 +1,4 @@
-#![allow(clippy::indexing_slicing)]
+#![allow(clippy::indexing_slicing, clippy::literal_string_with_formatting_args)]
 
 use std::path::Path;
 
@@ -7,9 +7,6 @@ use super::launch::{
     LaunchFiles, SEARCH_MODE_TOOLS, claude_headless_argv, claude_hook_command, codex_headless_argv, hook_words,
     mcp_tool, opencode_headless_argv, session_argv, shell_quote, toml_array, toml_string,
 };
-use super::tmux::SessionName;
-
-const NONCE: &str = "0123456789abcdef0123456789abcdef";
 
 fn files() -> LaunchFiles<'static> {
     LaunchFiles {
@@ -17,12 +14,7 @@ fn files() -> LaunchFiles<'static> {
         claude_settings: Path::new("/state/sessions/SVWL-claude/claude-settings.json"),
         runner_exe: Path::new("/opt/sylvode/bin/sylvode-runner"),
         hook_socket: Path::new("/state/hook.sock"),
-        nonce: NONCE,
     }
-}
-
-fn name() -> SessionName {
-    SessionName::new("SVWL", "claude").expect("name")
 }
 
 fn strings(items: &[&str]) -> Vec<String> {
@@ -84,6 +76,70 @@ fn a_created_session_runs_the_launch_command_plus_the_mcp_file_and_the_hook_sett
         ..RunnerClaudeConfig::default()
     };
     assert!(session_argv(program, &empty, &files()).is_err());
+}
+
+/// The placeholder and append matrix: a word that is exactly a placeholder is replaced; what the
+/// template does not place itself is appended; hooks off leaves out `--settings` unless the
+/// template placed it.
+#[test]
+fn the_launch_command_placeholders_and_the_append_matrix() {
+    let program = Path::new("/bin/claude");
+    let run = |words: &[&str], hooks: bool| {
+        let cfg = RunnerClaudeConfig {
+            launch_command: strings(words),
+            hooks,
+            ..RunnerClaudeConfig::default()
+        };
+        session_argv(program, &cfg, &files()).expect("argv")
+    };
+    let mcp = "/state/mcp/BOT.claude.json";
+    let settings = "/state/sessions/SVWL-claude/claude-settings.json";
+    // Neither placeholder: both are appended (hooks on), or only the MCP file (hooks off).
+    assert_eq!(
+        run(&["claude", "-x"], true),
+        strings(&["/bin/claude", "-x", "--mcp-config", mcp, "--settings", settings])
+    );
+    assert_eq!(
+        run(&["claude", "-x"], false),
+        strings(&["/bin/claude", "-x", "--mcp-config", mcp])
+    );
+    // `{mcp_config}` placed: the template owns its position, only `--settings` is appended.
+    assert_eq!(
+        run(&["claude", "--mcp-config", "{mcp_config}", "-x"], true),
+        strings(&["/bin/claude", "--mcp-config", mcp, "-x", "--settings", settings])
+    );
+    // `{settings}` placed: only `--mcp-config` is appended.
+    assert_eq!(
+        run(&["claude", "--settings", "{settings}", "-x"], true),
+        strings(&["/bin/claude", "--settings", settings, "-x", "--mcp-config", mcp])
+    );
+    // Both placed: nothing is appended, in any order, hooks on or off.
+    for hooks in [true, false] {
+        assert_eq!(
+            run(
+                &["claude", "--settings", "{settings}", "--mcp-config", "{mcp_config}"],
+                hooks
+            ),
+            strings(&["/bin/claude", "--settings", settings, "--mcp-config", mcp])
+        );
+    }
+    // `{settings}` placed with hooks off is still replaced (the template owns it).
+    assert_eq!(
+        run(&["claude", "--settings", "{settings}"], false),
+        strings(&["/bin/claude", "--settings", settings, "--mcp-config", mcp])
+    );
+    // Whole words only: a word that merely contains a placeholder is not a placement, stays
+    // literal, and the file is appended as if it were absent.
+    assert_eq!(
+        run(&["claude", "--mcp-config={mcp_config}"], false),
+        strings(&["/bin/claude", "--mcp-config={mcp_config}", "--mcp-config", mcp])
+    );
+    // The program word is never substituted, and a placeholder is replaced everywhere it stands
+    // as a whole word.
+    assert_eq!(
+        run(&["claude", "{mcp_config}", "{mcp_config}"], false),
+        strings(&["/bin/claude", mcp, mcp])
+    );
 }
 
 #[test]
@@ -194,7 +250,7 @@ fn toml_values_survive_hostile_text() {
 
 #[test]
 fn hook_commands_are_fixed_words_and_quoted_values() {
-    let words = hook_words(&files(), "claude", &name(), "Stop").expect("words");
+    let words = hook_words(&files(), "claude", "Stop").expect("words");
     assert_eq!(
         words,
         strings(&[
@@ -202,19 +258,15 @@ fn hook_commands_are_fixed_words_and_quoted_values() {
             "hook",
             "--cli",
             "claude",
-            "--session",
-            "SVWL-claude",
             "--event",
             "Stop",
             "--socket",
             "/state/hook.sock",
-            "--nonce",
-            "0123456789abcdef0123456789abcdef"
         ])
     );
     assert_eq!(
-        claude_hook_command(&files(), &name(), "Stop").expect("command"),
-        "'/opt/sylvode/bin/sylvode-runner' 'hook' '--cli' 'claude' '--session' 'SVWL-claude' '--event' 'Stop' '--socket' '/state/hook.sock' '--nonce' '0123456789abcdef0123456789abcdef'"
+        claude_hook_command(&files(), "Stop").expect("command"),
+        "'/opt/sylvode/bin/sylvode-runner' 'hook' '--cli' 'claude' '--event' 'Stop' '--socket' '/state/hook.sock'"
     );
     assert_eq!(shell_quote("it's"), "'it'\\''s'");
     assert_eq!(shell_quote("a b; rm -rf /"), "'a b; rm -rf /'");
@@ -223,8 +275,8 @@ fn hook_commands_are_fixed_words_and_quoted_values() {
         runner_exe: Path::new("/opt/run\nner"),
         ..files()
     };
-    assert!(hook_words(&weird, "claude", &name(), "Stop").is_err());
-    assert!(claude_hook_command(&weird, &name(), "Stop").is_err());
+    assert!(hook_words(&weird, "claude", "Stop").is_err());
+    assert!(claude_hook_command(&weird, "Stop").is_err());
 }
 
 /// What a shell makes of the hook command is exactly its words, whatever the paths hold.
@@ -237,7 +289,7 @@ fn a_quoted_hook_command_is_parsed_by_a_shell_into_the_same_words() {
         hook_socket: Path::new(socket),
         ..files()
     };
-    let command = claude_hook_command(&weird, &name(), "Stop").expect("command");
+    let command = claude_hook_command(&weird, "Stop").expect("command");
     let output = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(format!("printf '%s\\n' {command}"))
@@ -247,5 +299,5 @@ fn a_quoted_hook_command_is_parsed_by_a_shell_into_the_same_words() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(words, hook_words(&weird, "claude", &name(), "Stop").expect("words"));
+    assert_eq!(words, hook_words(&weird, "claude", "Stop").expect("words"));
 }

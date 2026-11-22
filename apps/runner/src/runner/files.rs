@@ -38,6 +38,53 @@ const MAX_FILE_BYTES: u64 = 64 * 1024;
 /// The events the claude hooks report.
 pub const CLAUDE_EVENTS: [&str; 4] = ["SessionStart", "UserPromptSubmit", "Stop", "Notification"];
 
+/// The `hooks` object of a claude settings file: one entry per event, each running the `hook`
+/// subcommand. With `marked`, each hook object carries `"sylvode-runner": 1`, so a settings file the
+/// operator shares can be updated without touching hooks that are not the runner's.
+///
+/// # Errors
+///
+/// A message when a path cannot be used in a command.
+pub fn claude_hooks(
+    files: &LaunchFiles<'_>,
+    marked: bool,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let mut hooks = serde_json::Map::new();
+    for event in CLAUDE_EVENTS {
+        let command = claude_hook_command(files, event).map_err(|e: LaunchError| e.to_string())?;
+        // `SessionStart` also fires after compaction, `/clear` and resume, and `Notification`
+        // also for an idle prompt: only the first start and the permission prompts are wanted.
+        let matcher = match event {
+            "SessionStart" => Some("startup"),
+            "Notification" => Some("permission_prompt|elicitation_dialog"),
+            _ => None,
+        };
+        let mut hook = json!({"type": "command", "command": command});
+        if let (true, Some(object)) = (marked, hook.as_object_mut()) {
+            object.insert(RUNNER_MARK.to_string(), json!(1));
+        }
+        let mut entry = json!({"hooks": [hook]});
+        if let (Some(matcher), Some(object)) = (matcher, entry.as_object_mut()) {
+            object.insert("matcher".to_string(), json!(matcher));
+        }
+        hooks.insert(event.to_string(), json!([entry]));
+    }
+    Ok(hooks)
+}
+
+/// The `sylvode` entry of an MCP configuration: the MCP server started on the bot's TOML. It
+/// names the file, never the token.
+pub fn mcp_server_entry(server: &str, toml_path: &str) -> serde_json::Value {
+    json!({
+        "type": "stdio",
+        "command": server,
+        "args": ["serve", "--transport", "stdio", "--config", toml_path],
+    })
+}
+
+/// The key that marks a hook object as the runner's own in a shared settings file.
+pub const RUNNER_MARK: &str = "sylvode-runner";
+
 const fn private_mode() -> Mode {
     Mode::from_bits_truncate(0o700)
 }
@@ -98,10 +145,6 @@ pub struct SessionRecord {
     /// The working directory the task that last used the session named (for `doctor`).
     pub dir: String,
     pub created_by: CreatedBy,
-    /// The per-launch secret the hooks of a session the runner created present (see
-    /// `LaunchFiles::nonce`); empty for a session the operator started.
-    #[serde(default)]
-    pub nonce: String,
     /// The task whose text was typed (or was about to be) into this session. Written and synced
     /// BEFORE the paste, consulted by restart recovery only to prevent a second paste.
     #[serde(default)]
@@ -260,13 +303,7 @@ impl StateDir {
             .to_str()
             .ok_or_else(|| "the MCP config path is not UTF-8".to_string())?;
         let json = serde_json::to_string_pretty(&json!({
-            "mcpServers": {
-                SERVER_NAME: {
-                    "type": "stdio",
-                    "command": server,
-                    "args": ["serve", "--transport", "stdio", "--config", toml_text],
-                }
-            }
+            "mcpServers": { SERVER_NAME: mcp_server_entry(server, toml_text) }
         }))
         .map_err(|e| e.to_string())?;
         let mcp = private_dir(&self.fd, "mcp")?;
@@ -282,27 +319,13 @@ impl StateDir {
     }
 
     /// Writes `sessions/<NAME>/claude-settings.json`: the four hooks, each the `hook` subcommand.
+    /// The file holds no secret.
     ///
     /// # Errors
     ///
     /// A message when a path cannot be used or a file cannot be written.
     pub fn write_session_settings(&self, name: &SessionName, files: &LaunchFiles<'_>) -> Result<Written, String> {
-        let mut hooks = serde_json::Map::new();
-        for event in CLAUDE_EVENTS {
-            let command = claude_hook_command(files, name, event).map_err(|e: LaunchError| e.to_string())?;
-            // `SessionStart` also fires after compaction, `/clear` and resume, and `Notification`
-            // also for an idle prompt: only the first start and the permission prompts are wanted.
-            let matcher = match event {
-                "SessionStart" => Some("startup"),
-                "Notification" => Some("permission_prompt|elicitation_dialog"),
-                _ => None,
-            };
-            let mut entry = json!({"hooks": [{"type": "command", "command": command}]});
-            if let (Some(matcher), Some(object)) = (matcher, entry.as_object_mut()) {
-                object.insert("matcher".to_string(), json!(matcher));
-            }
-            hooks.insert(event.to_string(), json!([entry]));
-        }
+        let hooks = claude_hooks(files, false)?;
         let text = serde_json::to_string_pretty(&json!({"hooks": hooks})).map_err(|e| e.to_string())?;
         let sessions = private_dir(&self.fd, "sessions")?;
         let dir = private_dir(&sessions, name.as_str())?;
@@ -390,7 +413,7 @@ impl StateDir {
             }
         };
         check(&self.root, 0o700);
-        for sub in ["mcp", "sessions"] {
+        for sub in ["mcp", "sessions", "panes"] {
             let dir = self.root.join(sub);
             check(&dir, 0o700);
             for (path, limit) in entries_below(&dir) {

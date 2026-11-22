@@ -220,7 +220,6 @@ enum Cmd {
     },
     Hook {
         event: HookEvent,
-        nonce: String,
         seq: u64,
         peer_chain: Option<Vec<u32>>,
     },
@@ -238,10 +237,13 @@ struct Shared {
     socket: SocketName,
     tmux_program: Option<PathBuf>,
     background: Background,
-    /// The nonce of each session's current launch, for the hook listener (which checks a message
-    /// before it spends anything on it), by session name.
-    nonces: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// The pane each session's worker recorded, for the hook listener (which checks a message
+    /// before it spends anything on it).
+    panes: PaneMap,
 }
+
+/// `(tmux socket path, pane id)` to the name of the session that uses the pane.
+type PaneMap = Arc<Mutex<HashMap<(String, String), String>>>;
 
 /// The sessions of this runner.
 pub struct SessionManager {
@@ -271,22 +273,17 @@ impl SessionManager {
                 socket,
                 tmux_program,
                 background,
-                nonces: Arc::new(Mutex::new(HashMap::new())),
+                panes: Arc::new(Mutex::new(HashMap::new())),
             }),
             workers: Mutex::new(HashMap::new()),
         })
     }
 
-    /// The listener's pre-check: a message is worth reading further only when its session has a
-    /// worker and it carries that launch's nonce.
-    pub fn nonce_check(&self) -> super::hooks::Accept {
-        let nonces = Arc::clone(&self.shared.nonces);
-        Arc::new(move |message| {
-            nonces
-                .lock()
-                .get(&message.session)
-                .is_some_and(|known| known.iter().any(|nonce| super::hooks::ct_eq(nonce, &message.nonce)))
-        })
+    /// The listener's pre-check: a message is worth reading further only when the pane it names
+    /// (tmux socket path and pane id) is one a session worker recorded.
+    pub fn pane_check(&self) -> super::hooks::Accept {
+        let panes = Arc::clone(&self.shared.panes);
+        Arc::new(move |message| panes.lock().contains_key(&(message.tmux.clone(), message.pane.clone())))
     }
 
     fn sender(&self, name: &SessionName) -> mpsc::Sender<Cmd> {
@@ -319,16 +316,18 @@ impl SessionManager {
 
     /// A hook event from a CLI.
     pub async fn hook(&self, message: HookMessage) {
-        let Ok(name) = SessionName::parse(&message.session) else {
-            return;
-        };
-        // Only a session that has a worker (a task was queued or recovered) takes events.
-        let sender = self.workers.lock().get(name.as_str()).cloned();
+        // Only a pane a session worker recorded takes events.
+        let name = self
+            .shared
+            .panes
+            .lock()
+            .get(&(message.tmux.clone(), message.pane.clone()))
+            .cloned();
+        let sender = name.and_then(|name| self.workers.lock().get(&name).cloned());
         if let Some(sender) = sender {
             let _ = sender
                 .send(Cmd::Hook {
                     event: message.event,
-                    nonce: message.nonce,
                     seq: message.seq,
                     peer_chain: message.peer_chain,
                 })
@@ -409,10 +408,9 @@ struct Worker {
     pane: Option<Pane>,
     rx: mpsc::Receiver<Cmd>,
     tx: mpsc::Sender<Cmd>,
-    /// The session has no hooks (the operator started it): turn events are read from the screen.
+    /// No hook of this session's pane has been admitted yet: turn events are read from the screen.
+    /// The first admitted hook switches to hook mode.
     screen_mode: bool,
-    /// The secret of the current launch's hooks.
-    nonce: String,
     last_screen: Option<String>,
     still_ticks: u32,
     screen_working: bool,
@@ -423,21 +421,13 @@ struct Worker {
     ticks: u32,
 }
 
-/// Whether a hook message may be applied: it carries this launch's nonce, and (where the platform
-/// names the sender) the sender runs below the session's pane process. Refuses with the reason.
+/// Whether a hook message may be applied: (where the platform names the sender) the sender runs
+/// below the session's pane process. Refuses with the reason. (The pane pair was checked before.)
 ///
 /// # Errors
 ///
 /// The reason for dropping the message.
-pub fn admit_hook(
-    own_nonce: &str,
-    nonce: &str,
-    chain: Option<&[u32]>,
-    pane_pid: Option<u32>,
-) -> Result<(), &'static str> {
-    if !super::hooks::ct_eq(nonce, own_nonce) {
-        return Err("wrong nonce");
-    }
+pub fn admit_hook(chain: Option<&[u32]>, pane_pid: Option<u32>) -> Result<(), &'static str> {
     if !super::hooks::chain_allows(chain, pane_pid) {
         return Err("not from the pane");
     }
@@ -470,9 +460,23 @@ pub fn dir_unchanged(dir: &Path) -> bool {
     std::fs::canonicalize(dir).is_ok_and(|now| now == dir)
 }
 
-/// A random secret of 32 hex characters (the 128 random bits of a version 4 UUID).
-fn fresh_nonce() -> String {
-    Uuid::new_v4().simple().to_string()
+/// Records `pane` for the hook listener: the socket path of its server (asked once, here) with its
+/// id, replacing whatever the session had recorded. A server that cannot say its socket path
+/// leaves the pane unrecorded, and the session runs on the screen.
+fn register_pane(tmux: &Tmux, panes: &PaneMap, pane: &Pane) {
+    match tmux.socket_path(pane) {
+        Ok(path) => record_pane(panes, pane, path),
+        Err(e) => tracing::warn!(session = pane.name.as_str(), "no hooks for this pane: {e}"),
+    }
+}
+
+fn record_pane(panes: &PaneMap, pane: &Pane, socket_path: String) {
+    let mut map = panes.lock();
+    map.retain(|_, name| name != pane.name.as_str());
+    map.insert(
+        (socket_path, pane.id.as_str().to_string()),
+        pane.name.as_str().to_string(),
+    );
 }
 
 fn unix_now() -> u64 {
@@ -487,16 +491,6 @@ impl Worker {
         } else {
             format!("tmux -L {socket} attach -t {}", name.as_str())
         };
-        let nonce = shared
-            .state
-            .read_session_record(&name)
-            .map(|record| record.nonce)
-            .filter(|nonce| nonce.len() == 32)
-            .unwrap_or_else(fresh_nonce);
-        shared
-            .nonces
-            .lock()
-            .insert(name.as_str().to_string(), vec![nonce.clone()]);
         let machine = Machine::new(
             Timers::from_config(&shared.config.runner),
             name.as_str(),
@@ -510,8 +504,7 @@ impl Worker {
             pane: None,
             rx,
             tx,
-            screen_mode: false,
-            nonce,
+            screen_mode: true,
             last_screen: None,
             still_ticks: 0,
             screen_working: false,
@@ -564,16 +557,23 @@ impl Worker {
                         .filter(|record| record.project_id == adopt.task.project_id)
                         .and_then(|record| pane_of(&self.name, record));
                     let tmux = self.tmux();
+                    let panes = Arc::clone(&self.shared.panes);
                     let alive = match pane.clone() {
-                        Some(pane) => tokio::task::spawn_blocking(move || pane_alive(&tmux, &pane))
-                            .await
-                            .unwrap_or(false),
+                        Some(pane) => tokio::task::spawn_blocking(move || {
+                            let alive = pane_alive(&tmux, &pane);
+                            if alive {
+                                register_pane(&tmux, &panes, &pane);
+                            }
+                            alive
+                        })
+                        .await
+                        .unwrap_or(false),
                         None => false,
                     };
-                    if let (Some(pane), Some(record), true) = (pane, record, alive) {
+                    if let (Some(pane), Some(_record), true) = (pane, record, alive) {
                         self.pane = Some(pane);
-                        // A session the operator started has no hooks: the screen tells the turns.
-                        self.screen_mode = !self.hooks_expected(&record);
+                        // Until a hook of the pane is admitted, the screen tells the turns.
+                        self.screen_mode = true;
                         self.machine.adopt_running(now);
                         // The `blocked` phase can be stale (nothing re-reports `pushed` after a
                         // dialog is answered): the session is blocked again only if a dialog is
@@ -611,16 +611,12 @@ impl Worker {
                 let _ = reply.send(self.machine.queue.position(&id).unwrap_or(0));
                 actions
             }
-            Cmd::Hook {
-                event,
-                nonce,
-                seq,
-                peer_chain,
-            } => {
-                // The message must carry this launch's secret and come from below this session's
-                // pane process; a session whose record cannot be read admits nothing.
+            Cmd::Hook { event, seq, peer_chain } => {
+                // The message came from this session's pane (the listener checked the pair) and
+                // from below the pane's process; a session whose record cannot be read admits
+                // nothing.
                 let pane_pid = self.shared.state.read_session_record(&self.name).map(|r| r.pane_pid);
-                if let Err(why) = admit_hook(&self.nonce, &nonce, peer_chain.as_deref(), pane_pid) {
+                if let Err(why) = admit_hook(peer_chain.as_deref(), pane_pid) {
                     tracing::debug!(session = self.name.as_str(), "hook message dropped: {why}");
                     return Vec::new();
                 }
@@ -782,12 +778,6 @@ impl Worker {
 
     // ----- liveness -----
 
-    /// Whether hooks are expected from the session of `record`: the runner started it with its
-    /// hook settings.
-    fn hooks_expected(&self, record: &SessionRecord) -> bool {
-        record.created_by == CreatedBy::Runner && self.shared.config.runner.cli.claude.hooks
-    }
-
     /// The recorded pane of this session, if a record names one.
     fn recorded_pane(&self) -> Option<Pane> {
         self.shared
@@ -945,17 +935,8 @@ impl Worker {
 
     // ----- ensure -----
 
-    /// The listener knows exactly this worker's current secret.
-    fn publish_nonce(&self) {
-        self.shared
-            .nonces
-            .lock()
-            .insert(self.name.as_str().to_string(), vec![self.nonce.clone()]);
-    }
-
-    /// A launch began: its nonce is published to the listener and the order counter starts over.
+    /// A launch began: the order counter starts over.
     fn launched(&mut self) {
-        self.publish_nonce();
         self.seq_gate = super::hooks::SeqGate::default();
     }
 
@@ -994,7 +975,6 @@ impl Worker {
             claude_settings: &settings,
             runner_exe: &self.shared.runner_exe,
             hook_socket: &socket,
-            nonce: &self.nonce,
         };
         let claude = &self.shared.config.runner.cli.claude;
         let program = claude
@@ -1027,15 +1007,9 @@ impl Worker {
         let record = self.shared.state.read_session_record(&name);
         let task = task.clone();
         let job = self.settings_job(&task);
-        // The launch's secret is known to the listener before the CLI starts: its first hook
-        // (`SessionStart`) may arrive before this call returns.
-        let launch_nonce = fresh_nonce();
-        self.shared
-            .nonces
-            .lock()
-            .entry(self.name.as_str().to_string())
-            .or_default()
-            .push(launch_nonce.clone());
+        // The pane is recorded for the hook listener inside the blocking call, right after it is
+        // known: its first hook (`SessionStart`) may arrive before the call returns.
+        let panes = Arc::clone(&self.shared.panes);
         let result = tokio::task::spawn_blocking(move || {
             ensure_blocking(
                 &tmux,
@@ -1046,12 +1020,11 @@ impl Worker {
                 record.as_ref(),
                 &job,
                 &tmux_cfg,
-                &launch_nonce,
+                &panes,
             )
         })
         .await;
         let Ok(result) = result else {
-            self.publish_nonce();
             return declined("the tmux session could not be checked", true);
         };
         match result {
@@ -1062,16 +1035,12 @@ impl Worker {
                 launched,
             }) => {
                 self.pane = pane;
-                if launched && let Some(record) = &record {
-                    // A launch got a secret of its own; a session found running keeps its old one.
-                    self.nonce.clone_from(&record.nonce);
+                if launched {
                     self.launched();
-                } else {
-                    // No launch took place: the pending secret is forgotten.
-                    self.publish_nonce();
                 }
                 if let Some(record) = record {
-                    self.screen_mode = !self.hooks_expected(&record);
+                    // Until a hook of the pane is admitted, the screen tells the turns.
+                    self.screen_mode = true;
                     if let Err(e) = self.shared.state.write_session_record(&record) {
                         tracing::warn!("could not save session.json of {}: {e}", self.name.as_str());
                     }
@@ -1079,7 +1048,6 @@ impl Worker {
                 outcome
             }
             Err(e) => {
-                self.publish_nonce();
                 tracing::error!("tmux session {}: {e}", self.name.as_str());
                 EnsureOutcome::Declined {
                     reason: format!("the runner could not start tmux session {}", self.name.as_str()),
@@ -1172,9 +1140,8 @@ impl Worker {
     }
 }
 
-/// Writes the hook settings of one launch with that launch's nonce. Run just before the CLI is
-/// started in a new session, so every launch has a secret of its own; a session that is only used
-/// keeps the one it was started with.
+/// Writes the hook settings (which hold no secret) just before the CLI is started in a new
+/// session.
 struct SettingsJob {
     state: Arc<StateDir>,
     name: SessionName,
@@ -1184,18 +1151,10 @@ struct SettingsJob {
 }
 
 impl SettingsJob {
-    fn write(&self, nonce: &str) -> Result<(), TmuxError> {
+    fn write(&self) -> Result<(), TmuxError> {
         if !self.enabled {
             return Ok(());
         }
-        // A new launch counts its hooks from the start.
-        let _ = std::fs::remove_file(
-            self.state
-                .root()
-                .join("sessions")
-                .join(self.name.as_str())
-                .join("hook.seq"),
-        );
         let claude_json = self.state.root().join("unused.json");
         let settings = self.state.claude_settings(&self.name);
         let socket = self.state.hook_socket();
@@ -1204,7 +1163,6 @@ impl SettingsJob {
             claude_settings: &settings,
             runner_exe: &self.runner_exe,
             hook_socket: &socket,
-            nonce,
         };
         self.state
             .write_session_settings(&self.name, &files)
@@ -1270,7 +1228,7 @@ fn ensure_blocking(
     record: Option<&SessionRecord>,
     job: &SettingsJob,
     cfg: &super::config::RunnerTmuxConfig,
-    launch_nonce: &str,
+    panes_for_hooks: &PaneMap,
 ) -> Result<EnsureResult, TmuxError> {
     let declined = |reason: String, retryable: bool| EnsureResult {
         outcome: EnsureOutcome::Declined { reason, retryable },
@@ -1278,7 +1236,7 @@ fn ensure_blocking(
         record: None,
         launched: false,
     };
-    let new_record = |pane_id: &PaneId, pid: u32, created_by: CreatedBy, nonce: &str| SessionRecord {
+    let new_record = |pane_id: &PaneId, pid: u32, created_by: CreatedBy| SessionRecord {
         name: name.as_str().to_string(),
         project_id: task.project_id.clone(),
         bot_id: task.bot.bot_id.clone(),
@@ -1287,7 +1245,6 @@ fn ensure_blocking(
         pane_pid: pid,
         dir: task.dir.to_string_lossy().into_owned(),
         created_by,
-        nonce: nonce.to_string(),
         pushed: None,
     };
     let exists = tmux.has_session(name)?;
@@ -1317,10 +1274,10 @@ fn ensure_blocking(
                 ));
             }
             let created = job
-                .write(launch_nonce)
+                .write()
                 .and_then(|()| tmux.new_session(name, &dir, cfg.window_width, cfg.window_height, &argv));
-            let pane = match created {
-                Ok(pane) => pane,
+            let (pane, socket_path) = match created {
+                Ok(created) => (created.pane, created.socket_path),
                 Err(e) => {
                     tracing::error!("tmux session {} was not created: {e}", name.as_str());
                     return Ok(declined(
@@ -1329,7 +1286,13 @@ fn ensure_blocking(
                     ));
                 }
             };
-            let record = new_record(&pane.id, pane.pid, CreatedBy::Runner, launch_nonce);
+            // Recorded right away, from the answer of `new-session` itself: the CLI's first hook
+            // may arrive within milliseconds.
+            match socket_path {
+                Some(path) => record_pane(panes_for_hooks, &pane, path),
+                None => register_pane(tmux, panes_for_hooks, &pane),
+            }
+            let record = new_record(&pane.id, pane.pid, CreatedBy::Runner);
             Ok(EnsureResult {
                 outcome: EnsureOutcome::Started,
                 pane: Some(pane),
@@ -1338,23 +1301,21 @@ fn ensure_blocking(
             })
         }
         EnsureDecision::Use { pane, created_by } => {
-            // A session the runner started keeps the secret its hooks were written with.
             let previous = record;
-            let nonce = previous
-                .filter(|r| created_by == CreatedBy::Runner && r.pane_id == pane.id.as_str())
-                .map_or("", |r| r.nonce.as_str());
-            let mut record = new_record(&pane.id, pane.pid, created_by, nonce);
+            let pane = Pane {
+                name: name.clone(),
+                id: pane.id.clone(),
+                pid: pane.pid,
+            };
+            register_pane(tmux, panes_for_hooks, &pane);
+            let mut record = new_record(&pane.id, pane.pid, created_by);
             // The same pane keeps what is recorded of the task typed into it.
             record.pushed = previous
                 .filter(|r| r.pane_id == pane.id.as_str() && r.pane_pid == pane.pid)
                 .and_then(|r| r.pushed.clone());
             Ok(EnsureResult {
                 outcome: EnsureOutcome::Running,
-                pane: Some(Pane {
-                    name: name.clone(),
-                    id: pane.id,
-                    pid: pane.pid,
-                }),
+                pane: Some(pane),
                 record: Some(record),
                 launched: false,
             })

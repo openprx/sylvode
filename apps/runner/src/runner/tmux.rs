@@ -319,6 +319,15 @@ pub struct Pane {
     pub pid: u32,
 }
 
+/// A session [`Tmux::new_session`] created.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Created {
+    pub pane: Pane,
+    /// The socket path of the server, asked in the same call so the pane can be recorded for hooks
+    /// at once; `None` when this tmux does not say.
+    pub socket_path: Option<String>,
+}
+
 /// One pane of a session, from [`Tmux::list_panes`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListedPane {
@@ -679,7 +688,7 @@ impl Tmux {
             "-d",
             "-P",
             "-F",
-            "#{pane_id} #{pane_pid}",
+            "#{pane_id} #{pane_pid} #{socket_path}",
             "-s",
             name.as_str(),
             "-n",
@@ -880,8 +889,8 @@ impl Tmux {
         Ok(self.run(&self.server_probe_call())?.code == Some(0))
     }
 
-    /// Creates session `name` with one window running `argv` and returns its pane (the caller
-    /// records it). Sets no option. The server, if this starts it, and so the CLI, gets the
+    /// Creates session `name` with one window running `argv` and returns its pane and the server's
+    /// socket path (the caller records them). Sets no option. The server, if this starts it, and so the CLI, gets the
     /// runner's environment minus the agent variables. When the server is not yet running and the
     /// process is a systemd service, the server is started in its own scope.
     ///
@@ -895,7 +904,7 @@ impl Tmux {
         width: u16,
         height: u16,
         argv: &[String],
-    ) -> Result<Pane, TmuxError> {
+    ) -> Result<Created, TmuxError> {
         let call = self.new_session_call(name, dir, width, height, argv)?;
         let started_server = !self.server_running()?;
         let scope = self.under_systemd && started_server;
@@ -904,11 +913,18 @@ impl Tmux {
             return Err(failed(&output));
         }
         let line = one_line(&output.stdout).ok_or_else(|| unreadable("pane id"))?;
-        let (id, pid) = line.split_once(' ').ok_or_else(|| unreadable("pane id"))?;
-        Ok(Pane {
-            name: name.clone(),
-            id: PaneId::new(id)?,
-            pid: pid.parse().map_err(|_| unreadable("pane pid"))?,
+        // The socket path comes last: it may hold a space.
+        let mut parts = line.splitn(3, ' ');
+        let (Some(id), Some(pid), Some(socket)) = (parts.next(), parts.next(), parts.next()) else {
+            return Err(unreadable("pane id"));
+        };
+        Ok(Created {
+            pane: Pane {
+                name: name.clone(),
+                id: PaneId::new(id)?,
+                pid: pid.parse().map_err(|_| unreadable("pane pid"))?,
+            },
+            socket_path: socket.starts_with('/').then(|| socket.to_string()),
         })
     }
 
@@ -943,6 +959,20 @@ impl Tmux {
         one_line(&output.stdout)
             .map(str::to_string)
             .ok_or_else(|| unreadable("pane field"))
+    }
+
+    /// The socket path of the server the pane lives on, as the panes' programs see it in `TMUX`.
+    ///
+    /// # Errors
+    ///
+    /// A failure status or an unreadable answer (a tmux that does not know the variable).
+    pub fn socket_path(&self, pane: &Pane) -> Result<String, TmuxError> {
+        let path = self.field(pane, "#{socket_path}")?;
+        if path.starts_with('/') {
+            Ok(path)
+        } else {
+            Err(unreadable("socket path"))
+        }
     }
 
     /// State, foreground command and directory of the pane, each from its own call.

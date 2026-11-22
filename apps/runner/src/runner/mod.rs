@@ -38,6 +38,7 @@ pub mod recovery;
 pub mod registry;
 #[allow(dead_code, reason = "wired in by the application")]
 pub mod session;
+pub mod setup;
 pub mod sv_client;
 
 #[allow(dead_code, reason = "used by the session manager, which is a later package")]
@@ -83,6 +84,8 @@ mod runtime_tests;
 mod sanitize_tests;
 #[cfg(test)]
 mod session_tests;
+#[cfg(test)]
+mod setup_tests;
 #[cfg(test)]
 mod sv_client_tests;
 

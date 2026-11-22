@@ -34,8 +34,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use sylvode_runner::mcp_launch_for_tests::{
-    AiTaskCallback, BotCreds, Config, LaunchFiles, Protected, SEARCH_MODE_TOOLS, SERVER_NAME, SessionKey, StateDir,
-    WRITE_TOOL, claude_argv, claude_headless_argv, codex_argv, codex_headless_argv,
+    AiTaskCallback, BotCreds, Config, LaunchFiles, SEARCH_MODE_TOOLS, SERVER_NAME, SessionName, StateDir, WRITE_TOOL,
+    claude_headless_argv, codex_headless_argv, session_argv,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -198,46 +198,36 @@ fn runner_launch(scratch: &Scratch, config: &Config, cli: &'static str) -> Resul
     let bot = BotCreds::for_target(GOLDEN_BOT, &target).ok_or("the target has no workspace")?;
     let state = StateDir::open(&scratch.0.join("state"))?;
     let server = Path::new(SERVER);
-    state.write_bot_files(&bot.mcp_files(&config.runner, cli), server)?;
+    state.write_bot_files(&bot.mcp_files(&config.runner), server)?;
 
-    let key = SessionKey::new("SVWL")?;
-    let dir = scratch.0.join("project");
+    let name = SessionName::new("SVWL", "claude")?;
     let mcp_toml = state.mcp_toml(GOLDEN_BOT);
     let claude_json = state.claude_mcp_json(GOLDEN_BOT);
-    let settings = state.claude_settings(&key);
+    let settings = state.claude_settings(&name);
     let socket = state.hook_socket();
     let runner_exe = scratch.0.join("sylvode-runner");
     let files = LaunchFiles {
-        mcp_server: server,
-        mcp_toml: &mcp_toml,
         claude_mcp_json: &claude_json,
         claude_settings: &settings,
         runner_exe: &runner_exe,
         hook_socket: &socket,
-        nonce: "0123456789abcdef0123456789abcdef",
-        state_dir: state.root(),
-        config_file: None,
     };
     let program = scratch.0.join(cli);
     let mut cli_argvs = Vec::new();
     let mut registrations = Vec::new();
     match cli {
         "claude" => {
-            cli_argvs.push(claude_argv(&program, &config.runner.cli.claude, &dir, &files)?);
+            // A session the runner creates and a headless run: both are given the runner's MCP file.
+            cli_argvs.push(session_argv(&program, &config.runner.cli.claude, &files)?);
             cli_argvs.push(claude_headless_argv(
                 &program,
                 &config.runner.cli.claude,
-                &dir,
                 &claude_json,
-                &Protected {
-                    state_dir: state.root(),
-                    config_file: None,
-                },
+                config.runner.mcp.allow_write_call,
                 "[Sylvode task] id=x",
             )?);
-            // The CLI reads the registration from the file `--mcp-config` names, and nothing else.
+            // The CLI reads the registration from the file `--mcp-config` names.
             for argv in &cli_argvs {
-                assert!(argv.iter().any(|a| a == "--strict-mcp-config"), "{argv:?}");
                 let at = argv.iter().position(|a| a == "--mcp-config").ok_or("no --mcp-config")?;
                 assert_eq!(argv.get(at + 1).map(String::as_str), claude_json.to_str());
             }
@@ -250,11 +240,9 @@ fn runner_launch(scratch: &Scratch, config: &Config, cli: &'static str) -> Resul
             });
         }
         "codex" => {
-            cli_argvs.push(codex_argv(&program, &config.runner.cli.codex, &dir, &files, &key)?);
             cli_argvs.push(codex_headless_argv(
                 &program,
                 &config.runner.cli.codex,
-                &dir,
                 server,
                 &mcp_toml,
                 "[Sylvode task] id=x",
@@ -502,12 +490,12 @@ async fn a_claude_launch_reaches_its_task_through_the_real_mcp_server() -> TestR
 
 #[tokio::test]
 async fn a_codex_launch_reaches_its_task_through_the_real_mcp_server() -> TestResult {
-    // The runner never allows `sylvode_write` for codex, whatever the claude table says.
-    chain("codex", "[runner.cli.claude]\nallow_write_call = true\n", false, false).await
+    // `[runner.mcp] allow_write_call` is one switch for every CLI's MCP file.
+    chain("codex", "[runner.mcp]\nallow_write_call = true\n", true, false).await
 }
 
 #[tokio::test]
 async fn the_full_tool_mode_of_the_runner_configuration_reaches_the_server() -> TestResult {
-    let extra = "[runner.mcp]\ntool_mode = \"full\"\n[runner.cli.claude]\nallow_write_call = true\n";
+    let extra = "[runner.mcp]\ntool_mode = \"full\"\nallow_write_call = true\n";
     chain("claude", extra, true, true).await
 }

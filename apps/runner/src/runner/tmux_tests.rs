@@ -229,7 +229,7 @@ fn every_call_is_an_argument_vector_with_the_socket_and_an_exact_target() {
             "-d",
             "-P",
             "-F",
-            "#{pane_id} #{pane_pid}",
+            "#{pane_id} #{pane_pid} #{socket_path}",
             "-s",
             "SVWL-claude",
             "-n",
@@ -829,7 +829,10 @@ fn has_session_maps_exit_statuses() {
 #[test]
 fn new_session_returns_the_pane_id_and_pid_and_sets_no_option() {
     let dir = Dir::new();
-    let (program, log) = fake_tmux(&dir, "case \"$*\" in *new-session*) echo '%7 4242';; esac\nexit 0");
+    let (program, log) = fake_tmux(
+        &dir,
+        "case \"$*\" in *new-session*) echo '%7 4242 /tmp/tmux-1/s';; esac\nexit 0",
+    );
     let pane = driver("sylvode")
         .with_program(&program)
         .new_session(
@@ -842,16 +845,19 @@ fn new_session_returns_the_pane_id_and_pid_and_sets_no_option() {
         .expect("created");
     assert_eq!(
         pane,
-        super::Pane {
-            name: name("SVWL"),
-            id: PaneId::new("%7").expect("id"),
-            pid: 4242
+        super::Created {
+            pane: super::Pane {
+                name: name("SVWL"),
+                id: PaneId::new("%7").expect("id"),
+                pid: 4242
+            },
+            socket_path: Some("/tmp/tmux-1/s".to_string()),
         }
     );
     // Only the probe for a running server and the creation: no option is set on anything.
     assert_eq!(names(&log), ["list-panes", "new-session"]);
     // An answer that is not a pane id and a pid is an error.
-    for junk in ["oops", "%7", "%7 x", "7 1"] {
+    for junk in ["oops", "%7", "%7 x", "%7 4242", "7 1 /tmp/s"] {
         let (bad, _) = fake_tmux(&dir, &format!("echo '{junk}'; exit 0"));
         assert!(
             driver("s")
@@ -874,7 +880,7 @@ fn new_session_has_the_operators_environment_and_other_calls_the_allow_list() {
     let program = dir.script(
         "tmux",
         &format!(
-            "case \"$*\" in *new-session*) /usr/bin/env > '{}'; echo '%1 2';; *) /usr/bin/env > '{}';; esac\nexit 0",
+            "case \"$*\" in *new-session*) /usr/bin/env > '{}'; echo '%1 2 /tmp/s';; *) /usr/bin/env > '{}';; esac\nexit 0",
             env_new.display(),
             env_other.display()
         ),
@@ -1060,7 +1066,7 @@ fn a_new_server_under_systemd_is_started_in_its_own_scope() {
     let dir = Dir::new();
     let (program, log) = fake_tmux(
         &dir,
-        "case \"$*\" in *list-panes*) exit 1;; *new-session*) echo '%2 99';; esac\nexit 0",
+        "case \"$*\" in *list-panes*) exit 1;; *new-session*) echo '%2 99 /tmp/s';; esac\nexit 0",
     );
     let scope_log = dir.path().join("scope");
     let systemd_run = dir.script(
@@ -1100,7 +1106,7 @@ fn a_new_server_under_systemd_is_started_in_its_own_scope() {
 #[test]
 fn a_running_server_is_not_wrapped_again() {
     let dir = Dir::new();
-    let (program, log) = fake_tmux(&dir, "case \"$*\" in *new-session*) echo '%2 99';; esac\nexit 0");
+    let (program, log) = fake_tmux(&dir, "case \"$*\" in *new-session*) echo '%2 99 /tmp/s';; esac\nexit 0");
     let scope_log = dir.path().join("scope");
     let systemd_run = dir.script(
         "systemd-run",
