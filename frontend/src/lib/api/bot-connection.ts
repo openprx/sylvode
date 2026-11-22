@@ -2,6 +2,7 @@ import { apiClient, type ApiResult } from './client';
 import {
 	isRecord,
 	parseConnection,
+	parseList,
 	parseRead,
 	parseRemove,
 	parseWrite,
@@ -9,6 +10,7 @@ import {
 	type Cli,
 	type Connection,
 	type Level,
+	type ListAnswer,
 	type ReadAnswer,
 	type RemoveAnswer,
 	type WriteAnswer
@@ -69,52 +71,81 @@ function narrowed<T>(result: ApiResult<unknown>, read: (data: unknown) => T | nu
 		: { ok: true, value };
 }
 
-const path = (projectId: string): string =>
-	`/api/v1/projects/${encodeURIComponent(projectId)}/bot-connection`;
+const base = (projectId: string): string =>
+	`/api/v1/projects/${encodeURIComponent(projectId)}/bot-connections`;
+const path = (projectId: string, botId: string): string =>
+	`${base(projectId)}/${encodeURIComponent(botId)}`;
 
 export const botConnectionApi = {
-	async get(projectId: string): Promise<CallResult<ReadAnswer>> {
-		return narrowed(await apiClient.get<unknown>(path(projectId)), parseRead);
+	/** Every connection of the project, ordered by bot name. */
+	async list(projectId: string): Promise<CallResult<ListAnswer>> {
+		return narrowed(await apiClient.get<unknown>(base(projectId)), parseList);
+	},
+
+	async get(projectId: string, botId: string): Promise<CallResult<ReadAnswer>> {
+		return narrowed(await apiClient.get<unknown>(path(projectId, botId)), parseRead);
 	},
 
 	async connect(projectId: string, input: ConnectInput): Promise<CallResult<WriteAnswer>> {
-		return narrowed(await apiClient.post<unknown>(path(projectId), input), parseWrite);
+		return narrowed(await apiClient.post<unknown>(base(projectId), input), parseWrite);
 	},
 
-	async update(projectId: string, input: UpdateInput): Promise<CallResult<WriteAnswer>> {
-		return narrowed(await apiClient.patch<unknown>(path(projectId), input), parseWrite);
+	async update(
+		projectId: string,
+		botId: string,
+		input: UpdateInput
+	): Promise<CallResult<WriteAnswer>> {
+		return narrowed(await apiClient.patch<unknown>(path(projectId, botId), input), parseWrite);
 	},
 
-	async disable(projectId: string, expectedVersion: number): Promise<CallResult<WriteAnswer>> {
+	async disable(
+		projectId: string,
+		botId: string,
+		expectedVersion: number
+	): Promise<CallResult<WriteAnswer>> {
 		return narrowed(
-			await apiClient.post<unknown>(`${path(projectId)}/disable`, {
+			await apiClient.post<unknown>(`${path(projectId, botId)}/disable`, {
 				expected_version: expectedVersion
 			}),
 			parseWrite
 		);
 	},
 
-	async enable(projectId: string, expectedVersion: number): Promise<CallResult<WriteAnswer>> {
+	async enable(
+		projectId: string,
+		botId: string,
+		expectedVersion: number
+	): Promise<CallResult<WriteAnswer>> {
 		return narrowed(
-			await apiClient.post<unknown>(`${path(projectId)}/enable`, {
+			await apiClient.post<unknown>(`${path(projectId, botId)}/enable`, {
 				expected_version: expectedVersion
 			}),
 			parseWrite
 		);
 	},
 
-	async rotate(projectId: string, expectedVersion: number): Promise<CallResult<WriteAnswer>> {
+	async rotate(
+		projectId: string,
+		botId: string,
+		expectedVersion: number
+	): Promise<CallResult<WriteAnswer>> {
 		return narrowed(
-			await apiClient.post<unknown>(`${path(projectId)}/rotate`, {
+			await apiClient.post<unknown>(`${path(projectId, botId)}/rotate`, {
 				expected_version: expectedVersion
 			}),
 			parseWrite
 		);
 	},
 
-	async remove(projectId: string, expectedVersion: number): Promise<CallResult<RemoveAnswer>> {
+	async remove(
+		projectId: string,
+		botId: string,
+		expectedVersion: number
+	): Promise<CallResult<RemoveAnswer>> {
 		return narrowed(
-			await apiClient.delete<unknown>(`${path(projectId)}?expected_version=${expectedVersion}`),
+			await apiClient.delete<unknown>(
+				`${path(projectId, botId)}?expected_version=${expectedVersion}`
+			),
 			parseRemove
 		);
 	}

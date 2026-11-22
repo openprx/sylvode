@@ -76,6 +76,7 @@
 		"test:shell-redirects": "bun tests/shell-redirects.test.ts",
 		"test:connection-managed": "bun tests/connection-managed.test.ts",
 		"test:connection-section": "bun tests/connection-section.test.ts",
+		"test:connection-list": "bun tests/connection-list.test.ts",
 		"test:surface-embed": "bun tests/surface-embed.test.ts",
 		"test:component-adapters": "bun tests/component-adapters.test.ts",
 		"test:toast-routing": "bun tests/toast-routing.test.ts",

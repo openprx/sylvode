@@ -42,7 +42,7 @@ export async function loadConnectedBots(
 		if (managed.projects.some((project) => project.id === projectId)) continue;
 		const first = managed.projects[0];
 		if (first === undefined) continue;
-		const read = await botConnectionApi.get(first.id);
+		const read = await botConnectionApi.get(first.id, bot.id);
 		if (!read.ok || read.value.kind !== 'full') continue;
 		options.push({
 			id: bot.id,

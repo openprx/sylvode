@@ -28,18 +28,21 @@
 		validateRunnerUrl,
 		validateWorkingDirectory
 	} from './validate';
-	import { CLIS, type Cli, type WriteAnswer } from './wire';
+	import { channelErrorText, tmuxBlock as tmuxBlockOf } from './tmux';
+	import { CLIS, type Cli, type Connection, type WriteAnswer } from './wire';
 
 	interface Props {
 		workspaceId: string;
 		projectId: string;
+		/** The project's connections: a CLI that has a tmux connection cannot get another. */
+		connections: Connection[];
 		oncancel: () => void;
 		/** The answer of a successful connect. The block in it is the caller's from here on. */
 		onconnected: (answer: WriteAnswer) => void;
 		/** A business 409 asks the section to read the connection again. */
 		onreload: () => void;
 	}
-	let { workspaceId, projectId, oncancel, onconnected, onreload }: Props = $props();
+	let { workspaceId, projectId, connections, oncancel, onconnected, onreload }: Props = $props();
 
 	type Mode = 'new' | 'existing';
 	let mode = $state<Mode>('new');
@@ -69,6 +72,17 @@
 			loadDomains(projectId)
 		]);
 	});
+
+	const tmuxBlock = $derived(tmuxBlockOf(connections, cli, null));
+	$effect(() => {
+		// The server defaults to tmux; a CLI that cannot have it gets the one-shot channel instead.
+		if (tmuxBlock !== null && draft.channel === 'tmux') draft.channel = 'headless';
+	});
+	const channelError = $derived(
+		serverField?.field === 'channel'
+			? channelErrorText(serverField.text, connections, (key, values) => $t(key, { values }))
+			: undefined
+	);
 
 	const chosen = $derived(connectedBots.find((bot) => bot.id === botId) ?? null);
 	const botOptions = $derived(
@@ -133,7 +147,11 @@
 			return;
 		}
 		const routed = routeServerMessage(result.message);
-		if (routed.field !== 'other') serverField = { field: routed.field, text: routed.text };
+		if (routed.field === 'channel') {
+			// Keep the server's whole message: the text is re-read when it names a known holder.
+			serverField = { field: 'channel', text: result.message };
+			advancedOpen = true;
+		} else if (routed.field !== 'other') serverField = { field: routed.field, text: routed.text };
 		else conflict = result.message;
 	}
 </script>
@@ -212,10 +230,15 @@
 		options={cliOptions}
 		onchange={(value) => (cli = value ?? 'claude')}
 	/>
+	{#if draft.channel === 'tmux'}
+		<span class="hint">{$t('execution.connection.cli.tmuxOnlyClaude')}</span>
+	{/if}
 
 	<div class="mono">
 		<TextField
-			label={$t('execution.connection.workingDirectory')}
+			label={draft.channel === 'tmux'
+				? $t('execution.connection.workingDirectoryTmux')
+				: $t('execution.connection.workingDirectory')}
 			bind:value={directory}
 			required
 			placeholder="/home/you/work/project"
@@ -240,6 +263,8 @@
 				{labels}
 				{domains}
 				scope="connect"
+				{tmuxBlock}
+				{channelError}
 			/>
 		{/if}
 	</div>

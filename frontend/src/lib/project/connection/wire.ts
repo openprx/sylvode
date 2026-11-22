@@ -40,6 +40,8 @@ export interface Connection {
 		channel: Channel;
 		cli: Cli;
 		working_directory: string;
+		/** `<PROJECT KEY>-<cli>` of a tmux connection; `null` for headless (or when not sent). */
+		session_name: string | null;
 		on_complete_state: string;
 		on_fail_label_id: string | null;
 		approval_gate: string;
@@ -51,6 +53,26 @@ export type RunnerState = 'waiting' | 'online' | 'not_reporting' | 'unreachable'
 export type ComponentState = 'ready' | 'warning' | 'missing' | 'disabled' | 'unknown';
 export type DeliveryState = 'delivered' | 'refused' | 'failed' | 'none';
 
+export type SessionState = 'running' | 'absent' | 'cli_not_running' | 'ambiguous' | 'dialog';
+export type SessionOrigin = 'runner' | 'operator';
+export type SessionHooks = 'seen' | 'none';
+export type SessionPermissions = 'bypass' | 'normal' | 'unknown';
+export type SessionMcp = 'ok' | 'missing' | 'other' | 'stale';
+
+/**
+ * The runner's row for the tmux session of a connection (design 6.6). Every field but `status`
+ * is absent when the runner did not report it.
+ */
+export interface SessionRow {
+	session_name: string | null;
+	status: 'ok' | 'warn' | 'fail' | null;
+	state: SessionState | null;
+	created_by: SessionOrigin | null;
+	hooks: SessionHooks | null;
+	permissions: SessionPermissions | null;
+	mcp: SessionMcp | null;
+}
+
 export interface Status {
 	runner: {
 		state: RunnerState;
@@ -60,6 +82,10 @@ export interface Status {
 	};
 	cli: { state: ComponentState; version: string | null };
 	tmux: { state: ComponentState; version: string | null } | null;
+	/** The session rows of 6.6; `null` when the status does not carry them (headless, no report). */
+	tmux_session: SessionRow | null;
+	/** Whether tasks of this connection run with permission checks off; `null` when unknown. */
+	bypass: boolean | null;
 	last_delivery: {
 		state: DeliveryState;
 		at: string | null;
@@ -146,6 +172,8 @@ export function parseConnection(value: unknown): Connection | null {
 	const onComplete = str(execution.on_complete_state);
 	const gate = str(execution.approval_gate);
 	const label = execution.on_fail_label_id;
+	// Optional: only a tmux connection has one.
+	const sessionName = execution.session_name === undefined ? null : str(execution.session_name);
 	if (
 		projectId === null ||
 		botId === null ||
@@ -183,6 +211,7 @@ export function parseConnection(value: unknown): Connection | null {
 			channel,
 			cli,
 			working_directory: directory,
+			session_name: sessionName,
 			on_complete_state: onComplete,
 			on_fail_label_id: label,
 			approval_gate: gate
@@ -199,6 +228,30 @@ function component(value: unknown): { state: ComponentState; version: string | n
 	if (!isRecord(value)) return null;
 	const state = member(COMPONENT_STATES, value.state);
 	return state === null ? null : { state, version: str(value.version) };
+}
+
+const SESSION_STATES = ['running', 'absent', 'cli_not_running', 'ambiguous', 'dialog'] as const;
+const SESSION_ORIGINS = ['runner', 'operator'] as const;
+const SESSION_HOOKS = ['seen', 'none'] as const;
+const SESSION_PERMISSIONS = ['bypass', 'normal', 'unknown'] as const;
+const SESSION_MCP = ['ok', 'missing', 'other', 'stale'] as const;
+const ROW_STATUS = ['ok', 'warn', 'fail'] as const;
+
+/**
+ * The session row of a status. Tolerant on purpose: a missing or unrecognised row, or a value
+ * outside its vocabulary, reads as absent and never fails the status.
+ */
+function sessionRow(value: unknown): SessionRow | null {
+	if (!isRecord(value)) return null;
+	return {
+		session_name: str(value.session_name),
+		status: member(ROW_STATUS, value.status),
+		state: member(SESSION_STATES, value.state),
+		created_by: member(SESSION_ORIGINS, value.created_by),
+		hooks: member(SESSION_HOOKS, value.hooks),
+		permissions: member(SESSION_PERMISSIONS, value.permissions),
+		mcp: member(SESSION_MCP, value.mcp)
+	};
 }
 
 /** The status of a connection, or `null` when the answer does not have the documented shape. */
@@ -219,6 +272,8 @@ export function parseStatus(value: unknown): Status | null {
 		},
 		cli,
 		tmux,
+		tmux_session: sessionRow(value.tmux_session),
+		bypass: typeof value.bypass === 'boolean' ? value.bypass : null,
 		last_delivery: {
 			state: deliveryState,
 			at: str(value.last_delivery.at),
@@ -236,18 +291,51 @@ export function parseBlock(value: unknown): BlockAnswer | null {
 	return text === null || text === '' ? null : { text };
 }
 
-/** What a reading answer holds: no connection, the full view, or the reduced member view. */
+/** One connection of the project with its status. */
+export interface ConnectionItem {
+	connection: Connection;
+	status: Status | null;
+}
+
+/** What a reading answer holds: the full view, or the reduced member view. */
 export type ReadAnswer =
-	| { kind: 'none' }
 	| { kind: 'full'; connection: Connection; status: Status | null }
 	| { kind: 'reduced' };
 
+function isReduced(value: unknown): boolean {
+	return isRecord(value) && isRecord(value.bot) && !isRecord(value.runner);
+}
+
+/** The answer of one connection: `{connection, status}`. */
 export function parseRead(value: unknown): ReadAnswer | null {
 	if (!isRecord(value)) return null;
-	if (value.connection === null || value.connection === undefined) return { kind: 'none' };
 	const connection = parseConnection(value.connection);
 	if (connection !== null) return { kind: 'full', connection, status: parseStatus(value.status) };
-	return isRecord(value.connection) && isRecord(value.connection.bot) ? { kind: 'reduced' } : null;
+	return isReduced(value.connection) ? { kind: 'reduced' } : null;
+}
+
+/** What the list holds: every connection with its status, or the reduced member views. */
+export type ListAnswer = { kind: 'full'; items: ConnectionItem[] } | { kind: 'reduced' };
+
+/** The answer of the list: `{connections: [{connection, status}]}`, or member views. */
+export function parseList(value: unknown): ListAnswer | null {
+	if (!isRecord(value) || !Array.isArray(value.connections)) return null;
+	const items: ConnectionItem[] = [];
+	let reduced = false;
+	for (const entry of value.connections) {
+		const connection = isRecord(entry) ? parseConnection(entry.connection) : null;
+		if (connection !== null && isRecord(entry)) {
+			items.push({ connection, status: parseStatus(entry.status) });
+			continue;
+		}
+		// Members get the reduced views, bare or wrapped.
+		if (isReduced(entry) || (isRecord(entry) && isReduced(entry.connection))) {
+			reduced = true;
+			continue;
+		}
+		return null;
+	}
+	return reduced && items.length === 0 ? { kind: 'reduced' } : { kind: 'full', items };
 }
 
 /** A write's answer: the connection and its status, and the block when one was issued. */

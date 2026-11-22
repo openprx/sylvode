@@ -251,7 +251,7 @@ jobs:
                        flow-package-import flow-v0.4 flow-static-build flow-outbox flow-offline-recovery flow-apply-busy \
                        shell-routing shell-state shell-keyboard surface-host project-nav shell-redirects surface-embed \
                        component-adapters toast-routing workbench-tabs forms-page forms-csv-export plugin-creator-review-focus oauth workspace-role \
-                       agent-tasks connection-managed connection-section; do
+                       agent-tasks connection-managed connection-section connection-list; do
             echo "::group::test:$suite"
             bun run "test:$suite"
             echo "::endgroup::"

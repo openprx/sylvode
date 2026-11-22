@@ -12,6 +12,7 @@
 	import TextField from '#lib/ui/text-field/TextField.svelte';
 	import type { Draft, DraftErrors, OnComplete } from './advanced';
 	import type { Choice } from './options';
+	import { blockReason, type TmuxBlock } from './tmux';
 	import { vetoAllowed } from './validate';
 	import { CHANNELS, LEVELS, type Channel, type Level } from './wire';
 
@@ -24,6 +25,10 @@
 		/** Distinguishes the ids of two instances on one page. */
 		scope?: string;
 		disabled?: boolean;
+		/** Why the tmux channel cannot be chosen for this connection's CLI; `null` when it can. */
+		tmuxBlock?: TmuxBlock | null;
+		/** The server's refusal of the channel, shown under the channel control. */
+		channelError?: string;
 	}
 	let {
 		draft = $bindable(),
@@ -32,14 +37,23 @@
 		labels,
 		domains,
 		scope = 'adv',
-		disabled = false
+		disabled = false,
+		tmuxBlock = null,
+		channelError = undefined
 	}: Props = $props();
 
 	const channels = $derived(
 		CHANNELS.map((value) => ({
 			value,
-			label: $t(`execution.connection.advanced.channel.${value}`)
+			label: $t(`execution.connection.advanced.channel.${value}`),
+			// The chosen option stays selectable so a saved tmux connection reads as it is.
+			disabled: value === 'tmux' && tmuxBlock !== null && draft.channel !== 'tmux'
 		}))
+	);
+	const tmuxReason = $derived(
+		tmuxBlock !== null && draft.channel !== 'tmux'
+			? blockReason(tmuxBlock, (key, values) => $t(key, { values }))
+			: undefined
 	);
 	const levels = $derived(
 		LEVELS.map((value) => ({ value, label: $t(`execution.connection.advanced.level.${value}`) }))
@@ -78,6 +92,12 @@
 			width="fill"
 		/>
 	</div>
+	{#if tmuxReason}
+		<p class="hint" data-testid="tmux-disabled-reason">{tmuxReason}</p>
+	{/if}
+	{#if channelError}
+		<p class="error" role="alert" data-testid="channel-error">{channelError}</p>
+	{/if}
 	{#if draft.channel === 'tmux'}
 		<SecurityWarning tone="warning" title={$t('execution.connection.advanced.tmuxWarningTitle')}>
 			{$t('execution.connection.advanced.tmuxWarningBody')}

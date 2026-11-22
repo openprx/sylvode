@@ -24,7 +24,9 @@
 	import ConnectForm from './ConnectForm.svelte';
 	import ConnectedView from './ConnectedView.svelte';
 	import { WAITING_POLL_SECONDS, shouldPollWaiting } from './status';
-	import type { Connection, Status, WriteAnswer } from './wire';
+	import Button from '#lib/ui/button/Button.svelte';
+	import { anyWaiting, dropItem, putItem } from './list';
+	import type { ConnectionItem, WriteAnswer } from './wire';
 
 	interface Props {
 		workspaceId: string;
@@ -35,8 +37,7 @@
 	type Load = 'loading' | 'error' | 'forbidden' | 'ready';
 	let load = $state<Load>('loading');
 	let projectName = $state('');
-	let connection = $state<Connection | null>(null);
-	let status = $state<Status | null>(null);
+	let items = $state<ConnectionItem[]>([]);
 	let formOpen = $state(false);
 	let conflict = $state(false);
 	let refreshing = $state(false);
@@ -48,10 +49,10 @@
 	 */
 	let block = $state<BlockState>(NO_BLOCK);
 
-	/** Reads the connection again. Never touches `block`: a refresh cannot lose what is on screen. */
+	/** Reads the connections again. Never touches `block`: a refresh cannot lose what is on screen. */
 	async function reload(): Promise<void> {
 		refreshing = true;
-		const result = await botConnectionApi.get(projectId);
+		const result = await botConnectionApi.list(projectId);
 		refreshing = false;
 		now = new Date();
 		if (!result.ok) {
@@ -64,8 +65,7 @@
 			return;
 		}
 		conflict = false;
-		connection = result.value.kind === 'full' ? result.value.connection : null;
-		status = result.value.kind === 'full' ? result.value.status : null;
+		items = result.value.items;
 		load = 'ready';
 	}
 
@@ -76,8 +76,7 @@
 	});
 
 	function take(answer: WriteAnswer) {
-		connection = answer.connection;
-		status = answer.status;
+		items = putItem(items, { connection: answer.connection, status: answer.status });
 		conflict = false;
 		if (answer.block) block = showBlock(answer.block.text);
 	}
@@ -93,20 +92,21 @@
 			);
 	}
 
-	function removed() {
-		connection = null;
-		status = null;
-		formOpen = false;
+	function removed(botId: string) {
+		items = dropItem(items, botId);
 		conflict = false;
 	}
 
 	// --- the status asks again while the runner has not shown up -------------------------------
 	let waitedSeconds = 0;
+	/** The cards ask again while any of them waits for its runner. */
+	const shouldPoll = (waited: number): boolean =>
+		items.some((entry) => shouldPollWaiting(entry.status, waited));
 	$effect(() => {
-		if (!shouldPollWaiting(status, waitedSeconds)) return;
+		if (!shouldPoll(waitedSeconds)) return;
 		const timer = setInterval(() => {
 			waitedSeconds += WAITING_POLL_SECONDS;
-			if (!shouldPollWaiting(status, waitedSeconds)) {
+			if (!shouldPoll(waitedSeconds)) {
 				clearInterval(timer);
 				return;
 			}
@@ -115,7 +115,7 @@
 		return () => clearInterval(timer);
 	});
 	$effect(() => {
-		if (status?.runner.state !== 'waiting') waitedSeconds = 0;
+		if (!anyWaiting(items)) waitedSeconds = 0;
 	});
 
 	// --- the section asks again when the window gets focus -------------------------------------
@@ -175,7 +175,7 @@
 			onstored={(stored) => (block = setStored(block, stored))}
 			ondone={() => (block = finish(block))}
 		/>
-	{:else if connection}
+	{:else}
 		{#if conflict}
 			<TipBar
 				tone="warning"
@@ -184,36 +184,48 @@
 				{$t('execution.connection.conflict')}
 			</TipBar>
 		{/if}
-		<ConnectedView
-			{workspaceId}
-			{projectName}
-			{connection}
-			{status}
-			{now}
-			{refreshing}
-			onrefresh={() => void reload()}
-			onchanged={take}
-			onremoved={removed}
-			onconflict={() => (conflict = true)}
-		/>
-	{:else if formOpen}
-		<ConnectForm
-			{workspaceId}
-			{projectId}
-			oncancel={() => (formOpen = false)}
-			onconnected={connected}
-			onreload={() => void reload()}
-		/>
-	{:else}
-		<StateBlock
-			kind="empty"
-			message={$t('execution.connection.empty')}
-			action={{
-				label: $t('execution.connection.connect'),
-				run: () => (formOpen = true),
-				primary: true
-			}}
-		/>
+		{#if items.length === 0 && !formOpen}
+			<StateBlock
+				kind="empty"
+				message={$t('execution.connection.empty')}
+				action={{
+					label: $t('execution.connection.connect'),
+					run: () => (formOpen = true),
+					primary: true
+				}}
+			/>
+		{/if}
+		{#each items as item (item.connection.bot.id)}
+			<ConnectedView
+				{workspaceId}
+				{projectName}
+				connection={item.connection}
+				connections={items.map((entry) => entry.connection)}
+				status={item.status}
+				{now}
+				{refreshing}
+				onrefresh={() => void reload()}
+				onchanged={take}
+				onremoved={removed}
+				onconflict={() => (conflict = true)}
+			/>
+		{/each}
+		{#if formOpen}
+			<ConnectForm
+				{workspaceId}
+				{projectId}
+				connections={items.map((entry) => entry.connection)}
+				oncancel={() => (formOpen = false)}
+				onconnected={connected}
+				onreload={() => void reload()}
+			/>
+		{:else if items.length > 0}
+			<div>
+				<Button variant="secondary" onclick={() => (formOpen = true)} data-testid="connect-bot">
+					{$t('execution.connection.connect')}
+				</Button>
+			</div>
+		{/if}
 	{/if}
 </div>
 

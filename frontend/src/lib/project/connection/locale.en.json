@@ -2,7 +2,7 @@
 	"execution": {
 		"connection": {
 			"title": "Execution",
-			"description": "Run this project's agent tasks on a runner through a connected bot.",
+			"description": "Run this project's agent tasks on runners through connected bots.",
 			"empty": "No bot is connected. Connect a bot to run this project's agent tasks on a runner.",
 			"loadingThing": "bot connection",
 			"connect": "Connect a bot",
@@ -31,7 +31,8 @@
 				"label": "CLI",
 				"claude": "Claude Code",
 				"codex": "Codex (experimental)",
-				"opencode": "opencode (experimental)"
+				"opencode": "opencode (experimental)",
+				"tmuxOnlyClaude": "Only claude can run in a tmux session"
 			},
 			"workingDirectory": "Working directory",
 			"error": {
@@ -97,7 +98,24 @@
 					"failed": "Failed",
 					"none": "No delivery yet"
 				},
-				"refresh": "Refresh status"
+				"refresh": "Refresh status",
+				"session": {
+					"label": "Session",
+					"running": "Running",
+					"runningRunner": "Running (started by runner)",
+					"runningOperator": "Running (started by you)",
+					"absent": "Not started (starts on the next task)",
+					"cliNotRunning": "CLI not running",
+					"ambiguous": "Ambiguous",
+					"dialog": "Waiting for a dialog"
+				},
+				"badge": {
+					"bypass": "Permission checks off",
+					"noHooks": "No hooks",
+					"noTools": "Sylvode tools missing",
+					"staleTools": "Sylvode tools out of date",
+					"noHooksHint": "Turn tracking from the screen only."
+				}
 			},
 			"advanced": {
 				"title": "Advanced",
@@ -106,7 +124,10 @@
 				"channel": {
 					"label": "Channel",
 					"tmux": "Interactive session (tmux)",
-					"headless": "One-shot (headless)"
+					"headless": "One-shot (headless)",
+					"onlyClaude": "Only claude can run in a tmux session",
+					"taken": "{bot} already uses tmux session {session}",
+					"takenNoSession": "{bot} already uses the tmux session of this CLI"
 				},
 				"onComplete": {
 					"label": "On completion",
@@ -172,6 +193,16 @@
 			"managed": {
 				"chip": "Managed by project connection",
 				"reason": "Change it in the project's Execution settings"
+			},
+			"workingDirectoryTmux": "Working directory (used when the runner starts the session)",
+			"tmux": {
+				"session": "tmux session:",
+				"attach": "Attach:",
+				"behaviour": "If this session exists on the runner machine, tasks are typed into it as it is. If not, the runner starts it here with `claude --permission-mode bypassPermissions` and your own login. The CLI reports back through Sylvode's tools as this bot."
+			},
+			"warning": {
+				"bypassTitle": "Permission checks are off",
+				"bypassBody": "Tasks for this bot run with all permission checks off. Anything a task asks the CLI to do runs as the runner machine's user."
 			}
 		}
 	}

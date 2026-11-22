@@ -6,7 +6,15 @@
 	import IconButton from '#lib/ui/icon-button/IconButton.svelte';
 	import SettingRow from '#lib/ui/setting-row/SettingRow.svelte';
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
-	import { componentChip, deliveryChip, deliveryValue, relativeTime, runnerChip } from './status';
+	import {
+		componentChip,
+		deliveryChip,
+		deliveryValue,
+		relativeTime,
+		runnerChip,
+		sessionChip,
+		statusBadges
+	} from './status';
 	import type { Cli, Status } from './wire';
 
 	interface Props {
@@ -70,6 +78,25 @@
 				{/snippet}
 			</SettingRow>
 		{/if}
+		{@const session = showTmux ? sessionChip(status.tmux_session) : null}
+		{#if session}
+			<SettingRow label={$t('execution.connection.status.session.label')}>
+				{#snippet chip()}
+					<StatusChip tone={session.tone} data-testid="session-chip">{$t(session.key)}</StatusChip>
+				{/snippet}
+			</SettingRow>
+		{/if}
+		{@const badges = statusBadges(status)}
+		{#if badges.length > 0}
+			<div class="badges" data-testid="status-badges">
+				{#each badges as badge (badge.key)}
+					<StatusChip tone={badge.tone}>{$t(badge.key)}</StatusChip>
+				{/each}
+			</div>
+			{#if showTmux && status.tmux_session?.hooks === 'none'}
+				<p class="hint">{$t('execution.connection.status.badge.noHooksHint')}</p>
+			{/if}
+		{/if}
 		{@const delivery = deliveryChip(status.last_delivery.state)}
 		<SettingRow
 			label={$t('execution.connection.status.delivery.label')}
@@ -90,6 +117,12 @@
 	.head {
 		display: flex;
 		justify-content: flex-end;
+	}
+	.badges {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--rf-space-3);
+		padding: var(--rf-space-3) 0;
 	}
 	.hint {
 		margin: 0;
