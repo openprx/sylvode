@@ -734,6 +734,7 @@
 					{/if}
 				</div>
 				<div class="prose prose-slate max-w-none">
+					<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 					{@html renderMarkdown(proposal.content)}
 				</div>
 			</div>
@@ -771,6 +772,7 @@
 									</div>
 								</div>
 								<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
+									<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 									{@html renderCommentContent(comment.content)}
 								</div>
 							</div>
@@ -830,6 +832,7 @@
 						<div class="min-h-24 rounded-control border border-line bg-surface px-3 py-2">
 							{#if newComment.trim()}
 								<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
+									<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 									{@html renderMarkdown(newComment)}
 								</div>
 							{:else}

@@ -1122,6 +1122,7 @@
 							<div class="rounded-control border border-line bg-surface p-4">
 								{#if issue.description?.trim()}
 									<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
+										<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 										{@html renderMarkdown(issue.description)}
 									</div>
 								{:else}
@@ -1220,6 +1221,7 @@
 											</div>
 										{:else}
 											<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
+												<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 												{@html renderCommentContent(comment.content)}
 											</div>
 										{/if}

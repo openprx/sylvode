@@ -398,6 +398,7 @@
 							class="markdown-body min-h-[280px] rounded-control border border-line bg-surface px-3 py-2 text-sm text-fg"
 						>
 							{#if content.trim()}
+								<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 								{@html renderMarkdown(content)}
 							{:else}
 								<p class="text-fg-muted">{$t('issue.noDescriptionPreview')}</p>
