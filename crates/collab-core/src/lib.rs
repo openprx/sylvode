@@ -27,7 +27,7 @@
 //! process per call rather than reusing the spike's fork-no-exec zygote (see
 //! `isolation::host`'s module doc for why that specific mechanism does not fit a live,
 //! multi-threaded async server). It reuses that ADR's online-enforcement *mechanisms*
-//! (`SIGPROF`/`setitimer`, a counting `GlobalAlloc`, an independent wall watchdog) over a
+//! (`SIGPROF` from a process-CPU-clock `timer_create` timer, a counting `GlobalAlloc`, an independent wall watchdog) over a
 //! different process-creation primitive, not its code.
 //!
 //! `CorpusEngine` (the spike's second, harness-only trait providing `new_empty`/`apply_operation`/

@@ -25,7 +25,7 @@
 //! The workspace root `Cargo.toml` sets `unsafe_code = "deny"` via `[workspace.lints.rust]`, cast
 //! as a crate-level `-D unsafe_code` flag by Cargo -- not `forbid`, so it can be locally
 //! overridden. This module tree is the only place in `collab-core` that needs raw
-//! `setitimer`/`sigaction`/`setrlimit`/`kill`/`poll`-family syscalls; every individual `unsafe`
+//! `timer_create`/`sigaction`/`setrlimit`/`kill`/`poll`-family syscalls; every individual `unsafe`
 //! block still carries its own `// SAFETY:` comment (the workspace clippy lint
 //! `undocumented_unsafe_blocks = "deny"` is *not* overridden and still applies here).
 #![allow(unsafe_code, clippy::too_long_first_doc_paragraph)]

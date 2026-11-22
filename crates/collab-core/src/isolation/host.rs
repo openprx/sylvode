@@ -48,6 +48,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Child, ChildStdout, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use super::child_runtime;
 use super::limits::{DECODE_APPLY_WALL_MS_MAX, IMPORT_DECODE_WALL_MS_MAX};
 use super::outcome::{
     HostFailure, HostFailureKind, IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode,
@@ -414,13 +415,7 @@ fn run_worker_inner(
     }
 
     if wait_status.code() != Some(0) {
-        return Err(host_failure(
-            HostFailureKind::Crash,
-            format!(
-                "isolated-apply worker exited with non-zero status {:?}",
-                wait_status.code()
-            ),
-        ));
+        return Err(nonzero_exit_failure(wait_status.code()));
     }
 
     // A worker that completed always wrote a decision record before its frame.
@@ -453,6 +448,24 @@ fn run_worker_inner(
         }),
         Outcome::Rejected(err) => Err(IsolatedApplyError::Collab(err)),
     }
+}
+
+/// The host failure for a worker that exited with a non-zero status. Status
+/// [`child_runtime::EXIT_CANNOT_ARM_CPU_CEILING`] gets its own message, so an operator can tell a
+/// worker that could not arm (or close) its CPU ceiling (a blocked `timer_create`, an exhausted
+/// signal queue) from a crash. The classification is the same for every status: a host failure,
+/// never a document refusal.
+fn nonzero_exit_failure(code: Option<i32>) -> IsolatedApplyError {
+    if code == Some(child_runtime::EXIT_CANNOT_ARM_CPU_CEILING) {
+        return host_failure(
+            HostFailureKind::Crash,
+            "isolated-apply worker could not arm its CPU ceiling (exit status 71)".to_string(),
+        );
+    }
+    host_failure(
+        HostFailureKind::Crash,
+        format!("isolated-apply worker exited with non-zero status {code:?}"),
+    )
 }
 
 fn classify_signal(signal: i32) -> IsolatedApplyError {
@@ -995,12 +1008,15 @@ mod tests {
     /// write and the import window.
     ///
     /// The ceiling is a timer on the worker's own CPU clock (`child_runtime::arm_cpu_timer`), which
-    /// fires only after the ceiling is consumed and at most about a tick later, so a kill never
-    /// needs an allowance for firing early. (It did when the ceiling was `ITIMER_PROF`: that timer
+    /// fires only after the ceiling is consumed and at most one scheduler tick later, so a kill
+    /// never needs an allowance for firing early. (It did when the ceiling was `ITIMER_PROF`: that timer
     /// counts ticks sampled at the interrupt and, on a loaded 2-CPU machine, fired up to 1.5% of
     /// the ceiling early, 29 ms of the import window's 2 s, which no fixed number of ticks covers.)
-    /// What is left is the host's own reading: it reads the worker's CPU when it sees the marker,
-    /// a moment after the worker armed the timer, and `wait4` accounts a killed process to a tick.
+    /// What is left is the host's own reading: it reads the worker's CPU at the marker, which can be
+    /// a moment after the worker armed the timer, so the window's CPU as the host sees it can fall
+    /// short of the CPU the worker really burned in it. (`wait4` reports a reaped child's
+    /// `ru_utime + ru_stime` scaled to its precise runtime, so the final reading is not rounded to
+    /// a tick.)
     /// Measured on a loaded 2-CPU machine, every kill of 80 runs read at or above the ceiling
     /// (a shortfall of at most 0 us); one tick is the margin for that reading, and it is far
     /// smaller than the distance between the ceiling and the CPU the under-ceiling runs consume.
@@ -1020,8 +1036,9 @@ mod tests {
     }
 
     /// Judges a burn that targets more CPU than `decode_apply_cpu_ms_max`. The worker must be
-    /// killed by `SIGPROF` once it has consumed the ceiling; a `WallCeiling` is acceptable only
-    /// when the worker had demonstrably not consumed it.
+    /// killed by `SIGPROF` once it has consumed the ceiling, and no later than two scheduler ticks
+    /// after it; a `WallCeiling` is acceptable only when the worker had demonstrably not consumed
+    /// it.
     fn judge_burn_over_cpu_ceiling(
         result: &Result<IsolatedApplySuccess, IsolatedApplyError>,
         observation: &WorkerObservation,
@@ -1031,9 +1048,16 @@ mod tests {
             return CeilingVerdict::Violation("the host could not observe the worker's CPU time".to_string());
         };
         match result {
-            Err(IsolatedApplyError::CpuCeiling) if cpu_us.saturating_add(CPU_ACCOUNTING_SLACK_US) >= ceiling_us => {
+            Err(IsolatedApplyError::CpuCeiling)
+                if cpu_us.saturating_add(CPU_ACCOUNTING_SLACK_US) >= ceiling_us
+                    && cpu_us <= ceiling_us.saturating_add(2 * SCHEDULER_TICK_US) =>
+            {
                 CeilingVerdict::Conclusive
             }
+            Err(IsolatedApplyError::CpuCeiling) if cpu_us > ceiling_us => CeilingVerdict::Violation(format!(
+                "SIGPROF killed the worker after {cpu_us}us of CPU, more than two scheduler ticks over the \
+                 {ceiling_us}us ceiling"
+            )),
             Err(IsolatedApplyError::CpuCeiling) => CeilingVerdict::Violation(format!(
                 "SIGPROF killed the worker after only {cpu_us}us of CPU, below the {ceiling_us}us ceiling"
             )),
@@ -1112,6 +1136,37 @@ mod tests {
     fn over_ceiling_verdict(over_micros: u64, ceiling_micros: u64) -> CeilingVerdict {
         let (result, observation) = isolated_apply_injected_observed(&format!("cpu_burn_micros={over_micros}"));
         judge_burn_over_cpu_ceiling(&result, &observation, ceiling_micros)
+    }
+
+    /// A burn of the ceiling minus 1 ms is never ended by the CPU ceiling. The process-clock timer
+    /// cannot fire before the whole budget is consumed, and the window holds only the burn plus
+    /// microseconds of arming overhead, so a `CpuCeiling` here is always a violation.
+    #[test]
+    fn decode_apply_cpu_ms_ceiling_never_kills_a_burn_one_millisecond_under_it() {
+        let (ceiling_micros, _, _) = boundary_runs();
+        let near_micros = ceiling_micros - 1_000;
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            &format!("a {near_micros}us CPU burn (1 ms under the {ceiling_micros}us write ceiling)"),
+            || under_ceiling_verdict(near_micros),
+        );
+    }
+
+    /// CPU burned after the write window closed is not metered: 30 ms inside the 50 ms window plus
+    /// 60 ms after it must be accepted. If the timer outlived the window, the 90 ms in total
+    /// would reach the ceiling and kill a worker that had already decided.
+    #[test]
+    fn cpu_burned_after_the_write_window_closes_is_not_metered() {
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            "30 ms of CPU inside the write window and 60 ms after it",
+            || {
+                let (result, observation) = isolated_apply_injected_observed("burn_then_post_window_burn=30000:60000");
+                judge_burn_under_cpu_ceiling(&result, &observation)
+            },
+        );
     }
 
     /// The CPU ceiling's behaviour never depends on how much CPU the machine gives the worker:
@@ -1201,6 +1256,15 @@ mod tests {
         );
         assert!(matches!(
             judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(Some(10_000)), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        // A kill later than the ceiling plus two scheduler ticks is a late timer.
+        assert_eq!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(Some(70_000)), ceiling),
+            CeilingVerdict::Conclusive
+        );
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(Some(70_001)), ceiling),
             CeilingVerdict::Violation(_)
         ));
         // An unobservable CPU time and a burn that ran to completion are violations.
@@ -1384,6 +1448,55 @@ mod tests {
         });
     }
 
+    /// Judges an import-window burn that must end inside the window: the worker finishes with the
+    /// refusal the injected workload ends in. A `WallCeiling` is a starved worker; anything else
+    /// (a `CpuCeiling` above all) is a violation.
+    fn judge_import_burn_finishes(
+        result: &Result<IsolatedApplySuccess, IsolatedApplyError>,
+        observation: &WorkerObservation,
+    ) -> CeilingVerdict {
+        if is_the_injected_refusal(result) {
+            CeilingVerdict::Conclusive
+        } else if matches!(result, Err(IsolatedApplyError::WallCeiling)) {
+            CeilingVerdict::Starved
+        } else {
+            CeilingVerdict::Violation(format!("{result:?} after {:?}us of CPU", observation.metered_cpu_us))
+        }
+    }
+
+    /// A burn of the import ceiling minus 1 ms is never ended by the CPU ceiling.
+    #[test]
+    fn the_import_cpu_ceiling_never_kills_a_burn_one_millisecond_under_it() {
+        let import_ceiling_us = super::super::IMPORT_DECODE_CPU_MS_MAX * 1_000;
+        let near_micros = import_ceiling_us - 1_000;
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            &format!("a {near_micros}us burn (1 ms under the {import_ceiling_us}us import ceiling)"),
+            || {
+                let (result, observation) =
+                    isolated_import_injected_observed(&format!("cpu_burn_micros={near_micros}"));
+                judge_import_burn_finishes(&result, &observation)
+            },
+        );
+    }
+
+    /// CPU burned after the import window closed is not metered: 1.5 s inside the 2 s window plus
+    /// 1 s after it (3.5 s in total, past the ceiling) must still end in the injected refusal.
+    #[test]
+    fn cpu_burned_after_the_import_window_closes_is_not_metered() {
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            "1.5 s of CPU inside the import window and 1 s after it",
+            || {
+                let (result, observation) =
+                    isolated_import_injected_observed("burn_then_post_window_burn=1500000:1000000");
+                judge_import_burn_finishes(&result, &observation)
+            },
+        );
+    }
+
     /// The wall watchdog of the import window is the import one: a sleep that the write watchdog
     /// (100 ms) would kill is accepted, and a sleep past the import watchdog is killed at it.
     #[test]
@@ -1510,7 +1623,7 @@ mod tests {
     //
     // Everything above this point tests pure logic (frame codec, path resolution). These tests
     // exercise the actual mechanism the parent trusts: a real `fork`+`exec`'d process, real
-    // `SIGPROF`/`ITIMER_PROF` arming, real pipe I/O, real `wait4` reaping. If
+    // process-CPU-clock timer arming, real pipe I/O, real `wait4` reaping. If
     // `real_worker_binary_for_tests` cannot find the compiled binary (a narrower invocation than
     // `cargo test -p collab-core --all-features` was used), they report and skip rather than fail
     // the suite over a build-layout mismatch unrelated to this module's own logic.
@@ -2161,6 +2274,21 @@ mod tests {
         }
         drop(guard);
         result
+    }
+
+    /// Status 71 (the worker could not arm or close its CPU ceiling) gets its own message but the
+    /// same classification as any other non-zero exit: a host failure, never a document refusal.
+    #[test]
+    fn exit_status_71_is_a_host_failure_with_its_own_message() {
+        let IsolatedApplyError::HostFailure(arm) = nonzero_exit_failure(Some(71)) else {
+            panic!("status 71 must be a host failure");
+        };
+        assert!(arm.detail.contains("could not arm its CPU ceiling"), "{arm:?}");
+        let IsolatedApplyError::HostFailure(other) = nonzero_exit_failure(Some(3)) else {
+            panic!("status 3 must be a host failure");
+        };
+        assert!(other.detail.contains("non-zero status Some(3)"), "{other:?}");
+        assert_eq!(format!("{:?}", arm.kind), format!("{:?}", other.kind));
     }
 
     /// A worker that exits successfully without a decision record violates the protocol: the host

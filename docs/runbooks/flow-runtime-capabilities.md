@@ -93,8 +93,12 @@ who turns it on.
 Every Page write is decided inside the isolated worker's 50 ms CPU window. The ceiling is a timer on
 the worker's own CPU clock (`CLOCK_PROCESS_CPUTIME_ID`, user plus system time, the clock the host
 measures it with): the worker is killed once it has consumed the ceiling, never before, and at most
-about one scheduler tick (a few milliseconds) after it, however loaded the host is. The same holds
-for the import window's 2 s ceiling. For flat (model 1) and
+one scheduler tick (1 to 10 ms, depending on the kernel's `CONFIG_HZ`) after it, however loaded the
+host is. The budget counts from the moment the window opens, and work after the window closes
+(exporting the snapshot, writing the response) is not counted. The same holds for the import
+window's 2 s ceiling, where the head export and the fingerprints come after the window. The worker
+needs the `timer_create`, `timer_settime` and `timer_delete` syscalls; if a sandbox blocks them,
+every write fails closed as a host failure (worker exit status 71). For flat (model 1) and
 legacy tree Pages the window works from facts about the accepted Page that the worker computes
 before the window opens, and evaluates only the units the update touched, but only for an update
 that is a strict causal extension of the Page's current head (the client had received everything

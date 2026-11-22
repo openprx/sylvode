@@ -14,6 +14,7 @@
 #![allow(unsafe_code)]
 
 use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::limits::{
     DECODE_APPLY_CPU_MS_MAX_MICROS, IMPORT_DECODE_CPU_MS_MAX_MICROS, IMPORT_ISOLATED_MEMORY_BYTES_MAX,
@@ -107,10 +108,24 @@ pub fn arm_sigprof_for_import() {
 /// The exit status of a worker that could not arm its CPU ceiling. The host sees an exit that no
 /// ceiling explains and reports a host failure: running the metered window without a ceiling is
 /// never an option.
-const EXIT_CANNOT_ARM_CPU_CEILING: libc::c_int = 71;
+///
+/// Also the status of a worker that could not close its window (`timer_delete` failed): unmetered
+/// work under a live timer is no better than none.
+pub const EXIT_CANNOT_ARM_CPU_CEILING: libc::c_int = 71;
 
-/// The armed CPU timer of this process, as a `timer_t` held in an integer (0 when none).
-static CPU_TIMER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Whether a CPU timer is armed in this process. The timer id below is meaningful only while this
+/// is set: `0` is a valid `timer_t` (on glibc 2.34+ and musl it is the kernel timer id, and the
+/// first timer of a process has id 0), so the id cannot also say "no timer".
+static CPU_TIMER_ARMED: AtomicBool = AtomicBool::new(false);
+
+/// The armed CPU timer of this process, as a `timer_t` held in an integer.
+static CPU_TIMER_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Exits the worker with [`EXIT_CANNOT_ARM_CPU_CEILING`]; never returns.
+fn exit_cannot_arm() -> ! {
+    // SAFETY: `_exit` is async-signal-safe and takes no pointers; this process owns its exit.
+    unsafe { libc::_exit(EXIT_CANNOT_ARM_CPU_CEILING) }
+}
 
 fn arm_sigprof_micros(budget_micros: i64) {
     let mut old_action = MaybeUninit::<libc::sigaction>::uninit();
@@ -124,16 +139,20 @@ fn arm_sigprof_micros(budget_micros: i64) {
     default_action.sa_mask = empty_sigset();
     // SAFETY: `&default_action` is a valid, fully-initialized `sigaction`; `old_action` is a valid
     // out-pointer. `SIGPROF` is a valid signal number.
-    unsafe {
-        libc::sigaction(libc::SIGPROF, &raw const default_action, old_action.as_mut_ptr());
+    let reset = unsafe { libc::sigaction(libc::SIGPROF, &raw const default_action, old_action.as_mut_ptr()) };
+    if reset != 0 {
+        // An inherited `SIG_IGN` would void the ceiling silently.
+        exit_cannot_arm();
     }
 
     let sigprof_set = sigprof_only_set();
     // SAFETY: `sigprof_set` is a fully-initialized `sigset_t` containing only `SIGPROF`; passing
     // `null` for `oldset` is explicitly allowed by POSIX when the caller does not need the
     // previous mask.
-    unsafe {
-        libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const sigprof_set, std::ptr::null_mut());
+    let unblocked = unsafe { libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const sigprof_set, std::ptr::null_mut()) };
+    if unblocked != 0 {
+        // An inherited blocked mask would void the ceiling silently.
+        exit_cannot_arm();
     }
     arm_cpu_timer(budget_micros);
 }
@@ -169,22 +188,23 @@ fn arm_cpu_timer(budget_micros: i64) {
     // a null old-value pointer is allowed.
     let armed = created == 0 && unsafe { libc::timer_settime(timer, 0, &raw const spec, std::ptr::null_mut()) } == 0;
     if !armed {
-        // SAFETY: `_exit` is async-signal-safe and takes no pointers; this process owns its exit.
-        unsafe { libc::_exit(EXIT_CANNOT_ARM_CPU_CEILING) };
+        exit_cannot_arm();
     }
-    CPU_TIMER.store(timer as usize, std::sync::atomic::Ordering::SeqCst);
+    CPU_TIMER_ID.store(timer as usize, Ordering::SeqCst);
+    CPU_TIMER_ARMED.store(true, Ordering::SeqCst);
 }
 
 /// Disarms the CPU timer, so it cannot fire *after* the metered window has already closed
 /// successfully -- e.g. while this process is busy exporting the result snapshot and writing the
 /// response frame, neither of which are protected work.
 pub fn disarm_sigprof() {
-    let timer = CPU_TIMER.swap(0, std::sync::atomic::Ordering::SeqCst);
-    if timer != 0 {
+    if CPU_TIMER_ARMED.swap(false, Ordering::SeqCst) {
+        let timer = CPU_TIMER_ID.load(Ordering::SeqCst) as libc::timer_t;
         // SAFETY: `timer` was produced by `timer_create` in `arm_cpu_timer` and is deleted once
-        // (the swap above clears it); deleting also drops a pending expiry.
-        unsafe {
-            libc::timer_delete(timer as libc::timer_t);
+        // (the swap above clears the armed flag); deleting also drops a pending expiry.
+        if unsafe { libc::timer_delete(timer) } != 0 {
+            // A window that cannot be closed must not run unmetered work under a live timer.
+            exit_cannot_arm();
         }
     }
 }

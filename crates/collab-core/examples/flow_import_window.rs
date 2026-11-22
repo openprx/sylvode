@@ -6,7 +6,7 @@
 //! Run with:
 //!   cargo run --release -p collab-core --example `flow_import_window`
 //!
-//! Numbers are CPU time (`CLOCK_PROCESS_CPUTIME_ID`), the quantity `ITIMER_PROF` enforces in
+//! Numbers are CPU time (`CLOCK_PROCESS_CPUTIME_ID`), the quantity the process-CPU-clock timer enforces in
 //! production, measured on whatever machine runs this binary. They are local numbers: the real
 //! limit is only enforced by the Linux worker.
 //!
