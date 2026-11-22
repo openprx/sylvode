@@ -40,13 +40,26 @@ the advisory unless you prefer otherwise.
 ## The `runner` agent type
 
 - One runner OS user is one trust domain: file modes do not protect one bot's token from a CLI
-  running as the same user. Separate trust domains need separate OS users or hosts. The CLI's
-  permission posture (allow list, deny rules for the state directory and the configuration file,
-  `dontAsk`) is the only barrier inside one user, and `allowed_roots` is not a sandbox.
-- The tmux channel is off by default (`[runner.tmux] enabled = false`). Enable it only after the
-  hand checks in the README have been done on the pinned CLI version.
-- Every child process the runner starts gets an allow-listed environment, never the service's.
+  running as the same user. Separate trust domains need separate OS users or hosts.
+- By default every task runs with all permission checks of the CLI off (`launch_command` and
+  `headless_args` carry `--permission-mode bypassPermissions`), as the runner's OS user, with that
+  user's environment and login. The runner adds no tool list, deny rule or settings-source limit,
+  and project files (`.claude/settings.json`, `.mcp.json`, hooks, skills, `CLAUDE.md`) take effect:
+  a work item that carries a prompt injection can make the CLI read or change any file that user
+  can reach, run any command, read every bot token in the state directory, push code and use the
+  operator's credentials. Put the flags you want in `launch_command` and `headless_args`; the
+  start-up posture line, `doctor` and the connection's status in Sylvode warn while checks are off.
+  `allowed_roots` is not a sandbox.
+- A tmux session the operator created runs with whatever configuration it has; the runner does not
+  inspect or limit it. It types only when the CLI is idle with an empty prompt and no client typed
+  recently, only into the one pane that runs the CLI (checked by pane id and process id at every
+  push), and never restarts, respawns or ends a session.
+- The runner starts no CLI with a stripped environment: a CLI it starts, headless or in a session
+  it creates, gets the runner's own environment minus `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and
+  `TMUX`. The runner's own tmux calls get an allow-listed environment.
 - `GET /health` is unauthenticated and returns only the overall status and the protocol state.
-- A hook message is admitted only with the launch's nonce, from the runner's own user, and from
-  below the session's pane process where the platform can name the sender (Linux: `/proc`; macOS:
-  one `ps -A` snapshot per admitted message). The sender's identity is best-effort on macOS.
+- A hook message carries no secret. It is admitted only from the runner's own user, from a pane a
+  session worker recorded (the tmux server's socket path and the pane id), and from below the
+  recorded pane process where the platform can name the sender (Linux: `/proc`; macOS: one `ps -A`
+  snapshot per admitted message). The sender's identity is best-effort on macOS. Any process of the
+  same user inside that pane can send hook messages for it.
