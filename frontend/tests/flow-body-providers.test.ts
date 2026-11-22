@@ -1,2 +1,30 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {flowApi} from '../src/lib/api/flow';import {privateBodyAssetProvider,publicBodyAssetProvider} from '../src/lib/flow/body/providers';
-test('byte providers retain only their explicit authority and never invent a Page identity',async()=>{const previousPrivate=flowApi.bodyAsset,previousPublic=flowApi.publicBodyAsset;const calls:string[]=[];flowApi.bodyAsset=async(page,asset)=>{calls.push(`private:${page}:${asset}`);return {code:404,message:'fixture',data:null};};flowApi.publicBodyAsset=async(token,asset)=>{calls.push(`public:${token}:${asset}`);return {code:404,message:'fixture',data:null};};try{const privateReader=privateBodyAssetProvider('original-page');const publicReader=publicBodyAssetProvider('synthetic-token');await privateReader.read('asset');await publicReader.read('asset');assert.deepEqual(calls,['private:original-page:asset','public:synthetic-token:asset']);assert.equal((await privateBodyAssetProvider('').read('asset')).data,null);assert.equal((await publicBodyAssetProvider('').read('asset')).data,null);assert.equal(calls.length,2);}finally{flowApi.bodyAsset=previousPrivate;flowApi.publicBodyAsset=previousPublic;}});
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { flowApi } from '../src/lib/api/flow';
+import { privateBodyAssetProvider, publicBodyAssetProvider } from '../src/lib/flow/body/providers';
+test('byte providers retain only their explicit authority and never invent a Page identity', async () => {
+	const previousPrivate = flowApi.bodyAsset,
+		previousPublic = flowApi.publicBodyAsset;
+	const calls: string[] = [];
+	flowApi.bodyAsset = async (page, asset) => {
+		calls.push(`private:${page}:${asset}`);
+		return { code: 404, message: 'fixture', data: null };
+	};
+	flowApi.publicBodyAsset = async (token, asset) => {
+		calls.push(`public:${token}:${asset}`);
+		return { code: 404, message: 'fixture', data: null };
+	};
+	try {
+		const privateReader = privateBodyAssetProvider('original-page');
+		const publicReader = publicBodyAssetProvider('synthetic-token');
+		await privateReader.read('asset');
+		await publicReader.read('asset');
+		assert.deepEqual(calls, ['private:original-page:asset', 'public:synthetic-token:asset']);
+		assert.equal((await privateBodyAssetProvider('').read('asset')).data, null);
+		assert.equal((await publicBodyAssetProvider('').read('asset')).data, null);
+		assert.equal(calls.length, 2);
+	} finally {
+		flowApi.bodyAsset = previousPrivate;
+		flowApi.publicBodyAsset = previousPublic;
+	}
+});

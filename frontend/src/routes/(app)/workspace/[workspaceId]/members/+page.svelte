@@ -517,7 +517,7 @@
 										{#if bot.permissions.length === 0}
 											<span>-</span>
 										{:else}
-											{#each bot.permissions as permission}
+											{#each bot.permissions as permission, index (index)}
 												<span
 													class={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${getPermissionClass(permission)}`}
 												>
@@ -696,7 +696,7 @@
 				{$t('members.permissions')}
 			</p>
 			<div class="flex flex-wrap gap-2">
-				{#each botPermissionOptions as permission}
+				{#each botPermissionOptions as permission, index (index)}
 					<label
 						class="inline-flex items-center gap-2 rounded-control border border-input bg-field px-3 py-1.5 text-sm text-fg"
 					>

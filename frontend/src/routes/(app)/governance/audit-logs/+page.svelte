@@ -107,9 +107,9 @@
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 			>
 				<option value="">{`- ${$t('impactReview.allProjects')} -`}</option>
-				{#each groupedProjects as group}
+				{#each groupedProjects as group, index (index)}
 					<optgroup label={group.workspaceName}>
-						{#each group.items as project}
+						{#each group.items as project (project.id)}
 							<option value={project.id}>{project.name}</option>
 						{/each}
 					</optgroup>
@@ -191,7 +191,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each logs as item}
+						{#each logs as item (item.id)}
 							<tr class="border-b border-line align-top">
 								<td class="px-2 py-2 text-xs text-fg-muted">{item.id}</td>
 								<td class="px-2 py-2 text-xs text-fg-muted"

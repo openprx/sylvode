@@ -40,7 +40,7 @@
 				</thead>
 
 				<tbody class="divide-y divide-line bg-raised">
-					{#each s.pendingDesignerChanges as change}
+					{#each s.pendingDesignerChanges as change, index (index)}
 						<tr>
 							<td class="px-3 py-2 text-fg">
 								{#if change.kind === 'delete'}

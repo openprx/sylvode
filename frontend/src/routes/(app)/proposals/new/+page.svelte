@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { tick } from 'svelte';
 	import { get } from 'svelte/store';
@@ -338,9 +339,9 @@
 		const createdId = String((res.data as Record<string, unknown>).id ?? '');
 		toast.success(get(t)('governance.createSuccess'));
 		if (createdId) {
-			goto(`/proposals/${createdId}`);
+			goto(resolve('/(app)/proposals/[id]', { id: createdId }));
 		} else {
-			goto('/proposals');
+			goto(resolve('/(app)/proposals'));
 		}
 	}
 </script>
@@ -380,9 +381,9 @@
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
 						<option value="">{`- ${$t('proposalTemplates.project')} -`}</option>
-						{#each groupedProjectOptions as group}
+						{#each groupedProjectOptions as group, index (index)}
 							<optgroup label={group.workspaceName}>
-								{#each group.items as project}
+								{#each group.items as project (project.id)}
 									<option value={project.id}>{project.name}</option>
 								{/each}
 							</optgroup>
@@ -399,7 +400,7 @@
 						onchange={handleTypeChange}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
-						{#each proposalTypeOptions as option}
+						{#each proposalTypeOptions as option, index (index)}
 							<option value={option.value}>{$t(option.labelKey)}</option>
 						{/each}
 					</select>
@@ -413,7 +414,7 @@
 						bind:value={votingRule}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
-						{#each votingRuleOptions as option}
+						{#each votingRuleOptions as option, index (index)}
 							<option value={option.value}>{$t(option.labelKey)}</option>
 						{/each}
 					</select>
@@ -430,7 +431,7 @@
 						bind:value={cycleTemplate}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
-						{#each cycleTemplateOptions as option}
+						{#each cycleTemplateOptions as option, index (index)}
 							<option value={option.value}>{$t(option.labelKey)}</option>
 						{/each}
 					</select>
@@ -459,7 +460,7 @@
 					disabled={loadingTemplates || templateOptions.length === 0}
 				>
 					<option value="">{`- ${$t('proposalTemplates.none')} -`}</option>
-					{#each templateOptions as template}
+					{#each templateOptions as template (template.id)}
 						<option value={template.id}
 							>{template.name}{template.is_default
 								? ` (${$t('proposalTemplates.default')})`
@@ -531,6 +532,7 @@
 						class="markdown-body min-h-[280px] rounded-control border border-line bg-surface px-3 py-2 text-sm text-fg"
 					>
 						{#if content.trim()}
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 							{@html renderMarkdown(content)}
 						{:else}
 							<p class="text-fg-muted">{$t('issue.noDescriptionPreview')}</p>
@@ -540,7 +542,9 @@
 			</div>
 
 			<div class="flex items-center justify-end gap-2">
-				<a href="/proposals" class="rounded-control border border-input bg-field px-4 py-2 text-sm"
+				<a
+					href={resolve('/(app)/proposals')}
+					class="rounded-control border border-input bg-field px-4 py-2 text-sm"
 					>{$t('common.cancel')}</a
 				>
 				<button

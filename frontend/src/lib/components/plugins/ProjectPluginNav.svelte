@@ -40,10 +40,7 @@
 		data-plugin-slot="project.view"
 	>
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
-			<h2
-				id="project-plugin-nav-title"
-				class="text-lg font-semibold text-fg"
-			>
+			<h2 id="project-plugin-nav-title" class="text-lg font-semibold text-fg">
 				{$t('plugins.apps.navTitle')}
 			</h2>
 			<div class="flex flex-wrap items-center gap-2">
@@ -55,21 +52,21 @@
 			<ul class="grid gap-3 md:grid-cols-3">
 				{#each [...layout.inline, ...layout.more] as item (itemKey(item))}
 					<li>
+						<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
 						<a
 							href={href(item)}
 							class="block rounded-card border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface"
 							data-plugin-contribution={item.contribution.id}
 							aria-label={$t('plugins.apps.open', { values: { label: item.contribution.label } })}
 						>
-							<span class="block text-sm font-semibold text-fg"
-								>{item.contribution.label}</span
-							>
+							<span class="block text-sm font-semibold text-fg">{item.contribution.label}</span>
 							<span class="mt-1 block text-sm text-fg-muted">
 								{$t('plugins.apps.publisher', {
 									values: { name: item.name, version: item.version }
 								})}
 							</span>
 						</a>
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					</li>
 				{/each}
 			</ul>

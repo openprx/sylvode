@@ -6,7 +6,6 @@
 		pluginPackagesApi,
 		type InstalledPluginPackage,
 		type PluginBindingEvent,
-		type PluginCapability,
 		type PluginGrant,
 		type PluginInvocationEvent,
 		type PluginPlacement
@@ -103,12 +102,8 @@
 </script>
 
 <div class="space-y-3">
-	<details
-		class="rounded-card border border-line bg-raised p-4"
-	>
-		<summary class="cursor-pointer text-base font-semibold"
-			>{$t('plugins.bindingHistory')}</summary
-		>
+	<details class="rounded-card border border-line bg-raised p-4">
+		<summary class="cursor-pointer text-base font-semibold">{$t('plugins.bindingHistory')}</summary>
 		{#if history === undefined}
 			<p class="mt-3 text-sm">{$t('plugins.historyUnavailable')}</p>
 		{:else if !history.length}
@@ -169,9 +164,7 @@
 		{/if}
 	</details>
 
-	<details
-		class="rounded-card border border-line bg-raised p-4"
-	>
+	<details class="rounded-card border border-line bg-raised p-4">
 		<summary class="cursor-pointer text-base font-semibold"
 			>{$t('plugins.invocationHistory')}</summary
 		>

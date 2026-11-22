@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -80,19 +81,6 @@
 		return $t('pageTitle.proposalDetailFallback');
 	});
 
-	const workspaceId = $derived.by(() => {
-		if (page.params.workspaceId) {
-			return page.params.workspaceId;
-		}
-		const fromQuery =
-			page.url.searchParams.get('workspaceId') || page.url.searchParams.get('workspace_id');
-		if (fromQuery) {
-			return fromQuery;
-		}
-		const fromPath = page.url.pathname.match(/^\/workspace\/([^/]+)/);
-		return fromPath?.[1] ?? '';
-	});
-
 	onMount(() => {
 		void loadAll();
 		void loadWorkspaceMembers();
@@ -117,7 +105,7 @@
 				);
 				return;
 			}
-		} catch (_) {
+		} catch {
 			/* fallback below */
 		}
 		workspaceMembers = [];
@@ -125,7 +113,7 @@
 
 	async function loadAll() {
 		if (!proposalId) {
-			goto('/proposals');
+			goto(resolve('/(app)/proposals'));
 			return;
 		}
 		loading = true;
@@ -259,6 +247,7 @@
 	function extractMentionIds(text: string): string[] {
 		const content = text.toLowerCase();
 		const ids: string[] = [];
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const seen = new Set<string>();
 		for (const member of mentionCandidates) {
 			const marker = `@${member.name}`.toLowerCase();
@@ -463,7 +452,7 @@
 			return;
 		}
 		toast.success(get(t)('governance.draftDeleted'));
-		goto('/proposals');
+		goto(resolve('/(app)/proposals'));
 	}
 
 	async function vote(choice: VoteChoice) {
@@ -691,7 +680,7 @@
 		<StateBlock
 			kind="notFound"
 			place={$t('governance.place')}
-			action={{ run: () => goto('/proposals') }}
+			action={{ run: () => goto(resolve('/(app)/proposals')) }}
 			data-testid="proposal-detail-not-found"
 		/>
 	</div>
@@ -721,7 +710,7 @@
 				</div>
 				<div class="mb-4 space-y-3">
 					<div class="grid grid-cols-4 gap-2">
-						{#each progressStages as stage, idx}
+						{#each progressStages as stage, idx (idx)}
 							<div class="space-y-1">
 								<div
 									class={`h-1.5 rounded ${idx <= stageIndex(proposal.status) ? 'bg-primary' : 'bg-surface'}`}
@@ -746,6 +735,7 @@
 					{/if}
 				</div>
 				<div class="prose prose-slate max-w-none">
+					<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 					{@html renderMarkdown(proposal.content)}
 				</div>
 			</div>
@@ -758,7 +748,7 @@
 					{#if comments.length === 0}
 						<p class="text-sm text-fg-muted">{$t('governance.noComments')}</p>
 					{:else}
-						{#each comments as comment}
+						{#each comments as comment (comment.id)}
 							<div class="rounded-control border border-line p-3">
 								<div class="mb-2 flex items-start gap-3">
 									{#if comment.author_avatar}
@@ -783,6 +773,7 @@
 									</div>
 								</div>
 								<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
+									<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 									{@html renderCommentContent(comment.content)}
 								</div>
 							</div>
@@ -842,6 +833,7 @@
 						<div class="min-h-24 rounded-control border border-line bg-surface px-3 py-2">
 							{#if newComment.trim()}
 								<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
+									<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 									{@html renderMarkdown(newComment)}
 								</div>
 							{:else}
@@ -878,7 +870,10 @@
 					<h2 class="text-lg font-semibold text-fg">
 						{$t('impactReview.title')}
 					</h2>
-					<a href={`/proposals/${proposal.id}/review`} class="text-sm text-fg underline">
+					<a
+						href={resolve('/(app)/proposals/[id]/review', { id: proposal.id })}
+						class="text-sm text-fg underline"
+					>
 						{$t('impactReview.detailLink')}
 					</a>
 				</div>
@@ -1007,7 +1002,7 @@
 				<div class="space-y-2">
 					{#if proposal.status === 'draft' && isAuthor}
 						<a
-							href={`/proposals/${proposal.id}/edit`}
+							href={resolve('/(app)/proposals/[id]/edit', { id: proposal.id })}
 							class="block w-full rounded-control border border-fg bg-raised px-3 py-2 text-center text-sm hover:bg-surface"
 							>{$t('governance.editDraft')}</a
 						>
@@ -1110,7 +1105,7 @@
 					{#if links.length === 0}
 						<p class="text-xs text-fg-muted">{$t('governance.noIssueLinks')}</p>
 					{:else}
-						{#each links as link}
+						{#each links as link (link.issue_id)}
 							<div class="rounded border border-line px-2 py-1 text-xs">
 								#{link.issue_id.slice(0, 8)} · {link.issue_title} · {link.issue_state}
 							</div>
@@ -1137,7 +1132,7 @@
 							<p class="text-xs text-fg-muted">{$t('governance.searchingIssues')}</p>
 						{:else if issueResults.length > 0}
 							<div class="space-y-1">
-								{#each issueResults as issue}
+								{#each issueResults as issue (issue.id)}
 									<div
 										class="flex items-center justify-between rounded border border-line px-2 py-1 text-xs"
 									>
@@ -1169,20 +1164,20 @@
 				{/if}
 				<div class="mt-3 flex flex-wrap gap-2">
 					<a
-						href={`/proposals/${proposal.id}/review`}
+						href={resolve('/(app)/proposals/[id]/review', { id: proposal.id })}
 						class="inline-flex rounded-control border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface"
 					>
 						{$t('impactReview.detailLink')}
 					</a>
 					<a
-						href={`/proposals/${proposal.id}/veto`}
+						href={resolve('/(app)/proposals/[id]/veto', { id: proposal.id })}
 						class="inline-flex rounded-control border border-fg bg-raised px-3 py-1.5 text-xs hover:bg-surface"
 					>
 						{$t('vetoDetail.title')}
 					</a>
 				</div>
 				<a
-					href={`/proposals/${proposal.id}/chain`}
+					href={resolve('/(app)/proposals/[id]/chain', { id: proposal.id })}
 					class="mt-3 inline-block text-xs text-fg underline"
 				>
 					{$t('governanceExt.viewChain')}

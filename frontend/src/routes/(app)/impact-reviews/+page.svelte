@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -128,9 +129,9 @@
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 			>
 				<option value="">{`- ${$t('impactReview.allProjects')} -`}</option>
-				{#each groupedProjects as group}
+				{#each groupedProjects as group, index (index)}
 					<optgroup label={group.workspaceName}>
-						{#each group.items as project}
+						{#each group.items as project (project.id)}
 							<option value={project.id}>{project.name}</option>
 						{/each}
 					</optgroup>
@@ -188,17 +189,17 @@
 			<p class="text-sm text-fg-muted">{$t('impactReview.empty')}</p>
 		{:else}
 			<div class="space-y-2">
-				{#each reviews as review}
+				{#each reviews as review (review.id)}
 					<div class="rounded-control border border-line p-3">
 						<div class="mb-2 flex flex-wrap items-center gap-2">
 							<a
-								href={`/proposals/${review.proposal_id}`}
+								href={resolve('/(app)/proposals/[id]', { id: review.proposal_id })}
 								class="text-sm font-medium text-fg underline"
 							>
 								{review.proposal_id}
 							</a>
 							<a
-								href={`/proposals/${review.proposal_id}/review`}
+								href={resolve('/(app)/proposals/[id]/review', { id: review.proposal_id })}
 								class="text-xs text-fg-muted hover:underline"
 							>
 								{$t('impactReview.detailLink')}

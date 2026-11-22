@@ -318,6 +318,7 @@
 						{file.mimeType.startsWith('image/') ? '🖼️' : '📄'}
 					</div>
 					<div class="min-w-0 flex-1">
+						<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 						<a
 							href={file.url}
 							target="_blank"
@@ -326,6 +327,7 @@
 						>
 							{file.filename}
 						</a>
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						<p class="text-xs text-fg-muted">{formatBytes(file.size)}</p>
 					</div>
 					<button

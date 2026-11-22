@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -25,7 +26,7 @@
 		const meResponse = await authApi.me();
 		if (meResponse.code !== 0 || !isAdminUser(meResponse.data?.user ?? null)) {
 			toast.error(get(t)('admin.settingsAdminOnly'));
-			goto('/workspace');
+			goto(resolve('/(app)/workspace'));
 		}
 	});
 </script>
@@ -46,9 +47,8 @@
 			<Input label={$t('admin.siteName')} bind:value={basicSettings.siteName} disabled />
 			<Input label={$t('admin.siteUrl')} bind:value={basicSettings.siteUrl} disabled />
 			<div class="md:col-span-2">
-				<label
-					class="mb-1 block text-sm font-medium text-fg"
-					for="allowWorkspaceCreate">{$t('admin.workspaceCreatePermission')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="allowWorkspaceCreate"
+					>{$t('admin.workspaceCreatePermission')}</label
 				>
 				<select
 					id="allowWorkspaceCreate"

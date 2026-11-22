@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount, tick, untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import {
@@ -66,8 +67,11 @@
 	const recordOrigin = $derived(creatorSlot(initialSlot));
 	const settingsUrl = $derived(
 		context.kind === 'project'
-			? `/workspace/${context.workspaceId}/projects/${context.projectId}/settings/plugins`
-			: '/plugins'
+			? resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/settings/plugins', {
+					workspaceId: context.workspaceId,
+					projectId: context.projectId
+				})
+			: resolve('/(app)/plugins')
 	);
 	let templateId = $state<CreatorTemplateId>(
 		initialTemplate(
@@ -102,7 +106,6 @@
 	let revision = $state(0);
 
 	const isUi = $derived(templateId === 'ui_view');
-	const template = $derived(creatorTemplates[templateId]);
 	const invalid = $derived(isUi ? invalidUiViewFields(uiDraft) : invalidDraftFields(orderDraft));
 	const details = ['detailLabel', 'detailTitle', 'detailText'] as const;
 	const actions = ['actionLabel', 'actionTitle', 'actionText'] as const;

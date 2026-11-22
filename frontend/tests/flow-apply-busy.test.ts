@@ -44,11 +44,7 @@ import {
 import { negotiateFlowLimitsVersion } from '../src/lib/flow/limits';
 import type { FlowObjectView } from '../src/lib/api/flow';
 import type { FlowError } from '../src/lib/flow/types';
-import {
-	CONTENTION_SENDS_MAX,
-	REBASE_MAX,
-	classifySubmitError
-} from '../src/lib/flow/offline-sync';
+import { CONTENTION_SENDS_MAX, classifySubmitError } from '../src/lib/flow/offline-sync';
 import { flowErrorDetailKey, flowErrorI18nKey } from '../src/lib/flow/errors';
 import en from '../src/lib/i18n/en.json';
 import zh from '../src/lib/i18n/zh.json';

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -155,7 +156,7 @@
 		</div>
 
 		<div class="mb-4 flex flex-wrap gap-2">
-			{#each domains as domain}
+			{#each domains as domain, index (index)}
 				<button
 					type="button"
 					onclick={() => (selectedDomain = domain)}
@@ -187,7 +188,7 @@
 										#{index + 1}
 									</span>
 									<a
-										href={`/users/${item.user_id}/trust`}
+										href={resolve('/(app)/users/[id]/trust', { id: item.user_id })}
 										class="truncate font-medium text-fg underline"
 										title={item.user_id}
 									>

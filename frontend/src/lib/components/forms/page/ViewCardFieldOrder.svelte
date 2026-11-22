@@ -18,7 +18,7 @@
 	</div>
 
 	<div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-		{#each viewDraftCardFields() as field, fieldIndex}
+		{#each viewDraftCardFields() as field, fieldIndex (field.key)}
 			<div
 				class="flex min-w-0 items-center justify-between gap-2 rounded-control border border-line bg-nav px-2 py-1.5 text-sm"
 				data-card-field-order={`${fieldIndex + 1}:${field.key}`}

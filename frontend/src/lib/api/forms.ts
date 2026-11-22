@@ -903,7 +903,13 @@ export const formsApi = {
 
 	updateRecord(
 		recordId: string,
-		data: { values?: Record<string, unknown>; title?: string; source?: Record<string, unknown>; expected_updated_at?: string; expected_schema_version?: number }
+		data: {
+			values?: Record<string, unknown>;
+			title?: string;
+			source?: Record<string, unknown>;
+			expected_updated_at?: string;
+			expected_schema_version?: number;
+		}
 	): Promise<ApiResult<FormRecord>> {
 		return apiClient.patch<FormRecord>(`/api/v1/form-records/${recordId}`, data);
 	},

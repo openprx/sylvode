@@ -26,7 +26,7 @@
 		class="flex flex-wrap gap-1 rounded-card border border-line bg-raised p-1"
 		data-detail-layout-tabs
 	>
-		{#each detailLayoutModes as mode}
+		{#each detailLayoutModes as mode, index (index)}
 			<button
 				type="button"
 				class="inline-flex h-9 items-center rounded-control px-3 text-sm font-medium transition-colors {s.detailLayoutMode ===
@@ -75,7 +75,7 @@
 				>
 					<option value="">{$t('forms.detailHeaderNoField')}</option>
 
-					{#each s.detailVisibleFields as field}
+					{#each s.detailVisibleFields as field (field.key)}
 						<option value={field.key}>{fieldLabel(field)}</option>
 					{/each}
 				</select>
@@ -99,7 +99,7 @@
 				>
 					<option value="">{$t('forms.detailHeaderNoField')}</option>
 
-					{#each s.detailVisibleFields as field}
+					{#each s.detailVisibleFields as field (field.key)}
 						<option value={field.key}>{fieldLabel(field)}</option>
 					{/each}
 				</select>
@@ -138,7 +138,7 @@
 		</div>
 
 		<div class="space-y-2">
-			{#each s.detailVisibleFields as field}
+			{#each s.detailVisibleFields as field (field.key)}
 				{@const highlightIndex = s.detailHighlightDraft.fields.indexOf(field.key)}
 				{@const isChecked = highlightIndex >= 0}
 

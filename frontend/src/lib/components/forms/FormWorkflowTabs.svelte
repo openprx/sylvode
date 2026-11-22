@@ -27,7 +27,7 @@
 
 <div class="border-b border-line">
 	<div class="flex flex-wrap gap-1 px-1">
-		{#each modes as mode}
+		{#each modes as mode, index (index)}
 			{@const Icon = mode.icon}
 			<button
 				type="button"

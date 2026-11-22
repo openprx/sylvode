@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
@@ -107,14 +108,17 @@
 					importing = !importing;
 				}}>{$t('plugins.library.import')}</Button
 			>
-			<Button onclick={() => goto(`/plugins/creator?draft=${crypto.randomUUID()}`)}
+			<Button onclick={() => goto(resolve(`/(app)/plugins/creator?draft=${crypto.randomUUID()}`))}
 				>{$t('plugins.creator.launch')}</Button
 			>
 			<Button
 				variant="secondary"
 				onclick={() =>
-					goto(`/plugins/creator?draft=${crypto.randomUUID()}&template=ui_view&slot=project.view`)}
-				>{$t('plugins.creatorV3.newUiView')}</Button
+					goto(
+						resolve(
+							`/(app)/plugins/creator?draft=${crypto.randomUUID()}&template=ui_view&slot=project.view`
+						)
+					)}>{$t('plugins.creatorV3.newUiView')}</Button
 			>
 		</div>
 	</header>
@@ -166,7 +170,9 @@
 							>{entry.draft.name || $t('plugins.library.untitled')} · v{entry.draft.version}</span
 						>
 						<a
-							href={`/plugins/creator?draft=${encodeURIComponent(entry.id)}&template=${entry.templateId}`}
+							href={resolve(
+								`/(app)/plugins/creator?draft=${encodeURIComponent(entry.id)}&template=${entry.templateId}`
+							)}
 							aria-label={$t('plugins.library.editNamed', {
 								values: { name: entry.draft.name || $t('plugins.library.untitled') }
 							})}

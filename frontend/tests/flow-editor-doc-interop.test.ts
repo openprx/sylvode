@@ -107,7 +107,8 @@ test('in-place server-like LoroText edit is visible to binding without replacing
 
 test('rich schema keeps native mark names and refuses unsupported embeds', () => {
 	assert.deepEqual(Object.keys(schema.marks), ['bold', 'italic', 'strike', 'code', 'link']);
-	assert.equal(schema.nodes.embed,undefined);for(const kind of ['image','attachment','childPage'])assert(schema.nodes[kind]?.spec.atom);
+	assert.equal(schema.nodes.embed, undefined);
+	for (const kind of ['image', 'attachment', 'childPage']) assert(schema.nodes[kind]?.spec.atom);
 	assert.equal(
 		schema.mark('link', { href: 'https://example.test' }).attrs.href,
 		'https://example.test'
@@ -307,11 +308,17 @@ test('actual API command planner structure output renders updated heading and re
 	);
 });
 
-test('duplicating one block creates a distinct CID without replacing the source',()=>{
- const {doc}=fixture();const mapping=new Map();let node=read(doc);let state=EditorState.create({schema,doc:node});
- updateLoroToPmState(doc,mapping,state);const original=(blocks(doc).get(0) as LoroMap).id;
- const first=state.doc.firstChild!;state=state.apply(state.tr.insert(first.nodeSize,first));updateLoroToPmState(doc,mapping,state);
- assert.equal((blocks(doc).get(0) as LoroMap).id,original);
- assert.notEqual((blocks(doc).get(1) as LoroMap).id,original);
- assert.equal(read(doc).child(1).textContent,first.textContent);
+test('duplicating one block creates a distinct CID without replacing the source', () => {
+	const { doc } = fixture();
+	const mapping = new Map();
+	const node = read(doc);
+	let state = EditorState.create({ schema, doc: node });
+	updateLoroToPmState(doc, mapping, state);
+	const original = (blocks(doc).get(0) as LoroMap).id;
+	const first = state.doc.firstChild!;
+	state = state.apply(state.tr.insert(first.nodeSize, first));
+	updateLoroToPmState(doc, mapping, state);
+	assert.equal((blocks(doc).get(0) as LoroMap).id, original);
+	assert.notEqual((blocks(doc).get(1) as LoroMap).id, original);
+	assert.equal(read(doc).child(1).textContent, first.textContent);
 });

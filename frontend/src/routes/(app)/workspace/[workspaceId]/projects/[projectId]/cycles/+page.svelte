@@ -280,19 +280,31 @@
 	}
 
 	function goSprintBoard(sprintId: string) {
-		goto(`/workspace/${workspaceId}/projects/${projectId}/board?sprintId=${sprintId}`);
+		goto(
+			resolve(`/(app)/workspace/[workspaceId]/projects/[projectId]/board?sprintId=${sprintId}`, {
+				workspaceId,
+				projectId
+			})
+		);
 	}
 </script>
 
 <div class="mx-auto max-w-7xl space-y-6">
 	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 text-sm text-fg-muted">
-			<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+			<a href={resolve('/(app)/workspace')} class="hover:underline">{$t('nav.myWorkspace')}</a>
 			<span class="mx-1 text-fg-muted">/</span>
-			<a href="/workspace/{workspaceId}/projects" class="hover:underline">{$t('project.title')}</a>
+			<a
+				href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId })}
+				class="hover:underline">{$t('project.title')}</a
+			>
 			<span class="mx-1 text-fg-muted">/</span>
-			<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:underline"
-				>{$t('project.detail')}</a
+			<a
+				href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]', {
+					workspaceId,
+					projectId
+				})}
+				class="hover:underline">{$t('project.detail')}</a
 			>
 			<span class="mx-1 text-fg-muted">/</span>
 			<span class="font-medium text-fg">{$t('cycles.title')}</span>
@@ -397,7 +409,10 @@
 									<div class="space-y-2">
 										{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
 											<a
-												href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
+												href={resolve(
+													'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
+													{ workspaceId, projectId, issueId: issue.id }
+												)}
 												class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
 											>
 												<p class="font-medium text-fg">{issue.title}</p>
@@ -479,7 +494,10 @@
 									<div class="space-y-2">
 										{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
 											<a
-												href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
+												href={resolve(
+													'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
+													{ workspaceId, projectId, issueId: issue.id }
+												)}
 												class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
 											>
 												<p class="font-medium text-fg">{issue.title}</p>
@@ -570,7 +588,10 @@
 										<div class="space-y-2">
 											{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
 												<a
-													href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
+													href={resolve(
+														'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
+														{ workspaceId, projectId, issueId: issue.id }
+													)}
 													class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
 												>
 													<p class="font-medium text-fg">

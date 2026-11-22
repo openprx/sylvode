@@ -1,10 +1,11 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
 	import { projectsApi, type Project } from '#lib/api/projects.js';
-	import { membersApi } from '#lib/api/members.js';
+	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
 	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
@@ -129,7 +130,7 @@
 				if (res.code === 0 && res.data) {
 					const nameMap: Record<string, string> = {};
 					const entityMap: Record<string, string> = {};
-					for (const m of (res.data.items ?? []) as any[]) {
+					for (const m of (res.data.items ?? []) as Array<WorkspaceMember & { id: string }>) {
 						const memberId = m.user_id || m.id;
 						nameMap[memberId] = m.name || m.email || memberId.substring(0, 8);
 						entityMap[memberId] = m.entity_type || 'human';
@@ -331,13 +332,19 @@
 	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
 			<div class="text-sm text-fg-muted">
-				<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+				<a href={resolve('/(app)/workspace')} class="hover:underline">{$t('nav.myWorkspace')}</a>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects" class="hover:underline">{$t('project.title')}</a
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId })}
+					class="hover:underline">{$t('project.title')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:underline"
-					>{$t('project.detail')}</a
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]', {
+						workspaceId,
+						projectId
+					})}
+					class="hover:underline">{$t('project.detail')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
 				<span class="font-medium text-fg">{$t('board.title')}</span>
@@ -352,7 +359,13 @@
 						values: { sprint: sprintNameMap[sprintFilterId] ?? sprintFilterId }
 					})}</span
 				>
-				<a href="/workspace/{workspaceId}/projects/{projectId}/board" class="text-fg underline">
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/board', {
+						workspaceId,
+						projectId
+					})}
+					class="text-fg underline"
+				>
 					{$t('board.clearFilter')}
 				</a>
 			</div>
@@ -393,7 +406,7 @@
 					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="all">{$t('issue.all')}</option>
-					{#each assigneeOptions as assigneeId}
+					{#each assigneeOptions as assigneeId, idx (idx)}
 						<option value={assigneeId}>{getAssigneeLabel(assigneeId)}</option>
 					{/each}
 				</select>
@@ -418,11 +431,11 @@
 
 	{#if loading}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-			{#each columns as column}
+			{#each columns}
 				<div class="rounded-card border border-line bg-surface p-3">
 					<div class="mb-3 h-5 w-24 animate-pulse rounded bg-surface"></div>
 					<div class="space-y-3">
-						{#each Array(2) as _, index (`${column}-${index}`)}
+						{#each Array(2)}
 							<div class="h-24 animate-pulse rounded-control border border-line bg-raised"></div>
 						{/each}
 					</div>
@@ -431,7 +444,7 @@
 		</div>
 	{:else}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-			{#each columns as column}
+			{#each columns as column, idx (idx)}
 				<div
 					class={`rounded-card border p-3 transition-colors ${
 						dropTargetStatus === column ? 'border-fg bg-surface' : 'border-line bg-surface'
@@ -466,7 +479,10 @@
 								<div class="ml-2 space-y-2">
 									<div class="flex items-start justify-between gap-2">
 										<a
-											href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
+											href={resolve(
+												'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
+												{ workspaceId, projectId, issueId: issue.id }
+											)}
 											class="line-clamp-2 text-sm font-medium text-fg hover:underline"
 										>
 											{issue.title}
@@ -477,7 +493,7 @@
 									</div>
 									{#if issue.labels?.length}
 										<div class="flex flex-wrap gap-1">
-											{#each issue.labels as label}
+											{#each issue.labels as label, idx (idx)}
 												<span
 													class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
 													style={`background-color: ${label.color}20; color: ${label.color}; border: 1px solid ${label.color}40;`}

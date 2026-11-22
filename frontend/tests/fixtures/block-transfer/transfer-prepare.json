@@ -1,26 +1,26 @@
 {
-  "assets": {
-    "copied_count": 0,
-    "state": "ready",
-    "total_bytes": 0
-  },
-  "expires_at": "2026-11-17T09:09:57.359468+00:00",
-  "kind": "move",
-  "review": {
-    "affected_share_count": 0,
-    "asset_count": 0,
-    "block_count": 2,
-    "native_undo_barrier_pages": [
-      "b128c7ac-06dc-41e8-9138-10e32eba59b6",
-      "464e69df-5784-4455-a2ac-5f44ebf538e9"
-    ],
-    "selection_digest": "2ee557975f0f9660f787c9c7e325c519836b314651229ee0350d548c5d84f857",
-    "source_frontier": "AtS0mKnsld3KThzJ25bzlPTj+z58",
-    "source_object_id": "b128c7ac-06dc-41e8-9138-10e32eba59b6",
-    "target_frontier": "AaGRgdu7momW5wEc",
-    "target_object_id": "464e69df-5784-4455-a2ac-5f44ebf538e9",
-    "total_asset_bytes": 0
-  },
-  "state": "prepared",
-  "transfer_id": "4762840e-9a61-4021-b98d-b07313d6cd08"
+	"assets": {
+		"copied_count": 0,
+		"state": "ready",
+		"total_bytes": 0
+	},
+	"expires_at": "2026-11-17T09:09:57.359468+00:00",
+	"kind": "move",
+	"review": {
+		"affected_share_count": 0,
+		"asset_count": 0,
+		"block_count": 2,
+		"native_undo_barrier_pages": [
+			"b128c7ac-06dc-41e8-9138-10e32eba59b6",
+			"464e69df-5784-4455-a2ac-5f44ebf538e9"
+		],
+		"selection_digest": "2ee557975f0f9660f787c9c7e325c519836b314651229ee0350d548c5d84f857",
+		"source_frontier": "AtS0mKnsld3KThzJ25bzlPTj+z58",
+		"source_object_id": "b128c7ac-06dc-41e8-9138-10e32eba59b6",
+		"target_frontier": "AaGRgdu7momW5wEc",
+		"target_object_id": "464e69df-5784-4455-a2ac-5f44ebf538e9",
+		"total_asset_bytes": 0
+	},
+	"state": "prepared",
+	"transfer_id": "4762840e-9a61-4021-b98d-b07313d6cd08"
 }

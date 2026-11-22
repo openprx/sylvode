@@ -10,9 +10,7 @@
 	let { appearance = null, objectId, size = 'sm' }: Props = $props();
 
 	let imageUrl = $state<string | null>(null);
-	const assetId = $derived(
-		appearance?.icon?.kind === 'image' ? appearance.icon.asset_id : null
-	);
+	const assetId = $derived(appearance?.icon?.kind === 'image' ? appearance.icon.asset_id : null);
 	const emoji = $derived(appearance?.icon?.kind === 'emoji' ? appearance.icon.emoji : null);
 	const box = $derived(size === 'lg' ? 'h-16 w-16 text-4xl' : 'h-5 w-5 text-sm');
 
@@ -31,7 +29,9 @@
 </script>
 
 {#if emoji}
-	<span class={`inline-flex shrink-0 items-center justify-center ${box}`} aria-hidden="true">{emoji}</span>
+	<span class={`inline-flex shrink-0 items-center justify-center ${box}`} aria-hidden="true"
+		>{emoji}</span
+	>
 {:else if imageUrl}
 	<img src={imageUrl} alt="" class={`${box} shrink-0 rounded object-cover`} />
 {/if}

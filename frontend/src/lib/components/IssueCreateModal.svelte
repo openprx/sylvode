@@ -371,7 +371,7 @@
 										class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 									>
 										<option value="">{$t('issue.selectPlaceholder')}</option>
-										{#each field.options as option}
+										{#each field.options as option, index (index)}
 											<option value={option}>{option.replaceAll('_', ' ')}</option>
 										{/each}
 									</select>
@@ -444,6 +444,7 @@
 						class="markdown-body min-h-[220px] rounded-control border border-line bg-surface px-3 py-2 text-sm text-fg"
 					>
 						{#if form.description.trim()}
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 							{@html renderMarkdown(form.description)}
 						{:else}
 							<p class="text-fg-muted">{$t('issue.noDescriptionPreview')}</p>

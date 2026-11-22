@@ -35,7 +35,11 @@ const suite = new Suite('agent-tasks');
 let seq = 0;
 function event(event_type: string, payload: Record<string, unknown> = {}): AiTaskEvent {
 	seq += 1;
-	return { event_type, payload, created_at: new Date(Date.UTC(2026, 10, 20, 10, 0, seq)).toISOString() };
+	return {
+		event_type,
+		payload,
+		created_at: new Date(Date.UTC(2026, 10, 20, 10, 0, seq)).toISOString()
+	};
 }
 
 function task(overrides: Partial<AiTask> = {}): AiTask {
@@ -88,7 +92,9 @@ const rawTask = (extra: Record<string, unknown> = {}) => ({
 	last_progress_at: null,
 	lease_expires_at: '2026-11-20T10:30:00Z',
 	runner_phase: 'pushed',
-	events: [{ event_type: 'delivered', payload: { attempts: 1 }, created_at: '2026-11-20T10:00:00Z' }],
+	events: [
+		{ event_type: 'delivered', payload: { attempts: 1 }, created_at: '2026-11-20T10:00:00Z' }
+	],
 	events_omitted: false,
 	...extra
 });
@@ -142,7 +148,9 @@ suite.check('malformed responses are rejected, not guessed', () => {
 
 suite.check('an event payload that is not an object becomes an empty record', () => {
 	const narrowed = narrowAiTask(
-		rawTask({ events: [{ event_type: 'progress', payload: 'x', created_at: '2026-11-20T10:00:00Z' }] })
+		rawTask({
+			events: [{ event_type: 'progress', payload: 'x', created_at: '2026-11-20T10:00:00Z' }]
+		})
 	);
 	assert(narrowed !== null, 'narrowed');
 	assertDeepEqual(narrowed.events[0].payload, {}, 'payload');
@@ -159,7 +167,11 @@ suite.check('status mapping table', () => {
 	const delivered = event('delivered', { attempts: 1 });
 	const table: Array<[string, AiTask, string]> = [
 		['pending', task(), 'agentTasks.status.queued|neutral'],
-		['processing, not delivered', task({ status: 'processing' }), 'agentTasks.status.queued|neutral'],
+		[
+			'processing, not delivered',
+			task({ status: 'processing' }),
+			'agentTasks.status.queued|neutral'
+		],
 		[
 			'processing, delivered, queued phase',
 			task({ status: 'processing', runner_phase: 'queued', events: [delivered] }),
@@ -175,30 +187,57 @@ suite.check('status mapping table', () => {
 			task({ status: 'processing', events: [delivered] }),
 			'agentTasks.status.delivered|neutral'
 		],
-		['acknowledged, no progress', task({ status: 'acknowledged', events: [delivered, event('acknowledged')] }), 'agentTasks.status.acknowledged|neutral'],
+		[
+			'acknowledged, no progress',
+			task({ status: 'acknowledged', events: [delivered, event('acknowledged')] }),
+			'agentTasks.status.acknowledged|neutral'
+		],
 		[
 			'acknowledged, progress',
-			task({ status: 'acknowledged', events: [delivered, event('acknowledged'), event('progress')] }),
+			task({
+				status: 'acknowledged',
+				events: [delivered, event('acknowledged'), event('progress')]
+			}),
 			'agentTasks.status.working|neutral'
 		],
-		['blocked while processing', task({ status: 'processing', runner_phase: 'blocked', events: [delivered] }), 'agentTasks.status.blocked|warning'],
-		['blocked while acknowledged', task({ status: 'acknowledged', runner_phase: 'blocked' }), 'agentTasks.status.blocked|warning'],
+		[
+			'blocked while processing',
+			task({ status: 'processing', runner_phase: 'blocked', events: [delivered] }),
+			'agentTasks.status.blocked|warning'
+		],
+		[
+			'blocked while acknowledged',
+			task({ status: 'acknowledged', runner_phase: 'blocked' }),
+			'agentTasks.status.blocked|warning'
+		],
 		['completed', task({ status: 'completed' }), 'agentTasks.status.completed|success'],
-		['completed keeps phase out of it', task({ status: 'completed', runner_phase: 'blocked' }), 'agentTasks.status.completed|success'],
+		[
+			'completed keeps phase out of it',
+			task({ status: 'completed', runner_phase: 'blocked' }),
+			'agentTasks.status.completed|success'
+		],
 		['failed', task({ status: 'failed', error_message: 'x' }), 'agentTasks.status.failed|danger'],
 		['cancelled', task({ status: 'cancelled' }), 'agentTasks.status.cancelled|neutral'],
 		['retried', task({ status: 'retried' }), 'agentTasks.status.retried|neutral'],
 		['unknown status', task({ status: 'weird' }), 'agentTasks.status.unknown|neutral']
 	];
 	for (const [name, input, expected] of table) assertEqual(label(input), expected, name);
-	assertDeepEqual(statusView(task({ status: 'weird' })).values, { status: 'weird' }, 'unknown shows the raw status');
+	assertDeepEqual(
+		statusView(task({ status: 'weird' })).values,
+		{ status: 'weird' },
+		'unknown shows the raw status'
+	);
 });
 
 suite.check('queue position comes from the latest report of the current attempt', () => {
 	const t = task({
 		status: 'processing',
 		runner_phase: 'queued',
-		events: [event('delivered'), event('runner.queued', { queue_position: 3 }), event('runner.alive', { queue_position: 2 })]
+		events: [
+			event('delivered'),
+			event('runner.queued', { queue_position: 3 }),
+			event('runner.alive', { queue_position: 2 })
+		]
 	});
 	assertEqual(queuePosition(t), 2, 'latest');
 	assertDeepEqual(statusView(t).values, { position: 2 }, 'values');
@@ -225,7 +264,11 @@ suite.check('a retried attempt ignores the events of the earlier attempt', () =>
 
 suite.check('attempt values', () => {
 	assertEqual(attemptValues(task({ attempts: 0 })), null, 'before the first attempt');
-	assertDeepEqual(attemptValues(task({ attempts: 4, max_attempts: 3 })), { attempt: 4, max: 4 }, 'never above max');
+	assertDeepEqual(
+		attemptValues(task({ attempts: 4, max_attempts: 3 })),
+		{ attempt: 4, max: 4 },
+		'never above max'
+	);
 });
 
 // Ordering, names, truncation
@@ -235,8 +278,16 @@ suite.check('active tasks come first, then newest first, ties keep server order'
 	const b = task({ id: 'b', status: 'processing', created_at: '2026-11-20T08:00:00Z' });
 	const c = task({ id: 'c', status: 'failed', created_at: '2026-11-20T13:00:00Z' });
 	const d = task({ id: 'd', status: 'failed', created_at: '2026-11-20T13:00:00Z' });
-	assertDeepEqual(orderTasks([a, b, c, d]).map((x) => x.id), ['b', 'c', 'd', 'a'], 'order');
-	assertDeepEqual(orderTasks([]).map((x) => x.id), [], 'empty');
+	assertDeepEqual(
+		orderTasks([a, b, c, d]).map((x) => x.id),
+		['b', 'c', 'd', 'a'],
+		'order'
+	);
+	assertDeepEqual(
+		orderTasks([]).map((x) => x.id),
+		[],
+		'empty'
+	);
 });
 
 suite.check('bot name falls back to the first 8 characters of the id', () => {
@@ -276,9 +327,20 @@ suite.check('reply lines follow the frozen report shape', () => {
 		],
 		'all parts'
 	);
-	assertDeepEqual(replyLines({ comment_id: null, state_changed: null, warnings: [] }), [], 'nothing written');
-	assertDeepEqual(replyLines({ state_changed: { from: 1, to: 'x' } }), [], 'malformed state change');
-	const t = task({ status: 'completed', events: [event('completed'), event('reply_routed', { comment_id: 'c' })] });
+	assertDeepEqual(
+		replyLines({ comment_id: null, state_changed: null, warnings: [] }),
+		[],
+		'nothing written'
+	);
+	assertDeepEqual(
+		replyLines({ state_changed: { from: 1, to: 'x' } }),
+		[],
+		'malformed state change'
+	);
+	const t = task({
+		status: 'completed',
+		events: [event('completed'), event('reply_routed', { comment_id: 'c' })]
+	});
 	assertDeepEqual(taskReply(t), [{ kind: 'comment' }], 'last reply of the task');
 	assertEqual(taskReply(task()), null, 'no reply event');
 });
@@ -287,9 +349,16 @@ suite.check('latest progress reads the newest report', () => {
 	const t = task({
 		status: 'acknowledged',
 		last_progress_at: '2026-11-20T10:05:00Z',
-		events: [event('progress', { note: 'one', percent: 10 }), event('progress', { note: ' ', percent: 50 })]
+		events: [
+			event('progress', { note: 'one', percent: 10 }),
+			event('progress', { note: ' ', percent: 50 })
+		]
 	});
-	assertDeepEqual(latestProgress(t), { note: null, percent: 50, at: '2026-11-20T10:05:00Z' }, 'newest');
+	assertDeepEqual(
+		latestProgress(t),
+		{ note: null, percent: 50, at: '2026-11-20T10:05:00Z' },
+		'newest'
+	);
 });
 
 suite.check('event chain collapses heartbeats and hides bookkeeping events', () => {
@@ -312,7 +381,19 @@ suite.check('event chain collapses heartbeats and hides bookkeeping events', () 
 	]);
 	assertDeepEqual(
 		chain.map((entry) => entry.kind),
-		['delivered', 'queued', 'alive', 'pushed', 'acknowledged', 'progress', 'reminded', 'blocked', 'completed', 'reply', 'other'],
+		[
+			'delivered',
+			'queued',
+			'alive',
+			'pushed',
+			'acknowledged',
+			'progress',
+			'reminded',
+			'blocked',
+			'completed',
+			'reply',
+			'other'
+		],
 		'kinds in time order'
 	);
 	const alive = chain.find((entry) => entry.kind === 'alive');
@@ -330,7 +411,14 @@ suite.check('failed and retried entries carry the reason', () => {
 		event('retried', { error_message: 'timeout' }),
 		event('failed', { error_message: 'no way' })
 	]);
-	assertDeepEqual(chain.map((e) => [e.kind, e.detail]), [['retried', 'timeout'], ['failed', 'no way']], 'reasons');
+	assertDeepEqual(
+		chain.map((e) => [e.kind, e.detail]),
+		[
+			['retried', 'timeout'],
+			['failed', 'no way']
+		],
+		'reasons'
+	);
 });
 
 // Locale files
@@ -340,16 +428,50 @@ function leaves(node: unknown, prefix = ''): string[] {
 	return Object.entries(node).flatMap(([k, v]) => leaves(v, prefix ? `${prefix}.${k}` : k));
 }
 const read = (name: string) =>
-	JSON.parse(readFileSync(new URL(`../src/lib/project/agent-tasks/${name}`, import.meta.url), 'utf8'));
+	JSON.parse(
+		readFileSync(new URL(`../src/lib/project/agent-tasks/${name}`, import.meta.url), 'utf8')
+	);
 
 suite.check('feature locale files have the same keys and every used key exists', () => {
 	const en = new Set(leaves(read('locale.en.json')));
 	const zh = new Set(leaves(read('locale.zh.json')));
 	assertDeepEqual([...en].sort(), [...zh].sort(), 'en and zh keys');
 	for (const key of [
-		...['queued', 'waitingQueue', 'waitingQueuePosition', 'delivered', 'acknowledged', 'working', 'blocked', 'completed', 'failed', 'cancelled', 'retried', 'unknown'].map((k) => `agentTasks.status.${k}`),
-		...['delivered', 'queued', 'queuedPosition', 'pushed', 'acknowledged', 'progress', 'progressPercent', 'alive', 'aliveCount', 'reminded', 'blocked', 'completed', 'failed', 'retried', 'reply', 'other'].map((k) => `agentTasks.event.${k}`),
-		...['comment', 'state', 'label', 'vote', 'warning', 'none'].map((k) => `agentTasks.replyLine.${k}`)
+		...[
+			'queued',
+			'waitingQueue',
+			'waitingQueuePosition',
+			'delivered',
+			'acknowledged',
+			'working',
+			'blocked',
+			'completed',
+			'failed',
+			'cancelled',
+			'retried',
+			'unknown'
+		].map((k) => `agentTasks.status.${k}`),
+		...[
+			'delivered',
+			'queued',
+			'queuedPosition',
+			'pushed',
+			'acknowledged',
+			'progress',
+			'progressPercent',
+			'alive',
+			'aliveCount',
+			'reminded',
+			'blocked',
+			'completed',
+			'failed',
+			'retried',
+			'reply',
+			'other'
+		].map((k) => `agentTasks.event.${k}`),
+		...['comment', 'state', 'label', 'vote', 'warning', 'none'].map(
+			(k) => `agentTasks.replyLine.${k}`
+		)
 	]) {
 		assert(en.has(key), `missing ${key}`);
 	}
@@ -357,7 +479,9 @@ suite.check('feature locale files have the same keys and every used key exists',
 
 suite.check('feature keys are not defined in the shared locale files', () => {
 	for (const file of ['en.json', 'zh.json']) {
-		const shared = JSON.parse(readFileSync(new URL(`../src/lib/i18n/${file}`, import.meta.url), 'utf8'));
+		const shared = JSON.parse(
+			readFileSync(new URL(`../src/lib/i18n/${file}`, import.meta.url), 'utf8')
+		);
 		assert(!('agentTasks' in shared), `${file} must not define agentTasks`);
 	}
 });
@@ -367,25 +491,29 @@ suite.check('feature keys are not defined in the shared locale files', () => {
 const { default: TaskRow } = await import('../src/lib/project/agent-tasks/TaskRow.svelte');
 const { default: ClampedText } = await import('../src/lib/project/agent-tasks/ClampedText.svelte');
 
-await suite.checkAsync('agent text is escaped, never linked, and long text is cut with an expand control', async () => {
-	const hostile = '<img src=x onerror=alert(1)> https://evil.example/x [a](https://evil.example) **b**';
-	const html = await renderToHtml(TaskRow, {
-		names: {},
-		task: task({
-			status: 'failed',
-			plan: hostile,
-			error_message: `<script>alert(1)</script>${'z'.repeat(CLAMP_CHARS + 50)}`,
-			events: [event('delivered'), event('progress', { note: hostile })]
-		})
-	});
-	assert(!html.includes('<img'), 'no raw img');
-	assert(!html.includes('<script'), 'no raw script');
-	assert(html.includes('&lt;img src=x onerror=alert(1)'), 'escaped text present');
-	assert(!/<a[\s>]/.test(html), 'no anchor element');
-	assert(!html.includes('<strong>'), 'no markdown rendering');
-	assert(html.includes('agentTasks.showMore'), 'expand control for the long reason');
-	assert(!html.includes('z'.repeat(CLAMP_CHARS + 1)), 'long text is cut before expansion');
-});
+await suite.checkAsync(
+	'agent text is escaped, never linked, and long text is cut with an expand control',
+	async () => {
+		const hostile =
+			'<img src=x onerror=alert(1)> https://evil.example/x [a](https://evil.example) **b**';
+		const html = await renderToHtml(TaskRow, {
+			names: {},
+			task: task({
+				status: 'failed',
+				plan: hostile,
+				error_message: `<script>alert(1)</script>${'z'.repeat(CLAMP_CHARS + 50)}`,
+				events: [event('delivered'), event('progress', { note: hostile })]
+			})
+		});
+		assert(!html.includes('<img'), 'no raw img');
+		assert(!html.includes('<script'), 'no raw script');
+		assert(html.includes('&lt;img src=x onerror=alert(1)'), 'escaped text present');
+		assert(!/<a[\s>]/.test(html), 'no anchor element');
+		assert(!html.includes('<strong>'), 'no markdown rendering');
+		assert(html.includes('agentTasks.showMore'), 'expand control for the long reason');
+		assert(!html.includes('z'.repeat(CLAMP_CHARS + 1)), 'long text is cut before expansion');
+	}
+);
 
 await suite.checkAsync('short text has no expand control', async () => {
 	const short = await renderToHtml(ClampedText, { text: 'hello' });

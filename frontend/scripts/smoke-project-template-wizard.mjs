@@ -485,20 +485,6 @@ const scenarioTemplates = [
 	}
 ];
 
-const embeddedContractTemplate = {
-	key: 'contract_review_default',
-	name: 'Contract Review',
-	industry: 'legal',
-	project_type_key: 'contract_review',
-	audience_label: 'Document review assistant',
-	workflow_template: scenarioTemplates[1].workflow_template,
-	field_schema: scenarioTemplates[1].field_schema,
-	resource_schema: scenarioTemplates[1].resource_schema,
-	ai_roles: scenarioTemplates[1].ai_roles,
-	governance_policy: scenarioTemplates[1].governance_policy,
-	sample_data: scenarioTemplates[1].sample_data
-};
-
 function projectIdForTemplate(templateKey) {
 	if (templateKey === 'contract_review_default') return 'project-created-smoke';
 	return `project-${templateKey.replace(/_default$/, '').replaceAll('_', '-')}`;

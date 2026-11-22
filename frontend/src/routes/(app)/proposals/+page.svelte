@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { get } from 'svelte/store';
@@ -121,7 +122,7 @@
 				<p class="text-sm text-fg-muted">{$t('governance.subtitle')}</p>
 			</div>
 			<a
-				href="/proposals/new"
+				href={resolve('/(app)/proposals/new')}
 				class="inline-flex items-center rounded-control rf-filled bg-primary px-4 py-2 text-sm font-medium text-on-primary"
 			>
 				{$t('governance.createAction')}
@@ -188,10 +189,10 @@
 			<div class="py-8 text-center text-fg-muted">{$t('governance.empty')}</div>
 		{:else}
 			<div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-				{#each items as item}
+				{#each items as item (item.id)}
 					<button
 						type="button"
-						onclick={() => goto(`/proposals/${item.id}`)}
+						onclick={() => goto(resolve('/(app)/proposals/[id]', { id: item.id }))}
 						class="rounded-card border border-line bg-raised p-4 text-left transition"
 					>
 						<div class="mb-2 flex items-start justify-between gap-2">

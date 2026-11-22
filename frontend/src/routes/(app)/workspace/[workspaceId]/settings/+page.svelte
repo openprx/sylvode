@@ -88,7 +88,7 @@
 		}
 
 		toast.success(get(t)('workspace.deleteSuccess'));
-		goto('/workspace');
+		goto(resolve('/(app)/workspace'));
 	}
 </script>
 
@@ -134,7 +134,10 @@
 				{$t('workspace.labelManagementDesc')}
 			</p>
 			<div class="mt-4">
-				<Button variant="secondary" onclick={() => goto(`/workspace/${workspaceId}/projects`)}>
+				<Button
+					variant="secondary"
+					onclick={() => goto(resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId }))}
+				>
 					{$t('workspace.goToProjectList')}
 				</Button>
 			</div>
@@ -150,7 +153,10 @@
 						{$t('workflow.settingsDesc')}
 					</p>
 				</div>
-				<Button variant="secondary" onclick={() => goto(`/workspace/${workspaceId}/workflows`)}>
+				<Button
+					variant="secondary"
+					onclick={() => goto(resolve('/(app)/workspace/[workspaceId]/workflows', { workspaceId }))}
+				>
 					{$t('workflow.manageWorkflows')}
 				</Button>
 			</div>

@@ -302,6 +302,7 @@
 			return Array.from({ length: totalCount }, (_, i) => i + 1);
 		}
 
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const pages = new Set<number>([1, totalCount, current - 1, current, current + 1]);
 		if (current <= 3) {
 			pages.add(2);
@@ -667,7 +668,7 @@
 					>
 						{$t('webhook.prevPage')}
 					</button>
-					{#each getPageNumbers(deliveriesPage, deliveriesTotalPages) as pageNum}
+					{#each getPageNumbers(deliveriesPage, deliveriesTotalPages) as pageNum, index (index)}
 						{#if pageNum === '...'}
 							<span class="px-2 py-1 text-fg-muted">...</span>
 						{:else}

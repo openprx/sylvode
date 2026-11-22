@@ -184,7 +184,7 @@
 			>
 				<option value="">{$t('forms.timelineEventTypeAll')}</option>
 
-				{#each s.timelineEventTypes as eventType}
+				{#each s.timelineEventTypes as eventType, index (index)}
 					<option value={eventType}>{eventType}</option>
 				{/each}
 			</select>
@@ -207,7 +207,7 @@
 			>
 				<option value="">{$t('forms.timelineEventActorAll')}</option>
 
-				{#each s.timelineEventActors as actorId}
+				{#each s.timelineEventActors as actorId, index (index)}
 					<option value={actorId}>{actorId}</option>
 				{/each}
 			</select>
@@ -230,7 +230,7 @@
 			>
 				<option value="">{$t('forms.timelineEventAggregateAll')}</option>
 
-				{#each s.timelineEventAggregates as aggregate}
+				{#each s.timelineEventAggregates as aggregate, index (index)}
 					<option value={aggregate}>{aggregate}</option>
 				{/each}
 			</select>
@@ -312,7 +312,7 @@
 			>
 				<option value="">{$t('forms.recordTitle')}</option>
 
-				{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
+				{#each s.fields.filter((field) => field.visibility?.list !== false) as field (field.key)}
 					<option value={field.key}>{fieldLabel(field)}</option>
 				{/each}
 			</select>
@@ -335,7 +335,7 @@
 			>
 				<option value="">{$t('forms.viewNoRule')}</option>
 
-				{#each s.fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.timelineTitleField) as field}
+				{#each s.fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.timelineTitleField) as field (field.key)}
 					<option value={field.key}>{fieldLabel(field)}</option>
 				{/each}
 			</select>

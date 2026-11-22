@@ -131,9 +131,7 @@
 		})}
 	>
 		{#each stars(display.value, display.max) as filled, index (index)}
-			<span aria-hidden="true" class={filled ? '' : 'text-fg-muted'}
-				>{filled ? '★' : '☆'}</span
-			>
+			<span aria-hidden="true" class={filled ? '' : 'text-fg-muted'}>{filled ? '★' : '☆'}</span>
 		{/each}
 	</span>
 {:else if display.kind === 'progress'}
@@ -143,9 +141,7 @@
 		aria-label={$t('forms.fieldValue.percent', { values: { value: Math.round(display.value) } })}
 	>
 		<span
-			class="relative h-1.5 overflow-hidden rounded-full bg-surface {panel
-				? 'w-30'
-				: 'w-12'}"
+			class="relative h-1.5 overflow-hidden rounded-full bg-surface {panel ? 'w-30' : 'w-12'}"
 			aria-hidden="true"
 		>
 			<span
@@ -153,9 +149,7 @@
 				style={`width:${display.value}%`}
 			></span>
 		</span>
-		<span class="text-xs tabular-nums text-fg" aria-hidden="true"
-			>{display.text}</span
-		>
+		<span class="text-xs tabular-nums text-fg" aria-hidden="true">{display.text}</span>
 	</span>
 {:else if display.kind === 'date'}
 	<time datetime={display.iso} class={panel ? '' : 'block truncate'} title={display.iso}
@@ -189,24 +183,18 @@
 					{display.name}
 				{:else}
 					{$t('forms.fieldValue.unknownMember')}
-					<span class="font-mono text-xs text-fg-muted" dir="ltr"
-						>{shortId(display.userId)}</span
-					>
+					<span class="font-mono text-xs text-fg-muted" dir="ltr">{shortId(display.userId)}</span>
 				{/if}
 			</span>
 			{#if panel && display.email && display.email !== display.name}
-				<span class="block truncate text-xs text-fg-muted"
-					>{display.email}</span
-				>
+				<span class="block truncate text-xs text-fg-muted">{display.email}</span>
 			{/if}
 		</span>
 	</span>
 {:else if display.kind === 'link'}
 	<a
 		href={display.href}
-		class="break-all text-fg underline-offset-2 hover:underline {panel
-			? ''
-			: 'block truncate'}"
+		class="break-all text-fg underline-offset-2 hover:underline {panel ? '' : 'block truncate'}"
 		dir={display.scheme === 'tel' ? 'ltr' : undefined}
 		data-row-ignore>{display.text}</a
 	>
@@ -214,9 +202,7 @@
 	<span class={panel ? 'block' : 'block truncate'} data-field-value-location>
 		{#if display.label}<span class="me-1">{display.label}</span>{/if}
 		{#if panel || !display.label}
-			<span class="font-mono text-xs text-fg-muted" dir="ltr"
-				>{display.coordinates}</span
-			>
+			<span class="font-mono text-xs text-fg-muted" dir="ltr">{display.coordinates}</span>
 		{/if}
 	</span>
 {:else if display.kind === 'images'}
@@ -234,9 +220,7 @@
 				</button>
 			{/each}
 			{#if display.blocked > 0}
-				<span class="self-center text-xs text-warning"
-					>{$t('forms.fieldValue.linkBlocked')}</span
-				>
+				<span class="self-center text-xs text-warning">{$t('forms.fieldValue.linkBlocked')}</span>
 			{/if}
 		</span>
 	{:else if display.items.length > 0}
@@ -252,9 +236,7 @@
 			{/if}
 		</span>
 	{:else}
-		<span class="text-xs text-warning"
-			>{$t('forms.fieldValue.linkBlocked')}</span
-		>
+		<span class="text-xs text-warning">{$t('forms.fieldValue.linkBlocked')}</span>
 	{/if}
 {:else if display.kind === 'files'}
 	{#if panel}
@@ -287,9 +269,8 @@
 						{/if}
 					</span>
 					{#if item.blocked}
-						<span
-							class="text-xs text-warning"
-							data-record-detail-attachment-value-blocked>{$t('forms.fieldValue.linkBlocked')}</span
+						<span class="text-xs text-warning" data-record-detail-attachment-value-blocked
+							>{$t('forms.fieldValue.linkBlocked')}</span
 						>
 					{:else}
 						<a
@@ -320,9 +301,7 @@
 	{/if}
 {:else if display.kind === 'signature'}
 	{#if display.blocked}
-		<span class="text-xs text-warning"
-			>{$t('forms.fieldValue.linkBlocked')}</span
-		>
+		<span class="text-xs text-warning">{$t('forms.fieldValue.linkBlocked')}</span>
 	{:else if panel}
 		<button
 			type="button"
@@ -356,9 +335,7 @@
 	{/if}
 {:else if display.kind === 'relation'}
 	{#if !display.available && !recordHref}
-		<span class="text-fg-muted"
-			>{$t('forms.fieldValue.unavailableRecord')}</span
-		>
+		<span class="text-fg-muted">{$t('forms.fieldValue.unavailableRecord')}</span>
 	{:else}
 		<a
 			href={recordHref?.(display.recordId)}

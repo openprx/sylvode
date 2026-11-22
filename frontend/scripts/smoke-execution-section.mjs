@@ -355,7 +355,8 @@ function runChromium(url) {
 				.split('\n')
 				.filter((line) => line.includes('CONSOLE'))
 				.slice(-8);
-			code === 0 ? resolveRun(out) : reject(new Error(`Chromium exited with ${code}: ${err}`));
+			if (code === 0) resolveRun(out);
+			else reject(new Error(`Chromium exited with ${code}: ${err}`));
 		});
 	});
 }

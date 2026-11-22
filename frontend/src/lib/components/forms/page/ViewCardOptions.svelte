@@ -37,7 +37,7 @@
 				>
 					<option value="">{$t('forms.viewNoRule')}</option>
 
-					{#each s.viewRecords as record}
+					{#each s.viewRecords as record (record.id)}
 						<option value={record.id}>{record.title}</option>
 					{/each}
 				</select>
@@ -241,7 +241,7 @@
 		>
 			<option value="">{$t('forms.recordTitle')}</option>
 
-			{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
+			{#each s.fields.filter((field) => field.visibility?.list !== false) as field (field.key)}
 				<option value={field.key}>{fieldLabel(field)}</option>
 			{/each}
 		</select>
@@ -263,7 +263,7 @@
 		>
 			<option value="">{$t('forms.viewNoRule')}</option>
 
-			{#each s.fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField) as field}
+			{#each s.fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField) as field (field.key)}
 				<option value={field.key}>{fieldLabel(field)}</option>
 			{/each}
 		</select>
@@ -283,7 +283,7 @@
 		>
 			<option value="">{$t('forms.viewNoRule')}</option>
 
-			{#each s.fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField && field.key !== s.viewDraft.cardSubtitleField) as field}
+			{#each s.fields.filter((field) => field.visibility?.list !== false && field.key !== s.viewDraft.cardTitleField && field.key !== s.viewDraft.cardSubtitleField) as field (field.key)}
 				<option value={field.key}>{fieldLabel(field)}</option>
 			{/each}
 		</select>
@@ -303,7 +303,7 @@
 		>
 			<option value="">{$t('forms.viewNoRule')}</option>
 
-			{#each s.fields.filter((field) => field.visibility?.list !== false && ['image', 'attachment'].includes(field.type ?? 'text')) as field}
+			{#each s.fields.filter((field) => field.visibility?.list !== false && ['image', 'attachment'].includes(field.type ?? 'text')) as field (field.key)}
 				<option value={field.key}>{fieldLabel(field)}</option>
 			{/each}
 		</select>

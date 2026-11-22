@@ -145,8 +145,9 @@
 			<h1 class="text-xl font-semibold text-fg">
 				{$t('impactReview.title')}
 			</h1>
-			<a href={`/proposals/${proposalId}`} class="text-sm text-fg underline"
-				>{$t('impactReview.backToProposal')}</a
+			<a
+				href={resolve('/(app)/proposals/[id]', { id: proposalId })}
+				class="text-sm text-fg underline">{$t('impactReview.backToProposal')}</a
 			>
 		</div>
 		<p class="text-sm text-fg-muted">{$t('impactReview.detailSubtitle')}</p>

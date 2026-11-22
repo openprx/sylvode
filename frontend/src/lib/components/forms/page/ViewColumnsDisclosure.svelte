@@ -40,7 +40,7 @@
 		</div>
 
 		<div class="grid gap-2 sm:grid-cols-2">
-			{#each s.fields.filter((field) => field.visibility?.list !== false) as field}
+			{#each s.fields.filter((field) => field.visibility?.list !== false) as field (field.key)}
 				<div
 					class="flex items-center gap-2 rounded-card border border-line bg-nav px-3 py-2 text-sm text-fg"
 				>

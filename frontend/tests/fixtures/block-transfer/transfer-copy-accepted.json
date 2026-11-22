@@ -1,39 +1,37 @@
 {
-  "kind": "copy",
-  "receipt": {
-    "affected_share_count": 0,
-    "changed_page_ids": [
-      "464e69df-5784-4455-a2ac-5f44ebf538e9"
-    ],
-    "mappings": [
-      {
-        "identity": "new",
-        "source_block_cid": "cid:0@8933625647545418177:Map",
-        "target_block_cid": "cid:0@10724189408919630898:Map"
-      },
-      {
-        "identity": "new",
-        "source_block_cid": "cid:27@8933625647545418177:Map",
-        "target_block_cid": "cid:27@10724189408919630898:Map"
-      }
-    ],
-    "source": {
-      "accepted_seq": 3,
-      "frontier": "BOjJl8aKoYGjeQLUtJip7JXdyk4cwYOO8pqmp/17bMnblvOU9OP7Pnw=",
-      "object_id": "b128c7ac-06dc-41e8-9138-10e32eba59b6"
-    },
-    "source_placeholder_cid": null,
-    "target": {
-      "accepted_seq": 3,
-      "frontier": "BOi086G60oPP+AFsoZGB27uaiZbnARyF94vgifKF11oCsuik9auu/umUAWw=",
-      "object_id": "464e69df-5784-4455-a2ac-5f44ebf538e9"
-    },
-    "undo": {
-      "expected_source_frontier": "BOjJl8aKoYGjeQLUtJip7JXdyk4cwYOO8pqmp/17bMnblvOU9OP7Pnw=",
-      "expected_target_frontier": "BOi086G60oPP+AFsoZGB27uaiZbnARyF94vgifKF11oCsuik9auu/umUAWw=",
-      "state": "available"
-    }
-  },
-  "state": "accepted",
-  "transfer_id": "0b3b01ad-4c43-43d1-9aad-d68eba627b47"
+	"kind": "copy",
+	"receipt": {
+		"affected_share_count": 0,
+		"changed_page_ids": ["464e69df-5784-4455-a2ac-5f44ebf538e9"],
+		"mappings": [
+			{
+				"identity": "new",
+				"source_block_cid": "cid:0@8933625647545418177:Map",
+				"target_block_cid": "cid:0@10724189408919630898:Map"
+			},
+			{
+				"identity": "new",
+				"source_block_cid": "cid:27@8933625647545418177:Map",
+				"target_block_cid": "cid:27@10724189408919630898:Map"
+			}
+		],
+		"source": {
+			"accepted_seq": 3,
+			"frontier": "BOjJl8aKoYGjeQLUtJip7JXdyk4cwYOO8pqmp/17bMnblvOU9OP7Pnw=",
+			"object_id": "b128c7ac-06dc-41e8-9138-10e32eba59b6"
+		},
+		"source_placeholder_cid": null,
+		"target": {
+			"accepted_seq": 3,
+			"frontier": "BOi086G60oPP+AFsoZGB27uaiZbnARyF94vgifKF11oCsuik9auu/umUAWw=",
+			"object_id": "464e69df-5784-4455-a2ac-5f44ebf538e9"
+		},
+		"undo": {
+			"expected_source_frontier": "BOjJl8aKoYGjeQLUtJip7JXdyk4cwYOO8pqmp/17bMnblvOU9OP7Pnw=",
+			"expected_target_frontier": "BOi086G60oPP+AFsoZGB27uaiZbnARyF94vgifKF11oCsuik9auu/umUAWw=",
+			"state": "available"
+		}
+	},
+	"state": "accepted",
+	"transfer_id": "0b3b01ad-4c43-43d1-9aad-d68eba627b47"
 }

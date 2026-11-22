@@ -55,7 +55,7 @@
 			</div>
 
 			<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-				{#each formPermissionActions as action}
+				{#each formPermissionActions as action, index (index)}
 					<label
 						class="flex min-h-12 items-center gap-2 rounded-control border border-line px-3 py-2 text-sm text-fg"
 					>
@@ -180,7 +180,7 @@
 				</div>
 
 				<div class="mt-3 grid gap-2">
-					{#each s.fields as field}
+					{#each s.fields as field (field.key)}
 						<div
 							class="grid min-h-10 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-card border border-line px-3 py-2 text-sm text-fg"
 						>

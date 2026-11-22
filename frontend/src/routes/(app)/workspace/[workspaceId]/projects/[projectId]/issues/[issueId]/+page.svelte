@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount, tick } from 'svelte';
@@ -82,7 +83,6 @@
 	let statusValue = $state<IssueStatus>('backlog');
 	let priorityValue = $state<IssuePriority>('medium');
 	let assigneeValue = $state('');
-	let sprintValue = $state('');
 	let updatingField = $state<'status' | 'priority' | 'assignee' | 'sprint' | null>(null);
 
 	let selectedLabelId = $state('');
@@ -97,12 +97,10 @@
 	let editingCommentId = $state<string | null>(null);
 	let editingCommentContent = $state('');
 	let commentBusyId = $state<string | null>(null);
-	let mentionedUsers = $state<string[]>([]);
 	let showMentionDropdown = $state(false);
 	let mentionFilter = $state('');
 	let mentionAnchorIndex = $state<number | null>(null);
 	let commentTextareaEl = $state<HTMLTextAreaElement | null>(null);
-	let editingMentionedUsers = $state<string[]>([]);
 	let showEditMentionDropdown = $state(false);
 	let editMentionFilter = $state('');
 	let editMentionAnchorIndex = $state<number | null>(null);
@@ -131,11 +129,6 @@
 			.filter((item) => !selected.has(item.id))
 			.map((item) => ({ label: item.name, value: item.id }));
 	});
-
-	const sprintOptions = $derived.by<SelectOption[]>(() => [
-		{ label: get(t)('issue.noSprint'), value: '' },
-		...sprints.map((sprint) => ({ label: sprint.name, value: sprint.id }))
-	]);
 
 	const currentSprintName = $derived.by(() => {
 		const sprintId = issue?.sprint_id;
@@ -220,7 +213,6 @@
 			statusValue = issueResponse.data.status;
 			priorityValue = issueResponse.data.priority;
 			assigneeValue = issueResponse.data.assignee_id ?? '';
-			sprintValue = issueResponse.data.sprint_id ?? '';
 			issueLabels = extractIssueLabels(issueResponse.data);
 		}
 
@@ -355,7 +347,6 @@
 			statusValue = response.data.status;
 			priorityValue = response.data.priority;
 			assigneeValue = response.data.assignee_id ?? '';
-			sprintValue = response.data.sprint_id ?? '';
 		}
 
 		return true;
@@ -450,25 +441,6 @@
 		updatingField = null;
 	}
 
-	async function handleSprintChange() {
-		if (!issue || updatingField) {
-			return;
-		}
-		if ((issue.sprint_id ?? '') === sprintValue) {
-			return;
-		}
-
-		updatingField = 'sprint';
-		const previous = issue.sprint_id ?? '';
-		const success = await updateIssue({ sprint_id: sprintValue || undefined });
-		if (!success) {
-			sprintValue = previous;
-		} else {
-			toast.success(get(t)('issue.sprintUpdated'));
-		}
-		updatingField = null;
-	}
-
 	async function handleCloseIssue() {
 		if (!issue) {
 			return;
@@ -509,7 +481,12 @@
 		}
 
 		toast.success(get(t)('issue.deleted'));
-		goto(`/workspace/${workspaceId}/projects/${projectId}/issues`);
+		goto(
+			resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues', {
+				workspaceId,
+				projectId
+			})
+		);
 	}
 
 	async function handleAddLabel() {
@@ -604,6 +581,7 @@
 	function extractMentionIds(text: string): string[] {
 		let content = text.toLowerCase();
 		const ids: string[] = [];
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const seen = new Set<string>();
 
 		// Sort by name length descending to match longest names first
@@ -631,7 +609,6 @@
 		const textarea = event.target as HTMLTextAreaElement;
 		commentTextareaEl = textarea;
 		const mentionState = parseMentionAtCursor(textarea.value, textarea.selectionStart ?? 0);
-		mentionedUsers = extractMentionIds(textarea.value);
 		mentionAnchorIndex = mentionState.start;
 		mentionFilter = mentionState.filter;
 		showMentionDropdown = mentionState.start !== null;
@@ -641,7 +618,6 @@
 		const textarea = event.target as HTMLTextAreaElement;
 		editTextareaEl = textarea;
 		const mentionState = parseMentionAtCursor(textarea.value, textarea.selectionStart ?? 0);
-		editingMentionedUsers = extractMentionIds(textarea.value);
 		editMentionAnchorIndex = mentionState.start;
 		editMentionFilter = mentionState.filter;
 		showEditMentionDropdown = mentionState.start !== null;
@@ -676,7 +652,6 @@
 		await tick();
 		commentTextareaEl.focus();
 		commentTextareaEl.setSelectionRange(inserted.cursorPos, inserted.cursorPos);
-		mentionedUsers = extractMentionIds(inserted.nextText);
 		showMentionDropdown = false;
 		mentionFilter = '';
 		mentionAnchorIndex = null;
@@ -696,7 +671,6 @@
 		await tick();
 		editTextareaEl.focus();
 		editTextareaEl.setSelectionRange(inserted.cursorPos, inserted.cursorPos);
-		editingMentionedUsers = extractMentionIds(inserted.nextText);
 		showEditMentionDropdown = false;
 		editMentionFilter = '';
 		editMentionAnchorIndex = null;
@@ -823,7 +797,6 @@
 			agentTasksRefresh += 1;
 			newComment = '';
 			commentAttachments = [];
-			mentionedUsers = [];
 			showMentionDropdown = false;
 			mentionFilter = '';
 			mentionAnchorIndex = null;
@@ -837,13 +810,11 @@
 		}
 		editingCommentId = comment.id;
 		editingCommentContent = comment.content;
-		editingMentionedUsers = extractMentionIds(comment.content);
 	}
 
 	function cancelEditComment() {
 		editingCommentId = null;
 		editingCommentContent = '';
-		editingMentionedUsers = [];
 		showEditMentionDropdown = false;
 		editMentionFilter = '';
 		editMentionAnchorIndex = null;
@@ -940,7 +911,7 @@
 		return rendered.replace(
 			/(^|[\s>])@([^\s@<]+)/g,
 			(_matched, prefix: string, mention: string) =>
-				`${prefix}<span class=\"comment-mention\">@${mention}</span>`
+				`${prefix}<span class="comment-mention">@${mention}</span>`
 		);
 	}
 
@@ -1031,14 +1002,19 @@
 				class="flex flex-col gap-3 rounded-card border border-line bg-raised p-4 sm:flex-row sm:items-center sm:justify-between"
 			>
 				<div class="text-sm text-fg-muted">
-					<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+					<a href={resolve('/(app)/workspace')} class="hover:underline">{$t('nav.myWorkspace')}</a>
 					<span class="mx-1 text-fg-muted">/</span>
-					<a href="/workspace/{workspaceId}/projects" class="hover:underline"
-						>{$t('project.title')}</a
+					<a
+						href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId })}
+						class="hover:underline">{$t('project.title')}</a
 					>
 					<span class="mx-1 text-fg-muted">/</span>
-					<a href="/workspace/{workspaceId}/projects/{projectId}/issues" class="hover:underline"
-						>{$t('issue.list')}</a
+					<a
+						href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues', {
+							workspaceId,
+							projectId
+						})}
+						class="hover:underline">{$t('issue.list')}</a
 					>
 					<span class="mx-1 text-fg-muted">/</span>
 					<span class="font-medium text-fg">{formatIssueCode(issue)}</span>
@@ -1071,7 +1047,7 @@
 							<div class="mb-3 flex flex-wrap items-center gap-2">
 								{#if issue.proposal_id}
 									<a
-										href={`/proposals/${issue.proposal_id}`}
+										href={resolve('/(app)/proposals/[id]', { id: issue.proposal_id })}
 										class="inline-flex items-center rounded-full border bg-surface px-2 py-0.5 text-xs font-medium text-fg"
 									>
 										{$t('issue.sourceProposal')}: {issue.proposal_id}
@@ -1116,6 +1092,7 @@
 										</p>
 										<div class="space-y-1">
 											{#each existingIssueAttachments as attachment (attachment.url)}
+												<!-- eslint-disable svelte/no-navigation-without-resolve -- attachment and user-supplied URLs are not app routes -->
 												<a
 													href={attachment.url}
 													target="_blank"
@@ -1125,6 +1102,7 @@
 													{attachment.isImage ? '🖼️' : '📎'}
 													{attachment.filename}
 												</a>
+												<!-- eslint-enable svelte/no-navigation-without-resolve -->
 											{/each}
 										</div>
 									</div>
@@ -1145,6 +1123,7 @@
 							<div class="rounded-control border border-line bg-surface p-4">
 								{#if issue.description?.trim()}
 									<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
+										<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 										{@html renderMarkdown(issue.description)}
 									</div>
 								{:else}
@@ -1243,6 +1222,7 @@
 											</div>
 										{:else}
 											<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
+												<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
 												{@html renderCommentContent(comment.content)}
 											</div>
 										{/if}
@@ -1379,6 +1359,7 @@
 										<div>
 											<p class="text-sm text-fg">
 												<span class="font-medium">{getActivityAuthor(activity)}</span>
+												<!-- eslint-disable-next-line svelte/no-useless-mustaches -- keeps the space between the author and the activity text -->
 												{' '}
 												{formatActivity(activity)}
 											</p>

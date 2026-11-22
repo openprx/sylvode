@@ -40,7 +40,7 @@
 	>
 		<option value="">{$t('forms.viewNoRule')}</option>
 
-		{#each viewDraftGanttDateFieldCandidates() as field}
+		{#each viewDraftGanttDateFieldCandidates() as field (field.key)}
 			<option value={field.key}>{fieldLabel(field)}</option>
 		{/each}
 	</select>
@@ -66,7 +66,7 @@
 	>
 		<option value="">{$t('forms.ganttNoEndField')}</option>
 
-		{#each viewDraftGanttDateFieldCandidates().filter((field) => field.key !== s.viewDraft.ganttStartField) as field}
+		{#each viewDraftGanttDateFieldCandidates().filter((field) => field.key !== s.viewDraft.ganttStartField) as field (field.key)}
 			<option value={field.key}>{fieldLabel(field)}</option>
 		{/each}
 	</select>
@@ -90,7 +90,7 @@
 	>
 		<option value="">{$t('forms.viewNoRule')}</option>
 
-		{#each viewDraftGanttGroupFieldCandidates() as field}
+		{#each viewDraftGanttGroupFieldCandidates() as field (field.key)}
 			<option value={field.key}>{fieldLabel(field)}</option>
 		{/each}
 	</select>
@@ -111,7 +111,7 @@
 	>
 		<option value="">{$t('forms.viewNoRule')}</option>
 
-		{#each viewDraftGanttDependencyFieldCandidates() as field}
+		{#each viewDraftGanttDependencyFieldCandidates() as field (field.key)}
 			<option value={field.key}>{fieldLabel(field)}</option>
 		{/each}
 	</select>

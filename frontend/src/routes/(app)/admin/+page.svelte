@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -44,7 +45,7 @@
 		const meResponse = await authApi.me();
 		if (meResponse.code !== 0 || !isAdminUser(meResponse.data?.user ?? null)) {
 			toast.error(get(t)('admin.adminOnlyPage'));
-			goto('/workspace');
+			goto(resolve('/(app)/workspace'));
 			return;
 		}
 
@@ -64,6 +65,7 @@
 		const workspaces = workspaceResponse.data.items ?? [];
 		let projectCount = 0;
 		let issueCount = 0;
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const userIdSet = new Set<string>();
 
 		for (const workspace of workspaces) {
@@ -107,10 +109,11 @@
 			<p class="mt-1 text-sm text-fg-muted">{$t('admin.overview')}</p>
 		</div>
 		<div class="flex gap-2">
-			<Button variant="secondary" onclick={() => goto('/admin/users')}
+			<Button variant="secondary" onclick={() => goto(resolve('/(app)/admin/users'))}
 				>{$t('admin.createUser')}</Button
 			>
-			<Button onclick={() => goto('/inbox')}>{$t('admin.viewRecentActivity')}</Button>
+			<Button onclick={() => goto(resolve('/(app)/inbox'))}>{$t('admin.viewRecentActivity')}</Button
+			>
 		</div>
 	</div>
 
@@ -143,7 +146,7 @@
 				{$t('admin.systemStatus')}
 			</h2>
 			<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-				{#each statusItems as item}
+				{#each statusItems as item, index (index)}
 					<div class="rounded-control border border-line p-3">
 						<p class="text-sm text-fg-muted">{item.label}</p>
 						<span

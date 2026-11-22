@@ -38,6 +38,7 @@ export class RecordPanelController extends FormsController {
 		const current = `${page.url.pathname}${page.url.search}${page.url.hash}`;
 
 		if (next !== current) {
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- rebuilds the current same-app URL
 			await goto(next, { replaceState: true, reset: false });
 		}
 	};

@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
-	import { membersApi } from '#lib/api/members.js';
+	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import { projectsApi, type Project } from '#lib/api/projects.js';
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
@@ -114,7 +114,7 @@
 		if (res.code === 0 && res.data) {
 			const nameMap: Record<string, string> = {};
 			const entityMap: Record<string, string> = {};
-			for (const m of (res.data.items ?? []) as any[]) {
+			for (const m of (res.data.items ?? []) as Array<WorkspaceMember & { id: string }>) {
 				const memberId = m.user_id || m.id;
 				nameMap[memberId] = m.name || m.email || memberId.substring(0, 8);
 				entityMap[memberId] = m.entity_type || 'human';
@@ -217,18 +217,6 @@
 		return `${get(t)('common.label')} (${selectedLabelIds.length})`;
 	}
 
-	function getStateLabel(stateKey: string): string {
-		const stateDef = workflowStates.find((state) => state.key === stateKey);
-		if (stateDef?.display_name) return stateDef.display_name;
-		const fallback: Record<string, string> = {
-			backlog: get(t)('issue.backlog'),
-			todo: get(t)('issue.todo'),
-			in_progress: get(t)('issue.inProgress'),
-			done: get(t)('issue.done')
-		};
-		return fallback[stateKey] || stateKey;
-	}
-
 	function handleIssueCreated(issue: Issue) {
 		void issue;
 		currentPage = 1;
@@ -240,6 +228,7 @@
 			return Array.from({ length: totalCount }, (_, i) => i + 1);
 		}
 
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const pages = new Set<number>([1, totalCount, current - 1, current, current + 1]);
 		if (current <= 3) {
 			pages.add(2);
@@ -279,13 +268,19 @@
 	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div class="text-sm text-fg-muted">
-				<a href="/workspace" class="hover:underline">{$t('nav.myWorkspace')}</a>
+				<a href={resolve('/(app)/workspace')} class="hover:underline">{$t('nav.myWorkspace')}</a>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects" class="hover:underline">{$t('project.title')}</a
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId })}
+					class="hover:underline">{$t('project.title')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
-				<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:underline"
-					>{$t('project.detail')}</a
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]', {
+						workspaceId,
+						projectId
+					})}
+					class="hover:underline">{$t('project.detail')}</a
 				>
 				<span class="mx-1 text-fg-muted">/</span>
 				<span class="font-medium text-fg">{$t('issue.list')}</span>
@@ -362,7 +357,7 @@
 					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="all">{$t('issue.all')}</option>
-					{#each assigneeOptions as assigneeId}
+					{#each assigneeOptions as assigneeId, idx (idx)}
 						<option value={assigneeId}>{getAssigneeLabel(assigneeId)}</option>
 					{/each}
 				</select>
@@ -467,7 +462,7 @@
 	{#if loading}
 		<div class="rounded-card border border-line bg-raised p-4">
 			<div class="space-y-3">
-				{#each Array(5) as _, index (`skeleton-${index}`)}
+				{#each Array(5)}
 					<div class="h-12 animate-pulse rounded bg-surface"></div>
 				{/each}
 			</div>
@@ -517,7 +512,7 @@
 										</p>
 										{#if issue.labels?.length}
 											<div class="mt-1 flex flex-wrap gap-1">
-												{#each issue.labels as label}
+												{#each issue.labels as label, idx (idx)}
 													<span
 														class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
 														style={`background-color: ${label.color}20; color: ${label.color}; border: 1px solid ${label.color}40;`}
@@ -588,7 +583,7 @@
 								</p>
 								{#if issue.labels?.length}
 									<div class="mt-1 flex flex-wrap gap-1">
-										{#each issue.labels as label}
+										{#each issue.labels as label, idx (idx)}
 											<span
 												class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
 												style={`background-color: ${label.color}20; color: ${label.color}; border: 1px solid ${label.color}40;`}
@@ -663,7 +658,7 @@
 					>
 						{$t('issue.prevPage')}
 					</button>
-					{#each getPageNumbers(currentPage, totalPages) as p}
+					{#each getPageNumbers(currentPage, totalPages) as p, idx (idx)}
 						{#if p === '...'}
 							<span class="px-2 text-fg-muted">...</span>
 						{:else}

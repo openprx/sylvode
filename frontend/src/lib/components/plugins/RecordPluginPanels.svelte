@@ -133,6 +133,7 @@
 						// A frame that is no longer shown does not navigate anymore.
 						if (slot.frame?.token !== token) return;
 						const from = safeFrom(page.url.pathname + page.url.search, workspaceId, projectId);
+						// eslint-disable-next-line svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type
 						await goto(navigationHref(target, { workspaceId, projectId, key: item.key, from }));
 					},
 					onStale: () => void recordDiscovery(projectId, recordId).refresh(),

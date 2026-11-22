@@ -22,7 +22,7 @@
 </script>
 
 <div class="divide-y divide-line" data-view-renderer="detail">
-	{#each s.viewRecords as record}
+	{#each s.viewRecords as record (record.id)}
 		<article class="p-4 hover:bg-surface">
 			<div class="flex items-start justify-between gap-3">
 				<button
@@ -51,7 +51,7 @@
 			</div>
 
 			<div class="mt-3 space-y-3">
-				{#each detailLayoutSections() as section}
+				{#each detailLayoutSections() as section, index (index)}
 					<details
 						open={!section.collapsible || !section.defaultCollapsed}
 						ontoggle={(event) => keepDetailSectionOpen(event, section.collapsible)}
@@ -81,7 +81,7 @@
 							class={detailLayoutSectionGridClass(section.columns, section.density)}
 							data-detail-view-section-columns={`${record.id}:${section.key}:${section.columns}`}
 						>
-							{#each detailLayoutSectionFieldsForRecord(section, record) as field}
+							{#each detailLayoutSectionFieldsForRecord(section, record) as field (field.key)}
 								<div
 									class={detailLayoutSectionFieldClass(field, section.columns)}
 									data-detail-view-field={`${record.id}:${section.key}:${field.key}`}

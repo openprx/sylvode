@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -45,7 +46,13 @@
 	}
 
 	function goToIssue(workspaceId: string, projectId: string, issueId: string) {
-		goto(`/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}`);
+		goto(
+			resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]', {
+				workspaceId,
+				projectId,
+				issueId
+			})
+		);
 	}
 
 	function formatRelativeTime(dateText: string): string {
@@ -70,16 +77,6 @@
 			urgent: get(t)('issue.urgent')
 		};
 		return map[priority] || priority;
-	}
-
-	function getStatusClass(status: string): string {
-		const map: Record<string, string> = {
-			backlog: 'bg-surface text-fg',
-			todo: 'bg-surface text-fg',
-			in_progress: 'bg-warning-soft text-warning',
-			done: 'bg-surface text-fg'
-		};
-		return map[status] || 'bg-surface text-fg';
 	}
 
 	function getPriorityClass(priority: string): string {
@@ -133,13 +130,11 @@
 		<!-- Issues by Status -->
 	{:else}
 		<div class="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-4">
-			{#each ['backlog', 'todo', 'in_progress', 'done'] as status}
+			{#each ['backlog', 'todo', 'in_progress', 'done'] as status, index (index)}
 				{@const issues = groupedIssues[status]}
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3
-							class="flex items-center gap-2 text-lg font-semibold text-fg"
-						>
+						<h3 class="flex items-center gap-2 text-lg font-semibold text-fg">
 							<svg
 								class="h-5 w-5 text-fg-muted"
 								fill="none"
@@ -205,7 +200,7 @@
 					<div class="mt-1 text-sm text-fg-muted">{$t('common.total')}</div>
 				</div>
 			</Card>
-			{#each ['backlog', 'todo', 'in_progress', 'done'] as status}
+			{#each ['backlog', 'todo', 'in_progress', 'done'] as status, index (index)}
 				<Card>
 					<div class="text-center">
 						<div class="text-3xl font-semibold text-fg">

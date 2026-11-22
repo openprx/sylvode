@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { get } from 'svelte/store';
@@ -91,7 +92,7 @@
 			</p>
 			<div class="mt-4">
 				<a
-					href={`/proposals/${proposalId}`}
+					href={resolve('/(app)/proposals/[id]', { id: proposalId })}
 					class="inline-flex rounded-control border border-fg bg-raised px-3 py-2 text-xs hover:bg-surface"
 				>
 					{$t('governanceExt.backToProposal')}
@@ -108,7 +109,7 @@
 					<p class="mt-1 text-xs text-fg-muted">{data.proposal.id}</p>
 				</div>
 				<a
-					href={`/proposals/${data.proposal.id}`}
+					href={resolve('/(app)/proposals/[id]', { id: data.proposal.id })}
 					class="rounded-control border border-fg bg-raised px-3 py-2 text-xs hover:bg-surface"
 				>
 					{$t('governanceExt.backToProposal')}
@@ -148,7 +149,7 @@
 						{#if events.length === 0}
 							<p class="text-sm text-fg-muted">{$t('common.noData')}</p>
 						{:else}
-							{#each events as event}
+							{#each events as event, index (index)}
 								<div class="flex gap-2 rounded-control border border-line p-3">
 									<span class={`rounded px-2 py-0.5 text-xs ${eventTone(event.event_type)}`}
 										>{event.event_type}</span
@@ -175,7 +176,7 @@
 						{$t('governanceExt.voteCount', { values: { count: data.votes.length } })}
 					</p>
 					<div class="mt-2 max-h-72 space-y-2 overflow-auto">
-						{#each data.votes as vote}
+						{#each data.votes as vote, index (index)}
 							<div class="rounded border border-line px-2 py-1 text-xs">
 								<p>{vote.voter_id} · {vote.choice}</p>
 								<p class="text-fg-muted">{new Date(vote.voted_at).toLocaleString()}</p>
@@ -192,9 +193,9 @@
 						<p class="text-xs text-fg-muted">{$t('common.noData')}</p>
 					{:else}
 						<div class="space-y-2">
-							{#each data.feedback_proposals as feedback}
+							{#each data.feedback_proposals as feedback (feedback.proposal_id)}
 								<a
-									href={`/proposals/${feedback.proposal_id}`}
+									href={resolve('/(app)/proposals/[id]', { id: feedback.proposal_id })}
 									class="block rounded border border-line px-2 py-1 text-xs hover:bg-surface"
 								>
 									<p class="font-medium text-fg">{feedback.title}</p>

@@ -622,6 +622,7 @@ export class FormsPageState {
 	readonly focusedRecords = $derived.by(() => {
 		if (this.focusedRecordIds.length === 0) return [];
 
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- plain lookup rebuilt on each derivation, not reactive state
 		const focusedIds = new Set(this.focusedRecordIds);
 
 		return this.records.filter((record) => focusedIds.has(record.id));
@@ -658,6 +659,7 @@ export class FormsPageState {
 	readonly visibleFields = $derived.by(() => {
 		if (this.selectedViewColumns.length === 0) return this.listableFields;
 
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- plain lookup rebuilt on each derivation, not reactive state
 		const byKey = new Map(this.listableFields.map((field) => [field.key, field]));
 		const ordered = this.selectedViewColumns
 			.map((key) => byKey.get(key))
@@ -865,6 +867,7 @@ export class FormsPageState {
 	readonly fieldCtx = $derived<FieldDisplayContext>({
 		locale: currentLocale() ?? 'en',
 		formKey: this.selectedForm?.key ?? '',
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- plain lookup rebuilt on each derivation, not reactive state
 		members: new Map(this.workspaceMembers.map((member) => [member.user_id, member])),
 		attachmentsByField: this.recordAttachments.reduce<Record<string, FormAttachment[]>>(
 			(groups, item) => {

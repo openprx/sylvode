@@ -212,9 +212,9 @@
 						onchange={onProjectChange}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
-						{#each groupedProjects as group}
+						{#each groupedProjects as group, index (index)}
 							<optgroup label={group.workspaceName}>
-								{#each group.items as project}
+								{#each group.items as project (project.id)}
 									<option value={project.id}>{project.name}</option>
 								{/each}
 							</optgroup>
@@ -236,7 +236,7 @@
 				<p class="text-sm text-fg-muted">{$t('proposalTemplates.empty')}</p>
 			{:else}
 				<div class="space-y-2">
-					{#each templates as item}
+					{#each templates as item (item.id)}
 						<div class="rounded-control border border-line p-3">
 							<div class="mb-2 flex flex-wrap items-center gap-2">
 								<p class="text-sm font-medium text-fg">{item.name}</p>

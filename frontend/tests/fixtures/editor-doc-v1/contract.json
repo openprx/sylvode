@@ -1,133 +1,125 @@
 {
-  "library": "loro-prosemirror@0.4.3",
-  "peer_id": "71001",
-  "pm": {
-    "type": "doc",
-    "content": [
-      {
-        "type": "paragraph",
-        "attrs": {
-          "indent": 0
-        },
-        "content": [
-          {
-            "type": "text",
-            "text": "Browser 😀 prose"
-          }
-        ]
-      },
-      {
-        "type": "heading",
-        "attrs": {
-          "indent": 1,
-          "level": 2
-        },
-        "content": [
-          {
-            "type": "text",
-            "text": "Heading"
-          }
-        ]
-      },
-      {
-        "type": "bulletItem",
-        "attrs": {
-          "indent": 2
-        },
-        "content": [
-          {
-            "type": "text",
-            "text": "Bullet"
-          }
-        ]
-      },
-      {
-        "type": "codeBlock",
-        "attrs": {
-          "indent": 0
-        },
-        "content": [
-          {
-            "type": "text",
-            "text": "let x = 1;\n"
-          }
-        ]
-      }
-    ]
-  },
-  "deep": {
-    "doc": {
-      "attributes": {},
-      "nodeName": "doc",
-      "children": [
-        {
-          "attributes": {
-            "indent": 0
-          },
-          "nodeName": "paragraph",
-          "children": [
-            "Browser 😀 prose"
-          ]
-        },
-        {
-          "attributes": {
-            "indent": 1,
-            "level": 2
-          },
-          "nodeName": "heading",
-          "children": [
-            "Heading"
-          ]
-        },
-        {
-          "attributes": {
-            "indent": 2
-          },
-          "nodeName": "bulletItem",
-          "children": [
-            "Bullet"
-          ]
-        },
-        {
-          "attributes": {
-            "indent": 0
-          },
-          "nodeName": "codeBlock",
-          "children": [
-            "let x = 1;\n"
-          ]
-        }
-      ]
-    }
-  },
-  "blocks": [
-    {
-      "id": "cid:3@71001:Map",
-      "type": "paragraph",
-      "attributes_id": "cid:5@71001:Map",
-      "children_id": "cid:7@71001:List",
-      "text_id": "cid:8@71001:Text"
-    },
-    {
-      "id": "cid:24@71001:Map",
-      "type": "heading",
-      "attributes_id": "cid:26@71001:Map",
-      "children_id": "cid:29@71001:List",
-      "text_id": "cid:30@71001:Text"
-    },
-    {
-      "id": "cid:38@71001:Map",
-      "type": "bulletItem",
-      "attributes_id": "cid:40@71001:Map",
-      "children_id": "cid:42@71001:List",
-      "text_id": "cid:43@71001:Text"
-    },
-    {
-      "id": "cid:50@71001:Map",
-      "type": "codeBlock",
-      "attributes_id": "cid:52@71001:Map",
-      "children_id": "cid:54@71001:List",
-      "text_id": "cid:55@71001:Text"
-    }
-  ]
+	"library": "loro-prosemirror@0.4.3",
+	"peer_id": "71001",
+	"pm": {
+		"type": "doc",
+		"content": [
+			{
+				"type": "paragraph",
+				"attrs": {
+					"indent": 0
+				},
+				"content": [
+					{
+						"type": "text",
+						"text": "Browser 😀 prose"
+					}
+				]
+			},
+			{
+				"type": "heading",
+				"attrs": {
+					"indent": 1,
+					"level": 2
+				},
+				"content": [
+					{
+						"type": "text",
+						"text": "Heading"
+					}
+				]
+			},
+			{
+				"type": "bulletItem",
+				"attrs": {
+					"indent": 2
+				},
+				"content": [
+					{
+						"type": "text",
+						"text": "Bullet"
+					}
+				]
+			},
+			{
+				"type": "codeBlock",
+				"attrs": {
+					"indent": 0
+				},
+				"content": [
+					{
+						"type": "text",
+						"text": "let x = 1;\n"
+					}
+				]
+			}
+		]
+	},
+	"deep": {
+		"doc": {
+			"attributes": {},
+			"nodeName": "doc",
+			"children": [
+				{
+					"attributes": {
+						"indent": 0
+					},
+					"nodeName": "paragraph",
+					"children": ["Browser 😀 prose"]
+				},
+				{
+					"attributes": {
+						"indent": 1,
+						"level": 2
+					},
+					"nodeName": "heading",
+					"children": ["Heading"]
+				},
+				{
+					"attributes": {
+						"indent": 2
+					},
+					"nodeName": "bulletItem",
+					"children": ["Bullet"]
+				},
+				{
+					"attributes": {
+						"indent": 0
+					},
+					"nodeName": "codeBlock",
+					"children": ["let x = 1;\n"]
+				}
+			]
+		}
+	},
+	"blocks": [
+		{
+			"id": "cid:3@71001:Map",
+			"type": "paragraph",
+			"attributes_id": "cid:5@71001:Map",
+			"children_id": "cid:7@71001:List",
+			"text_id": "cid:8@71001:Text"
+		},
+		{
+			"id": "cid:24@71001:Map",
+			"type": "heading",
+			"attributes_id": "cid:26@71001:Map",
+			"children_id": "cid:29@71001:List",
+			"text_id": "cid:30@71001:Text"
+		},
+		{
+			"id": "cid:38@71001:Map",
+			"type": "bulletItem",
+			"attributes_id": "cid:40@71001:Map",
+			"children_id": "cid:42@71001:List",
+			"text_id": "cid:43@71001:Text"
+		},
+		{
+			"id": "cid:50@71001:Map",
+			"type": "codeBlock",
+			"attributes_id": "cid:52@71001:Map",
+			"children_id": "cid:54@71001:List",
+			"text_id": "cid:55@71001:Text"
+		}
+	]
 }

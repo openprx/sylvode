@@ -260,6 +260,7 @@
 
 	const tree = $derived.by((): TreeNode[] => {
 		void orderVersion;
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const byParent = new Map<string | null, FlowObjectView[]>();
 		const displayParents = rootObjectId
 			? pageOnlyParents(objects, navigationParents, rootObjectId)
@@ -341,6 +342,7 @@
 	async function ensureOrderEntries(): Promise<void> {
 		if (!navEntry) return;
 		const map = getNamedMap(navEntry.doc, 'order');
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const byParent = new Map<string | null, FlowObjectView[]>();
 		for (const object of objects) {
 			const parentKey = object.parent_id ?? null;
@@ -622,6 +624,7 @@
 	}
 
 	function toggleExpand(id: string): void {
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- expanded is replaced as a whole, so a plain Set is intended
 		const next = new Set(expanded);
 		if (next.has(id)) next.delete(id);
 		else next.add(id);
@@ -908,6 +911,7 @@
 				title: get(t)('flow.nav.untitled')
 			});
 			placeCreatedObject(created);
+			// eslint-disable-next-line svelte/prefer-svelte-reactivity -- expanded is replaced as a whole, so a plain Set is intended
 			if (parentId) expanded = new Set(expanded).add(parentId);
 			select(created.object.id);
 		} catch (error) {

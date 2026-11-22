@@ -74,9 +74,9 @@
 				bind:value={selectedProjectId}
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 			>
-				{#each groupedProjects as group}
+				{#each groupedProjects as group, index (index)}
 					<optgroup label={group.workspaceName}>
-						{#each group.items as project}
+						{#each group.items as project (project.id)}
 							<option value={project.id}>{project.name}</option>
 						{/each}
 					</optgroup>
@@ -218,7 +218,7 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each analytics.by_type as row}
+							{#each analytics.by_type as row, index (index)}
 								<tr class="border-b border-line">
 									<td class="px-2 py-2">{row.proposal_type}</td>
 									<td class="px-2 py-2">{row.total_decisions}</td>
@@ -246,7 +246,7 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each analytics.by_domain as row}
+							{#each analytics.by_domain as row, index (index)}
 								<tr class="border-b border-line">
 									<td class="px-2 py-2">{row.domain}</td>
 									<td class="px-2 py-2">{row.total_decisions}</td>

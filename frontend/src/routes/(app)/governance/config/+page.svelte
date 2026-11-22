@@ -123,9 +123,9 @@
 						onchange={onProjectChange}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm"
 					>
-						{#each groupedProjects as group}
+						{#each groupedProjects as group, index (index)}
 							<optgroup label={group.workspaceName}>
-								{#each group.items as project}
+								{#each group.items as project (project.id)}
 									<option value={project.id}>{project.name}</option>
 								{/each}
 							</optgroup>

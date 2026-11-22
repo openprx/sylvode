@@ -227,7 +227,9 @@
 				</p>
 				<p class="mt-1 text-sm text-fg-muted">{$t('vetoDetail.emptyHint')}</p>
 				<div class="mt-5">
-					<Button variant="secondary" onclick={() => goto(`/proposals/${proposalId}`)}
+					<Button
+						variant="secondary"
+						onclick={() => goto(resolve('/(app)/proposals/[id]', { id: proposalId }))}
 						>{$t('vetoDetail.backToProposal')}</Button
 					>
 				</div>
@@ -339,7 +341,9 @@
 				{$t('vetoDetail.authorActions')}
 			</h2>
 			<div class="mt-3 flex flex-wrap gap-2">
-				<Button variant="secondary" onclick={() => goto(`/proposals/${proposalId}/edit`)}
+				<Button
+					variant="secondary"
+					onclick={() => goto(resolve('/(app)/proposals/[id]/edit', { id: proposalId }))}
 					>{$t('vetoDetail.editProposal')}</Button
 				>
 				{#if meId === vetoEvent.vetoer_id && vetoEvent.status === 'active'}

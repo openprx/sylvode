@@ -3,7 +3,7 @@
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { authStore } from '#lib/stores/auth.js';
-	import { vetoApi, type VetoerScope } from '#lib/api/veto.js';
+	import { vetoApi } from '#lib/api/veto.js';
 	import { isAdminUser } from '#lib/utils/auth.js';
 	import { trustApi, type Appeal, type AppealStatus } from '#lib/api/trust.js';
 	import { toast } from '#lib/stores/toast.js';
@@ -68,6 +68,7 @@
 			return;
 		}
 
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const next = new Set<string>();
 		for (const row of res.data.items || []) {
 			if (row.user_id === meId && row.project_id && row.domain) {

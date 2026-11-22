@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { get } from 'svelte/store';
@@ -62,7 +63,10 @@
 				<p class="mt-1 text-sm text-fg-muted">{reportId}</p>
 			</div>
 			<a
-				href={`/workspace/${workspaceId}/projects/${projectId}/audit-reports`}
+				href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/audit-reports', {
+					workspaceId,
+					projectId
+				})}
 				class="rounded-control border border-fg px-3 py-2 text-xs hover:bg-surface"
 			>
 				{$t('governanceExt.backToList')}

@@ -383,6 +383,7 @@
 	async function aggregateMonthlyDecisions(
 		decisionProjectIds: string[]
 	): Promise<DecisionAggregate> {
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local date arithmetic, not reactive state
 		const monthStart = new Date();
 		monthStart.setDate(1);
 		monthStart.setHours(0, 0, 0, 0);
@@ -447,6 +448,7 @@
 	}
 
 	function getTodayStartIso(): string {
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local date arithmetic, not reactive state
 		const todayStart = new Date();
 		todayStart.setHours(0, 0, 0, 0);
 		return todayStart.toISOString();
@@ -484,9 +486,9 @@
 						onchange={handleProjectChange}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					>
-						{#each groupedProjectOptions as group}
+						{#each groupedProjectOptions as group, index (index)}
 							<optgroup label={group.workspaceName}>
-								{#each group.items as project}
+								{#each group.items as project (project.id)}
 									<option value={project.id}>{project.name}</option>
 								{/each}
 							</optgroup>
@@ -497,7 +499,7 @@
 		</div>
 
 		<div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-			{#each overviewMetrics as metric}
+			{#each overviewMetrics as metric, index (index)}
 				<div class="rounded-card border border-line bg-surface p-4">
 					<p class="text-xs uppercase tracking-wide text-fg-muted">{$t(metric.labelKey)}</p>
 					<p class="mt-2 text-2xl font-semibold text-fg">
@@ -516,7 +518,8 @@
 			{$t('governanceCenter.groups.core')}
 		</h2>
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-			{#each coreModules as module}
+			{#each coreModules as module, index (index)}
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app paths held in a static module table -->
 				<a
 					href={module.href}
 					class="group rounded-card border border-line bg-raised p-5 transition hover:-translate-y-0.5"
@@ -701,6 +704,7 @@
 						<span class="text-lg text-fg-muted transition group-hover:text-fg">→</span>
 					</div>
 				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{/each}
 		</div>
 	</section>
@@ -710,7 +714,8 @@
 			{$t('governanceCenter.groups.reviewAndTemplate')}
 		</h2>
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-			{#each reviewModules as module}
+			{#each reviewModules as module, index (index)}
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app paths held in a static module table -->
 				<a
 					href={module.href}
 					class={`group rounded-card border border-line bg-raised p-5 transition hover:-translate-y-0.5 ${
@@ -902,6 +907,7 @@
 						<span class="text-lg text-fg-muted transition group-hover:text-fg">→</span>
 					</div>
 				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{/each}
 		</div>
 	</section>
@@ -911,7 +917,8 @@
 			{$t('governanceCenter.groups.system')}
 		</h2>
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-			{#each systemModules as module}
+			{#each systemModules as module, index (index)}
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app paths held in a static module table -->
 				<a
 					href={module.href}
 					class="group rounded-card border border-line bg-raised p-5 transition hover:-translate-y-0.5"
@@ -1096,6 +1103,7 @@
 						<span class="text-lg text-fg-muted transition group-hover:text-fg">→</span>
 					</div>
 				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{/each}
 		</div>
 	</section>

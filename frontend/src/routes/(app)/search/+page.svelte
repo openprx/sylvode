@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
@@ -40,12 +41,12 @@
 	async function runSearch() {
 		if (!query.trim()) {
 			results = [];
-			goto('/search', { replaceState: true });
+			goto(resolve('/(app)/search'), { replaceState: true });
 			return;
 		}
 
 		searching = true;
-		goto(`/search?q=${encodeURIComponent(query.trim())}`, { replaceState: true });
+		goto(resolve(`/(app)/search?q=${encodeURIComponent(query.trim())}`), { replaceState: true });
 		const response = await searchApi.search(query.trim());
 		if (response.code !== 0) {
 			toast.error(response.message);
@@ -148,6 +149,7 @@
 					</h2>
 					<div class="mt-3 space-y-2">
 						{#each issues as item (item.id)}
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app path built at runtime, or # when none -->
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
@@ -160,6 +162,7 @@
 									</p>
 								{/if}
 							</a>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						{/each}
 					</div>
 				</section>
@@ -172,6 +175,7 @@
 					</h2>
 					<div class="mt-3 space-y-2">
 						{#each projects as item (item.id)}
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app path built at runtime, or # when none -->
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
@@ -184,6 +188,7 @@
 									</p>
 								{/if}
 							</a>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						{/each}
 					</div>
 				</section>
@@ -196,6 +201,7 @@
 					</h2>
 					<div class="mt-3 space-y-2">
 						{#each comments as item (item.id)}
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app path built at runtime, or # when none -->
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
@@ -206,6 +212,7 @@
 									{previewText(item.body, 100)}
 								</p>
 							</a>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						{/each}
 					</div>
 				</section>
