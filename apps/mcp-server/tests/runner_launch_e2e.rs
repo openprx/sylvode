@@ -15,6 +15,7 @@
 //! must be one the API's route-scope table lets a runner bot call without naming a project.
 
 #![cfg(unix)]
+#![allow(clippy::indexing_slicing)]
 
 use axum::{
     Json, Router,
@@ -24,12 +25,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sylvode_runner::mcp_launch_for_tests::{
     AiTaskCallback, BotCreds, Config, LaunchFiles, Protected, SEARCH_MODE_TOOLS, SERVER_NAME, SessionKey, StateDir,
@@ -72,7 +74,7 @@ async fn answer(
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
     let authorized = header("authorization").as_deref() == Some(&format!("Bearer {TOKEN}"));
     let surface = header("x-sylvode-mcp-surface");
-    log.lock().expect("log").push(Call {
+    log.lock().push(Call {
         method: method.to_string(),
         pattern: path.as_str().to_string(),
         authorized,
@@ -143,6 +145,28 @@ impl Drop for Scratch {
 struct Registration {
     command: String,
     args: Vec<String>,
+}
+
+/// The registration in codex's `-c mcp_servers.<name>.command=...` and `.args=...` overrides.
+fn codex_registration(words: &[String]) -> Result<Registration, Box<dyn Error>> {
+    let mut command = None;
+    let mut args = None;
+    for pair in words.windows(2).filter(|pair| pair[0] == "-c") {
+        let table: toml::Table = toml::from_str(&pair[1])?;
+        let Some(entry) = table.get("mcp_servers").and_then(|v| v.get(SERVER_NAME)) else {
+            continue;
+        };
+        if let Some(text) = entry.get("command").and_then(toml::Value::as_str) {
+            command = Some(text.to_string());
+        }
+        if let Some(list) = entry.get("args").and_then(toml::Value::as_array) {
+            args = Some(list.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+        }
+    }
+    Ok(Registration {
+        command: command.ok_or("codex was given no MCP command")?,
+        args: args.ok_or("codex was given no MCP args")?,
+    })
 }
 
 /// Everything the runner hands to one CLI launch.
@@ -237,25 +261,7 @@ fn runner_launch(scratch: &Scratch, config: &Config, cli: &'static str) -> Resul
             )?);
             // codex takes the registration as `-c mcp_servers.<name>.command=...` / `.args=...`.
             for argv in &cli_argvs {
-                let mut command = None;
-                let mut args = None;
-                for pair in argv.windows(2).filter(|pair| pair[0] == "-c") {
-                    let table: toml::Table = toml::from_str(&pair[1])?;
-                    if let Some(entry) = table.get("mcp_servers").and_then(|v| v.get(SERVER_NAME)) {
-                        command = command.or_else(|| entry.get("command").and_then(|v| v.as_str()).map(String::from));
-                        args = args.or_else(|| {
-                            entry.get("args").and_then(|v| v.as_array()).map(|list| {
-                                list.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect::<Vec<_>>()
-                            })
-                        });
-                    }
-                }
-                registrations.push(Registration {
-                    command: command.ok_or("codex was given no MCP command")?,
-                    args: args.ok_or("codex was given no MCP args")?,
-                });
+                registrations.push(codex_registration(argv)?);
             }
         }
         other => return Err(format!("unexpected cli {other}").into()),
@@ -409,7 +415,7 @@ async fn chain(cli: &'static str, extra_config: &str, allow_write: bool, full: b
                 launch.mcp_toml.to_str().ok_or("path")?
             ]
         );
-        log.lock().expect("log").clear();
+        log.lock().clear();
 
         let mut client = McpClient::start(registration, &scratch.0.join("project"))?;
         let initialized = client.initialize().await?;
@@ -459,7 +465,7 @@ async fn chain(cli: &'static str, extra_config: &str, allow_write: bool, full: b
             .await?;
         client.finish().await?;
 
-        let calls = log.lock().expect("log").clone();
+        let calls = log.lock().clone();
         assert_eq!(
             calls.first().map(|c| format!("{} {}", c.method, c.pattern)).as_deref(),
             Some("GET /api/v1/ai/tasks/{task_id}"),
