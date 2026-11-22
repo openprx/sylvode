@@ -1705,13 +1705,6 @@ mod tests {
         ("deliveries.replay", "Flow administration"),
     ];
 
-    /// Tools whose request matches no route of `main.rs`, so the API answers 404 or 405 to anyone: not
-    /// a scope question, listed so it is noticed and fixed on the MCP side.
-    const REQUEST_WITHOUT_A_ROUTE: &[(&str, &str)] = &[(
-        "projects.update",
-        "calls PATCH /api/v1/projects/{id}; the API registers PUT only",
-    )];
-
     fn pattern_matches(pattern: &str, path: &str) -> bool {
         let path = path.split('?').next().unwrap_or(path);
         let (mut a, mut b) = (pattern.split('/'), path.split('/'));
@@ -1767,9 +1760,6 @@ mod tests {
             }
             for (method, path) in &requests {
                 let class = class_of(method, path);
-                if class.is_none() && REQUEST_WITHOUT_A_ROUTE.iter().any(|(listed, _)| *listed == name) {
-                    continue;
-                }
                 let Some(class) = class else {
                     surprises.push(format!("{name}: {method} {path} matches no classified route"));
                     continue;
