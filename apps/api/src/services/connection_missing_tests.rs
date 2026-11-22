@@ -202,11 +202,11 @@ async fn rotating_from_one_project_replaces_the_token_and_the_secret_for_all() {
     assert_ne!(old_token, new_token);
     assert_ne!(old_secret, new_secret);
 
-    // The callback route a P2 task would use: only the new token authenticates.
+    // The task protocol route a P2 task would use: only the new token authenticates.
     let state = crate::routes::context::tenant_fixture::state_for(db.clone());
     let app = Router::new()
         .route(
-            "/api/v1/ai/callbacks/task/{task_id}/progress",
+            "/api/v1/ai/tasks/{task_id}/progress",
             post(|| async { "ok" }).route_layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 crate::middleware::bot_auth::bot_or_user_auth_middleware,
@@ -218,7 +218,7 @@ async fn rotating_from_one_project_replaces_the_token_and_the_secret_for_all() {
         async move {
             let response = app
                 .oneshot(
-                    Request::post(format!("/api/v1/ai/callbacks/task/{}/progress", Uuid::new_v4()))
+                    Request::post(format!("/api/v1/ai/tasks/{}/progress", Uuid::new_v4()))
                         .header(header::AUTHORIZATION, format!("Bearer {token}"))
                         .header("x-sylvode-mcp-surface", "mcp_stdio")
                         .body(Body::empty())
