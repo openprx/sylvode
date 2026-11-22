@@ -20,19 +20,22 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     inbound::{
-        audit, credentials, notify,
+        allowlist, audit, credentials,
+        dry_run::{self, EventFacts, Limits, SourceFacts},
+        envelope::{EnvelopeError, parse_envelope},
+        notify,
         rule_input::{RuleInput, ValidatedRule},
         rules::{RULE_COLUMNS, RuleRow},
     },
     middleware::bot_auth::{BotAuthContext, require_workspace_access_from_auth},
     response::ApiResponse,
+    services::workflow_service::resolve_effective_workflow_for_project,
 };
 
 const NAME_MAX: usize = 100;
-const FORMAT_SETTINGS_MAX_BYTES: usize = 4_096;
 const EVENTS_DEFAULT_LIMIT: i64 = 50;
 const EVENTS_MAX_LIMIT: i64 = 100;
-/// The only source format of this stage; the adapters come later.
+/// The only payload format: the native envelope. Sources of every product send it.
 const FORMAT_NATIVE: &str = "native_v1";
 
 // ---------------------------------------------------------------------------------------------
@@ -87,9 +90,10 @@ fn actor_source(user_id: Uuid) -> Value {
 // Sources
 // ---------------------------------------------------------------------------------------------
 
-const SOURCE_COLUMNS: &str = "id, workspace_id, project_id, name, format, format_settings, token_prefix, \
-     require_signature, (signing_secret IS NOT NULL) AS has_signing_secret, acting_user_id, enabled, \
-     rate_per_minute, daily_cap, last_used_at, host(last_used_ip) AS last_used_ip, created_by, created_at, updated_at";
+const SOURCE_COLUMNS: &str = "id, workspace_id, project_id, name, format, token_prefix, \
+     require_signature, (signing_secret IS NOT NULL) AS has_signing_secret, ip_allowlist::text[] AS ip_allowlist, \
+     acting_user_id, enabled, rate_per_minute, daily_cap, last_used_at, host(last_used_ip) AS last_used_ip, \
+     created_by, created_at, updated_at";
 
 /// A source as the management API shows it: no token hash, no signing secret.
 #[derive(Debug, Clone, FromQueryResult, Serialize)]
@@ -99,10 +103,11 @@ pub struct SourceView {
     pub project_id: Uuid,
     pub name: String,
     pub format: String,
-    pub format_settings: Value,
     pub token_prefix: String,
     pub require_signature: bool,
     pub has_signing_secret: bool,
+    /// `address/prefix` blocks the source may post from; empty admits every address.
+    pub ip_allowlist: Vec<String>,
     pub acting_user_id: Option<Uuid>,
     pub enabled: bool,
     pub rate_per_minute: i32,
@@ -124,6 +129,7 @@ impl SourceView {
             "rate_per_minute": self.rate_per_minute,
             "daily_cap": self.daily_cap,
             "format": self.format,
+            "ip_allowlist": self.ip_allowlist,
             "acting_user_id": self.acting_user_id,
             "token_prefix": self.token_prefix,
         })
@@ -175,14 +181,9 @@ fn valid_rates(rate_per_minute: Option<i32>, daily_cap: Option<i32>) -> Result<(
     Ok(())
 }
 
-fn valid_format_settings(settings: &Value) -> Result<(), ApiError> {
-    if !settings.is_object() {
-        return Err(ApiError::BadRequest("format_settings must be an object".to_owned()));
-    }
-    if settings.to_string().len() > FORMAT_SETTINGS_MAX_BYTES {
-        return Err(ApiError::BadRequest("format_settings is larger than 4 KiB".to_owned()));
-    }
-    Ok(())
+/// The allow-list as it is stored, or the 400 that names the entry that is wrong.
+fn valid_allowlist(entries: &[String]) -> Result<Vec<String>, ApiError> {
+    allowlist::normalise_entries(entries).map_err(ApiError::BadRequest)
 }
 
 fn mint_failure() -> ApiError {
@@ -212,11 +213,12 @@ pub async fn list_sources(
 #[serde(deny_unknown_fields)]
 pub struct CreateSourceRequest {
     pub name: String,
+    /// Only `native_v1` exists.
     pub format: Option<String>,
-    pub format_settings: Option<Value>,
     pub require_signature: Option<bool>,
     pub rate_per_minute: Option<i32>,
     pub daily_cap: Option<i32>,
+    pub ip_allowlist: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -239,13 +241,10 @@ pub async fn create_source(
     let user = require_workspace_admin(&state, &claims, bot.as_ref().map(|b| &b.0), workspace_id).await?;
     let name = valid_name(&request.name)?;
     if request.format.as_deref().unwrap_or(FORMAT_NATIVE) != FORMAT_NATIVE {
-        return Err(ApiError::BadRequest(
-            "format must be native_v1: the product adapters are not available yet".to_owned(),
-        ));
+        return Err(ApiError::BadRequest("format must be native_v1".to_owned()));
     }
     valid_rates(request.rate_per_minute, request.daily_cap)?;
-    let settings = request.format_settings.unwrap_or_else(|| json!({}));
-    valid_format_settings(&settings)?;
+    let allowlist = valid_allowlist(&request.ip_allowlist.unwrap_or_default())?;
 
     let minted = credentials::mint_token().map_err(|_| mint_failure())?;
     let signing_secret = credentials::mint_signing_secret().map_err(|_| mint_failure())?;
@@ -253,15 +252,16 @@ pub async fn create_source(
     let tx = state.db.begin().await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO inbound_sources (id, workspace_id, project_id, name, format, format_settings, token_hash, \
-         token_prefix, signing_secret, require_signature, acting_user_id, rate_per_minute, daily_cap, created_by) \
-         VALUES ($1, $2, $3, $4, 'native_v1', $5, $6, $7, $8, $9, $10, COALESCE($11, 120), COALESCE($12, 20000), $10)",
+        "INSERT INTO inbound_sources (id, workspace_id, project_id, name, format, token_hash, \
+         token_prefix, signing_secret, require_signature, acting_user_id, rate_per_minute, daily_cap, \
+         ip_allowlist, created_by) \
+         VALUES ($1, $2, $3, $4, 'native_v1', $5, $6, $7, $8, $9, COALESCE($10, 120), COALESCE($11, 20000), \
+                 $12::text[]::cidr[], $9)",
         vec![
             id.into(),
             workspace_id.into(),
             project_id.into(),
             name.into(),
-            settings.into(),
             minted.hash.into(),
             minted.display_prefix.into(),
             signing_secret.clone().into(),
@@ -269,6 +269,7 @@ pub async fn create_source(
             user.into(),
             request.rate_per_minute.into(),
             request.daily_cap.into(),
+            allowlist.into(),
         ],
     ))
     .await?;
@@ -311,7 +312,8 @@ pub struct PatchSourceRequest {
     pub require_signature: Option<bool>,
     pub rate_per_minute: Option<i32>,
     pub daily_cap: Option<i32>,
-    pub format_settings: Option<Value>,
+    /// Replaces the allow-list; an empty list admits every address.
+    pub ip_allowlist: Option<Vec<String>>,
     /// Makes the caller the person the source acts for (D7).
     pub take_over: Option<bool>,
 }
@@ -326,16 +328,14 @@ pub async fn patch_source(
     let (before, user) = admin_source(&state, &claims, bot.as_ref().map(|b| &b.0), id).await?;
     let name = request.name.as_deref().map(valid_name).transpose()?;
     valid_rates(request.rate_per_minute, request.daily_cap)?;
-    if let Some(settings) = &request.format_settings {
-        valid_format_settings(settings)?;
-    }
+    let allowlist = request.ip_allowlist.as_deref().map(valid_allowlist).transpose()?;
     let take_over = request.take_over.unwrap_or(false);
     let tx = state.db.begin().await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE inbound_sources SET name = COALESCE($2, name), enabled = COALESCE($3, enabled), \
                 require_signature = COALESCE($4, require_signature), rate_per_minute = COALESCE($5, rate_per_minute), \
-                daily_cap = COALESCE($6, daily_cap), format_settings = COALESCE($7, format_settings), \
+                daily_cap = COALESCE($6, daily_cap), ip_allowlist = COALESCE($7::text[]::cidr[], ip_allowlist), \
                 acting_user_id = CASE WHEN $8 THEN $9 ELSE acting_user_id END, updated_at = now() \
           WHERE id = $1",
         vec![
@@ -345,7 +345,7 @@ pub async fn patch_source(
             request.require_signature.into(),
             request.rate_per_minute.into(),
             request.daily_cap.into(),
-            request.format_settings.into(),
+            allowlist.into(),
             take_over.into(),
             user.into(),
         ],
@@ -868,12 +868,113 @@ pub async fn reorder_rules(
     Ok(ApiResponse::success(rules))
 }
 
+// ---------------------------------------------------------------------------------------------
+// Rule test
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestRulesRequest {
+    /// The source of the project the sample event is posted as.
+    pub source_id: Uuid,
+    /// A sample envelope, validated like a real one. Exactly one of `envelope` and
+    /// `inbound_event_id` is given.
+    pub envelope: Option<Value>,
+    /// A stored event of that source, tested again against the rules as they are now.
+    pub inbound_event_id: Option<Uuid>,
+}
+
+/// POST `/api/v1/projects/{project_id}/alert-rules/test`: which rule would handle the event and
+/// what would happen. Creates nothing and counts against no limit.
+pub async fn test_rules(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(project_id): Path<Uuid>,
+    Json(request): Json<TestRulesRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let workspace_id = project_workspace(&state, project_id).await?;
+    require_workspace_admin(&state, &claims, bot.as_ref().map(|b| &b.0), workspace_id).await?;
+    let source = Found::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM inbound_sources WHERE id = $1 AND project_id = $2 AND workspace_id = $3",
+        vec![request.source_id.into(), project_id.into(), workspace_id.into()],
+    ))
+    .one(&state.db)
+    .await?;
+    if source.is_none() {
+        return Err(ApiError::BadRequest(
+            "source_id must be a source of this project".to_owned(),
+        ));
+    }
+    let name = SourceName::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT name FROM inbound_sources WHERE id = $1",
+        vec![request.source_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .map(|row| row.name)
+    .ok_or_else(|| ApiError::NotFound("inbound source not found".to_owned()))?;
+
+    let facts = match (request.envelope, request.inbound_event_id) {
+        (Some(envelope), None) => {
+            let bytes = serde_json::to_vec(&envelope)
+                .map_err(|_| ApiError::BadRequest("envelope must be a JSON object".to_owned()))?;
+            let parsed = parse_envelope(&bytes, Timestamp::now()).map_err(|error| match error {
+                EnvelopeError::Invalid { path, reason } => ApiError::BadRequest(format!("envelope {path}: {reason}")),
+                EnvelopeError::OccurredAtOutOfRange => {
+                    ApiError::BadRequest("envelope occurred_at is out of range".to_owned())
+                }
+            })?;
+            EventFacts {
+                kind: parsed.kind,
+                severity: parsed.severity,
+                dedup_key: parsed.dedup_key,
+                subject: parsed.subject,
+            }
+        }
+        (None, Some(event_id)) => dry_run::stored_event(&state.db, project_id, request.source_id, event_id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("inbound event not found".to_owned()))?,
+        _ => {
+            return Err(ApiError::BadRequest(
+                "give exactly one of envelope and inbound_event_id".to_owned(),
+            ));
+        }
+    };
+    let workflow = resolve_effective_workflow_for_project(&state, project_id).await?;
+    let config = crate::config::runtime().inbound;
+    let report = dry_run::evaluate(
+        &state.db,
+        &workflow,
+        &SourceFacts {
+            id: request.source_id,
+            workspace_id,
+            project_id,
+            name: &name,
+        },
+        &facts,
+        Limits {
+            workspace_active_tasks: config.max_active_alert_tasks_per_workspace,
+            alerts_per_rule_per_hour: config.max_alerts_per_rule_per_hour,
+        },
+    )
+    .await?;
+    Ok(ApiResponse::success(report))
+}
+
+#[derive(FromQueryResult)]
+struct SourceName {
+    name: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn names_rates_and_settings_are_bounded() {
+    fn names_rates_and_allowlist_are_bounded() {
         assert!(valid_name("  prx-waf edge-01 ").is_ok_and(|name| name == "prx-waf edge-01"));
         assert!(valid_name("   ").is_err());
         assert!(valid_name(&"n".repeat(101)).is_err());
@@ -883,8 +984,8 @@ mod tests {
         assert!(valid_rates(Some(6_001), None).is_err());
         assert!(valid_rates(None, Some(0)).is_err());
         assert!(valid_rates(None, Some(1_000_001)).is_err());
-        assert!(valid_format_settings(&json!({})).is_ok());
-        assert!(valid_format_settings(&json!([1])).is_err());
-        assert!(valid_format_settings(&json!({ "k": "x".repeat(5_000) })).is_err());
+        assert!(valid_allowlist(&[]).is_ok_and(|list| list.is_empty()));
+        assert!(valid_allowlist(&["192.0.2.0/24".to_owned()]).is_ok());
+        assert!(valid_allowlist(&["192.0.2.1/24".to_owned()]).is_err());
     }
 }

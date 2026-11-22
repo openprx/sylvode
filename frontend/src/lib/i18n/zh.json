@@ -454,6 +454,8 @@
 		"issueAssignedContentFallback": "你被指派了一个 Issue",
 		"alertOpenedTitle": "告警已创建",
 		"alertOpenedContent": "{severity} 级告警：{title}",
+		"alertEscalatedTitle": "告警已升级",
+		"alertEscalatedContent": "已升级为 {severity}：{title}",
 		"alertTaskCompletedTitle": "告警任务已完成",
 		"alertTaskCompletedContent": "机器人已完成对以下告警的处理：{title}",
 		"alertTaskFailedTitle": "告警任务失败",

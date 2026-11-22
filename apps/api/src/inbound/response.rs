@@ -59,6 +59,11 @@ impl InboundError {
         Self::new(StatusCode::FORBIDDEN, "source_suspended")
     }
 
+    /// The source is valid but the request came from an address outside its allow-list.
+    pub const fn ip_not_allowed() -> Self {
+        Self::new(StatusCode::FORBIDDEN, "ip_not_allowed")
+    }
+
     pub const fn rate_limited(retry_after_secs: u64) -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,

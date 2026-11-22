@@ -31,7 +31,6 @@ CREATE TABLE IF NOT EXISTS inbound_sources (
   project_id              UUID        NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name                    TEXT        NOT NULL,
   format                  TEXT        NOT NULL DEFAULT 'native_v1',
-  format_settings         JSONB       NOT NULL DEFAULT '{}'::jsonb,
   token_hash              CHAR(64)    NOT NULL UNIQUE,
   token_prefix            TEXT        NOT NULL,
   signing_secret          TEXT        NULL,
@@ -95,6 +94,10 @@ CREATE TABLE IF NOT EXISTS inbound_alerts (
   task_seq                 INTEGER     NOT NULL DEFAULT 0,
   task_id                  UUID        NULL REFERENCES ai_tasks(id) ON DELETE SET NULL,
   task_state               TEXT        NOT NULL DEFAULT 'none',
+  -- A task refused by a cap waits ('waiting') for up to an hour from `task_queued_at` and is then
+  -- started by the worker or suppressed. `queued_event_id` is the event that asked for it.
+  task_queued_at           TIMESTAMPTZ NULL,
+  queued_event_id          UUID        NULL,
   task_ended_at            TIMESTAMPTZ NULL,
   outcome_notified_task_id UUID        NULL,
   open                     BOOLEAN     NOT NULL DEFAULT TRUE,
@@ -104,7 +107,8 @@ CREATE TABLE IF NOT EXISTS inbound_alerts (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_inbound_alerts_open ON inbound_alerts (source_id, dedup_key) WHERE open;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_inbound_alerts_work_item ON inbound_alerts (work_item_id);
 CREATE INDEX IF NOT EXISTS idx_inbound_alerts_task ON inbound_alerts (task_id) WHERE task_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_inbound_alerts_rule ON inbound_alerts (rule_id) WHERE rule_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inbound_alerts_rule ON inbound_alerts (rule_id, created_at) WHERE rule_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inbound_alerts_waiting ON inbound_alerts (task_queued_at) WHERE task_state = 'waiting';
 
 CREATE TABLE IF NOT EXISTS inbound_events (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -125,13 +129,13 @@ CREATE TABLE IF NOT EXISTS inbound_events (
   signed        BOOLEAN     NOT NULL,
   client_ip     INET        NULL,
   outcome       TEXT        NOT NULL,
+  task_created_at TIMESTAMPTZ NULL,
   rule_id       UUID        NULL REFERENCES alert_rules(id) ON DELETE SET NULL,
   alert_id      UUID        NULL REFERENCES inbound_alerts(id) ON DELETE SET NULL,
   task_id       UUID        NULL REFERENCES ai_tasks(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_inbound_events_source_time ON inbound_events (source_id, received_at DESC);
-CREATE INDEX IF NOT EXISTS idx_inbound_events_rule_time   ON inbound_events (rule_id, received_at) WHERE task_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_inbound_events_rule_opened ON inbound_events (rule_id, received_at) WHERE outcome = 'alert_opened';
+CREATE INDEX IF NOT EXISTS idx_inbound_events_rule_task   ON inbound_events (rule_id, task_created_at) WHERE task_created_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_inbound_events_received    ON inbound_events (received_at);
 
 -- Constraints, each added only when the table does not carry one of that name.
@@ -146,9 +150,11 @@ BEGIN
       ('inbound_sources', 'inbound_sources_name_check',
        $d$CHECK (char_length(name) BETWEEN 1 AND 100)$d$),
       ('inbound_sources', 'inbound_sources_format_check',
-       $d$CHECK (format IN ('native_v1', 'prx_waf_v1', 'prx_sd_generic_v1'))$d$),
+       $d$CHECK (format = 'native_v1')$d$),
       ('inbound_sources', 'inbound_sources_rate_check',
        $d$CHECK (rate_per_minute BETWEEN 1 AND 6000 AND daily_cap BETWEEN 1 AND 1000000)$d$),
+      ('inbound_sources', 'inbound_sources_allowlist_check',
+       $d$CHECK (cardinality(ip_allowlist) <= 64)$d$),
       ('inbound_sources', 'inbound_sources_sig_check',
        $d$CHECK (NOT require_signature OR signing_secret IS NOT NULL)$d$),
       ('alert_rules', 'alert_rules_name_check',
@@ -166,7 +172,8 @@ BEGIN
       ('alert_rules', 'alert_rules_patterns_check',
        $d$CHECK (cardinality(kind_patterns) <= 32)$d$),
       ('inbound_alerts', 'inbound_alerts_task_state_check',
-       $d$CHECK (task_state IN ('none', 'created', 'suppressed', 'waiting'))$d$),
+       $d$CHECK (task_state IN ('none', 'created', 'suppressed', 'waiting')
+          AND (task_state <> 'waiting' OR task_queued_at IS NOT NULL))$d$),
       ('inbound_alerts', 'inbound_alerts_rank_check',
        $d$CHECK (max_severity_rank BETWEEN 0 AND 4)$d$),
       ('inbound_events', 'inbound_events_unique_id',
@@ -174,8 +181,8 @@ BEGIN
       ('inbound_events', 'inbound_events_rank_check',
        $d$CHECK (severity_rank BETWEEN 0 AND 4)$d$),
       ('inbound_events', 'inbound_events_outcome_check',
-       $d$CHECK (outcome IN ('no_rule', 'alert_opened', 'alert_attached', 'suppressed_task_cap',
-          'suppressed_active_cap', 'suppressed_workspace_cap', 'suppressed_alert_cap', 'bot_unavailable'))$d$)
+       $d$CHECK (outcome IN ('no_rule', 'alert_opened', 'alert_attached', 'task_queued',
+          'suppressed_alert_cap', 'bot_unavailable'))$d$)
     ) AS t(tbl, conname, definition)
   LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_constraint

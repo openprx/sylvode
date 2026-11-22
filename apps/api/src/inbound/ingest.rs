@@ -8,7 +8,9 @@
 //!    concurrent events of the same rule;
 //! 3. the event is attached to the open alert of its `dedup_key`, or opens a new alert work item;
 //! 4. when the rule hands alerts to a bot, one task is created through the central dispatch guard
-//!    (`DispatchOrigin::InboundRule`) unless an alert-level or rule-level limit says no.
+//!    (`DispatchOrigin::InboundRule`) unless the alert already has one. A task refused by a cap is
+//!    not dropped: the alert is marked `waiting` and the worker starts the task when capacity frees
+//!    up, or suppresses it after an hour (see `queue`).
 //!
 //! Outbound webhooks run after the commit. The answer never tells the source which rule matched or
 //! whether a task was created.
@@ -32,21 +34,21 @@ use super::{
     notify::{self, AlertNotification, Subject},
     response::{InboundError, answer},
     rules::{RuleRow, first_matching_rule, rule_matches},
+    severity::Severity,
+    tasks::{
+        ACTIVE_TASK_STATUSES, AlertScope, Cap, HOUR, TaskStart, cap_state, note_suppression, scalar, start_task,
+        valid_bot,
+    },
 };
 use crate::{
     error::ApiError,
     services::{
-        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task, runner_bot_block},
+        ai_task_service::runner_bot_block,
         work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{EffectiveWorkflow, resolve_effective_workflow_for_project},
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks_after_ai_tasks},
 };
-
-/// Statuses in which a task still occupies a slot. One list for every cap and every check, so the
-/// runner protocol's `acknowledged` joins it without another change.
-pub const ACTIVE_TASK_STATUSES: &str = "('pending','processing','acknowledged')";
-const HOUR: &str = "interval '1 hour'";
 
 /// What happened to a stored event.
 struct Decision {
@@ -89,30 +91,22 @@ struct ExistingEvent {
     body_sha256: String,
 }
 
-#[derive(FromQueryResult)]
-struct CountRow {
-    n: i64,
-}
-
-#[derive(FromQueryResult)]
-struct IdRow {
-    id: Uuid,
-}
-
 /// An open alert with the facts the decisions need.
 #[derive(FromQueryResult)]
-struct AlertRow {
-    id: Uuid,
-    work_item_id: Uuid,
-    occurrences: i32,
-    max_severity_rank: i16,
-    task_seq: i32,
-    fresh: bool,
-    task_active: bool,
-    rearm_active: bool,
-    wi_state: String,
-    wi_title: String,
-    wi_assignee: Option<Uuid>,
+pub(super) struct AlertRow {
+    pub(super) id: Uuid,
+    pub(super) work_item_id: Uuid,
+    pub(super) occurrences: i32,
+    pub(super) max_severity_rank: i16,
+    pub(super) task_seq: i32,
+    pub(super) fresh: bool,
+    pub(super) task_active: bool,
+    /// The alert's `task_state`: `none`, `created`, `waiting` or `suppressed`.
+    pub(super) task_state: String,
+    pub(super) rearm_active: bool,
+    pub(super) wi_state: String,
+    pub(super) wi_title: String,
+    pub(super) wi_assignee: Option<Uuid>,
 }
 
 /// The facts of the alert an event was attached to or opened.
@@ -124,6 +118,7 @@ struct AlertContext {
     occurrences: i32,
     task_seq: i32,
     task_active: bool,
+    task_state: String,
     rearm_active: bool,
     opened_now: bool,
 }
@@ -288,43 +283,34 @@ async fn insert_event<C: ConnectionTrait>(
     envelope: &Envelope,
 ) -> Result<bool, ApiError> {
     let source = &request.source;
-    let inserted = IdRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO inbound_events (id, source_id, workspace_id, project_id, event_id, body_sha256, kind, \
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO inbound_events (id, source_id, workspace_id, project_id, event_id, body_sha256, kind, \
          severity_rank, dedup_key, occurred_at, title, summary, subject, payload, signed, client_ip, outcome) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::inet, 'no_rule') \
-         ON CONFLICT (source_id, event_id) DO NOTHING RETURNING id",
-        vec![
-            id.into(),
-            source.id.into(),
-            source.workspace_id.into(),
-            source.project_id.into(),
-            envelope.event_id.clone().into(),
-            request.body_sha256.clone().into(),
-            envelope.kind.clone().into(),
-            envelope.severity.rank().into(),
-            envelope.dedup_key.clone().into(),
-            envelope.occurred_at.into(),
-            envelope.title.clone().into(),
-            envelope.summary.clone().into(),
-            Value::Object(envelope.subject.clone()).into(),
-            envelope.payload.clone().into(),
-            request.signed.into(),
-            request.client.to_string().into(),
-        ],
-    ))
-    .one(db)
-    .await?;
-    Ok(inserted.is_some())
-}
-
-async fn scalar<C: ConnectionTrait>(db: &C, sql: &str, values: Vec<sea_orm::Value>) -> Result<i64, ApiError> {
-    Ok(
-        CountRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
-            .one(db)
-            .await?
-            .map_or(0, |row| row.n),
-    )
+         ON CONFLICT (source_id, event_id) DO NOTHING",
+            vec![
+                id.into(),
+                source.id.into(),
+                source.workspace_id.into(),
+                source.project_id.into(),
+                envelope.event_id.clone().into(),
+                request.body_sha256.clone().into(),
+                envelope.kind.clone().into(),
+                envelope.severity.rank().into(),
+                envelope.dedup_key.clone().into(),
+                envelope.occurred_at.into(),
+                envelope.title.clone().into(),
+                envelope.summary.clone().into(),
+                Value::Object(envelope.subject.clone()).into(),
+                envelope.payload.clone().into(),
+                request.signed.into(),
+                request.client.to_string().into(),
+            ],
+        ))
+        .await?;
+    Ok(inserted.rows_affected() == 1)
 }
 
 /// Steps 2 to 7 of the processing: rule, alert, task.
@@ -350,6 +336,7 @@ async fn decide<C: ConnectionTrait>(
         return Ok(Decision::none("no_rule"));
     }
 
+    let scope = scope_of(source);
     let bot = if rule.wants_task() {
         valid_bot(tx, rule.bot_user_id, source.workspace_id).await?
     } else {
@@ -366,7 +353,16 @@ async fn decide<C: ConnectionTrait>(
         })
     };
 
-    let reusable = match find_open_alert(tx, source, envelope, rule.dedup_window_secs, rule.rearm_after_secs).await? {
+    let reusable = match find_open_alert(
+        tx,
+        source.id,
+        &envelope.dedup_key,
+        rule.dedup_window_secs,
+        rule.rearm_after_secs,
+        true,
+    )
+    .await?
+    {
         Some(alert) if alert.fresh && !is_terminal(workflow, &alert.wi_state) => Some(alert),
         Some(alert) => {
             close_alert(tx, source, &alert, "window_or_terminal_state").await?;
@@ -376,10 +372,10 @@ async fn decide<C: ConnectionTrait>(
     };
 
     let alert = if let Some(row) = reusable {
-        attach(tx, envelope, row).await?
+        attach(tx, envelope, &rule, scope, row).await?
     } else {
         if opened_this_hour(tx, rule.id).await? >= i64::from(request.config.max_alerts_per_rule_per_hour) {
-            note_suppression(tx, &rule, source, "alert_cap", None).await?;
+            note_suppression(tx, &rule, scope, "alert_cap", None).await?;
             decision.outcome = "suppressed_alert_cap";
             return Ok(decision);
         }
@@ -398,37 +394,58 @@ async fn decide<C: ConnectionTrait>(
         });
     }
     if bot_unavailable {
-        note_suppression(tx, &rule, source, "bot_unavailable", Some(alert.work_item_id)).await?;
+        note_suppression(tx, &rule, scope, "bot_unavailable", Some(alert.work_item_id)).await?;
     }
 
     if let Some(bot) = bot {
         match decide_task(tx, request, envelope, &rule, &alert, bot, event_id).await? {
             TaskDecision::Created(task_id) => decision.task_id = Some(task_id),
             TaskDecision::Skipped => {}
-            TaskDecision::Suppressed(cap) => {
-                decision.outcome = match cap {
-                    "task_cap" => "suppressed_task_cap",
-                    "active_cap" => "suppressed_active_cap",
-                    "workspace_cap" => "suppressed_workspace_cap",
-                    // The runner bot has no enabled connection in this project: like a bot that
-                    // is unavailable, the alert opens and no task starts.
-                    _ => "bot_unavailable",
-                };
-                note_suppression(tx, &rule, source, cap, Some(alert.work_item_id)).await?;
+            TaskDecision::Queued(cap) => {
+                decision.outcome = "task_queued";
+                audit::record(
+                    tx,
+                    source.workspace_id,
+                    source.project_id,
+                    "alert_rule.queued",
+                    "alert_rule",
+                    rule.id,
+                    source.acting_user_id,
+                    audit::inbound_source_value(source.id),
+                    json!({ "cap": cap.as_str(), "work_item_id": alert.work_item_id, "alert_id": alert.id }),
+                )
+                .await?;
+            }
+            TaskDecision::BotUnavailable => {
+                // The runner bot has no enabled connection in this project: like a bot that left,
+                // the alert opens and no task starts, and no later task will either.
+                decision.outcome = "bot_unavailable";
+                note_suppression(tx, &rule, scope, "bot_unavailable", Some(alert.work_item_id)).await?;
             }
         }
     }
     Ok(decision)
 }
 
-fn is_terminal(workflow: &EffectiveWorkflow, state: &str) -> bool {
+/// The source's identity for tasks, audit events and notices.
+fn scope_of(source: &SourceRow) -> AlertScope<'_> {
+    AlertScope {
+        workspace_id: source.workspace_id,
+        project_id: source.project_id,
+        source_id: source.id,
+        source_name: &source.name,
+        acting_user_id: source.acting_user_id,
+    }
+}
+
+pub(super) fn is_terminal(workflow: &EffectiveWorkflow, state: &str) -> bool {
     workflow
         .states
         .iter()
         .any(|candidate| candidate.key == state && candidate.is_terminal)
 }
 
-async fn lock_rule<C: ConnectionTrait>(tx: &C, rule_id: Uuid) -> Result<Option<RuleRow>, ApiError> {
+pub(super) async fn lock_rule<C: ConnectionTrait>(tx: &C, rule_id: Uuid) -> Result<Option<RuleRow>, ApiError> {
     Ok(RuleRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
@@ -441,44 +458,26 @@ async fn lock_rule<C: ConnectionTrait>(tx: &C, rule_id: Uuid) -> Result<Option<R
     .await?)
 }
 
-/// The bot of a rule when it is still a bot account that is a member of the workspace.
-async fn valid_bot<C: ConnectionTrait>(
-    tx: &C,
-    bot_user_id: Option<Uuid>,
-    workspace_id: Uuid,
-) -> Result<Option<Uuid>, ApiError> {
-    let Some(bot) = bot_user_id else {
-        return Ok(None);
-    };
-    let found = IdRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT u.id FROM users u JOIN workspace_members m ON m.user_id = u.id AND m.workspace_id = $2 \
-          WHERE u.id = $1 AND u.entity_type = 'bot' AND u.is_active",
-        vec![bot.into(), workspace_id.into()],
-    ))
-    .one(tx)
-    .await?;
-    Ok(found.map(|row| row.id))
-}
-
-async fn opened_this_hour<C: ConnectionTrait>(tx: &C, rule_id: Uuid) -> Result<i64, ApiError> {
+/// Alerts the rule opened in the last hour, from the alert rows themselves so an alert whose task
+/// is queued or suppressed counts like any other.
+pub(super) async fn opened_this_hour<C: ConnectionTrait>(tx: &C, rule_id: Uuid) -> Result<i64, ApiError> {
     scalar(
         tx,
-        &format!(
-            "SELECT COUNT(*) AS n FROM inbound_events \
-              WHERE rule_id = $1 AND outcome = 'alert_opened' AND received_at > now() - {HOUR}"
-        ),
+        &format!("SELECT COUNT(*) AS n FROM inbound_alerts WHERE rule_id = $1 AND created_at > now() - {HOUR}"),
         vec![rule_id.into()],
     )
     .await
 }
 
-async fn find_open_alert<C: ConnectionTrait>(
+/// The open alert of `(source_id, dedup_key)`. `lock` takes the row lock the ingest transaction
+/// needs; the rule test reads without it.
+pub(super) async fn find_open_alert<C: ConnectionTrait>(
     tx: &C,
-    source: &SourceRow,
-    envelope: &Envelope,
+    source_id: Uuid,
+    dedup_key: &str,
     window_secs: i32,
     rearm_secs: i32,
+    lock: bool,
 ) -> Result<Option<AlertRow>, ApiError> {
     Ok(AlertRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -486,6 +485,7 @@ async fn find_open_alert<C: ConnectionTrait>(
             "SELECT a.id, a.work_item_id, a.occurrences, a.max_severity_rank, a.task_seq, \
                     (a.last_seen_at + make_interval(secs => $3) > now()) AS fresh, \
                     COALESCE(t.status IN {ACTIVE_TASK_STATUSES}, false) AS task_active, \
+                    a.task_state, \
                     COALESCE(t.status NOT IN {ACTIVE_TASK_STATUSES} \
                              AND COALESCE(a.task_ended_at, t.completed_at, t.updated_at) \
                                  + make_interval(secs => $4) > now(), false) AS rearm_active, \
@@ -493,12 +493,12 @@ async fn find_open_alert<C: ConnectionTrait>(
                FROM inbound_alerts a \
                JOIN work_items w ON w.id = a.work_item_id \
                LEFT JOIN ai_tasks t ON t.id = a.task_id \
-              WHERE a.source_id = $1 AND a.dedup_key = $2 AND a.open \
-                FOR UPDATE OF a"
+              WHERE a.source_id = $1 AND a.dedup_key = $2 AND a.open{}",
+            if lock { " FOR UPDATE OF a" } else { "" }
         ),
         vec![
-            source.id.into(),
-            envelope.dedup_key.clone().into(),
+            source_id.into(),
+            dedup_key.to_owned().into(),
             f64::from(window_secs).into(),
             f64::from(rearm_secs).into(),
         ],
@@ -533,8 +533,16 @@ async fn close_alert<C: ConnectionTrait>(
     .await
 }
 
-/// Step 5: the event joins the open alert.
-async fn attach<C: ConnectionTrait>(tx: &C, envelope: &Envelope, row: AlertRow) -> Result<AlertContext, ApiError> {
+/// Step 5: the event joins the open alert. When it raises the alert's highest severity to `high`
+/// or above, the rule's recipients are told (once per rise: a second event of the same severity
+/// raises nothing).
+async fn attach<C: ConnectionTrait>(
+    tx: &C,
+    envelope: &Envelope,
+    rule: &RuleRow,
+    scope: AlertScope<'_>,
+    row: AlertRow,
+) -> Result<AlertContext, ApiError> {
     let rank = row.max_severity_rank.max(envelope.severity.rank());
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -543,6 +551,43 @@ async fn attach<C: ConnectionTrait>(tx: &C, envelope: &Envelope, row: AlertRow) 
         vec![row.id.into(), rank.into()],
     ))
     .await?;
+    if rank > row.max_severity_rank && envelope.severity >= Severity::High {
+        notify::send(
+            tx,
+            AlertNotification::Escalated,
+            &Subject {
+                workspace_id: scope.workspace_id,
+                project_id: scope.project_id,
+                work_item_id: Some(row.work_item_id),
+            },
+            &rule.notify_user_ids,
+            &notify::escalated_content(envelope.severity, &row.wi_title),
+            &notify::payload(
+                Some(row.id),
+                Some(envelope.severity),
+                Some(&envelope.kind),
+                scope.source_name,
+                None,
+            ),
+        )
+        .await?;
+        audit::record(
+            tx,
+            scope.workspace_id,
+            scope.project_id,
+            "alert.escalated",
+            "work_item",
+            row.work_item_id,
+            None,
+            audit::inbound_source_value(scope.source_id),
+            json!({
+                "alert_id": row.id,
+                "from": Severity::from_rank(row.max_severity_rank).map(Severity::as_str),
+                "to": envelope.severity.as_str(),
+            }),
+        )
+        .await?;
+    }
     Ok(AlertContext {
         id: row.id,
         work_item_id: row.work_item_id,
@@ -551,6 +596,7 @@ async fn attach<C: ConnectionTrait>(tx: &C, envelope: &Envelope, row: AlertRow) 
         occurrences: row.occurrences + 1,
         task_seq: row.task_seq,
         task_active: row.task_active,
+        task_state: row.task_state,
         rearm_active: row.rearm_active,
         opened_now: false,
     })
@@ -736,6 +782,7 @@ async fn open_alert<C: ConnectionTrait>(
         occurrences: 1,
         task_seq: 0,
         task_active: false,
+        task_state: "none".to_owned(),
         rearm_active: false,
         opened_now: true,
     })
@@ -744,11 +791,13 @@ async fn open_alert<C: ConnectionTrait>(
 enum TaskDecision {
     Created(Uuid),
     Skipped,
-    /// The named cap refused the task.
-    Suppressed(&'static str),
+    /// A cap refused the task now; the alert waits for capacity.
+    Queued(Cap),
+    /// The runner bot is not connected to the project or its connection is disabled.
+    BotUnavailable,
 }
 
-/// Step 7: whether this event starts a bot task, and starts it.
+/// Step 7: whether this event starts a bot task, queues it behind a cap, or does nothing.
 async fn decide_task<C: ConnectionTrait>(
     tx: &C,
     request: &VerifiedRequest,
@@ -759,176 +808,69 @@ async fn decide_task<C: ConnectionTrait>(
     event_id: Uuid,
 ) -> Result<TaskDecision, ApiError> {
     let source = &request.source;
-    if alert.task_active || alert.rearm_active {
+    if alert.task_active || alert.rearm_active || alert.task_state == "waiting" {
         return Ok(TaskDecision::Skipped);
     }
-    // A runner bot the rule's project has not enabled gets no task: the alert is still opened and
-    // the event records why (the rule warns about this when it is saved).
-    if let Some(block) = runner_bot_block(tx, source.project_id, bot).await? {
-        return Ok(TaskDecision::Suppressed(match block {
-            crate::services::ai_task_service::RunnerBotBlock::NotConnected => "bot_not_connected_to_project",
-            crate::services::ai_task_service::RunnerBotBlock::Disabled => "connection_disabled",
-        }));
+    // A runner bot the rule's project has not enabled gets no task, now or later: the alert is
+    // still opened and the event records why (the rule warns about this when it is saved). The
+    // central guard in `create_ai_task` refuses it too; this settles the outcome before a cap
+    // can park the alert in the queue.
+    if runner_bot_block(tx, source.project_id, bot).await?.is_some() {
+        return Ok(TaskDecision::BotUnavailable);
     }
-    let rule_id = rule.id;
-    let tasks_last_hour = scalar(
-        tx,
-        &format!(
-            "SELECT COUNT(*) AS n FROM inbound_events \
-              WHERE rule_id = $1 AND task_id IS NOT NULL AND received_at > now() - {HOUR}"
-        ),
-        vec![rule_id.into()],
-    )
-    .await?;
-    if tasks_last_hour >= i64::from(rule.max_tasks_per_hour) {
-        return Ok(TaskDecision::Suppressed("task_cap"));
+    let caps = cap_state(tx, rule.id, source.workspace_id).await?;
+    let refused = caps.refusal(rule, request.config.max_active_alert_tasks_per_workspace);
+    // Alerts already waiting for this rule were queued first and are served first: a newcomer does
+    // not jump ahead of them in the moment between a slot freeing and the worker's next tick.
+    let queued = match refused {
+        Some(cap) => Some(cap),
+        None if waiting_for_rule(tx, rule.id).await? => Some(Cap::Active),
+        None => None,
+    };
+    if let Some(cap) = queued {
+        enqueue(tx, alert.id, event_id).await?;
+        return Ok(TaskDecision::Queued(cap));
     }
-    let active_for_rule = scalar(
+    let started = start_task(
         tx,
-        &format!(
-            "SELECT COUNT(*) AS n FROM inbound_alerts a JOIN ai_tasks t ON t.id = a.task_id \
-              WHERE a.rule_id = $1 AND t.status IN {ACTIVE_TASK_STATUSES}"
-        ),
-        vec![rule_id.into()],
-    )
-    .await?;
-    if active_for_rule >= i64::from(rule.max_active_tasks) {
-        return Ok(TaskDecision::Suppressed("active_cap"));
-    }
-    let active_in_workspace = scalar(
-        tx,
-        &format!(
-            "SELECT COUNT(*) AS n FROM inbound_alerts a \
-               JOIN ai_tasks t ON t.id = a.task_id \
-               JOIN projects p ON p.id = a.project_id \
-              WHERE p.workspace_id = $1 AND t.status IN {ACTIVE_TASK_STATUSES}"
-        ),
-        vec![source.workspace_id.into()],
-    )
-    .await?;
-    if active_in_workspace >= i64::from(request.config.max_active_alert_tasks_per_workspace) {
-        return Ok(TaskDecision::Suppressed("workspace_cap"));
-    }
-
-    let seq = alert.task_seq + 1;
-    let task = create_ai_task(
-        tx,
-        CreateAiTaskInput {
-            origin: DispatchOrigin::InboundRule {
-                rule_id,
-                inbound_event_id: event_id,
-                source_id: source.id,
-            },
-            project_id: source.project_id,
-            ai_participant_id: bot,
-            actor_id: source.acting_user_id,
-            task_type: "issue_assigned".to_owned(),
-            reference_type: Some("work_item".to_owned()),
-            reference_id: Some(alert.work_item_id),
-            priority: envelope.severity.task_priority(),
-            payload: json!({
-                "issue_id": alert.work_item_id.to_string(),
-                "project_id": source.project_id.to_string(),
-                "assignee_id": bot.to_string(),
-                "trigger": "alert_rule",
-                "title": alert.title,
-                "alert": {
-                    "alert_id": alert.id.to_string(),
-                    "rule_id": rule_id.to_string(),
-                    "source_id": source.id.to_string(),
-                    "inbound_event_id": event_id.to_string(),
-                    "severity": envelope.severity.as_str(),
-                    "kind": envelope.kind,
-                    "occurrences": alert.occurrences,
-                },
-            }),
-            idempotency_key: Some(format!("alert:{}:{seq}", alert.id)),
-            max_attempts: rule.task_max_attempts,
+        &TaskStart {
+            scope: scope_of(source),
+            rule,
+            bot,
+            alert_id: alert.id,
+            work_item_id: alert.work_item_id,
+            title: &alert.title,
+            current_assignee: alert.assignee,
+            occurrences: alert.occurrences,
+            task_seq: alert.task_seq,
+            severity: envelope.severity,
+            kind: &envelope.kind,
+            event_id,
         },
     )
     .await?;
-    let Some(task) = task else {
-        return Ok(TaskDecision::Skipped);
-    };
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE inbound_alerts SET task_id = $2, task_seq = $3, task_state = 'created', task_ended_at = NULL, \
-                updated_at = now() WHERE id = $1",
-        vec![alert.id.into(), task.id.into(), seq.into()],
-    ))
-    .await?;
-    if alert.assignee != Some(bot) {
-        // Set directly: `queue_assignment_ai_task` would create a second task for the same work.
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE work_items SET assignee_id = $2, updated_at = now() WHERE id = $1",
-            vec![alert.work_item_id.into(), bot.into()],
-        ))
-        .await?;
-    }
-    audit::record(
-        tx,
-        source.workspace_id,
-        source.project_id,
-        "alert_rule.fired",
-        "alert_rule",
-        rule_id,
-        source.acting_user_id,
-        audit::inbound_source_value(source.id),
-        json!({ "inbound_event_id": event_id, "alert_id": alert.id, "task_id": task.id }),
-    )
-    .await?;
-    Ok(TaskDecision::Created(task.id))
+    Ok(started.map_or(TaskDecision::Skipped, TaskDecision::Created))
 }
 
-/// Records a suppression and tells the rule's recipients, at most once per rule per hour.
-async fn note_suppression<C: ConnectionTrait>(
-    tx: &C,
-    rule: &RuleRow,
-    source: &SourceRow,
-    cause: &str,
-    work_item_id: Option<Uuid>,
-) -> Result<(), ApiError> {
-    if cause != "bot_unavailable" {
-        audit::record(
-            tx,
-            source.workspace_id,
-            source.project_id,
-            "alert_rule.suppressed",
-            "alert_rule",
-            rule.id,
-            source.acting_user_id,
-            audit::inbound_source_value(source.id),
-            json!({ "cap": cause, "work_item_id": work_item_id }),
-        )
-        .await?;
-    }
-    let claimed = IdRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        format!(
-            "UPDATE alert_rules SET last_suppression_notice_at = now() \
-              WHERE id = $1 AND (last_suppression_notice_at IS NULL OR last_suppression_notice_at < now() - {HOUR}) \
-              RETURNING id"
-        ),
-        vec![rule.id.into()],
-    ))
-    .one(tx)
-    .await?;
-    if claimed.is_none() {
-        return Ok(());
-    }
-    notify::send(
+pub(super) async fn waiting_for_rule<C: ConnectionTrait>(tx: &C, rule_id: Uuid) -> Result<bool, ApiError> {
+    Ok(scalar(
         tx,
-        AlertNotification::Suppressed,
-        &Subject {
-            workspace_id: source.workspace_id,
-            project_id: source.project_id,
-            work_item_id,
-        },
-        &rule.notify_user_ids,
-        &format!("alert_suppressed:{}", rule.name),
-        &json!({ "rule_id": rule.id, "cause": cause, "source_name": source.name }),
+        "SELECT COUNT(*) AS n FROM inbound_alerts WHERE rule_id = $1 AND task_state = 'waiting'",
+        vec![rule_id.into()],
     )
+    .await?
+        > 0)
+}
+
+/// Marks the alert as waiting for a task slot. The queue lives in this row, so a restart of any
+/// process loses nothing.
+async fn enqueue<C: ConnectionTrait>(tx: &C, alert_id: Uuid, event_id: Uuid) -> Result<(), ApiError> {
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE inbound_alerts SET task_state = 'waiting', task_queued_at = now(), queued_event_id = $2, \
+                updated_at = now() WHERE id = $1",
+        vec![alert_id.into(), event_id.into()],
+    ))
     .await?;
     Ok(())
 }

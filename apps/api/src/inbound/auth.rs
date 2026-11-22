@@ -7,8 +7,9 @@
 //!
 //! 1. the endpoint is enabled, and the credential is not in the query string;
 //! 2. the client address has not used up its failed-authentication allowance;
-//! 3. the token hashes to a live source whose project exists, and the person the source acts for
-//!    is still a workspace owner or admin;
+//! 3. the token hashes to a live source whose project exists, the client address lies inside the
+//!    source's IP allow-list (when it has one), and the person the source acts for is still a
+//!    workspace owner or admin;
 //! 4. the source's per-minute and per-day allowances (counted before the body is read, so a flood
 //!    of invalid bodies is capped too);
 //! 5. the body is read under the size limit, and the optional HMAC signature is verified.
@@ -34,7 +35,7 @@ use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::{audit, credentials, notify, response::InboundError};
+use super::{allowlist, audit, credentials, notify, response::InboundError};
 use crate::oauth::rate::{RateBucket, RateError, RateKey, client_address, enforce_with_limit, is_over_limit};
 
 /// Header carrying the unix timestamp a signature covers.
@@ -63,6 +64,8 @@ pub struct SourceRow {
     pub enabled: bool,
     pub rate_per_minute: i32,
     pub daily_cap: i32,
+    /// The allow-list as `address/prefix` text; empty admits every address.
+    pub ip_allowlist: Vec<String>,
     /// Role of the acting user in the source's workspace, `None` when they are no longer a member
     /// or their account is inactive.
     pub acting_role: Option<String>,
@@ -205,6 +208,7 @@ async fn find_source<C: ConnectionTrait>(db: &C, token: &str) -> Result<Option<S
         DbBackend::Postgres,
         "SELECT s.id, s.workspace_id, s.project_id, s.name, s.signing_secret, s.require_signature, \
                 s.acting_user_id, s.enabled, s.rate_per_minute, s.daily_cap, \
+                s.ip_allowlist::text[] AS ip_allowlist, \
                 (SELECT m.role FROM workspace_members m \
                    JOIN users u ON u.id = m.user_id AND u.is_active \
                   WHERE m.workspace_id = s.workspace_id AND m.user_id = s.acting_user_id) AS acting_role \
@@ -279,6 +283,12 @@ async fn authenticate(state: &InboundAuthState, request: Request) -> Result<Requ
             return Err(InboundError::store_unavailable());
         }
     };
+    // Before the allowances are counted, so an address outside the list cannot use up the source's
+    // quota, and counted as a failed authentication of that address.
+    if !allowlist::allows(&source.ip_allowlist, client) {
+        audit_rejection(db, &source, "ip_not_allowed", client).await;
+        return Err(count_failure(db, &config, client, InboundError::ip_not_allowed()).await);
+    }
     if !source.acting_user_is_admin() {
         audit_rejection(db, &source, "source_suspended", client).await;
         return Err(InboundError::source_suspended());
@@ -505,7 +515,7 @@ mod tests {
         assert_eq!(
             bearer_token(&headers),
             None,
-            "the prx-waf header is not accepted by this stage"
+            "a product-specific secret header is no credential: only Authorization: Bearer is read"
         );
     }
 
@@ -544,6 +554,7 @@ mod tests {
             enabled: true,
             rate_per_minute: 1,
             daily_cap: 1,
+            ip_allowlist: Vec::new(),
             acting_role: role.map(str::to_owned),
         };
         assert!(row(Some("owner"), true).acting_user_is_admin());

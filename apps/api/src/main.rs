@@ -1744,6 +1744,23 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
                 )),
         )
         .route(
+            "/api/v1/projects/{project_id}/alert-rules/test",
+            post(routes::inbound_admin::test_rules)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        // The read-only alert facts of a work item: any workspace member, not delegable.
+        .route(
+            "/api/v1/issues/{id}/alert",
+            get(routes::inbound_events::get_issue_alert)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
             "/api/v1/alert-rules/{id}",
             get(routes::inbound_admin::get_rule)
                 .put(routes::inbound_admin::replace_rule)

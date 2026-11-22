@@ -7,9 +7,11 @@
 //! transaction. Running a tick twice, or from two workers, announces nothing twice. An attempt
 //! that fails and goes back to `pending` is not an outcome and notifies nobody.
 //!
-//! The same tick closes alerts whose work item reached a terminal state or whose dedup window has
+//! The same tick starts tasks that waited behind a cap and suppresses those that waited an hour
+//! (see `queue`), closes alerts whose work item reached a terminal state or whose dedup window has
 //! passed, and an hourly call prunes stored events past their retention.
 
+use platform::{config::InboundConfig, timestamp::Timestamp};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde_json::json;
 use uuid::Uuid;
@@ -17,6 +19,7 @@ use uuid::Uuid;
 use super::{
     audit,
     notify::{self, AlertNotification, Subject},
+    queue,
     severity::Severity,
 };
 use crate::error::ApiError;
@@ -31,6 +34,12 @@ const PRUNE_BATCH: i64 = 5_000;
 pub struct FollowupReport {
     pub announced: usize,
     pub closed: usize,
+    /// Queued tasks created because capacity freed up.
+    pub started: usize,
+    /// Queued tasks suppressed after waiting an hour.
+    pub expired: usize,
+    /// Queued tasks settled because the rule, the bot or the work item no longer allows one.
+    pub dropped: usize,
 }
 
 #[derive(FromQueryResult)]
@@ -53,11 +62,27 @@ struct Ended {
     kind: Option<String>,
 }
 
-/// One tick: announce ended tasks, then close finished alerts.
-pub async fn run_once(db: &DatabaseConnection) -> Result<FollowupReport, ApiError> {
+/// One tick: announce ended tasks, work the queue, then close finished alerts.
+pub async fn run_once(db: &DatabaseConnection, config: &InboundConfig) -> Result<FollowupReport, ApiError> {
+    run_once_at(db, config, Timestamp::now()).await
+}
+
+/// [`run_once`] with the clock of the queue given, so its one-hour expiry can be tested.
+pub async fn run_once_at(
+    db: &DatabaseConnection,
+    config: &InboundConfig,
+    now: Timestamp,
+) -> Result<FollowupReport, ApiError> {
     let announced = announce_ended_tasks(db).await?;
+    let queued = queue::drain(db, config.max_active_alert_tasks_per_workspace, now).await?;
     let closed = close_finished_alerts(db).await?;
-    Ok(FollowupReport { announced, closed })
+    Ok(FollowupReport {
+        announced,
+        closed,
+        started: queued.started,
+        expired: queued.expired,
+        dropped: queued.dropped,
+    })
 }
 
 async fn announce_ended_tasks(db: &DatabaseConnection) -> Result<usize, ApiError> {

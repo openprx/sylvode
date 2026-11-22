@@ -84,12 +84,25 @@ pub fn kind_matches(patterns: &[String], kind: &str) -> bool {
     patterns.is_empty() || patterns.iter().any(|pattern| pattern_matches(pattern, kind))
 }
 
+/// Why `rule` does not handle an event of `source_id`, `kind` and `severity`, or `None` when it
+/// does. The first failing condition is named, in the order disabled, source, kind, severity.
+pub fn mismatch_reason(rule: &RuleRow, source_id: Uuid, kind: &str, severity: Severity) -> Option<&'static str> {
+    if !rule.enabled {
+        Some("disabled")
+    } else if rule.source_id.is_some_and(|bound| bound != source_id) {
+        Some("other_source")
+    } else if !kind_matches(&rule.kind_patterns, kind) {
+        Some("kind_not_listed")
+    } else if Severity::parse(&rule.min_severity).is_none_or(|minimum| severity < minimum) {
+        Some("below_minimum_severity")
+    } else {
+        None
+    }
+}
+
 /// Whether `rule` handles an event of `source_id`, `kind` and `severity`.
 pub fn rule_matches(rule: &RuleRow, source_id: Uuid, kind: &str, severity: Severity) -> bool {
-    rule.enabled
-        && rule.source_id.is_none_or(|bound| bound == source_id)
-        && kind_matches(&rule.kind_patterns, kind)
-        && Severity::parse(&rule.min_severity).is_some_and(|minimum| severity >= minimum)
+    mismatch_reason(rule, source_id, kind, severity).is_none()
 }
 
 /// The first enabled rule of `project_id` that matches, in `position`, `id` order.
@@ -204,6 +217,26 @@ mod tests {
             !rule_matches(&r, source, "k", Severity::Critical),
             "a corrupt threshold matches nothing"
         );
+    }
+
+    #[test]
+    fn a_mismatch_names_the_first_failing_condition() {
+        let source = Uuid::new_v4();
+        let mut r = rule();
+        assert_eq!(mismatch_reason(&r, source, "k", Severity::High), None);
+        assert_eq!(
+            mismatch_reason(&r, source, "k", Severity::Low),
+            Some("below_minimum_severity")
+        );
+        r.kind_patterns = vec!["waf.*".into()];
+        assert_eq!(
+            mismatch_reason(&r, source, "sd.x", Severity::Low),
+            Some("kind_not_listed")
+        );
+        r.source_id = Some(Uuid::new_v4());
+        assert_eq!(mismatch_reason(&r, source, "sd.x", Severity::Low), Some("other_source"));
+        r.enabled = false;
+        assert_eq!(mismatch_reason(&r, source, "waf.a", Severity::High), Some("disabled"));
     }
 
     #[test]
