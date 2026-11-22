@@ -116,7 +116,7 @@ ADR-0014-isolated-apply-host.md is currently "$ADR_0014_STATUS", not
 "Accepted". Its own section 10 (R20, GO-CALIBRATION) explicitly forbids this:
 the calibration work under spikes/collab-shared/src/isolation/ (zygote.rs,
 shared_page.rs, child.rs, termination.rs, calibrate.rs, alloc.rs, frame.rs)
-and spikes/collab-shared/src/bin/isolation-calibrate.rs may build and run,
+and spikes/collab-shared/src/bin/isolation_calibrate.rs may build and run,
 but is scoped to answering three empirical questions only -- it "不产生
 evidence 通过判定" and "isolated_apply_not_async_timeout 继续保持 pending"
 until the ADR itself transitions to Accepted with reviewer sign-off.

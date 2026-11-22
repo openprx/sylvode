@@ -2056,7 +2056,7 @@ Verified:
 
 - `cargo fmt --all`
 - `cargo check -p mcp-server`
-- `bash -n scripts/test-mcp.sh skills/openpr-mcp/scripts/validate-mcp.sh scripts/audit-universal-forms-source-coverage.sh scripts/audit-universal-forms-docs.sh scripts/smoke-forms-mcp.sh`
+- `bash -n scripts/test-mcp.sh skills/sylvode-mcp/scripts/validate-mcp.sh scripts/audit-universal-forms-source-coverage.sh scripts/audit-universal-forms-docs.sh scripts/smoke-forms-mcp.sh`
 - `cargo fmt --all --check`
 - `cargo check -p api -p mcp-server`
 - `scripts/smoke-forms-mcp.sh`
@@ -2130,7 +2130,7 @@ Implemented:
 
 Verified:
 
-- `bash -n scripts/test-mcp.sh skills/openpr-mcp/scripts/validate-mcp.sh scripts/audit-universal-forms-source-coverage.sh scripts/audit-universal-forms-docs.sh scripts/audit-universal-forms-production-readiness.sh scripts/smoke-forms-mcp.sh`
+- `bash -n scripts/test-mcp.sh skills/sylvode-mcp/scripts/validate-mcp.sh scripts/audit-universal-forms-source-coverage.sh scripts/audit-universal-forms-docs.sh scripts/audit-universal-forms-production-readiness.sh scripts/smoke-forms-mcp.sh`
 - `cargo fmt --all --check`
 - `cargo check -p mcp-server`
 - `cargo test -p mcp-server project_type_and_resource_tools_are_registered_once`
@@ -2182,7 +2182,7 @@ Verified:
 - `cargo test -p api mcp_tool_registry_enables_tools_from_project_capabilities`
 - `cargo test -p mcp-server project_type_and_resource_tools_are_registered_once`
 - `cargo test -p mcp-server embedded_skill_guide_matches_registered_universal_tool_surface`
-- `bash -n scripts/test-mcp.sh skills/openpr-mcp/scripts/validate-mcp.sh scripts/audit-universal-forms-source-coverage.sh scripts/audit-universal-forms-docs.sh scripts/audit-universal-forms-production-readiness.sh scripts/smoke-forms-mcp.sh`
+- `bash -n scripts/test-mcp.sh skills/sylvode-mcp/scripts/validate-mcp.sh scripts/audit-universal-forms-source-coverage.sh scripts/audit-universal-forms-docs.sh scripts/audit-universal-forms-production-readiness.sh scripts/smoke-forms-mcp.sh`
 - `scripts/smoke-forms-mcp.sh`
 - `scripts/audit-universal-forms-source-coverage.sh`
 - `scripts/audit-universal-forms-production-readiness.sh`

@@ -123,7 +123,7 @@ questions are answered, limits-v1.md's platform-scope revision has landed
 
 This is not this script's decision to override. Re-run once ADR-0014 is
 Accepted; at that point wire this runner to the real host binary (see
-spikes/collab-shared/src/bin/isolation-calibrate.rs and
+spikes/collab-shared/src/bin/isolation_calibrate.rs and
 spikes/collab-shared/src/isolation/ for the mechanism that will back it) and
 to the candidate's own cold-start/apply/bootstrap measurement harness for the
 other five budget metrics (browser_engine_bundle, cold_start_ms,
