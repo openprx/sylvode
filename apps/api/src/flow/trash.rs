@@ -76,9 +76,14 @@ pub fn decide_purge(nodes: &[(bool, PermissionLevel)]) -> Result<(), PurgeRefusa
     Ok(())
 }
 
+/// Archived objects the caller can view.
+///
+/// `project_id` limits the listing to the objects of that project inside the query itself, so
+/// neither the page contents, the cursor nor the scan budget depend on anything outside it.
 pub async fn list_trash(
     state: &AppState,
     access: &FlowReadContext,
+    project_id: Option<Uuid>,
     cursor: Option<&str>,
     limit: Option<u64>,
 ) -> Result<Option<TrashPage>, ApiError> {
@@ -97,7 +102,7 @@ pub async fn list_trash(
     let mut exhausted = false;
     let needed = usize::try_from(limit).unwrap_or(usize::MAX).saturating_add(1);
     while items.len() < needed && examined < SCAN_MAX {
-        let batch = fetch_archived_batch(&state.db, access.workspace_id(), after).await?;
+        let batch = fetch_archived_batch(&state.db, access.workspace_id(), project_id, after).await?;
         if batch.is_empty() {
             exhausted = true;
             break;
@@ -137,6 +142,7 @@ pub async fn list_trash(
 async fn fetch_archived_batch<C: ConnectionTrait>(
     db: &C,
     workspace_id: Uuid,
+    project_id: Option<Uuid>,
     after: Option<(Timestamp, Uuid)>,
 ) -> Result<Vec<TrashRow>, ApiError> {
     let (after_archived, after_id) = match after {
@@ -153,6 +159,7 @@ async fn fetch_archived_batch<C: ConnectionTrait>(
            AND fo.lifecycle_status = 'archived' \
            AND NOT flow_is_system_navigator_root(fo.object_type, fo.parent_id, fo.governance_metadata) \
            AND ($2::timestamptz IS NULL OR (fo.archived_at, fo.id) < ($2, $3)) \
+           AND ($5::uuid IS NULL OR fo.project_id = $5) \
          ORDER BY fo.archived_at DESC, fo.id DESC \
          LIMIT $4",
         vec![
@@ -160,6 +167,7 @@ async fn fetch_archived_batch<C: ConnectionTrait>(
             after_archived.into(),
             after_id.into(),
             SCAN_BATCH.into(),
+            project_id.into(),
         ],
     ))
     .all(db)

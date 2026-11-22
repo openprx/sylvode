@@ -1033,15 +1033,13 @@ pub async fn get_flow_v2_trash(
 ) -> Result<Response, ApiError> {
     let actor = user(&claims, bot.as_ref())?;
     if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
-        if params.project_id.is_some() {
-            return Err(ApiError::invalid_update("project_id is not supported for legacy trash"));
-        }
         return Ok(super::get_flow_trash(
             State(state),
             Extension(claims),
             bot,
             Path(workspace),
             Query(super::flow_page::TrashQuery {
+                project_id: params.project_id,
                 cursor: params.cursor,
                 limit: params.limit,
             }),

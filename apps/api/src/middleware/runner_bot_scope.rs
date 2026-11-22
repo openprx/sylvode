@@ -643,6 +643,9 @@ mod tests {
             ("GET", "/api/v1/my/issues"),
             ("GET", "/api/v2/flow/block-share-placements"),
             ("POST", "/api/v2/flow/collab/tickets"),
+            ("GET", "/api/v1/workspaces/{workspace_id}/flow/projection-lag"),
+            ("GET", "/api/v1/workspaces/{workspace_id}/flow/navigator"),
+            ("GET", "/api/v2/flow/workspaces/{workspace_id}/scope"),
         ] {
             assert_eq!(class(method, pattern), Refused, "{method} {pattern}");
         }
@@ -672,16 +675,28 @@ mod tests {
             counts,
             BTreeMap::from([
                 ("no project", 14),
-                ("project-resolved", 291),
+                ("project-resolved", 294),
                 ("own resource", 13),
                 ("admin", 86),
-                ("refused", 40),
+                ("refused", 37),
             ]),
             "the classes of the {} routes changed",
             RUNNER_BOT_ROUTES.len()
         );
         for name in ["no project", "project-resolved", "own resource", "admin", "refused"] {
             assert!(counts.get(name).copied().unwrap_or(0) > 0, "no route is {name}");
+        }
+        // The workspace Flow reads that take the project from the query: allowed only for a named project.
+        for pattern in [
+            "/api/v1/workspaces/{workspace_id}/flow/objects",
+            "/api/v1/workspaces/{workspace_id}/flow/search",
+            "/api/v1/workspaces/{workspace_id}/flow/trash",
+        ] {
+            assert_eq!(
+                class("GET", pattern),
+                Class::Project(Find::Query("project_id")),
+                "GET {pattern}"
+            );
         }
         // Every resolver the table uses is exercised by the database test; list them here so a new one
         // is noticed.

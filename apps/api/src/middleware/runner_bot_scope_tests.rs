@@ -86,7 +86,7 @@ fn path_of(pattern: &str, values: &BTreeMap<&str, String>) -> String {
     out
 }
 
-async fn call(app: &Router, method: &str, path: &str, token: &str, body: Option<Value>) -> (u16, Value) {
+pub(super) async fn call(app: &Router, method: &str, path: &str, token: &str, body: Option<Value>) -> (u16, Value) {
     let mut builder = Request::builder()
         .method(method)
         .uri(path)
@@ -109,27 +109,27 @@ async fn call(app: &Router, method: &str, path: &str, token: &str, body: Option<
     (status, json)
 }
 
-fn allowed(answer: &(u16, Value)) -> bool {
+pub(super) fn allowed(answer: &(u16, Value)) -> bool {
     answer.0 == 200 && answer.1 == Value::String("ok".into())
 }
 
-fn refused(answer: &(u16, Value)) -> bool {
+pub(super) fn refused(answer: &(u16, Value)) -> bool {
     (answer.1["code"] == 403 && answer.1["message"] == REFUSAL) || answer.0 == 403
 }
 
-struct Cast {
-    w: W,
+pub(super) struct Cast {
+    pub(super) w: W,
     /// The runner bot's token and id, and an ordinary bot's token, same workspace.
-    token: String,
-    bot: Uuid,
-    plain_token: String,
+    pub(super) token: String,
+    pub(super) bot: Uuid,
+    pub(super) plain_token: String,
     /// Connected and enabled / connected and disabled / never connected.
-    on: Uuid,
-    off: Uuid,
-    never: Uuid,
+    pub(super) on: Uuid,
+    pub(super) off: Uuid,
+    pub(super) never: Uuid,
 }
 
-async fn cast(db: &DatabaseConnection, tag: &str) -> Cast {
+pub(super) async fn cast(db: &DatabaseConnection, tag: &str) -> Cast {
     let w = world(db, tag).await;
     let on_project = w.tenant.project_id;
     let off = second_project(db, &w, &format!("S{tag}2")).await;
