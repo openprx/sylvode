@@ -278,8 +278,8 @@ psql "$SCRATCH_URL" -v ON_ERROR_STOP=1 -q <<SQL
 INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, created_at, updated_at)
 VALUES ('$OWNER_USER', 'cli-verify-$RUN_ID@example.local', '', 'CLI Verify Owner', 'user', true, 'human', now(), now());
 INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, agent_type, created_at, updated_at)
-VALUES ('$BOT_ID', '$BOT_ID@bot.openpr.local', '!', 'CLI Verify Bot', 'user', true, 'bot_mcp', 'mcp', now(), now()),
-       ('$DISABLED_BOT_ID', '$DISABLED_BOT_ID@bot.openpr.local', '!', 'CLI Verify Bot Off', 'user', true, 'bot_mcp', 'mcp', now(), now());
+VALUES ('$BOT_ID', '$BOT_ID@bot.sylvode.local', '!', 'CLI Verify Bot', 'user', true, 'bot_mcp', 'mcp', now(), now()),
+       ('$DISABLED_BOT_ID', '$DISABLED_BOT_ID@bot.sylvode.local', '!', 'CLI Verify Bot Off', 'user', true, 'bot_mcp', 'mcp', now(), now());
 INSERT INTO workspaces (id, slug, name, created_by, created_at, updated_at)
 VALUES ('$WORKSPACE', 'cli-verify-$RUN_ID', 'CLI Verify', '$OWNER_USER', now(), now()),
        ('$DISABLED_WORKSPACE', 'cli-verify-off-$RUN_ID', 'CLI Verify Off', '$OWNER_USER', now(), now());

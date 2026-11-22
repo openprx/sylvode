@@ -263,7 +263,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q <<SQL
 INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, agent_type, created_at, updated_at)
 VALUES ('$OWNER_USER', '$USER_EMAIL', '$PW_HASH', 'Transport Verify Owner', 'user', true, 'human', NULL, now(), now());
 INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, agent_type, created_at, updated_at)
-VALUES ('$BOT_ID', 'transport-verify-bot-$RUN_ID@bot.openpr.local', '!', 'Transport Verify Bot', 'user', true, 'bot_mcp', 'mcp', now(), now());
+VALUES ('$BOT_ID', 'transport-verify-bot-$RUN_ID@bot.sylvode.local', '!', 'Transport Verify Bot', 'user', true, 'bot_mcp', 'mcp', now(), now());
 INSERT INTO workspaces (id, slug, name, created_by, created_at, updated_at)
 VALUES ('$WORKSPACE_ID', 'transport-verify-$RUN_ID', 'Transport Verify', '$OWNER_USER', now(), now());
 INSERT INTO workspace_members (workspace_id, user_id, role, created_at)

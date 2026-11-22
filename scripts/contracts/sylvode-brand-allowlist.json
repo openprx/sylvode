@@ -132,8 +132,8 @@
       "paths": [
         "**"
       ],
-      "pattern": "(?:bot\\+\\{\\}|admin)@openpr\\.local\\b|[\\w${}+-]*@bot\\.openpr\\.local\\b",
-      "explanation": "Synthetic identities stored in the users table: the bot user domain (`<id>@bot.openpr.local`, any local part, as the API and the gate fixtures create them), the bot JWT subject email (`bot+{}@openpr.local`) and the built-in admin seeded by migration 0008 (`admin@openpr.local`). Existing rows carry these values; D3 keeps database data unchanged."
+      "pattern": "(?:bot\\+\\{\\}|admin)@openpr\\.local\\b",
+      "explanation": "Synthetic identities stored in the users table: the bot JWT subject email (`bot+{}@openpr.local`) and the built-in admin seeded by migration 0008 (`admin@openpr.local`). Existing rows carry these values; D3 keeps database data unchanged."
     },
     {
       "id": "sylvode-skill-resource-id",

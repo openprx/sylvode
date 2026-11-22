@@ -177,8 +177,8 @@ INSERT INTO users (id,email,password_hash,name,role,is_active,entity_type,create
 ('$OWNER_USER','owner-$RUN_ID@example.local','','Owner','user',true,'human',now(),now()),
 ('$MEMBER_USER','member-$RUN_ID@example.local','','Member','user',true,'human',now(),now());
 INSERT INTO users (id,email,password_hash,name,role,is_active,entity_type,agent_type,created_at,updated_at) VALUES
-('$ADMIN_BOT','$ADMIN_BOT@bot.openpr.local','!','Admin Bot','user',true,'bot_mcp','mcp',now(),now()),
-('$MEMBER_BOT','$MEMBER_BOT@bot.openpr.local','!','Member Bot','user',true,'bot_mcp','mcp',now(),now());
+('$ADMIN_BOT','$ADMIN_BOT@bot.sylvode.local','!','Admin Bot','user',true,'bot_mcp','mcp',now(),now()),
+('$MEMBER_BOT','$MEMBER_BOT@bot.sylvode.local','!','Member Bot','user',true,'bot_mcp','mcp',now(),now());
 INSERT INTO workspaces (id,slug,name,created_by,created_at,updated_at) VALUES
 ('$WORKSPACE_A','feature-a-$RUN_ID','Feature A','$OWNER_USER',now(),now()),
 ('$WORKSPACE_B','feature-b-$RUN_ID','Feature B','$OWNER_USER',now(),now());

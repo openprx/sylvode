@@ -380,7 +380,7 @@ mod token_bot_identity_database_tests {
                     ($3, $4, '!', 'person', 'user', true, 'human', NULL)",
             vec![
                 legacy.into(),
-                format!("{legacy}@bot.openpr.local").into(),
+                format!("{legacy}@bot.sylvode.local").into(),
                 human.into(),
                 format!("{human}@tenant.test").into(),
             ],
