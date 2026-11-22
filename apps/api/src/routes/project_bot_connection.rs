@@ -64,6 +64,17 @@ async fn require_manager(
     Ok((actor, project))
 }
 
+/// The bot of the project's only connection: 404 without one, 409 when the project has several
+/// (these routes name no bot).
+async fn only_bot(state: &AppState, project_id: Uuid) -> Result<Uuid, ApiError> {
+    let mut connections = bot_connections::list_member_views(&state.db, project_id).await?;
+    match (connections.pop(), connections.is_empty()) {
+        (Some(only), true) => Ok(only.bot.id),
+        (None, _) => Err(ApiError::NotFound(bot_connections::NO_CONNECTION.to_string())),
+        (Some(_), false) => Err(ApiError::Conflict("project has several bot connections".to_string())),
+    }
+}
+
 /// The request's `Origin`, the fallback for the block's `api_url`.
 fn origin_of(headers: &HeaderMap) -> Option<&str> {
     headers.get(header::ORIGIN).and_then(|value| value.to_str().ok())
@@ -133,7 +144,11 @@ pub async fn get_bot_connection(
     // No existence check of its own: a project that does not exist has no members, so the caller
     // gets the same refusal as for a project they cannot see.
     if is_project_admin_or_owner(&state.db, project_id, actor).await? {
-        let Some(connection) = bot_connections::load_view(&state.db, project_id).await? else {
+        let Some(connection) = bot_connections::list_views(&state.db, project_id)
+            .await?
+            .into_iter()
+            .next()
+        else {
             return Ok(ApiResponse::success(json!({ "connection": null, "status": null })).into_response());
         };
         return Ok(ApiResponse::success(answer(&state, &connection).await?).into_response());
@@ -141,7 +156,10 @@ pub async fn get_bot_connection(
     if !is_project_member(&state.db, project_id, actor).await? {
         return Err(ApiError::Forbidden("project access denied".to_string()));
     }
-    let connection: Option<MemberView> = bot_connections::load_member_view(&state.db, project_id).await?;
+    let connection: Option<MemberView> = bot_connections::list_member_views(&state.db, project_id)
+        .await?
+        .into_iter()
+        .next();
     Ok(ApiResponse::success(json!({ "connection": connection })).into_response())
 }
 
@@ -172,7 +190,8 @@ pub async fn update_bot_connection(
     Json(req): Json<UpdateRequest>,
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
-    match bot_connections::update(&state, &project, actor, req).await? {
+    let bot_id = only_bot(&state, project_id).await?;
+    match bot_connections::update(&state, &project, bot_id, actor, req).await? {
         Outcome::Done(connection) => Ok(ApiResponse::success(answer(&state, &connection).await?).into_response()),
         Outcome::Conflict { current } => Ok(version_conflict(&current)),
     }
@@ -216,7 +235,8 @@ async fn set_enabled(
     enabled: bool,
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
-    match bot_connections::set_enabled(&state, &project, actor, body.expected_version, enabled).await? {
+    let bot_id = only_bot(&state, project_id).await?;
+    match bot_connections::set_enabled(&state, &project, bot_id, actor, body.expected_version, enabled).await? {
         Outcome::Done(connection) => Ok(ApiResponse::success(answer(&state, &connection).await?).into_response()),
         Outcome::Conflict { current } => Ok(version_conflict(&current)),
     }
@@ -232,7 +252,17 @@ pub async fn rotate_bot_connection(
     Json(body): Json<VersionBody>,
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
-    match bot_connections::rotate(&state, &project, actor, body.expected_version, origin_of(&headers)).await? {
+    let bot_id = only_bot(&state, project_id).await?;
+    match bot_connections::rotate(
+        &state,
+        &project,
+        bot_id,
+        actor,
+        body.expected_version,
+        origin_of(&headers),
+    )
+    .await?
+    {
         Outcome::Done(rotated) => Ok(no_store(ApiResponse::success(BlockAnswer {
             status: status_of(&state, &rotated.connection).await?,
             connection: &rotated.connection,
@@ -256,7 +286,8 @@ pub async fn remove_bot_connection(
     Query(query): Query<RemoveQuery>,
 ) -> Result<Response, ApiError> {
     let (actor, project) = require_manager(&state, &claims, bot.as_ref(), project_id).await?;
-    match bot_connections::remove(&state, &project, actor, query.expected_version).await? {
+    let bot_id = only_bot(&state, project_id).await?;
+    match bot_connections::remove(&state, &project, bot_id, actor, query.expected_version).await? {
         Outcome::Done(removed) => Ok(ApiResponse::success(removed).into_response()),
         Outcome::Conflict { current } => Ok(version_conflict(&current)),
     }

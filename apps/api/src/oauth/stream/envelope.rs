@@ -409,7 +409,6 @@ mod tests {
             "project.bot_connected",
             "project.bot_connection_updated",
             "project.bot_disconnected",
-            "project.execution_settings_updated",
             "bot.credentials_rotated",
         ] {
             assert!(EventKind::from_name(name).is_none(), "{name}");

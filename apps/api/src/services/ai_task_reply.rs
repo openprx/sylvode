@@ -258,7 +258,7 @@ pub async fn route_completion<C: ConnectionTrait>(
             routed.triggers.push(comment_trigger(&issue, bot_id, comment.id));
 
             if kind == SourceKind::IssueAssignment && input.outcome == Outcome::Done {
-                let settings = execution_settings::load(txn, task.project_id).await?;
+                let settings = execution_settings::load(txn, task.project_id, task.ai_participant_id).await?;
                 let current = current_state(txn, issue.id).await?;
                 let target = target_state(
                     state,
@@ -393,7 +393,7 @@ pub async fn route_failure<C: ConnectionTrait>(
     routed.triggers.push(comment_trigger(&issue, bot_id, comment.id));
 
     if kind == SourceKind::IssueAssignment
-        && let Some(label_id) = execution_settings::load(txn, task.project_id)
+        && let Some(label_id) = execution_settings::load(txn, task.project_id, task.ai_participant_id)
             .await?
             .and_then(|settings| settings.on_fail_label_id)
     {
@@ -423,12 +423,15 @@ pub async fn route_failure<C: ConnectionTrait>(
 
 /// The reply to a task the runner refused at delivery.
 ///
-/// For a project that has execution settings, enabled or not, it is a comment
+/// For a task whose connection exists, enabled or not, it is a comment
 /// `Could not start: {reason}` where the task came from, written in its own transaction after the
 /// worker failed the task. A project whose connection is disabled still wants to know why its
-/// task did not start; a project without settings was never configured and gets no comment.
+/// task did not start; a task without a connection was never configured and gets no comment.
 pub async fn announce_start_refusal(state: &AppState, task: &AiTaskRow, reason: &str) -> Result<(), ApiError> {
-    if execution_settings::load(&state.db, task.project_id).await?.is_none() {
+    if execution_settings::load(&state.db, task.project_id, task.ai_participant_id)
+        .await?
+        .is_none()
+    {
         return Ok(());
     }
     let txn = state.db.begin().await?;
@@ -448,8 +451,8 @@ mod tests {
         CompleteRequest, FailRequest, complete_task_with_reply, fail_task_with_reply,
     };
     use crate::routes::context::tenant_fixture::{
-        Tenant, bot_context_for, claims_for, count, exec, seed_bot_user, seed_label, seed_member, seed_tenant,
-        seed_work_item, state_for,
+        Tenant, bot_context_for, claims_for, count, exec, seed_bot_runner, seed_bot_user, seed_label, seed_member,
+        seed_tenant, seed_work_item, state_for,
     };
     use crate::scratch_or_skip;
     use crate::services::ai_task_fixture::{seed_task, seed_task_for};
@@ -599,12 +602,19 @@ mod tests {
         }
 
         async fn settings(&self, on_complete_state: &str, label: Option<Uuid>) {
+            seed_bot_runner(&self.db, &self.tenant, self.bot).await;
             exec(
                 &self.db,
-                "INSERT INTO project_execution_settings (project_id, working_directory, enabled, on_complete_state, on_fail_label_id) \
-                 VALUES ($1, '/work/a', true, $2, $3) \
-                 ON CONFLICT (project_id) DO UPDATE SET on_complete_state = $2, on_fail_label_id = $3",
-                vec![self.tenant.project_id.into(), on_complete_state.to_string().into(), label.into()],
+                "INSERT INTO project_bot_connections \
+                 (project_id, bot_id, working_directory, enabled, on_complete_state, on_fail_label_id) \
+                 VALUES ($1, $2, '/work/a', true, $3, $4) \
+                 ON CONFLICT (project_id, bot_id) DO UPDATE SET on_complete_state = $3, on_fail_label_id = $4",
+                vec![
+                    self.tenant.project_id.into(),
+                    self.bot.into(),
+                    on_complete_state.to_string().into(),
+                    label.into(),
+                ],
             )
             .await;
         }
@@ -1058,7 +1068,7 @@ mod tests {
         env.settings("auto", None).await;
         exec(
             &env.db,
-            "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+            "UPDATE project_bot_connections SET enabled = false WHERE project_id = $1",
             vec![env.tenant.project_id.into()],
         )
         .await;
@@ -1084,7 +1094,7 @@ mod tests {
 
         exec(
             &env.db,
-            "UPDATE project_execution_settings SET enabled = true WHERE project_id = $1",
+            "UPDATE project_bot_connections SET enabled = true WHERE project_id = $1",
             vec![env.tenant.project_id.into()],
         )
         .await;

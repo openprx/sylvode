@@ -1,21 +1,18 @@
-//! Project execution settings: where and how a runner executes a project's agent tasks.
+//! Execution settings of a bot connection: where and how a runner executes the agent tasks of one
+//! (project, bot) pair.
 //!
-//! One optional row per project (`project_execution_settings`). The database mirrors every rule
-//! checked here with a constraint, so a path that bypasses this module still cannot store a
-//! relative working directory or an unknown channel. This module adds what the database cannot
-//! see: the workflow states of the project and the labels of its workspace.
+//! The settings are columns of `project_bot_connections`; the connection service is their only
+//! writer. The database mirrors every rule checked here with a constraint, so a path that bypasses
+//! this module still cannot store a relative working directory or an unknown channel. This module
+//! adds what the database cannot see: the workflow states of the project and the labels of its
+//! workspace.
 
 use platform::{app::AppState, timestamp::Timestamp};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::Serialize;
-use serde_json::json;
 use uuid::Uuid;
 
-use crate::{
-    error::ApiError,
-    events::{BusinessEventInput, insert_business_event},
-    services::workflow_service::resolve_effective_workflow_for_project,
-};
+use crate::{error::ApiError, services::workflow_service::resolve_effective_workflow_for_project};
 
 /// The channels a runner can use to run a task.
 pub const CHANNELS: [&str; 2] = ["tmux", "headless"];
@@ -26,10 +23,17 @@ const MAX_WORKING_DIRECTORY_BYTES: usize = 1024;
 /// Longest workflow state key a `state:<key>` value can name.
 const MAX_STATE_KEY_CHARS: usize = 64;
 
+/// The tmux session a connection's tasks run in: `<KEY>-<cli>` (design rule N1). The project key is
+/// stored upper case and the CLI type is one of [`CLIS`], so the name is a valid tmux target.
+#[must_use]
+pub fn session_name(project_key: &str, cli: &str) -> String {
+    format!("{project_key}-{cli}")
+}
+
 const SETTINGS_COLUMNS: &str = "enabled, channel, cli, working_directory, on_complete_state, \
                                 on_fail_label_id, approval_gate, version, updated_by, updated_at";
 
-/// The stored settings of a project.
+/// The stored settings of a connection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, FromQueryResult)]
 pub struct ExecutionSettings {
     pub enabled: bool,
@@ -69,21 +73,11 @@ pub struct ValidSettings {
 }
 
 /// The project a settings call is about.
-#[derive(Debug, Clone, Copy, FromQueryResult)]
+#[derive(Debug, Clone, FromQueryResult)]
 pub struct ProjectRef {
     pub id: Uuid,
     pub workspace_id: Uuid,
-}
-
-/// What a save did.
-#[derive(Debug)]
-pub enum SaveOutcome {
-    Saved {
-        before: Option<ExecutionSettings>,
-        after: ExecutionSettings,
-    },
-    /// The caller's `expected_version` does not match the stored row (or the existence of one).
-    Conflict { current: Option<ExecutionSettings> },
+    pub key: String,
 }
 
 fn invalid(field: &str, why: &str) -> ApiError {
@@ -94,7 +88,7 @@ fn invalid(field: &str, why: &str) -> ApiError {
 pub async fn project_ref<C: ConnectionTrait>(db: &C, project_id: Uuid) -> Result<ProjectRef, ApiError> {
     ProjectRef::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id, workspace_id FROM projects WHERE id = $1",
+        "SELECT id, workspace_id, key FROM projects WHERE id = $1",
         vec![project_id.into()],
     ))
     .one(db)
@@ -102,15 +96,71 @@ pub async fn project_ref<C: ConnectionTrait>(db: &C, project_id: Uuid) -> Result
     .ok_or_else(|| ApiError::NotFound("project not found".to_string()))
 }
 
-/// The settings of a project, `None` when it has none.
-pub async fn load<C: ConnectionTrait>(db: &C, project_id: Uuid) -> Result<Option<ExecutionSettings>, ApiError> {
+/// The settings of the connection of `bot_id` to `project_id`, `None` when there is none.
+pub async fn load<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    bot_id: Uuid,
+) -> Result<Option<ExecutionSettings>, ApiError> {
     Ok(ExecutionSettings::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        format!("SELECT {SETTINGS_COLUMNS} FROM project_execution_settings WHERE project_id = $1"),
-        vec![project_id.into()],
+        format!("SELECT {SETTINGS_COLUMNS} FROM project_bot_connections WHERE project_id = $1 AND bot_id = $2"),
+        vec![project_id.into(), bot_id.into()],
     ))
     .one(db)
     .await?)
+}
+
+/// One connection of a project as the project context lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExecutionEntry {
+    pub bot_id: Uuid,
+    pub bot_name: String,
+    pub enabled: bool,
+    pub channel: String,
+    pub cli: String,
+    pub working_directory: String,
+    /// `<KEY>-<cli>` for a tmux connection, `null` for headless.
+    pub session_name: Option<String>,
+}
+
+#[derive(FromQueryResult)]
+struct EntryRow {
+    bot_id: Uuid,
+    bot_name: String,
+    enabled: bool,
+    channel: String,
+    cli: String,
+    working_directory: String,
+}
+
+/// Every connection of `project_id` (`project_key` names the sessions), ordered by bot name.
+pub async fn list_for_project<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    project_key: &str,
+) -> Result<Vec<ExecutionEntry>, ApiError> {
+    let rows = EntryRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT c.bot_id, b.name AS bot_name, c.enabled, c.channel, c.cli, c.working_directory \
+         FROM project_bot_connections c JOIN workspace_bots b ON b.id = c.bot_id \
+         WHERE c.project_id = $1 ORDER BY lower(b.name), c.bot_id",
+        vec![project_id.into()],
+    ))
+    .all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| ExecutionEntry {
+            session_name: (row.channel == "tmux").then(|| session_name(project_key, &row.cli)),
+            bot_id: row.bot_id,
+            bot_name: row.bot_name,
+            enabled: row.enabled,
+            channel: row.channel,
+            cli: row.cli,
+            working_directory: row.working_directory,
+        })
+        .collect())
 }
 
 /// What a name or a path is refused with when it holds a character that hides or reorders text.
@@ -182,8 +232,8 @@ fn complete_state_key(value: &str) -> Result<Option<&str>, &'static str> {
     }
 }
 
-/// Checks the settings of a connection against the rules of the settings and the project's workflow and
-/// workspace. The first refusal names its field.
+/// Checks the settings of a connection against the rules of the settings, the project's workflow
+/// and workspace, and the tmux channel (claude only). The first refusal names its field.
 pub async fn validate(
     state: &AppState,
     project: &ProjectRef,
@@ -200,6 +250,9 @@ pub async fn validate(
     }
     if !CLIS.contains(&input.cli.as_str()) {
         return Err(invalid("cli", "must be claude, codex or opencode"));
+    }
+    if input.channel == "tmux" && input.cli != "claude" {
+        return Err(invalid("cli", "only claude can use the tmux channel"));
     }
     if input.approval_gate != "none" {
         return Err(invalid("approval_gate", "must be none"));
@@ -238,118 +291,9 @@ pub async fn validate(
     })
 }
 
-/// Creates or updates the settings as a compare-and-set on `version`, and records
-/// `project.execution_settings_updated` on `db`.
-///
-/// The project connection service is the only caller: it passes the transaction that holds the
-/// connection, so the settings change commits or rolls back with it. Without a stored row the
-/// caller must send no `expected_version`; with one it must send the stored version. Any other
-/// combination is a [`SaveOutcome::Conflict`] and nothing is written.
-pub async fn upsert(
-    db: &impl ConnectionTrait,
-    project: &ProjectRef,
-    valid: &ValidSettings,
-    expected_version: Option<i32>,
-    actor_id: Uuid,
-) -> Result<SaveOutcome, ApiError> {
-    let before = ExecutionSettings::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        format!("SELECT {SETTINGS_COLUMNS} FROM project_execution_settings WHERE project_id = $1 FOR UPDATE"),
-        vec![project.id.into()],
-    ))
-    .one(db)
-    .await?;
-
-    let saved = match (&before, expected_version) {
-        (None, None) => {
-            ExecutionSettings::find_by_statement(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                format!(
-                    "INSERT INTO project_execution_settings \
-                     (project_id, enabled, channel, cli, working_directory, on_complete_state, \
-                      on_fail_label_id, approval_gate, updated_by) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-                     ON CONFLICT (project_id) DO NOTHING \
-                     RETURNING {SETTINGS_COLUMNS}"
-                ),
-                vec![
-                    project.id.into(),
-                    valid.enabled.into(),
-                    valid.channel.clone().into(),
-                    valid.cli.clone().into(),
-                    valid.working_directory.clone().into(),
-                    valid.on_complete_state.clone().into(),
-                    valid.on_fail_label_id.into(),
-                    valid.approval_gate.clone().into(),
-                    actor_id.into(),
-                ],
-            ))
-            .one(db)
-            .await?
-        }
-        (Some(current), Some(expected)) if current.version == expected => {
-            ExecutionSettings::find_by_statement(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                format!(
-                    "UPDATE project_execution_settings \
-                     SET enabled = $2, channel = $3, cli = $4, working_directory = $5, \
-                         on_complete_state = $6, on_fail_label_id = $7, approval_gate = $8, \
-                         version = version + 1, updated_by = $9, updated_at = now() \
-                     WHERE project_id = $1 AND version = $10 \
-                     RETURNING {SETTINGS_COLUMNS}"
-                ),
-                vec![
-                    project.id.into(),
-                    valid.enabled.into(),
-                    valid.channel.clone().into(),
-                    valid.cli.clone().into(),
-                    valid.working_directory.clone().into(),
-                    valid.on_complete_state.clone().into(),
-                    valid.on_fail_label_id.into(),
-                    valid.approval_gate.clone().into(),
-                    actor_id.into(),
-                    expected.into(),
-                ],
-            ))
-            .one(db)
-            .await?
-        }
-        _ => None,
-    };
-
-    let Some(after) = saved else {
-        let current = load(db, project.id).await?;
-        return Ok(SaveOutcome::Conflict { current });
-    };
-
-    insert_business_event(
-        db,
-        BusinessEventInput {
-            workspace_id: project.workspace_id,
-            project_id: Some(project.id),
-            event_type: "project.execution_settings_updated".to_string(),
-            aggregate_type: "project".to_string(),
-            aggregate_id: project.id.to_string(),
-            actor_id: Some(actor_id),
-            source: json!({ "type": "api", "actor_id": actor_id }),
-            payload: json!({ "before": before, "after": after, "actor_id": actor_id }),
-            metadata: json!({
-                "project_id": project.id,
-                "version": after.version,
-                "managed_by_connection": true
-            }),
-            correlation_id: None,
-            causation_id: None,
-            idempotency_key: None,
-        },
-    )
-    .await?;
-    Ok(SaveOutcome::Saved { before, after })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{complete_state_key, normalize_working_directory};
+    use super::{complete_state_key, normalize_working_directory, session_name};
 
     #[test]
     fn working_directories_are_checked_and_normalised() {
@@ -403,5 +347,11 @@ mod tests {
         assert!(complete_state_key(&too_long).is_err());
         let longest = format!("state:{}", "a".repeat(64));
         assert!(complete_state_key(&longest).is_ok());
+    }
+
+    #[test]
+    fn a_session_name_is_the_project_key_and_the_cli() {
+        assert_eq!(session_name("QLA", "claude"), "QLA-claude");
+        assert_eq!(session_name("P1", "codex"), "P1-codex");
     }
 }

@@ -84,7 +84,8 @@ async fn world(db: &DatabaseConnection, tag: &str) -> World {
     .await;
     exec(
         &tx,
-        "INSERT INTO project_bot_connections (project_id, bot_id, created_by) VALUES ($1, $2, $3)",
+        "INSERT INTO project_bot_connections (project_id, bot_id, working_directory, created_by) \
+         VALUES ($1, $2, '/work/a', $3)",
         vec![tenant.project_id.into(), managed.id.into(), tenant.member_id.into()],
     )
     .await;

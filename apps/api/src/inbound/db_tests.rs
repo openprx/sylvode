@@ -300,7 +300,7 @@ async fn an_alert_for_a_runner_bot_the_project_has_not_enabled_opens_no_task() {
     super::admin_tests::connect_the_bot(&w).await;
     crate::routes::context::tenant_fixture::exec(
         w.db(),
-        "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+        "UPDATE project_bot_connections SET enabled = false WHERE project_id = $1",
         vec![w.tenant.project_id.into()],
     )
     .await;

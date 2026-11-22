@@ -1,4 +1,4 @@
-//! Read a project's execution settings.
+//! Read the execution settings of a project's only connection.
 //!
 //! Reading is open to the project's members and to the bots of its workspace. The settings are
 //! written only by the project's bot connection (`routes::project_bot_connection`): a bot that
@@ -21,8 +21,8 @@ fn user_id(claims: &JwtClaims) -> Result<Uuid, ApiError> {
     Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))
 }
 
-/// `GET /api/v1/projects/{project_id}/execution-settings`: the settings, or `null` when the
-/// project has none.
+/// `GET /api/v1/projects/{project_id}/execution-settings`: the settings of the project's only
+/// connection, or `null` when it has none or several.
 pub async fn get_execution_settings(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -37,7 +37,8 @@ pub async fn get_execution_settings(
     } else if !is_project_member(&state.db, project_id, user_id(&claims)?).await? {
         return Err(ApiError::Forbidden("project access denied".to_string()));
     }
-    let settings = execution_settings::load(&state.db, project_id).await?;
+    let mut entries = execution_settings::list_for_project(&state.db, project_id, &project.key).await?;
+    let settings = if entries.len() == 1 { entries.pop() } else { None };
     Ok(ApiResponse::success(json!(settings)))
 }
 
@@ -47,7 +48,7 @@ mod tests {
     use super::get_execution_settings;
     use crate::error::ApiError;
     use crate::routes::context::tenant_fixture::{
-        bot_context_for, claims_for, exec, seed_bot_user, seed_member, seed_tenant, state_for,
+        bot_context_for, claims_for, seed_bot_user, seed_connection, seed_member, seed_tenant, state_for,
     };
     use crate::scratch_or_skip;
     use axum::{
@@ -79,7 +80,7 @@ mod tests {
         Ok(serde_json::from_slice(&bytes).expect("the body is JSON"))
     }
 
-    /// Settings are inserted directly: the connection service is their only writer.
+    /// Connections are inserted directly: the connection service is their only writer.
     #[tokio::test]
     async fn members_and_workspace_bots_read_and_nobody_else_does() {
         let scratch = scratch_or_skip!("pes_reads");
@@ -95,16 +96,11 @@ mod tests {
             get(db, member, None, tenant.project_id).await.expect("read")["data"],
             Value::Null
         );
-        exec(
-            db,
-            "INSERT INTO project_execution_settings (project_id, enabled, working_directory) VALUES ($1, true, '/work/a')",
-            vec![tenant.project_id.into()],
-        )
-        .await;
+        seed_connection(db, &tenant, tenant.project_id, bot, true, "/work/a").await;
 
         let read = get(db, member, None, tenant.project_id).await.expect("read");
         assert_eq!(read["data"]["working_directory"], "/work/a");
-        assert_eq!(read["data"]["version"], 1);
+        assert_eq!(read["data"]["session_name"], "Prd-claude");
         let own = get(
             db,
             bot,

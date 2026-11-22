@@ -234,7 +234,7 @@ pub async fn build_task_view<C: ConnectionTrait>(
     .one(db)
     .await?
     .ok_or_else(|| ApiError::NotFound("project not found".to_string()))?;
-    let settings = execution_settings::load(db, task.project_id).await?;
+    let settings = execution_settings::load(db, task.project_id, task.ai_participant_id).await?;
     let kind = SourceKind::of(task);
 
     let mut source = serde_json::Map::new();
@@ -256,14 +256,23 @@ pub async fn build_task_view<C: ConnectionTrait>(
     }
 
     let execution = settings.as_ref().map(|settings| {
-        json!({
+        let mut execution = json!({
             "enabled": settings.enabled,
             "channel": settings.channel,
             "cli": settings.cli,
             "working_directory": settings.working_directory,
             "approval_gate": settings.approval_gate,
             "version": settings.version,
-        })
+        });
+        if settings.channel == "tmux"
+            && let Some(map) = execution.as_object_mut()
+        {
+            map.insert(
+                "session_name".to_string(),
+                json!(execution_settings::session_name(&project.key, &settings.cli)),
+            );
+        }
+        execution
     });
 
     Ok(json!({
@@ -296,7 +305,9 @@ pub async fn build_task_view<C: ConnectionTrait>(
 #[allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 mod tests {
     use super::{build_task_view, cut_chars};
-    use crate::routes::context::tenant_fixture::{exec, seed_bot_user, seed_proposal, seed_tenant, seed_work_item};
+    use crate::routes::context::tenant_fixture::{
+        exec, seed_bot_user, seed_connection, seed_proposal, seed_tenant, seed_work_item,
+    };
     use crate::scratch_or_skip;
     use crate::services::ai_task_fixture::seed_task_for;
     use crate::services::ai_task_service::load_task_with_protocol;
@@ -373,10 +384,10 @@ mod tests {
         );
         assert_eq!(without["active"], true);
 
+        seed_connection(db, &tenant, tenant.project_id, bot, true, "/work/a").await;
         exec(
             db,
-            "INSERT INTO project_execution_settings (project_id, working_directory, enabled, on_complete_state) \
-             VALUES ($1, '/work/a', true, 'state:done')",
+            "UPDATE project_bot_connections SET on_complete_state = 'state:done' WHERE project_id = $1",
             vec![tenant.project_id.into()],
         )
         .await;
@@ -384,7 +395,7 @@ mod tests {
         assert_eq!(
             with["execution"],
             json!({"enabled": true, "channel": "tmux", "cli": "claude", "working_directory": "/work/a",
-                   "approval_gate": "none", "version": 1})
+                   "approval_gate": "none", "version": 1, "session_name": "Pas-claude"})
         );
         assert_eq!(with["reply_policy"]["on_complete"], "comment+state:done");
 
@@ -397,6 +408,7 @@ mod tests {
         .await;
         let renamed = view_of(db, task).await;
         assert_eq!(renamed["project"]["key"], "RENAMED");
+        assert_eq!(renamed["execution"]["session_name"], "RENAMED-claude");
 
         let mut all = Vec::new();
         keys(&renamed, &mut all);

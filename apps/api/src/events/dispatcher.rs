@@ -1948,7 +1948,6 @@ mod dispatcher_database_tests {
             "project.bot_connection_disabled",
             "project.bot_connection_enabled",
             "project.bot_disconnected",
-            "project.execution_settings_updated",
             "bot.credentials_rotated",
         ] {
             let event = BusinessEventRow {

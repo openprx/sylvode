@@ -156,7 +156,7 @@ async fn every_write_route_refuses_members_bots_applications_and_outsiders() {
         .await,
         text_of(
             db,
-            "SELECT enabled::text AS v FROM project_execution_settings WHERE project_id = $1",
+            "SELECT enabled::text AS v FROM project_bot_connections WHERE project_id = $1",
             vec![project.into()],
         )
         .await,

@@ -578,11 +578,8 @@ pub(super) async fn connect_the_bot(w: &World) {
             vec![w.bot.into(), w.tenant.workspace_id.into(), hook.into()],
         ),
         (
-            "INSERT INTO project_execution_settings (project_id, enabled, working_directory) VALUES ($1, true, '/work/a')",
-            vec![w.tenant.project_id.into()],
-        ),
-        (
-            "INSERT INTO project_bot_connections (project_id, bot_id) VALUES ($1, $2)",
+            "INSERT INTO project_bot_connections (project_id, bot_id, enabled, working_directory) \
+             VALUES ($1, $2, true, '/work/a')",
             vec![w.tenant.project_id.into(), w.bot.into()],
         ),
     ] {
@@ -625,7 +622,7 @@ async fn the_rule_warning_follows_the_bots_connection_to_the_rules_project() {
 
     exec(
         w.db(),
-        "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+        "UPDATE project_bot_connections SET enabled = false WHERE project_id = $1",
         vec![w.tenant.project_id.into()],
     )
     .await;
@@ -638,7 +635,7 @@ async fn the_rule_warning_follows_the_bots_connection_to_the_rules_project() {
 
     exec(
         w.db(),
-        "UPDATE project_execution_settings SET enabled = true WHERE project_id = $1",
+        "UPDATE project_bot_connections SET enabled = true WHERE project_id = $1",
         vec![w.tenant.project_id.into()],
     )
     .await;

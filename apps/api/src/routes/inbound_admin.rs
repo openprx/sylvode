@@ -567,8 +567,7 @@ async fn check_rule_references<C: ConnectionTrait>(
         let connected = Found::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT c.project_id AS id FROM project_bot_connections c \
-             JOIN project_execution_settings s ON s.project_id = c.project_id \
-              WHERE c.project_id = $1 AND c.bot_id = $2 AND s.enabled",
+              WHERE c.project_id = $1 AND c.bot_id = $2 AND c.enabled",
             vec![project_id.into(), bot.into()],
         ))
         .one(db)

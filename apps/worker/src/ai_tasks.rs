@@ -421,10 +421,9 @@ async fn pickup_pending_tasks(
                       OR EXISTS (
                           SELECT 1
                           FROM project_bot_connections c
-                          INNER JOIN project_execution_settings s ON s.project_id = c.project_id
                           WHERE c.project_id = ai_tasks.project_id
                             AND c.bot_id = ai_tasks.ai_participant_id
-                            AND s.enabled
+                            AND c.enabled
                       )
                   )
                 ORDER BY priority DESC, created_at
@@ -1251,17 +1250,19 @@ mod database_tests {
                 vec![task.into(), issue.into()],
             )
             .await;
-            if let Some(on) = settings {
-                exec(
-                    db,
-                    "INSERT INTO project_execution_settings (project_id, working_directory, enabled) \
-                     SELECT project_id, '/work/a', $2 FROM ai_tasks WHERE id = $1",
-                    vec![task.into(), on.into()],
-                )
-                .await;
+            if settings.is_some() {
+                connect_the_bot_of(db, task, 3.0, Some(2.0)).await;
             }
         }
         let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        // The connection of one task is disabled after pick-up: still a configured project.
+        exec(
+            db,
+            "UPDATE project_bot_connections SET enabled = false \
+             WHERE (project_id, bot_id) = (SELECT project_id, ai_participant_id FROM ai_tasks WHERE id = $1)",
+            vec![disabled.into()],
+        )
+        .await;
         for task in [enabled, disabled, plain] {
             let row = picked.iter().find(|row| row.id == task).expect("picked");
             settle_delivery(
@@ -1348,13 +1349,11 @@ mod database_tests {
         .await;
         // An enabled connection of the task's project: without one the bot takes no task of it.
         for sql in [
-            "INSERT INTO project_execution_settings (project_id, enabled, working_directory) \
-             SELECT project_id, true, '/work/a' FROM ai_tasks WHERE id = $1",
             "INSERT INTO ai_participants (id, project_id, name, is_active, registered_by) \
              SELECT t.ai_participant_id::text, t.project_id, 'runner bot', true, p.created_by \
              FROM ai_tasks t INNER JOIN projects p ON p.id = t.project_id WHERE t.id = $1",
-            "INSERT INTO project_bot_connections (project_id, bot_id) \
-             SELECT project_id, ai_participant_id FROM ai_tasks WHERE id = $1",
+            "INSERT INTO project_bot_connections (project_id, bot_id, enabled, working_directory, channel) \
+             SELECT project_id, ai_participant_id, true, '/work/a', 'headless' FROM ai_tasks WHERE id = $1",
         ] {
             exec(db, sql, vec![task.into()]).await;
         }
@@ -1508,20 +1507,15 @@ mod database_tests {
             if let Some(enabled) = connection {
                 exec(
                     db,
-                    "INSERT INTO project_execution_settings (project_id, enabled, working_directory) VALUES ($1, $2, '/work/a')",
-                    vec![id.into(), enabled.into()],
-                )
-                .await;
-                exec(
-                    db,
                     "INSERT INTO ai_participants (id, project_id, name, is_active, registered_by) VALUES ($1::text, $2, 'gate bot', $3, $4)",
                     vec![bot.into(), id.into(), enabled.into(), owner.into()],
                 )
                 .await;
                 exec(
                     db,
-                    "INSERT INTO project_bot_connections (project_id, bot_id) VALUES ($1, $2)",
-                    vec![id.into(), bot.into()],
+                    "INSERT INTO project_bot_connections (project_id, bot_id, enabled, working_directory) \
+                     VALUES ($1, $2, $3, '/work/a')",
+                    vec![id.into(), bot.into(), enabled.into()],
                 )
                 .await;
             }
@@ -1658,7 +1652,7 @@ mod database_tests {
             .expect("the enabled task is picked up");
         exec(
             db,
-            "UPDATE project_execution_settings SET enabled = false WHERE project_id = $1",
+            "UPDATE project_bot_connections SET enabled = false WHERE project_id = $1",
             vec![w.enabled.0.into()],
         )
         .await;
@@ -1676,6 +1670,49 @@ mod database_tests {
         .expect("count runs")
         .map_or(0, |row| row.n);
         assert_eq!(reason, 1);
+        scratch.drop_self().await;
+    }
+
+    /// Two bots of one project: each connection gates only its own bot's tasks.
+    #[tokio::test]
+    async fn two_bots_of_one_project_are_gated_by_their_own_connections() {
+        let scratch = scratch_or_skip!("gate_two_bots");
+        let db = &scratch.db;
+        let first = seed_pending_task(db).await;
+        connect_the_bot_of(db, first, 3.0, Some(2.0)).await;
+        let second = Uuid::new_v4();
+        let second_bot = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type) \
+             VALUES ($1, $2, '!', 'bot two', 'user', true, 'bot')",
+            vec![second_bot.into(), format!("{second_bot}@worker.test").into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status, max_attempts) \
+             SELECT $1, project_id, $2, 'issue_assigned', 'pending', 3 FROM ai_tasks WHERE id = $3",
+            vec![second.into(), second_bot.into(), first.into()],
+        )
+        .await;
+        connect_the_bot_of(db, second, 3.0, Some(2.0)).await;
+        let set = |task: Uuid, enabled: bool| async move {
+            exec(
+                db,
+                "UPDATE project_bot_connections SET enabled = $2 \
+                 WHERE (project_id, bot_id) = (SELECT project_id, ai_participant_id FROM ai_tasks WHERE id = $1)",
+                vec![task.into(), enabled.into()],
+            )
+            .await;
+        };
+        set(second, false).await;
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        assert_eq!(picked.iter().map(|task| task.id).collect::<Vec<_>>(), vec![first]);
+        assert_eq!(status_of(db, second).await, "pending");
+        set(second, true).await;
+        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        assert_eq!(picked.iter().map(|task| task.id).collect::<Vec<_>>(), vec![second]);
         scratch.drop_self().await;
     }
 
