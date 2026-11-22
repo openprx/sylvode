@@ -193,6 +193,23 @@ name.
 
 ### Fixed
 
+- **A Flow package import validates every uploaded document in the isolated worker.** The
+  workspace package import used to decode the uploaded snapshot and update tail inside the API
+  process and the import transaction, with no content limit and no meter, and stored the uploaded
+  snapshot as it was. Both package imports (workspace and personal scope) now run each document
+  through the import operation of the worker (load, replay, scans of the whole history for reserved
+  roots and unresolved tree references, projection, every content limit) before the transaction
+  opens, and store the head the worker returned after the API process has loaded it again and
+  compared its own projection, title, reference verdict and fingerprint with the worker's report.
+  A package that exceeds a content limit or an import ceiling is refused as `limit_exceeded`
+  naming the limit, and nothing is stored. The import window has its own named budget
+  (`IMPORT_DECODE_CPU_MS_MAX` 2,000 ms, `IMPORT_DECODE_WALL_MS_MAX` 5,000 ms,
+  `IMPORT_ISOLATED_MEMORY_BYTES_MAX` 512 MiB), applied by that operation only; the write window
+  keeps 50 ms, 100 ms and 128 MiB. Off Linux a package import is refused as
+  `isolated_apply_unsupported_platform`. A portable graph package whose versions need more than
+  16,384 mark edits to replay is refused (`portable_graph_replay_work`), at export too, and the
+  replay no longer runs on the async executor.
+
 - **Deleting a workspace or a project that holds content works.** A workspace with a Flow Page
   that had an accepted collaboration update answered `database error` and stayed, because the
   delete cascade reached the event row before the update that references it. Workspace and project

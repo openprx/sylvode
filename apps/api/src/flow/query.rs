@@ -750,6 +750,7 @@ pub async fn get_object_diff(
         from_frontier: from_frontier.as_bytes().to_vec(),
         to_frontier: to_frontier.as_bytes().to_vec(),
         package_updates_base64: None,
+        package_semantic_model: None,
     };
     let base_snapshot = rows.snapshot;
     let (isolated, observation) =
@@ -816,6 +817,27 @@ pub(crate) fn isolated_diff_error(
     object_id: Uuid,
     history_invalid: impl FnOnce() -> ApiError,
 ) -> ApiError {
+    isolated_replay_error(error, observation, object_id, ReplayBudget::Write, history_invalid)
+}
+
+/// The ceilings of the window a refused replay ran under, which its `limit_exceeded` answer names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReplayBudget {
+    /// The write window: the diff of retained history (`decode_apply_*`).
+    Write,
+    /// The import window of an uploaded document (`IMPORT_*`).
+    Import,
+}
+
+/// [`isolated_diff_error`] for the window of `budget`: the same classification, with the message
+/// and the `limit` of a ceiling kill taken from the budget the worker ran under.
+pub(crate) fn isolated_replay_error(
+    error: IsolatedApplyError,
+    observation: &collab_core::isolation::WorkerObservation,
+    object_id: Uuid,
+    budget: ReplayBudget,
+    history_invalid: impl FnOnce() -> ApiError,
+) -> ApiError {
     use super::collab::write::refusal::{AttemptLog, RebasePolicy, Refusal, Stopped, classify, record};
 
     let stopped = Stopped::of(&error);
@@ -843,10 +865,24 @@ pub(crate) fn isolated_diff_error(
     );
     match refusal {
         Refusal::Content { limit_kind, limit } => {
-            let message = match limit_kind {
-                "decode_apply_cpu_ms" => "diff replay exceeded the isolated CPU budget",
-                "decode_apply_wall_ms" => "diff replay exceeded the isolated wall-clock budget",
-                _ => "diff replay exceeded the isolated memory budget",
+            let (message, limit) = match (budget, limit_kind) {
+                (ReplayBudget::Write, "decode_apply_cpu_ms") => ("diff replay exceeded the isolated CPU budget", limit),
+                (ReplayBudget::Write, "decode_apply_wall_ms") => {
+                    ("diff replay exceeded the isolated wall-clock budget", limit)
+                }
+                (ReplayBudget::Write, _) => ("diff replay exceeded the isolated memory budget", limit),
+                (ReplayBudget::Import, "decode_apply_cpu_ms") => (
+                    "package document import exceeded the isolated CPU budget",
+                    collab_core::isolation::IMPORT_DECODE_CPU_MS_MAX,
+                ),
+                (ReplayBudget::Import, "decode_apply_wall_ms") => (
+                    "package document import exceeded the isolated wall-clock budget",
+                    collab_core::isolation::IMPORT_DECODE_WALL_MS_MAX,
+                ),
+                (ReplayBudget::Import, _) => (
+                    "package document import exceeded the isolated memory budget",
+                    collab_core::isolation::IMPORT_ISOLATED_MEMORY_BYTES_MAX,
+                ),
             };
             ApiError::limit_exceeded(
                 message,
@@ -867,7 +903,7 @@ pub(crate) fn isolated_diff_error(
             tracing::error!(
                 os,
                 %object_id,
-                "diff replay refused: the isolated-apply boundary requires Linux (ADR-0014)"
+                "replay refused: the isolated-apply boundary requires Linux (ADR-0014)"
             );
             ApiError::server_rejected(SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM)
         }

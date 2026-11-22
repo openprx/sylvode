@@ -41,6 +41,14 @@
 //!    already sent in step 3 and the decision record in step 5, so this is just the framed payload
 //!    itself).
 //!
+//! The `import` operation (`wire::OPERATION_IMPORT`) is a different shape of the same boundary: the
+//! snapshot and the update tail of an uploaded document are untrusted from the first byte, so its
+//! metered window opens before the load and holds the load, the replay of every update, the scans
+//! of the whole history (reserved roots, tree references), the projection and `check_snapshot`,
+//! under the import-specific budget of `isolation::limits` (`IMPORT_*`). The export of the
+//! validated head, the title and the fingerprints are read after the window closes, from state the
+//! window validated, like the export of an accepted write. See [`import_check_and_encode`].
+//!
 //! If the process is killed by `SIGPROF` (step 4/5 overran the CPU ceiling), aborts itself via the
 //! counting allocator's rejection path (overran the memory ceiling, `SIGABRT`), or is `SIGKILL`ed
 //! by the parent's wall watchdog (overran the wall ceiling), no response frame is ever written --
@@ -87,7 +95,14 @@ fn main() {
     // allocator (a raw `mmap`, an FFI allocator) at any point in this process's life, not only
     // inside the metered window (`ADR-0014` section 10's `child.rs::apply_address_space_backstop`
     // reasoning, ported to this workload).
-    child_runtime::set_address_space_backstop();
+    // The operation is chosen by the trusted host in the environment, not read from the caller's
+    // bytes, so it can be read before them. Only the import operation gets the larger backstop.
+    let operation = std::env::var(wire::OPERATION_ENV).unwrap_or_else(|_| wire::OPERATION_APPLY.to_string());
+    if operation == wire::OPERATION_IMPORT {
+        child_runtime::set_address_space_backstop_for_import();
+    } else {
+        child_runtime::set_address_space_backstop();
+    }
 
     if !child_runtime::is_single_threaded() {
         // An invariant this process's own design guarantees (a freshly `exec`'d binary starts
@@ -103,10 +118,13 @@ fn main() {
         exit_without_response(1);
     };
 
-    let operation = std::env::var(wire::OPERATION_ENV).unwrap_or_else(|_| wire::OPERATION_APPLY.to_string());
     if operation == wire::OPERATION_DIFF {
         write_marker_or_exit(None);
         respond_and_exit(&replay_diff_check_and_encode(&base_snapshot, &update));
+    }
+    if operation == wire::OPERATION_IMPORT {
+        write_marker_or_exit();
+        respond_and_exit(&import_check_and_encode(&base_snapshot, &update));
     }
     if operation != wire::OPERATION_APPLY {
         exit_without_response(1);
@@ -205,54 +223,188 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
     }
 }
 
+/// The import operation: the whole of one uploaded document is untrusted, so the metered window
+/// opens before `load` and the import-specific budget bounds everything up to and including
+/// `check_snapshot`. The head is exported and the fingerprints are read after the window closes,
+/// from the engine the window validated (see the module documentation).
+#[cfg(target_os = "linux")]
+fn import_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> wire::Outcome {
+    child_runtime::arm_sigprof_for_import();
+    alloc::arm_for_import();
+    let validated = import_replay(base_snapshot, request_bytes);
+    child_runtime::disarm_sigprof();
+    alloc::disarm();
+
+    let outcome =
+        validated.and_then(|(engine, semantic, fingerprints)| import_result(&engine, semantic, &fingerprints));
+    match outcome {
+        Ok(result) => match wire::encode_replay_diff_result(&result) {
+            Ok(snapshot) => wire::Outcome::Success {
+                snapshot,
+                window_cpu_us: None,
+                window_report: None,
+                setup_guard: None,
+            },
+            Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
+                reason: format!("import result encoding failed: {error}"),
+            }),
+        },
+        Err(error) => wire::Outcome::Rejected(error),
+    }
+}
+
+/// The metered part of the import: decode the request, load the snapshot, replay the update tail
+/// causally, require the replayed head to be the accepted frontier, scan the whole history for
+/// shadow roots and unresolved tree references, project and check the content limits.
+#[cfg(target_os = "linux")]
+fn import_replay(
+    base_snapshot: &[u8],
+    request_bytes: &[u8],
+) -> Result<(LoroCollabEngine, collab_core::SemanticSnapshot, Fingerprints), CollabError> {
+    use base64::Engine;
+
+    #[cfg(debug_assertions)]
+    if let Some(workload) = test_injection::workload_from_env() {
+        // Test builds only: a synthetic workload under the import budget. It ends in a refusal the
+        // tests recognise, so a ceiling that did not fire is distinguishable from one that did.
+        test_injection::run(&workload, LoroCollabEngine::new_empty(1));
+        return Err(CollabError::OperationFailed {
+            reason: "injected_workload_finished".into(),
+        });
+    }
+    let request = wire::decode_replay_diff_request(request_bytes).map_err(|error| CollabError::DecodeFailed {
+        input: "update",
+        reason: format!("import request is invalid: {error}"),
+    })?;
+    let updates = request
+        .package_updates_base64
+        .ok_or_else(|| CollabError::OperationFailed {
+            reason: "the import operation requires the package update tail".into(),
+        })?;
+    let mut engine = LoroCollabEngine::load(base_snapshot)?;
+    for encoded in updates {
+        let update = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|error| CollabError::DecodeFailed {
+                input: "update",
+                reason: error.to_string(),
+            })?;
+        engine.import_update_causally_complete(&update)?;
+    }
+    if !LoroCollabEngine::frontiers_equivalent(&request.from_frontier, &request.to_frontier)?
+        || !engine.matches_frontier(&request.to_frontier)
+    {
+        return Err(CollabError::OperationFailed {
+            reason: "package accepted frontier does not match replayed head".into(),
+        });
+    }
+    // Uploaded history, never replayed from this server's own storage: no reserved root of the
+    // wrong type anywhere in it, and no tree op that names a parent that does not exist when it
+    // runs (it would panic every subscribed client).
+    engine.refuse_shadow_roots()?;
+    engine.refuse_unresolved_tree_parents_in_history()?;
+    let semantic = engine.semantic_snapshot()?;
+    check_snapshot(&semantic, &DocumentLimits::default()).map_err(CollabError::from)?;
+    // The fingerprint of the versioned reader the manifest names, a projection of the validated
+    // document read in the window, so that no format version of a package needs a path outside it.
+    let fingerprints = match request.package_semantic_model.as_deref() {
+        Some("v1") => Fingerprints::V1(engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
+        Some("v2") => Fingerprints::V2(engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
+        Some("v3") => Fingerprints::V3(engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
+        Some("v4") if engine.minimum_editor_model()? <= 4 => {
+            Fingerprints::V4(engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
+        }
+        Some("v4" | "v5") => Fingerprints::None,
+        _ => {
+            return Err(CollabError::OperationFailed {
+                reason: "the import operation requires a known package semantic model".into(),
+            });
+        }
+    };
+    Ok((engine, semantic, fingerprints))
+}
+
+/// The fingerprint the import window read of the validated document, for the model the request
+/// named.
+#[cfg(target_os = "linux")]
+enum Fingerprints {
+    V1(String),
+    V2(String),
+    V3(String),
+    V4(String),
+    /// The model needs no read beyond the projection (`v5`), or is not readable for this
+    /// document (`v4` of a document that needs a newer editor model).
+    None,
+}
+
+#[cfg(target_os = "linux")]
+impl Fingerprints {
+    fn v1(&self) -> Option<String> {
+        match self {
+            Self::V1(hash) => Some(hash.clone()),
+            _ => None,
+        }
+    }
+    fn v2(&self) -> Option<String> {
+        match self {
+            Self::V2(hash) => Some(hash.clone()),
+            _ => None,
+        }
+    }
+    fn v3(&self) -> Option<String> {
+        match self {
+            Self::V3(hash) => Some(hash.clone()),
+            _ => None,
+        }
+    }
+    fn v4(&self) -> Option<String> {
+        match self {
+            Self::V4(hash) => Some(hash.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// The answer of an accepted import: the window's own reads and the rest, read from the engine the
+/// window validated.
+#[cfg(target_os = "linux")]
+fn import_result(
+    engine: &LoroCollabEngine,
+    semantic: collab_core::SemanticSnapshot,
+    fingerprints: &Fingerprints,
+) -> Result<wire::ReplayDiffResult, CollabError> {
+    use base64::Engine;
+
+    let title = engine.title()?;
+    let snapshot = engine.export_snapshot()?;
+    Ok(wire::ReplayDiffResult {
+        semantic_diff: collab_core::SemanticDiff::default(),
+        to_snapshot: semantic,
+        from_title: title.clone(),
+        to_title: title,
+        legacy_package_semantic_hash_v1: fingerprints.v1(),
+        legacy_package_semantic_hash_v2: fingerprints.v2(),
+        legacy_package_semantic_hash_v3: fingerprints.v3(),
+        legacy_package_semantic_hash_v4: fingerprints.v4(),
+        package_reference_remap_required: Some(wire::package_reference_remap_required(engine)?),
+        validated_head_snapshot_base64: Some(base64::engine::general_purpose::STANDARD.encode(snapshot)),
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::ReplayDiffResult, CollabError> {
     let request = wire::decode_replay_diff_request(request_bytes).map_err(|error| CollabError::DecodeFailed {
         input: "update",
         reason: format!("diff request is invalid: {error}"),
     })?;
-    let mut engine = LoroCollabEngine::load(base_snapshot)?;
-    if let Some(updates) = request.package_updates_base64 {
-        use base64::Engine;
-        for encoded in updates {
-            let update =
-                base64::engine::general_purpose::STANDARD
-                    .decode(encoded)
-                    .map_err(|e| CollabError::DecodeFailed {
-                        input: "update",
-                        reason: e.to_string(),
-                    })?;
-            engine.import_update_causally_complete(&update)?;
-        }
-        if !LoroCollabEngine::frontiers_equivalent(&request.from_frontier, &request.to_frontier)?
-            || !engine.matches_frontier(&request.to_frontier)
-        {
-            return Err(CollabError::OperationFailed {
-                reason: "package accepted frontier does not match replayed head".into(),
-            });
-        }
-        let semantic = engine.semantic_snapshot()?;
-        check_snapshot(&semantic, &DocumentLimits::default()).map_err(CollabError::from)?;
-        let title = engine.title()?;
-        let snapshot = engine.export_snapshot()?;
-        return Ok(wire::ReplayDiffResult {
-            semantic_diff: collab_core::SemanticDiff::default(),
-            to_snapshot: semantic,
-            from_title: title.clone(),
-            to_title: title,
-            legacy_package_semantic_hash_v1: Some(engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
-            legacy_package_semantic_hash_v2: Some(engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
-            legacy_package_semantic_hash_v3: Some(engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
-            legacy_package_semantic_hash_v4: if engine.minimum_editor_model()? <= 4 {
-                Some(engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
-            } else {
-                None
-            },
-            package_reference_remap_required: Some(wire::package_reference_remap_required(&engine)?),
-            validated_head_snapshot_base64: Some(base64::engine::general_purpose::STANDARD.encode(snapshot)),
+    // The replay of an uploaded package is the `import` operation, under its own budget and with the
+    // scans of an upload: the diff of retained history never carries package updates.
+    if request.package_updates_base64.is_some() {
+        return Err(CollabError::OperationFailed {
+            reason: "package updates are imported with the import operation".into(),
         });
     }
-
+    let mut engine = LoroCollabEngine::load(base_snapshot)?;
     if !engine.matches_frontier(&request.snapshot_frontier) {
         return Err(CollabError::OperationFailed {
             reason: "snapshot frontier does not match the retained history".to_string(),
