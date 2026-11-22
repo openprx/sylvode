@@ -1,0 +1,63 @@
+{
+	"agentTasks": {
+		"title": "Agent tasks",
+		"refresh": "Refresh",
+		"refreshing": "Refreshing",
+		"things": "agent tasks",
+		"agent": "Agent: {name}",
+		"attempt": "Attempt {attempt} of {max}",
+		"plan": "Plan",
+		"progress": "Progress",
+		"progressPercent": "{percent}%",
+		"progressNone": "No progress reported yet",
+		"reason": "Failure reason",
+		"reply": "Reply",
+		"showMore": "Show more",
+		"showLess": "Show less",
+		"events": "Event chain",
+		"showEvents": "Show events ({count})",
+		"hideEvents": "Hide events",
+		"eventsOmitted": "Older events are not shown.",
+		"nextRetry": "Next attempt {time}",
+		"status": {
+			"queued": "Queued",
+			"waitingQueue": "Waiting in the runner queue",
+			"waitingQueuePosition": "Waiting in the runner queue (position {position})",
+			"delivered": "Delivered",
+			"acknowledged": "Acknowledged",
+			"working": "Working",
+			"blocked": "Blocked on the runner",
+			"completed": "Completed",
+			"failed": "Failed",
+			"cancelled": "Cancelled",
+			"retried": "Waiting for a new attempt",
+			"unknown": "Status: {status}"
+		},
+		"event": {
+			"delivered": "Delivered to the runner",
+			"queued": "Waiting in the runner queue",
+			"queuedPosition": "Waiting in the runner queue (position {position})",
+			"pushed": "Pushed to the agent session",
+			"acknowledged": "Acknowledged, plan given",
+			"progress": "Progress",
+			"progressPercent": "Progress ({percent}%)",
+			"alive": "Runner heartbeat",
+			"aliveCount": "Runner heartbeat, {count} times",
+			"reminded": "Runner reminded the agent",
+			"blocked": "Blocked on the runner",
+			"completed": "Completed",
+			"failed": "Failed",
+			"retried": "Attempt ended, a new one is scheduled",
+			"reply": "Reply written",
+			"other": "Event: {type}"
+		},
+		"replyLine": {
+			"comment": "Comment posted",
+			"state": "State changed from {from} to {to}",
+			"label": "Label added",
+			"vote": "Vote cast: {vote}",
+			"warning": "Warning: {text}",
+			"none": "No reply written"
+		}
+	}
+}

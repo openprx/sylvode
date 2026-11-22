@@ -1,17 +1,18 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
 	import { projectsApi, type Project } from '#lib/api/projects.js';
-	import { membersApi } from '#lib/api/members.js';
+	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
 	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import Input from '#lib/components/Input.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Badge from '#lib/components/Badge.svelte';
 	import Avatar from '#lib/components/Avatar.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
@@ -129,7 +130,7 @@
 				if (res.code === 0 && res.data) {
 					const nameMap: Record<string, string> = {};
 					const entityMap: Record<string, string> = {};
-					for (const m of (res.data.items ?? []) as any[]) {
+					for (const m of (res.data.items ?? []) as Array<WorkspaceMember & { id: string }>) {
 						const memberId = m.user_id || m.id;
 						nameMap[memberId] = m.name || m.email || memberId.substring(0, 8);
 						entityMap[memberId] = m.entity_type || 'human';
@@ -201,10 +202,10 @@
 
 	function getPriorityBarClass(priority: IssuePriority): string {
 		const classes: Record<IssuePriority, string> = {
-			low: 'bg-slate-300',
-			medium: 'bg-blue-400',
-			high: 'bg-orange-400',
-			urgent: 'bg-red-500'
+			low: 'bg-control',
+			medium: 'bg-fg-muted',
+			high: 'bg-warning',
+			urgent: 'bg-danger'
 		};
 		return classes[priority];
 	}
@@ -328,36 +329,42 @@
 </script>
 
 <div class="mx-auto max-w-7xl space-y-6">
-	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-700 dark:bg-slate-800"
-	>
+	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-			<div class="text-sm text-slate-600 dark:text-slate-400">
-				<a href="/workspace" class="hover:text-blue-600">{$t('nav.myWorkspace')}</a>
-				<span class="mx-1 text-slate-400">/</span>
-				<a href="/workspace/{workspaceId}/projects" class="hover:text-blue-600"
-					>{$t('project.title')}</a
+			<div class="text-sm text-fg-muted">
+				<a href={resolve('/(app)/workspace')} class="hover:underline">{$t('nav.myWorkspace')}</a>
+				<span class="mx-1 text-fg-muted">/</span>
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId })}
+					class="hover:underline">{$t('project.title')}</a
 				>
-				<span class="mx-1 text-slate-400">/</span>
-				<a href="/workspace/{workspaceId}/projects/{projectId}" class="hover:text-blue-600"
-					>{$t('project.detail')}</a
+				<span class="mx-1 text-fg-muted">/</span>
+				<a
+					href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]', {
+						workspaceId,
+						projectId
+					})}
+					class="hover:underline">{$t('project.detail')}</a
 				>
-				<span class="mx-1 text-slate-400">/</span>
-				<span class="font-medium text-slate-900 dark:text-slate-100">{$t('board.title')}</span>
+				<span class="mx-1 text-fg-muted">/</span>
+				<span class="font-medium text-fg">{$t('board.title')}</span>
 			</div>
 		</div>
 		{#if sprintFilterId}
 			<div
-				class="mb-4 flex items-center justify-between rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm"
+				class="mb-4 flex items-center justify-between rounded-control border bg-surface px-3 py-2 text-sm"
 			>
-				<span class="text-blue-700"
+				<span class="text-fg"
 					>{$t('board.filterBySprint', {
 						values: { sprint: sprintNameMap[sprintFilterId] ?? sprintFilterId }
 					})}</span
 				>
 				<a
-					href="/workspace/{workspaceId}/projects/{projectId}/board"
-					class="text-blue-700 underline hover:text-blue-800"
+					href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/board', {
+						workspaceId,
+						projectId
+					})}
+					class="text-fg underline"
 				>
 					{$t('board.clearFilter')}
 				</a>
@@ -374,14 +381,13 @@
 				/>
 			</div>
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
-					for="priorityFilter">{$t('common.priority')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="priorityFilter"
+					>{$t('common.priority')}</label
 				>
 				<select
 					id="priorityFilter"
 					bind:value={priorityFilter}
-					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="all">{$t('issue.all')}</option>
 					<option value="low">{$t('issue.low')}</option>
@@ -391,17 +397,16 @@
 				</select>
 			</div>
 			<div>
-				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
-					for="assigneeFilter">{$t('common.assignee')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="assigneeFilter"
+					>{$t('common.assignee')}</label
 				>
 				<select
 					id="assigneeFilter"
 					bind:value={assigneeFilter}
-					class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
 					<option value="all">{$t('issue.all')}</option>
-					{#each assigneeOptions as assigneeId}
+					{#each assigneeOptions as assigneeId, idx (idx)}
 						<option value={assigneeId}>{getAssigneeLabel(assigneeId)}</option>
 					{/each}
 				</select>
@@ -418,24 +423,22 @@
 				type="text"
 				bind:value={quickTitle}
 				placeholder={$t('issue.quickCreatePlaceholder')}
-				class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 			/>
-			<Button loading={creatingQuick} onclick={handleQuickCreate}>+ {$t('issue.create')}</Button>
+			<Button variant="primary" loading={creatingQuick} onclick={handleQuickCreate}
+				>+ {$t('issue.create')}</Button
+			>
 		</div>
 	</div>
 
 	{#if loading}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-			{#each columns as column}
-				<div
-					class="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800"
-				>
-					<div class="mb-3 h-5 w-24 animate-pulse rounded bg-slate-200"></div>
+			{#each columns}
+				<div class="rounded-card border border-line bg-surface p-3">
+					<div class="mb-3 h-5 w-24 animate-pulse rounded bg-surface"></div>
 					<div class="space-y-3">
-						{#each Array(2) as _, index (`${column}-${index}`)}
-							<div
-								class="h-24 animate-pulse rounded-md border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
-							></div>
+						{#each Array(2)}
+							<div class="h-24 animate-pulse rounded-control border border-line bg-raised"></div>
 						{/each}
 					</div>
 				</div>
@@ -443,12 +446,10 @@
 		</div>
 	{:else}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-			{#each columns as column}
+			{#each columns as column, idx (idx)}
 				<div
-					class={`rounded-lg border p-3 transition-colors ${
-						dropTargetStatus === column
-							? 'border-blue-400 bg-blue-50 dark:bg-blue-500/20'
-							: 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800'
+					class={`rounded-card border p-3 transition-colors ${
+						dropTargetStatus === column ? 'border-fg bg-surface' : 'border-line bg-surface'
 					}`}
 					role="region"
 					ondragover={handleDragOver}
@@ -457,12 +458,10 @@
 					ondrop={(event) => handleDrop(event, column)}
 				>
 					<div class="mb-3 flex items-center justify-between">
-						<h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+						<h2 class="text-sm font-semibold text-fg">
 							{getColumnName(column)}
 						</h2>
-						<span
-							class="rounded-full bg-white px-2 py-1 text-xs text-slate-600 dark:bg-slate-700 dark:text-slate-300"
-						>
+						<span class="rounded-full bg-surface px-2 py-1 text-xs text-fg-muted">
 							{getIssuesByStatus(column).length}
 						</span>
 					</div>
@@ -474,7 +473,7 @@
 								role="article"
 								ondragstart={() => handleDragStart(issue.id)}
 								ondragend={handleDragEnd}
-								class={`group relative overflow-hidden rounded-md border bg-white p-3 shadow-sm dark:shadow-slate-900/50 transition hover:shadow-md dark:shadow-slate-900/50 dark:border-slate-700 dark:bg-slate-900 ${draggingIssueId === issue.id ? 'opacity-50' : ''}`}
+								class={`group relative overflow-hidden rounded-control border bg-raised p-3 transition hover:border-line-strong ${draggingIssueId === issue.id ? 'opacity-50' : ''}`}
 							>
 								<div
 									class={`absolute inset-y-0 left-0 w-1 ${getPriorityBarClass(issue.priority)}`}
@@ -482,18 +481,21 @@
 								<div class="ml-2 space-y-2">
 									<div class="flex items-start justify-between gap-2">
 										<a
-											href="/workspace/{workspaceId}/projects/{projectId}/issues/{issue.id}"
-											class="line-clamp-2 text-sm font-medium text-slate-900 hover:text-blue-600 dark:text-slate-100"
+											href={resolve(
+												'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
+												{ workspaceId, projectId, issueId: issue.id }
+											)}
+											class="line-clamp-2 text-sm font-medium text-fg hover:underline"
 										>
 											{issue.title}
 										</a>
 										{#if updatingIssueId === issue.id}
-											<span class="text-[10px] text-blue-600">{$t('common.updating')}</span>
+											<span class="text-[10px] text-fg-muted">{$t('common.updating')}</span>
 										{/if}
 									</div>
 									{#if issue.labels?.length}
 										<div class="flex flex-wrap gap-1">
-											{#each issue.labels as label}
+											{#each issue.labels as label, idx (idx)}
 												<span
 													class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
 													style={`background-color: ${label.color}20; color: ${label.color}; border: 1px solid ${label.color}40;`}
@@ -505,7 +507,7 @@
 									{/if}
 									{#if issue.sprint_id}
 										<span
-											class="inline-flex w-fit items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
+											class="inline-flex w-fit items-center rounded-full border bg-surface px-2 py-0.5 text-xs font-medium text-fg"
 										>
 											<svg
 												class="mr-1 h-3.5 w-3.5"
@@ -526,18 +528,13 @@
 									<div class="flex items-center justify-between gap-2">
 										<div class="flex items-center gap-2">
 											<Badge kind="priority" value={issue.priority} />
-											<span class="font-mono text-xs text-slate-500 dark:text-slate-400"
-												>{getIssueCode(issue)}</span
-											>
+											<span class="font-mono text-xs text-fg-muted">{getIssueCode(issue)}</span>
 										</div>
 										{#if issue.assignee_id}
 											<div class="flex items-center gap-1.5">
 												<Avatar userId={issue.assignee_id} />
 												{#if isBotAssignee(issue.assignee_id)}
-													<BotIcon
-														class="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-300"
-														title={$t('admin.botBadge')}
-													/>
+													<BotIcon class="h-3.5 w-3.5 text-fg-muted" title={$t('admin.botBadge')} />
 												{/if}
 											</div>
 										{/if}
@@ -548,7 +545,7 @@
 
 						{#if getIssuesByStatus(column).length === 0}
 							<div
-								class="rounded-md border border-dashed border-slate-300 bg-white/70 p-4 text-center text-sm text-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400"
+								class="rounded-control border border-dashed border-input bg-raised p-4 text-center text-sm text-fg-muted"
 							>
 								{$t('issue.none')}
 							</div>

@@ -1,17 +1,14 @@
 import type { ApiResult } from '../api/client';
 import {
 	pluginExtensionsApi,
-	pluginPackagesApi,
 	type PluginCapability,
 	type PluginContributionItem,
 	type PluginDataRequest,
-	type PluginInvocation,
-	type PluginPanel
+	type PluginInvocation
 } from '../api/plugin-packages';
 import {
 	bridgeErrorCode,
 	bridgeLimits,
-	validResult,
 	type BridgeErrorCode,
 	type BridgeMethod,
 	type PluginHostContext
@@ -137,7 +134,6 @@ export function requiredGrant(method: BridgeMethod, params: Record<string, unkno
 }
 
 export interface HostDispatcherOptions {
-	bridge: 1 | 2;
 	/** The frame's effective grants (from discovery or entry; never from the plugin). */
 	grants: () => readonly string[];
 	context: () => PluginHostContext | undefined;
@@ -230,19 +226,7 @@ export function createHostDispatcher(options: HostDispatcherOptions): HostDispat
 		}
 	}
 
-	async function handleLegacy(
-		requestId: string,
-		method: BridgeMethod | undefined
-	): Promise<HostOutcome> {
-		if (!method || !isAmountMethod(method) || !options.grants().includes(method))
-			return fail('method_unavailable');
-		if (amountBusy || seen.has(requestId) || seen.size >= bridgeLimits.legacyRequestsPerFrame)
-			return fail('busy');
-		seen.add(requestId);
-		return amount(method, requestId);
-	}
-
-	async function handleV2(
+	async function handleRequest(
 		requestId: string,
 		method: BridgeMethod | undefined,
 		raw: Record<string, unknown> | undefined
@@ -286,10 +270,7 @@ export function createHostDispatcher(options: HostDispatcherOptions): HostDispat
 	return {
 		async handle(requestId, method, params) {
 			if (disposed) return fail('canceled');
-			const outcome =
-				options.bridge === 1
-					? await handleLegacy(requestId, method)
-					: await handleV2(requestId, method, params);
+			const outcome = await handleRequest(requestId, method, params);
 			return disposed ? fail('canceled') : outcome;
 		},
 		dispose() {
@@ -361,7 +342,7 @@ export interface ExtensionTransportOptions {
 	api?: Pick<typeof pluginExtensionsApi, 'data' | 'invoke'>;
 }
 
-/** Transport for protocol 2 frames backed by the v3 data, invoke and routing endpoints. */
+/** Transport for frames backed by the v3 data, invoke and routing endpoints. */
 export function createExtensionTransport(options: ExtensionTransportOptions): HostTransport {
 	const api = options.api ?? pluginExtensionsApi;
 	// An accepted navigation is performed after its reply was posted. Until it settles, every other
@@ -434,46 +415,6 @@ export function createExtensionTransport(options: ExtensionTransportOptions): Ho
 			return { ok: true, result: { amount_cents: result.amount_cents } };
 		}
 		return { ok: false, code: 'method_unavailable' };
-	};
-}
-
-export interface LegacyTransportOptions {
-	recordId: string;
-	panel: PluginPanel;
-	/** Called after a successful `amount.apply`. */
-	onApplied?: () => void;
-	api?: Pick<typeof pluginPackagesApi, 'invoke'>;
-}
-
-/** Transport for protocol 1 frames, matching the previous record panel host behaviour. */
-export function createLegacyTransport(options: LegacyTransportOptions): HostTransport {
-	const api = options.api ?? pluginPackagesApi;
-	return async (method, params, requestId) => {
-		if (!isAmountMethod(method)) return { ok: false, code: 'method_unavailable' };
-		const previewRequestId =
-			method === 'amount.apply' && typeof params.preview_request_id === 'string'
-				? params.preview_request_id
-				: undefined;
-		if (method === 'amount.apply' && !previewRequestId)
-			return { ok: false, code: 'preview_required' };
-		const response = await api.invoke(
-			options.recordId,
-			options.panel,
-			method,
-			requestId,
-			previewRequestId
-		);
-		if (
-			response.code !== 0 ||
-			!response.data ||
-			!validResult(response.data, options.panel, requestId)
-		)
-			return {
-				ok: false,
-				code: [401, 403, 404].includes(response.code) ? 'denied' : 'failed'
-			};
-		if (method === 'amount.apply') options.onApplied?.();
-		return { ok: true, result: { amount_cents: response.data.amount_cents } };
 	};
 }
 

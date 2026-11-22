@@ -19,8 +19,6 @@ let createdIssuePayload = null;
 let createdIssuePayloads = [];
 let createdIssues = [];
 let createdIssuesByProject = {};
-let aiAgents = [];
-let assistantPatchPayload = null;
 
 function apiResult(data) {
 	return { code: 0, message: 'success', data };
@@ -173,17 +171,6 @@ function restoreMarks() {
   projectButton.click();
   await waitFor(() => textInElements('Document review assistant'), 'scenario dashboard');
   mark('data-scenario-dashboard-seen');
-  await waitFor(() => textInElements('Scenario Setup'), 'scenario setup');
-  const modelInput = await waitFor(() => Array.from(document.querySelectorAll('input')).find((input) => input.value === 'mcp-agent'), 'assistant model input');
-  modelInput.value = 'mcp-agent-smoke';
-  modelInput.dispatchEvent(new Event('input', { bubbles: true }));
-  const apiEndpointInput = await waitFor(() => Array.from(document.querySelectorAll('input')).find((input) => input.placeholder === 'https://...'), 'assistant endpoint input');
-  apiEndpointInput.value = 'http://127.0.0.1:8090/mcp/rpc';
-  apiEndpointInput.dispatchEvent(new Event('input', { bubbles: true }));
-  const enableAssistant = await waitFor(() => findButtonExact('Enable'), 'enable assistant');
-  enableAssistant.click();
-  await waitFor(() => findButtonExact('Save assistant'), 'assistant saved');
-  mark('data-scenario-assistant-enabled');
   const workLink = await waitFor(() => Array.from(document.querySelectorAll('a')).find((link) => link.textContent.includes('Open Work') || link.getAttribute('href')?.endsWith('/issues')), 'open work link');
   workLink.click();
   await createScenarioIssue({ data: 'contract_review_default', title: 'Review ACME contract', fields: { counterparty: 'ACME Manufacturing', amount: '125000', risk_level: 'high' } });
@@ -498,20 +485,6 @@ const scenarioTemplates = [
 	}
 ];
 
-const embeddedContractTemplate = {
-	key: 'contract_review_default',
-	name: 'Contract Review',
-	industry: 'legal',
-	project_type_key: 'contract_review',
-	audience_label: 'Document review assistant',
-	workflow_template: scenarioTemplates[1].workflow_template,
-	field_schema: scenarioTemplates[1].field_schema,
-	resource_schema: scenarioTemplates[1].resource_schema,
-	ai_roles: scenarioTemplates[1].ai_roles,
-	governance_policy: scenarioTemplates[1].governance_policy,
-	sample_data: scenarioTemplates[1].sample_data
-};
-
 function projectIdForTemplate(templateKey) {
 	if (templateKey === 'contract_review_default') return 'project-created-smoke';
 	return `project-${templateKey.replace(/_default$/, '').replaceAll('_', '-')}`;
@@ -685,42 +658,6 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 			issue_counts: null
 		};
 		createdProjects = [...createdProjects.filter((item) => item.id !== project.id), project];
-		if (template.key === 'contract_review_default') {
-			aiAgents = [
-				{
-					id: 'tpl-smoke-document_assistant',
-					project_id: 'project-created-smoke',
-					name: 'Document review assistant',
-					model: 'template-placeholder',
-					provider: 'openpr-mcp',
-					api_endpoint: null,
-					capabilities: ['documents.extract_summary', 'documents.review_risk'],
-					domain_overrides: { source: 'scenario_template' },
-					max_domain_level: 'advisor',
-					can_veto_human_consensus: false,
-					reason_min_length: 50,
-					is_active: false,
-					registered_by: 'user-smoke',
-					created_at: now
-				},
-				{
-					id: 'tpl-smoke-approval_assistant',
-					project_id: 'project-created-smoke',
-					name: 'Approval assistant',
-					model: 'template-placeholder',
-					provider: 'webhook',
-					api_endpoint: null,
-					capabilities: ['approval.request'],
-					domain_overrides: { source: 'scenario_template' },
-					max_domain_level: 'advisor',
-					can_veto_human_consensus: false,
-					reason_min_length: 50,
-					is_active: false,
-					registered_by: 'user-smoke',
-					created_at: now
-				}
-			];
-		}
 		json(res, 200, apiResult(project));
 		return;
 	}
@@ -736,33 +673,6 @@ location.replace('/workspace/${workspaceId}/projects?template_wizard_capture=1')
 
 	if (pathname === '/api/v1/projects/project-created-smoke/resources') {
 		json(res, 200, apiResult(paginated([])));
-		return;
-	}
-
-	if (
-		pathname === '/api/v1/projects/project-created-smoke/ai-participants' &&
-		req.method === 'GET'
-	) {
-		json(res, 200, apiResult(paginated(aiAgents)));
-		return;
-	}
-
-	if (
-		pathname ===
-			'/api/v1/projects/project-created-smoke/ai-participants/tpl-smoke-document_assistant' &&
-		req.method === 'PATCH'
-	) {
-		assistantPatchPayload = await readBody(req);
-		aiAgents = aiAgents.map((agent) =>
-			agent.id === 'tpl-smoke-document_assistant'
-				? { ...agent, ...assistantPatchPayload, updated_at: now }
-				: agent
-		);
-		json(
-			res,
-			200,
-			apiResult(aiAgents.find((agent) => agent.id === 'tpl-smoke-document_assistant'))
-		);
 		return;
 	}
 
@@ -1034,7 +944,6 @@ server.listen(0, '127.0.0.1', async () => {
 		assertIncludes(dom, `data-template-created-${templateKey}="done"`);
 	}
 	assertIncludes(dom, 'data-scenario-dashboard-seen="done"');
-	assertIncludes(dom, 'data-scenario-assistant-enabled="done"');
 	assertIncludes(dom, 'data-scenario-issue-fields-seen="done"');
 	assertIncludes(dom, 'data-scenario-issue-create="done"');
 	assertIncludes(dom, 'Contract Template Smoke');
@@ -1065,20 +974,6 @@ server.listen(0, '127.0.0.1', async () => {
 	}
 	if (contractPayload.key !== 'LEGALSMK') {
 		throw new Error(`Unexpected contract project key: ${contractPayload.key}`);
-	}
-	if (!assistantPatchPayload?.is_active) {
-		throw new Error(
-			`Expected assistant activation patch, got ${JSON.stringify(assistantPatchPayload)}`
-		);
-	}
-	if (
-		assistantPatchPayload.provider !== 'openpr-mcp' ||
-		assistantPatchPayload.model !== 'mcp-agent-smoke' ||
-		assistantPatchPayload.api_endpoint !== 'http://127.0.0.1:8090/mcp/rpc'
-	) {
-		throw new Error(
-			`Expected assistant provider/model/endpoint patch, got ${JSON.stringify(assistantPatchPayload)}`
-		);
 	}
 	const contractIssuePayload = createdIssuePayloads.find(
 		(entry) => entry.template_key === 'contract_review_default'

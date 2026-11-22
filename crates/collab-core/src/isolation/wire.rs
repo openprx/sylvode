@@ -8,12 +8,69 @@ use std::io::{self, Read, Write};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CollabError;
+use crate::setup_guard::Fired;
+use crate::window_check::{FallbackReason, WindowReport};
 use crate::{SemanticDiff, SemanticSnapshot};
 
 /// Child-only operation selector set explicitly by the trusted host for every spawn.
 pub const OPERATION_ENV: &str = "COLLAB_ISOLATION_OPERATION";
 pub const OPERATION_APPLY: &str = "apply";
 pub const OPERATION_DIFF: &str = "diff";
+/// The import of one uploaded document: the snapshot and the update tail are untrusted from the
+/// first byte, so their load, replay, history scans and projection all run inside the metered
+/// window, under the import-specific budget (`isolation::limits`). Takes a [`ReplayDiffRequest`]
+/// with `package_updates_base64` and answers a [`ReplayDiffResult`] with the validated head.
+pub const OPERATION_IMPORT: &str = "import";
+
+/// Child-only window selector, set by the trusted host for a spawn that must run the full
+/// computation in the metered window. The only value the worker acts on is [`WINDOW_FULL`]; the
+/// variable can only ask for more checking (the worker then computes no base facts, so its window
+/// is today's full projection and `check_snapshot`), never for less: no value turns a check off.
+pub const WINDOW_ENV: &str = "COLLAB_ISOLATION_WINDOW";
+pub const WINDOW_FULL: &str = "full";
+
+/// Child-only setting of the CPU budget of the setup, in milliseconds (`[flow] setup_cpu_budget_ms`),
+/// set by the trusted host for every apply spawn. The worker accepts a value inside
+/// [`crate::setup_guard::SETUP_CPU_BUDGET_MS_RANGE`] and uses its default for anything else, so no
+/// value can switch the guard off.
+pub const SETUP_CPU_BUDGET_ENV: &str = "COLLAB_ISOLATION_SETUP_CPU_BUDGET_MS";
+
+/// Test seam: the per-text CPU budget of the setup, in milliseconds. Only a worker built with
+/// `debug_assertions` reads it (a release worker ignores it, so production cannot widen the budget);
+/// tests use it to keep a slow machine from tripping the 50 ms budget on a text that is cheap on
+/// the development machine.
+pub const TEXT_CPU_BUDGET_TEST_ENV: &str = "COLLAB_ISOLATION_TEXT_CPU_BUDGET_MS_TEST";
+
+/// The marker byte a worker writes when it opens its metered window, which also tells the host which
+/// setup guard, if any, fired in that worker: no guard, the allocation guard, the CPU guard, or the
+/// per-text guard. The host reads it for every attempt, accepted or refused, killed or not.
+pub const MARKER_NO_GUARD: u8 = 0xA5;
+const MARKER_ALLOCATION_GUARD: u8 = 0xA6;
+const MARKER_CPU_GUARD: u8 = 0xA7;
+const MARKER_TEXT_GUARD: u8 = 0xA8;
+
+/// The marker byte of a worker whose setup guard `fired` is the given one (or none).
+#[must_use]
+pub const fn marker_byte(fired: Option<Fired>) -> u8 {
+    match fired {
+        None => MARKER_NO_GUARD,
+        Some(Fired::Allocation) => MARKER_ALLOCATION_GUARD,
+        Some(Fired::Cpu) => MARKER_CPU_GUARD,
+        Some(Fired::Text) => MARKER_TEXT_GUARD,
+    }
+}
+
+/// The setup guard a marker byte names. Anything that is not one of the four markers is no guard:
+/// the field is telemetry, and an unknown byte never changes a verdict.
+#[must_use]
+pub const fn guard_of_marker(byte: u8) -> Option<Fired> {
+    match byte {
+        MARKER_ALLOCATION_GUARD => Some(Fired::Allocation),
+        MARKER_CPU_GUARD => Some(Fired::Cpu),
+        MARKER_TEXT_GUARD => Some(Fired::Text),
+        _ => None,
+    }
+}
 
 /// Response payload cap. Sized well above `bootstrap_response_bytes_max` (12 MiB,
 /// `contracts/limits-v1.md`) with headroom for a real exported document snapshot -- unlike
@@ -112,6 +169,11 @@ pub struct ReplayDiffRequest {
     pub to_frontier: Vec<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_updates_base64: Option<Vec<String>>,
+    /// The versioned package reader whose fingerprint the import window reads (`"v1"` to `"v5"`),
+    /// for the `import` operation. `"v5"` is the fingerprint of the projection itself and needs no
+    /// further read. Absent for every other operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_semantic_model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,7 +200,7 @@ pub struct ReplayDiffResult {
 pub fn package_reference_remap_required(engine: &crate::LoroCollabEngine) -> Result<bool, crate::CollabError> {
     let semantic = engine.semantic_snapshot()?;
     Ok(engine.minimum_editor_model()? >= 5
-        || !engine.navigator_order().is_empty()
+        || !engine.navigator_order()?.is_empty()
         || semantic.nodes.values().any(|node| {
             node.kind == crate::NodeKind::NavigatorNode
                 || ["embed_object_id", "child_page_id", "reference_id", "asset_id"]
@@ -170,10 +232,34 @@ pub fn decode_replay_diff_result(bytes: &[u8]) -> io::Result<ReplayDiffResult> {
 /// What the child reports back on a run that completes without being killed by a ceiling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    Success { snapshot: Vec<u8> },
+    /// `window_cpu_us` is the process CPU time (`CLOCK_PROCESS_CPUTIME_ID`, microseconds) the
+    /// worker spent between opening and closing its metered window. Telemetry only: it never
+    /// influences a verdict. `None` when the worker did not measure it (the diff operation, an
+    /// unreadable clock) or when an older worker produced the outcome.
+    ///
+    /// `window_report` is what the worker's incremental window check established about the
+    /// accepted document (`window_check::WindowReport`); `None` when the full computation decided.
+    /// The host compares it with its own projection of the accepted document.
+    ///
+    /// `touched_blocks` are the container ids of the editor blocks the update touched, sent only
+    /// with a report: the host measures the decode cost of their texts in the candidate document
+    /// (`LoroCollabEngine::first_text_over_budget`).
+    Success {
+        snapshot: Vec<u8>,
+        window_cpu_us: Option<u64>,
+        window_report: Option<WindowReport>,
+        touched_blocks: Vec<String>,
+    },
     Rejected(CollabError),
 }
 
+/// The encoding of a window CPU time that was not measured, when a report follows it.
+const NOT_MEASURED: u64 = u64::MAX;
+/// Flags of a success outcome: a window report follows.
+const FLAG_REPORT: u8 = 1;
+/// The most touched blocks a success outcome carries, and the longest container id of one.
+const MAX_TOUCHED_BLOCKS: u32 = 1_000_000;
+const MAX_CONTAINER_ID_BYTES: usize = 256;
 const TAG_SUCCESS: u8 = 0;
 const TAG_EMPTY_INPUT: u8 = 1;
 const TAG_INPUT_TOO_LARGE: u8 = 2;
@@ -203,6 +289,7 @@ fn static_str_from(value: &str) -> &'static str {
         "document_block_count" => "document_block_count",
         "text_block_chars" => "text_block_chars",
         "document_text_chars" => "document_text_chars",
+        "text_decode_cost" => "text_decode_cost",
         _ => "unknown",
     }
 }
@@ -216,9 +303,39 @@ fn static_str_from(value: &str) -> &'static str {
 pub fn encode_outcome(outcome: &Outcome) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     match outcome {
-        Outcome::Success { snapshot } => {
+        Outcome::Success {
+            snapshot,
+            window_cpu_us,
+            window_report,
+            touched_blocks,
+        } => {
             buf.push(TAG_SUCCESS);
             write_field(&mut buf, snapshot)?;
+            // The CPU time (`u64::MAX` standing for "not measured"), the flags, and the report when
+            // the flags say there is one.
+            write_u64(&mut buf, window_cpu_us.unwrap_or(NOT_MEASURED))?;
+            let mut flags = 0;
+            if window_report.is_some() {
+                flags |= FLAG_REPORT;
+            }
+            buf.push(flags);
+            if let Some(report) = window_report {
+                for value in [
+                    report.blocks,
+                    report.navigators,
+                    report.chars,
+                    report.depth_bound,
+                    report.longest_bound,
+                ] {
+                    write_u64(&mut buf, value)?;
+                }
+                let count = u32::try_from(touched_blocks.len())
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many touched blocks"))?;
+                write_u32(&mut buf, count)?;
+                for block in touched_blocks {
+                    write_str(&mut buf, block)?;
+                }
+            }
         }
         Outcome::Rejected(CollabError::EmptyInput { input }) => {
             buf.push(TAG_EMPTY_INPUT);
@@ -287,7 +404,40 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
     match tag_byte {
         TAG_SUCCESS => {
             let snapshot = read_field(&mut cursor, MAX_RESPONSE_PAYLOAD_BYTES)?;
-            Ok(Outcome::Success { snapshot })
+            let window_cpu_us = Some(read_u64(&mut cursor)?).filter(|micros| *micros != NOT_MEASURED);
+            let mut flag_byte = [0u8; 1];
+            cursor.read_exact(&mut flag_byte)?;
+            let [flags] = flag_byte;
+            if flags & !FLAG_REPORT != 0 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown outcome flags"));
+            }
+            let (window_report, touched_blocks) = if flags & FLAG_REPORT == 0 {
+                (None, Vec::new())
+            } else {
+                let report = WindowReport {
+                    blocks: read_u64(&mut cursor)?,
+                    navigators: read_u64(&mut cursor)?,
+                    chars: read_u64(&mut cursor)?,
+                    depth_bound: read_u64(&mut cursor)?,
+                    longest_bound: read_u64(&mut cursor)?,
+                };
+                let count = read_u32(&mut cursor)?;
+                if count > MAX_TOUCHED_BLOCKS {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "too many touched blocks"));
+                }
+                // Not `with_capacity(count)`: the count is the sender's claim.
+                let mut blocks = Vec::new();
+                for _ in 0..count {
+                    blocks.push(read_str(&mut cursor, MAX_CONTAINER_ID_BYTES)?);
+                }
+                (Some(report), blocks)
+            };
+            Ok(Outcome::Success {
+                snapshot,
+                window_cpu_us,
+                window_report,
+                touched_blocks,
+            })
         }
         TAG_EMPTY_INPUT => {
             let input = read_str(&mut cursor, 64)?;
@@ -344,6 +494,133 @@ pub fn decode_outcome(payload: &[u8]) -> io::Result<Outcome> {
     }
 }
 
+/// The first byte of the decision record the worker writes right after its marker byte, before it
+/// does the full computation (`WindowDecision`). Every response the worker completes is
+/// `marker, record, frame`; a worker killed by a ceiling after the record has still told the host
+/// what its window check decided.
+pub const DECISION_RECORD_TAG: u8 = 0xD5;
+
+/// What the worker's window check decided for one attempt, as the host learns it.
+///
+/// It is written to the wire as one stable byte ([`Self::to_wire`], an explicit table that does not
+/// depend on the order of the variants), so that a new `FallbackReason` cannot silently change the
+/// meaning of an existing code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowDecision {
+    /// The worker did not reach a decision: the import itself was refused or failed, the base did
+    /// not load, or this was not an apply. The host treats it as "not a sequential-gate fallback".
+    Undecided,
+    /// The incremental check accepted the update.
+    Incremental,
+    /// The incremental check refused the update with the full computation's own refusal (a total
+    /// over its limit, or the write of an existing node's id).
+    Refused,
+    /// The incremental check did not decide, for this reason, and the full computation did.
+    Fallback(FallbackReason),
+}
+
+const DECISION_UNDECIDED: u8 = 0;
+const DECISION_INCREMENTAL: u8 = 1;
+const DECISION_REFUSED: u8 = 2;
+const DECISION_FALLBACK_BASE: u8 = 16;
+
+const fn fallback_code(reason: FallbackReason) -> u8 {
+    DECISION_FALLBACK_BASE
+        + match reason {
+            FallbackReason::FactsAbsent => 0,
+            FallbackReason::StaleFacts => 1,
+            FallbackReason::GlobalStructure => 2,
+            FallbackReason::UnreadableInsert => 3,
+            FallbackReason::TreeStructure => 4,
+            FallbackReason::DuplicateLogicalId => 5,
+            FallbackReason::ResolvedNodeId => 6,
+            FallbackReason::IdRewritten => 7,
+            FallbackReason::NotSequential => 8,
+            FallbackReason::WorkBudget => 9,
+            FallbackReason::Unclassified => 10,
+            FallbackReason::KeyCollision => 11,
+            FallbackReason::InvalidUnit => 12,
+            FallbackReason::AliasLimit => 13,
+            FallbackReason::PresenceChange => 14,
+            FallbackReason::Inconsistent => 15,
+            FallbackReason::LimitReached => 16,
+        }
+}
+
+impl WindowDecision {
+    /// The stable wire code of this decision.
+    #[must_use]
+    pub const fn to_wire(self) -> u8 {
+        match self {
+            Self::Undecided => DECISION_UNDECIDED,
+            Self::Incremental => DECISION_INCREMENTAL,
+            Self::Refused => DECISION_REFUSED,
+            Self::Fallback(reason) => fallback_code(reason),
+        }
+    }
+
+    /// The decision a wire code names, or `None` for a code no worker writes.
+    #[must_use]
+    pub fn from_wire(code: u8) -> Option<Self> {
+        match code {
+            DECISION_UNDECIDED => Some(Self::Undecided),
+            DECISION_INCREMENTAL => Some(Self::Incremental),
+            DECISION_REFUSED => Some(Self::Refused),
+            _ => FallbackReason::ALL
+                .iter()
+                .copied()
+                .find(|reason| fallback_code(*reason) == code)
+                .map(Self::Fallback),
+        }
+    }
+
+    /// A short label for the host's log (`fallback:not_sequential`).
+    #[must_use]
+    pub fn label(self) -> String {
+        match self {
+            Self::Undecided => "undecided".to_owned(),
+            Self::Incremental => "incremental".to_owned(),
+            Self::Refused => "refused".to_owned(),
+            Self::Fallback(reason) => format!("fallback:{}", fallback_label(reason)),
+        }
+    }
+}
+
+fn fallback_label(reason: FallbackReason) -> String {
+    // The variant names are the stable vocabulary; `Debug` prints exactly them.
+    let name = format!("{reason:?}");
+    let mut label = String::with_capacity(name.len() + 4);
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                label.push('_');
+            }
+            label.push(ch.to_ascii_lowercase());
+        } else {
+            label.push(ch);
+        }
+    }
+    label
+}
+
+/// Splits the bytes a worker wrote after its marker byte into its decision record and the rest
+/// (the response frame, or nothing for a killed worker).
+///
+/// The record is present when the first byte is [`DECISION_RECORD_TAG`] and a second byte follows;
+/// the second byte must then be a code [`WindowDecision::from_wire`] knows, else the record is
+/// invalid (`Err`). Without a record the whole input is returned as the rest.
+///
+/// # Errors
+/// A tag byte followed by a code that names no decision.
+pub fn split_decision_record(bytes: &[u8]) -> Result<(Option<WindowDecision>, &[u8]), &'static str> {
+    match bytes {
+        [DECISION_RECORD_TAG, code, rest @ ..] => WindowDecision::from_wire(*code)
+            .map(|decision| (Some(decision), rest))
+            .ok_or("decision record carries an unknown code"),
+        _ => Ok((None, bytes)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,6 +649,7 @@ mod tests {
             from_frontier: vec![7],
             to_frontier: vec![8],
             package_updates_base64: None,
+            package_semantic_model: None,
         };
         let encoded = encode_replay_diff_request(&request).expect("request encodes");
         assert_eq!(decode_replay_diff_request(&encoded).expect("request decodes"), request);
@@ -394,12 +672,94 @@ mod tests {
 
     #[test]
     fn success_outcome_round_trips() {
-        let outcome = Outcome::Success {
-            snapshot: b"exported snapshot bytes".to_vec(),
+        for window_cpu_us in [None, Some(0), Some(13_980)] {
+            let outcome = Outcome::Success {
+                snapshot: b"exported snapshot bytes".to_vec(),
+                window_cpu_us,
+                window_report: None,
+                touched_blocks: Vec::new(),
+            };
+            let payload = encode_outcome(&outcome).expect("encode succeeds");
+            let decoded = decode_outcome(&payload).expect("decode succeeds");
+            assert_eq!(decoded, outcome);
+        }
+    }
+
+    #[test]
+    fn success_outcome_with_a_window_report_round_trips() {
+        let report = WindowReport {
+            blocks: 5_000,
+            navigators: 7,
+            chars: 123_456,
+            depth_bound: 3,
+            longest_bound: 99,
         };
-        let payload = encode_outcome(&outcome).expect("encode succeeds");
-        let decoded = decode_outcome(&payload).expect("decode succeeds");
-        assert_eq!(decoded, outcome);
+        for window_cpu_us in [None, Some(0), Some(13_980)] {
+            let outcome = Outcome::Success {
+                snapshot: b"exported snapshot bytes".to_vec(),
+                window_cpu_us,
+                window_report: Some(report),
+                touched_blocks: vec!["cid:1@2:Map".to_owned(), "cid:3@4:Map".to_owned()],
+            };
+            let payload = encode_outcome(&outcome).expect("encode succeeds");
+            assert_eq!(decode_outcome(&payload).expect("decode succeeds"), outcome);
+        }
+        // A report cut short is a corrupt payload, not a report with fewer fields.
+        let payload = encode_outcome(&Outcome::Success {
+            snapshot: b"snap".to_vec(),
+            window_cpu_us: Some(1),
+            window_report: Some(report),
+            touched_blocks: vec!["cid:1@2:Map".to_owned()],
+        })
+        .expect("encode succeeds");
+        for cut in 1..=48 {
+            let truncated = payload.get(..payload.len() - cut).expect("cut within the payload");
+            let decoded = decode_outcome(truncated);
+            assert!(
+                decoded.is_err(),
+                "a payload cut by {cut} bytes must not decode: {decoded:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_marker_byte_names_the_setup_guard_that_fired() {
+        let all = [None, Some(Fired::Allocation), Some(Fired::Cpu), Some(Fired::Text)];
+        let mut seen = std::collections::HashSet::new();
+        for fired in all {
+            let byte = marker_byte(fired);
+            assert!(seen.insert(byte), "{fired:?} shares its marker byte {byte:#x}");
+            assert_ne!(
+                byte, b'\n',
+                "a newline would split the marker write of a line-buffered stdout"
+            );
+            assert_eq!(guard_of_marker(byte), fired);
+        }
+        assert_eq!(marker_byte(None), MARKER_NO_GUARD);
+        // A byte no worker writes names no guard and changes no verdict.
+        assert_eq!(guard_of_marker(0), None);
+        assert_eq!(guard_of_marker(0xFF), None);
+    }
+
+    #[test]
+    fn success_outcome_with_unknown_flags_is_rejected() {
+        let mut payload = encode_outcome(&Outcome::Success {
+            snapshot: b"snap".to_vec(),
+            window_cpu_us: None,
+            window_report: None,
+            touched_blocks: Vec::new(),
+        })
+        .expect("encode succeeds");
+        *payload.last_mut().expect("a payload") = 0x80;
+        assert!(decode_outcome(&payload).is_err());
+    }
+
+    #[test]
+    fn success_outcome_with_a_truncated_telemetry_field_is_rejected() {
+        let mut payload = vec![TAG_SUCCESS];
+        write_field(&mut payload, b"snap").expect("write succeeds");
+        payload.extend_from_slice(&[1, 2, 3]);
+        assert!(decode_outcome(&payload).is_err());
     }
 
     #[test]
@@ -429,6 +789,7 @@ mod tests {
             "document_block_count",
             "text_block_chars",
             "document_text_chars",
+            "text_decode_cost",
         ] {
             let outcome = Outcome::Rejected(CollabError::LimitExceeded {
                 limit_kind,
@@ -461,5 +822,57 @@ mod tests {
         let mut cursor = buf.as_slice();
         let result = read_field(&mut cursor, 10);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn decision_record_round_trips_for_every_fallback_reason() {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut all = vec![
+            WindowDecision::Undecided,
+            WindowDecision::Incremental,
+            WindowDecision::Refused,
+        ];
+        all.extend(FallbackReason::ALL.iter().copied().map(WindowDecision::Fallback));
+        for decision in all {
+            let code = decision.to_wire();
+            assert!(seen.insert(code), "{decision:?} shares its wire code {code}");
+            assert_eq!(WindowDecision::from_wire(code), Some(decision));
+        }
+        assert_eq!(WindowDecision::from_wire(3), None);
+        assert_eq!(WindowDecision::from_wire(255), None);
+        // Pinned values: a code, once released, never changes meaning.
+        assert_eq!(WindowDecision::Fallback(FallbackReason::FactsAbsent).to_wire(), 16);
+        assert_eq!(WindowDecision::Fallback(FallbackReason::NotSequential).to_wire(), 24);
+        assert_eq!(WindowDecision::Fallback(FallbackReason::LimitReached).to_wire(), 32);
+        assert_eq!(
+            WindowDecision::Fallback(FallbackReason::NotSequential).label(),
+            "fallback:not_sequential"
+        );
+    }
+
+    #[test]
+    fn a_decision_record_splits_off_the_front_of_the_response() {
+        let not_sequential = WindowDecision::Fallback(FallbackReason::NotSequential);
+        let bytes = [DECISION_RECORD_TAG, not_sequential.to_wire(), 9, 9];
+        assert_eq!(
+            split_decision_record(&bytes).expect("a valid record"),
+            (Some(not_sequential), &[9u8, 9][..])
+        );
+        // A killed worker's bytes may hold the record and nothing else, or nothing at all.
+        assert_eq!(
+            split_decision_record(&bytes[..2]).expect("a valid record"),
+            (Some(not_sequential), &[][..])
+        );
+        assert_eq!(split_decision_record(&[]).expect("no record"), (None, &[][..]));
+        assert_eq!(
+            split_decision_record(&[DECISION_RECORD_TAG]).expect("a lone tag is no record"),
+            (None, &[DECISION_RECORD_TAG][..])
+        );
+        // A frame that does not start with the tag has no record.
+        assert_eq!(
+            split_decision_record(&[1, 2, 3]).expect("no record"),
+            (None, &[1u8, 2, 3][..])
+        );
+        assert!(split_decision_record(&[DECISION_RECORD_TAG, 200]).is_err());
     }
 }

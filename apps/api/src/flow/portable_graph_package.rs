@@ -40,6 +40,15 @@ const MAX_PAGES: usize = 16;
 const MAX_FORMS: usize = 16;
 const MAX_VERSIONS: u16 = 256;
 const MAX_RELATIONS: u16 = 256;
+/// The mark edits (a span cleared or set on a text) one package may make the replay of its
+/// versions apply, over all of its Pages. Every version of a Page that keeps its layout clears the
+/// spans of the version before and sets the spans of the next one on the same texts, and the style
+/// anchors of every edit stay in the text. The replay is the server's own CPU, so its work is
+/// bounded by a count that the package alone decides, refused before any replay (and at export, so
+/// that a package this product writes is one it reads again). 16,384 edits take about 2.5 s in an
+/// unoptimized build and a fraction of that in the release build; a history in which every version
+/// reformats 32 spans over 256 versions fits.
+const MAX_REPLAY_MARK_EDITS: u64 = 16_384;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -122,7 +131,7 @@ struct FormReference {
 }
 
 struct Candidate {
-    graph: Graph,
+    graph: std::sync::Arc<Graph>,
     hash: String,
     source_scope: Uuid,
     includes_history: bool,
@@ -165,6 +174,45 @@ fn history_limit() -> ApiError {
         None,
     )
 }
+fn replay_work_limit(observed: u64) -> ApiError {
+    ApiError::limit_exceeded(
+        "The versions of the package need more mark edits to replay than one package may carry",
+        "portable_graph_replay_work",
+        Some(json!(MAX_REPLAY_MARK_EDITS)),
+        Some(json!(observed)),
+        None,
+    )
+}
+
+/// The mark and text edits that [`frames`] applies to replay the versions of `page`: the spans of
+/// its first version, and for every later version either the edits of each block that changed
+/// (the spans cleared, the text replaced, the spans set) when it keeps the layout of the version
+/// before, or the spans of the blocks it inserts. Decided by the package's own data, the same way
+/// [`frames`] decides, so it is known before any engine runs.
+fn replay_mark_edits(page: &Page) -> u64 {
+    let spans = |blocks: &[Block]| blocks.iter().map(|block| block.spans.len() as u64).sum::<u64>();
+    let Some(first) = page.versions.first() else {
+        return 0;
+    };
+    let mut edits = spans(&first.blocks);
+    for (prior, version) in page.versions.iter().zip(page.versions.iter().skip(1)) {
+        if same_layout(prior, version, &prior.blocks, &version.blocks) {
+            for (before, after) in prior.blocks.iter().zip(&version.blocks) {
+                if before.text == after.text && before.spans == after.spans {
+                    continue;
+                }
+                edits += before.spans.len() as u64 + after.spans.len() as u64;
+                if before.text != after.text {
+                    edits += u64::from(!before.text.is_empty()) + u64::from(!after.text.is_empty());
+                }
+            }
+        } else {
+            edits += spans(&version.blocks);
+        }
+    }
+    edits
+}
+
 async fn enabled<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
     if !scope::capabilities(db).await?.portable_graph_packages_supported {
         return Err(ApiError::typed_with_details(
@@ -513,7 +561,7 @@ fn capture_retained(
     seq: i64,
     capture: &mut impl FnMut(&mut LoroCollabEngine, i64) -> Result<(), ApiError>,
 ) -> Result<(), ApiError> {
-    if engine.has_editor_doc() {
+    if engine.has_editor_doc().map_err(map)? {
         capture(engine, seq)
     } else {
         let mut clone = LoroCollabEngine::load(&engine.export_snapshot().map_err(map)?).map_err(map)?;
@@ -527,7 +575,7 @@ fn capture_version(
     source_recorded_at: Option<Timestamp>,
 ) -> Result<Version, ApiError> {
     let build = || {
-        if !selected.has_editor_doc() {
+        if !selected.has_editor_doc().map_err(map)? {
             selected.initialize_page_editor().map_err(map)?;
         }
         let mut blocks = read_blocks(&selected.semantic_snapshot().map_err(map)?)?;
@@ -710,6 +758,10 @@ fn validate(graph: &Graph, includes_history: bool) -> Result<(), ApiError> {
             return Err(invalid());
         }
     }
+    let replay_edits = graph.pages.iter().map(replay_mark_edits).sum::<u64>();
+    if replay_edits > MAX_REPLAY_MARK_EDITS {
+        return Err(replay_work_limit(replay_edits));
+    }
     let targets = graph
         .forms
         .iter()
@@ -770,7 +822,7 @@ fn decode(bytes: &[u8], expected: Option<&str>) -> Result<Candidate, ApiError> {
         uploads.insert(asset.id, upload);
     }
     Ok(Candidate {
-        graph,
+        graph: std::sync::Arc::new(graph),
         hash: verified.package_sha256,
         source_scope,
         includes_history,
@@ -841,10 +893,13 @@ pub async fn preview(
     } else {
         Vec::new()
     };
-    let plan = ImportPlan::new(graph);
-    for item in &graph.pages {
-        frames(item, &plan)?;
-    }
+    // The replay is validated (and bounded) here, off the executor; the frames are built again at
+    // import.
+    build_timelines(
+        std::sync::Arc::clone(&candidate.graph),
+        std::sync::Arc::new(ImportPlan::new(graph)),
+    )
+    .await?;
     let tx = db.begin().await?;
     enabled(&tx).await?;
     scope::fence_many_with_workspaces(&tx, &proofs, &workspace_proofs).await?;
@@ -1031,6 +1086,23 @@ fn frames(page: &Page, plan: &ImportPlan) -> Result<Vec<Frame>, ApiError> {
     Ok(frames)
 }
 
+/// Replays the versions of every Page of `graph` into frames, off the async executor: the replay is
+/// CPU work, bounded by [`MAX_REPLAY_MARK_EDITS`] (checked by [`validate`] before this runs).
+async fn build_timelines(
+    graph: std::sync::Arc<Graph>,
+    plan: std::sync::Arc<ImportPlan>,
+) -> Result<BTreeMap<Uuid, Vec<Frame>>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        graph
+            .pages
+            .iter()
+            .map(|page| Ok((page.id, frames(page, &plan)?)))
+            .collect()
+    })
+    .await
+    .map_err(|_| ApiError::internal())?
+}
+
 fn same_layout(prior: &Version, next: &Version, current: &[Block], expected: &[Block]) -> bool {
     prior.block_keys == next.block_keys
         && current.len() == expected.len()
@@ -1167,7 +1239,14 @@ async fn store_timeline(tx: &DatabaseTransaction, input: PagePromotion<'_>) -> R
         let registry = super::block_registry::prepare(&frame.semantic)?;
         body_assets::reconcile_accepted(tx, object, seq, &refs).await?;
         super::child_pages::reconcile_accepted(tx, object, Some(actor), seq, &child_refs).await?;
-        super::block_registry::reconcile_accepted(tx, object, seq, &registry).await?;
+        super::block_registry::reconcile_accepted(
+            tx,
+            object,
+            seq,
+            &registry,
+            super::block_registry::RegistrationAllowance::Complete,
+        )
+        .await?;
         if offset + 1 == source.versions.len() {
             if seq > 0 {
                 tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,
@@ -1207,13 +1286,9 @@ pub async fn import(
     }
     let mut candidate = decode(bytes, Some(expected))?;
     let graph = &candidate.graph;
-    let plan = ImportPlan::new(graph);
+    let plan = std::sync::Arc::new(ImportPlan::new(graph));
     let ordered = parent_order(graph)?;
-    let mut timelines = graph
-        .pages
-        .iter()
-        .map(|page| Ok((page.id, frames(page, &plan)?)))
-        .collect::<Result<BTreeMap<_, _>, ApiError>>()?;
+    let mut timelines = build_timelines(std::sync::Arc::clone(&candidate.graph), std::sync::Arc::clone(&plan)).await?;
     let body = json!({"operation":"portable_graph_import","parent_object_id":anchor,"package_sha256":expected});
     let tx = db.begin().await?;
     enabled(&tx).await?;
@@ -1344,4 +1419,132 @@ pub async fn import(
     .await?;
     tx.commit().await?;
     Ok(result)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+    use collab_core::page_inline::{InlineMark, InlineSpan};
+
+    fn version(index: u16, text: &str, spans: Vec<InlineSpan>) -> Version {
+        Version {
+            source_seq: i64::from(index),
+            source_recorded_at: None,
+            block_keys: vec!["0".repeat(64)],
+            title: "T".into(),
+            blocks: vec![Block {
+                source_cid: "b0".into(),
+                parent_cid: None,
+                preorder: 0,
+                content: Content::Paragraph,
+                text: text.into(),
+                spans,
+            }],
+        }
+    }
+
+    fn spans(count: usize) -> Vec<InlineSpan> {
+        (0..count)
+            .map(|k| InlineSpan {
+                start: 2 * k,
+                end: 2 * k + 1,
+                mark: InlineMark::Bold,
+                href: None,
+            })
+            .collect()
+    }
+
+    fn graph_of(versions: Vec<Version>) -> Graph {
+        Graph {
+            pages: vec![Page {
+                id: Uuid::new_v4(),
+                parent: None,
+                versions,
+                assets: Vec::new(),
+            }],
+            forms: Vec::new(),
+            edges: Vec::new(),
+            references: Vec::new(),
+        }
+    }
+
+    fn refusal_details(error: &ApiError) -> serde_json::Value {
+        assert_eq!(error.kind(), crate::error::ApiErrorKind::LimitExceeded, "{error:?}");
+        let ApiError::Typed { details, .. } = error else {
+            panic!("a typed error");
+        };
+        details.clone().expect("details")
+    }
+
+    /// A-3: 256 versions that alternately set and clear a bold span over every two characters of
+    /// one text make the replay apply 256 mark edits per version into the same text, which took
+    /// 19.6 s in an unoptimized build and was not metered. The package is refused before any
+    /// replay, naming the limit.
+    #[test]
+    fn a_history_that_toggles_marks_in_every_version_is_refused_before_any_replay() {
+        let text = "a".repeat(512);
+        let graph = graph_of(
+            (0..256u16)
+                .map(|i| version(i, &text, if i % 2 == 0 { spans(256) } else { Vec::new() }))
+                .collect(),
+        );
+        let error = validate(&graph, true).expect_err("the replay work must be bounded");
+        let details = refusal_details(&error);
+        assert_eq!(details["limit_kind"], "portable_graph_replay_work");
+        assert_eq!(details["limit"], MAX_REPLAY_MARK_EDITS);
+        assert!(details["observed"].as_u64().unwrap() > MAX_REPLAY_MARK_EDITS);
+    }
+
+    /// The variant that replaces the text of every version, which leaves style anchors over the
+    /// deleted text, is bounded by the same count.
+    #[test]
+    fn a_history_that_replaces_the_text_and_marks_in_every_version_is_refused() {
+        let (even, odd) = ("a".repeat(512), "b".repeat(512));
+        let graph = graph_of(
+            (0..256u16)
+                .map(|i| version(i, if i % 2 == 0 { &even } else { &odd }, spans(256)))
+                .collect(),
+        );
+        let details = refusal_details(&validate(&graph, true).expect_err("bounded"));
+        assert_eq!(details["limit_kind"], "portable_graph_replay_work");
+    }
+
+    /// The work counted is the work the replay does: every edit of every changed block, and the
+    /// count of the boundary is exact.
+    #[test]
+    fn the_replay_work_budget_is_exact_at_its_boundary() {
+        let at_limit = graph_of(vec![version(0, &"a".repeat(2), spans(1))]);
+        assert_eq!(replay_mark_edits(&at_limit.pages[0]), 1);
+        let count = usize::try_from(MAX_REPLAY_MARK_EDITS).unwrap();
+        let text = "a".repeat(2 * count + 1);
+        assert!(validate(&graph_of(vec![version(0, &text, spans(count))]), true).is_ok());
+        let error = validate(&graph_of(vec![version(0, &text, spans(count + 1))]), true).expect_err("one over");
+        assert_eq!(refusal_details(&error)["observed"], MAX_REPLAY_MARK_EDITS + 1);
+    }
+
+    /// An honest history is cheap: 256 versions that each change one word of a block with a few
+    /// spans stay far under the budget and replay in well under a second, in any build.
+    #[test]
+    fn an_honest_history_is_within_the_budget_and_replays() {
+        let versions = (0..256u16)
+            .map(|i| {
+                let text = format!("{}{}", "word ".repeat(8), i);
+                version(i, &text, spans(4))
+            })
+            .collect::<Vec<_>>();
+        let graph = graph_of(versions);
+        validate(&graph, true).expect("an honest history is accepted");
+        let edits = replay_mark_edits(&graph.pages[0]);
+        assert!(edits < MAX_REPLAY_MARK_EDITS / 4, "{edits}");
+        let plan = ImportPlan::new(&graph);
+        let started = std::time::Instant::now();
+        let frames = frames(&graph.pages[0], &plan).expect("an honest history replays");
+        assert_eq!(frames.len(), 256);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+    }
 }

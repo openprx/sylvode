@@ -10,13 +10,19 @@
 //! 2. Load the base document -- also unmetered: it is already-validated state this process is
 //!    only rehydrating, analogous to how the calibration host excludes `fork()` itself from its
 //!    window.
-//! 3. Write `host::RESPONSE_MARKER_BYTE` to stdout and flush -- the unmetered setup phase is now
-//!    over. This is the signal `isolation::host::read_response_two_phase` uses to start its own
+//!    The load is followed by `LoroCollabEngine::prewarm_for_writes`, still unmetered: it forces the
+//!    decoded state of the base's block list, alias map, order map and placement tree and builds
+//!    the root key index, work the import of an update would otherwise do inside the window. It
+//!    reaches no verdict and never sees the update.
+//! 3. Write the marker byte (`wire::marker_byte`: `host::RESPONSE_MARKER_BYTE`, or the byte that names
+//!    the setup guard that fired) to stdout and flush -- the unmetered setup phase is now over. A
+//!    fired guard (`setup_guard`) has the worker load and prewarm the base again first, so that the
+//!    full window meters the decode of the texts the setup decoded on the first engine. This is the signal `isolation::host::read_response_two_phase` uses to start its own
 //!    independent `decode_apply_wall_ms_max` watchdog from the *right* moment (the metered window
 //!    is about to open), not from whenever the full response happens to be ready. See
 //!    [`write_marker_or_exit`]'s doc comment for why this must happen here and not folded into the
 //!    final response write.
-//! 4. Arm the CPU-ceiling timer (`SIGPROF`/`ITIMER_PROF`) and the counting allocator. This opens
+//! 4. Arm the CPU-ceiling timer (`SIGPROF` from a `CLOCK_PROCESS_CPUTIME_ID` timer) and the counting allocator. This opens
 //!    the metered window.
 //! 5. `import_update` the untrusted update, compute the resulting `semantic_snapshot`, and run
 //!    `check_snapshot` against the frozen `contracts/limits-v1.md` structural ceilings -- decode +
@@ -27,8 +33,21 @@
 //!    validated in-memory state (the same reasoning that keeps step 2's `load` outside the window),
 //!    not on the untrusted input step 5 just finished validating, so it is not part of the budget
 //!    that bounds processing that untrusted input.
+//!    As soon as the window check has decided (before the full computation of a fallback runs) the
+//!    worker writes the two-byte decision record `[wire::DECISION_RECORD_TAG, code]`, so a worker
+//!    that a ceiling kills later has still told the host whether it fell back because the update
+//!    was not sequential. A response that did not pass through the check says `Undecided`.
 //! 7. Report the outcome back over stdout as a length/CRC32-framed payload (the marker byte was
-//!    already sent in step 3, so this is just the framed payload itself).
+//!    already sent in step 3 and the decision record in step 5, so this is just the framed payload
+//!    itself).
+//!
+//! The `import` operation (`wire::OPERATION_IMPORT`) is a different shape of the same boundary: the
+//! snapshot and the update tail of an uploaded document are untrusted from the first byte, so its
+//! metered window opens before the load and holds the load, the replay of every update, the scans
+//! of the whole history (reserved roots, tree references), the projection and `check_snapshot`,
+//! under the import-specific budget of `isolation::limits` (`IMPORT_*`). The export of the
+//! validated head, the title and the fingerprints are read after the window closes, from state the
+//! window validated, like the export of an accepted write. See [`import_check_and_encode`].
 //!
 //! If the process is killed by `SIGPROF` (step 4/5 overran the CPU ceiling), aborts itself via the
 //! counting allocator's rejection path (overran the memory ceiling, `SIGABRT`), or is `SIGKILL`ed
@@ -52,11 +71,19 @@ use std::io::Write;
 #[cfg(target_os = "linux")]
 use collab_core::error::CollabError;
 #[cfg(target_os = "linux")]
+use collab_core::facts::{BaseFacts, SetupFacts};
+#[cfg(target_os = "linux")]
 use collab_core::isolation::{alloc, child_runtime, host, wire};
 #[cfg(target_os = "linux")]
 use collab_core::limits::{DocumentLimits, check_snapshot};
 #[cfg(target_os = "linux")]
+use collab_core::setup_guard::{self, SetupGuard};
+#[cfg(target_os = "linux")]
+use collab_core::window_check::{self, WindowReport};
+#[cfg(target_os = "linux")]
 use collab_core::{CollabEngine, LoroCollabEngine};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "linux")]
 #[global_allocator]
@@ -68,7 +95,14 @@ fn main() {
     // allocator (a raw `mmap`, an FFI allocator) at any point in this process's life, not only
     // inside the metered window (`ADR-0014` section 10's `child.rs::apply_address_space_backstop`
     // reasoning, ported to this workload).
-    child_runtime::set_address_space_backstop();
+    // The operation is chosen by the trusted host in the environment, not read from the caller's
+    // bytes, so it can be read before them. Only the import operation gets the larger backstop.
+    let operation = std::env::var(wire::OPERATION_ENV).unwrap_or_else(|_| wire::OPERATION_APPLY.to_string());
+    if operation == wire::OPERATION_IMPORT {
+        child_runtime::set_address_space_backstop_for_import();
+    } else {
+        child_runtime::set_address_space_backstop();
+    }
 
     if !child_runtime::is_single_threaded() {
         // An invariant this process's own design guarantees (a freshly `exec`'d binary starts
@@ -84,30 +118,96 @@ fn main() {
         exit_without_response(1);
     };
 
-    let operation = std::env::var(wire::OPERATION_ENV).unwrap_or_else(|_| wire::OPERATION_APPLY.to_string());
     if operation == wire::OPERATION_DIFF {
-        write_marker_or_exit();
+        write_marker_or_exit(None);
         respond_and_exit(&replay_diff_check_and_encode(&base_snapshot, &update));
+    }
+    if operation == wire::OPERATION_IMPORT {
+        write_marker_or_exit(None);
+        respond_and_exit(&import_check_and_encode(&base_snapshot, &update));
     }
     if operation != wire::OPERATION_APPLY {
         exit_without_response(1);
     }
+
+    // The setup guard's count starts here, before the base is decoded. Its CPU budget is the host's
+    // setting (`[flow] setup_cpu_budget_ms`); a value outside the accepted range is the default.
+    let setup_guard = SetupGuard::start_with_cpu_budget(setup_guard::cpu_budget_nanos_from_setting(
+        std::env::var(wire::SETUP_CPU_BUDGET_ENV).ok().as_deref(),
+    ));
+    // Debug builds only (see `wire::TEXT_CPU_BUDGET_TEST_ENV`).
+    #[cfg(debug_assertions)]
+    let setup_guard = std::env::var(wire::TEXT_CPU_BUDGET_TEST_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(setup_guard, |millis| {
+            setup_guard.with_text_limits(
+                setup_guard::TEXT_ALLOCATION_LIMIT_BYTES,
+                millis.saturating_mul(1_000_000),
+            )
+        });
 
     // `LoroCollabEngine::load`'s error is reported via the normal response frame (it is a real,
     // well-typed `CollabError` a caller-facing rejection can be built from), not treated as a
     // host failure -- so this cannot be a `let...else` (clippy's suggested rewrite): the
     // divergent branch needs the `Err` payload, not just "diverge".
     #[allow(clippy::manual_let_else)]
-    let base_engine = match LoroCollabEngine::load(&base_snapshot) {
+    let first_engine = match LoroCollabEngine::load(&base_snapshot) {
         Ok(engine) => engine,
         Err(err) => {
-            write_marker_or_exit();
+            write_marker_or_exit(None);
             respond_and_exit(&wire::Outcome::Rejected(err));
         }
     };
 
-    write_marker_or_exit();
-    respond_and_exit(&decode_apply_check_and_export(base_engine, &update));
+    // Still setup: materialise the trusted base's containers that an update would otherwise make
+    // the metered import decode. No verdict is reached here and nothing depends on the update.
+    first_engine.prewarm_for_writes();
+    // Also setup: the facts of the trusted base that the incremental window check corrects by
+    // what the update touched (D2b). A pure function of the base; absent for a base the check does
+    // not describe, and then the window takes the full computation.
+    // The host can ask for the full computation (`wire::WINDOW_FULL`): then there are no facts, which
+    // is the same as a base the check does not describe. Nothing can ask for less checking.
+    // The setup guard counts the allocation of the whole setup, load and prewarm included (it was
+    // started before the load), and yields no facts when the setup has cost more than it allows:
+    // an ordinary outcome, the same as for a base the check does not describe.
+    let setup = if std::env::var(wire::WINDOW_ENV).as_deref() == Ok(wire::WINDOW_FULL) {
+        SetupFacts::none(None)
+    } else {
+        BaseFacts::compute_guarded(&first_engine, &setup_guard)
+    };
+
+    // A setup that read the page's texts and ended without facts (a fired guard, a page over the
+    // item budget, a snapshot over a limit) has decoded them on this engine, outside any window:
+    // the decode of a text is memoised in the document, so the full window that now decides the
+    // page would find it paid for and never meter it. The window starts from a fresh load instead,
+    // exactly as the worker did before the incremental window existed, so the decode is metered
+    // again and a text whose decode alone passes the CPU ceiling is refused with the content
+    // limit. The first engine is dropped before the reload, so two engines never share the
+    // address-space limit. The reload is bounded by the snapshot.
+    let base_engine = if setup.needs_fresh_engine() {
+        drop(first_engine);
+        match LoroCollabEngine::load(&base_snapshot) {
+            Ok(fresh) => {
+                fresh.prewarm_for_writes();
+                fresh
+            }
+            Err(err) => {
+                write_marker_or_exit(setup.guard);
+                respond_and_exit(&wire::Outcome::Rejected(err));
+            }
+        }
+    } else {
+        first_engine
+    };
+
+    // Test builds only: a synthetic setup that sleeps or burns CPU, to exercise the host's setup
+    // timeout. Nothing in a release build.
+    #[cfg(debug_assertions)]
+    test_injection::run_setup_workload();
+
+    write_marker_or_exit(setup.guard);
+    respond_and_exit(&decode_apply_check_and_export(base_engine, &setup, &update));
 }
 
 #[cfg(target_os = "linux")]
@@ -120,7 +220,12 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
 
     match outcome {
         Ok(result) => match wire::encode_replay_diff_result(&result) {
-            Ok(snapshot) => wire::Outcome::Success { snapshot },
+            Ok(snapshot) => wire::Outcome::Success {
+                snapshot,
+                window_cpu_us: None,
+                window_report: None,
+                touched_blocks: Vec::new(),
+            },
             Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
                 reason: format!("diff result encoding failed: {error}"),
             }),
@@ -129,54 +234,193 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
     }
 }
 
+/// The import operation: the whole of one uploaded document is untrusted, so the metered window
+/// opens before `load` and the import-specific budget bounds everything up to and including
+/// `check_snapshot`. The head is exported and the fingerprints are read after the window closes,
+/// from the engine the window validated (see the module documentation).
+#[cfg(target_os = "linux")]
+fn import_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> wire::Outcome {
+    child_runtime::arm_sigprof_for_import();
+    alloc::arm_for_import();
+    #[cfg(debug_assertions)]
+    test_injection::note_window_open();
+    let validated = import_replay(base_snapshot, request_bytes);
+    child_runtime::disarm_sigprof();
+    alloc::disarm();
+    // Test builds only: CPU burned after the window closed (see `run_metered`).
+    #[cfg(debug_assertions)]
+    test_injection::run_post_window_workload();
+
+    let outcome =
+        validated.and_then(|(engine, semantic, fingerprints)| import_result(&engine, semantic, &fingerprints));
+    match outcome {
+        Ok(result) => match wire::encode_replay_diff_result(&result) {
+            Ok(snapshot) => wire::Outcome::Success {
+                snapshot,
+                window_cpu_us: None,
+                window_report: None,
+                touched_blocks: Vec::new(),
+            },
+            Err(error) => wire::Outcome::Rejected(CollabError::OperationFailed {
+                reason: format!("import result encoding failed: {error}"),
+            }),
+        },
+        Err(error) => wire::Outcome::Rejected(error),
+    }
+}
+
+/// The metered part of the import: decode the request, load the snapshot, replay the update tail
+/// causally, require the replayed head to be the accepted frontier, scan the whole history for
+/// shadow roots and unresolved tree references, project and check the content limits.
+#[cfg(target_os = "linux")]
+fn import_replay(
+    base_snapshot: &[u8],
+    request_bytes: &[u8],
+) -> Result<(LoroCollabEngine, collab_core::SemanticSnapshot, Fingerprints), CollabError> {
+    use base64::Engine;
+
+    #[cfg(debug_assertions)]
+    if let Some(workload) = test_injection::workload_from_env() {
+        // Test builds only: a synthetic workload under the import budget. It ends in a refusal the
+        // tests recognise, so a ceiling that did not fire is distinguishable from one that did.
+        test_injection::run(&workload, LoroCollabEngine::new_empty(1));
+        return Err(CollabError::OperationFailed {
+            reason: "injected_workload_finished".into(),
+        });
+    }
+    let request = wire::decode_replay_diff_request(request_bytes).map_err(|error| CollabError::DecodeFailed {
+        input: "update",
+        reason: format!("import request is invalid: {error}"),
+    })?;
+    let updates = request
+        .package_updates_base64
+        .ok_or_else(|| CollabError::OperationFailed {
+            reason: "the import operation requires the package update tail".into(),
+        })?;
+    let mut engine = LoroCollabEngine::load(base_snapshot)?;
+    for encoded in updates {
+        let update = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|error| CollabError::DecodeFailed {
+                input: "update",
+                reason: error.to_string(),
+            })?;
+        engine.import_update_causally_complete(&update)?;
+    }
+    if !LoroCollabEngine::frontiers_equivalent(&request.from_frontier, &request.to_frontier)?
+        || !engine.matches_frontier(&request.to_frontier)
+    {
+        return Err(CollabError::OperationFailed {
+            reason: "package accepted frontier does not match replayed head".into(),
+        });
+    }
+    // Uploaded history, never replayed from this server's own storage: no reserved root of the
+    // wrong type anywhere in it, and no tree op that names a parent that does not exist when it
+    // runs (it would panic every subscribed client).
+    engine.refuse_shadow_roots()?;
+    engine.refuse_unresolved_tree_parents_in_history()?;
+    let semantic = engine.semantic_snapshot()?;
+    check_snapshot(&semantic, &DocumentLimits::default()).map_err(CollabError::from)?;
+    // The fingerprint of the versioned reader the manifest names, a projection of the validated
+    // document read in the window, so that no format version of a package needs a path outside it.
+    let fingerprints = match request.package_semantic_model.as_deref() {
+        Some("v1") => Fingerprints::V1(engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
+        Some("v2") => Fingerprints::V2(engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
+        Some("v3") => Fingerprints::V3(engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
+        Some("v4") if engine.minimum_editor_model()? <= 4 => {
+            Fingerprints::V4(engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
+        }
+        Some("v4" | "v5") => Fingerprints::None,
+        _ => {
+            return Err(CollabError::OperationFailed {
+                reason: "the import operation requires a known package semantic model".into(),
+            });
+        }
+    };
+    Ok((engine, semantic, fingerprints))
+}
+
+/// The fingerprint the import window read of the validated document, for the model the request
+/// named.
+#[cfg(target_os = "linux")]
+enum Fingerprints {
+    V1(String),
+    V2(String),
+    V3(String),
+    V4(String),
+    /// The model needs no read beyond the projection (`v5`), or is not readable for this
+    /// document (`v4` of a document that needs a newer editor model).
+    None,
+}
+
+#[cfg(target_os = "linux")]
+impl Fingerprints {
+    fn v1(&self) -> Option<String> {
+        match self {
+            Self::V1(hash) => Some(hash.clone()),
+            _ => None,
+        }
+    }
+    fn v2(&self) -> Option<String> {
+        match self {
+            Self::V2(hash) => Some(hash.clone()),
+            _ => None,
+        }
+    }
+    fn v3(&self) -> Option<String> {
+        match self {
+            Self::V3(hash) => Some(hash.clone()),
+            _ => None,
+        }
+    }
+    fn v4(&self) -> Option<String> {
+        match self {
+            Self::V4(hash) => Some(hash.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// The answer of an accepted import: the window's own reads and the rest, read from the engine the
+/// window validated.
+#[cfg(target_os = "linux")]
+fn import_result(
+    engine: &LoroCollabEngine,
+    semantic: collab_core::SemanticSnapshot,
+    fingerprints: &Fingerprints,
+) -> Result<wire::ReplayDiffResult, CollabError> {
+    use base64::Engine;
+
+    let title = engine.title()?;
+    let snapshot = engine.export_snapshot()?;
+    Ok(wire::ReplayDiffResult {
+        semantic_diff: collab_core::SemanticDiff::default(),
+        to_snapshot: semantic,
+        from_title: title.clone(),
+        to_title: title,
+        legacy_package_semantic_hash_v1: fingerprints.v1(),
+        legacy_package_semantic_hash_v2: fingerprints.v2(),
+        legacy_package_semantic_hash_v3: fingerprints.v3(),
+        legacy_package_semantic_hash_v4: fingerprints.v4(),
+        package_reference_remap_required: Some(wire::package_reference_remap_required(engine)?),
+        validated_head_snapshot_base64: Some(base64::engine::general_purpose::STANDARD.encode(snapshot)),
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::ReplayDiffResult, CollabError> {
     let request = wire::decode_replay_diff_request(request_bytes).map_err(|error| CollabError::DecodeFailed {
         input: "update",
         reason: format!("diff request is invalid: {error}"),
     })?;
-    let mut engine = LoroCollabEngine::load(base_snapshot)?;
-    if let Some(updates) = request.package_updates_base64 {
-        use base64::Engine;
-        for encoded in updates {
-            let update =
-                base64::engine::general_purpose::STANDARD
-                    .decode(encoded)
-                    .map_err(|e| CollabError::DecodeFailed {
-                        input: "update",
-                        reason: e.to_string(),
-                    })?;
-            engine.import_update_causally_complete(&update)?;
-        }
-        if !LoroCollabEngine::frontiers_equivalent(&request.from_frontier, &request.to_frontier)?
-            || !engine.matches_frontier(&request.to_frontier)
-        {
-            return Err(CollabError::OperationFailed {
-                reason: "package accepted frontier does not match replayed head".into(),
-            });
-        }
-        let semantic = engine.semantic_snapshot()?;
-        check_snapshot(&semantic, &DocumentLimits::default()).map_err(CollabError::from)?;
-        let title = engine.title()?;
-        let snapshot = engine.export_snapshot()?;
-        return Ok(wire::ReplayDiffResult {
-            semantic_diff: collab_core::SemanticDiff::default(),
-            to_snapshot: semantic,
-            from_title: title.clone(),
-            to_title: title,
-            legacy_package_semantic_hash_v1: Some(engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
-            legacy_package_semantic_hash_v2: Some(engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
-            legacy_package_semantic_hash_v3: Some(engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
-            legacy_package_semantic_hash_v4: if engine.minimum_editor_model()? <= 4 {
-                Some(engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
-            } else {
-                None
-            },
-            package_reference_remap_required: Some(wire::package_reference_remap_required(&engine)?),
-            validated_head_snapshot_base64: Some(base64::engine::general_purpose::STANDARD.encode(snapshot)),
+    // The replay of an uploaded package is the `import` operation, under its own budget and with the
+    // scans of an upload: the diff of retained history never carries package updates.
+    if request.package_updates_base64.is_some() {
+        return Err(CollabError::OperationFailed {
+            reason: "package updates are imported with the import operation".into(),
         });
     }
-
+    let mut engine = LoroCollabEngine::load(base_snapshot)?;
     if !engine.matches_frontier(&request.snapshot_frontier) {
         return Err(CollabError::OperationFailed {
             reason: "snapshot frontier does not match the retained history".to_string(),
@@ -225,7 +469,8 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
     })
 }
 
-/// Writes [`host::RESPONSE_MARKER_BYTE`] and flushes, marking the exact moment this process's
+/// Writes the marker byte (`wire::marker_byte`: [`host::RESPONSE_MARKER_BYTE`] when no setup guard
+/// fired, and a byte that names the guard that did) and flushes, marking the exact moment this process's
 /// unmetered setup (reading the request, loading the base document) is over. Split out from
 /// [`respond_and_exit`] -- an earlier version of this file wrote the marker together with the
 /// final framed response, which made `isolation::host::read_response_two_phase`'s
@@ -242,13 +487,45 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
 /// failure in `main` does -- a write failure this early means the parent cannot receive a useful
 /// response of any shape.
 #[cfg(target_os = "linux")]
-fn write_marker_or_exit() {
+fn write_marker_or_exit(setup_guard: Option<collab_core::setup_guard::Fired>) {
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
-    if lock.write_all(&[host::RESPONSE_MARKER_BYTE]).is_err() || lock.flush().is_err() {
+    if lock.write_all(&[wire::marker_byte(setup_guard)]).is_err() || lock.flush().is_err() {
         drop(lock);
         exit_without_response(1);
     }
+}
+
+/// Set once the decision record has been written, so that [`respond_and_exit`] writes the
+/// `Undecided` record only when the window check never decided.
+#[cfg(target_os = "linux")]
+static DECISION_WRITTEN: AtomicBool = AtomicBool::new(false);
+
+/// Tells the host what the window check decided, as soon as it has decided: two bytes,
+/// [`wire::DECISION_RECORD_TAG`] and the decision's wire code, in one `write(2)` from a stack
+/// array. It runs inside the armed metered window, so it must not allocate (the counting allocator
+/// is armed) and takes no lock. A worker killed by a ceiling after this point has still told the
+/// host the decision.
+///
+/// A failed or short write is ignored: the host then sees no record, which for a worker that
+/// completes is a protocol failure and for a killed worker is "no decision known".
+#[cfg(target_os = "linux")]
+fn write_decision_record(decision: wire::WindowDecision) {
+    let record = [wire::DECISION_RECORD_TAG, decision.to_wire()];
+    DECISION_WRITTEN.store(true, Ordering::Relaxed);
+    // The unit tests of this binary run the window in the test process, whose stdout is not a host's
+    // pipe: nothing is written there.
+    #[cfg(not(test))]
+    // SAFETY: `record` is a live, initialised two-byte array on this stack frame, so the pointer is
+    // valid for reads of `record.len()` bytes for the whole call. File descriptor 1 is this
+    // process's stdout, which stays open until `_exit`; `std`'s stdout buffer is empty here (the
+    // marker byte was flushed) and is only used again after this record, so the bytes stay in
+    // order.
+    unsafe {
+        libc::write(1, record.as_ptr().cast::<libc::c_void>(), record.len());
+    }
+    #[cfg(test)]
+    let _ = record;
 }
 
 /// Everything between arming the metered window and closing it: `import_update`, deriving the
@@ -266,13 +543,55 @@ fn write_marker_or_exit() {
 /// not just this one test's work. The real armed path is only ever exercised by spawning the
 /// actual compiled worker binary as a subprocess, which `isolation::host`'s own tests do.
 #[cfg(target_os = "linux")]
-fn run_metered(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
+fn run_metered(engine: LoroCollabEngine, facts: Option<&BaseFacts>, update: &[u8]) -> Metered {
     child_runtime::arm_sigprof();
     alloc::arm();
-    let outcome = metered_workload(engine, update);
+    #[cfg(debug_assertions)]
+    test_injection::note_window_open();
+    // Telemetry only: two process-CPU clock reads bracket the workload. They do not allocate and
+    // take no part in the verdict or in the `SIGPROF` ceiling.
+    let cpu_before = process_cpu_micros();
+    let outcome = metered_workload(engine, facts, update);
+    let cpu_after = process_cpu_micros();
     child_runtime::disarm_sigprof();
     alloc::disarm();
-    outcome
+    // Test builds only: CPU burned after the window closed, to prove the closed window is not
+    // metered. Nothing in a release build.
+    #[cfg(debug_assertions)]
+    test_injection::run_post_window_workload();
+    let window_cpu_us = match (cpu_before, cpu_after) {
+        (Some(before), Some(after)) => Some(after.saturating_sub(before)),
+        _ => None,
+    };
+    Metered {
+        verdict: outcome,
+        window_cpu_us,
+    }
+}
+
+/// What the metered window produced.
+#[cfg(target_os = "linux")]
+struct Metered {
+    /// The accepted engine and what the incremental check established, or the rejection.
+    verdict: Result<(LoroCollabEngine, Option<WindowReport>, Vec<String>), wire::Outcome>,
+    window_cpu_us: Option<u64>,
+}
+
+/// Process CPU time (user plus system, `CLOCK_PROCESS_CPUTIME_ID`) in microseconds -- the clock
+/// the CPU timer and `decode_apply_cpu_ms_max` track. `None` only if the clock cannot be read.
+#[cfg(target_os = "linux")]
+fn process_cpu_micros() -> Option<u64> {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `&raw mut ts` is a valid, properly aligned out-pointer for a `timespec`;
+    // `CLOCK_PROCESS_CPUTIME_ID` is a clock id supported by every Linux kernel this workspace
+    // targets. No precondition beyond the pointer's validity.
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut ts) };
+    if rc != 0 {
+        return None;
+    }
+    let secs = u64::try_from(ts.tv_sec).ok()?;
+    let nanos = u64::try_from(ts.tv_nsec).ok()?;
+    secs.checked_mul(1_000_000)?.checked_add(nanos / 1_000)
 }
 
 /// The work that actually runs inside the armed metered window. In every `--release` build (this
@@ -282,33 +601,34 @@ fn run_metered(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngi
 /// controllable synthetic workload for the real decode/apply/validate pipeline, still inside this
 /// exact arm/disarm pair.
 #[cfg(target_os = "linux")]
-fn metered_workload(engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
+fn metered_workload(
+    engine: LoroCollabEngine,
+    facts: Option<&BaseFacts>,
+    update: &[u8],
+) -> Result<(LoroCollabEngine, Option<WindowReport>, Vec<String>), wire::Outcome> {
     #[cfg(debug_assertions)]
     if let Some(workload) = test_injection::workload_from_env() {
-        return Ok(test_injection::run(&workload, engine));
+        return Ok((test_injection::run(&workload, engine), None, Vec::new()));
     }
-    decode_apply_and_check(engine, update)
+    decode_apply_and_check(engine, facts, update)
 }
 
 /// The pure decode/apply/shape-validate logic, with no timer or allocator side effects of its own
 /// -- safe to unit test directly (see [`run_metered`]'s doc comment for why that function itself
 /// is not).
 #[cfg(target_os = "linux")]
-fn decode_apply_and_check(mut engine: LoroCollabEngine, update: &[u8]) -> Result<LoroCollabEngine, wire::Outcome> {
-    if let Err(err) = engine.import_update_causally_complete(update) {
-        return Err(wire::Outcome::Rejected(err));
+fn decode_apply_and_check(
+    mut engine: LoroCollabEngine,
+    facts: Option<&BaseFacts>,
+    update: &[u8],
+) -> Result<(LoroCollabEngine, Option<WindowReport>, Vec<String>), wire::Outcome> {
+    // Import, then the structural check of the result: incrementally against the base facts when
+    // that is certain, with the full projection and `check_snapshot` otherwise. Every refusal is
+    // the full computation's own.
+    match window_check::run_window(&mut engine, facts, update, &mut write_decision_record) {
+        Ok(accepted) => Ok((engine, accepted.report, accepted.touched_blocks)),
+        Err(err) => Err(wire::Outcome::Rejected(err)),
     }
-
-    let semantic = match engine.semantic_snapshot() {
-        Ok(semantic) => semantic,
-        Err(err) => return Err(wire::Outcome::Rejected(err)),
-    };
-
-    if let Err(violation) = check_snapshot(&semantic, &DocumentLimits::default()) {
-        return Err(wire::Outcome::Rejected(CollabError::from(violation)));
-    }
-
-    Ok(engine)
 }
 
 /// Composes [`run_metered`] with the unmetered `export_snapshot` step that follows it, producing
@@ -326,10 +646,16 @@ fn decode_apply_and_check(mut engine: LoroCollabEngine, update: &[u8]) -> Result
 /// inside the window (as an earlier version of this file did) was spending real budget on work the
 /// contract does not ask this ceiling to bound.
 #[cfg(target_os = "linux")]
-fn decode_apply_check_and_export(engine: LoroCollabEngine, update: &[u8]) -> wire::Outcome {
-    match run_metered(engine, update) {
-        Ok(accepted) => match accepted.export_snapshot() {
-            Ok(snapshot) => wire::Outcome::Success { snapshot },
+fn decode_apply_check_and_export(engine: LoroCollabEngine, setup: &SetupFacts, update: &[u8]) -> wire::Outcome {
+    let Metered { verdict, window_cpu_us } = run_metered(engine, setup.facts.as_ref(), update);
+    match verdict {
+        Ok((accepted, window_report, touched_blocks)) => match accepted.export_snapshot() {
+            Ok(snapshot) => wire::Outcome::Success {
+                snapshot,
+                window_cpu_us,
+                window_report,
+                touched_blocks,
+            },
             Err(err) => wire::Outcome::Rejected(err),
         },
         Err(outcome) => outcome,
@@ -345,6 +671,11 @@ fn decode_apply_check_and_export(engine: LoroCollabEngine, update: &[u8]) -> wir
 /// there and not here.
 #[cfg(target_os = "linux")]
 fn respond_and_exit(outcome: &wire::Outcome) -> ! {
+    // Every completed response is `marker, decision record, frame`. A response that did not pass
+    // through the window check (a refused import, a failed base load, a diff) says `Undecided`.
+    if !DECISION_WRITTEN.load(Ordering::Relaxed) {
+        write_decision_record(wire::WindowDecision::Undecided);
+    }
     let payload = wire::encode_outcome(outcome).unwrap_or_default();
     let Ok(framed) = host::encode_response_frame(&payload) else {
         exit_without_response(1);
@@ -423,6 +754,15 @@ mod test_injection {
         /// exact byte, which real document content cannot reach (see this module's own doc
         /// comment).
         AllocBytes(usize),
+        /// Writes the decision record for this wire code, then burns this many microseconds of CPU
+        /// time: a ceiling kill that comes after the record.
+        DecisionThenBurn(u8, u64),
+        /// Writes the decision record for this wire code, then sleeps this many milliseconds: a
+        /// wall kill that comes after the record.
+        DecisionThenSleep(u8, u64),
+        /// Burns `.0` microseconds of CPU time inside the window, and `.1` more after the window
+        /// has closed (see [`run_post_window_workload`]): the closed window must not be metered.
+        BurnThenPostWindowBurn(u64, u64),
     }
 
     /// Parses [`ENV_VAR`] into a [`Workload`], if set and well-formed. Any absence or parse
@@ -436,12 +776,50 @@ mod test_injection {
             "cpu_burn_micros" => value.parse().ok().map(Workload::CpuBurnMicros),
             "wall_sleep_millis" => value.parse().ok().map(Workload::WallSleepMillis),
             "alloc_bytes" => value.parse().ok().map(Workload::AllocBytes),
+            "decision_then_burn" => {
+                let (code, micros) = value.split_once(':')?;
+                Some(Workload::DecisionThenBurn(code.parse().ok()?, micros.parse().ok()?))
+            }
+            "burn_then_post_window_burn" => {
+                let (inside, after) = value.split_once(':')?;
+                Some(Workload::BurnThenPostWindowBurn(
+                    inside.parse().ok()?,
+                    after.parse().ok()?,
+                ))
+            }
+            "decision_then_sleep" => {
+                let (code, millis) = value.split_once(':')?;
+                Some(Workload::DecisionThenSleep(code.parse().ok()?, millis.parse().ok()?))
+            }
             _ => None,
         }
     }
 
+    /// The synthetic setup of the debug build, run before the marker byte (so before the metered
+    /// window): `setup_sleep_millis=<n>` sleeps, `setup_burn_micros=<n>` burns that much CPU time.
+    /// Nothing happens without [`ENV_VAR`] naming one of them.
+    pub fn run_setup_workload() {
+        let Some(raw) = std::env::var(ENV_VAR).ok() else { return };
+        let Some((kind, value)) = raw.split_once('=') else {
+            return;
+        };
+        match kind {
+            "setup_sleep_millis" => {
+                if let Ok(millis) = value.parse() {
+                    std::thread::sleep(Duration::from_millis(millis));
+                }
+            }
+            "setup_burn_micros" => {
+                if let Ok(micros) = value.parse() {
+                    burn_cpu_micros(micros);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Reads `CLOCK_PROCESS_CPUTIME_ID` -- the same POSIX clock `contracts/limits-v1.md`'s
-    /// `decode_apply_cpu_ms_max` and `ITIMER_PROF` (`child_runtime::arm_sigprof`) both track (user
+    /// `decode_apply_cpu_ms_max` and the CPU timer (`child_runtime::arm_sigprof`) both track (user
     /// and system CPU time combined, not wall clock). `None` only if the kernel does not support
     /// this clock id, which does not happen on any Linux this workspace targets.
     fn cpu_time_now() -> Option<Duration> {
@@ -456,6 +834,40 @@ mod test_injection {
         let secs = u64::try_from(ts.tv_sec).ok()?;
         let nanos = u32::try_from(ts.tv_nsec).ok()?;
         Some(Duration::new(secs, nanos))
+    }
+
+    /// The process CPU time at which the metered window opened, in nanoseconds; 0 when none has.
+    static WINDOW_OPEN_CPU_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// Records the process CPU time at the moment the window opened (called right after the timer
+    /// is armed), so a burn inside the window is counted from there: the window then holds the
+    /// burn and only the loop's own granularity on top, whatever the synthetic workload spent
+    /// before it (an engine created for it, say). A test of a ceiling "1 ms under" needs that.
+    pub fn note_window_open() {
+        if let Some(now) = cpu_time_now() {
+            let nanos = u64::try_from(now.as_nanos()).unwrap_or(u64::MAX);
+            WINDOW_OPEN_CPU_NANOS.store(nanos.max(1), std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Burns until `target_micros` of CPU time have passed since the window opened (see
+    /// [`note_window_open`]); from now on when no window has been noted.
+    fn burn_cpu_micros_in_window(target_micros: u64) {
+        let opened = WINDOW_OPEN_CPU_NANOS.load(std::sync::atomic::Ordering::SeqCst);
+        if opened == 0 {
+            return burn_cpu_micros(target_micros);
+        }
+        let target = Duration::from_micros(target_micros);
+        let start = Duration::from_nanos(opened);
+        loop {
+            for spin in 0..1_000u64 {
+                std::hint::black_box(spin);
+            }
+            let Some(now) = cpu_time_now() else { return };
+            if now.saturating_sub(start) >= target {
+                return;
+            }
+        }
     }
 
     /// Spins until this process has burned at least `target_micros` of its own CPU time (or until
@@ -477,6 +889,22 @@ mod test_injection {
         }
     }
 
+    /// Called right after the metered window has closed: burns the post-window part of a
+    /// `burn_then_post_window_burn=<inside>:<after>` workload. The CPU timer is deleted by then,
+    /// so this burn must never kill the worker, however much budget the window already used.
+    pub fn run_post_window_workload() {
+        if let Some(Workload::BurnThenPostWindowBurn(_, after)) = workload_from_env() {
+            burn_cpu_micros(after);
+        }
+    }
+
+    /// Writes the decision record for `code`, as the window check does when it has decided. An
+    /// unknown code is written as `Undecided`.
+    fn tell_host(code: u8) {
+        let decision = super::wire::WindowDecision::from_wire(code).unwrap_or(super::wire::WindowDecision::Undecided);
+        super::write_decision_record(decision);
+    }
+
     /// Runs `workload` inside the caller's already-armed metered window ([`super::run_metered`]
     /// calls this, via [`super::metered_workload`], between `arm_sigprof`/`alloc::arm` and
     /// `disarm_sigprof`/`alloc::disarm` -- exactly where it would otherwise call
@@ -496,10 +924,24 @@ mod test_injection {
     pub fn run(workload: &Workload, engine: LoroCollabEngine) -> LoroCollabEngine {
         match *workload {
             Workload::CpuBurnMicros(micros) => {
-                burn_cpu_micros(micros);
+                burn_cpu_micros_in_window(micros);
                 engine
             }
             Workload::WallSleepMillis(millis) => {
+                std::thread::sleep(Duration::from_millis(millis));
+                engine
+            }
+            Workload::DecisionThenBurn(code, micros) => {
+                tell_host(code);
+                burn_cpu_micros_in_window(micros);
+                engine
+            }
+            Workload::BurnThenPostWindowBurn(inside, _) => {
+                burn_cpu_micros_in_window(inside);
+                engine
+            }
+            Workload::DecisionThenSleep(code, millis) => {
+                tell_host(code);
                 std::thread::sleep(Duration::from_millis(millis));
                 engine
             }
@@ -541,10 +983,24 @@ mod tests {
         writer.set_title("hello").expect("set_title succeeds");
         let update = writer.export_from(&base_frontier).expect("export succeeds");
 
-        let outcome = decode_apply_check_and_export(base, &update);
-        let wire::Outcome::Success { snapshot } = outcome else {
+        let setup = BaseFacts::compute_guarded(&base, &SetupGuard::start());
+        let outcome = decode_apply_check_and_export(base, &setup, &update);
+        let wire::Outcome::Success {
+            snapshot,
+            window_cpu_us,
+            window_report,
+            touched_blocks,
+        } = outcome
+        else {
             panic!("expected Success, a title-only update stays well within every ceiling");
         };
+        assert!(window_cpu_us.is_some(), "the worker reports the window CPU time");
+        assert!(setup.guard.is_none(), "a tiny base never trips a setup guard");
+        assert!(touched_blocks.is_empty(), "a title touches no block");
+        assert!(
+            window_report.is_some(),
+            "a title-only update on a tree page is decided by the incremental check"
+        );
         let reloaded = LoroCollabEngine::load(&snapshot).expect("exported snapshot reloads");
         assert_eq!(reloaded.title().expect("title reads"), "hello");
     }
@@ -598,7 +1054,8 @@ mod tests {
             .expect("insert_text succeeds at the engine level (check_snapshot, not the engine, enforces this ceiling)");
         let update = writer.export_from(&base_frontier).expect("export succeeds");
 
-        let outcome = decode_apply_check_and_export(base, &update);
+        let setup = BaseFacts::compute_guarded(&base, &SetupGuard::start());
+        let outcome = decode_apply_check_and_export(base, &setup, &update);
         let wire::Outcome::Rejected(CollabError::LimitExceeded { limit_kind, .. }) = outcome else {
             panic!("expected a document_text_chars rejection, got {outcome:?}");
         };

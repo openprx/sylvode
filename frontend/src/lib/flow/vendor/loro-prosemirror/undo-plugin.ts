@@ -1,184 +1,181 @@
-import {editorWritesAllowed} from '../../editor-batch';
-import type { Cursor } from "loro-crdt";
-import { UndoManager } from "loro-crdt";
+import { editorWritesAllowed } from '../../editor-batch';
+import type { Cursor } from 'loro-crdt';
+import { UndoManager } from 'loro-crdt';
+import { type Command, EditorState, Plugin, type StateField } from 'prosemirror-state';
+import { EditorView } from 'prosemirror-view';
+import { convertPmSelectionToCursors } from './cursor/common';
+import { syncCursorsToPmSelection } from './sync-plugin';
+import { loroSyncPluginKey } from './sync-plugin-key';
+import { configLoroTextStyle } from './text-style';
 import {
-  type Command,
-  EditorState,
-  Plugin,
-  type StateField,
-} from "prosemirror-state";
-import { EditorView } from "prosemirror-view";
-import { convertPmSelectionToCursors } from "./cursor/common";
-import { syncCursorsToPmSelection } from "./sync-plugin";
-import { loroSyncPluginKey } from "./sync-plugin-key";
-import { configLoroTextStyle } from "./text-style";
-import {
-  loroUndoPluginKey,
-  type LoroUndoPluginProps,
-  type LoroUndoPluginState,
-} from "./undo-plugin-key";
+	loroUndoPluginKey,
+	type LoroUndoPluginProps,
+	type LoroUndoPluginState
+} from './undo-plugin-key';
 
 type Cursors = { anchor: Cursor | null; focus: Cursor | null };
 export const LoroUndoPlugin = (props: LoroUndoPluginProps): Plugin => {
-  const undoManager = props.undoManager || new UndoManager(props.doc, {});
-  let lastSelection: Cursors = {
-    anchor: null,
-    focus: null,
-  };
-  return new Plugin({
-    key: loroUndoPluginKey,
-    state: {
-      init: (_config, editorState): LoroUndoPluginState => {
-        configLoroTextStyle(props.doc, editorState.schema);
+	const undoManager = props.undoManager || new UndoManager(props.doc, {});
+	let lastSelection: Cursors = {
+		anchor: null,
+		focus: null
+	};
+	return new Plugin({
+		key: loroUndoPluginKey,
+		state: {
+			init: (_config, editorState): LoroUndoPluginState => {
+				configLoroTextStyle(props.doc, editorState.schema);
 
-        undoManager.addExcludeOriginPrefix("sys:init");
-        undoManager.addExcludeOriginPrefix("sys:storage");
-        return {
-          undoManager,
-          canUndo: undoManager.canUndo(),
-          canRedo: undoManager.canRedo(),
-          isUndoing: { current: false },
-        };
-      },
-      apply: (_tr, state, oldEditorState, _newEditorState) => {
-        const undoState = loroUndoPluginKey.getState(oldEditorState);
-        const loroState = loroSyncPluginKey.getState(oldEditorState);
-        if (!undoState || !loroState) {
-          return state;
-        }
+				undoManager.addExcludeOriginPrefix('sys:init');
+				undoManager.addExcludeOriginPrefix('sys:storage');
+				return {
+					undoManager,
+					canUndo: undoManager.canUndo(),
+					canRedo: undoManager.canRedo(),
+					isUndoing: { current: false }
+				};
+			},
+			apply: (_tr, state, oldEditorState) => {
+				const undoState = loroUndoPluginKey.getState(oldEditorState);
+				const loroState = loroSyncPluginKey.getState(oldEditorState);
+				if (!undoState || !loroState) {
+					return state;
+				}
 
-        const canUndo = undoState.undoManager.canUndo();
-        const canRedo = undoState.undoManager.canRedo();
-        {
-          const { anchor, focus } = convertPmSelectionToCursors(
-            oldEditorState.doc,
-            oldEditorState.selection,
-            loroState,
-          );
-          lastSelection = {
-            anchor: anchor ?? null,
-            focus: focus ?? null,
-          };
-        }
-        return {
-          ...state,
-          canUndo,
-          canRedo,
-        };
-      },
-    } as StateField<LoroUndoPluginState>,
+				const canUndo = undoState.undoManager.canUndo();
+				const canRedo = undoState.undoManager.canRedo();
+				{
+					const { anchor, focus } = convertPmSelectionToCursors(
+						oldEditorState.doc,
+						oldEditorState.selection,
+						loroState
+					);
+					lastSelection = {
+						anchor: anchor ?? null,
+						focus: focus ?? null
+					};
+				}
+				return {
+					...state,
+					canUndo,
+					canRedo
+				};
+			}
+		} as StateField<LoroUndoPluginState>,
 
-    view: (view: EditorView) => {
-      undoManager.setOnPush((isUndo, _counterRange) => {
-        const loroState = loroSyncPluginKey.getState(view.state);
-        if (loroState?.doc == null) {
-          return {
-            value: null,
-            cursors: [],
-          };
-        }
+		view: (view: EditorView) => {
+			undoManager.setOnPush((isUndo) => {
+				const loroState = loroSyncPluginKey.getState(view.state);
+				if (loroState?.doc == null) {
+					return {
+						value: null,
+						cursors: []
+					};
+				}
 
-        const cursors: Cursor[] = [];
-        let selection = lastSelection;
-        if (!isUndo) {
-          const loroState = loroSyncPluginKey.getState(view.state);
-          if (loroState) {
-            const { anchor, focus } = convertPmSelectionToCursors(
-              view.state.doc,
-              view.state.selection,
-              loroState,
-            );
-            selection.anchor = anchor || null;
-            selection.focus = focus || null;
-          }
-        }
+				const cursors: Cursor[] = [];
+				const selection = lastSelection;
+				if (!isUndo) {
+					const loroState = loroSyncPluginKey.getState(view.state);
+					if (loroState) {
+						const { anchor, focus } = convertPmSelectionToCursors(
+							view.state.doc,
+							view.state.selection,
+							loroState
+						);
+						selection.anchor = anchor || null;
+						selection.focus = focus || null;
+					}
+				}
 
-        if (selection.anchor) {
-          cursors.push(selection.anchor);
-        }
-        if (selection.focus) {
-          cursors.push(selection.focus);
-        }
+				if (selection.anchor) {
+					cursors.push(selection.anchor);
+				}
+				if (selection.focus) {
+					cursors.push(selection.focus);
+				}
 
-        return {
-          value: null,
-          // The undo manager will internally transform the cursors.
-          // Undo/redo operations may recreate deleted content, so we need to remap
-          // the cursors to their new positions. Additionally, if containers are deleted
-          // and recreated, they also need remapping. Remote changes to the document
-          // should be considered in these transformations.
-          cursors,
-        };
-      });
-      undoManager.setOnPop((_isUndo, meta, _counterRange) => {
-        // After this call, the `onPush` will be called immediately.
-        // The immediate `onPush` will contain the inverse operations that undone the effect caused by the current `onPop`
-        const loroState = loroSyncPluginKey.getState(view.state);
-        if (loroState?.doc == null) {
-          return;
-        }
+				return {
+					value: null,
+					// The undo manager will internally transform the cursors.
+					// Undo/redo operations may recreate deleted content, so we need to remap
+					// the cursors to their new positions. Additionally, if containers are deleted
+					// and recreated, they also need remapping. Remote changes to the document
+					// should be considered in these transformations.
+					cursors
+				};
+			});
+			undoManager.setOnPop((_isUndo, meta) => {
+				// After this call, the `onPush` will be called immediately.
+				// The immediate `onPush` will contain the inverse operations that undone the effect caused by the current `onPop`
+				const loroState = loroSyncPluginKey.getState(view.state);
+				if (loroState?.doc == null) {
+					return;
+				}
 
-        const anchor: Cursor | undefined = meta.cursors[0];
-        const focus: Cursor | undefined = meta.cursors[1];
-        if (anchor == null) {
-          return;
-        }
-        setTimeout(() => {
-          syncCursorsToPmSelection(view, anchor, focus);
-        }, 0);
-      });
-      return {
-        destroy: () => {
-          undoManager.setOnPop();
-          undoManager.setOnPush();
-        },
-      };
-    },
-  });
+				const anchor: Cursor | undefined = meta.cursors[0];
+				const focus: Cursor | undefined = meta.cursors[1];
+				if (anchor == null) {
+					return;
+				}
+				setTimeout(() => {
+					syncCursorsToPmSelection(view, anchor, focus);
+				}, 0);
+			});
+			return {
+				destroy: () => {
+					undoManager.setOnPop();
+					undoManager.setOnPush();
+				}
+			};
+		}
+	});
 };
 
 export function canUndo(state: EditorState): boolean {
-  const undoState = loroUndoPluginKey.getState(state);
-  return undoState?.undoManager.canUndo() || false;
+	const undoState = loroUndoPluginKey.getState(state);
+	return undoState?.undoManager.canUndo() || false;
 }
 
 export function canRedo(state: EditorState): boolean {
-  const undoState = loroUndoPluginKey.getState(state);
-  return undoState?.undoManager.canRedo() || false;
+	const undoState = loroUndoPluginKey.getState(state);
+	return undoState?.undoManager.canRedo() || false;
 }
 
 export const undo: Command = (state, dispatch): boolean => {
-  const doc=loroSyncPluginKey.getState(state)?.doc;if(doc&&!editorWritesAllowed(doc))return !!dispatch;
-  const undoState = loroUndoPluginKey.getState(state);
-  if (!undoState) {
-    return false;
-  }
+	const doc = loroSyncPluginKey.getState(state)?.doc;
+	if (doc && !editorWritesAllowed(doc)) return !!dispatch;
+	const undoState = loroUndoPluginKey.getState(state);
+	if (!undoState) {
+		return false;
+	}
 
-  if (!dispatch) {
-    return undoState.undoManager.canUndo();
-  }
+	if (!dispatch) {
+		return undoState.undoManager.canUndo();
+	}
 
-  undoState.isUndoing.current = true;
-  setTimeout(() => {
-    undoState.isUndoing.current = false;
-  }, 0);
-  return undoState.undoManager.undo();
+	undoState.isUndoing.current = true;
+	setTimeout(() => {
+		undoState.isUndoing.current = false;
+	}, 0);
+	return undoState.undoManager.undo();
 };
 
 export const redo: Command = (state, dispatch): boolean => {
-  const doc=loroSyncPluginKey.getState(state)?.doc;if(doc&&!editorWritesAllowed(doc))return !!dispatch;
-  const undoState = loroUndoPluginKey.getState(state);
-  if (!undoState) {
-    return false;
-  }
+	const doc = loroSyncPluginKey.getState(state)?.doc;
+	if (doc && !editorWritesAllowed(doc)) return !!dispatch;
+	const undoState = loroUndoPluginKey.getState(state);
+	if (!undoState) {
+		return false;
+	}
 
-  if (!dispatch) {
-    return undoState.undoManager.canRedo();
-  }
+	if (!dispatch) {
+		return undoState.undoManager.canRedo();
+	}
 
-  undoState.isUndoing.current = true;
-  setTimeout(() => {
-    undoState.isUndoing.current = false;
-  }, 0);
-  return undoState.undoManager.redo();
+	undoState.isUndoing.current = true;
+	setTimeout(() => {
+		undoState.isUndoing.current = false;
+	}, 0);
+	return undoState.undoManager.redo();
 };

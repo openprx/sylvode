@@ -1,7 +1,7 @@
 {
   "comment": "The configuration keys the api, worker and mcp-server binaries accept (crates/platform/src/config/raw.rs; every section denies unknown keys). Read by scripts/start.sh --check-config. The platform test config::schema_tests compares this file with the Rust types and fails when either side gains or loses a key.",
   "sections": {
-    "server": ["app_name", "bind_addr"],
+    "server": ["app_name", "bind_addr", "trusted_proxies"],
     "database": [
       "url",
       "max_connections",
@@ -21,11 +21,49 @@
     "storage": ["backend", "dir", "s3"],
     "storage.s3": ["endpoint", "bucket", "region", "access_key_id", "secret_access_key", "session_token"],
     "audit": ["operation_log_retention_days"],
-    "ai_tasks": ["processing_timeout_secs"],
+    "ai_tasks": ["processing_timeout_secs", "lease_extension_secs", "max_processing_secs", "max_chain_depth"],
     "migrations": ["replay", "continue_on_error"],
     "outbound": ["allowed_hosts", "allow_private"],
-    "mcp": ["api_url", "bot_token", "workspace_id", "transport", "bind_addr"],
-    "flow": ["dispatch_max_attempts", "collab_allowed_origins", "conversion_reap_interval_secs", "body_asset_max_bytes"]
+    "mcp": [
+      "api_url",
+      "bot_token",
+      "workspace_id",
+      "transport",
+      "bind_addr",
+      "oauth_issuer",
+      "oauth_resource",
+      "oauth_forward_secret",
+      "tool_mode",
+      "allow_write_call"
+    ],
+    "flow": ["dispatch_max_attempts", "collab_allowed_origins", "conversion_reap_interval_secs", "body_asset_max_bytes", "incremental_window", "setup_cpu_budget_ms"],
+    "oauth": [
+      "issuer",
+      "api_resource",
+      "mcp_resource",
+      "internal_forward_secret",
+      "allow_insecure_loopback_issuer",
+      "access_token_ttl_seconds",
+      "refresh_token_idle_days",
+      "grant_max_lifetime_days",
+      "authorization_code_ttl_seconds",
+      "max_active_grants_per_user_client",
+      "event_feed_retention_days",
+      "event_backfill_max_events",
+      "event_backfill_max_age_hours",
+      "max_streams_per_process",
+      "embed_frame_ancestors"
+    ],
+    "inbound": [
+      "enabled",
+      "max_body_bytes",
+      "signature_tolerance_secs",
+      "auth_failures_per_minute_per_ip",
+      "max_active_alert_tasks_per_workspace",
+      "max_alerts_per_rule_per_hour",
+      "event_retention_days",
+      "followup_interval_secs"
+    ]
   },
   "retired": {
     "mcp.auth_token": "the shared inbound secret has been removed and the MCP server refuses to start while the key is present. An http/sse caller now presents its own workspace bot token in the Authorization: Bearer opr_... header, which the server forwards to the API unchanged. Fix: delete the auth_token line from the [mcp] section"

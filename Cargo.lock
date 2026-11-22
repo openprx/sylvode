@@ -134,6 +134,7 @@ dependencies = [
  "hmac",
  "image",
  "jsonwebtoken",
+ "loro",
  "parking_lot",
  "platform",
  "rand 0.8.6",
@@ -150,6 +151,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-tungstenite 0.26.2",
+ "toml",
  "tower",
  "tower-http",
  "tracing",
@@ -627,6 +629,7 @@ dependencies = [
  "collab-yrs-yjs-spike",
  "crc32fast",
  "libc",
+ "parking_lot",
  "serde",
  "serde_json",
  "sha2",
@@ -1276,9 +1279,9 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -2341,6 +2344,7 @@ dependencies = [
  "clap",
  "collab-core",
  "hex",
+ "parking_lot",
  "platform",
  "reqwest",
  "sea-orm",
@@ -2348,10 +2352,14 @@ dependencies = [
  "serde_jcs",
  "serde_json",
  "sha2",
+ "sylvode-prereq",
+ "sylvode-runner",
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "toml",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -4022,7 +4030,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "sylvode-webhook"
+name = "sylvode-prereq"
+version = "0.5.0"
+dependencies = [
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "sylvode-runner"
 version = "0.5.0"
 dependencies = [
  "axum",
@@ -4030,10 +4049,12 @@ dependencies = [
  "hex",
  "hmac",
  "nix 0.31.3",
+ "parking_lot",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
+ "sylvode-prereq",
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
@@ -4041,6 +4062,8 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "unicode-normalization",
+ "unicode-properties",
  "url",
  "uuid",
 ]
@@ -4626,9 +4649,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -5536,6 +5559,7 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "api",
+ "axum",
  "clap",
  "platform",
  "reqwest",

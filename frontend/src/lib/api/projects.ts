@@ -51,21 +51,6 @@ export interface ScenarioTemplate {
 	updated_at: string;
 }
 
-export type ProjectResourceKind = 'directory' | 'custom';
-
-export interface ProjectResource {
-	id: string;
-	project_id: string;
-	kind: ProjectResourceKind;
-	name: string;
-	locator: Record<string, unknown>;
-	permission_policy: Record<string, unknown>;
-	sync_status: string;
-	created_by?: string | null;
-	created_at: string;
-	updated_at: string;
-}
-
 export interface ProjectAgentPolicy {
 	project_id: string;
 	project_type: string;
@@ -85,7 +70,6 @@ export interface ProjectAgentPolicy {
 export interface ProjectContext {
 	project: Project;
 	project_type?: ProjectType | null;
-	resources: ProjectResource[];
 	governance?: unknown;
 	workflow?: unknown;
 	recent_decisions?: unknown[];
@@ -195,44 +179,5 @@ export const projectsApi = {
 
 	getScenarioTemplate(key: string): Promise<ApiResult<ScenarioTemplate>> {
 		return apiClient.get<ScenarioTemplate>(`/api/v1/scenario-templates/${key}`);
-	},
-
-	listResources(projectId: string): Promise<ApiResult<PaginatedData<ProjectResource>>> {
-		return apiClient.get<PaginatedData<ProjectResource>>(`/api/v1/projects/${projectId}/resources`);
-	},
-
-	createResource(
-		projectId: string,
-		data: {
-			kind: ProjectResourceKind;
-			name: string;
-			locator?: Record<string, unknown>;
-			permission_policy?: Record<string, unknown>;
-			sync_status?: string;
-		}
-	): Promise<ApiResult<ProjectResource>> {
-		return apiClient.post<ProjectResource>(`/api/v1/projects/${projectId}/resources`, data);
-	},
-
-	updateResource(
-		projectId: string,
-		resourceId: string,
-		data: {
-			kind?: ProjectResourceKind;
-			name?: string;
-			locator?: Record<string, unknown>;
-			permission_policy?: Record<string, unknown>;
-			sync_status?: string;
-			expected_updated_at?: string;
-		}
-	): Promise<ApiResult<ProjectResource>> {
-		return apiClient.patch<ProjectResource>(
-			`/api/v1/projects/${projectId}/resources/${resourceId}`,
-			data
-		);
-	},
-
-	deleteResource(projectId: string, resourceId: string): Promise<ApiResult<null>> {
-		return apiClient.delete<null>(`/api/v1/projects/${projectId}/resources/${resourceId}`);
 	}
 };

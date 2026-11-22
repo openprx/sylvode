@@ -1,11 +1,11 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { locale, t } from 'svelte-i18n';
 	import { slotLabelKey } from '#lib/plugins/layout-v3.js';
 	import CreatorPanelPreview from './CreatorPanelPreview.svelte';
 	import { verifyPanelHtml } from '#lib/plugins/bridge.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import {
-		isV3,
 		pluginLibraryApi,
 		type LibraryProject,
 		type PersonalPluginPackage
@@ -26,17 +26,11 @@
 	let html = $state<string | null>(null);
 	let panelState = $state<'loading' | 'error' | null>(null);
 	let panelLoad = 0;
-	const v3 = $derived(isV3(item.manifest) ? item.manifest : null);
-	const calculator = $derived(!v3 || v3.profile === 'wasm');
-	let v3Contribution = $state('');
-	const v3Picked = $derived(
-		v3?.contributions.find((entry) => entry.id === v3Contribution) ?? v3?.contributions[0]
-	);
-	const v2ui = $derived(isV3(item.manifest) ? undefined : item.manifest.ui);
-	const placement = $derived(v2ui?.contributions?.[0]);
-	const slot = $derived(
-		placement?.slot ??
-			(v2ui?.slot === 'form.record.actions' ? 'form.record.actions' : 'form.record.detail')
+	const manifest = $derived(item.manifest);
+	const calculator = $derived(manifest.profile === 'wasm');
+	let pickedId = $state('');
+	const picked = $derived(
+		manifest.contributions.find((entry) => entry.id === pickedId) ?? manifest.contributions[0]
 	);
 	let quantity = $state<number | undefined>();
 	let unitPrice = $state<number | undefined>();
@@ -167,15 +161,13 @@
 	}
 </script>
 
-<article
-	class="space-y-4 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
->
+<article class="space-y-4 rounded-card border border-line bg-raised p-4">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0 space-y-1">
 			<h3 class="break-words font-semibold">
 				{item.manifest.name} <span class="text-sm font-normal">v{item.manifest.version}</span>
 			</h3>
-			<p class="text-sm text-slate-600 dark:text-slate-300">
+			<p class="text-sm text-fg-muted">
 				{item.manifest.key} · {item.manifest.publisher}
 			</p>
 		</div>
@@ -186,29 +178,27 @@
 		{/if}
 	</div>
 
-	{#if v3}
-		<div class="space-y-1 text-sm">
-			<p>{$t(`plugins.layoutV3.profile.${v3.profile}`)}</p>
-			<ul class="list-disc pl-5">
-				{#each v3.contributions as contribution (contribution.id)}
-					<li>
-						{contribution.label} · {$t(slotLabelKey(contribution.slot))} ·
-						{contribution.route
-							? $t('plugins.layoutV3.route', { values: { route: contribution.route } })
-							: $t('plugins.layoutV3.form', { values: { form: contribution.form_key } })}
-					</li>
-				{/each}
-			</ul>
-			<p>
-				{v3.reads.length
-					? v3.reads.map((read) => `${read.form_key}: ${read.fields.join(', ')}`).join(' · ')
-					: $t('plugins.layoutV3.readsNone')}
-			</p>
-		</div>
-	{/if}
+	<div class="space-y-1 text-sm">
+		<p>{$t(`plugins.layoutV3.profile.${manifest.profile}`)}</p>
+		<ul class="list-disc pl-5">
+			{#each manifest.contributions as contribution (contribution.id)}
+				<li>
+					{contribution.label} · {$t(slotLabelKey(contribution.slot))} ·
+					{contribution.route
+						? $t('plugins.layoutV3.route', { values: { route: contribution.route } })
+						: $t('plugins.layoutV3.form', { values: { form: contribution.form_key } })}
+				</li>
+			{/each}
+		</ul>
+		<p>
+			{manifest.reads.length
+				? manifest.reads.map((read) => `${read.form_key}: ${read.fields.join(', ')}`).join(' · ')
+				: $t('plugins.layoutV3.readsNone')}
+		</p>
+	</div>
 
 	{#if open && !item.archived_at && calculator}
-		<form class="space-y-3 border-l-2 border-blue-500 pl-3" onsubmit={preview}>
+		<form class="space-y-3 border-l-2 border-line-strong pl-3" onsubmit={preview}>
 			<div class="grid max-w-lg gap-3 sm:grid-cols-2">
 				<label class="grid gap-1 text-sm">
 					{$t('plugins.library.quantity')}
@@ -223,7 +213,7 @@
 						oninput={() => {
 							amount = undefined;
 						}}
-						class="w-full rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+						class="w-full rounded-control border border-input bg-transparent px-3 py-2"
 					/>
 				</label>
 				<label class="grid gap-1 text-sm">
@@ -239,12 +229,13 @@
 						oninput={() => {
 							amount = undefined;
 						}}
-						class="w-full rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+						class="w-full rounded-control border border-input bg-transparent px-3 py-2"
 					/>
 				</label>
 			</div>
 			<div class="flex flex-wrap items-center gap-3">
 				<Button
+					variant="primary"
 					type="submit"
 					loading={pending === 'preview'}
 					disabled={pending !== null && pending !== 'preview'}
@@ -259,15 +250,15 @@
 		</form>
 	{/if}
 	{#if open && !item.archived_at}
-		{#if html && v3 && v3Picked}
-			{#if v3.contributions.length > 1}
+		{#if html && picked}
+			{#if manifest.contributions.length > 1}
 				<label class="flex flex-wrap items-center gap-2 text-sm">
 					{$t('plugins.creatorV3.slotChoice')}
 					<select
-						bind:value={v3Contribution}
-						class="rounded border border-slate-300 bg-transparent px-3 py-1 dark:border-slate-700"
+						bind:value={pickedId}
+						class="rounded-control border border-input bg-transparent px-3 py-1"
 					>
-						{#each v3.contributions as contribution (contribution.id)}
+						{#each manifest.contributions as contribution (contribution.id)}
 							<option value={contribution.id}>
 								{contribution.label} · {$t(slotLabelKey(contribution.slot))}
 							</option>
@@ -276,34 +267,31 @@
 				</label>
 			{/if}
 			<p class="text-sm">{$t('plugins.layoutV3.personalSampleNote')}</p>
-			{#key v3Picked.id}
+			{#key picked.id}
 				<CreatorPanelPreview
 					{html}
-					slot={v3Picked.slot}
 					v3={{
-						manifest: v3,
-						contributionId: v3Picked.id,
-						webSha256: v3.entry.sha256,
+						manifest,
+						contributionId: picked.id,
+						webSha256: manifest.entry.sha256,
 						schema: null,
 						personal: true,
 						onViewed: () => {},
-						...(v3.profile === 'wasm' ? { onAmountPreview: calculate } : {})
+						...(manifest.profile === 'wasm' ? { onAmountPreview: calculate } : {})
 					}}
 				/>
 			{/key}
-		{:else if html}
-			<CreatorPanelPreview {html} {slot} placementId={placement?.id} onPreview={calculate} />
 		{:else if panelState === 'loading'}
 			<p role="status" class="text-sm">{$t('plugins.loadingPanel')}</p>
 		{:else if panelState === 'error'}
-			<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t('plugins.loadFailed')}</p>
+			<p role="alert" class="text-sm text-danger">{$t('plugins.loadFailed')}</p>
 		{/if}
 	{/if}
 
-	<div class="space-y-3 border-t border-slate-200 pt-3 dark:border-slate-700">
+	<div class="space-y-3 border-t border-line pt-3">
 		<h4 class="text-sm font-semibold">{$t('plugins.library.projectUse')}</h4>
 		{#if item.project_links.length}
-			<ul class="divide-y divide-slate-200 dark:divide-slate-700">
+			<ul class="divide-y divide-line">
 				{#each item.project_links as link (link.project_id)}
 					{@const project = projects.find((entry) => entry.id === link.project_id)}
 					<li class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
@@ -318,9 +306,14 @@
 						<div class="flex flex-wrap items-center gap-2">
 							{#if project?.can_manage && link.status === 'attached'}
 								<a
-									href={`/workspace/${encodeURIComponent(project.workspace_id)}/projects/${encodeURIComponent(project.id)}/settings/plugins`}
-									class="text-blue-700 underline dark:text-blue-300"
-									>{$t('plugins.library.manageInProject')}</a
+									href={resolve(
+										'/(app)/workspace/[workspaceId]/projects/[projectId]/settings/plugins',
+										{
+											workspaceId: encodeURIComponent(project.workspace_id),
+											projectId: encodeURIComponent(project.id)
+										}
+									)}
+									class="text-fg underline">{$t('plugins.library.manageInProject')}</a
 								>
 							{/if}
 							{#if confirmRemoval === link.project_id}
@@ -332,7 +325,7 @@
 									)}
 								</p>
 								<Button
-									variant="danger"
+									variant="danger-quiet"
 									size="sm"
 									loading={pending === 'revoke'}
 									onclick={() => revoke(link.project_id)}>{$t('plugins.library.confirm')}</Button
@@ -366,7 +359,7 @@
 				{/each}
 			</ul>
 		{:else}
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('plugins.library.noProjectUse')}</p>
+			<p class="text-sm text-fg-muted">{$t('plugins.library.noProjectUse')}</p>
 		{/if}
 		{#if canConnect.length && !item.archived_at}
 			<div class="flex flex-wrap items-end gap-2">
@@ -375,7 +368,7 @@
 					<select
 						bind:value={projectId}
 						disabled={!!pending}
-						class="w-full rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+						class="w-full rounded-control border border-input bg-transparent px-3 py-2"
 					>
 						<option value="">{$t('plugins.library.chooseProject')}</option>
 						{#each canConnect as project (project.id)}
@@ -383,7 +376,11 @@
 						{/each}
 					</select>
 				</label>
-				<Button onclick={attach} loading={pending === 'attach'} disabled={!target || !!pending}
+				<Button
+					variant="primary"
+					onclick={attach}
+					loading={pending === 'attach'}
+					disabled={!target || !!pending}
 					>{$t(
 						target && !target.can_manage
 							? 'plugins.library.requestAccess'
@@ -393,6 +390,6 @@
 			</div>
 		{/if}
 	</div>
-	{#if error}<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t(error)}</p>{/if}
+	{#if error}<p role="alert" class="text-sm text-danger">{$t(error)}</p>{/if}
 	{#if notice}<p role="status" class="text-sm">{$t(notice)}</p>{/if}
 </article>

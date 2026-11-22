@@ -20,7 +20,10 @@ use crate::{
     error::{ApiError, localize_error, request_lang},
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
     response::{ApiResponse, PaginatedData},
-    services::ai_task_service::{CreateAiTaskInput, create_ai_task},
+    services::{
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
+        comments::insert_comment,
+    },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
 };
 
@@ -231,24 +234,15 @@ pub async fn create_comment(
 
     let mention_user_ids = normalize_mentions(req.mentions, user_id);
 
-    let comment_id = Uuid::new_v4();
-    let now = platform::timestamp::Timestamp::now();
+    // A connected application may not mention an agent: that would start its task. Refused before
+    // the comment is written.
+    crate::oauth::delegated::refuse_agent_dispatch(&state.db, &mention_user_ids).await?;
 
     let tx = state.db.begin().await?;
 
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO comments (id, work_item_id, author_id, body, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
-        vec![
-            comment_id.into(),
-            issue_id.into(),
-            user_id.into(),
-            content.clone().into(),
-            now.into(),
-            now.into(),
-        ],
-    ))
-    .await?;
+    let inserted = insert_comment(&tx, issue_id, user_id, &content).await?;
+    let comment_id = inserted.id;
+    let now = inserted.created_at;
 
     create_mention_notifications(
         &tx,
@@ -266,10 +260,21 @@ pub async fn create_comment(
     // comment: the `comment.created` delivery below reaches that bot's webhook without
     // `bot_context`. The author is never among the mentions (`normalize_mentions`).
     let mentioned_bots = mentioned_bot_ids(&state.db, &mention_user_ids, issue_context.workspace_id).await?;
+    let mut task_bots = Vec::with_capacity(mentioned_bots.len());
     for &bot_id in &mentioned_bots {
-        let _ = create_ai_task(
+        // A runner bot this project has not enabled is mentioned like any member, but starts nothing.
+        if let Some(block) = runner_bot_block(&state.db, issue_context.project_id, bot_id).await? {
+            tracing::info!(%comment_id, %bot_id, reason = block.code(), "mention queued no task");
+            continue;
+        }
+        // A mention a bot's chain rules refuse queues no task, and the bot is still listed: the
+        // list is also the bots whose webhook delivery must not carry `bot_context`, which would
+        // start the bot through its webhook.
+        task_bots.push(bot_id);
+        let outcome = dispatch_ai_task(
             &state.db,
             CreateAiTaskInput {
+                origin: DispatchOrigin::Request,
                 project_id: issue_context.project_id,
                 ai_participant_id: bot_id,
                 actor_id: Some(user_id),
@@ -294,6 +299,9 @@ pub async fn create_comment(
             },
         )
         .await?;
+        if let DispatchOutcome::ChainRefused(refusal) = outcome {
+            tracing::info!(%comment_id, %bot_id, reason = refusal.code(), "mention queued no task");
+        }
     }
 
     trigger_webhooks_after_ai_tasks(
@@ -311,7 +319,7 @@ pub async fn create_comment(
             mentions: mention_user_ids.clone(),
             extra_data: None,
         },
-        mentioned_bots,
+        task_bots,
     );
 
     Ok(ApiResponse::success(CommentResponse {
@@ -372,14 +380,23 @@ pub async fn list_comments(
     let comments = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT c.id, c.work_item_id, c.author_id, u.name as author_name, u.email as author_email,
+            SELECT c.id, c.work_item_id, c.author_id,
+                   CASE WHEN $2 AND m.user_id IS NULL THEN NULL ELSE u.name END AS author_name,
+                   CASE WHEN $2 AND m.user_id IS NULL THEN NULL ELSE u.email END AS author_email,
                    c.body, c.created_at, c.updated_at
             FROM comments c
             LEFT JOIN users u ON c.author_id = u.id
+            LEFT JOIN workspace_members m ON m.workspace_id = $3 AND m.user_id = c.author_id
             WHERE c.work_item_id = $1
             ORDER BY c.created_at ASC
         ",
-        vec![issue_id.into()],
+        // A connected application sees the name and email of an author only while the author is a
+        // member of the connected workspace; a person who has left stays a bare id.
+        vec![
+            issue_id.into(),
+            crate::oauth::delegated::current().is_some().into(),
+            issue.workspace_id.into(),
+        ],
     ))
     .all(&state.db)
     .await?;

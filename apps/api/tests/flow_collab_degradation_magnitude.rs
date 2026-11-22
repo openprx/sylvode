@@ -279,7 +279,7 @@ async fn seed_workspace(db: &DatabaseConnection) -> (Uuid, Uuid) {
     .await;
     exec(
         db,
-        "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true)",
+        "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace_id.into()],
     )
     .await;
@@ -398,6 +398,7 @@ async fn write_once(
         10,
         None,
         UpdateRequest {
+            rebase_policy: api::flow::collab::write::RebasePolicy::None,
             origin: CommandOrigin::first_request_from(EventSurface::Rest),
             document_id,
             update_id: Uuid::new_v4(),

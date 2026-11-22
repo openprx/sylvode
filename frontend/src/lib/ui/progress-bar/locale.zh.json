@@ -1,0 +1,18 @@
+{
+	"ui": {
+		"progress": {
+			"queued": "等待开始。",
+			"retry": "重试",
+			"started": "已开始。",
+			"milestone": "已完成 {percent}%。",
+			"done": "已完成。",
+			"failed": "失败。",
+			"sample": {
+				"label": "正在导出记录",
+				"count": "8 个文件中的 3 个",
+				"done": "已完成。已导出 1,240 条记录。",
+				"failed": "在 40% 处停止。已导出的记录已保留。"
+			}
+		}
+	}
+}

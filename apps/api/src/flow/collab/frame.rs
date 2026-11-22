@@ -113,6 +113,33 @@ pub const SERVER_REJECTED_REASON_DATABASE: &str = "deterministic_database_refusa
 /// platform nor anything about the update.
 pub const SERVER_REJECTED_REASON_UNSUPPORTED_PLATFORM: &str = "isolated_apply_unsupported_platform";
 
+/// The `server_rejected.details.reason` value for an accepted worker result that the host's own
+/// projection contradicts, with no second computation able to change that: the first attempt was the
+/// full window (or carried no report), or the full-window retry was contradicted as well. A defect
+/// of the check, or a deterministic crafted input; every resend is refused identically.
+pub const SERVER_REJECTED_REASON_WINDOW_DIVERGENCE: &str = "window_divergence";
+
+/// The `server_rejected.details.reason` value for a worker whose setup did not open its metered
+/// window within the setup timeout although it had consumed a large share of that time as CPU: the
+/// setup is not bounded for this base (a defect), not a host that starved the worker.
+pub const SERVER_REJECTED_REASON_SETUP_EXHAUSTED: &str = "isolated_setup_exhausted";
+
+/// The `server_rejected.details.reason` value for a defect of the isolation mechanism itself: the
+/// worker crashed, exited non-zero, answered with a missing or invalid frame, or could not be
+/// spawned for a reason a retry does not clear.
+pub const SERVER_REJECTED_REASON_ISOLATED_APPLY_FAILED: &str = "isolated_apply_failed";
+
+/// The `server_rejected.details.reason` value for a document whose accepted state cannot be read
+/// back for a write: its bootstrap snapshot does not decode, its retained tail does not re-apply, or
+/// the loaded base cannot be exported. Deterministic for the document, so every write of every
+/// client is refused identically until the document is repaired; a retry cannot help.
+pub const SERVER_REJECTED_REASON_BASE_LOAD_FAILED: &str = "document_base_unreadable";
+
+/// The `server_rejected.details.reason` value for an update the worker accepted whose result the API
+/// cannot derive its stored fields from (the title of the candidate document, or its projection to
+/// JSON). Deterministic for the base and the update, so every resend is refused identically.
+pub const SERVER_REJECTED_REASON_CANDIDATE_DERIVATION_FAILED: &str = "candidate_derivation_failed";
+
 /// `rejected.write_state` — the required "did the server change anything?" discriminant
 /// (`collab-protocol-v1.md`, 2026-08-30: "`recoverable` 只回答「能不能重试」，不回答「服务端状态改了
 /// 没有」，而这两件事必须分开").
@@ -146,6 +173,8 @@ pub enum WriteState {
 pub enum DrainReason {
     Drain,
     Contention,
+    /// A load refusal of the isolated write window; see `ServerDrainingReason::ApplyBusy`.
+    ApplyBusy,
 }
 
 /// The one shared producer value for an instance/workspace drain. REST admission, active and

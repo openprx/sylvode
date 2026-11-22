@@ -18,15 +18,20 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use super::inbound::RawInbound;
+use super::oauth::{RawOAuth, UrlRole, validate_forward_secret, validate_url};
 use super::secret::Secret;
 use super::{
+    AI_TASK_LEASE_EXTENSION_RANGE_SECS, AI_TASK_MAX_CHAIN_DEPTH_RANGE, AI_TASK_MAX_PROCESSING_CEILING_SECS,
     AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS, AiTasksConfig, AuditConfig, AuthConfig, ConfigError,
+    DEFAULT_AI_TASK_LEASE_EXTENSION_SECS, DEFAULT_AI_TASK_MAX_CHAIN_DEPTH, DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
     DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
-    DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS,
-    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig,
+    DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS,
+    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
     LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
-    MIN_JWT_SECRET_LEN, McpConfig, McpTransport, MigrationsConfig, OpenPrConfig, OutboundConfig, S3Config,
-    ServerConfig, StorageBackend, StorageConfig,
+    MAX_FLOW_SETUP_CPU_BUDGET_MS, MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode,
+    McpTransport, MigrationsConfig, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config, ServerConfig, StorageBackend,
+    StorageConfig,
 };
 
 const DEFAULT_MAX_CONNECTIONS: u32 = 20;
@@ -74,6 +79,10 @@ pub(super) struct RawConfig {
     mcp: RawMcp,
     #[serde(default)]
     flow: RawFlow,
+    #[serde(default)]
+    oauth: RawOAuth,
+    #[serde(default)]
+    inbound: RawInbound,
 }
 
 #[derive(Deserialize, Default)]
@@ -81,6 +90,7 @@ pub(super) struct RawConfig {
 struct RawServer {
     app_name: Option<String>,
     bind_addr: Option<String>,
+    trusted_proxies: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -111,6 +121,8 @@ struct RawFlow {
     collab_allowed_origins: Option<Vec<String>>,
     conversion_reap_interval_secs: Option<u64>,
     body_asset_max_bytes: Option<u64>,
+    incremental_window: Option<bool>,
+    setup_cpu_budget_ms: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -138,8 +150,12 @@ struct RawAudit {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_field_names, reason = "the keys are in seconds, as their names say")]
 struct RawAiTasks {
     processing_timeout_secs: Option<u64>,
+    lease_extension_secs: Option<u64>,
+    max_processing_secs: Option<u64>,
+    max_chain_depth: Option<u32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -179,22 +195,27 @@ struct RawMcp {
     auth_token: Option<String>,
     transport: Option<String>,
     bind_addr: Option<String>,
+    oauth_issuer: Option<String>,
+    oauth_resource: Option<String>,
+    oauth_forward_secret: Option<String>,
+    tool_mode: Option<String>,
+    allow_write_call: Option<bool>,
 }
 
 /// Collects validation problems so the operator sees all of them at once.
-struct Issues(Vec<String>);
+pub(super) struct Issues(Vec<String>);
 
 impl Issues {
     const fn new() -> Self {
         Self(Vec::new())
     }
 
-    fn push(&mut self, issue: impl Into<String>) {
+    pub(super) fn push(&mut self, issue: impl Into<String>) {
         self.0.push(issue.into());
     }
 
     /// Records `Err` and yields `None`, so validation can keep walking the file.
-    fn record<T>(&mut self, result: Result<T, String>) -> Option<T> {
+    pub(super) fn record<T>(&mut self, result: Result<T, String>) -> Option<T> {
         match result {
             Ok(value) => Some(value),
             Err(issue) => {
@@ -231,6 +252,9 @@ impl RawConfig {
         let outbound = self.outbound.validate(&mut issues);
         let mcp = self.mcp.validate(&mut issues);
         let flow = self.flow.validate(&mut issues);
+        let oauth = self.oauth.validate(&mut issues);
+        let inbound = self.inbound.validate(&mut issues);
+        cross_check_oauth_and_mcp(oauth.as_ref(), &mcp, &mut issues);
 
         issues.into_result(origin)?;
 
@@ -256,6 +280,8 @@ impl RawConfig {
             outbound,
             mcp,
             flow,
+            oauth,
+            inbound,
         })
     }
 }
@@ -272,7 +298,20 @@ impl RawServer {
         let bind_addr = self.bind_addr.and_then(|addr| {
             issues.record(validate_bind_addr("server.bind_addr", &addr).map(|()| addr.trim().to_string()))
         });
-        ServerConfig { app_name, bind_addr }
+        let trusted_proxies = self.trusted_proxies.map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    issues
+                        .record(IpCidr::parse(entry).map_err(|reason| format!("server.trusted_proxies entry {reason}")))
+                })
+                .collect()
+        });
+        ServerConfig {
+            app_name,
+            bind_addr,
+            trusted_proxies,
+        }
     }
 }
 
@@ -517,8 +556,42 @@ impl RawAiTasks {
                         DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS
                     }
                 });
+        let lease_extension_secs = self
+            .lease_extension_secs
+            .map_or(DEFAULT_AI_TASK_LEASE_EXTENSION_SECS, |secs| {
+                if AI_TASK_LEASE_EXTENSION_RANGE_SECS.contains(&secs) {
+                    secs
+                } else {
+                    issues.push("ai_tasks.lease_extension_secs must be between 60 and 86400");
+                    DEFAULT_AI_TASK_LEASE_EXTENSION_SECS
+                }
+            });
+        // The default cap is never below a valid timeout that is itself above it.
+        let max_processing_secs = match self.max_processing_secs {
+            None => DEFAULT_AI_TASK_MAX_PROCESSING_SECS.max(processing_timeout_secs),
+            Some(secs) if secs > AI_TASK_MAX_PROCESSING_CEILING_SECS => {
+                issues.push("ai_tasks.max_processing_secs must be at most 604800");
+                DEFAULT_AI_TASK_MAX_PROCESSING_SECS.max(processing_timeout_secs)
+            }
+            Some(secs) if secs < processing_timeout_secs => {
+                issues.push("ai_tasks.max_processing_secs must be at least ai_tasks.processing_timeout_secs");
+                DEFAULT_AI_TASK_MAX_PROCESSING_SECS.max(processing_timeout_secs)
+            }
+            Some(secs) => secs,
+        };
+        let max_chain_depth = self.max_chain_depth.map_or(DEFAULT_AI_TASK_MAX_CHAIN_DEPTH, |depth| {
+            if AI_TASK_MAX_CHAIN_DEPTH_RANGE.contains(&depth) {
+                depth
+            } else {
+                issues.push("ai_tasks.max_chain_depth must be between 1 and 10");
+                DEFAULT_AI_TASK_MAX_CHAIN_DEPTH
+            }
+        });
         AiTasksConfig {
             processing_timeout_secs,
+            lease_extension_secs,
+            max_processing_secs,
+            max_chain_depth,
         }
     }
 }
@@ -561,11 +634,23 @@ impl RawFlow {
                     DEFAULT_FLOW_BODY_ASSET_MAX_BYTES
                 }
             });
+        let setup_cpu_budget_ms = self
+            .setup_cpu_budget_ms
+            .map_or(DEFAULT_FLOW_SETUP_CPU_BUDGET_MS, |value| {
+                if (MIN_FLOW_SETUP_CPU_BUDGET_MS..=MAX_FLOW_SETUP_CPU_BUDGET_MS).contains(&value) {
+                    value
+                } else {
+                    issues.push("flow.setup_cpu_budget_ms must be between 500 and 4000");
+                    DEFAULT_FLOW_SETUP_CPU_BUDGET_MS
+                }
+            });
         FlowConfig {
             dispatch_max_attempts,
             collab_allowed_origins,
             conversion_reap_interval_secs,
             body_asset_max_bytes,
+            incremental_window: self.incremental_window.unwrap_or(false),
+            setup_cpu_budget_ms,
         }
     }
 }
@@ -776,13 +861,55 @@ impl RawMcp {
         let bind_addr = self.bind_addr.and_then(|addr| {
             issues.record(validate_bind_addr("mcp.bind_addr", &addr).map(|()| addr.trim().to_string()))
         });
+        // Plain http is accepted for a loopback literal only: the MCP server has no insecure flag
+        // of its own, and a loopback address never leaves the machine.
+        let oauth_issuer = self
+            .oauth_issuer
+            .and_then(|value| issues.record(validate_url("mcp.oauth_issuer", &value, UrlRole::Issuer, true)));
+        let oauth_resource = self
+            .oauth_resource
+            .and_then(|value| issues.record(validate_url("mcp.oauth_resource", &value, UrlRole::Resource, true)));
+        let oauth_forward_secret = self
+            .oauth_forward_secret
+            .and_then(|value| issues.record(validate_forward_secret("mcp.oauth_forward_secret", &value)));
+        let tool_mode = self.tool_mode.map_or_else(
+            || Some(McpToolMode::default()),
+            |raw| {
+                issues.record(
+                    McpToolMode::parse(&raw)
+                        .ok_or_else(|| format!("mcp.tool_mode must be search or full, got {}", raw.trim())),
+                )
+            },
+        );
         McpConfig {
             api_url,
             bot_token,
             workspace_id,
             transport: transport.unwrap_or_default(),
             bind_addr,
+            oauth_issuer,
+            oauth_resource,
+            oauth_forward_secret,
+            tool_mode: tool_mode.unwrap_or_default(),
+            allow_write_call: self.allow_write_call,
         }
+    }
+}
+
+/// When one file configures both sections, the MCP server and the API have to agree on who the
+/// issuer is and which URL the MCP resource has; a mismatch would otherwise surface only as
+/// tokens refused at runtime.
+fn cross_check_oauth_and_mcp(oauth: Option<&OAuthConfig>, mcp: &McpConfig, issues: &mut Issues) {
+    let Some(oauth) = oauth else {
+        return;
+    };
+    if mcp.oauth_issuer.as_deref().is_some_and(|issuer| issuer != oauth.issuer) {
+        issues.push("mcp.oauth_issuer must equal oauth.issuer");
+    }
+    if let (Some(mcp_resource), Some(oauth_resource)) = (mcp.oauth_resource.as_deref(), oauth.mcp_resource.as_deref())
+        && mcp_resource != oauth_resource
+    {
+        issues.push("mcp.oauth_resource must equal oauth.mcp_resource");
     }
 }
 
@@ -853,7 +980,7 @@ fn validate_bind_addr(field: &str, value: &str) -> Result<(), String> {
 /// Splits an authority into host and port, tolerating bracketed IPv6 literals.
 ///
 /// Returns `None` when there is no port at all.
-fn split_host_port(authority: &str) -> Option<(&str, &str)> {
+pub(super) fn split_host_port(authority: &str) -> Option<(&str, &str)> {
     if let Some(end) = authority.rfind(']') {
         let after = authority.get(end + 1..)?;
         let port = after.strip_prefix(':')?;
@@ -879,7 +1006,7 @@ pub(super) fn is_loopback_bind_addr(bind_addr: &str) -> bool {
     host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
-fn validate_port(field: &str, port: &str) -> Result<(), String> {
+pub(super) fn validate_port(field: &str, port: &str) -> Result<(), String> {
     match port.parse::<u16>() {
         Ok(0) | Err(_) => Err(format!("{field} has an invalid port {port}, expected 1-65535")),
         Ok(_) => Ok(()),

@@ -9,14 +9,14 @@
 //! # Why CPU time, not wall clock
 //!
 //! `ADR-0014`'s actual online enforcement (`crates/collab-core/src/isolation/child_runtime.rs`,
-//! `arm_sigprof`) arms `ITIMER_PROF`, which POSIX defines as decrementing "both when the process
-//! executes and when the system is executing on behalf of the process" -- i.e. user + system CPU
+//! `arm_sigprof`) arms a `timer_create` timer on `CLOCK_PROCESS_CPUTIME_ID`, which counts the CPU
+//! time the process and the system on its behalf consume -- i.e. user + system CPU
 //! time, explicitly *not* wall clock (a process blocked on I/O or descheduled by the kernel does
-//! not burn its `ITIMER_PROF` budget). To measure the same quantity the production ceiling
+//! not burn its budget). To measure the same quantity the production ceiling
 //! actually enforces, this binary reads `clock_gettime(CLOCK_PROCESS_CPUTIME_ID)` around each
 //! phase instead of `Instant::now()`. `CLOCK_PROCESS_CPUTIME_ID` is the POSIX clock defined to
 //! track that same "CPU time consumed by this process" quantity (summed across all its threads);
-//! unlike `ITIMER_PROF` it is a plain readable clock rather than a signal-firing timer, so it can
+//! unlike the timer it is a plain readable clock rather than a signal-firing timer, so it can
 //! be sampled at arbitrary points without arming/disarming a real process-terminating signal
 //! disposition inside a long-lived measurement process.
 //!

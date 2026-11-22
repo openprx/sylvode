@@ -237,16 +237,9 @@ treating the missing input as a pass.
 | `SYLVODE_CONTRACTS_ROOT` | The Sylvode Flow contracts checkout (`gates/`, `contracts/`) read by the Flow gate scripts; `--contracts-root` overrides it | none, required |
 | `SYLVODE_SCRATCH_ROOT` | Scratch trees, mutation copies and separate cargo target directories | `.flow-gate/cache` |
 | `SYLVODE_UF_REPORT_ROOT` | Universal Forms acceptance reports (`docs/`) and screenshots (`artifacts/`) | `.flow-gate/universal-forms` |
-| `SYLVODE_FLOW_PRIOR_EVIDENCE_ROOT` | Earlier release receipts read by `verify-flow-prior-receipts-v1.0.sh` | `.flow-gate/evidence` |
-| `SYLVODE_WEBHOOK_DIR` | A separate Sylvode Webhook checkout for the webhook smokes to build and run instead of the in-repository `apps/webhook` | none: `apps/webhook`, built with `cargo build -p sylvode-webhook` |
-| `SYLVODE_FLOW_V05_CONTRACT_GAPS` | The v0.5 contract-gap register read by `verify-flow-authz-v0.5.sh`, or `none` | none, required |
-| `OPENPR_V10_CAPACITY_RESULT` | The capacity measurement result read by `verify-flow-slo-v1.0.sh` (or `--capacity-result`) | none, required |
-| `OPENPR_FLOW_V1_ORCHESTRATION_CONFIG` | The v1.0 orchestration config (`[flow_gate]` database URLs) read by `report-flow-v1.0-json.sh` (or `--orchestration-config`) | `.flow-gate/cache/v10-flow-gate.toml` |
+| `SYLVODE_RUNNER_DIR` | A separate Sylvode runner checkout for the runner smokes to build and run instead of the in-repository `apps/runner` | none: `apps/runner`, built with `cargo build -p sylvode-runner` |
 
-The v0.9 and v1.0 reports read the predecessor release's receipt from
-`<evidence root>/../<previous release>/gate-result.json` unless `--predecessor-gate-result` names
-it. `docs/sylvode-v1-stable-runbook.md` ("Re-running the v1.0 gate") lists every input of the
-v1.0 gate. The scripts need bash 4.3 or newer and GNU coreutils; macOS's bash 3.2 cannot run
+The scripts need bash 4.3 or newer and GNU coreutils; macOS's bash 3.2 cannot run
 them.
 
 Flow gate scripts write their evidence to `.flow-gate/evidence/<release>` unless `--evidence-root`
@@ -282,11 +275,11 @@ The workspace lints in `Cargo.toml` and the settings in `clippy.toml` enforce th
 
 ## Compatibility
 
-Sylvode keeps its OpenPR-era identifiers stable. Do not rename anything listed in
-[docs/sylvode-v1.0-compatibility.md](docs/sylvode-v1.0-compatibility.md): the REST paths and
-schema identifiers, MCP tool names, database objects and migrations, the plugin ABI, the `opr_`
-token prefix, compose service labels and `OPENPR_TEST_DATABASE_URL`. Legacy entry points stay
-working with a deprecation warning and are not removed before Sylvode v2.0.
+Sylvode keeps no alias for a name from before the rename: a legacy configuration file,
+environment variable, header, URI or archive name is simply unknown, and no change adds one back. Identifiers that
+are stored or on the wire were not renamed and stay as they are: the REST paths and schema
+identifiers, MCP tool names, database objects and migrations, the plugin ABI, the `opr_` token
+prefix, compose service labels and `OPENPR_TEST_DATABASE_URL`.
 
 Migrations are append-only. Add a new `migrations/NNNN_description.sql` with the next number;
 never edit one that has been released.

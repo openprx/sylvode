@@ -1,19 +1,18 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { apiClient } from '#lib/api/client.js';
 	import {
-		isV3,
 		pluginLibraryApi,
 		type LibraryProject,
 		type PersonalPluginPackage,
-		type PluginUpload,
 		type PluginUploadV3
 	} from '#lib/api/plugin-packages.js';
 	import { listPersonalDrafts } from '#lib/plugins/creator/personal-drafts.js';
 	import { readPluginUpload } from '#lib/plugins/upload.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import PersonalPluginVersion from '#lib/components/plugins/PersonalPluginVersion.svelte';
 
 	let packages = $state<PersonalPluginPackage[]>([]);
@@ -24,7 +23,7 @@
 	let importing = $state(false);
 	let importError = $state('');
 	let importNotice = $state('');
-	let upload = $state<PluginUpload | PluginUploadV3 | null>(null);
+	let upload = $state<PluginUploadV3 | null>(null);
 	let importBusy = $state(false);
 	let selection = 0;
 	let generation = 0;
@@ -99,7 +98,7 @@
 	<header class="flex flex-wrap items-start justify-between gap-3">
 		<div>
 			<h1 class="text-2xl font-semibold">{$t('plugins.library.title')}</h1>
-			<p class="mt-2 text-sm text-slate-600 dark:text-slate-300">{$t('plugins.library.summary')}</p>
+			<p class="mt-2 text-sm text-fg-muted">{$t('plugins.library.summary')}</p>
 		</div>
 		<div class="flex flex-wrap gap-2">
 			<Button
@@ -109,14 +108,19 @@
 					importing = !importing;
 				}}>{$t('plugins.library.import')}</Button
 			>
-			<Button onclick={() => goto(`/plugins/creator?draft=${crypto.randomUUID()}`)}
+			<Button
+				variant="primary"
+				onclick={() => goto(resolve(`/(app)/plugins/creator?draft=${crypto.randomUUID()}`))}
 				>{$t('plugins.creator.launch')}</Button
 			>
 			<Button
 				variant="secondary"
 				onclick={() =>
-					goto(`/plugins/creator?draft=${crypto.randomUUID()}&template=ui_view&slot=project.view`)}
-				>{$t('plugins.creatorV3.newUiView')}</Button
+					goto(
+						resolve(
+							`/(app)/plugins/creator?draft=${crypto.randomUUID()}&template=ui_view&slot=project.view`
+						)
+					)}>{$t('plugins.creatorV3.newUiView')}</Button
 			>
 		</div>
 	</header>
@@ -124,7 +128,7 @@
 	{#if importing}
 		<section
 			aria-label={$t('plugins.library.import')}
-			class="space-y-3 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+			class="space-y-3 rounded-card border border-line bg-raised p-4"
 		>
 			<label class="grid gap-2 text-sm">
 				{$t('plugins.packageFile')}
@@ -136,28 +140,24 @@
 				/>
 			</label>
 			{#if upload}
-				<div class="space-y-2 border-l-2 border-blue-500 pl-3 text-sm">
+				<div class="space-y-2 border-l-2 border-line-strong pl-3 text-sm">
 					<p class="font-medium">{upload.manifest.name} · v{upload.manifest.version}</p>
 					<p>{upload.manifest.key} · {upload.manifest.publisher}</p>
-					{#if isV3(upload.manifest)}
-						<p>
-							{$t('plugins.layoutV3.installSummary', {
-								values: {
-									count: upload.manifest.contributions.length,
-									reads: upload.manifest.reads.length
-								}
-							})}
-						</p>
-						<p>{$t(`plugins.layoutV3.profile.${upload.manifest.profile}`)}</p>
-					{:else}
-						<p>
-							{$t('plugins.creator.targetForm', { values: { form: upload.manifest.ui.form_key } })}
-						</p>
-					{/if}
-					<Button loading={importBusy} onclick={saveImport}>{$t('plugins.library.save')}</Button>
+					<p>
+						{$t('plugins.layoutV3.installSummary', {
+							values: {
+								count: upload.manifest.contributions.length,
+								reads: upload.manifest.reads.length
+							}
+						})}
+					</p>
+					<p>{$t(`plugins.layoutV3.profile.${upload.manifest.profile}`)}</p>
+					<Button variant="primary" loading={importBusy} onclick={saveImport}
+						>{$t('plugins.library.save')}</Button
+					>
 				</div>
 			{/if}
-			{#if importError}<p role="alert" class="text-sm text-red-800 dark:text-red-200">
+			{#if importError}<p role="alert" class="text-sm text-danger">
 					{$t(importError)}
 				</p>{/if}
 			{#if importNotice}<p role="status" class="text-sm">{$t(importNotice)}</p>{/if}
@@ -167,20 +167,20 @@
 	{#if drafts.length}
 		<section aria-labelledby="personal-drafts" class="space-y-2">
 			<h2 id="personal-drafts" class="font-semibold">{$t('plugins.library.drafts')}</h2>
-			<ul
-				class="divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white px-4 dark:divide-slate-700 dark:border-slate-700 dark:bg-slate-900"
-			>
+			<ul class="divide-y divide-line rounded-card border border-line bg-raised px-4">
 				{#each drafts as entry (`${entry.templateId}:${entry.id}`)}
 					<li class="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
 						<span class="break-all"
 							>{entry.draft.name || $t('plugins.library.untitled')} · v{entry.draft.version}</span
 						>
 						<a
-							href={`/plugins/creator?draft=${encodeURIComponent(entry.id)}&template=${entry.templateId}`}
+							href={resolve(
+								`/(app)/plugins/creator?draft=${encodeURIComponent(entry.id)}&template=${entry.templateId}`
+							)}
 							aria-label={$t('plugins.library.editNamed', {
 								values: { name: entry.draft.name || $t('plugins.library.untitled') }
 							})}
-							class="text-blue-700 underline dark:text-blue-300">{$t('plugins.library.edit')}</a
+							class="text-fg underline">{$t('plugins.library.edit')}</a
 						>
 					</li>
 				{/each}
@@ -191,12 +191,12 @@
 	<section class="space-y-3" aria-labelledby="saved-personal-versions">
 		<h2 id="saved-personal-versions" class="font-semibold">{$t('plugins.library.versions')}</h2>
 		{#if error}
-			<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t(error)}</p>
+			<p role="alert" class="text-sm text-danger">{$t(error)}</p>
 			<Button variant="secondary" onclick={refresh}>{$t('plugins.library.retry')}</Button>
 		{:else if loading}
 			<p role="status" class="text-sm">{$t('common.loading')}</p>
 		{:else if !packages.length}
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('plugins.library.empty')}</p>
+			<p class="text-sm text-fg-muted">{$t('plugins.library.empty')}</p>
 		{/if}
 		{#each packages as item (item.id)}
 			<PersonalPluginVersion {item} {projects} onChanged={refresh} />

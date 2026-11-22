@@ -16,6 +16,7 @@ const MAX_PER_PAGE: u64 = 100;
 
 pub fn list_work_items_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.list".to_string(),
         description: "List work items in a project with optional filters. Paginated: per_page defaults to 50 \
 (max 100); check total_pages before treating the result as complete."
@@ -183,6 +184,7 @@ fn build_paginated_output(payload: &Value, item_key: &str, page: u64, per_page: 
 
 pub fn get_work_item_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.get".to_string(),
         description: "Get details of a specific work item".to_string(),
         input_schema: json!({
@@ -221,6 +223,7 @@ pub async fn get_work_item(client: &OpenPrClient, args: serde_json::Value) -> Ca
 
 pub fn get_work_item_by_identifier_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.get_by_identifier".to_string(),
         description: "Get details of a specific work item by identifier (e.g. PRX-42)".to_string(),
         input_schema: json!({
@@ -537,6 +540,7 @@ fn attachment_name_from_url(url: &str) -> String {
 
 pub fn create_work_item_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.create".to_string(),
         description: "Create a new work item in a project".to_string(),
         input_schema: json!({
@@ -642,6 +646,7 @@ pub async fn create_work_item(client: &OpenPrClient, args: serde_json::Value) ->
 
 pub fn update_work_item_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.update".to_string(),
         description: "Update an existing work item".to_string(),
         input_schema: json!({
@@ -771,6 +776,7 @@ pub async fn update_work_item(client: &OpenPrClient, args: serde_json::Value) ->
 
 pub fn search_work_items_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.search".to_string(),
         description: "Search work items across all projects the caller can access".to_string(),
         input_schema: json!({
@@ -814,6 +820,7 @@ pub async fn search_work_items(client: &OpenPrClient, args: serde_json::Value) -
 
 pub fn add_label_to_work_item_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.add_label".to_string(),
         description: "Add a label to a work item".to_string(),
         input_schema: json!({
@@ -855,6 +862,7 @@ pub async fn add_label_to_work_item(client: &OpenPrClient, args: serde_json::Val
 
 pub fn remove_label_from_work_item_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.remove_label".to_string(),
         description: "Remove a label from a work item".to_string(),
         input_schema: json!({
@@ -899,6 +907,7 @@ pub async fn remove_label_from_work_item(client: &OpenPrClient, args: serde_json
 
 pub fn list_work_item_labels_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.list_labels".to_string(),
         description: "List labels of a work item".to_string(),
         input_schema: json!({
@@ -937,6 +946,7 @@ pub async fn list_work_item_labels(client: &OpenPrClient, args: serde_json::Valu
 
 pub fn delete_work_item_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.delete".to_string(),
         description: "Delete a work item".to_string(),
         input_schema: json!({
@@ -972,6 +982,7 @@ pub async fn handle_delete_work_item(client: &OpenPrClient, args: serde_json::Va
 
 pub fn add_labels_to_work_item_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "work_items.add_labels".to_string(),
         description: "Add multiple labels to a work item in one request".to_string(),
         input_schema: json!({

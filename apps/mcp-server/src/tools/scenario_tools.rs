@@ -3,38 +3,40 @@ use crate::protocol::{CallToolResult, ToolDefinition};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-pub fn code_resources_list_tool() -> ToolDefinition {
-    ToolDefinition {
-        name: "code.resources.list".to_string(),
-        description: "List code-oriented project resources (directory kind)".to_string(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "project_id": { "type": "string", "description": "Project UUID" }
-            },
-            "required": ["project_id"]
-        }),
-    }
-}
-
-pub fn code_directory_get_tool() -> ToolDefinition {
-    ToolDefinition {
-        name: "code.directory.get".to_string(),
-        description: "Read a directory resource locator and access policy from project context".to_string(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "project_id": { "type": "string", "description": "Project UUID" },
-                "resource_id": { "type": "string", "description": "Optional project resource UUID" },
-                "name": { "type": "string", "description": "Optional directory resource name" }
-            },
-            "required": ["project_id"]
-        }),
-    }
-}
+// PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+// pub fn code_resources_list_tool() -> ToolDefinition {
+//     ToolDefinition {
+//         name: "code.resources.list".to_string(),
+//         description: "List code-oriented project resources (directory kind)".to_string(),
+//         input_schema: json!({
+//             "type": "object",
+//             "properties": {
+//                 "project_id": { "type": "string", "description": "Project UUID" }
+//             },
+//             "required": ["project_id"]
+//         }),
+//     }
+// }
+//
+// pub fn code_directory_get_tool() -> ToolDefinition {
+//     ToolDefinition {
+//         name: "code.directory.get".to_string(),
+//         description: "Read a directory resource locator and access policy from project context".to_string(),
+//         input_schema: json!({
+//             "type": "object",
+//             "properties": {
+//                 "project_id": { "type": "string", "description": "Project UUID" },
+//                 "resource_id": { "type": "string", "description": "Optional project resource UUID" },
+//                 "name": { "type": "string", "description": "Optional directory resource name" }
+//             },
+//             "required": ["project_id"]
+//         }),
+//     }
+// }
 
 pub fn code_task_context_get_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "code.task_context.get".to_string(),
         description: "Get project context plus optional work-item context for a code task".to_string(),
         input_schema: json!({
@@ -50,6 +52,7 @@ pub fn code_task_context_get_tool() -> ToolDefinition {
 
 pub fn code_change_proposal_create_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "code.change_proposal.create".to_string(),
         description: "Record a governed code change proposal as a check result instead of directly mutating code"
             .to_string(),
@@ -62,6 +65,7 @@ pub fn code_change_proposal_create_tool() -> ToolDefinition {
 
 pub fn documents_extract_summary_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "documents.extract_summary".to_string(),
         description: "Record a document summary as a governed AI check result".to_string(),
         input_schema: governed_result_schema("Document summary title", "Extracted document summary"),
@@ -70,6 +74,7 @@ pub fn documents_extract_summary_tool() -> ToolDefinition {
 
 pub fn documents_review_risk_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "documents.review_risk".to_string(),
         description: "Record document risk review findings as a high-risk governed check result".to_string(),
         input_schema: governed_result_schema("Risk review title", "Risk review summary"),
@@ -78,6 +83,7 @@ pub fn documents_review_risk_tool() -> ToolDefinition {
 
 pub fn approval_request_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "approval.request".to_string(),
         description: "Create a governed approval request check result for human decision flow".to_string(),
         input_schema: governed_result_schema("Approval request title", "Approval request summary"),
@@ -86,6 +92,7 @@ pub fn approval_request_tool() -> ToolDefinition {
 
 pub fn inspection_report_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "inspection.report".to_string(),
         description: "Record an inspection report as a governed check result".to_string(),
         input_schema: governed_result_schema("Inspection report title", "Inspection findings summary"),
@@ -94,23 +101,25 @@ pub fn inspection_report_tool() -> ToolDefinition {
 
 pub fn corrective_action_propose_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "corrective_action.propose".to_string(),
         description: "Record a corrective-action proposal as a governed check result".to_string(),
         input_schema: governed_result_schema("Corrective action title", "Corrective action summary"),
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct ProjectInput {
-    project_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct DirectoryInput {
-    project_id: String,
-    resource_id: Option<String>,
-    name: Option<String>,
-}
+// PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+// #[derive(Debug, Deserialize)]
+// struct ProjectInput {
+//     project_id: String,
+// }
+//
+// #[derive(Debug, Deserialize)]
+// struct DirectoryInput {
+//     project_id: String,
+//     resource_id: Option<String>,
+//     name: Option<String>,
+// }
 
 #[derive(Debug, Deserialize)]
 struct CodeTaskContextInput {
@@ -127,37 +136,38 @@ struct GovernedResultInput {
     risk_level: Option<String>,
 }
 
-pub async fn code_resources_list(client: &OpenPrClient, args: Value) -> CallToolResult {
-    let input: ProjectInput = match serde_json::from_value(args) {
-        Ok(value) => value,
-        Err(err) => return CallToolResult::error(format!("Invalid input: {err}")),
-    };
-
-    let resources = match client.list_project_resources(&input.project_id).await {
-        Ok(value) => value,
-        Err(err) => return CallToolResult::error(err),
-    };
-
-    CallToolResult::success(serde_json::to_string_pretty(&filter_code_resources(resources)).unwrap_or_default())
-}
-
-pub async fn code_directory_get(client: &OpenPrClient, args: Value) -> CallToolResult {
-    let input: DirectoryInput = match serde_json::from_value(args) {
-        Ok(value) => value,
-        Err(err) => return CallToolResult::error(format!("Invalid input: {err}")),
-    };
-
-    let resources = match client.list_project_resources(&input.project_id).await {
-        Ok(value) => value,
-        Err(err) => return CallToolResult::error(err),
-    };
-    let Some(resource) = find_directory_resource(&resources, input.resource_id.as_deref(), input.name.as_deref())
-    else {
-        return CallToolResult::error("directory resource not found");
-    };
-
-    CallToolResult::success(serde_json::to_string_pretty(&resource).unwrap_or_default())
-}
+// PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+// pub async fn code_resources_list(client: &OpenPrClient, args: Value) -> CallToolResult {
+//     let input: ProjectInput = match serde_json::from_value(args) {
+//         Ok(value) => value,
+//         Err(err) => return CallToolResult::error(format!("Invalid input: {err}")),
+//     };
+//
+//     let resources = match client.list_project_resources(&input.project_id).await {
+//         Ok(value) => value,
+//         Err(err) => return CallToolResult::error(err),
+//     };
+//
+//     CallToolResult::success(serde_json::to_string_pretty(&filter_code_resources(resources)).unwrap_or_default())
+// }
+//
+// pub async fn code_directory_get(client: &OpenPrClient, args: Value) -> CallToolResult {
+//     let input: DirectoryInput = match serde_json::from_value(args) {
+//         Ok(value) => value,
+//         Err(err) => return CallToolResult::error(format!("Invalid input: {err}")),
+//     };
+//
+//     let resources = match client.list_project_resources(&input.project_id).await {
+//         Ok(value) => value,
+//         Err(err) => return CallToolResult::error(err),
+//     };
+//     let Some(resource) = find_directory_resource(&resources, input.resource_id.as_deref(), input.name.as_deref())
+//     else {
+//         return CallToolResult::error("directory resource not found");
+//     };
+//
+//     CallToolResult::success(serde_json::to_string_pretty(&resource).unwrap_or_default())
+// }
 
 /// The owning project reported by `GET /api/v1/issues/{id}`.
 fn work_item_project_id(response: &Value) -> Option<&str> {
@@ -292,69 +302,70 @@ fn governed_result_schema(title_description: &str, summary_description: &str) ->
     })
 }
 
-fn filter_code_resources(value: Value) -> Value {
-    map_resources(value, |resource| {
-        matches!(resource.get("kind").and_then(Value::as_str), Some("directory"))
-    })
-}
-
-fn find_directory_resource(value: &Value, resource_id: Option<&str>, name: Option<&str>) -> Option<Value> {
-    resource_items(value)
-        .into_iter()
-        .find(|resource| {
-            let is_directory = matches!(resource.get("kind").and_then(Value::as_str), Some("directory"));
-            let id_matches = resource_id.is_none_or(|id| resource.get("id").and_then(Value::as_str) == Some(id));
-            let name_matches =
-                name.is_none_or(|expected| resource.get("name").and_then(Value::as_str) == Some(expected));
-            is_directory && id_matches && name_matches
-        })
-        .cloned()
-}
-
-fn map_resources(value: Value, predicate: impl Fn(&Value) -> bool) -> Value {
-    if let Some(items) = value
-        .get("data")
-        .and_then(|data| data.get("items"))
-        .and_then(Value::as_array)
-    {
-        let filtered = items.iter().filter(|item| predicate(item)).cloned().collect();
-        let mut output = value;
-        if let Some(data) = output.get_mut("data").and_then(Value::as_object_mut) {
-            data.insert("items".to_string(), Value::Array(filtered));
-        }
-        return output;
-    }
-
-    if let Some(items) = value.get("data").and_then(Value::as_array) {
-        let filtered = items.iter().filter(|item| predicate(item)).cloned().collect();
-        let mut output = value;
-        if let Some(data) = output.get_mut("data") {
-            *data = Value::Array(filtered);
-        }
-        return output;
-    }
-
-    if let Some(items) = value.as_array() {
-        return Value::Array(items.iter().filter(|item| predicate(item)).cloned().collect());
-    }
-
-    value
-}
-
-fn resource_items(value: &Value) -> Vec<&Value> {
-    value
-        .get("data")
-        .and_then(|data| data.get("items"))
-        .and_then(Value::as_array)
-        .or_else(|| value.get("data").and_then(Value::as_array))
-        .or_else(|| value.as_array())
-        .map(|items| items.iter().collect())
-        .unwrap_or_default()
-}
+// PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+// fn filter_code_resources(value: Value) -> Value {
+//     map_resources(value, |resource| {
+//         matches!(resource.get("kind").and_then(Value::as_str), Some("directory"))
+//     })
+// }
+//
+// fn find_directory_resource(value: &Value, resource_id: Option<&str>, name: Option<&str>) -> Option<Value> {
+//     resource_items(value)
+//         .into_iter()
+//         .find(|resource| {
+//             let is_directory = matches!(resource.get("kind").and_then(Value::as_str), Some("directory"));
+//             let id_matches = resource_id.is_none_or(|id| resource.get("id").and_then(Value::as_str) == Some(id));
+//             let name_matches =
+//                 name.is_none_or(|expected| resource.get("name").and_then(Value::as_str) == Some(expected));
+//             is_directory && id_matches && name_matches
+//         })
+//         .cloned()
+// }
+//
+// fn map_resources(value: Value, predicate: impl Fn(&Value) -> bool) -> Value {
+//     if let Some(items) = value
+//         .get("data")
+//         .and_then(|data| data.get("items"))
+//         .and_then(Value::as_array)
+//     {
+//         let filtered = items.iter().filter(|item| predicate(item)).cloned().collect();
+//         let mut output = value;
+//         if let Some(data) = output.get_mut("data").and_then(Value::as_object_mut) {
+//             data.insert("items".to_string(), Value::Array(filtered));
+//         }
+//         return output;
+//     }
+//
+//     if let Some(items) = value.get("data").and_then(Value::as_array) {
+//         let filtered = items.iter().filter(|item| predicate(item)).cloned().collect();
+//         let mut output = value;
+//         if let Some(data) = output.get_mut("data") {
+//             *data = Value::Array(filtered);
+//         }
+//         return output;
+//     }
+//
+//     if let Some(items) = value.as_array() {
+//         return Value::Array(items.iter().filter(|item| predicate(item)).cloned().collect());
+//     }
+//
+//     value
+// }
+//
+// fn resource_items(value: &Value) -> Vec<&Value> {
+//     value
+//         .get("data")
+//         .and_then(|data| data.get("items"))
+//         .and_then(Value::as_array)
+//         .or_else(|| value.get("data").and_then(Value::as_array))
+//         .or_else(|| value.as_array())
+//         .map(|items| items.iter().collect())
+//         .unwrap_or_default()
+// }
 
 #[cfg(test)]
 mod tests {
-    use super::{code_task_context_get, filter_code_resources, find_directory_resource};
+    use super::code_task_context_get;
     use crate::client::test_api;
     use crate::protocol::ToolContent;
     use axum::{Json, Router, routing::get};
@@ -457,44 +468,45 @@ mod tests {
         );
     }
 
-    #[test]
-    fn code_resource_filter_keeps_directory_only() {
-        let filtered = filter_code_resources(json!({
-            "data": {
-                "items": [
-                    { "id": "1", "kind": "repo" },
-                    { "id": "2", "kind": "directory" },
-                    { "id": "3", "kind": "custom" }
-                ]
-            }
-        }));
-
-        assert_eq!(
-            filtered
-                .get("data")
-                .and_then(|data| data.get("items"))
-                .and_then(|items| items.as_array())
-                .expect("items")
-                .len(),
-            1
-        );
-    }
-
-    #[test]
-    fn directory_lookup_accepts_name_or_id() {
-        let resources = json!({
-            "data": [
-                { "id": "r1", "kind": "directory", "name": "src" },
-                { "id": "r2", "kind": "custom", "name": "src" }
-            ]
-        });
-
-        assert_eq!(
-            find_directory_resource(&resources, None, Some("src"))
-                .and_then(|value| value.get("id").and_then(|id| id.as_str()).map(str::to_string))
-                .as_deref(),
-            Some("r1")
-        );
-        assert!(find_directory_resource(&resources, Some("r2"), None).is_none());
-    }
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // #[test]
+    // fn code_resource_filter_keeps_directory_only() {
+    //     let filtered = filter_code_resources(json!({
+    //         "data": {
+    //             "items": [
+    //                 { "id": "1", "kind": "repo" },
+    //                 { "id": "2", "kind": "directory" },
+    //                 { "id": "3", "kind": "custom" }
+    //             ]
+    //         }
+    //     }));
+    //
+    //     assert_eq!(
+    //         filtered
+    //             .get("data")
+    //             .and_then(|data| data.get("items"))
+    //             .and_then(|items| items.as_array())
+    //             .expect("items")
+    //             .len(),
+    //         1
+    //     );
+    // }
+    //
+    // #[test]
+    // fn directory_lookup_accepts_name_or_id() {
+    //     let resources = json!({
+    //         "data": [
+    //             { "id": "r1", "kind": "directory", "name": "src" },
+    //             { "id": "r2", "kind": "custom", "name": "src" }
+    //         ]
+    //     });
+    //
+    //     assert_eq!(
+    //         find_directory_resource(&resources, None, Some("src"))
+    //             .and_then(|value| value.get("id").and_then(|id| id.as_str()).map(str::to_string))
+    //             .as_deref(),
+    //         Some("r1")
+    //     );
+    //     assert!(find_directory_resource(&resources, Some("r2"), None).is_none());
+    // }
 }

@@ -1,17 +1,12 @@
-//! ADR-0020 D5: `sylvode` carries the nine workspace command groups of `mcp-server`, as the same
-//! commands.
+//! The workspace command groups of `sylvode`, run as the shipped executable.
 //!
-//! Every test here runs the two shipped executables — `mcp-server` and `sylvode` — as real
-//! processes, with identical arguments and an identical configuration file, against one
-//! recording stand-in for the Sylvode API, and compares what each process printed on stdout,
-//! byte for byte, and the code it exited with. The stand-in echoes every request back in its
-//! answer and records it, so equal stdout also means equal requests, and the recorded request
-//! lists of the two runs are compared as well.
+//! Every test here runs the real `sylvode` process with a configuration file against one
+//! recording stand-in for the Sylvode API; the stand-in echoes every request back in its
+//! answer and records it. `mcp-server` offers no workspace command, which is checked too.
 //!
 //! Per group there is at least one read command, every write command the group has (labels,
 //! sprints, search and operation-logs have none), one API error envelope and one network
-//! failure. `<group> --help` is asserted to exit 0 under `sylvode` for each group on its own,
-//! because the D2 warning tells `mcp-server` users to run exactly that command.
+//! failure.
 
 mod support;
 
@@ -38,9 +33,9 @@ const MISSING: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 /// One request as the stand-in saw it: method, path with query, body.
 type Seen = Arc<tokio::sync::Mutex<Vec<(String, String, String)>>>;
 
-/// The transport surface each request declared, canonical header then legacy header
-/// (`mcp-surface-v1.md` "Transport → actor/origin"; ADR-0020 D3 sends both spellings).
-type Surfaces = Arc<tokio::sync::Mutex<Vec<(String, String)>>>;
+/// The transport surface each request declared in `X-Sylvode-MCP-Surface`
+/// (`mcp-surface-v1.md` "Transport → actor/origin").
+type Surfaces = Arc<tokio::sync::Mutex<Vec<String>>>;
 
 /// Starts the recording stand-in API and returns its base URL and its request log.
 ///
@@ -56,17 +51,12 @@ async fn spawn_api() -> Result<(String, Seen, Surfaces), BoxError> {
         let log = Arc::clone(&log);
         let surface_log = Arc::clone(&surface_log);
         async move {
-            let declared = {
-                let header = |name: &str| -> String {
-                    request
-                        .headers()
-                        .get(name)
-                        .and_then(|value| value.to_str().ok())
-                        .unwrap_or_default()
-                        .to_string()
-                };
-                (header("x-sylvode-mcp-surface"), header("x-openpr-mcp-surface"))
-            };
+            let declared = request
+                .headers()
+                .get("x-sylvode-mcp-surface")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
             surface_log.lock().await.push(declared);
             let method = request.method().to_string();
             let target = request
@@ -187,7 +177,7 @@ async fn run(binary: &str, cwd: &Path, args: &[String]) -> Result<Output, BoxErr
 const MCP_SERVER: &str = env!("CARGO_BIN_EXE_mcp-server");
 const SYLVODE: &str = env!("CARGO_BIN_EXE_sylvode");
 
-/// What one case expects of both executables.
+/// What one case expects of the command.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Expect {
     /// Exit 0, non-empty stdout, and at least one request reached the API.
@@ -198,21 +188,16 @@ enum Expect {
     LocalFailure,
 }
 
-/// Runs `args` under both executables and asserts identical stdout bytes, identical exit code,
-/// identical requests, and the outcome `expect` describes.
-async fn assert_same(fixture: &Fixture, args: &[&str], expect: Expect) -> TestResult {
+/// Runs `args` under `sylvode` and asserts the outcome `expect` describes.
+async fn assert_command(fixture: &Fixture, args: &[&str], expect: Expect) -> TestResult {
     let mut full: Vec<String> = args.iter().map(ToString::to_string).collect();
     full.push("--config".to_string());
     full.push(fixture.config.path().display().to_string());
 
     fixture.seen.lock().await.clear();
     fixture.surfaces.lock().await.clear();
-    let legacy = run(MCP_SERVER, fixture.dir()?, &full).await?;
-    let legacy_requests = std::mem::take(&mut *fixture.seen.lock().await);
-    let legacy_surfaces = std::mem::take(&mut *fixture.surfaces.lock().await);
     let canonical = run(SYLVODE, fixture.dir()?, &full).await?;
     let canonical_requests = std::mem::take(&mut *fixture.seen.lock().await);
-    let canonical_surfaces = std::mem::take(&mut *fixture.surfaces.lock().await);
 
     let shown = |output: &Output| {
         format!(
@@ -222,29 +207,6 @@ async fn assert_same(fixture: &Fixture, args: &[&str], expect: Expect) -> TestRe
             String::from_utf8_lossy(&output.stderr)
         )
     };
-    assert_eq!(
-        legacy.stdout,
-        canonical.stdout,
-        "{args:?}: stdout differs\n--- mcp-server\n{}\n--- sylvode\n{}",
-        shown(&legacy),
-        shown(&canonical)
-    );
-    assert_eq!(
-        legacy.status.code(),
-        canonical.status.code(),
-        "{args:?}: exit code differs\n--- mcp-server\n{}\n--- sylvode\n{}",
-        shown(&legacy),
-        shown(&canonical)
-    );
-    assert_eq!(
-        legacy_requests, canonical_requests,
-        "{args:?}: the API saw different requests"
-    );
-    assert_eq!(
-        legacy_surfaces, canonical_surfaces,
-        "{args:?}: the two executables declared different transport surfaces"
-    );
-
     let expected_code = match expect {
         Expect::Success => 0,
         Expect::ApiError | Expect::LocalFailure => 1,
@@ -280,9 +242,7 @@ async fn assert_same(fixture: &Fixture, args: &[&str], expect: Expect) -> TestRe
     Ok(())
 }
 
-/// `sylvode <group> --help` exits 0 and prints the help `mcp-server <group> --help` prints, with
-/// only the program name changed and the shared options' sentences about `serve`, which `sylvode`
-/// does not have, rewritten (`cli::sylvode_help_prose`).
+/// `sylvode <group> --help` exits 0 and never mentions `serve`, which `sylvode` does not have.
 async fn assert_help(fixture: &Fixture, group: &str) -> TestResult {
     let args = vec![group.to_string(), "--help".to_string()];
     let canonical = run(SYLVODE, fixture.dir()?, &args).await?;
@@ -296,14 +256,6 @@ async fn assert_help(fixture: &Fixture, group: &str) -> TestResult {
     assert!(
         canonical_help.contains(&format!("Usage: sylvode {group}")),
         "{canonical_help}"
-    );
-    let legacy = run(MCP_SERVER, fixture.dir()?, &args).await?;
-    assert_eq!(legacy.status.code(), Some(0));
-    let legacy_help = String::from_utf8(legacy.stdout)?;
-    assert_eq!(
-        mcp_server::cli::sylvode_help_prose(&legacy_help),
-        canonical_help,
-        "{group} help differs beyond the program name and the serve sentences"
     );
     let mentions_serve = canonical_help
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
@@ -320,17 +272,17 @@ async fn assert_network_failure(fixture: &Fixture, args: &[&str]) -> TestResult 
     let mut with_url: Vec<&str> = args.to_vec();
     with_url.push("--api-url");
     with_url.push(&fixture.closed_url);
-    assert_same(fixture, &with_url, Expect::LocalFailure).await
+    assert_command(fixture, &with_url, Expect::LocalFailure).await
 }
 
 #[tokio::test]
-async fn projects_are_the_same_command_under_both_names() -> TestResult {
+async fn projects_commands() -> TestResult {
     let fixture = Fixture::new().await?;
     assert_help(&fixture, "projects").await?;
-    assert_same(&fixture, &["projects", "list"], Expect::Success).await?;
-    assert_same(&fixture, &["projects", "list", "--format", "table"], Expect::Success).await?;
-    assert_same(&fixture, &["projects", "get", PROJECT], Expect::Success).await?;
-    assert_same(
+    assert_command(&fixture, &["projects", "list"], Expect::Success).await?;
+    assert_command(&fixture, &["projects", "list", "--format", "table"], Expect::Success).await?;
+    assert_command(&fixture, &["projects", "get", PROJECT], Expect::Success).await?;
+    assert_command(
         &fixture,
         &[
             "projects",
@@ -341,7 +293,7 @@ async fn projects_are_the_same_command_under_both_names() -> TestResult {
         Expect::Success,
     )
     .await?;
-    assert_same(
+    assert_command(
         &fixture,
         &[
             "projects",
@@ -381,29 +333,29 @@ async fn projects_are_the_same_command_under_both_names() -> TestResult {
     assert_eq!(method, "POST");
     assert_eq!(body.get("key"), Some(&json!("WPKEY")), "{body}");
     assert_eq!(body.get("name"), Some(&json!("Demo")), "{body}");
-    assert_same(
+    assert_command(
         &fixture,
         &["projects", "create", "--key", "WPKEY", "--name", MISSING],
         Expect::ApiError,
     )
     .await?;
-    assert_same(&fixture, &["projects", "get", MISSING], Expect::ApiError).await?;
+    assert_command(&fixture, &["projects", "get", MISSING], Expect::ApiError).await?;
     assert_network_failure(&fixture, &["projects", "list"]).await
 }
 
 #[tokio::test]
-async fn work_items_are_the_same_command_under_both_names() -> TestResult {
+async fn work_items_commands() -> TestResult {
     let fixture = Fixture::new().await?;
     assert_help(&fixture, "work-items").await?;
-    assert_same(
+    assert_command(
         &fixture,
         &["work-items", "list", "--project", PROJECT, "--state", "todo"],
         Expect::Success,
     )
     .await?;
-    assert_same(&fixture, &["work-items", "get", "PRX-1"], Expect::Success).await?;
-    assert_same(&fixture, &["work-items", "search", "--query", "bug"], Expect::Success).await?;
-    assert_same(
+    assert_command(&fixture, &["work-items", "get", "PRX-1"], Expect::Success).await?;
+    assert_command(&fixture, &["work-items", "search", "--query", "bug"], Expect::Success).await?;
+    assert_command(
         &fixture,
         &[
             "work-items",
@@ -418,7 +370,7 @@ async fn work_items_are_the_same_command_under_both_names() -> TestResult {
         Expect::Success,
     )
     .await?;
-    assert_same(
+    assert_command(
         &fixture,
         &[
             "work-items",
@@ -432,27 +384,27 @@ async fn work_items_are_the_same_command_under_both_names() -> TestResult {
         Expect::Success,
     )
     .await?;
-    assert_same(&fixture, &["work-items", "get", MISSING], Expect::ApiError).await?;
+    assert_command(&fixture, &["work-items", "get", MISSING], Expect::ApiError).await?;
     assert_network_failure(&fixture, &["work-items", "search", "--query", "bug"]).await
 }
 
 #[tokio::test]
-async fn comments_are_the_same_command_under_both_names() -> TestResult {
+async fn comments_commands() -> TestResult {
     let fixture = Fixture::new().await?;
     assert_help(&fixture, "comments").await?;
-    assert_same(
+    assert_command(
         &fixture,
         &["comments", "list", "--work-item", WORK_ITEM],
         Expect::Success,
     )
     .await?;
-    assert_same(
+    assert_command(
         &fixture,
         &["comments", "create", "--work-item", WORK_ITEM, "--content", "hello"],
         Expect::Success,
     )
     .await?;
-    assert_same(
+    assert_command(
         &fixture,
         &["comments", "create", "--work-item", MISSING, "--content", "hello"],
         Expect::ApiError,
@@ -462,53 +414,53 @@ async fn comments_are_the_same_command_under_both_names() -> TestResult {
 }
 
 #[tokio::test]
-async fn labels_are_the_same_command_under_both_names() -> TestResult {
+async fn labels_commands() -> TestResult {
     let fixture = Fixture::new().await?;
     assert_help(&fixture, "labels").await?;
-    assert_same(&fixture, &["labels", "list"], Expect::Success).await?;
-    assert_same(
+    assert_command(&fixture, &["labels", "list"], Expect::Success).await?;
+    assert_command(
         &fixture,
         &["labels", "list", "--project", PROJECT, "--format", "table"],
         Expect::Success,
     )
     .await?;
-    assert_same(&fixture, &["labels", "list", "--project", MISSING], Expect::ApiError).await?;
+    assert_command(&fixture, &["labels", "list", "--project", MISSING], Expect::ApiError).await?;
     assert_network_failure(&fixture, &["labels", "list"]).await
 }
 
 #[tokio::test]
-async fn sprints_are_the_same_command_under_both_names() -> TestResult {
+async fn sprints_commands() -> TestResult {
     let fixture = Fixture::new().await?;
     assert_help(&fixture, "sprints").await?;
-    assert_same(&fixture, &["sprints", "list", "--project", PROJECT], Expect::Success).await?;
-    assert_same(&fixture, &["sprints", "list", "--project", MISSING], Expect::ApiError).await?;
+    assert_command(&fixture, &["sprints", "list", "--project", PROJECT], Expect::Success).await?;
+    assert_command(&fixture, &["sprints", "list", "--project", MISSING], Expect::ApiError).await?;
     assert_network_failure(&fixture, &["sprints", "list", "--project", PROJECT]).await
 }
 
 #[tokio::test]
-async fn search_is_the_same_command_under_both_names() -> TestResult {
+async fn search_commands() -> TestResult {
     let fixture = Fixture::new().await?;
     assert_help(&fixture, "search").await?;
-    assert_same(&fixture, &["search", "anything"], Expect::Success).await?;
-    assert_same(&fixture, &["search", "anything", "--format", "table"], Expect::Success).await?;
-    assert_same(&fixture, &["search", MISSING], Expect::ApiError).await?;
+    assert_command(&fixture, &["search", "anything"], Expect::Success).await?;
+    assert_command(&fixture, &["search", "anything", "--format", "table"], Expect::Success).await?;
+    assert_command(&fixture, &["search", MISSING], Expect::ApiError).await?;
     assert_network_failure(&fixture, &["search", "anything"]).await
 }
 
 #[tokio::test]
-async fn files_are_the_same_command_under_both_names() -> TestResult {
+async fn files_commands() -> TestResult {
     let fixture = Fixture::new().await?;
     assert_help(&fixture, "files").await?;
     let upload = fixture.upload.display().to_string();
     let upload_missing = fixture.upload_missing.display().to_string();
-    assert_same(&fixture, &["files", "upload", "--file", &upload], Expect::Success).await?;
-    assert_same(
+    assert_command(&fixture, &["files", "upload", "--file", &upload], Expect::Success).await?;
+    assert_command(
         &fixture,
         &["files", "upload", "--file", &upload_missing],
         Expect::ApiError,
     )
     .await?;
-    assert_same(
+    assert_command(
         &fixture,
         &["files", "upload", "--file", "/nonexistent/sylvode-upload"],
         Expect::LocalFailure,
@@ -518,11 +470,11 @@ async fn files_are_the_same_command_under_both_names() -> TestResult {
 }
 
 #[tokio::test]
-async fn operation_logs_are_the_same_command_under_both_names() -> TestResult {
+async fn operation_logs_commands() -> TestResult {
     let fixture = Fixture::new().await?;
     assert_help(&fixture, "operation-logs").await?;
-    assert_same(&fixture, &["operation-logs", "list", "--limit", "5"], Expect::Success).await?;
-    assert_same(
+    assert_command(&fixture, &["operation-logs", "list", "--limit", "5"], Expect::Success).await?;
+    assert_command(
         &fixture,
         &["operation-logs", "list", "--bot-id", MISSING],
         Expect::ApiError,
@@ -532,25 +484,25 @@ async fn operation_logs_are_the_same_command_under_both_names() -> TestResult {
 }
 
 #[tokio::test]
-async fn tools_are_the_same_command_under_both_names() -> TestResult {
+async fn tools_commands() -> TestResult {
     let fixture = Fixture::new().await?;
     assert_help(&fixture, "tools").await?;
-    assert_same(&fixture, &["tools", "call", "--name", "projects.list"], Expect::Success).await?;
+    assert_command(&fixture, &["tools", "call", "--name", "projects.list"], Expect::Success).await?;
     let create = json!({"project_id": PROJECT, "title": "from tools"}).to_string();
-    assert_same(
+    assert_command(
         &fixture,
         &["tools", "call", "--name", "work_items.create", "--args-json", &create],
         Expect::Success,
     )
     .await?;
     let missing = json!({"project_id": MISSING}).to_string();
-    assert_same(
+    assert_command(
         &fixture,
         &["tools", "call", "--name", "projects.get", "--args-json", &missing],
         Expect::ApiError,
     )
     .await?;
-    assert_same(
+    assert_command(
         &fixture,
         &["tools", "call", "--name", "projects.list", "--args-json", "[]"],
         Expect::LocalFailure,
@@ -564,7 +516,7 @@ async fn tools_are_the_same_command_under_both_names() -> TestResult {
 /// `surface=cli_tools_call`，保留 tool 名；native `sylvode` command 使用 `surface=cli`。"
 ///
 /// The API binds every bot token to one surface and refuses any other, so the label is what
-/// decides which token a command can use. Both executables, both header spellings.
+/// decides which token a command can use.
 #[tokio::test]
 async fn tools_call_declares_the_cli_tools_call_surface_and_native_commands_declare_cli() -> TestResult {
     let fixture = Fixture::new().await?;
@@ -572,7 +524,7 @@ async fn tools_call_declares_the_cli_tools_call_surface_and_native_commands_decl
         (&["tools", "call", "--name", "projects.list"][..], "cli_tools_call"),
         (&["projects", "list"][..], "cli"),
     ] {
-        for binary in [MCP_SERVER, SYLVODE] {
+        for binary in [SYLVODE] {
             let mut full: Vec<String> = args.iter().map(ToString::to_string).collect();
             full.push("--config".to_string());
             full.push(fixture.config.path().display().to_string());
@@ -586,9 +538,8 @@ async fn tools_call_declares_the_cli_tools_call_surface_and_native_commands_decl
             );
             let surfaces = std::mem::take(&mut *fixture.surfaces.lock().await);
             assert!(!surfaces.is_empty(), "{binary} {args:?}: no request reached the API");
-            for (canonical, legacy) in &surfaces {
-                assert_eq!(canonical, expected, "{binary} {args:?}: X-Sylvode-MCP-Surface");
-                assert_eq!(legacy, expected, "{binary} {args:?}: X-OpenPR-MCP-Surface");
+            for surface in &surfaces {
+                assert_eq!(surface, expected, "{binary} {args:?}: X-Sylvode-MCP-Surface");
             }
         }
     }
@@ -609,6 +560,12 @@ async fn sylvode_help_lists_all_fifteen_groups_and_no_serve() -> TestResult {
 
     let serve = run(SYLVODE, fixture.dir()?, &["serve".to_string()]).await?;
     assert_eq!(serve.status.code(), Some(2), "sylvode must not offer serve");
+    // The workspace groups are not `mcp-server` commands: they fail like any unknown command.
+    for group in ["projects", "work-items", "search", "tools"] {
+        let output = run(MCP_SERVER, fixture.dir()?, &[group.to_string()]).await?;
+        assert_eq!(output.status.code(), Some(2), "mcp-server {group}");
+        assert!(output.stdout.is_empty(), "mcp-server {group} wrote to stdout");
+    }
     Ok(())
 }
 
@@ -678,7 +635,6 @@ async fn group_help_never_prints_internal_documentation() -> TestResult {
         (SYLVODE, vec!["projects", "--help"]),
         (SYLVODE, vec!["objects", "--help"]),
         (MCP_SERVER, vec!["--help"]),
-        (MCP_SERVER, vec!["projects", "--help"]),
     ] {
         let args: Vec<String> = args.into_iter().map(str::to_string).collect();
         let output = run(binary, fixture.dir()?, &args).await?;
@@ -717,8 +673,7 @@ async fn run_redirected(
 
 /// An unwritable stream never panics a command (a panic exits 101). A failed workspace command
 /// whose stderr cannot be written exits 1, exactly as with a writable stderr; a successful one
-/// whose result cannot be written to stdout exits 1 instead of claiming success; both names
-/// behave alike. The Flow renderer keeps a failure's own exit code and exits 1 for an
+/// whose result cannot be written to stdout exits 1 instead of claiming success; The Flow renderer keeps a failure's own exit code and exits 1 for an
 /// undeliverable success.
 #[cfg(target_os = "linux")]
 #[tokio::test]
@@ -727,7 +682,7 @@ async fn an_unwritable_stream_never_panics_a_command() -> TestResult {
     let dir = fixture.dir()?;
     let config = fixture.config.path().display().to_string();
 
-    for binary in [MCP_SERVER, SYLVODE] {
+    for binary in [SYLVODE] {
         let failing = ["projects", "get", MISSING, "--config", &config];
         let writable = run_redirected(binary, dir, &failing, Stdio::piped(), Stdio::piped()).await?;
         let full = run_redirected(binary, dir, &failing, Stdio::piped(), unwritable()?).await?;
@@ -788,7 +743,7 @@ async fn an_unwritable_stream_never_panics_a_command() -> TestResult {
 
 /// `[logging] output = "stdout"` cannot be honoured by a process whose stdout is its result, so
 /// logs go to stderr and the process says so. Under the default filter (no `logging.filter`) that
-/// notice must reach stderr, while stdout stays exactly the command's JSON, under both names.
+/// notice must reach stderr, while stdout stays exactly the command's JSON.
 #[tokio::test]
 async fn an_overridden_log_stream_is_reported_under_the_default_filter() -> TestResult {
     let fixture = Fixture::new().await?;
@@ -808,23 +763,16 @@ async fn an_overridden_log_stream_is_reported_under_the_default_filter() -> Test
         "--config".to_string(),
         config,
     ];
-    let legacy = run(MCP_SERVER, dir, &args).await?;
-    let canonical = run(SYLVODE, dir, &args).await?;
-    for (name, output) in [("mcp-server", &legacy), ("sylvode", &canonical)] {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(output.status.code(), Some(0), "{name}: {stderr}");
-        assert!(
-            stderr.contains("logging.output was overridden"),
-            "{name}: the override notice is missing from stderr:\n{stderr}"
-        );
-        let stdout = String::from_utf8(output.stdout.clone())?;
-        assert!(
-            !stdout.contains("overridden"),
-            "{name}: a log line reached stdout:\n{stdout}"
-        );
-        let parsed: Value = serde_json::from_str(&stdout)?;
-        assert!(parsed.is_object(), "{name}: {stdout}");
-    }
-    assert_eq!(legacy.stdout, canonical.stdout);
+    let output = run(SYLVODE, dir, &args).await?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.contains("logging.output was overridden"),
+        "the override notice is missing from stderr:\n{stderr}"
+    );
+    let stdout = String::from_utf8(output.stdout.clone())?;
+    assert!(!stdout.contains("overridden"), "a log line reached stdout:\n{stdout}");
+    let parsed: Value = serde_json::from_str(&stdout)?;
+    assert!(parsed.is_object(), "{stdout}");
     Ok(())
 }

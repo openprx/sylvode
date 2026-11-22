@@ -226,6 +226,22 @@ pub struct EventSource {
     /// `events-v1.md`: "只有无用户发起的 scheduled maintenance 才允许 `actor_id=null,
     /// surface=system`，同时必须有 service identity 写入 `source.service`".
     pub service: Option<String>,
+    /// The connected-application grant the request was made under. Set only by trusted server
+    /// code from the delegated authentication context, never from a request body. `None` for
+    /// every request a person or a bot made directly.
+    ///
+    /// A delegated origin never starts agent work: the delegated branch refuses a write that would
+    /// assign or mention an agent before it happens, so no automation reads this field to decide
+    /// whether to run; it exists so the audit stream can tell a connected application's change
+    /// from the user's own.
+    pub delegation: Option<Delegation>,
+}
+
+/// The grant behind a delegated request, as carried in an event source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delegation {
+    pub grant_id: Uuid,
+    pub client_id: String,
 }
 
 impl EventSource {
@@ -240,7 +256,24 @@ impl EventSource {
             request: None,
             client_id: None,
             service: None,
+            delegation: None,
         }
+    }
+
+    /// Marks the origin as a connected application acting for the user under `grant_id`.
+    #[must_use]
+    pub fn with_delegation(mut self, grant_id: Uuid, client_id: impl Into<String>) -> Self {
+        self.delegation = Some(Delegation {
+            grant_id,
+            client_id: client_id.into(),
+        });
+        self
+    }
+
+    /// Whether the request was made through a connected application.
+    #[must_use]
+    pub const fn is_delegated(&self) -> bool {
+        self.delegation.is_some()
     }
 
     /// Downgrade provenance whose transport label came from the credential holder. Bot traffic
@@ -304,6 +337,12 @@ impl EventSource {
             if let Some(value) = value {
                 map.insert(key.to_string(), Value::String(value.clone()));
             }
+        }
+        if let Some(delegation) = &self.delegation {
+            let mut grant = Map::new();
+            grant.insert("grant_id".to_string(), Value::String(delegation.grant_id.to_string()));
+            grant.insert("client_id".to_string(), Value::String(delegation.client_id.clone()));
+            map.insert("delegation".to_string(), Value::Object(grant));
         }
         Value::Object(map)
     }
@@ -432,6 +471,29 @@ mod tests {
     /// The "缺省与空值不可区分" guard. `None` and `Some("")` are two different facts and must
     /// produce two different JSON shapes; a `to_json` that folded the empty string into an absent
     /// key would make them one, and this assertion is what stops that.
+    #[test]
+    fn a_delegated_origin_carries_its_grant_and_other_origins_carry_no_delegation_key() {
+        let plain = EventSource::new(EventSurface::Rest).to_json();
+        assert!(
+            plain.get("delegation").is_none(),
+            "a direct request has no delegation key"
+        );
+        assert!(!EventSource::new(EventSurface::Rest).is_delegated());
+
+        let grant = Uuid::new_v4();
+        let delegated = EventSource::new(EventSurface::McpHttp).with_delegation(grant, "ramflux");
+        assert!(delegated.is_delegated());
+        let json = delegated.to_json();
+        assert_eq!(
+            json.get("delegation"),
+            Some(&serde_json::json!({"grant_id": grant.to_string(), "client_id": "ramflux"}))
+        );
+        assert_eq!(
+            json.get("surface").and_then(serde_json::Value::as_str),
+            Some("mcp_http")
+        );
+    }
+
     #[test]
     fn an_empty_string_stays_a_present_key_and_does_not_collapse_into_omitted() {
         let omitted = EventSource::new(EventSurface::McpStdio).to_json();

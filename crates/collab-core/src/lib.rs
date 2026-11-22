@@ -27,7 +27,7 @@
 //! process per call rather than reusing the spike's fork-no-exec zygote (see
 //! `isolation::host`'s module doc for why that specific mechanism does not fit a live,
 //! multi-threaded async server). It reuses that ADR's online-enforcement *mechanisms*
-//! (`SIGPROF`/`setitimer`, a counting `GlobalAlloc`, an independent wall watchdog) over a
+//! (`SIGPROF` from a process-CPU-clock `timer_create` timer, a counting `GlobalAlloc`, an independent wall watchdog) over a
 //! different process-creation primitive, not its code.
 //!
 //! `CorpusEngine` (the spike's second, harness-only trait providing `new_empty`/`apply_operation`/
@@ -35,6 +35,7 @@
 //! engine there is nothing left to abstract over, so those three capabilities are plain inherent
 //! methods on [`engine::LoroCollabEngine`] instead.
 
+pub mod alloc_meter;
 pub mod block_identity;
 pub mod block_projection;
 mod editor_doc_bridge;
@@ -42,15 +43,24 @@ pub mod editor_media;
 pub mod editor_structure;
 pub mod engine;
 pub mod error;
+pub mod facts;
+mod floor_guard;
 pub mod frontier;
 pub mod isolation;
 pub mod limits;
 pub mod operation;
 pub mod page_inline;
 mod prose_projection;
+pub mod reserved_roots;
 pub mod semantic;
+pub mod setup_guard;
+#[cfg(test)]
+mod test_alloc;
+pub mod tree_refs;
 #[cfg(test)]
 mod walk_counter;
+pub mod window_check;
+pub mod work;
 
 pub use engine::{CollabEngine, Diff, EngineMetadata, LoroCollabEngine, metadata};
 pub use error::{CollabError, InputLimits};

@@ -1,0 +1,22 @@
+[
+	{
+		"file": "src/lib/components/IssueCreateModal.svelte",
+		"rules": ["hex"],
+		"reason": "default colour of a label that has none: data a user sets with a colour picker and the API stores, not styling"
+	},
+	{
+		"file": "src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]/+page.svelte",
+		"rules": ["hex"],
+		"reason": "default colour of a new label in the colour picker: data stored through the API, not styling"
+	},
+	{
+		"file": "src/routes/(app)/workspace/[workspaceId]/workflows/+page.svelte",
+		"rules": ["hex"],
+		"reason": "default and fallback colours of a workflow state: data a user changes with a colour picker and the API stores, not styling"
+	},
+	{
+		"file": "src/lib/forms/state/attachments.ts",
+		"rules": ["hex"],
+		"reason": "fixed ink colour of the signature canvas, which is always white paper: the stroke of a drawing exported as a stored PNG, independent of the theme"
+	}
+]

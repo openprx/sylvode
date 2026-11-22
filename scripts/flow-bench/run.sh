@@ -147,6 +147,9 @@ dir = "$STATE/uploads"
 
 [flow]
 collab_allowed_origins = ["$web_origin"]
+# The benchmark measures the incremental write window, which is experimental and off by default,
+# so the servers under measurement turn it on explicitly.
+incremental_window = true
 TOML
   chmod 600 "$path"
 }
@@ -177,6 +180,8 @@ pid_alive "$STATE/worker.pid" || {
   exit 1
 }
 
+# Recorded in the summary: what the servers above were configured with.
+export FLOW_BENCH_INCREMENTAL_WINDOW=true
 export FLOW_BENCH_API_ORIGIN="$api_origin"
 export FLOW_BENCH_OBSERVER_ORIGIN="$observer_origin"
 export FLOW_BENCH_WEB_ORIGIN="$web_origin"

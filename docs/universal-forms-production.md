@@ -14,8 +14,8 @@ Minimum production services:
 - Sylvode worker.
 - Sylvode frontend.
 - Sylvode MCP server if AI assistants or external MCP clients are enabled.
-- Optional: the Sylvode Webhook receiver (`sylvode-webhook`, compose profile `connectors`) when
-  inbound webhook handling is wanted.
+- Optional: the Sylvode runner (`sylvode-runner`, compose profile `connectors`) when inbound
+  webhook handling is wanted.
 
 Universal forms production features require these subsystems to be running
 together:
@@ -250,9 +250,9 @@ postgres image. Nothing in it reaches Sylvode's own code:
 
 ```bash
 POSTGRES_PASSWORD=replace_with_postgres_password
-OPENPR_FRONTEND_PORT=3000
-OPENPR_API_PORT=8081
-MCP_SERVER_PORT=8090
+SYLVODE_FRONTEND_PORT=3000
+SYLVODE_API_PORT=8081
+SYLVODE_MCP_PORT=8090
 VITE_API_BASE_URL=
 ```
 
@@ -276,26 +276,21 @@ outside compose, set `VITE_API_BASE_URL=http://localhost:8081`.
 
 PostgreSQL is exposed only inside the compose network. Do not publish the
 database port unless an operator has a separate firewall, backup, and access
-control plan. API, MCP, frontend, and optional webhook receiver host ports bind
+control plan. API, MCP, frontend, and optional runner host ports bind
 to `127.0.0.1` by default. Put a deployment-owned reverse proxy or tunnel in
 front of the frontend and any intentional API/MCP endpoint, and terminate TLS
-there. Optional receivers, such as the Sylvode Webhook receiver (`sylvode-webhook`), run under the
+there. Optional receivers, such as the Sylvode runner (`sylvode-runner`), run under the
 `connectors` profile and must use deployment-local image and config values, not
 machine-specific `/opt/...` paths.
 
-The repository includes `config/sylvode-webhook.example.toml` so the optional
-webhook receiver has a portable starter config. For production, copy
+The repository includes `config/sylvode-runner.example.toml` so the optional
+runner has a portable starter config. For production, copy
 it to a deployment-owned path, set a concrete `webhook_secrets` value, keep
-`allow_unsigned = false`, and point `SYLVODE_WEBHOOK_CONFIG` (legacy `OPENPR_WEBHOOK_CONFIG`) at that
-file. The default image is `ghcr.io/openprx/sylvode-webhook:latest`, which mounts the file at
-`/etc/sylvode-webhook/config.toml`; when no image of that name is present, compose builds it from
-`apps/webhook` in this repository (`apps/webhook/Dockerfile`, repository root as the context).
-The receiver now follows the Sylvode release version, so a published image is tagged with the
-Sylvode version. The standalone releases before the receiver joined this repository (last
-published tag 0.3.3) exist only as `ghcr.io/openprx/openpr-webhook`. To run one of those instead,
-set `SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/openpr-webhook:<tag>` to a published tag and override
-the service command with `["/app/openpr-webhook", "/etc/sylvode-webhook/config.toml"]`, because
-those images do not carry `/app/sylvode-webhook`. In production, pin a version tag instead of `latest`.
+`allow_unsigned = false`, and point `SYLVODE_RUNNER_CONFIG` at that file. The default image is `ghcr.io/openprx/sylvode-runner:latest`,
+which mounts the file at `/etc/sylvode-runner/config.toml`; when no image of that name is present,
+compose builds it from `apps/runner` in this repository (`apps/runner/Dockerfile`, repository root
+as the context). The runner follows the Sylvode release version, so a published image is tagged
+with the Sylvode version. In production, pin a version tag instead of `latest`.
 
 The compose file intentionally avoids fixed `container_name` values. This lets
 operators run multiple Sylvode deployments on the same host by using different
@@ -485,7 +480,7 @@ Production webhook checks:
 
 - API CRUD persists webhook definitions without mirroring them into another table.
 - Signed delivery is verified by the external webhook consumer.
-- Optional webhook receiver containers are started only when the deployment enables its compose profile.
+- Optional runner containers are started only when the deployment enables its compose profile.
 - Generic webhook delivery is verified independently of bot operation records.
 
 Smoke commands:
@@ -527,7 +522,7 @@ Smoke commands:
 ```bash
 cd frontend && bun run check && bun run build
 cd frontend && bun run smoke:project-template && bun run smoke:template-work-items
-cd frontend && bun run smoke:forms-ui && bun run smoke:restaurant-ordering
+cd frontend && bun run smoke:forms-page-interactions && bun run smoke:forms-record-list && bun run smoke:restaurant-ordering
 scripts/collect-universal-forms-ui-artifacts.sh
 scripts/verify-universal-forms-ui-artifacts.sh
 scripts/verify-universal-forms-ui-review-gallery.sh

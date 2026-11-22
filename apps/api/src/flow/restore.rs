@@ -207,6 +207,7 @@ pub async fn restore_page_version(
         crate::config::runtime().flow.dispatch_max_attempts,
         None,
         write::UpdateRequest {
+            rebase_policy: crate::flow::collab::write::RebasePolicy::None,
             document_id: head.document_id,
             update_id: write::replay_stable_update_id(head.document_id, &request.idempotency_key),
             bytes,

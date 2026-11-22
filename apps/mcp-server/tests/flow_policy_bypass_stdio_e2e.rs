@@ -35,7 +35,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use support::{ConfigFile, McpSettings, write_config};
+use support::{ConfigFile, FULL_TOOLS, McpSettings, write_config_with_extra_mcp_keys};
 use tokio::process::{Child, Command};
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -215,13 +215,16 @@ struct StdioClient {
 
 impl StdioClient {
     fn spawn(api_url: &str) -> Result<Self, Box<dyn Error>> {
-        let config = write_config(&McpSettings {
-            api_url,
-            bot_token: Some(BOT_TOKEN),
-            workspace_id: WORKSPACE,
-            transport: Some("stdio"),
-            bind_addr: None,
-        })?;
+        let config = write_config_with_extra_mcp_keys(
+            &McpSettings {
+                api_url,
+                bot_token: Some(BOT_TOKEN),
+                workspace_id: WORKSPACE,
+                transport: Some("stdio"),
+                bind_addr: None,
+            },
+            FULL_TOOLS,
+        )?;
         let mut child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])
             .arg(config.path())
@@ -327,13 +330,16 @@ struct NetworkedServer {
 impl NetworkedServer {
     async fn spawn(api_url: &str, transport: &str) -> Result<Self, Box<dyn Error>> {
         let bind_addr = format!("127.0.0.1:{}", free_port().await?);
-        let config = write_config(&McpSettings {
-            api_url,
-            bot_token: None,
-            workspace_id: WORKSPACE,
-            transport: Some(transport),
-            bind_addr: Some(&bind_addr),
-        })?;
+        let config = write_config_with_extra_mcp_keys(
+            &McpSettings {
+                api_url,
+                bot_token: None,
+                workspace_id: WORKSPACE,
+                transport: Some(transport),
+                bind_addr: Some(&bind_addr),
+            },
+            FULL_TOOLS,
+        )?;
         let child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])
             .arg(config.path())
@@ -509,12 +515,12 @@ fn alias_api_router() -> Router {
     }))
 }
 
-/// Enumerates the actual registry through every shipped transport and reads every single row
-/// through both schemes. The explicit expected list catches a registry row disappearing at the
-/// same time as its test; the observed count catches a new row added without alias coverage.
+/// Enumerates the actual registry through every shipped transport and reads every single row by its
+/// `sylvode://` identity. The explicit
+/// expected list catches a registry row disappearing at the same time as its test; the observed count
+/// catches a new row added without coverage.
 #[tokio::test]
-#[allow(clippy::print_stdout)]
-async fn all_resource_aliases_are_identical_over_stdio_http_and_sse() -> TestResult {
+async fn every_resource_is_served_by_its_sylvode_identity_only_over_stdio_http_and_sse() -> TestResult {
     let api_url = spawn_router(alias_api_router()).await?;
     let mut stdio = StdioClient::spawn(&api_url)?;
     let http = NetworkedServer::spawn(&api_url, "http").await?;
@@ -527,11 +533,12 @@ async fn all_resource_aliases_are_identical_over_stdio_http_and_sse() -> TestRes
     let sse_list = sse_call(&sse, &registry_request(5, "resources/list")).await?;
     let sse_templates = sse_call(&sse, &registry_request(6, "resources/templates/list")).await?;
 
-    let mut observed = registry_identities(&stdio_list, &stdio_templates)?;
+    let observed = registry_identities(&stdio_list, &stdio_templates)?;
     assert_eq!(registry_identities(&http_list, &http_templates)?, observed);
     assert_eq!(registry_identities(&sse_list, &sse_templates)?, observed);
     let expected = [
-        "sylvode://skills/openpr-mcp",
+        "sylvode://skills/sylvode-mcp",
+        "sylvode://skills/sylvode-mcp/tools",
         "sylvode://guides/agents",
         "sylvode://guides/workflows",
         "sylvode://scenario-templates",
@@ -548,7 +555,6 @@ async fn all_resource_aliases_are_identical_over_stdio_http_and_sse() -> TestRes
         "sylvode://projects/{project_id}/agent-policy",
         "sylvode://projects/{project_id}/release-readiness",
         "sylvode://projects/{project_id}/type",
-        "sylvode://projects/{project_id}/resources",
         "sylvode://projects/{project_id}/recent-decisions",
         "sylvode://projects/{project_id}/sprints",
         "sylvode://issues/{identifier}",
@@ -558,9 +564,6 @@ async fn all_resource_aliases_are_identical_over_stdio_http_and_sse() -> TestRes
         "sylvode://collections/{collection_id}/records?cursor={cursor}&limit={limit}",
         "sylvode://workspaces/{workspace_id}/navigator?project_id={project_id}",
     ];
-    if std::env::var("OPENPR_TEST_URI_ALIAS_MUTATION").as_deref() == Ok("drop-last-registry") {
-        observed.pop();
-    }
     assert_eq!(
         observed.len(),
         expected.len(),
@@ -568,93 +571,29 @@ async fn all_resource_aliases_are_identical_over_stdio_http_and_sse() -> TestRes
     );
     assert_eq!(observed, expected, "explicit resource enumeration drifted");
 
-    let mut rows = Vec::new();
     for (index, registered) in observed.iter().enumerate() {
         let index = i64::try_from(index)?;
         let canonical = expand_resource_identity(registered);
-        let alias = if index == 0 && std::env::var("OPENPR_TEST_URI_ALIAS_MUTATION").as_deref() == Ok("break-one-alias")
-        {
-            canonical.replacen("sylvode://", "openpr-broken://", 1)
-        } else {
-            canonical.replacen("sylvode://", "openpr://", 1)
-        };
         let id = 1000 + (index * 10);
         let stdio_canonical = stdio.call(&resource_request(id, &canonical)).await?;
-        let stdio_alias = stdio.call(&resource_request(id + 1, &alias)).await?;
         let http_canonical = http_call(&http, &resource_request(id + 2, &canonical)).await?;
-        let http_alias = http_call(&http, &resource_request(id + 3, &alias)).await?;
         let sse_canonical = sse_call(&sse, &resource_request(id + 4, &canonical)).await?;
-        let sse_alias = sse_call(&sse, &resource_request(id + 5, &alias)).await?;
-        for (transport, canonical_response, alias_response) in [
-            ("stdio", stdio_canonical, stdio_alias),
-            ("http", http_canonical, http_alias),
-            ("sse", sse_canonical, sse_alias),
+        for (transport, canonical_response) in [
+            ("stdio", stdio_canonical),
+            ("http", http_canonical),
+            ("sse", sse_canonical),
         ] {
             assert!(
                 canonical_response.get("error").is_none(),
                 "{transport} canonical {registered}: {canonical_response}"
             );
-            assert!(
-                alias_response.get("error").is_none(),
-                "{transport} alias {registered}: {alias_response}"
-            );
-            // ADR-0020 D2: the alias read carries `_meta.deprecation` naming the canonical URI
-            // and the earliest removal release; with that one key removed it is the canonical
-            // read byte for byte, and the canonical read carries no deprecation at all.
-            let mut alias_result = alias_response
-                .get("result")
-                .cloned()
-                .ok_or("alias read had no result")?;
-            let contents = alias_result
-                .get_mut("contents")
-                .and_then(Value::as_array_mut)
-                .ok_or("alias read had no contents")?;
-            assert!(
-                !contents.is_empty(),
-                "{transport} alias read of {registered} returned no contents"
-            );
-            for content in contents {
-                let deprecation = content
-                    .get_mut("_meta")
-                    .and_then(Value::as_object_mut)
-                    .and_then(|meta| meta.remove("deprecation"));
-                assert_eq!(
-                    deprecation,
-                    Some(json!({"replaced_by": canonical, "earliest_removal": "2.0"})),
-                    "{transport} alias read of {registered} lacks the deprecation metadata"
-                );
-            }
             assert_eq!(
-                canonical_response.get("result"),
-                Some(&alias_result),
-                "{transport} alias payload differs for {registered} beyond _meta.deprecation"
-            );
-            assert_eq!(
-                json_at(&canonical_response, "/result/contents/0/_meta/canonical_uri")?,
+                json_at(&canonical_response, "/result/contents/0/uri")?,
                 &json!(canonical),
-                "{transport} canonical metadata differs for {registered}"
+                "{transport} canonical read of {registered} names another identity"
             );
-            assert!(
-                canonical_response
-                    .pointer("/result/contents/0/_meta/deprecation")
-                    .is_none(),
-                "{transport} canonical read of {registered} carries deprecation metadata"
-            );
-            rows.push(json!({"resource":registered,"transport":transport,"passed":true,"deprecation_checked":true}));
         }
     }
-    println!(
-        "V09_URI_ALIAS_RESULT {}",
-        json!({
-            "schema_version":"sylvode.flow.mcp-uri-alias-result.v1",
-            "registry_actual_count":observed.len(),
-            "enumerated_resource_count":expected.len(),
-            "transport_count":3,
-            "executed_count":rows.len(),
-            "rows":rows,
-            "passed":true
-        })
-    );
     stdio.shutdown().await?;
     http.shutdown().await?;
     sse.shutdown().await

@@ -27,6 +27,7 @@
 	import { get } from 'svelte/store';
 	import { goto } from '$app/navigation';
 	import { t } from 'svelte-i18n';
+	import Modal from '#lib/components/Modal.svelte';
 	import { flowApi, type FlowObjectView, type FlowTrashItem } from '#lib/api/flow.js';
 	import { FlowCommandService } from '#lib/flow/command-service.js';
 	import {
@@ -259,6 +260,7 @@
 
 	const tree = $derived.by((): TreeNode[] => {
 		void orderVersion;
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const byParent = new Map<string | null, FlowObjectView[]>();
 		const displayParents = rootObjectId
 			? pageOnlyParents(objects, navigationParents, rootObjectId)
@@ -340,6 +342,7 @@
 	async function ensureOrderEntries(): Promise<void> {
 		if (!navEntry) return;
 		const map = getNamedMap(navEntry.doc, 'order');
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const byParent = new Map<string | null, FlowObjectView[]>();
 		for (const object of objects) {
 			const parentKey = object.parent_id ?? null;
@@ -454,6 +457,10 @@
 			try {
 				const navigatorObjectId = await loadNavigatorRoot();
 				await loadObjects();
+				// The tree needs only the REST reads above (created_at order until the order map
+				// arrives). Waiting for the collaborative navigator document to connect would hide
+				// every Page for as long as that socket is slow.
+				loading = false;
 				navEntry = await repository.open({
 					scopeId,
 					objectId: navigatorObjectId,
@@ -474,6 +481,8 @@
 						void refreshNavigatorMetadata();
 					}
 				);
+				// The stored order is now readable; re-derive the tree even if nothing needs seeding.
+				orderVersion += 1;
 				await ensureOrderEntries();
 			} catch (error) {
 				navigatorFailureKey = flowErrorDetailKey(error as FlowError);
@@ -621,6 +630,7 @@
 	}
 
 	function toggleExpand(id: string): void {
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- expanded is replaced as a whole, so a plain Set is intended
 		const next = new Set(expanded);
 		if (next.has(id)) next.delete(id);
 		else next.add(id);
@@ -907,6 +917,7 @@
 				title: get(t)('flow.nav.untitled')
 			});
 			placeCreatedObject(created);
+			// eslint-disable-next-line svelte/prefer-svelte-reactivity -- expanded is replaced as a whole, so a plain Set is intended
 			if (parentId) expanded = new Set(expanded).add(parentId);
 			select(created.object.id);
 		} catch (error) {
@@ -935,7 +946,7 @@
 </script>
 
 <nav
-	class="flex h-full w-full shrink-0 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950"
+	class="flex h-full w-full shrink-0 flex-col border-r border-line bg-nav"
 	aria-label={$t('flow.nav.title')}
 >
 	<a
@@ -944,19 +955,15 @@
 					workspaceId: integrationWorkspaceId
 				})
 			: resolve('/(app)/flow/package')}
-		class="block min-h-11 px-3 py-2 text-sm text-slate-600 underline dark:text-slate-300"
+		class="block min-h-11 px-3 py-2 text-sm text-fg-muted underline"
 		>{$t('flow.personal.packages')}</a
 	>
-	<div
-		class="flex items-center justify-between border-b border-slate-200 p-3 dark:border-slate-800"
-	>
-		<span class="text-sm font-semibold text-slate-900 dark:text-slate-100"
-			>{$t('flow.nav.title')}</span
-		>
+	<div class="flex items-center justify-between border-b border-line p-3">
+		<span class="text-sm font-semibold text-fg">{$t('flow.nav.title')}</span>
 		<div class="relative flex items-center gap-1">
 			<button
 				type="button"
-				class="min-h-11 min-w-11 rounded px-2 text-slate-500 hover:bg-slate-200 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-slate-800"
+				class="min-h-11 min-w-11 rounded px-2 text-fg-muted hover:bg-selected"
 				aria-label={$t('flow.personal.refreshNavigator')}
 				title={$t('flow.personal.refreshNavigator')}
 				disabled={refreshingNavigator}
@@ -966,7 +973,7 @@
 			<button
 				type="button"
 				bind:this={newMenuButton}
-				class="flex min-h-11 min-w-11 items-center justify-center rounded text-slate-600 hover:bg-slate-200 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+				class="flex min-h-11 min-w-11 items-center justify-center rounded text-fg-muted hover:bg-selected hover:text-fg disabled:text-fg-muted disabled:hover:bg-transparent"
 				onclick={toggleNewMenu}
 				disabled={creatingParentId !== undefined}
 				aria-haspopup="menu"
@@ -998,7 +1005,7 @@
 				></div>
 				<div
 					bind:this={newMenuEl}
-					class="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+					class="absolute right-0 top-full z-50 mt-1 w-48 rounded-float border border-overlay-line bg-overlay py-1 text-sm shadow-overlay"
 					role="menu"
 					tabindex="-1"
 					aria-label={$t('flow.nav.newMenu')}
@@ -1007,7 +1014,7 @@
 					<button
 						type="button"
 						role="menuitem"
-						class="block min-h-11 w-full px-3 text-left text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+						class="block min-h-11 w-full px-3 text-left text-fg hover:bg-surface focus:bg-surface"
 						onclick={chooseNewPage}
 					>
 						{$t('flow.nav.newPage')}
@@ -1016,7 +1023,7 @@
 						<button
 							type="button"
 							role="menuitem"
-							class="block min-h-11 w-full px-3 text-left text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+							class="block min-h-11 w-full px-3 text-left text-fg hover:bg-surface focus:bg-surface"
 							onclick={chooseNewCollection}
 						>
 							{$t('flow.nav.createCollection.menuItem')}
@@ -1028,10 +1035,9 @@
 	</div>
 
 	<p
-		class="border-b border-slate-200 px-3 py-1 text-xs dark:border-slate-800 {lagState.kind ===
-		'lagging'
-			? 'text-amber-700 dark:text-amber-300'
-			: 'text-slate-500 dark:text-slate-400'}"
+		class="border-b border-line px-3 py-1 text-xs {lagState.kind === 'lagging'
+			? 'text-warning'
+			: 'text-fg-muted'}"
 		role="status"
 		aria-live="polite"
 		data-testid="flow-lag-badge"
@@ -1048,7 +1054,7 @@
 		{/if}
 	</p>
 
-	<div class="border-b border-slate-200 p-2 dark:border-slate-800">
+	<div class="border-b border-line p-2">
 		<input
 			type="search"
 			role="combobox"
@@ -1064,13 +1070,11 @@
 			aria-activedescendant={searchOpen && searchState.activeIndex >= 0
 				? searchOptionId(searchState.activeIndex)
 				: undefined}
-			class="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+			class="min-h-11 w-full rounded-control border border-input bg-field px-3 text-sm text-fg"
 			data-testid="flow-search-input"
 		/>
 		{#if searchOpen}
-			<label
-				class="mt-1 flex min-h-11 items-center gap-2 text-xs text-slate-600 dark:text-slate-400"
-			>
+			<label class="mt-1 flex min-h-11 items-center gap-2 text-xs text-fg-muted">
 				<input
 					type="checkbox"
 					checked={searchState.freshness === 'require_current'}
@@ -1086,12 +1090,12 @@
 		{#if searchOpen}
 			<div data-testid="flow-search-panel">
 				{#if searchState.status === 'pending' || searchState.status === 'loading'}
-					<p class="p-2 text-sm text-slate-500 dark:text-slate-400">
+					<p class="p-2 text-sm text-fg-muted">
 						{$t('flow.search.searching')}
 					</p>
 				{:else if searchState.status === 'error' && searchState.failureKey}
 					<p
-						class="p-2 text-sm text-red-600 dark:text-red-400"
+						class="p-2 text-sm text-danger"
 						role="alert"
 						data-testid="flow-search-error"
 						data-error-code={searchState.failureCode ?? ''}
@@ -1099,15 +1103,12 @@
 						{$t(searchState.failureKey)}
 					</p>
 				{:else if searchState.status === 'ready' && searchState.rows.length === 0}
-					<p class="p-2 text-sm text-slate-500 dark:text-slate-400" data-testid="flow-search-empty">
+					<p class="p-2 text-sm text-fg-muted" data-testid="flow-search-empty">
 						{$t('flow.search.empty')}
 					</p>
 				{/if}
 				{#if searchState.status === 'ready' && searchState.frontierStale}
-					<p
-						class="px-2 pb-1 text-xs text-amber-700 dark:text-amber-300"
-						data-testid="flow-search-frontier-stale"
-					>
+					<p class="px-2 pb-1 text-xs text-warning" data-testid="flow-search-frontier-stale">
 						{$t('flow.search.frontierStale', { values: { lag: searchState.frontierLag } })}
 					</p>
 				{/if}
@@ -1127,8 +1128,8 @@
 							aria-selected={index === searchState.activeIndex}
 							class={`min-h-11 cursor-pointer rounded px-2 py-1.5 text-sm ${
 								index === searchState.activeIndex
-									? 'bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-100'
-									: 'text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800'
+									? 'bg-selected text-fg'
+									: 'text-fg hover:bg-selected'
 							}`}
 							onclick={() => openSearchRow(index)}
 							onmousemove={() => {
@@ -1141,7 +1142,7 @@
 								<span class="flex-1 truncate font-medium"
 									>{row.title || $t('flow.nav.untitled')}</span
 								>
-								<span class="shrink-0 text-xs text-slate-500 dark:text-slate-400"
+								<span class="shrink-0 text-xs text-fg-muted"
 									>{$t(
 										row.objectType === 'collection'
 											? 'flow.search.type.collection'
@@ -1152,7 +1153,7 @@
 								>
 								{#if row.stale}
 									<span
-										class="shrink-0 rounded bg-amber-100 px-1 text-xs text-amber-800 dark:bg-amber-900/50 dark:text-amber-200"
+										class="shrink-0 rounded bg-warning-soft px-1 text-xs text-warning"
 										data-testid="flow-search-stale"
 										title={$t('flow.search.staleHint', { values: { lag: row.lag } })}
 									>
@@ -1161,10 +1162,9 @@
 								{/if}
 							</span>
 							{#if row.snippet.length > 0}
-								<span class="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400"
+								<span class="mt-0.5 block truncate text-xs text-fg-muted"
 									>{#each row.snippet as segment, segmentIndex (segmentIndex)}{#if segment.match}<mark
-												class="bg-yellow-200 text-inherit dark:bg-yellow-700/60"
-												>{segment.text}</mark
+												class="bg-warning-soft text-inherit">{segment.text}</mark
 											>{:else}{segment.text}{/if}{/each}</span
 								>
 							{/if}
@@ -1178,17 +1178,13 @@
 				</p>
 			</div>
 		{:else if !navRenderer}
-			<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('flow.canvas.unsupported')}</p>
+			<p class="p-2 text-sm text-fg-muted">{$t('flow.canvas.unsupported')}</p>
 		{:else if loading}
-			<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('flow.nav.loading')}</p>
+			<p class="p-2 text-sm text-fg-muted">{$t('flow.nav.loading')}</p>
 		{:else if tree.length === 0}
-			<div class="p-3 text-sm text-slate-500 dark:text-slate-400">
+			<div class="p-3 text-sm text-fg-muted">
 				<p class="mb-2">{$t('flow.nav.empty')}</p>
-				<button
-					type="button"
-					class="font-medium text-blue-600 hover:underline dark:text-blue-400"
-					onclick={() => createPage()}
-				>
+				<button type="button" class="font-medium text-fg underline" onclick={() => createPage()}>
 					{$t('flow.nav.createFirst')}
 				</button>
 			</div>
@@ -1207,10 +1203,10 @@
 						draggable={canReorderPage(node.object.id)}
 						class={`group flex cursor-pointer items-center gap-1 rounded px-2 py-1.5 text-sm outline-none ${
 							selectedObjectId === node.object.id
-								? 'bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-100'
-								: 'text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800'
-						} ${liftedId === node.object.id ? 'ring-2 ring-amber-400' : ''} ${
-							focusedId === node.object.id ? 'ring-2 ring-blue-400' : ''
+								? 'bg-selected text-fg'
+								: 'text-fg hover:bg-selected'
+						} ${liftedId === node.object.id ? 'ring-2 ring-warning' : ''} ${
+							focusedId === node.object.id ? 'ring-2 ring-focus' : ''
 						}`}
 						style={`padding-left: ${node.depth * 16 + 8}px`}
 						onclick={() => select(node.object.id)}
@@ -1224,7 +1220,7 @@
 						{#if node.children.length > 0 || objects.some((o) => o.parent_id === node.object.id)}
 							<button
 								type="button"
-								class="w-4 shrink-0 text-slate-400"
+								class="w-4 shrink-0 text-fg-muted"
 								onclick={(e) => {
 									e.stopPropagation();
 									toggleExpand(node.object.id);
@@ -1242,7 +1238,7 @@
 						<span class="truncate">{node.object.title || $t('flow.nav.untitled')}</span>
 						{#if node.object.object_type === 'collection'}
 							<span
-								class="ml-auto shrink-0 text-xs text-slate-500 dark:text-slate-400"
+								class="ml-auto shrink-0 text-xs text-fg-muted"
 								data-testid="flow-nav-collection-badge">{$t('flow.nav.collectionBadge')}</span
 							>
 						{/if}
@@ -1265,11 +1261,11 @@
 		{/if}
 		{#if placements.length > 0}
 			<section
-				class="mt-3 border-t border-slate-200 pt-2 dark:border-slate-800"
+				class="mt-3 border-t border-line pt-2"
 				aria-labelledby="flow-placements-heading"
 				data-testid="flow-nav-placements"
 			>
-				<h2 id="flow-placements-heading" class="px-2 text-xs font-semibold text-slate-500">
+				<h2 id="flow-placements-heading" class="px-2 text-xs font-semibold text-fg-muted">
 					{$t('flow.mounts.sharedObjects')}
 				</h2>
 				<ul class="mt-1 space-y-1">
@@ -1280,7 +1276,7 @@
 							class="rounded px-2 text-sm"
 						>
 							{#if placement.status === 'source_archived'}
-								<p class="py-2 text-slate-500">
+								<p class="py-2 text-fg-muted">
 									{placement.title || $t('flow.nav.untitled')} · {$t('flow.mounts.sourceArchived')}
 								</p>
 							{:else}
@@ -1294,14 +1290,13 @@
 									draggable={false}
 									aria-current={selectedObjectId === placement.objectId ? 'page' : undefined}
 									title={$t('flow.mounts.nonOwningHint')}
-									class="flex min-h-11 items-center gap-2 rounded text-slate-700 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-300"
+									class="flex min-h-11 items-center gap-2 rounded text-fg hover:underline"
 								>
 									<FlowObjectIcon objectId={placement.objectId} appearance={placement.appearance} />
 									<span class="min-w-0 flex-1 truncate"
 										>{placement.title || $t('flow.nav.untitled')}</span
 									>
-									<span class="shrink-0 text-xs text-slate-500"
-										>{$t('flow.mounts.sharedBadge')}</span
+									<span class="shrink-0 text-xs text-fg-muted">{$t('flow.mounts.sharedBadge')}</span
 									>
 								</a>
 							{/if}
@@ -1310,7 +1305,7 @@
 									<p class="text-xs">{$t('flow.mounts.confirm')}</p>
 									<button
 										type="button"
-										class="min-h-11 px-1 text-xs text-red-700 underline"
+										class="min-h-11 px-1 text-xs text-danger underline"
 										disabled={removingPlacement}
 										onclick={() => removePlacement(placement.objectId, placement.mountId)}
 										>{$t('flow.mounts.remove')}</button
@@ -1324,7 +1319,7 @@
 								{:else}
 									<button
 										type="button"
-										class="min-h-11 text-xs text-slate-500 underline"
+										class="min-h-11 text-xs text-fg-muted underline"
 										onclick={() => (confirmingPlacement = placement.mountId)}
 										>{$t('flow.mounts.remove')}</button
 									>
@@ -1335,14 +1330,14 @@
 				</ul>
 			</section>
 		{/if}
-		{#if navigatorFailureKey}<p class="p-2 text-xs text-red-600" role="alert">
+		{#if navigatorFailureKey}<p class="p-2 text-xs text-danger" role="alert">
 				{$t(navigatorFailureKey)}
 			</p>{/if}
 
-		<div class="mt-3 border-t border-slate-200 pt-2 dark:border-slate-800" data-testid="flow-trash">
+		<div class="mt-3 border-t border-line pt-2" data-testid="flow-trash">
 			<button
 				type="button"
-				class="flex min-h-11 w-full items-center px-2 text-left text-sm text-slate-600 dark:text-slate-300"
+				class="flex min-h-11 w-full items-center px-2 text-left text-sm text-fg-muted"
 				aria-expanded={trashOpen}
 				onclick={() => {
 					trashOpen = !trashOpen;
@@ -1353,7 +1348,7 @@
 			</button>
 			{#if trashOpen}
 				{#if trashItems.length === 0 && !trashLoading && !trashFailureKey}
-					<p class="px-2 py-1 text-xs text-slate-500">{$t('flow.pageOnly.trashEmpty')}</p>
+					<p class="px-2 py-1 text-xs text-fg-muted">{$t('flow.pageOnly.trashEmpty')}</p>
 				{/if}
 				<ul class="space-y-1">
 					{#each trashItems as item (item.id)}
@@ -1371,7 +1366,7 @@
 							{#if confirmingDelete === item.id}
 								<button
 									type="button"
-									class="text-xs text-red-600 underline"
+									class="text-xs text-danger underline"
 									disabled={trashBusy}
 									onclick={() => purgeArchived(item.id)}
 								>
@@ -1390,7 +1385,7 @@
 						</li>
 					{/each}
 				</ul>
-				{#if trashLoading}<p class="px-2 text-xs text-slate-500" role="status">
+				{#if trashLoading}<p class="px-2 text-xs text-fg-muted" role="status">
 						{$t('common.loading')}
 					</p>{/if}
 				{#if trashNextCursor}
@@ -1402,7 +1397,7 @@
 					>
 				{/if}
 				{#if trashFailureKey}
-					<p class="px-2 text-xs text-red-600" role="alert">{$t(trashFailureKey)}</p>
+					<p class="px-2 text-xs text-danger" role="alert">{$t(trashFailureKey)}</p>
 				{/if}
 			{/if}
 		</div>
@@ -1429,7 +1424,7 @@
 		}}
 	></div>
 	<div
-		class="fixed z-50 w-48 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+		class="fixed z-50 w-48 rounded-float border border-overlay-line bg-overlay py-1 text-sm shadow-overlay"
 		style={`left: ${contextMenuPos.x}px; top: ${contextMenuPos.y}px`}
 		role="menu"
 		tabindex="-1"
@@ -1444,7 +1439,7 @@
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			class="block w-full px-3 py-1.5 text-left text-fg hover:bg-surface"
 			onclick={() => moveRelative(contextMenuFor!, 'before')}
 		>
 			{$t('flow.nav.contextMenu.moveBefore')}
@@ -1452,7 +1447,7 @@
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			class="block w-full px-3 py-1.5 text-left text-fg hover:bg-surface"
 			onclick={() => moveRelative(contextMenuFor!, 'after')}
 		>
 			{$t('flow.nav.contextMenu.moveAfter')}
@@ -1460,7 +1455,7 @@
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			class="block w-full px-3 py-1.5 text-left text-fg hover:bg-surface"
 			disabled={!integrationWorkspaceId &&
 				!personalMoveAllowed(
 					objects.find((object) => object.id === contextMenuFor)?.object_type,
@@ -1473,7 +1468,7 @@
 		<button
 			type="button"
 			role="menuitem"
-			class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+			class="block w-full px-3 py-1.5 text-left text-fg hover:bg-surface"
 			disabled={!integrationWorkspaceId &&
 				!personalMoveAllowed(
 					objects.find((object) => object.id === contextMenuFor)?.object_type,
@@ -1485,7 +1480,7 @@
 		</button>
 		<button
 			type="button"
-			class="block w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800"
+			class="block w-full px-3 py-2 text-left hover:bg-surface"
 			role="menuitem"
 			onclick={() => archiveObject(contextMenuFor!)}
 		>
@@ -1495,46 +1490,35 @@
 {/if}
 
 {#if moveInsideFor}
-	<div class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4">
-		<div
-			class="w-full max-w-sm rounded-md border border-slate-200 bg-white p-4 shadow-lg dark:border-slate-700 dark:bg-slate-900"
-			role="dialog"
-			aria-labelledby="flow-move-inside-title"
-		>
-			<h2
-				id="flow-move-inside-title"
-				class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100"
-			>
-				{$t('flow.nav.move.title')}
-			</h2>
-			{#if insideChoices.length === 0}
-				<p class="text-sm text-slate-500">{$t('flow.nav.move.empty')}</p>
-			{:else}
-				<ul class="max-h-64 space-y-1 overflow-y-auto">
-					{#each insideChoices as choice (choice.id)}
-						<li>
-							<button
-								type="button"
-								class="w-full rounded-md px-2 py-1.5 text-left text-sm text-slate-800 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-800"
-								onclick={() => {
-									const sourceId = moveInsideFor;
-									moveInsideFor = null;
-									if (sourceId) void moveToParent(sourceId, choice.id);
-								}}
-							>
-								{$t('flow.nav.move.choose', { values: { title: choice.title } })}
-							</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-			<button
-				type="button"
-				class="mt-3 text-sm text-slate-600"
-				onclick={() => (moveInsideFor = null)}
-			>
-				{$t('common.cancel')}
-			</button>
-		</div>
-	</div>
+	<Modal
+		open
+		title={$t('flow.nav.move.title')}
+		maxWidthClass="max-w-sm"
+		onclose={() => (moveInsideFor = null)}
+	>
+		{#if insideChoices.length === 0}
+			<p class="text-sm text-fg-muted">{$t('flow.nav.move.empty')}</p>
+		{:else}
+			<ul class="max-h-64 space-y-1 overflow-y-auto">
+				{#each insideChoices as choice (choice.id)}
+					<li>
+						<button
+							type="button"
+							class="w-full rounded-row px-2 py-1.5 text-left text-sm text-fg hover:bg-surface"
+							onclick={() => {
+								const sourceId = moveInsideFor;
+								moveInsideFor = null;
+								if (sourceId) void moveToParent(sourceId, choice.id);
+							}}
+						>
+							{$t('flow.nav.move.choose', { values: { title: choice.title } })}
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		<button type="button" class="mt-3 text-sm text-fg-muted" onclick={() => (moveInsideFor = null)}>
+			{$t('common.cancel')}
+		</button>
+	</Modal>
 {/if}

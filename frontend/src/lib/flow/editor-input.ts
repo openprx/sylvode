@@ -143,7 +143,13 @@ function matchSingle(
 }
 
 function plainContent(content: string): boolean {
-	return content.length > 0 && !content.includes('\n') && !content.includes('*') && !content.includes('`') && !content.includes('~');
+	return (
+		content.length > 0 &&
+		!content.includes('\n') &&
+		!content.includes('*') &&
+		!content.includes('`') &&
+		!content.includes('~')
+	);
 }
 
 /** Where a removed half-open block range `[start, end)` should be reinserted. `dest` is the
@@ -173,7 +179,12 @@ export interface ClipboardBlock {
 
 export const FLOW_BLOCK_CLIPBOARD = 'application/x-sylvode-flow-blocks';
 
-const BLOCK_KINDS: ReadonlySet<string> = new Set(['paragraph', 'heading', 'bulletItem', 'codeBlock']);
+const BLOCK_KINDS: ReadonlySet<string> = new Set([
+	'paragraph',
+	'heading',
+	'bulletItem',
+	'codeBlock'
+]);
 const MARK_NAMES: ReadonlySet<string> = new Set(['bold', 'italic', 'code', 'strike', 'link']);
 
 export function encodeBlocks(blocks: readonly ClipboardBlock[]): string {
@@ -205,7 +216,12 @@ function decodeBlock(entry: unknown): ClipboardBlock | null {
 	const record = entry as Record<string, unknown>;
 	if (typeof record.type !== 'string' || !BLOCK_KINDS.has(record.type)) return null;
 	if (typeof record.text !== 'string') return null;
-	if (typeof record.indent !== 'number' || !Number.isInteger(record.indent) || record.indent < 0 || record.indent > 7)
+	if (
+		typeof record.indent !== 'number' ||
+		!Number.isInteger(record.indent) ||
+		record.indent < 0 ||
+		record.indent > 7
+	)
 		return null;
 	let level: number | undefined;
 	if (record.type === 'heading') {
@@ -245,6 +261,7 @@ function decodeMark(entry: unknown, text: string): ClipboardMark | null {
 /** Addresses the link mark and the link popover will accept. */
 export function safeHref(href: string): boolean {
 	if (href.length === 0 || href.length > 2048) return false;
+	// eslint-disable-next-line no-control-regex -- rejects control characters on purpose
 	if (/[\s\u0000-\u001f\u007f]/.test(href)) return false;
 	const lower = href.toLowerCase();
 	if (lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:'))

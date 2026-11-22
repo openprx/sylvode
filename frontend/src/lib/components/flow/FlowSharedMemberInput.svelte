@@ -54,12 +54,12 @@
 </script>
 
 <section
-	class="mt-6 rounded-lg border border-slate-200 p-4 dark:border-slate-700"
+	class="mt-6 rounded-card border border-line p-4"
 	aria-label={$t('flow.shared.localDraft')}
 	data-testid="flow-shared-draft"
 >
 	<h2 class="mb-2 text-sm font-medium">{$t('flow.shared.localDraft')}</h2>
-	<p class="mb-3 text-xs text-slate-500">{$t('flow.shared.editorLimit')}</p>
+	<p class="mb-3 text-xs text-fg-muted">{$t('flow.shared.editorLimit')}</p>
 	{#if !code}<div
 			role="toolbar"
 			aria-label={$t('flow.shared.formatting')}
@@ -67,7 +67,7 @@
 		>
 			<button
 				type="button"
-				class="rounded border px-2 py-1 font-bold"
+				class="rounded border px-2 py-1 font-semibold"
 				disabled={!ready || !editable}
 				aria-label={$t('flow.shared.bold')}
 				title={$t('flow.shared.bold')}
@@ -142,17 +142,17 @@
 					if (!linkError) linkOpen = false;
 				}}>{$t('flow.shared.removeLink')}</button
 			>
-			{#if linkError}<p role="alert" class="w-full text-xs text-red-600">
+			{#if linkError}<p role="alert" class="w-full text-xs text-danger">
 					{$t('flow.shared.linkError')}
 				</p>{/if}
 		</form>{/if}
 	<div
 		bind:this={host}
-		class="shared-member-input rounded border border-slate-200 p-3 whitespace-pre-wrap focus-within:ring-2 focus-within:ring-blue-500 dark:border-slate-700"
+		class="shared-member-input rounded border border-line p-3 whitespace-pre-wrap focus-within:ring-2 focus-within:ring-focus"
 	></div>
-	{#if failed}<p role="alert" class="mt-2 text-sm text-red-600">
+	{#if failed}<p role="alert" class="mt-2 text-sm text-danger">
 			{$t('flow.shared.editorFailed')}
-		</p>{:else if !ready}<p role="status" class="mt-2 text-sm text-slate-500">
+		</p>{:else if !ready}<p role="status" class="mt-2 text-sm text-fg-muted">
 			{$t('common.loading')}
 		</p>{/if}
 	{#if snapshot.editing?.member.content.kind === 'todo'}<label class="mt-3 flex gap-2 text-sm"
@@ -174,7 +174,7 @@
 	<div class="mt-4 flex flex-wrap items-center gap-3 text-sm">
 		<button
 			type="button"
-			class="rounded bg-blue-600 px-3 py-2 text-white disabled:opacity-40"
+			class="rounded bg-primary rf-filled px-3 py-2 text-on-primary disabled:bg-surface disabled:text-fg-muted"
 			data-testid="flow-shared-save"
 			disabled={!ready ||
 				!editable ||
@@ -198,7 +198,7 @@
 		>
 		<button
 			type="button"
-			class="text-slate-500 underline"
+			class="text-fg-muted underline"
 			disabled={snapshot.draft?.phase === 'saving'}
 			onclick={() => session.discard()}>{$t('flow.shared.discardDraft')}</button
 		>

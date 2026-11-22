@@ -79,6 +79,7 @@
 					navigate: async (target) => {
 						// A frame that is no longer shown does not navigate anymore.
 						if (view.opened?.token !== opened.token) return;
+						// eslint-disable-next-line svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type
 						await goto(navigationHref(target, { workspaceId, projectId, key: pluginKey, from }));
 					},
 					onStale: () => void projectDiscovery(projectId).refresh()
@@ -126,6 +127,7 @@
 
 	function onClose(reason: string) {
 		if (closeView(view, reason) === 'back') {
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type
 			void goto(backHref);
 			return;
 		}
@@ -151,25 +153,30 @@
 
 {#if view.phase === 'unavailable'}
 	<section class="space-y-3" data-plugin-unavailable>
-		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-lg font-semibold text-fg">
 			{$t('plugins.host.unavailable')}
 		</h1>
-		<p class="text-sm text-slate-600 dark:text-slate-300">{$t('plugins.host.unavailableHint')}</p>
-		<a href={backHref} class="text-sm text-blue-700 underline dark:text-blue-300"
+		<p class="text-sm text-fg-muted">{$t('plugins.host.unavailableHint')}</p>
+		<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
+		<a href={backHref} class="text-sm text-fg underline"
 			>{$t(from ? 'plugins.host.back' : 'plugins.host.backToProject')}</a
 		>
+		<!-- eslint-enable svelte/no-navigation-without-resolve -->
 	</section>
 {:else}
 	<div class="space-y-4">
 		<div class="flex flex-wrap items-center justify-between gap-2">
-			<a href={backHref} class="text-sm text-blue-700 underline dark:text-blue-300"
+			<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
+			<a href={backHref} class="text-sm text-fg underline"
 				>{$t(from ? 'plugins.host.back' : 'plugins.host.backToProject')}</a
 			>
+			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			<PluginPreferenceMenu {projectId} items={discovery.items} />
 		</div>
 		{#if tabs.inline.length + tabs.more.length > 0}
 			<nav aria-label={$t('plugins.apps.tabsLabel')} class="flex flex-wrap items-center gap-2">
 				{#each tabs.inline as item (itemKey(item))}
+					<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
 					<a
 						href={appHref(workspaceId, projectId, item.key, item.contribution.route ?? '', {
 							from
@@ -177,26 +184,29 @@
 						aria-current={item.key === pluginKey && item.contribution.route === route
 							? 'page'
 							: undefined}
-						class="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 focus-visible:outline-blue-600 aria-[current=page]:bg-slate-100 aria-[current=page]:font-semibold dark:border-slate-600 dark:hover:bg-slate-800 dark:aria-[current=page]:bg-slate-800"
+						class="rounded-control border border-input px-3 py-1.5 text-sm hover:bg-surface aria-[current=page]:bg-selected aria-[current=page]:font-semibold"
 						>{item.contribution.label}</a
 					>
+					<!-- eslint-enable svelte/no-navigation-without-resolve -->
 				{/each}
 				{#if tabs.more.length}
 					<details class="relative">
-						<summary class="cursor-pointer rounded-md px-2 py-1.5 text-sm underline"
+						<summary class="cursor-pointer rounded-control px-2 py-1.5 text-sm underline"
 							>{$t('plugins.host.more')}</summary
 						>
 						<ul
-							class="absolute z-20 mt-1 min-w-40 space-y-1 rounded-md border border-slate-300 bg-white p-2 text-sm shadow dark:border-slate-600 dark:bg-slate-900"
+							class="absolute z-20 mt-1 min-w-40 space-y-1 rounded-float border border-overlay-line bg-overlay p-2 text-sm shadow-overlay"
 						>
 							{#each tabs.more as item (itemKey(item))}
 								<li>
+									<!-- eslint-disable svelte/no-navigation-without-resolve -- plugin and return paths are runtime strings resolve() cannot type -->
 									<a
 										class="block underline"
 										href={appHref(workspaceId, projectId, item.key, item.contribution.route ?? '', {
 											from
 										})}>{item.contribution.label}</a
 									>
+									<!-- eslint-enable svelte/no-navigation-without-resolve -->
 								</li>
 							{/each}
 						</ul>
@@ -204,32 +214,31 @@
 				{/if}
 			</nav>
 		{/if}
-		<h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+		<h1 class="text-lg font-semibold text-fg">
 			{found?.contribution.label ?? pluginKey}
 		</h1>
 		{#if view.notice && view.phase !== 'ready'}
-			<p class="text-sm text-slate-600 dark:text-slate-300" role="status">{$t(view.notice)}</p>
+			<p class="text-sm text-fg-muted" role="status">{$t(view.notice)}</p>
 		{/if}
 		{#if view.phase === 'loading'}
-			<p class="text-sm text-slate-600 dark:text-slate-300" role="status">
+			<p class="text-sm text-fg-muted" role="status">
 				{$t('plugins.host.loading')}
 			</p>
 		{:else if view.phase === 'failed'}
 			<button
 				type="button"
 				onclick={retry}
-				class="rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600"
+				class="rounded-control border border-input px-3 py-1.5 text-sm"
 				>{$t('plugins.host.retry')}</button
 			>
 		{/if}
 		{#if opened && transport && context}
 			<!-- One frame per open: a later open never reuses a host that is still being removed. -->
 			{#key opened.token}
-				<div class="overflow-hidden rounded-md border border-slate-300 dark:border-slate-600">
+				<div class="overflow-hidden rounded-card border border-line">
 					<PluginFrameHost
 						html={opened.html}
 						webSha256={opened.item.web_sha256}
-						bridge={2}
 						grants={[...opened.item.grants]}
 						{context}
 						{transport}

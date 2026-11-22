@@ -1,27 +1,24 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount, tick, untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import {
-		legacyDraftKey,
 		creatorTemplates,
 		draftStorageKey,
 		initialTemplate,
 		originSlot,
 		type CreatorTemplateId
 	} from '#lib/plugins/creator/registry.js';
-	import { personalDraftKey, personalLegacyKey } from '#lib/plugins/creator/personal-drafts.js';
-	import Button from '#lib/components/Button.svelte';
+	import { personalDraftKey } from '#lib/plugins/creator/personal-drafts.js';
+	import Button from '#lib/ui/button/Button.svelte';
 	import CreatorPanelPreview from '#lib/components/plugins/CreatorPanelPreview.svelte';
 	import { apiClient } from '#lib/api/client.js';
 	import { formsApi } from '#lib/api/forms.js';
 	import { projectsApi } from '#lib/api/projects.js';
 	import {
-		isV3,
 		pluginLibraryApi,
 		pluginPackagesApi,
-		type PluginSlot,
 		type PluginSlotV3,
-		type PluginUpload,
 		type PluginUploadV3
 	} from '#lib/api/plugin-packages.js';
 	import {
@@ -41,12 +38,13 @@
 		type UiViewDraft
 	} from '#lib/plugins/creator/ui-view-template.js';
 	import { slotLabelKey } from '#lib/plugins/layout-v3.js';
+	import { focusReviewStart } from '#lib/plugins/creator/review-focus.js';
 
 	type CreatorScope =
 		| { kind: 'personal'; draftId: string }
 		| { kind: 'project'; workspaceId: string; projectId: string };
 	interface Bundle {
-		upload: PluginUpload | PluginUploadV3;
+		upload: PluginUploadV3;
 		html: string;
 		json: string;
 		fixtureCents?: number;
@@ -69,8 +67,11 @@
 	const recordOrigin = $derived(creatorSlot(initialSlot));
 	const settingsUrl = $derived(
 		context.kind === 'project'
-			? `/workspace/${context.workspaceId}/projects/${context.projectId}/settings/plugins`
-			: '/plugins'
+			? resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/settings/plugins', {
+					workspaceId: context.workspaceId,
+					projectId: context.projectId
+				})
+			: resolve('/(app)/plugins')
 	);
 	let templateId = $state<CreatorTemplateId>(
 		initialTemplate(
@@ -85,7 +86,6 @@
 		creatorTemplates.ui_view.defaults({ slot: 'project.view', formKey: null })
 	);
 	let allowed = $state(false);
-	let layoutSupported = $state(true);
 	let extensionSupported = $state(true);
 	let checking = $state(true);
 	let building = $state(false);
@@ -94,7 +94,6 @@
 	let backendMessage = $state('');
 	let installed = $state(false);
 	let bundle = $state.raw<Bundle | null>(null);
-	let previewSlot = $state<PluginSlot>(detailSlot);
 	let previewContribution = $state('');
 	let previewSchema = $state.raw<SampleField[] | null>(null);
 	let schemaFailed = $state(false);
@@ -107,15 +106,13 @@
 	let revision = $state(0);
 
 	const isUi = $derived(templateId === 'ui_view');
-	const template = $derived(creatorTemplates[templateId]);
 	const invalid = $derived(isUi ? invalidUiViewFields(uiDraft) : invalidDraftFields(orderDraft));
-	const templateAvailable = $derived(isUi ? extensionSupported : layoutSupported);
 	const details = ['detailLabel', 'detailTitle', 'detailText'] as const;
 	const actions = ['actionLabel', 'actionTitle', 'actionText'] as const;
 	const metadata = ['key', 'name', 'publisher', 'version', 'formKey'] as const;
 	const uiMetadata = ['key', 'name', 'publisher', 'version'] as const;
 	const uiContent = ['title', 'text'] as const;
-	const review = $derived(bundle && isV3(bundle.upload.manifest) ? bundle.upload.manifest : null);
+	const review = $derived(bundle?.upload.manifest ?? null);
 
 	$effect(() => {
 		const mine = ++scope;
@@ -124,7 +121,6 @@
 		allowed = false;
 		checking = true;
 		resetBuild();
-		previewSlot = recordOrigin;
 		storageKey = '';
 		actorId = actor ?? '';
 		if (!actor) {
@@ -177,12 +173,11 @@
 			pluginPackagesApi.list(project.projectId)
 		]);
 		if (scope !== mine) return;
-		layoutSupported = catalog.data?.layout_supported === true;
 		extensionSupported = catalog.data?.extension_supported === true;
 		if (
 			metadata.data?.workspace_id !== project.workspaceId ||
 			catalog.code !== 0 ||
-			(!layoutSupported && !extensionSupported)
+			!extensionSupported
 		) {
 			checking = false;
 			error = catalog.code === 403 ? 'plugins.manageDenied' : 'plugins.creator.unavailable';
@@ -192,31 +187,18 @@
 		checking = false;
 	}
 
-	function draftKeys(id: CreatorTemplateId, slot: PluginSlotV3, form: string | null) {
-		if (context.kind === 'personal')
-			return {
-				key: personalDraftKey(actorId, context.draftId, id),
-				legacy: id === 'order_amount' ? personalLegacyKey(actorId, context.draftId) : null
-			};
+	function draftKey(id: CreatorTemplateId, slot: PluginSlotV3, form: string | null) {
+		if (context.kind === 'personal') return personalDraftKey(actorId, context.draftId, id);
 		const target = `${encodeURIComponent(context.projectId)}:${encodeURIComponent(form ?? slot)}`;
-		return {
-			key: draftStorageKey('project', actorId, id, target),
-			legacy:
-				id === 'order_amount'
-					? legacyDraftKey('project', actorId, `${context.projectId}:${form ?? 'order_line'}`)
-					: null
-		};
+		return draftStorageKey('project', actorId, id, target);
 	}
 
 	function setupDraft(id: CreatorTemplateId, slot: PluginSlotV3, form: string | null) {
 		resetBuild();
-		previewSlot = creatorSlot(slot);
-		const keys = draftKeys(id, slot, form);
-		storageKey = keys.key;
+		storageKey = draftKey(id, slot, form);
 		let prior: string | null = null;
 		try {
-			prior =
-				localStorage.getItem(keys.key) ?? (keys.legacy ? localStorage.getItem(keys.legacy) : null);
+			prior = localStorage.getItem(storageKey);
 		} catch {
 			/* The draft remains usable in memory. */
 		}
@@ -294,7 +276,7 @@
 	}
 
 	async function build() {
-		if (!allowed || !templateAvailable || invalid.length || building || installing) return;
+		if (!allowed || !extensionSupported || invalid.length || building || installing) return;
 		const buildRevision = ++revision;
 		const mine = scope;
 		resetBuild();
@@ -315,11 +297,13 @@
 			bundle = output;
 			previewSchema = schema;
 			schemaFailed = isUi && !personal && !schema;
-			previewContribution = isV3(output.upload.manifest)
-				? (output.upload.manifest.contributions[0]?.id ?? '')
-				: '';
+			const choices = output.upload.manifest.contributions;
+			previewContribution =
+				(isUi ? undefined : choices.find((item) => item.slot === recordOrigin))?.id ??
+				choices[0]?.id ??
+				'';
 			await tick();
-			reviewStart?.focus();
+			focusReviewStart(reviewStart);
 		} catch {
 			if (buildRevision === revision && mine === scope) error = 'plugins.creator.buildFailed';
 		} finally {
@@ -359,7 +343,7 @@
 	<label class="flex flex-col gap-1 text-sm">
 		<span class="font-medium">{$t(`plugins.creator.field.${field}`)}</span>
 		<input
-			class="rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+			class="rounded-control border border-input bg-transparent px-3 py-2"
 			value={orderDraft[field]}
 			maxlength={field.endsWith('Text') ? 320 : 120}
 			required
@@ -381,7 +365,7 @@
 	<label class="flex flex-col gap-1 text-sm">
 		<span class="font-medium">{$t(`plugins.creatorV3.field.${field}`)}</span>
 		<input
-			class="rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+			class="rounded-control border border-input bg-transparent px-3 py-2"
 			{value}
 			maxlength={max}
 			disabled={building || installing}
@@ -394,28 +378,23 @@
 
 <div class="mx-auto max-w-5xl space-y-5 px-1">
 	<header class="space-y-2">
-		<a href={settingsUrl} class="text-sm text-blue-700 underline dark:text-blue-300"
+		<a href={settingsUrl} class="text-sm text-fg underline"
 			>{$t(personal ? 'plugins.library.title' : 'plugins.projectSettings')}</a
 		>
 		<h1 class="text-2xl font-semibold">{$t('plugins.creator.title')}</h1>
-		<p class="text-sm text-slate-600 dark:text-slate-300">
+		<p class="text-sm text-fg-muted">
 			{$t(isUi ? 'plugins.creatorV3.templateHelp' : 'plugins.creator.template')}
 		</p>
 	</header>
 	{#if error}
-		<p
-			role="alert"
-			class="rounded border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-700 dark:text-red-200"
-		>
+		<p role="alert" class="rounded-control border border-danger px-3 py-2 text-sm text-danger">
 			{$t(error)}
 			{backendMessage}
 		</p>
 	{/if}
 	{#if checking}<p role="status" class="text-sm">{$t('common.loading')}</p>{/if}
 	{#if allowed}
-		<section
-			class="space-y-4 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
-		>
+		<section class="space-y-4 rounded-card border border-line bg-raised p-4">
 			<div class="flex flex-wrap items-center justify-between gap-3">
 				<h2 class="font-semibold">{$t('plugins.creator.draft')}</h2>
 				<label class="flex items-center gap-2 text-sm">
@@ -424,7 +403,7 @@
 						value={templateId}
 						disabled={building || installing}
 						onchange={(event) => chooseTemplate(event.currentTarget.value as CreatorTemplateId)}
-						class="rounded border border-slate-300 bg-transparent px-3 py-1 dark:border-slate-700"
+						class="rounded-control border border-input bg-transparent px-3 py-1"
 					>
 						{#each Object.keys(creatorTemplates) as id (id)}
 							<option value={id}>{$t(`plugins.creatorV3.templateName.${id}`)}</option>
@@ -432,11 +411,11 @@
 					</select>
 				</label>
 			</div>
-			<p class="text-sm text-slate-600 dark:text-slate-300">
+			<p class="text-sm text-fg-muted">
 				{$t('plugins.creator.origin', { values: { slot: $t(slotLabelKey(origin)) } })}
 				{$t(personal ? 'plugins.library.localDraft' : 'plugins.creator.localDraft')}
 			</p>
-			{#if !templateAvailable}
+			{#if !extensionSupported}
 				<p role="status" class="text-sm">
 					{$t(isUi ? 'plugins.creatorV3.extensionsUnavailable' : 'plugins.creator.unavailable')}
 				</p>
@@ -455,7 +434,7 @@
 							{@render uiInput(field, uiDraft[field], (value) => editUi({ [field]: value }))}
 						{/each}
 					</fieldset>
-					<p id="creator-field-help" class="text-xs text-slate-600 dark:text-slate-300">
+					<p id="creator-field-help" class="text-xs text-fg-muted">
 						{$t('plugins.creatorV3.fieldHelp')}
 					</p>
 					<p class="text-sm">{$t('plugins.creatorV3.uiIntro')}</p>
@@ -463,9 +442,7 @@
 						{#each uiViewSlots as slot (slot)}
 							{@const item = uiDraft.contributions.find((entry) => entry.slot === slot)}
 							{#if item}
-								<fieldset
-									class="space-y-2 rounded border border-slate-300 p-3 dark:border-slate-700"
-								>
+								<fieldset class="space-y-2 rounded-card border border-line p-3">
 									<legend class="px-1 text-sm font-medium">{$t(slotLabelKey(slot))}</legend>
 									<label class="flex items-start gap-2 text-sm">
 										<input
@@ -515,9 +492,7 @@
 					{#if invalid.includes('contributions')}<p role="status" class="text-sm">
 							{$t('plugins.creatorV3.needLocation')}
 						</p>{/if}
-					<fieldset
-						class="grid gap-3 rounded border border-slate-300 p-3 sm:grid-cols-2 dark:border-slate-700"
-					>
+					<fieldset class="grid gap-3 rounded-card border border-line p-3 sm:grid-cols-2">
 						<legend class="px-1 text-sm font-medium">{$t('plugins.creatorV3.reads')}</legend>
 						{@render uiInput(
 							'readFormKey',
@@ -531,7 +506,7 @@
 							(value) => editUi({ readFields: value }),
 							640
 						)}
-						<p class="text-xs text-slate-600 sm:col-span-2 dark:text-slate-300">
+						<p class="text-xs text-fg-muted sm:col-span-2">
 							{$t('plugins.creatorV3.readHelp')}
 						</p>
 						<label class="flex flex-col gap-1 text-sm">
@@ -543,7 +518,7 @@
 									editUi({
 										presentation: event.currentTarget.value === 'summary' ? 'summary' : 'table'
 									})}
-								class="rounded-md border border-slate-300 bg-transparent px-3 py-2 dark:border-slate-600"
+								class="rounded-control border border-input bg-transparent px-3 py-2"
 							>
 								<option value="table">{$t('plugins.creatorV3.presentation.table')}</option>
 								<option value="summary">{$t('plugins.creatorV3.presentation.summary')}</option>
@@ -563,12 +538,12 @@
 						<legend class="pb-2 text-sm font-semibold">{$t('plugins.creator.package')}</legend>
 						{#each metadata as field (field)}{@render fieldEditor(field)}{/each}
 					</fieldset>
-					<p id="creator-field-help" class="text-xs text-slate-600 dark:text-slate-300">
+					<p id="creator-field-help" class="text-xs text-fg-muted">
 						{$t('plugins.creator.fieldHelp')}
 					</p>
 					<div class="grid gap-3 sm:grid-cols-2">
 						{#each recordOrigin === actionSlot ? [actionSlot, detailSlot] : [detailSlot, actionSlot] as slot (slot)}
-							<fieldset class="space-y-2 rounded border border-slate-300 p-3 dark:border-slate-700">
+							<fieldset class="space-y-2 rounded-card border border-line p-3">
 								<legend class="px-1 text-sm font-medium">{$t(`plugins.slot.${slot}`)}</legend>
 								{#each slot === actionSlot ? actions : details as field (field)}{@render fieldEditor(
 										field
@@ -581,26 +556,27 @@
 						{$t('plugins.creator.invalidDraft')}
 					</p>{/if}
 				<Button
+					variant="primary"
 					type="submit"
 					loading={building}
-					disabled={invalid.length > 0 || installing || !templateAvailable}
+					disabled={invalid.length > 0 || installing || !extensionSupported}
 					>{$t('plugins.creator.build')}</Button
 				>
 			</form>
 		</section>
 		{#if bundle}
-			<section
-				class="space-y-3 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
-			>
+			<section class="space-y-3 rounded-card border border-line bg-raised p-4">
 				<h2 class="font-semibold" tabindex="-1" bind:this={reviewStart}>
 					{$t('plugins.creator.review')}
 				</h2>
 				{#if review}
 					<p class="text-sm">
 						{$t(
-							personal
-								? 'plugins.creatorV3.previewSamplePersonal'
-								: 'plugins.creatorV3.previewSampleProject'
+							isUi
+								? personal
+									? 'plugins.creatorV3.previewSamplePersonal'
+									: 'plugins.creatorV3.previewSampleProject'
+								: 'plugins.creator.previewRecord'
 						)}
 					</p>
 					{#if schemaFailed}<p role="status" class="text-sm">
@@ -610,7 +586,7 @@
 						{$t('plugins.creatorV3.slotChoice')}
 						<select
 							bind:value={previewContribution}
-							class="rounded border border-slate-300 bg-transparent px-3 py-1 dark:border-slate-700"
+							class="rounded-control border border-input bg-transparent px-3 py-1"
 						>
 							{#each review.contributions as item (item.id)}
 								<option value={item.id}>{item.label} · {$t(slotLabelKey(item.slot))}</option>
@@ -622,7 +598,6 @@
 						{#if picked}
 							<CreatorPanelPreview
 								html={bundle.html}
-								slot={picked.slot}
 								v3={{
 									manifest: review,
 									contributionId: picked.id,
@@ -631,35 +606,14 @@
 									personal,
 									onViewed: () => {
 										sampleRan = true;
-									}
+									},
+									...(isUi ? {} : { onAmountPreview: async () => bundle?.fixtureCents ?? null })
 								}}
 							/>
 						{/if}
 					{/key}
-				{:else}
-					<p class="text-sm">{$t('plugins.creator.previewRecord')}</p>
-					<label class="flex flex-wrap items-center gap-2 text-sm">
-						{$t('plugins.creator.previewLocation')}
-						<select
-							bind:value={previewSlot}
-							class="rounded border border-slate-300 bg-transparent px-3 py-1 dark:border-slate-700"
-						>
-							<option value={detailSlot}>{$t(`plugins.slot.${detailSlot}`)}</option>
-							<option value={actionSlot}>{$t(`plugins.slot.${actionSlot}`)}</option>
-						</select>
-					</label>
-					{#key `${revision}:${previewSlot}`}
-						<CreatorPanelPreview
-							html={bundle.html}
-							slot={previewSlot}
-							onPreview={() => {
-								sampleRan = true;
-								return bundle?.fixtureCents ?? null;
-							}}
-						/>
-					{/key}
 				{/if}
-				<div class="space-y-2 border-t border-slate-300 pt-3 text-sm dark:border-slate-700">
+				<div class="space-y-2 border-t border-line pt-3 text-sm">
 					<h3 class="font-medium">
 						{bundle.upload.manifest.name} · v{bundle.upload.manifest.version}
 					</h3>
@@ -686,20 +640,18 @@
 						{:else}
 							<p>{$t('plugins.creatorV3.reviewNoReads')}</p>
 						{/each}
-						<p>{$t('plugins.creatorV3.reviewNoWasm')}</p>
-						<p>{$t('plugins.creatorV3.reviewCapabilities')}</p>
-					{:else if !isV3(bundle.upload.manifest)}
-						<p>
-							{$t('plugins.creator.targetForm', {
-								values: { form: bundle.upload.manifest.ui.form_key }
-							})}
-						</p>
-						<h4 class="font-medium">{$t('plugins.requestedCapabilities')}</h4>
-						<ul class="list-disc pl-5">
-							{#each bundle.upload.manifest.capabilities as item (item.name)}<li>
-									{$t(`plugins.capability.${item.name}`)}
-								</li>{/each}
-						</ul>
+						{#if review.profile === 'wasm'}
+							<p>{$t('plugins.creatorV3.reviewWasm')}</p>
+							<h4 class="font-medium">{$t('plugins.requestedCapabilities')}</h4>
+							<ul class="list-disc pl-5">
+								{#each review.capabilities as item (item.name)}<li>
+										{$t(`plugins.capability.${item.name}`)}
+									</li>{/each}
+							</ul>
+						{:else}
+							<p>{$t('plugins.creatorV3.reviewNoWasm')}</p>
+							<p>{$t('plugins.creatorV3.reviewCapabilities')}</p>
+						{/if}
 					{/if}
 					<label class="flex items-start gap-2">
 						<input
@@ -711,13 +663,14 @@
 						<span>{$t('plugins.creator.reviewed')}</span>
 					</label>
 					{#if !sampleRan}<p role="status" class="text-sm">
-							{$t(review ? 'plugins.creatorV3.previewUi' : 'plugins.creator.previewFirst')}
+							{$t(isUi ? 'plugins.creatorV3.previewUi' : 'plugins.creator.previewFirst')}
 						</p>{/if}
 					<div class="flex flex-wrap items-center gap-2">
 						<Button variant="secondary" disabled={!reviewed || !sampleRan} onclick={download}
 							>{$t('plugins.creator.export')}</Button
 						>
 						<Button
+							variant="primary"
 							disabled={!reviewed || !sampleRan || installed}
 							loading={installing}
 							onclick={install}
@@ -726,7 +679,7 @@
 					</div>
 					{#if installed}
 						<p role="status">{$t(personal ? 'plugins.library.saved' : 'plugins.installed')}</p>
-						<a href={settingsUrl} class="text-blue-700 underline dark:text-blue-300"
+						<a href={settingsUrl} class="text-fg underline"
 							>{$t(personal ? 'plugins.library.title' : 'plugins.creator.reviewInstalled')}</a
 						>
 					{/if}

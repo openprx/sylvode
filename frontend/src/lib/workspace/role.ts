@@ -59,12 +59,18 @@ export class WorkspaceRoleTracker {
 		this.onChange(null);
 		if (!workspaceId || !userId) return null;
 		let role: WorkspaceRole | null = null;
+		let undecided = false;
 		try {
-			role = roleFromMembersResult(await this.fetchMembers(workspaceId), userId);
+			const result = await this.fetchMembers(workspaceId);
+			// A read stopped locally (the auth session changed under it, the page navigated) says
+			// nothing about the role: forget the pair so the next `select` reads it again.
+			undecided = result.error_code === 'request_aborted';
+			role = roleFromMembersResult(result, userId);
 		} catch {
 			role = null;
 		}
 		if (mine !== this.generation) return null;
+		if (undecided) this.key = null;
 		this.onChange(role);
 		return role;
 	}

@@ -43,7 +43,7 @@ struct BuildInfo {
 #[derive(Parser)]
 #[command(name = "api", about = "Sylvode API server")]
 struct Args {
-    /// Path to the configuration file. Defaults to config/sylvode.toml, with legacy fallback.
+    /// Path to the configuration file. Defaults to config/sylvode.toml.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -82,10 +82,6 @@ async fn main() -> anyhow::Result<()> {
     // startup rather than leaving half the service reading the fallback settings.
     api::config::install(&config).map_err(|err| anyhow::anyhow!("{err}"))?;
     logging::init(&config.logging, "api")?;
-    // Emitted only now: the logger it goes through did not exist while the file was loading.
-    if let Some(notice) = platform::config::take_legacy_discovery_notice() {
-        tracing::warn!("{notice}");
-    }
     warn_if_flow_collab_writes_unsupported();
 
     // from_config first: it reports a missing database url and signing key together, so the
@@ -131,6 +127,12 @@ async fn main() -> anyhow::Result<()> {
 
 /// The application router: every REST route, with the global layers applied.
 fn build_router(state: AppState) -> Router {
+    build_router_with(state, api::config::runtime().oauth.as_ref())
+}
+
+/// [`build_router`] with an explicit `[oauth]` configuration (tests; the server passes the
+/// installed one).
+fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::config::OAuthConfig>>) -> Router {
     let auth_state = state.clone();
 
     // Uploaded object downloads are gated by `uploads_access_middleware`: it accepts either a
@@ -879,23 +881,6 @@ fn build_router(state: AppState) -> Router {
                 )),
         )
         .route(
-            "/api/v1/form-records/{record_id}/plugin-panels",
-            get(routes::plugin_package::discover)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::auth::jwt_auth_middleware,
-                )),
-        )
-        .route(
-            "/api/v1/form-records/{record_id}/plugin-panels/{package_id}/invoke",
-            post(routes::plugin_package::invoke)
-                .layer(DefaultBodyLimit::max(4 * 1024))
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::auth::jwt_auth_middleware,
-                )),
-        )
-        .route(
             "/api/v1/projects/{project_id}/plugin-contributions",
             get(routes::plugin_package::extension::project_contributions)
                 .route_layer(axum_middleware::from_fn_with_state(
@@ -1021,6 +1006,49 @@ fn build_router(state: AppState) -> Router {
             ),
         )
         .route(
+            "/api/v1/projects/{project_id}/bot-connections",
+            get(routes::project_bot_connection::list_bot_connections)
+                .post(routes::project_bot_connection::connect_bot)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}",
+            get(routes::project_bot_connection::get_bot_connection)
+                .patch(routes::project_bot_connection::update_bot_connection)
+                .delete(routes::project_bot_connection::remove_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}/disable",
+            post(routes::project_bot_connection::disable_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}/enable",
+            post(routes::project_bot_connection::enable_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bot-connections/{bot_id}/rotate",
+            post(routes::project_bot_connection::rotate_bot_connection)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
             "/api/v1/projects/{project_id}/release-readiness",
             get(routes::release_readiness::get_project_release_readiness).route_layer(
                 axum_middleware::from_fn_with_state(
@@ -1066,34 +1094,6 @@ fn build_router(state: AppState) -> Router {
             ),
         )
         .route(
-            "/api/v1/projects/{project_id}/ai-participants",
-            get(routes::ai_agent::list_ai_agents)
-                .post(routes::ai_agent::create_ai_agent)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                )),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/ai-participants/{id}/stats",
-            get(routes::ai_agent::get_ai_agent_stats).route_layer(
-                axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                ),
-            ),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/ai-participants/{id}",
-            get(routes::ai_agent::get_ai_agent)
-                .patch(routes::ai_agent::update_ai_agent)
-                .delete(routes::ai_agent::delete_ai_agent)
-                .route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                )),
-        )
-        .route(
             "/api/v1/projects/{project_id}/ai/tasks",
             get(routes::ai_callback::list_project_ai_tasks)
                 .post(routes::ai_callback::create_project_ai_task)
@@ -1103,8 +1103,45 @@ fn build_router(state: AppState) -> Router {
                 )),
         )
         .route(
-            "/api/v1/ai/callbacks/task/{task_id}/complete",
-            post(routes::ai_callback::complete_task).route_layer(
+            "/api/v1/ai/protocol",
+            get(routes::ai_task_protocol::get_protocol).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/runner/report",
+            put(routes::ai_task_protocol::put_runner_report)
+                .layer(routes::ai_task_protocol::runner_report_body_limit())
+                .route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/active",
+            get(routes::ai_task_protocol::list_active_tasks).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}",
+            get(routes::ai_task_protocol::get_task).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/ack",
+            post(routes::ai_task_protocol::ack_task).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/progress",
+            post(routes::ai_task_protocol::report_task_progress).route_layer(
                 axum_middleware::from_fn_with_state(
                     auth_state.clone(),
                     middleware::bot_auth::bot_or_user_auth_middleware,
@@ -1112,15 +1149,24 @@ fn build_router(state: AppState) -> Router {
             ),
         )
         .route(
-            "/api/v1/ai/callbacks/task/{task_id}/fail",
-            post(routes::ai_callback::fail_task).route_layer(axum_middleware::from_fn_with_state(
+            "/api/v1/issues/{issue_id}/ai-tasks",
+            get(routes::ai_callback::list_issue_ai_tasks).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),
         )
         .route(
-            "/api/v1/ai/callbacks/task/{task_id}/progress",
-            post(routes::ai_callback::report_progress).route_layer(
+            "/api/v1/ai/tasks/{task_id}/complete",
+            post(routes::ai_task_protocol::complete_task_with_reply).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
+        .route(
+            "/api/v1/ai/tasks/{task_id}/fail",
+            post(routes::ai_task_protocol::fail_task_with_reply).route_layer(
                 axum_middleware::from_fn_with_state(
                     auth_state.clone(),
                     middleware::bot_auth::bot_or_user_auth_middleware,
@@ -1584,7 +1630,7 @@ fn build_router(state: AppState) -> Router {
             ),
         )
         .route(
-            "/api/v1/ai-participants/{id}/learning",
+            "/api/v1/projects/{project_id}/ai-participants/{bot_id}/learning",
             get(routes::governance_ext::get_ai_participant_learning).route_layer(
                 axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -1593,7 +1639,7 @@ fn build_router(state: AppState) -> Router {
             ),
         )
         .route(
-            "/api/v1/ai-participants/{id}/alignment-stats",
+            "/api/v1/projects/{project_id}/ai-participants/{bot_id}/alignment-stats",
             get(routes::governance_ext::get_ai_participant_alignment_stats).route_layer(
                 axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -1604,6 +1650,97 @@ fn build_router(state: AppState) -> Router {
         // The Flow surface: every `routes::flow` / `routes::collab` route, behind the one boundary
         // that renders its database failures as typed envelopes.
         .merge(routes::flow_surface::seal(flow_surface_routes(&auth_state)))
+        // OAuth authorization server: metadata documents and, with later packages, the endpoints.
+        .merge(api::oauth::router::routes_with(&auth_state, oauth))
+        // Alert chain: the inbound event endpoint. It carries its own layer, which accepts a source
+        // credential only (never a session, a bot token or a delegated token) and applies the
+        // rate limits and the body limit; it is deliberately not behind the layers below.
+        .route(
+            api::inbound::INBOUND_EVENTS_PATH,
+            post(routes::inbound_events::post_event).route_layer(axum_middleware::from_fn_with_state(
+                api::inbound::auth_state(&auth_state, api::config::runtime().inbound),
+                api::inbound::auth::inbound_source_auth,
+            )),
+        )
+        // Alert chain management: sources and rules, for workspace owners and admins only (each
+        // handler checks the role and refuses bots; none of these routes is delegable).
+        .route(
+            "/api/v1/projects/{project_id}/inbound-sources",
+            get(routes::inbound_admin::list_sources).post(routes::inbound_admin::create_source)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/inbound-sources/{id}",
+            get(routes::inbound_admin::get_source)
+                .patch(routes::inbound_admin::patch_source)
+                .delete(routes::inbound_admin::delete_source)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/inbound-sources/{id}/rotate",
+            post(routes::inbound_admin::rotate_source)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/inbound-sources/{id}/events",
+            get(routes::inbound_admin::list_source_events)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/alert-rules",
+            get(routes::inbound_admin::list_rules).post(routes::inbound_admin::create_rule)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/alert-rules/reorder",
+            post(routes::inbound_admin::reorder_rules)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/alert-rules/test",
+            post(routes::inbound_admin::test_rules)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        // The read-only alert facts of a work item: any workspace member, not delegable.
+        .route(
+            "/api/v1/issues/{id}/alert",
+            get(routes::inbound_events::get_issue_alert)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/alert-rules/{id}",
+            get(routes::inbound_admin::get_rule)
+                .put(routes::inbound_admin::replace_rule)
+                .delete(routes::inbound_admin::delete_rule)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
         // Label routes (protected)
         .route(
             "/api/v1/workspaces/{workspace_id}/labels",
@@ -3101,6 +3238,12 @@ fn embedded_git_dirty(value: &str) -> Option<bool> {
 }
 
 #[cfg(test)]
+mod delegated_router_tests;
+
+#[cfg(test)]
+mod legacy_auth_characterization_tests;
+
+#[cfg(test)]
 mod build_info_tests {
     use super::{embedded_build_info, embedded_git_dirty};
     use std::path::Path;
@@ -3136,18 +3279,42 @@ mod build_info_tests {
 /// business envelope carrying the same `reason`/`retry_after_ms`. It then keeps serving for
 /// [`PROCESS_DRAIN_GRACE_MS`] so those rejections and closes actually reach their clients instead
 /// of racing the process exit.
+///
+/// Open event streams of connected applications end first. An event stream never ends on its own
+/// while its client is connected, so `with_graceful_shutdown` would wait for it forever: the
+/// first thing the shutdown path does is end every stream (the client sees the response end and
+/// reconnects with its last event id to wherever the service comes back).
 async fn drain_then_shutdown(reaper_stop: tokio::sync::watch::Sender<bool>) {
-    shutdown_signal().await;
+    drain_after(
+        shutdown_signal(),
+        reaper_stop,
+        || api::flow::collab::runtime::runtime().begin_process_drain(PROCESS_DRAIN_RETRY_AFTER_MS),
+        Duration::from_millis(PROCESS_DRAIN_GRACE_MS),
+    )
+    .await;
+}
+
+/// The shutdown sequence after `signal`, with the Flow drain and the grace period passed in so a
+/// test can run the real sequence without putting the whole test process into drain mode.
+async fn drain_after(
+    signal: impl std::future::Future<Output = ()>,
+    reaper_stop: tokio::sync::watch::Sender<bool>,
+    begin_flow_drain: impl FnOnce() -> usize,
+    grace: Duration,
+) {
+    signal.await;
+    // Streams first: nothing below can make one end.
+    api::oauth::stream::begin_shutdown();
     // The receiver is gone only if the reaper already stopped; nothing is left to stop then.
     let _ = reaper_stop.send(true);
-    let closed = api::flow::collab::runtime::runtime().begin_process_drain(PROCESS_DRAIN_RETRY_AFTER_MS);
+    let closed = begin_flow_drain();
     tracing::info!(
         closed_sessions = closed,
         retry_after_ms = PROCESS_DRAIN_RETRY_AFTER_MS,
-        grace_ms = PROCESS_DRAIN_GRACE_MS,
+        grace_ms = u64::try_from(grace.as_millis()).unwrap_or(u64::MAX),
         "api server draining: refusing new Flow work and closing collab sessions before shutdown"
     );
-    tokio::time::sleep(Duration::from_millis(PROCESS_DRAIN_GRACE_MS)).await;
+    tokio::time::sleep(grace).await;
 }
 
 async fn shutdown_signal() {
@@ -3620,6 +3787,42 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0106_flow_capabilities_default_on.sql",
         include_str!("../../../migrations/0106_flow_capabilities_default_on.sql"),
     ),
+    (
+        "0107_flow_block_registration_progress.sql",
+        include_str!("../../../migrations/0107_flow_block_registration_progress.sql"),
+    ),
+    (
+        "0108_flow_block_checkpoint_digest.sql",
+        include_str!("../../../migrations/0108_flow_block_checkpoint_digest.sql"),
+    ),
+    (
+        "0109_oauth_authorization_server.sql",
+        include_str!("../../../migrations/0109_oauth_authorization_server.sql"),
+    ),
+    (
+        "0110_runner_task_protocol.sql",
+        include_str!("../../../migrations/0110_runner_task_protocol.sql"),
+    ),
+    (
+        "0111_alert_chain.sql",
+        include_str!("../../../migrations/0111_alert_chain.sql"),
+    ),
+    (
+        "0112_bot_connections.sql",
+        include_str!("../../../migrations/0112_bot_connections.sql"),
+    ),
+    (
+        "0113_ai_task_chain.sql",
+        include_str!("../../../migrations/0113_ai_task_chain.sql"),
+    ),
+    (
+        "0114_multi_bot_connections.sql",
+        include_str!("../../../migrations/0114_multi_bot_connections.sql"),
+    ),
+    (
+        "0115_flow_default_on.sql",
+        include_str!("../../../migrations/0115_flow_default_on.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -3679,6 +3882,8 @@ enum SchemaProbe {
     /// A constraint marker and a trigger must both exist. Used when one migration creates the
     /// static invariant and the mechanism that preserves it for future parent rows.
     ConstraintAndTrigger(&'static str, &'static str, &'static str, &'static str),
+    /// Non-internal trigger on a table, by table and trigger name.
+    Trigger(&'static str, &'static str),
     /// Complete independent block-sharing registry, private anchors and lifecycle fences.
     BlockSharing,
     PageBlockTransfers,
@@ -3719,6 +3924,18 @@ impl SchemaProbe {
                     ) AS present
                 ",
                 vec![table.into(), column.into()],
+            )),
+            Self::Trigger(table, trigger) => Some(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r"
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgrelid = to_regclass($1)
+                          AND tgname = $2
+                          AND NOT tgisinternal
+                    ) AS present
+                ",
+                vec![table.into(), trigger.into()],
             )),
             Self::EnumLabel(type_name, label) => Some(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -4162,6 +4379,39 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0106_flow_capabilities_default_on.sql",
         SchemaProbe::Relation("flow_runtime_capability_rollouts"),
+    ),
+    (
+        "0107_flow_block_registration_progress.sql",
+        SchemaProbe::Column("flow_block_checkpoints", "pending_registrations"),
+    ),
+    (
+        "0108_flow_block_checkpoint_digest.sql",
+        SchemaProbe::Column("flow_block_checkpoints", "registry_digest"),
+    ),
+    (
+        "0109_oauth_authorization_server.sql",
+        SchemaProbe::Relation("oauth_grants"),
+    ),
+    (
+        "0110_runner_task_protocol.sql",
+        SchemaProbe::Column("ai_tasks", "runner_phase"),
+    ),
+    ("0111_alert_chain.sql", SchemaProbe::Relation("inbound_events")),
+    (
+        "0112_bot_connections.sql",
+        SchemaProbe::Relation("project_bot_connections"),
+    ),
+    (
+        "0113_ai_task_chain.sql",
+        SchemaProbe::Column("ai_tasks", "chain_root_id"),
+    ),
+    (
+        "0114_multi_bot_connections.sql",
+        SchemaProbe::Column("project_bot_connections", "channel"),
+    ),
+    (
+        "0115_flow_default_on.sql",
+        SchemaProbe::Trigger("workspaces", "flow_provision_workspace_settings"),
     ),
 ];
 
@@ -4723,6 +4973,15 @@ mod tests {
                 "0104_project_resource_kinds.sql",
                 "0105_token_bot_entity_type.sql",
                 "0106_flow_capabilities_default_on.sql",
+                "0107_flow_block_registration_progress.sql",
+                "0108_flow_block_checkpoint_digest.sql",
+                "0109_oauth_authorization_server.sql",
+                "0110_runner_task_protocol.sql",
+                "0111_alert_chain.sql",
+                "0112_bot_connections.sql",
+                "0113_ai_task_chain.sql",
+                "0114_multi_bot_connections.sql",
+                "0115_flow_default_on.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -4739,9 +4998,10 @@ mod tests {
 
     /// The post-cutoff files that intentionally drop relations. Everything else past the cutoff
     /// must stay replay-safe.
-    const RETIREMENT_MIGRATIONS: [&str; 2] = [
+    const RETIREMENT_MIGRATIONS: [&str; 3] = [
         "0052_drop_connectors_and_agent_invocations.sql",
         "0053_drop_event_outbox.sql",
+        "0114_multi_bot_connections.sql",
     ];
 
     /// Non-destructive post-cutoff migrations must remain safe to replay. The explicitly
@@ -4776,13 +5036,21 @@ mod tests {
             "agent_invocation_tool_calls",
             "agent_invocations",
             "event_outbox",
+            "project_execution_settings",
         ];
         for (name, sql) in MIGRATIONS.iter().filter(|(name, _)| *name > MIGRATION_ADOPTION_CUTOFF) {
             if RETIREMENT_MIGRATIONS.contains(name) {
                 continue;
             }
             for relation in dropped {
-                if !sql.contains(relation) {
+                // Whole identifiers only: `oauth_event_outbox` is not the retired `event_outbox`.
+                let mentioned = sql.match_indices(relation).any(|(at, _)| {
+                    !sql[..at]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|prev| prev.is_ascii_alphanumeric() || prev == '_')
+                });
+                if !mentioned {
                     continue;
                 }
                 assert!(
@@ -4802,6 +5070,10 @@ mod tests {
                 ["agent_invocation_tool_calls", "agent_invocations", "connectors"].as_slice(),
             ),
             ("0053_drop_event_outbox.sql", ["event_outbox"].as_slice()),
+            (
+                "0114_multi_bot_connections.sql",
+                ["project_execution_settings"].as_slice(),
+            ),
         ] {
             let sql = MIGRATIONS
                 .iter()
@@ -4916,9 +5188,48 @@ mod tests {
         ] {
             assert!(
                 !statements.contains(column),
-                "{column} stays off by default and must not be touched"
+                "{column} belongs to 0115 and must not be touched here"
             );
         }
+    }
+
+    /// 0115 re-runs whenever the ledger has no row for it: the capability switch-on must be claimed
+    /// through its marker and may only raise values, and the backfill must never overwrite a row.
+    #[test]
+    fn flow_default_on_migration_runs_once_and_never_overwrites() {
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "0115_flow_default_on.sql")
+            .map(|(_, sql)| *sql)
+            .expect("0115 must be registered");
+        let statements: String = sql
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let update = statements
+            .split_once("UPDATE flow_runtime_capabilities")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split_once("CREATE OR REPLACE FUNCTION"))
+            .map(|(update, _)| update)
+            .expect("0115 updates the singleton row");
+        assert!(
+            statements.contains("ON CONFLICT (name) DO NOTHING")
+                && update.contains("AND EXISTS (SELECT 1 FROM claimed)"),
+            "the row update must run only in the execution that claims the rollout marker"
+        );
+        assert!(
+            !update.to_lowercase().contains("false"),
+            "the one-time update may only switch capabilities on"
+        );
+        assert!(
+            !statements.contains("UPDATE flow_workspace_settings"),
+            "an existing settings row is never changed"
+        );
+        assert!(
+            statements.matches("ON CONFLICT (workspace_id) DO NOTHING").count() == 2,
+            "the trigger and the backfill both leave an existing row alone"
+        );
     }
 
     #[test]
@@ -5243,6 +5554,145 @@ mod migration_runner_database_tests {
             assert_eq!(status_of(&ledger, name), "applied", "{name} should have been executed");
         }
         assert_schema_complete(&scratch.db).await;
+
+        scratch.drop_self().await;
+    }
+
+    async fn scalar_text(db: &DatabaseConnection, sql: &str) -> String {
+        db.query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
+            .await
+            .expect("query runs")
+            .expect("query returns a row")
+            .try_get("", "v")
+            .expect("v is text")
+    }
+
+    async fn config_version_of(db: &DatabaseConnection, project: &str, bot: &str) -> String {
+        scalar_text(
+            db,
+            &format!(
+                "SELECT config_updated_at::text AS v FROM ai_participants \
+                 WHERE project_id = '{project}' AND id = '{bot}'"
+            ),
+        )
+        .await
+    }
+
+    /// 0112 is after the adoption cutoff, so it re-runs on an adopted database, and 0092 (edited so
+    /// that its trigger no longer names the dropped columns) re-runs after it on a replay start.
+    /// Both must succeed any number of times and leave the same schema and the same versions.
+    #[tokio::test]
+    async fn bot_connections_migration_reruns_and_replaying_0092_after_it_succeeds() {
+        let scratch = scratch_or_skip!("bot_connections_replay");
+        let db = &scratch.db;
+        run_migrations_with(db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+
+        let dropped = scalar_text(
+            db,
+            "SELECT count(*)::text AS v FROM information_schema.columns \
+             WHERE table_schema = current_schema() AND table_name = 'ai_participants' \
+               AND column_name IN ('model', 'provider', 'api_endpoint', 'capabilities')",
+        )
+        .await;
+        assert_eq!(dropped, "0", "the four stored-only columns are gone");
+        let key = scalar_text(
+            db,
+            "SELECT string_agg(a.attname, ',' ORDER BY k.ord) AS v \
+             FROM pg_index i \
+             CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) \
+             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum \
+             WHERE i.indrelid = 'ai_participants'::regclass AND i.indisprimary",
+        )
+        .await;
+        assert_eq!(key, "project_id,id", "one registration per bot per project");
+        let learning_fk = scalar_text(
+            db,
+            "SELECT count(*)::text AS v FROM pg_constraint \
+             WHERE conrelid = 'ai_learning_records'::regclass AND contype = 'f' \
+               AND confrelid = 'ai_participants'::regclass",
+        )
+        .await;
+        assert_eq!(
+            learning_fk, "0",
+            "learning records keep no foreign key to the participant"
+        );
+
+        // A bot registered in two projects.
+        let user = "00000000-0000-0000-0000-0000000000a1";
+        let ws = "00000000-0000-0000-0000-0000000000b1";
+        let (p1, p2) = (
+            "00000000-0000-0000-0000-0000000000c1",
+            "00000000-0000-0000-0000-0000000000c2",
+        );
+        let bot = "bot-registered-twice";
+        let setup = format!(
+            "INSERT INTO users(id,email,password_hash,name,role,is_active) \
+               VALUES ('{user}','a1@example.test','','Owner','user',true); \
+             INSERT INTO workspaces(id,slug,name,created_by) VALUES ('{ws}','bc-ws','BC',  '{user}'); \
+             INSERT INTO projects(id,workspace_id,key,name,created_by) VALUES \
+               ('{p1}','{ws}','BCA','A','{user}'),('{p2}','{ws}','BCB','B','{user}'); \
+             INSERT INTO ai_participants(id,project_id,name,registered_by) VALUES \
+               ('{bot}','{p1}','Bot','{user}'),('{bot}','{p2}','Bot','{user}');"
+        );
+        db.execute_unprepared(&setup)
+            .await
+            .expect("the same bot id registers in two projects");
+
+        let before = config_version_of(db, p1, bot).await;
+        let heartbeat =
+            format!("UPDATE ai_participants SET last_active_at = clock_timestamp() WHERE project_id = '{p1}'");
+        db.execute_unprepared(&heartbeat).await.expect("heartbeat");
+        assert_eq!(
+            config_version_of(db, p1, bot).await,
+            before,
+            "a heartbeat is not a configuration edit"
+        );
+        let rename = format!("UPDATE ai_participants SET name = 'Renamed' WHERE project_id = '{p1}'");
+        db.execute_unprepared(&rename).await.expect("rename");
+        let after = config_version_of(db, p1, bot).await;
+        assert_ne!(after, before, "a configuration edit advances the version");
+
+        for (name, sql) in [
+            (
+                "0112 again",
+                include_str!("../../../migrations/0112_bot_connections.sql"),
+            ),
+            (
+                "0092 after 0112",
+                include_str!("../../../migrations/0092_ai_participant_config_version.sql"),
+            ),
+            (
+                "0112 after 0092",
+                include_str!("../../../migrations/0112_bot_connections.sql"),
+            ),
+        ] {
+            db.execute_unprepared(sql)
+                .await
+                .unwrap_or_else(|err| panic!("{name} must succeed: {err}"));
+            assert_eq!(
+                config_version_of(db, p1, bot).await,
+                after,
+                "{name} preserves versions and rows"
+            );
+        }
+        let trigger = scalar_text(
+            db,
+            "SELECT pg_get_triggerdef(oid) AS v FROM pg_trigger \
+             WHERE tgrelid = 'ai_participants'::regclass AND tgname = 'ai_participant_config_version'",
+        )
+        .await;
+        for column in ["model", "provider", "api_endpoint", "capabilities"] {
+            assert!(
+                !trigger.contains(column),
+                "the trigger must not name {column}: {trigger}"
+            );
+        }
+        for table in ["bot_runners", "project_bot_connections"] {
+            let present = scalar_text(db, &format!("SELECT (to_regclass('{table}') IS NOT NULL)::text AS v")).await;
+            assert_eq!(present, "true", "{table} exists");
+        }
 
         scratch.drop_self().await;
     }
@@ -6067,7 +6517,9 @@ mod migration_runner_database_tests {
         "portable_page_packages_enabled",
         "portable_graph_packages_enabled",
     ];
-    const DEFAULT_OFF: [&str; 4] = [
+    /// Switched on by 0115_flow_default_on.sql, which also sets them on every fresh database
+    /// through the original CREATE/ADD COLUMN statements.
+    const DEFAULT_ON_SINCE_0115: [&str; 4] = [
         "scope_native_legacy",
         "personal_package_imports",
         "personal_scope_package_exports",
@@ -6131,8 +6583,8 @@ mod migration_runner_database_tests {
         for column in DEFAULT_ON {
             assert!(capability_flag(&row, column), "{column} is on by default: {row}");
         }
-        for column in DEFAULT_OFF {
-            assert!(!capability_flag(&row, column), "{column} stays off by default: {row}");
+        for column in DEFAULT_ON_SINCE_0115 {
+            assert!(capability_flag(&row, column), "{column} is on by default: {row}");
         }
         assert_eq!(
             reader_floor(&row),
@@ -6241,14 +6693,14 @@ mod migration_runner_database_tests {
         let scratch = scratch_or_skip!("flow_caps_idempotent");
         seed_pre_ledger_schema(&scratch.db, Some(CAPABILITY_DEFAULT_MIGRATION)).await;
         let before = flow_capability_row(&scratch.db).await;
-        for column in DEFAULT_ON.iter().chain(DEFAULT_OFF.iter()) {
+        for column in DEFAULT_ON {
             assert!(!capability_flag(&before, column), "{column} starts off before 0106");
         }
         scratch
             .db
             .execute_unprepared(
-                "UPDATE flow_runtime_capabilities SET minimum_reader_version=6, personal_package_imports=true, \
-                 scope_native_legacy=true WHERE singleton",
+                "UPDATE flow_runtime_capabilities SET minimum_reader_version=6, personal_package_imports=false, \
+                 scope_native_legacy=false WHERE singleton",
             )
             .await
             .expect("the operator settings are applied");
@@ -6268,12 +6720,12 @@ mod migration_runner_database_tests {
             assert!(capability_flag(&first, column), "{column} is switched on: {first}");
         }
         assert!(
-            capability_flag(&first, "personal_package_imports"),
+            !capability_flag(&first, "personal_package_imports"),
             "operator choice kept"
         );
-        assert!(capability_flag(&first, "scope_native_legacy"), "operator choice kept");
-        assert!(!capability_flag(&first, "personal_scope_package_exports"));
-        assert!(!capability_flag(&first, "cross_workspace_forms_conversion"));
+        assert!(!capability_flag(&first, "scope_native_legacy"), "operator choice kept");
+        assert!(capability_flag(&first, "personal_scope_package_exports"));
+        assert!(capability_flag(&first, "cross_workspace_forms_conversion"));
         assert_eq!(reader_floor(&first), 6, "the reader floor is never lowered");
 
         scratch
@@ -6290,13 +6742,236 @@ mod migration_runner_database_tests {
         run_migrations_with(&scratch.db, MigrationOptions::default())
             .await
             .expect("the runner adopts the database and re-executes the post-cutoff files");
+        // The runner also executes 0115 for the first time, which switches the four capabilities
+        // 0106 leaves alone on once; nothing else changes and the reader floor stays.
+        let mut expected = first.clone();
+        for column in DEFAULT_ON_SINCE_0115 {
+            expected[column] = serde_json::Value::Bool(true);
+        }
         assert_eq!(
             flow_capability_row(&scratch.db).await,
-            first,
-            "the runner's execution is a no-op"
+            expected,
+            "the runner's execution only adds the 0115 switch-on"
         );
         assert_schema_complete(&scratch.db).await;
 
+        scratch.drop_self().await;
+    }
+
+    const FLOW_DEFAULT_ON_MIGRATION: &str = "0115_flow_default_on.sql";
+
+    async fn insert_workspace(db: &DatabaseConnection, user: uuid::Uuid) -> uuid::Uuid {
+        let workspace = uuid::Uuid::new_v4();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workspaces(id,slug,name,created_by) VALUES($1,$2,'Flow default',$3)",
+            vec![workspace.into(), format!("fd-{workspace}").into(), user.into()],
+        ))
+        .await
+        .expect("the workspace is created");
+        workspace
+    }
+
+    async fn flow_enabled_row(db: &DatabaseConnection, workspace: uuid::Uuid) -> Option<bool> {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT flow_enabled FROM flow_workspace_settings WHERE workspace_id=$1",
+            vec![workspace.into()],
+        ))
+        .await
+        .expect("the settings row is readable")
+        .map(|row| row.try_get::<bool>("", "flow_enabled").expect("flow_enabled column"))
+    }
+
+    async fn insert_user(db: &DatabaseConnection) -> uuid::Uuid {
+        let user = uuid::Uuid::new_v4();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO users(id,email,password_hash,name,role,is_active) VALUES($1,$2,'!','Flow default','user',true)",
+            vec![user.into(), format!("{user}@flow-default.test").into()],
+        ))
+        .await
+        .expect("the user is created");
+        user
+    }
+
+    /// A fresh database gives every workspace a settings row with Flow on, and deleting the
+    /// workspace removes that row without error.
+    #[tokio::test]
+    async fn a_new_workspace_gets_a_flow_settings_row_with_flow_on() {
+        let scratch = scratch_or_skip!("flow_ws_default");
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+        let user = insert_user(&scratch.db).await;
+        let workspace = insert_workspace(&scratch.db, user).await;
+        assert_eq!(flow_enabled_row(&scratch.db, workspace).await, Some(true));
+
+        scratch
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM workspaces WHERE id=$1",
+                vec![workspace.into()],
+            ))
+            .await
+            .expect("a workspace with its settings row can be deleted");
+        assert_eq!(flow_enabled_row(&scratch.db, workspace).await, None);
+        scratch.drop_self().await;
+    }
+
+    /// An existing database that predates 0115 gets the four capabilities switched on once, a
+    /// settings row for every workspace that had none, and keeps a deliberate `flow_enabled=false`
+    /// row; a later operator switch-off survives executing the file again.
+    #[tokio::test]
+    async fn the_flow_default_on_migration_upgrades_an_existing_database_once() {
+        let scratch = scratch_or_skip!("flow_default_on_upgrade");
+        seed_pre_ledger_schema(&scratch.db, Some(FLOW_DEFAULT_ON_MIGRATION)).await;
+        let user = insert_user(&scratch.db).await;
+        let without_row = insert_workspace(&scratch.db, user).await;
+        let switched_off = insert_workspace(&scratch.db, user).await;
+        scratch
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,false) \
+                 ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled=false",
+                vec![switched_off.into()],
+            ))
+            .await
+            .expect("the deliberate switch-off is stored");
+        scratch
+            .db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM flow_workspace_settings WHERE workspace_id=$1",
+                vec![without_row.into()],
+            ))
+            .await
+            .expect("the row of the old workspace is absent, as on an old database");
+        scratch
+            .db
+            .execute_unprepared(
+                "UPDATE flow_runtime_capabilities SET scope_native_legacy=false, personal_package_imports=false, \
+                 personal_scope_package_exports=false, cross_workspace_forms_conversion=false WHERE singleton",
+            )
+            .await
+            .expect("the old defaults are restored");
+
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == FLOW_DEFAULT_ON_MIGRATION)
+            .map(|(_, sql)| *sql)
+            .expect("0115 is registered");
+        scratch
+            .db
+            .execute_unprepared(sql)
+            .await
+            .expect("0115 first execution succeeds");
+        let first = flow_capability_row(&scratch.db).await;
+        for column in DEFAULT_ON_SINCE_0115 {
+            assert!(capability_flag(&first, column), "{column} is switched on: {first}");
+        }
+        assert_eq!(flow_enabled_row(&scratch.db, without_row).await, Some(true));
+        assert_eq!(
+            flow_enabled_row(&scratch.db, switched_off).await,
+            Some(false),
+            "a deliberate switch-off is not flipped"
+        );
+        let created_later = insert_workspace(&scratch.db, user).await;
+        assert_eq!(flow_enabled_row(&scratch.db, created_later).await, Some(true));
+
+        scratch
+            .db
+            .execute_unprepared(
+                "UPDATE flow_runtime_capabilities SET personal_scope_package_exports=false WHERE singleton",
+            )
+            .await
+            .expect("the operator switches an export capability off");
+        let operator = flow_capability_row(&scratch.db).await;
+        scratch
+            .db
+            .execute_unprepared(sql)
+            .await
+            .expect("0115 second execution succeeds");
+        assert_eq!(
+            flow_capability_row(&scratch.db).await,
+            operator,
+            "a second execution keeps the operator's choice"
+        );
+        assert_eq!(flow_enabled_row(&scratch.db, switched_off).await, Some(false));
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("the runner adopts the database and re-executes the post-cutoff files");
+        assert_schema_complete(&scratch.db).await;
+        scratch.drop_self().await;
+    }
+
+    const REGISTRATION_PROGRESS_MIGRATION: &str = "0107_flow_block_registration_progress.sql";
+
+    /// A database that already applied 0001-0106 and holds registry checkpoints gets the new column
+    /// with 0 on every existing row (those were written by complete registrations), and executing
+    /// the file again changes nothing. The 0106 state is reproduced by dropping the column from a
+    /// fully migrated database that has a registered Page.
+    #[tokio::test]
+    async fn the_registration_progress_migration_keeps_existing_checkpoints_complete() {
+        let scratch = scratch_or_skip!("flow_registration_progress");
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+        register_running_readers(&scratch.db).await;
+        ordinary_user_creates_a_personal_page(&scratch.db)
+            .await
+            .expect("a Page registers a checkpoint");
+        let heads = scratch
+            .db
+            .query_all(Statement::from_string(
+                DbBackend::Postgres,
+                "SELECT accepted_head FROM flow_block_checkpoints ORDER BY page_id".to_string(),
+            ))
+            .await
+            .expect("checkpoints readable");
+        assert_eq!(heads.len(), 1, "the created Page has one checkpoint");
+        scratch
+            .db
+            .execute_unprepared("ALTER TABLE flow_block_checkpoints DROP COLUMN pending_registrations")
+            .await
+            .expect("the 0106 state has no progress column");
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == REGISTRATION_PROGRESS_MIGRATION)
+            .map(|(_, sql)| *sql)
+            .expect("0107 is registered");
+        for _ in 0..2 {
+            scratch.db.execute_unprepared(sql).await.expect("0107 executes");
+            let row = scratch
+                .db
+                .query_one(Statement::from_string(
+                    DbBackend::Postgres,
+                    "SELECT pending_registrations, accepted_head FROM flow_block_checkpoints".to_string(),
+                ))
+                .await
+                .expect("checkpoint readable")
+                .expect("the checkpoint survives");
+            assert_eq!(row.try_get::<i32>("", "pending_registrations").expect("column"), 0);
+            assert_eq!(
+                row.try_get::<i64>("", "accepted_head").expect("column"),
+                heads
+                    .first()
+                    .expect("one checkpoint")
+                    .try_get::<i64>("", "accepted_head")
+                    .expect("column")
+            );
+        }
+        assert!(
+            scratch
+                .db
+                .execute_unprepared("UPDATE flow_block_checkpoints SET pending_registrations=-1")
+                .await
+                .is_err(),
+            "a negative pending count is refused"
+        );
+        assert_schema_complete(&scratch.db).await;
         scratch.drop_self().await;
     }
 }
@@ -7051,7 +7726,7 @@ mod flow_surface_boundary_tests {
         .await;
         exec(
             db,
-            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true)",
+            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
             vec![workspace_id.into()],
         )
         .await;

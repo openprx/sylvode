@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ApiResult } from '../src/lib/api/client';
-import type { PluginContributionItem, PluginPanel } from '../src/lib/api/plugin-packages';
+import type { PluginContributionItem } from '../src/lib/api/plugin-packages';
 import {
 	clearAllPreferences,
 	clearPreference,
@@ -32,10 +32,9 @@ import {
 } from '../src/lib/plugins/contributions';
 import {
 	contributionEntries,
-	mergeEntries,
-	panelEntries,
-	sameEntry
-} from '../src/lib/plugins/placements';
+	sameEntry,
+	validPlacementPositions
+} from '../src/lib/plugins/record-entries';
 
 function item(
 	key: string,
@@ -115,18 +114,7 @@ test('layout hides personal hidden entries and moves collapsed and overflow entr
 	);
 });
 
-test('record entries merge protocol 1/2 and protocol 3 contributions in one order', () => {
-	const legacy: PluginPanel = {
-		package_id: 'l',
-		key: 'legacy',
-		version: '1.0.0',
-		name: 'Legacy',
-		generation: 1,
-		grants: ['amount.preview'],
-		html: '',
-		web_sha256: '',
-		package_sha256: ''
-	};
+test('record entries are ordered by position, plugin key and contribution id and skip hidden ones', () => {
 	const v3 = [
 		item('zzz', 'summary', { project_position: 10 }, 'form.record.detail'),
 		item('aaa', 'tie', {}, 'form.record.detail'),
@@ -136,17 +124,38 @@ test('record entries merge protocol 1/2 and protocol 3 contributions in one orde
 			position: null
 		})
 	];
-	const merged = mergeEntries(
-		panelEntries([legacy], 'form.record.detail'),
-		contributionEntries(v3, 'form.record.detail')
-	);
+	const merged = contributionEntries(v3, 'form.record.detail');
 	assert.deepEqual(
 		merged.map((entry) => entry.id),
-		['summary', 'tie', 'detail']
+		['summary', 'tie']
 	);
 	assert.equal(sameEntry(merged[0], merged[0]), true);
 	assert.equal(sameEntry(merged[0], merged[1]), false);
 	assert.equal(sameEntry(null, merged[1]), false);
+});
+
+test('each entry stays in its declared slot and a tied position sorts by plugin key', () => {
+	const items = [
+		item('zzz', 'act', {}, 'form.record.actions'),
+		item('aaa', 'act', {}, 'form.record.actions'),
+		item('aaa', 'panel', {}, 'form.record.detail')
+	];
+	const actions = contributionEntries(items, 'form.record.actions');
+	assert.deepEqual(
+		actions.map((entry) => entry.item.key),
+		['aaa', 'zzz']
+	);
+	const [detail] = contributionEntries(items, 'form.record.detail');
+	assert.equal(detail.slot, 'form.record.detail');
+	assert.equal(sameEntry(detail, actions[0]), false);
+	assert.equal(sameEntry(detail, detail), true);
+});
+
+test('layout positions must be integers from 0 to 99', () => {
+	assert.equal(validPlacementPositions(undefined), true);
+	assert.equal(validPlacementPositions([{ id: 'a', enabled: false, position: 0 }]), true);
+	assert.equal(validPlacementPositions([{ id: 'a', enabled: true, position: NaN }]), false);
+	assert.equal(validPlacementPositions([{ id: 'a', enabled: true, position: 100 }]), false);
 });
 
 test('safeFrom only accepts same-project in-app paths', () => {

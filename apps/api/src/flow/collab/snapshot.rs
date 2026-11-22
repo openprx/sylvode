@@ -742,6 +742,7 @@ mod database_tests {
                 10,
                 None,
                 UpdateRequest {
+                    rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                     origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                         crate::flow::event_origin::EventSurface::Rest,
                     ),
@@ -934,7 +935,7 @@ mod database_tests {
         .await;
         exec(
             state,
-            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true)",
+            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
             vec![workspace_id.into()],
         )
         .await;
@@ -1036,6 +1037,7 @@ mod database_tests {
                 10,
                 None,
                 UpdateRequest {
+                    rebase_policy: crate::flow::collab::write::RebasePolicy::None,
                     origin: crate::flow::event_origin::CommandOrigin::first_request_from(
                         crate::flow::event_origin::EventSurface::Rest,
                     ),

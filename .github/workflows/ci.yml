@@ -66,6 +66,12 @@ jobs:
       - name: Web E2E stack script preflight
         run: bash scripts/test-e2e-web-stack.sh
 
+      - name: nginx event stream location
+        run: bash scripts/test-nginx-event-stream-location.sh
+
+      - name: nginx OAuth locations and headers
+        run: bash scripts/test-nginx-oauth-locations.sh
+
       # Single-repository form only: the sibling repositories are not checked out here. The
       # five-repository release form runs locally (see CONTRIBUTING, "Brand residue gate").
       - name: Brand residue gate (this repository)
@@ -73,16 +79,16 @@ jobs:
           bash scripts/verify-sylvode-brand-residue.sh --json --strict >/dev/null
           bash scripts/verify-sylvode-brand-residue.sh --json --self-test >/dev/null
 
-  # A fast signal for the webhook receiver (apps/webhook): fmt, clippy and its tests on Linux and
+  # A fast signal for the runner (apps/runner): fmt, clippy and its tests on Linux and
   # macOS, without waiting for the workspace-wide jobs. It runs when the push or pull request
-  # changes apps/webhook or what it builds with; a push whose base is unknown (a new branch) runs
+  # changes apps/runner or what it builds with; a push whose base is unknown (a new branch) runs
   # it as well. The workspace-wide Lint and Test jobs still cover the receiver on every run.
-  webhook-changes:
-    name: Webhook changes
+  runner-changes:
+    name: Runner changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      webhook: ${{ steps.filter.outputs.webhook }}
+      runner: ${{ steps.filter.outputs.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -98,18 +104,69 @@ jobs:
           [ "$EVENT_NAME" = "push" ] && base="$PUSH_BEFORE"
           if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
             changed=true
-          elif git diff --name-only "$base" HEAD -- apps/webhook config/sylvode-webhook.example.toml \
+          elif git diff --name-only "$base" HEAD -- apps/runner config/sylvode-runner.example.toml \
               Cargo.toml Cargo.lock rust-toolchain.toml .github/workflows/ci.yml | grep -q .; then
             changed=true
           else
             changed=false
           fi
-          echo "webhook=$changed" >>"$GITHUB_OUTPUT"
+          echo "runner=$changed" >>"$GITHUB_OUTPUT"
 
-  webhook:
-    name: Webhook (${{ matrix.os }})
-    needs: webhook-changes
-    if: needs.webhook-changes.outputs.webhook == 'true'
+  # The skill (`skills/sylvode-mcp`) is the single hand-written source for what an agent is told
+  # about the MCP server; every tool list and count elsewhere is generated from the tool
+  # catalogue. This job fails when the MCP server, the catalogue, the skill or a generated block
+  # changed and the generated files were not regenerated (fix: cargo run -p mcp-server --bin
+  # sylvode-skillgen -- --write). It runs when one of the inputs changed, and on a push whose base
+  # is unknown.
+  skills-sync:
+    name: Skills sync
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Compare with the base
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="$PR_BASE"
+          [ "$EVENT_NAME" = "push" ] && base="$PUSH_BEFORE"
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            changed=true
+          elif git diff --name-only "$base" HEAD -- apps/mcp-server skills apps/api/src/routes/context.rs \
+              apps/api/tests/fixtures README.md docs/README.md apps/runner/src/runner/guide.rs crates/platform Cargo.lock .github/workflows/ci.yml | grep -q .; then
+            changed=true
+          else
+            changed=false
+          fi
+          echo "changed=$changed" >>"$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        if: steps.filter.outputs.changed == 'true'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        if: steps.filter.outputs.changed == 'true'
+        with:
+          key: skills-sync
+      - name: Generated files are current
+        if: steps.filter.outputs.changed == 'true'
+        run: cargo run --locked -p mcp-server --bin sylvode-skillgen -- --check
+      - name: Skill text and catalogue lint
+        if: steps.filter.outputs.changed == 'true'
+        run: cargo run --locked -p mcp-server --bin sylvode-skillgen -- --lint
+      - name: Catalogue tests
+        if: steps.filter.outputs.changed == 'true'
+        run: cargo test --locked -p mcp-server --lib "catalog::"
+      - name: Agent policy names are catalogue names
+        if: steps.filter.outputs.changed == 'true'
+        run: cargo test --locked -p api --lib routes::context
+
+  runner:
+    name: Runner (${{ matrix.os }})
+    needs: runner-changes
+    if: needs.runner-changes.outputs.runner == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -123,13 +180,13 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: webhook
+          key: runner
       - name: Format check
-        run: cargo fmt -p sylvode-webhook -- --check
+        run: cargo fmt -p sylvode-runner -- --check
       - name: Clippy
-        run: cargo clippy -p sylvode-webhook --all-targets --all-features -- -D warnings
+        run: cargo clippy -p sylvode-runner --all-targets --all-features -- -D warnings
       - name: Tests
-        run: cargo test -p sylvode-webhook --all-features
+        run: cargo test -p sylvode-runner --all-features
 
   test:
     name: Test
@@ -182,13 +239,19 @@ jobs:
       - name: Check
         working-directory: frontend
         run: bun run check
+      - name: Lint
+        working-directory: frontend
+        run: bun run lint
       - name: Unit and contract tests
         working-directory: frontend
         run: |
           set -e
           for suite in record-values markdown-sanitize flow-limits flow-scope-api flow-route-scope flow-navigator-placements flow-i18n-parity i18n-parity bot-transport-surfaces \
-                       webhook-events flow-navigator-equivalence flow-cross-parent-move flow-ui-state flow-bridge \
-                       flow-package-import flow-v0.4 flow-static-build; do
+                       webhook-events flow-navigator-equivalence flow-cross-parent-move flow-ui-state flow-bridge flow-dangling-parent \
+                       flow-package-import flow-v0.4 flow-static-build flow-outbox flow-offline-recovery flow-apply-busy \
+                       shell-routing shell-state shell-keyboard surface-host project-nav shell-redirects surface-embed \
+                       component-adapters toast-routing workbench-tabs forms-page forms-csv-export plugin-creator-review-focus oauth workspace-role \
+                       agent-tasks connection-managed connection-section connection-list; do
             echo "::group::test:$suite"
             bun run "test:$suite"
             echo "::endgroup::"

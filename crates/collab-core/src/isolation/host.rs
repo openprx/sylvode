@@ -22,7 +22,7 @@
 //! has, because `Command::spawn` on Linux is `fork` immediately followed by `execve` -- the child
 //! never runs any of the parent's code (Tokio's runtime included) between those two calls. This
 //! adopts `ADR-0014`'s *online-enforcement* mechanisms over that different process-creation
-//! primitive: `SIGPROF`/`setitimer(ITIMER_PROF)` for the CPU ceiling (section 1.1, in
+//! primitive: `SIGPROF` from a process-CPU-clock timer for the CPU ceiling (section 1.1, in
 //! `isolation::child_runtime`), a counting `GlobalAlloc` for the memory ceiling (sections 1 and 3,
 //! in `isolation::alloc`), and an independent wall-clock watchdog with `SIGKILL` (section 1,
 //! below).
@@ -45,11 +45,16 @@
 use std::io::Read;
 use std::os::fd::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use super::limits::DECODE_APPLY_WALL_MS_MAX;
-use super::outcome::{IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess};
+use super::child_runtime;
+use super::limits::{DECODE_APPLY_WALL_MS_MAX, IMPORT_DECODE_WALL_MS_MAX};
+use super::outcome::{
+    HostFailure, HostFailureKind, IsolatedApplyError, IsolatedApplySuccess, IsolatedDiffSuccess, WindowMode,
+    WorkerObservation,
+};
+use super::spawn_env::worker_command;
 use super::wire::{self, MAX_RESPONSE_PAYLOAD_BYTES, Outcome};
 
 const RESPONSE_FRAME_HEADER_BYTES: usize = 8;
@@ -84,10 +89,10 @@ fn worker_binary_path() -> Result<std::path::PathBuf, IsolatedApplyError> {
     }
 
     let current_exe = std::env::current_exe()
-        .map_err(|err| IsolatedApplyError::HostFailure(format!("could not resolve current_exe: {err}")))?;
+        .map_err(|err| host_failure(HostFailureKind::Spawn, format!("could not resolve current_exe: {err}")))?;
     let dir = current_exe
         .parent()
-        .ok_or_else(|| IsolatedApplyError::HostFailure("current_exe has no parent directory".to_string()))?;
+        .ok_or_else(|| host_failure(HostFailureKind::Spawn, "current_exe has no parent directory"))?;
 
     let sibling = dir.join(WORKER_BINARY_NAME);
     if sibling.is_file() {
@@ -101,10 +106,33 @@ fn worker_binary_path() -> Result<std::path::PathBuf, IsolatedApplyError> {
         }
     }
 
-    Err(IsolatedApplyError::HostFailure(format!(
-        "worker binary '{WORKER_BINARY_NAME}' not found next to '{}'; set {WORKER_BINARY_PATH_ENV} to override",
-        current_exe.display()
-    )))
+    Err(host_failure(
+        HostFailureKind::Spawn,
+        format!(
+            "worker binary '{WORKER_BINARY_NAME}' not found next to '{}'; set {WORKER_BINARY_PATH_ENV} to override",
+            current_exe.display()
+        ),
+    ))
+}
+
+fn host_failure(kind: HostFailureKind, detail: impl Into<String>) -> IsolatedApplyError {
+    IsolatedApplyError::HostFailure(HostFailure::new(kind, detail))
+}
+
+/// The failure of spawning the worker: a host short of a resource is told apart from the rest.
+fn spawn_failure(error: &std::io::Error) -> IsolatedApplyError {
+    let kind = match error.raw_os_error() {
+        Some(code) if is_resource_errno(code) => HostFailureKind::SpawnResources,
+        _ => HostFailureKind::Spawn,
+    };
+    host_failure(kind, format!("spawn of isolated-apply worker failed: {error}"))
+}
+
+/// The `errno` values of a spawn that failed for lack of a resource and may succeed later:
+/// too many processes (`EAGAIN`), out of memory (`ENOMEM`), too many open files (`EMFILE`,
+/// `ENFILE`).
+const fn is_resource_errno(code: i32) -> bool {
+    matches!(code, libc::EAGAIN | libc::ENOMEM | libc::EMFILE | libc::ENFILE)
 }
 
 /// Runs `LoroCollabEngine::load(base_snapshot)` + `import_update(update)` + `semantic_snapshot()` +
@@ -118,7 +146,68 @@ fn worker_binary_path() -> Result<std::path::PathBuf, IsolatedApplyError> {
 /// # Errors
 /// See [`IsolatedApplyError`].
 pub fn isolated_apply(base_snapshot: &[u8], update: &[u8]) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
-    run_isolated_apply(base_snapshot, update, wire::OPERATION_APPLY, &[])
+    isolated_apply_with(base_snapshot, update, WindowMode::Incremental)
+}
+
+/// [`isolated_apply`] with the window mode chosen by the host: [`WindowMode::Full`] makes the worker
+/// run the full computation (`semantic_snapshot` and `check_snapshot`) in its window and report no
+/// incremental result. The mode can only add checking.
+///
+/// # Errors
+/// See [`IsolatedApplyError`].
+pub fn isolated_apply_with(
+    base_snapshot: &[u8],
+    update: &[u8],
+    mode: WindowMode,
+) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+    isolated_apply_with_observed(
+        base_snapshot,
+        update,
+        mode,
+        crate::setup_guard::SETUP_CPU_BUDGET_MS_DEFAULT,
+    )
+    .0
+}
+
+/// [`isolated_apply_with`] that additionally reports the [`WorkerObservation`] of the run: the CPU
+/// the worker consumed, what its window check decided and which setup guard fired, even when a
+/// ceiling killed it. `setup_cpu_budget_ms` is the CPU budget of the worker's setup (`[flow]
+/// setup_cpu_budget_ms`); the worker uses its default for a value outside
+/// [`crate::setup_guard::SETUP_CPU_BUDGET_MS_RANGE`].
+pub fn isolated_apply_with_observed(
+    base_snapshot: &[u8],
+    update: &[u8],
+    mode: WindowMode,
+    setup_cpu_budget_ms: u64,
+) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    let budget = setup_cpu_budget_ms.to_string();
+    let incremental = [(wire::SETUP_CPU_BUDGET_ENV, budget.as_str())];
+    let full = [
+        (wire::SETUP_CPU_BUDGET_ENV, budget.as_str()),
+        (wire::WINDOW_ENV, wire::WINDOW_FULL),
+    ];
+    match mode {
+        WindowMode::Incremental => {
+            run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &incremental)
+        }
+        WindowMode::Full => run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &full),
+    }
+}
+
+/// Same as [`isolated_apply`], and additionally reports the [`WorkerObservation`] of the run.
+/// Callers use it to log whether a [`IsolatedApplyError::WallCeiling`] came with the worker
+/// having had the CPU or not. It runs the default (incremental) window mode: it has no mode
+/// parameter, so a caller that needs to observe a [`WindowMode::Full`] attempt needs one added.
+pub fn isolated_apply_observed(
+    base_snapshot: &[u8],
+    update: &[u8],
+) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    isolated_apply_with_observed(
+        base_snapshot,
+        update,
+        WindowMode::Incremental,
+        crate::setup_guard::SETUP_CPU_BUDGET_MS_DEFAULT,
+    )
 }
 
 /// Replays a bounded retained-history tail and computes its semantic diff inside the same
@@ -127,99 +216,256 @@ pub fn isolated_diff(
     base_snapshot: &[u8],
     request: &wire::ReplayDiffRequest,
 ) -> Result<IsolatedDiffSuccess, IsolatedApplyError> {
-    let encoded = wire::encode_replay_diff_request(request)
-        .map_err(|error| IsolatedApplyError::HostFailure(format!("diff request encoding failed: {error}")))?;
-    let success = run_isolated_apply(base_snapshot, &encoded, wire::OPERATION_DIFF, &[])?;
-    wire::decode_replay_diff_result(&success.snapshot)
-        .map_err(|error| IsolatedApplyError::HostFailure(format!("diff response decoding failed: {error}")))
+    isolated_diff_observed(base_snapshot, request).0
 }
 
-/// Same as [`isolated_apply`], but additionally sets `extra_env` on the *spawned child's own*
-/// environment before it runs (never this process's own environment). [`isolated_apply`] always
-/// calls this with an empty slice, so passing environment variables through here has no effect on
-/// the production call path -- it exists so this module's own tests can drive
-/// `src/bin/isolated_apply_worker.rs`'s `cfg(debug_assertions)`-gated synthetic workloads (see
-/// that file's `test_injection` module) by setting `COLLAB_ISOLATION_TEST_INJECT` on the one child
-/// process a test spawns, without mutating this whole test binary's process-wide environment the
-/// way `WORKER_BINARY_PATH_ENV` (necessarily) does.
-fn run_isolated_apply(
+/// [`isolated_diff`] that additionally reports the [`WorkerObservation`] of the run.
+pub fn isolated_diff_observed(
+    base_snapshot: &[u8],
+    request: &wire::ReplayDiffRequest,
+) -> (Result<IsolatedDiffSuccess, IsolatedApplyError>, WorkerObservation) {
+    replay_observed(wire::OPERATION_DIFF, base_snapshot, request)
+}
+
+/// Imports one uploaded document: loads `base_snapshot`, replays the update tail of `request`
+/// (`package_updates_base64`), scans the whole history, projects and checks the result against the
+/// content limits, all inside the killable CPU/wall/memory boundary under the import-specific
+/// budget (`IMPORT_DECODE_CPU_MS_MAX` and its siblings). The answer carries the validated head
+/// snapshot the host stores from, never the uploaded bytes.
+pub fn isolated_import_observed(
+    base_snapshot: &[u8],
+    request: &wire::ReplayDiffRequest,
+) -> (Result<IsolatedDiffSuccess, IsolatedApplyError>, WorkerObservation) {
+    replay_observed(wire::OPERATION_IMPORT, base_snapshot, request)
+}
+
+fn replay_observed(
+    operation: &'static str,
+    base_snapshot: &[u8],
+    request: &wire::ReplayDiffRequest,
+) -> (Result<IsolatedDiffSuccess, IsolatedApplyError>, WorkerObservation) {
+    let encoded = match wire::encode_replay_diff_request(request) {
+        Ok(encoded) => encoded,
+        Err(error) => {
+            return (
+                Err(host_failure(
+                    HostFailureKind::Protocol,
+                    format!("diff request encoding failed: {error}"),
+                )),
+                WorkerObservation::default(),
+            );
+        }
+    };
+    let (result, observation) = run_isolated_apply_observed(base_snapshot, &encoded, operation, &[]);
+    let decoded = result.and_then(|success| {
+        wire::decode_replay_diff_result(&success.snapshot).map_err(|error| {
+            host_failure(
+                HostFailureKind::Protocol,
+                format!("diff response decoding failed: {error}"),
+            )
+        })
+    });
+    (decoded, observation)
+}
+
+/// Runs the worker and reports the host's [`WorkerObservation`] of the run. `extra_env` is set on
+/// the *spawned child's own* environment before it runs (never this process's own environment); the
+/// production entry points always pass an empty slice, so it has no effect on the production call
+/// path. It exists so this module's own tests can drive `src/bin/isolated_apply_worker.rs`'s
+/// `cfg(debug_assertions)`-gated synthetic workloads (see that file's `test_injection` module) by
+/// setting `COLLAB_ISOLATION_TEST_INJECT` on the one child process a test spawns, without mutating
+/// this whole test binary's process-wide environment the way `WORKER_BINARY_PATH_ENV` (necessarily)
+/// does.
+fn run_isolated_apply_observed(
     base_snapshot: &[u8],
     update: &[u8],
     operation: &'static str,
     extra_env: &[(&str, &str)],
+) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    let mut observation = WorkerObservation::default();
+    let result = run_worker(base_snapshot, update, operation, extra_env, &mut observation);
+    (result, observation)
+}
+
+fn run_worker(
+    base_snapshot: &[u8],
+    update: &[u8],
+    operation: &'static str,
+    extra_env: &[(&str, &str)],
+    observation: &mut WorkerObservation,
+) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+    let mut write_error: Option<String> = None;
+    let result = run_worker_inner(
+        base_snapshot,
+        update,
+        operation,
+        extra_env,
+        observation,
+        &mut write_error,
+    );
+    // The failed request write never decided the classification; it is the detail of a host failure
+    // when that is what the worker's own outcome says it was.
+    match (result, write_error) {
+        (Err(IsolatedApplyError::HostFailure(mut failure)), Some(note)) => {
+            failure.detail = format!("{} (request write failed: {note})", failure.detail);
+            Err(IsolatedApplyError::HostFailure(failure))
+        }
+        (result, _) => result,
+    }
+}
+
+fn run_worker_inner(
+    base_snapshot: &[u8],
+    update: &[u8],
+    operation: &'static str,
+    extra_env: &[(&str, &str)],
+    observation: &mut WorkerObservation,
+    write_error: &mut Option<String>,
 ) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
     let worker_path = worker_binary_path()?;
 
-    let mut command = Command::new(&worker_path);
+    let mut command = worker_command(&worker_path, operation, extra_env);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .env(wire::OPERATION_ENV, operation);
-    for (key, value) in extra_env {
-        command.env(key, value);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|err| IsolatedApplyError::HostFailure(format!("spawn of isolated-apply worker failed: {err}")))?;
+        .stderr(Stdio::null());
+    let mut child = command.spawn().map_err(|err| spawn_failure(&err))?;
+    let spawned_at = Instant::now();
 
     {
         let mut stdin = child
             .stdin
             .take()
-            .ok_or_else(|| IsolatedApplyError::HostFailure("child stdin unavailable".to_string()))?;
+            .ok_or_else(|| host_failure(HostFailureKind::Spawn, "child stdin unavailable"))?;
         let write_result = wire::write_request(&mut stdin, base_snapshot, update);
         // `stdin` drops here regardless of `write_result`, closing the write end so the child's
         // `read_exact` calls see a clean EOF rather than hanging on a half-written request.
         drop(stdin);
-        write_result.map_err(|err| IsolatedApplyError::HostFailure(format!("request write failed: {err}")))?;
+        // A failed write (a child that exited before it read the request: `EPIPE`) says nothing
+        // about how the child ended. The host still reads what it produced and waits for it, and
+        // classifies by its exit status, its signal and its output; the error is only kept as the
+        // detail of the failure that classification ends in.
+        if let Err(err) = write_result {
+            *write_error = Some(err.to_string());
+        }
     }
 
     let mut stdout = child
         .stdout
         .take()
-        .ok_or_else(|| IsolatedApplyError::HostFailure("child stdout unavailable".to_string()))?;
+        .ok_or_else(|| host_failure(HostFailureKind::Spawn, "child stdout unavailable"))?;
 
-    let read_outcome = read_response_two_phase(&mut stdout, &child);
+    let (read_outcome, marker) = read_response_two_phase(&mut stdout, &child, metered_wall_ms(operation));
+    let metered_wall_us = marker.map(|marker| duration_micros(marker.at.elapsed()));
     drop(stdout);
 
-    let wait_status = child
-        .wait()
-        .map_err(|err| IsolatedApplyError::HostFailure(format!("wait on isolated-apply worker failed: {err}")))?;
+    let (wait_status, final_cpu_us) = wait_for_exit(&child).map_err(|err| {
+        host_failure(
+            HostFailureKind::Crash,
+            format!("wait on isolated-apply worker failed: {err}"),
+        )
+    })?;
+    observation.metered_wall_us = metered_wall_us;
+    observation.metered_cpu_us = match (marker.and_then(|marker| marker.cpu_us), final_cpu_us) {
+        (Some(at_marker), Some(at_exit)) => Some(at_exit.saturating_sub(at_marker)),
+        _ => None,
+    };
+    // The CPU of the setup: the child's clock when it opened its window; for a worker killed at
+    // the setup timeout, everything it consumed.
+    observation.setup_cpu_us = match &read_outcome {
+        ReadOutcome::SetupPhaseTimedOut => final_cpu_us,
+        _ => marker.and_then(|marker| marker.cpu_us),
+    };
+    observation.setup_wall_us = match &read_outcome {
+        ReadOutcome::SetupPhaseTimedOut => Some(duration_micros(spawned_at.elapsed())),
+        _ => marker.map(|marker| duration_micros(marker.at.saturating_duration_since(spawned_at))),
+    };
+    // Which setup guard fired is in the marker byte, so a refused or killed attempt reports it too.
+    observation.setup_guard = marker.and_then(|marker| marker.setup_guard);
 
     let response_bytes = match read_outcome {
         ReadOutcome::SetupPhaseTimedOut => {
-            return Err(IsolatedApplyError::HostFailure(
+            return Err(host_failure(
+                HostFailureKind::SetupTimeout,
                 "isolated-apply worker exceeded its setup-phase safety timeout (spawn + base document load) \
-                 before opening its metered window"
-                    .to_string(),
+                 before opening its metered window",
             ));
         }
-        ReadOutcome::MeteredPhaseTimedOut => return Err(IsolatedApplyError::WallCeiling),
+        ReadOutcome::MeteredPhaseTimedOut(bytes) => {
+            // A worker killed at the wall deadline may still have told us what its check decided.
+            observation.decision = wire::split_decision_record(&bytes)
+                .ok()
+                .and_then(|(decision, _)| decision);
+            return Err(IsolatedApplyError::WallCeiling);
+        }
         ReadOutcome::ExitedBeforeResponding => Vec::new(),
         ReadOutcome::Completed(bytes) => bytes,
     };
+
+    // Parsed before the signal classification: a worker killed by a ceiling after it wrote its
+    // record arrives here as a completed read whose bytes are the record alone.
+    let (decision, frame_bytes, record_error) = match wire::split_decision_record(&response_bytes) {
+        Ok((decision, rest)) => (decision, rest, None),
+        Err(reason) => (None, response_bytes.as_slice(), Some(reason)),
+    };
+    observation.decision = decision;
 
     if let Some(signal) = wait_status.signal() {
         return Err(classify_signal(signal));
     }
 
     if wait_status.code() != Some(0) {
-        return Err(IsolatedApplyError::HostFailure(format!(
-            "isolated-apply worker exited with non-zero status {:?}",
-            wait_status.code()
-        )));
+        return Err(nonzero_exit_failure(wait_status.code()));
     }
 
-    let payload = decode_response_frame(&response_bytes)
-        .map_err(|err| IsolatedApplyError::HostFailure(format!("response frame invalid: {err}")))?;
+    // A worker that completed always wrote a decision record before its frame.
+    if decision.is_none() {
+        return Err(host_failure(
+            HostFailureKind::Protocol,
+            format!(
+                "response lacks a valid decision record: {}",
+                record_error.unwrap_or("no record")
+            ),
+        ));
+    }
+
+    let payload = decode_response_frame(frame_bytes)
+        .map_err(|err| host_failure(HostFailureKind::Protocol, format!("response frame invalid: {err}")))?;
     let outcome = wire::decode_outcome(&payload)
-        .map_err(|err| IsolatedApplyError::HostFailure(format!("response payload invalid: {err}")))?;
+        .map_err(|err| host_failure(HostFailureKind::Protocol, format!("response payload invalid: {err}")))?;
 
     match outcome {
-        Outcome::Success { snapshot } => Ok(IsolatedApplySuccess { snapshot }),
+        Outcome::Success {
+            snapshot,
+            window_cpu_us,
+            window_report,
+            touched_blocks,
+        } => Ok(IsolatedApplySuccess {
+            snapshot,
+            window_cpu_us,
+            window_report,
+            touched_blocks,
+        }),
         Outcome::Rejected(err) => Err(IsolatedApplyError::Collab(err)),
     }
+}
+
+/// The host failure for a worker that exited with a non-zero status. Status
+/// [`child_runtime::EXIT_CANNOT_ARM_CPU_CEILING`] gets its own message, so an operator can tell a
+/// worker that could not arm (or close) its CPU ceiling (a blocked `timer_create`, an exhausted
+/// signal queue) from a crash. The classification is the same for every status: a host failure,
+/// never a document refusal.
+fn nonzero_exit_failure(code: Option<i32>) -> IsolatedApplyError {
+    if code == Some(child_runtime::EXIT_CANNOT_ARM_CPU_CEILING) {
+        return host_failure(
+            HostFailureKind::Crash,
+            "isolated-apply worker could not arm its CPU ceiling (exit status 71)".to_string(),
+        );
+    }
+    host_failure(
+        HostFailureKind::Crash,
+        format!("isolated-apply worker exited with non-zero status {code:?}"),
+    )
 }
 
 fn classify_signal(signal: i32) -> IsolatedApplyError {
@@ -228,15 +474,19 @@ fn classify_signal(signal: i32) -> IsolatedApplyError {
     } else if signal == libc::SIGABRT {
         IsolatedApplyError::MemoryCeiling
     } else if signal == libc::SIGKILL {
-        // This host only ever sends `SIGKILL` itself from the wall watchdog, which already
-        // returns early (via `wall_watchdog_fired`) before this function is reached. A `SIGKILL`
-        // observed here means something *else* killed the child (the kernel OOM killer, an
-        // operator's `kill -9`, ...) -- a host-level failure, not a business rejection.
-        IsolatedApplyError::HostFailure("isolated-apply worker received an unrecognized SIGKILL".to_string())
+        // This host only ever sends `SIGKILL` itself from the watchdogs, which already return
+        // early before this function is reached. A `SIGKILL` observed here means something *else*
+        // killed the child (the kernel OOM killer, an operator's `kill -9`, ...) -- a host-level
+        // failure, not a business rejection.
+        host_failure(
+            HostFailureKind::ForeignKill,
+            "isolated-apply worker received an unrecognized SIGKILL",
+        )
     } else {
-        IsolatedApplyError::HostFailure(format!(
-            "isolated-apply worker terminated by unexpected signal {signal}"
-        ))
+        host_failure(
+            HostFailureKind::Crash,
+            format!("isolated-apply worker terminated by unexpected signal {signal}"),
+        )
     }
 }
 
@@ -250,15 +500,41 @@ fn classify_signal(signal: i32) -> IsolatedApplyError {
 /// base document per call.
 const SETUP_PHASE_SAFETY_TIMEOUT_MS: u64 = 5_000;
 
+#[cfg(test)]
+thread_local! {
+    /// Shortens the setup timeout for the calling test thread, so that the setup cases run in
+    /// under a second. Never set outside tests.
+    static SETUP_TIMEOUT_OVERRIDE_MS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Widens the wall watchdog of the metered window for the calling test thread, for the tests
+    /// that are about the CPU ceiling and must not be decided by a starved worker. The CPU ceiling
+    /// is not touched. Never set outside tests.
+    static METERED_WALL_OVERRIDE_MS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// The setup timeout in force: [`SETUP_PHASE_SAFETY_TIMEOUT_MS`], or a test's shorter one.
+#[allow(clippy::missing_const_for_fn, reason = "reads a thread-local in test builds")]
+fn setup_phase_timeout_ms() -> u64 {
+    #[cfg(test)]
+    if let Some(override_ms) = SETUP_TIMEOUT_OVERRIDE_MS.with(std::cell::Cell::get) {
+        return override_ms;
+    }
+    SETUP_PHASE_SAFETY_TIMEOUT_MS
+}
+
 /// Written as the very first byte of every response the worker ever sends
-/// (`respond_and_exit` in `src/bin/isolated_apply_worker.rs`), before the framed outcome that
-/// follows it. Its only job is to let [`read_response_two_phase`] tell "still doing unmetered
+/// (`write_marker_or_exit` in `src/bin/isolated_apply_worker.rs`), before the framed outcome that
+/// follows it. This is the byte of a worker whose setup guard did not fire; one whose guard fired
+/// writes the byte `wire::marker_byte` names, which says which (`wire::guard_of_marker`). Its only job is to let [`read_response_two_phase`] tell "still doing unmetered
 /// setup" apart from "done with setup, response is now being written" -- so the *strict*
 /// `decode_apply_wall_ms_max` watchdog can start counting from the moment that is actually true,
 /// instead of from process spawn (which would double-count spawn + base-document-load time
 /// against a ceiling `contracts/limits-v1.md` scopes to decode/apply/shape-validate only: "从
 /// decode 前开始计,到 semantic diff/shape validation 完成结束").
-pub const RESPONSE_MARKER_BYTE: u8 = 0xA5;
+pub const RESPONSE_MARKER_BYTE: u8 = wire::MARKER_NO_GUARD;
 
 /// What [`read_response_two_phase`] observed.
 enum ReadOutcome {
@@ -269,7 +545,9 @@ enum ReadOutcome {
     /// The marker byte arrived, but the framed response that should follow it did not within
     /// [`DECODE_APPLY_WALL_MS_MAX`] of that point; the child was `SIGKILL`ed. This *is* the
     /// `decode_apply_wall_ms_max` ceiling.
-    MeteredPhaseTimedOut,
+    ///
+    /// Carries the bytes read after the marker (the decision record, when the worker got that far).
+    MeteredPhaseTimedOut(Vec<u8>),
     /// The child closed its stdout (exited) before writing even the marker byte -- e.g. it never
     /// got past reading the request (`main`'s `exit_without_response` paths in
     /// `src/bin/isolated_apply_worker.rs`). Not a timeout; `isolated_apply` falls through to its
@@ -285,16 +563,20 @@ enum ReadOutcome {
 /// comments for why this is split rather than one flat deadline from process spawn. `ADR-0014`
 /// section 1.1: "wall watchdog 命中...是独立的 wall 上限, 不是 CPU 上限的替代品" -- this watchdog
 /// remains independent of (does not rely on) the CPU ceiling's own `SIGPROF` enforcement.
-fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> ReadOutcome {
+fn read_response_two_phase(
+    stdout: &mut ChildStdout,
+    child: &Child,
+    wall_ms: u64,
+) -> (ReadOutcome, Option<MarkerSample>) {
     let fd = stdout.as_raw_fd();
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 65536];
 
-    let setup_deadline = Instant::now() + Duration::from_millis(SETUP_PHASE_SAFETY_TIMEOUT_MS);
+    let setup_deadline = Instant::now() + Duration::from_millis(setup_phase_timeout_ms());
     let (setup_timed_out, exited_before_marker) =
         read_until(stdout, fd, child, &mut buffer, &mut chunk, setup_deadline, 1);
     if setup_timed_out {
-        return ReadOutcome::SetupPhaseTimedOut;
+        return (ReadOutcome::SetupPhaseTimedOut, None);
     }
     if buffer.is_empty() {
         // `read_until`'s only other early-exit besides "reached `min_bytes`" or "deadline" is
@@ -303,8 +585,18 @@ fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> ReadOutco
             exited_before_marker,
             "empty buffer implies EOF, not a bug in read_until"
         );
-        return ReadOutcome::ExitedBeforeResponding;
+        return (ReadOutcome::ExitedBeforeResponding, None);
     }
+
+    // The worker has just opened its metered window. Sample the child's CPU clock now, so the
+    // CPU it consumed inside the window (not during spawn and base-document load) can be told
+    // apart from the total once it has exited.
+    let marker_at = Instant::now();
+    let marker = MarkerSample {
+        at: marker_at,
+        cpu_us: child_cpu_micros(pid_of(child)),
+        setup_guard: buffer.first().copied().and_then(wire::guard_of_marker),
+    };
 
     // The single-poll-then-read pattern below can (and in practice often does) return more than
     // just the marker byte in one `read` call -- pipes have no "one write = one read" guarantee.
@@ -317,13 +609,95 @@ fn read_response_two_phase(stdout: &mut ChildStdout, child: &Child) -> ReadOutco
     };
     buffer = response_prefix;
 
-    let metered_deadline = Instant::now() + Duration::from_millis(DECODE_APPLY_WALL_MS_MAX);
+    let metered_deadline = marker_at + Duration::from_millis(wall_ms);
     let (metered_timed_out, _) = read_until(stdout, fd, child, &mut buffer, &mut chunk, metered_deadline, usize::MAX);
     if metered_timed_out {
-        return ReadOutcome::MeteredPhaseTimedOut;
+        return (ReadOutcome::MeteredPhaseTimedOut(buffer), Some(marker));
     }
 
-    ReadOutcome::Completed(buffer)
+    (ReadOutcome::Completed(buffer), Some(marker))
+}
+
+/// The wall-clock watchdog of the metered window of `operation`: [`DECODE_APPLY_WALL_MS_MAX`], or
+/// the import-specific one for the `import` operation only.
+fn metered_wall_ms(operation: &str) -> u64 {
+    #[cfg(test)]
+    if let Some(override_ms) = METERED_WALL_OVERRIDE_MS.with(std::cell::Cell::get) {
+        return override_ms;
+    }
+    if operation == wire::OPERATION_IMPORT {
+        IMPORT_DECODE_WALL_MS_MAX
+    } else {
+        DECODE_APPLY_WALL_MS_MAX
+    }
+}
+
+/// The host's view of the instant the worker opened its metered window.
+#[derive(Clone, Copy)]
+struct MarkerSample {
+    at: Instant,
+    /// The child's CPU time (user plus system) at that instant, if the kernel reported it.
+    cpu_us: Option<u64>,
+    /// The setup guard the marker byte names.
+    setup_guard: Option<crate::setup_guard::Fired>,
+}
+
+fn duration_micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+/// The CPU time (user plus system) the live child `pid` has consumed so far, read from its
+/// per-process CPU clock (`clock_getcpuclockid` + `clock_gettime`). `None` if either call fails.
+fn child_cpu_micros(pid: libc::pid_t) -> Option<u64> {
+    let mut clock: libc::clockid_t = 0;
+    // SAFETY: `&raw mut clock` is a valid out-pointer for a `clockid_t`; `pid` is this
+    // process's own child that has not been reaped yet. The call returns 0 or an errno value.
+    let rc = unsafe { libc::clock_getcpuclockid(pid, &raw mut clock) };
+    if rc != 0 {
+        return None;
+    }
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `&raw mut ts` is a valid, properly aligned out-pointer for a `timespec`, and
+    // `clock` was just filled in by `clock_getcpuclockid`.
+    let rc = unsafe { libc::clock_gettime(clock, &raw mut ts) };
+    if rc != 0 {
+        return None;
+    }
+    let secs = u64::try_from(ts.tv_sec).ok()?;
+    let nanos = u64::try_from(ts.tv_nsec).ok()?;
+    Some(secs.saturating_mul(1_000_000).saturating_add(nanos / 1_000))
+}
+
+/// Reaps `child` with `wait4`, returning its exit status and the CPU time (user plus system) the
+/// kernel accounted to it. Replaces `Child::wait`, which does not expose resource usage; the
+/// child must not be waited on again afterwards (dropping the `Child` does not wait).
+fn wait_for_exit(child: &Child) -> std::io::Result<(ExitStatus, Option<u64>)> {
+    let pid = pid_of(child);
+    loop {
+        let mut status: libc::c_int = 0;
+        // SAFETY: `rusage` is a C struct of plain integers, for which all-zero is a valid value.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: `&raw mut status` and `&raw mut usage` are valid out-pointers; `pid` is this
+        // process's own child, reaped exactly once (a retry happens only after `EINTR`).
+        let reaped = unsafe { libc::wait4(pid, &raw mut status, 0, &raw mut usage) };
+        if reaped == pid {
+            return Ok((ExitStatus::from_raw(status), rusage_cpu_micros(&usage)));
+        }
+        let error = std::io::Error::last_os_error();
+        if reaped < 0 && error.kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(error);
+    }
+}
+
+fn rusage_cpu_micros(usage: &libc::rusage) -> Option<u64> {
+    let timeval_micros = |value: libc::timeval| {
+        let secs = u64::try_from(value.tv_sec).ok()?;
+        let micros = u64::try_from(value.tv_usec).ok()?;
+        Some(secs.saturating_mul(1_000_000).saturating_add(micros))
+    };
+    Some(timeval_micros(usage.ru_utime)?.saturating_add(timeval_micros(usage.ru_stime)?))
 }
 
 /// Appends to `buffer` (via `poll`/`read` on `fd`) until it holds at least `min_bytes`, EOF is
@@ -528,6 +902,28 @@ mod tests {
         Some(result)
     }
 
+    /// [`isolated_apply_with_real_worker`] with the window mode chosen.
+    fn isolated_apply_mode_with_real_worker(
+        base_snapshot: &[u8],
+        update: &[u8],
+        mode: WindowMode,
+    ) -> Option<Result<IsolatedApplySuccess, IsolatedApplyError>> {
+        let worker_path = real_worker_binary_for_tests()?;
+        let guard = env_lock().lock();
+        // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
+        // `WORKER_BINARY_PATH_ENV` while this is set.
+        unsafe {
+            std::env::set_var(WORKER_BINARY_PATH_ENV, &worker_path);
+        }
+        let result = isolated_apply_with(base_snapshot, update, mode);
+        // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
+        unsafe {
+            std::env::remove_var(WORKER_BINARY_PATH_ENV);
+        }
+        drop(guard);
+        Some(result)
+    }
+
     // ---- Boundary tests: `decode_apply_cpu_ms_max` / `decode_apply_wall_ms_max` /
     // `isolated_apply_memory_bytes_max`, and their correct signal classification.
     //
@@ -585,6 +981,13 @@ mod tests {
     /// of these workloads (none of them ever call `import_update`), so this always uses a fresh
     /// empty document and an empty update.
     fn isolated_apply_injected(env_value: &str) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+        isolated_apply_injected_observed(env_value).0
+    }
+
+    /// [`isolated_apply_injected`] plus the host's [`WorkerObservation`] of the run.
+    fn isolated_apply_injected_observed(
+        env_value: &str,
+    ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
         let worker_path = required_debug_worker_binary_for_tests();
         let guard = env_lock().lock();
         // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
@@ -595,7 +998,7 @@ mod tests {
         let base_snapshot = crate::LoroCollabEngine::new_empty(1)
             .export_snapshot()
             .expect("a fresh empty document always exports");
-        let result = run_isolated_apply(
+        let result = run_isolated_apply_observed(
             &base_snapshot,
             &[],
             wire::OPERATION_APPLY,
@@ -609,39 +1012,312 @@ mod tests {
         result
     }
 
+    /// The coarsest scheduler tick the kernel accounts CPU in (`CONFIG_HZ=100`; 250 and 1000 are
+    /// finer).
+    const SCHEDULER_TICK_US: u64 = 10_000;
+
+    /// Allowance when judging a kill against the CPU the host measured, one tick, for both the
+    /// write and the import window.
+    ///
+    /// The ceiling is a timer on the worker's own CPU clock (`child_runtime::arm_cpu_timer`), which
+    /// fires only after the ceiling is consumed and at most one scheduler tick later, so a kill
+    /// never needs an allowance for firing early. (It did when the ceiling was `ITIMER_PROF`: that timer
+    /// counts ticks sampled at the interrupt and, on a loaded 2-CPU machine, fired up to 1.5% of
+    /// the ceiling early, 29 ms of the import window's 2 s, which no fixed number of ticks covers.)
+    /// What is left is the host's own reading: it reads the worker's CPU at the marker, which can be
+    /// a moment after the worker armed the timer, so the window's CPU as the host sees it can fall
+    /// short of the CPU the worker really burned in it. (`wait4` reports a reaped child's
+    /// `ru_utime + ru_stime` scaled to its precise runtime, so the final reading is not rounded to
+    /// a tick.)
+    /// Measured on a loaded 2-CPU machine, every kill of 80 runs read at or above the ceiling
+    /// (a shortfall of at most 0 us); one tick is the margin for that reading, and it is far
+    /// smaller than the distance between the ceiling and the CPU the under-ceiling runs consume.
+    const CPU_ACCOUNTING_SLACK_US: u64 = SCHEDULER_TICK_US;
+
+    /// How one injected run relates to the ceiling it targeted, judged from what the host
+    /// observed rather than from the clock alone.
+    #[derive(Debug, PartialEq, Eq)]
+    enum CeilingVerdict {
+        /// The run shows the ceiling working as specified.
+        Conclusive,
+        /// The wall watchdog killed a worker that never got the CPU it needed to reach the CPU
+        /// ceiling: the machine, not the ceiling, decided the outcome. Proves nothing either way.
+        Starved,
+        /// The run contradicts the specified behaviour; the text says how.
+        Violation(String),
+    }
+
+    /// Judges a burn that targets more CPU than `decode_apply_cpu_ms_max`. The worker must be
+    /// killed by `SIGPROF` once it has consumed the ceiling, and no later than two scheduler ticks
+    /// after it; a `WallCeiling` is acceptable only when the worker had demonstrably not consumed
+    /// it.
+    fn judge_burn_over_cpu_ceiling(
+        result: &Result<IsolatedApplySuccess, IsolatedApplyError>,
+        observation: &WorkerObservation,
+        ceiling_us: u64,
+    ) -> CeilingVerdict {
+        let Some(cpu_us) = observation.metered_cpu_us else {
+            return CeilingVerdict::Violation("the host could not observe the worker's CPU time".to_string());
+        };
+        match result {
+            Err(IsolatedApplyError::CpuCeiling)
+                if cpu_us.saturating_add(CPU_ACCOUNTING_SLACK_US) >= ceiling_us
+                    && cpu_us <= ceiling_us.saturating_add(2 * SCHEDULER_TICK_US) =>
+            {
+                CeilingVerdict::Conclusive
+            }
+            Err(IsolatedApplyError::CpuCeiling) if cpu_us > ceiling_us => CeilingVerdict::Violation(format!(
+                "SIGPROF killed the worker after {cpu_us}us of CPU, more than two scheduler ticks over the \
+                 {ceiling_us}us ceiling"
+            )),
+            Err(IsolatedApplyError::CpuCeiling) => CeilingVerdict::Violation(format!(
+                "SIGPROF killed the worker after only {cpu_us}us of CPU, below the {ceiling_us}us ceiling"
+            )),
+            Err(IsolatedApplyError::WallCeiling) if cpu_us < ceiling_us.saturating_add(CPU_ACCOUNTING_SLACK_US) => {
+                CeilingVerdict::Starved
+            }
+            Err(IsolatedApplyError::WallCeiling) => CeilingVerdict::Violation(format!(
+                "the wall watchdog had to kill a worker that consumed {cpu_us}us of CPU, over the \
+                 {ceiling_us}us ceiling: SIGPROF did not fire"
+            )),
+            other => CeilingVerdict::Violation(format!("unexpected outcome {other:?} after {cpu_us}us of CPU")),
+        }
+    }
+
+    /// Judges a burn that targets less CPU than `decode_apply_cpu_ms_max`: it must be accepted.
+    /// A `WallCeiling` means the worker was starved of CPU for the burn plus its response inside
+    /// the wall deadline; a `CpuCeiling` is never right for it.
+    fn judge_burn_under_cpu_ceiling(
+        result: &Result<IsolatedApplySuccess, IsolatedApplyError>,
+        observation: &WorkerObservation,
+    ) -> CeilingVerdict {
+        match result {
+            Ok(_) => CeilingVerdict::Conclusive,
+            Err(IsolatedApplyError::WallCeiling) => CeilingVerdict::Starved,
+            other => CeilingVerdict::Violation(format!(
+                "a burn under the CPU ceiling ended as {other:?} after {:?}us of CPU",
+                observation.metered_cpu_us
+            )),
+        }
+    }
+
+    /// Runs `run_once` until it is [`CeilingVerdict::Conclusive`] or `attempts` runs were all
+    /// starved, pausing between attempts so a short burst of contention can pass. Returns whether
+    /// a conclusive run happened; panics on the first violation.
+    #[allow(
+        clippy::print_stderr,
+        reason = "a test notice that an attempt was starved, visible with --nocapture or on a failure"
+    )]
+    fn conclusive_within(
+        attempts: usize,
+        pause: std::time::Duration,
+        what: &str,
+        mut run_once: impl FnMut() -> CeilingVerdict,
+    ) -> bool {
+        for attempt in 1..=attempts {
+            match run_once() {
+                CeilingVerdict::Conclusive => return true,
+                CeilingVerdict::Starved => {
+                    eprintln!("{what}: attempt {attempt}/{attempts} was starved of CPU by the host");
+                    std::thread::sleep(pause);
+                }
+                CeilingVerdict::Violation(why) => panic!("{what}: {why}"),
+            }
+        }
+        false
+    }
+
+    const BOUNDARY_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
+
+    /// One run of each side of the CPU ceiling, judged by [`judge_burn_under_cpu_ceiling`] and
+    /// [`judge_burn_over_cpu_ceiling`]. Margins are comfortably on each side of the ceiling
+    /// rather than at a literal +/-1us edge: `SIGPROF` delivery latency and the polling
+    /// busy-loop's own check granularity (see `test_injection::burn_cpu_micros`) both add slack.
+    fn boundary_runs() -> (u64, u64, u64) {
+        let ceiling_micros = super::super::DECODE_APPLY_CPU_MS_MAX * 1_000;
+        let under_micros = ceiling_micros - ceiling_micros / 3; // ~33ms: comfortably under 50ms.
+        let over_micros = ceiling_micros * 3; // ~150ms: comfortably over 50ms.
+        (ceiling_micros, under_micros, over_micros)
+    }
+
+    fn under_ceiling_verdict(under_micros: u64) -> CeilingVerdict {
+        let (result, observation) = isolated_apply_injected_observed(&format!("cpu_burn_micros={under_micros}"));
+        judge_burn_under_cpu_ceiling(&result, &observation)
+    }
+
+    fn over_ceiling_verdict(over_micros: u64, ceiling_micros: u64) -> CeilingVerdict {
+        let (result, observation) = isolated_apply_injected_observed(&format!("cpu_burn_micros={over_micros}"));
+        judge_burn_over_cpu_ceiling(&result, &observation, ceiling_micros)
+    }
+
+    /// A burn of the ceiling minus 1 ms is never ended by the CPU ceiling. The process-clock timer
+    /// cannot fire before the whole budget is consumed, and the window holds only the burn plus
+    /// microseconds of arming overhead, so a `CpuCeiling` here is always a violation.
+    #[test]
+    fn decode_apply_cpu_ms_ceiling_never_kills_a_burn_one_millisecond_under_it() {
+        let (ceiling_micros, _, _) = boundary_runs();
+        let near_micros = ceiling_micros - 1_000;
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            &format!("a {near_micros}us CPU burn (1 ms under the {ceiling_micros}us write ceiling)"),
+            || under_ceiling_verdict(near_micros),
+        );
+    }
+
+    /// CPU burned after the write window closed is not metered: 30 ms inside the 50 ms window plus
+    /// 60 ms after it must be accepted. If the timer outlived the window, the 90 ms in total
+    /// would reach the ceiling and kill a worker that had already decided.
+    #[test]
+    fn cpu_burned_after_the_write_window_closes_is_not_metered() {
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            "30 ms of CPU inside the write window and 60 ms after it",
+            || {
+                let (result, observation) = isolated_apply_injected_observed("burn_then_post_window_burn=30000:60000");
+                judge_burn_under_cpu_ceiling(&result, &observation)
+            },
+        );
+    }
+
+    /// The CPU ceiling's behaviour never depends on how much CPU the machine gives the worker:
+    /// a run is judged by the CPU the worker consumed as the host observed it. A worker that was
+    /// killed by the wall watchdog having consumed less CPU than the ceiling was starved by the
+    /// machine (CI runners share their cores with other tests), which says nothing about the
+    /// ceiling, so such a run is retried and, if the machine never gives it the CPU, left
+    /// inconclusive. A violation (SIGPROF not firing at the ceiling, firing early, or the wall
+    /// watchdog killing a worker that had consumed the ceiling) always fails. The strict variant
+    /// below requires a conclusive run.
     #[test]
     fn decode_apply_cpu_ms_ceiling_accepts_just_under_and_kills_with_cpu_ceiling_just_over_the_boundary() {
-        let ceiling_micros = super::super::DECODE_APPLY_CPU_MS_MAX * 1_000;
-        // Comfortably on each side of the ceiling rather than at a literal +/-1us edge: `SIGPROF`
-        // delivery/scheduling latency and the polling busy-loop's own check granularity (see
-        // `test_injection::burn_cpu_micros`) both add real-world slack, so a margin narrow enough
-        // to be flaky under CI contention would not actually prove anything a wider one -- which
-        // still stays strictly on the correct side of `DECODE_APPLY_CPU_MS_MAX` on every real run
-        // -- does not already prove.
-        let under_micros = ceiling_micros - ceiling_micros / 3; // ~33ms: comfortably under 50ms.
-        let over_micros = ceiling_micros * 3; // ~150ms: comfortably over 50ms, and still well
-        // under what a broken (non-firing) SIGPROF would need to reach before the independent
-        // 100ms wall watchdog caught it instead -- see the panic message below for why that
-        // distinction matters.
-
-        let accepted = isolated_apply_injected(&format!("cpu_burn_micros={under_micros}"));
-        assert!(
-            accepted.is_ok(),
-            "a {under_micros}us CPU burn (under the {ceiling_micros}us decode_apply_cpu_ms_max \
-             ceiling) must succeed, got {accepted:?}"
+        let (ceiling_micros, under_micros, over_micros) = boundary_runs();
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            &format!("a {under_micros}us CPU burn (under the {ceiling_micros}us decode_apply_cpu_ms_max ceiling)"),
+            || under_ceiling_verdict(under_micros),
         );
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            &format!("a {over_micros}us CPU burn (over the {ceiling_micros}us decode_apply_cpu_ms_max ceiling)"),
+            || over_ceiling_verdict(over_micros, ceiling_micros),
+        );
+    }
 
-        let rejected = isolated_apply_injected(&format!("cpu_burn_micros={over_micros}"));
-        match rejected {
-            Err(IsolatedApplyError::CpuCeiling) => {}
-            other => panic!(
-                "a {over_micros}us-targeted CPU burn (over the {ceiling_micros}us \
-                 decode_apply_cpu_ms_max ceiling) must be killed by SIGPROF and classified as \
-                 CpuCeiling specifically -- not WallCeiling (which would mean SIGPROF never fired \
-                 and the independent 100ms wall watchdog caught it instead, a different \
-                 mechanism entirely), not MemoryCeiling, not HostFailure -- got {other:?}"
+    /// The strict variant of the test above: the worker must demonstrably have had the CPU in
+    /// both runs (so the first run is accepted and the second is killed by `SIGPROF`), within
+    /// twenty attempts each. Fails on a machine that never gives the worker its CPU, so it is
+    /// not part of the default run; run it on an idle machine with
+    /// `cargo test -p collab-core --lib -- --ignored decode_apply_cpu_ms_ceiling_strict`.
+    #[test]
+    #[ignore = "needs an idle machine; run explicitly with --ignored"]
+    fn decode_apply_cpu_ms_ceiling_strict_requires_both_conclusive_runs_when_the_worker_has_the_cpu() {
+        let (ceiling_micros, under_micros, over_micros) = boundary_runs();
+        assert!(
+            conclusive_within(
+                20,
+                BOUNDARY_PAUSE,
+                "strict under-ceiling run",
+                || under_ceiling_verdict(under_micros)
             ),
-        }
+            "the worker never got the CPU for a {under_micros}us burn in twenty attempts"
+        );
+        assert!(
+            conclusive_within(20, BOUNDARY_PAUSE, "strict over-ceiling run", || over_ceiling_verdict(
+                over_micros,
+                ceiling_micros
+            )),
+            "the worker never got the CPU to reach the {ceiling_micros}us ceiling in twenty attempts"
+        );
+    }
+
+    /// The judgement itself, without a process or a clock: a wall kill is a violation only when
+    /// the worker had consumed the CPU ceiling, and a `SIGPROF` kill only counts when it did.
+    #[test]
+    fn ceiling_verdicts_separate_starvation_from_a_misbehaving_ceiling() {
+        let ceiling = 50_000;
+        let observed = |cpu: Option<u64>| WorkerObservation {
+            metered_wall_us: Some(100_000),
+            metered_cpu_us: cpu,
+            ..WorkerObservation::default()
+        };
+        let wall = || Err(IsolatedApplyError::WallCeiling);
+        let cpu_kill = || Err(IsolatedApplyError::CpuCeiling);
+
+        // Starved: killed at the wall deadline with a fraction of the ceiling (or just about
+        // the ceiling, inside the accounting slack).
+        assert_eq!(
+            judge_burn_over_cpu_ceiling(&wall(), &observed(Some(3_000)), ceiling),
+            CeilingVerdict::Starved
+        );
+        assert_eq!(
+            judge_burn_over_cpu_ceiling(&wall(), &observed(Some(55_000)), ceiling),
+            CeilingVerdict::Starved
+        );
+        // SIGPROF did not fire although the worker had clearly consumed the ceiling.
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(&wall(), &observed(Some(90_000)), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        // A SIGPROF kill is conclusive only if the worker had the ceiling's CPU.
+        assert_eq!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(Some(52_000)), ceiling),
+            CeilingVerdict::Conclusive
+        );
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(Some(10_000)), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        // A kill later than the ceiling plus two scheduler ticks is a late timer.
+        assert_eq!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(Some(70_000)), ceiling),
+            CeilingVerdict::Conclusive
+        );
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(Some(70_001)), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        // An unobservable CPU time and a burn that ran to completion are violations.
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(&cpu_kill(), &observed(None), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        assert!(matches!(
+            judge_burn_over_cpu_ceiling(
+                &Ok(IsolatedApplySuccess {
+                    snapshot: Vec::new(),
+                    window_cpu_us: None,
+                    window_report: None,
+                    touched_blocks: Vec::new(),
+                }),
+                &observed(Some(150_000)),
+                ceiling
+            ),
+            CeilingVerdict::Violation(_)
+        ));
+        // Under the ceiling: accepted is conclusive, a wall kill is starvation, a CPU kill is wrong.
+        assert_eq!(
+            judge_burn_under_cpu_ceiling(
+                &Ok(IsolatedApplySuccess {
+                    snapshot: Vec::new(),
+                    window_cpu_us: None,
+                    window_report: None,
+                    touched_blocks: Vec::new(),
+                }),
+                &observed(Some(33_000))
+            ),
+            CeilingVerdict::Conclusive
+        );
+        assert_eq!(
+            judge_burn_under_cpu_ceiling(&wall(), &observed(Some(8_000))),
+            CeilingVerdict::Starved
+        );
+        assert!(matches!(
+            judge_burn_under_cpu_ceiling(&cpu_kill(), &observed(Some(60_000))),
+            CeilingVerdict::Violation(_)
+        ));
     }
 
     #[test]
@@ -658,7 +1334,7 @@ mod tests {
              must succeed, got {accepted:?}"
         );
 
-        let rejected = isolated_apply_injected(&format!("wall_sleep_millis={over_millis}"));
+        let (rejected, observation) = isolated_apply_injected_observed(&format!("wall_sleep_millis={over_millis}"));
         match rejected {
             Err(IsolatedApplyError::WallCeiling) => {}
             other => panic!(
@@ -669,6 +1345,20 @@ mod tests {
                  not MemoryCeiling, not HostFailure -- got {other:?}"
             ),
         }
+        // A wall kill is right only when the wall time passed while the worker consumed less CPU
+        // than the CPU ceiling: a sleeping worker is the case that shows exactly that.
+        assert!(
+            observation
+                .metered_wall_us
+                .is_some_and(|wall_us| wall_us >= ceiling_millis * 1_000),
+            "the wall kill came before the {ceiling_millis}ms deadline: {observation:?}"
+        );
+        assert!(
+            observation
+                .metered_cpu_us
+                .is_some_and(|cpu_us| cpu_us < super::super::DECODE_APPLY_CPU_MS_MAX * 1_000),
+            "a sleeping worker consumed the CPU ceiling's worth of CPU: {observation:?}"
+        );
     }
 
     #[test]
@@ -713,6 +1403,168 @@ mod tests {
                  CpuCeiling or HostFailure; got {other:?}"
             ),
         }
+    }
+
+    // ---- The import operation's own budget (`IMPORT_*`): the same primitives, armed with larger
+    // ceilings, for the `import` operation only. The synthetic workloads run inside the import
+    // window, and a workload that stays under the import ceiling ends in the refusal the worker
+    // injects, so a ceiling that did not fire is told apart from one that did.
+
+    /// [`isolated_apply_injected_observed`] for the `import` operation.
+    fn isolated_import_injected_observed(
+        env_value: &str,
+    ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+        let worker_path = required_debug_worker_binary_for_tests();
+        let guard = env_lock().lock();
+        // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
+        // `WORKER_BINARY_PATH_ENV` while this is set.
+        unsafe {
+            std::env::set_var(WORKER_BINARY_PATH_ENV, &worker_path);
+        }
+        let result = run_isolated_apply_observed(&[], &[], wire::OPERATION_IMPORT, &[(TEST_INJECT_ENV_VAR, env_value)]);
+        // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
+        unsafe {
+            std::env::remove_var(WORKER_BINARY_PATH_ENV);
+        }
+        drop(guard);
+        result
+    }
+
+    fn is_the_injected_refusal(result: &Result<IsolatedApplySuccess, IsolatedApplyError>) -> bool {
+        matches!(
+            result,
+            Err(IsolatedApplyError::Collab(CollabError::OperationFailed { reason })) if reason == "injected_workload_finished"
+        )
+    }
+
+    /// A burn that the write ceiling would kill (150 ms against 50 ms) runs to its end inside the
+    /// import window (1,000 ms), and a burn over the import ceiling is killed by `SIGPROF` at it.
+    #[test]
+    fn the_import_window_has_its_own_cpu_budget() {
+        let import_ceiling_us = super::super::IMPORT_DECODE_CPU_MS_MAX * 1_000;
+        assert!(import_ceiling_us > super::super::DECODE_APPLY_CPU_MS_MAX * 1_000 * 3);
+        conclusive_within(4, BOUNDARY_PAUSE, "a 150 ms burn in the import window", || {
+            let (result, observation) = isolated_import_injected_observed("cpu_burn_micros=150000");
+            if is_the_injected_refusal(&result) {
+                CeilingVerdict::Conclusive
+            } else if matches!(result, Err(IsolatedApplyError::WallCeiling)) {
+                CeilingVerdict::Starved
+            } else {
+                CeilingVerdict::Violation(format!("{result:?} after {:?}us of CPU", observation.metered_cpu_us))
+            }
+        });
+        conclusive_within(4, BOUNDARY_PAUSE, "a burn over the import CPU ceiling", || {
+            let (result, observation) =
+                isolated_import_injected_observed(&format!("cpu_burn_micros={}", import_ceiling_us.saturating_mul(2)));
+            judge_burn_over_cpu_ceiling(&result, &observation, import_ceiling_us)
+        });
+    }
+
+    /// Judges an import-window burn that must end inside the window: the worker finishes with the
+    /// refusal the injected workload ends in. A `WallCeiling` is a starved worker; anything else
+    /// (a `CpuCeiling` above all) is a violation.
+    fn judge_import_burn_finishes(
+        result: &Result<IsolatedApplySuccess, IsolatedApplyError>,
+        observation: &WorkerObservation,
+    ) -> CeilingVerdict {
+        if is_the_injected_refusal(result) {
+            CeilingVerdict::Conclusive
+        } else if matches!(result, Err(IsolatedApplyError::WallCeiling)) {
+            CeilingVerdict::Starved
+        } else {
+            CeilingVerdict::Violation(format!("{result:?} after {:?}us of CPU", observation.metered_cpu_us))
+        }
+    }
+
+    /// A burn of the import ceiling minus 1 ms is never ended by the CPU ceiling.
+    #[test]
+    fn the_import_cpu_ceiling_never_kills_a_burn_one_millisecond_under_it() {
+        let import_ceiling_us = super::super::IMPORT_DECODE_CPU_MS_MAX * 1_000;
+        let near_micros = import_ceiling_us - 1_000;
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            &format!("a {near_micros}us burn (1 ms under the {import_ceiling_us}us import ceiling)"),
+            || {
+                let (result, observation) =
+                    isolated_import_injected_observed(&format!("cpu_burn_micros={near_micros}"));
+                judge_import_burn_finishes(&result, &observation)
+            },
+        );
+    }
+
+    /// CPU burned after the import window closed is not metered: 1.5 s inside the 2 s window plus
+    /// 1 s after it (3.5 s in total, past the ceiling) must still end in the injected refusal.
+    #[test]
+    fn cpu_burned_after_the_import_window_closes_is_not_metered() {
+        conclusive_within(
+            4,
+            BOUNDARY_PAUSE,
+            "1.5 s of CPU inside the import window and 1 s after it",
+            || {
+                let (result, observation) =
+                    isolated_import_injected_observed("burn_then_post_window_burn=1500000:1000000");
+                judge_import_burn_finishes(&result, &observation)
+            },
+        );
+    }
+
+    /// The wall watchdog of the import window is the import one: a sleep that the write watchdog
+    /// (100 ms) would kill is accepted, and a sleep past the import watchdog is killed at it.
+    #[test]
+    fn the_import_window_has_its_own_wall_budget() {
+        let ceiling_ms = super::super::IMPORT_DECODE_WALL_MS_MAX;
+        let (result, _) = isolated_import_injected_observed("wall_sleep_millis=400");
+        assert!(
+            is_the_injected_refusal(&result),
+            "a 400 ms sleep must end inside the import window: {result:?}"
+        );
+        let (result, observation) =
+            isolated_import_injected_observed(&format!("wall_sleep_millis={}", ceiling_ms + 500));
+        assert!(matches!(result, Err(IsolatedApplyError::WallCeiling)), "{result:?}");
+        assert!(
+            observation
+                .metered_wall_us
+                .is_some_and(|wall_us| wall_us >= ceiling_ms * 1_000),
+            "the wall kill came before the {ceiling_ms} ms deadline: {observation:?}"
+        );
+    }
+
+    /// An allocation the write ceiling refuses (200 MiB against 128 MiB) is accepted in the import
+    /// window, and one byte over the import ceiling is refused by a resource ceiling.
+    #[test]
+    fn the_import_window_has_its_own_memory_budget() {
+        let ceiling = super::super::IMPORT_ISOLATED_MEMORY_BYTES_MAX;
+        let Ok(ceiling_usize) = usize::try_from(ceiling) else {
+            panic!("IMPORT_ISOLATED_MEMORY_BYTES_MAX ({ceiling}) does not fit usize on this target");
+        };
+        let (accepted, _) = isolated_import_injected_observed(&format!("alloc_bytes={}", 200 * 1024 * 1024));
+        assert!(
+            is_the_injected_refusal(&accepted),
+            "a 200 MiB allocation must be accepted by the import ceiling: {accepted:?}"
+        );
+        // The synthetic workload creates its empty engine inside the armed window, so the exact
+        // byte is not reachable here; a few MiB under the ceiling is.
+        let (near, _) = isolated_import_injected_observed(&format!("alloc_bytes={}", ceiling_usize - 4 * 1024 * 1024));
+        assert!(
+            is_the_injected_refusal(&near),
+            "an allocation just under the import ceiling must be accepted: {near:?}"
+        );
+        let (rejected, _) = isolated_import_injected_observed(&format!("alloc_bytes={}", ceiling_usize + 1));
+        assert!(
+            matches!(
+                rejected,
+                Err(IsolatedApplyError::MemoryCeiling | IsolatedApplyError::WallCeiling)
+            ),
+            "one byte over the import ceiling must be refused by a resource ceiling: {rejected:?}"
+        );
+    }
+
+    #[test]
+    fn the_wall_deadline_follows_the_operation() {
+        assert_eq!(metered_wall_ms(wire::OPERATION_APPLY), DECODE_APPLY_WALL_MS_MAX);
+        assert_eq!(metered_wall_ms(wire::OPERATION_DIFF), DECODE_APPLY_WALL_MS_MAX);
+        assert_eq!(metered_wall_ms(wire::OPERATION_IMPORT), IMPORT_DECODE_WALL_MS_MAX);
     }
 
     #[test]
@@ -783,7 +1635,7 @@ mod tests {
     //
     // Everything above this point tests pure logic (frame codec, path resolution). These tests
     // exercise the actual mechanism the parent trusts: a real `fork`+`exec`'d process, real
-    // `SIGPROF`/`ITIMER_PROF` arming, real pipe I/O, real `wait4` reaping. If
+    // process-CPU-clock timer arming, real pipe I/O, real `wait4` reaping. If
     // `real_worker_binary_for_tests` cannot find the compiled binary (a narrower invocation than
     // `cargo test -p collab-core --all-features` was used), they report and skip rather than fail
     // the suite over a build-layout mismatch unrelated to this module's own logic.
@@ -820,6 +1672,56 @@ mod tests {
         let success = result.expect("a title-only update stays well within every ceiling");
         let reloaded = LoroCollabEngine::load(&success.snapshot).expect("returned snapshot reloads");
         assert_eq!(reloaded.title().expect("title reads"), "end to end");
+    }
+
+    /// The host can make the worker run the full computation: no incremental report, the same
+    /// document. Without the request, an update to a page with facts is decided incrementally.
+    #[test]
+    fn isolated_apply_full_window_mode_runs_the_full_computation_and_reports_nothing() {
+        let mut base = LoroCollabEngine::new_empty(1);
+        base.apply_content_operation(&Operation::CreateNode {
+            id: NodeId::from("a"),
+            parent: None,
+            index: 0,
+            kind: NodeKind::Block,
+        })
+        .expect("create applies");
+        let base_frontier = base.frontier();
+        let base_snapshot = base.export_snapshot().expect("export succeeds");
+        let mut writer = base.fork().expect("fork succeeds");
+        writer
+            .apply_content_operation(&Operation::InsertText {
+                id: NodeId::from("a"),
+                index: 0,
+                text: "typed".into(),
+            })
+            .expect("text applies");
+        let update = writer.export_from(&base_frontier).expect("export succeeds");
+
+        let Some(incremental) = isolated_apply_mode_with_real_worker(&base_snapshot, &update, WindowMode::Incremental)
+        else {
+            eprintln_test("skipped: collab-isolated-apply-worker binary not found");
+            return;
+        };
+        let incremental = incremental.expect("a one-character edit is accepted");
+        assert!(
+            incremental.window_report.is_some(),
+            "the incremental window decides this update"
+        );
+        let full = isolated_apply_mode_with_real_worker(&base_snapshot, &update, WindowMode::Full)
+            .expect("the worker binary was found a moment ago")
+            .expect("the same update is accepted by the full computation");
+        assert!(
+            full.window_report.is_none(),
+            "the full window reports no incremental result"
+        );
+        let value = |snapshot: &[u8]| {
+            LoroCollabEngine::load(snapshot)
+                .expect("returned snapshot reloads")
+                .semantic_snapshot()
+                .expect("projects")
+        };
+        assert_eq!(value(&incremental.snapshot), value(&full.snapshot));
     }
 
     #[test]
@@ -965,5 +1867,581 @@ mod tests {
             Err(IsolatedApplyError::CpuCeiling | IsolatedApplyError::WallCeiling) => {}
             other => panic!("expected the pathological chain to be killed by the CPU or wall ceiling, got {other:?}"),
         }
+    }
+
+    // ---- The decision record, the host's observation of a killed worker, and typed host failures.
+
+    use crate::window_check::FallbackReason;
+    use wire::WindowDecision;
+
+    /// The wire code of `NotSequential` in the injected workloads' `<code>:<n>` argument.
+    fn not_sequential_code() -> u8 {
+        WindowDecision::Fallback(FallbackReason::NotSequential).to_wire()
+    }
+
+    /// Runs `run_once` until it reports a conclusive run, pausing between attempts so that a short
+    /// burst of contention can pass. A run is inconclusive when the worker was starved so badly
+    /// that it never reached the point the test is about. Panics when no attempt is conclusive.
+    fn conclusive_run<T>(what: &str, mut run_once: impl FnMut() -> Option<T>) -> T {
+        for _ in 0..10 {
+            if let Some(found) = run_once() {
+                return found;
+            }
+            std::thread::sleep(BOUNDARY_PAUSE);
+        }
+        panic!("{what}: the worker never got far enough in ten attempts");
+    }
+
+    /// Runs `run_isolated_apply_observed` against the real debug worker with a base and an update
+    /// that are real documents (not a synthetic workload).
+    fn isolated_apply_real_observed(
+        base_snapshot: &[u8],
+        update: &[u8],
+        mode: WindowMode,
+    ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+        isolated_apply_real_observed_with_budget(
+            base_snapshot,
+            update,
+            mode,
+            crate::setup_guard::SETUP_CPU_BUDGET_MS_DEFAULT,
+        )
+    }
+
+    /// [`isolated_apply_real_observed`] with the setup CPU budget the host passes to the worker.
+    fn isolated_apply_real_observed_with_budget(
+        base_snapshot: &[u8],
+        update: &[u8],
+        mode: WindowMode,
+        setup_cpu_budget_ms: u64,
+    ) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+        with_worker_env(|| isolated_apply_with_observed(base_snapshot, update, mode, setup_cpu_budget_ms))
+    }
+
+    /// Runs `body` with the host pointed at the real debug worker.
+    fn with_worker_env<T>(body: impl FnOnce() -> T) -> T {
+        let worker_path = required_debug_worker_binary_for_tests();
+        let guard = env_lock().lock();
+        // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
+        // `WORKER_BINARY_PATH_ENV` while this is set.
+        unsafe {
+            std::env::set_var(WORKER_BINARY_PATH_ENV, &worker_path);
+        }
+        let result = body();
+        // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
+        unsafe {
+            std::env::remove_var(WORKER_BINARY_PATH_ENV);
+        }
+        drop(guard);
+        result
+    }
+
+    /// A page with one block and an update typed into it, as an author that has seen the base.
+    fn typed_update_on_a_block_page() -> (crate::LoroCollabEngine, Vec<u8>) {
+        let mut base = crate::LoroCollabEngine::new_empty(1);
+        base.apply_content_operation(&Operation::CreateNode {
+            id: NodeId::from("a"),
+            parent: None,
+            index: 0,
+            kind: NodeKind::Block,
+        })
+        .expect("create applies");
+        let base_frontier = base.frontier();
+        let mut writer = base.fork().expect("fork succeeds");
+        writer
+            .apply_content_operation(&Operation::InsertText {
+                id: NodeId::from("a"),
+                index: 0,
+                text: "typed".into(),
+            })
+            .expect("text applies");
+        let update = writer.export_from(&base_frontier).expect("export succeeds");
+        (base, update)
+    }
+
+    #[test]
+    fn a_completed_response_reports_what_the_window_check_decided() {
+        let (base, update) = typed_update_on_a_block_page();
+        let snapshot = base.export_snapshot().expect("export succeeds");
+
+        let (result, observation) = isolated_apply_real_observed(&snapshot, &update, WindowMode::Incremental);
+        result.expect("a one-character edit is accepted");
+        assert_eq!(
+            observation.decision,
+            Some(WindowDecision::Incremental),
+            "{observation:?}"
+        );
+
+        let (result, observation) = isolated_apply_real_observed(&snapshot, &update, WindowMode::Full);
+        result.expect("the same update is accepted by the full computation");
+        assert_eq!(
+            observation.decision,
+            Some(WindowDecision::Fallback(FallbackReason::FactsAbsent)),
+            "the full mode computes no facts: {observation:?}"
+        );
+
+        let (result, observation) = isolated_apply_real_observed(&snapshot, b"not an update", WindowMode::Incremental);
+        assert!(matches!(
+            result,
+            Err(IsolatedApplyError::Collab(CollabError::DecodeFailed { .. }))
+        ));
+        assert_eq!(
+            observation.decision,
+            Some(WindowDecision::Undecided),
+            "an import that fails never reaches the check: {observation:?}"
+        );
+    }
+
+    /// A title update by an author that has seen `base`.
+    fn a_title_update_on(base: &[u8]) -> Vec<u8> {
+        let mut server = crate::LoroCollabEngine::load(base).expect("the base loads");
+        let frontier = server.frontier();
+        server.set_title("typed").expect("the title is set");
+        server.export_from(&frontier).expect("export succeeds")
+    }
+
+    /// A-1 and A-5 on the real worker: a page with one text that costs the setup more than a
+    /// window's ceiling yields no facts, the worker reloads and meters the decode again, and the
+    /// host learns which guard fired from the marker byte even though the full window is then killed
+    /// by its ceiling and no response frame ever arrives.
+    #[test]
+    fn a_text_over_its_budget_is_reported_by_the_marker_of_an_attempt_the_full_window_kills() {
+        let base = crate::engine::window_text_guard_tests::nested_marks_page(50, 1, 1_800);
+        let update = a_title_update_on(&base);
+        let (result, observation) = isolated_apply_real_observed(&base, &update, WindowMode::Incremental);
+        assert!(
+            matches!(
+                result,
+                Err(IsolatedApplyError::CpuCeiling | IsolatedApplyError::WallCeiling)
+            ),
+            "the full window pays the decode of the text inside its ceiling and is killed: {result:?}"
+        );
+        assert_eq!(
+            observation.setup_guard,
+            Some(crate::setup_guard::Fired::Text),
+            "{observation:?}"
+        );
+        // A page without such a text reports no guard, whichever way the attempt ends.
+        let (base, update) = typed_update_on_a_block_page();
+        let snapshot = base.export_snapshot().expect("export succeeds");
+        let (result, observation) = isolated_apply_real_observed(&snapshot, &update, WindowMode::Incremental);
+        result.expect("accepted");
+        assert_eq!(observation.setup_guard, None);
+        let (result, observation) = isolated_apply_real_observed(&snapshot, b"not an update", WindowMode::Incremental);
+        assert!(result.is_err());
+        assert_eq!(observation.setup_guard, None);
+    }
+
+    /// R9-3 on the real worker: a page over the item budget (no facts, and no guard fired) has had
+    /// its texts decoded by the setup's count, and the full window that decides it still meters
+    /// those decodes, because the worker starts it from a freshly loaded engine: 20 texts of 400
+    /// nested marks cost about 0.14 s together, nearly three times the window's ceiling. Without the reload
+    /// the window would find them decoded and accept.
+    #[test]
+    fn a_page_over_the_item_budget_meters_the_decode_of_the_texts_the_count_read() {
+        let base = crate::engine::window_text_guard_tests::over_the_item_budget_with_decoded_texts();
+        let update = a_title_update_on(&base);
+        // The CPU budgets of the setup are widened for the worker (the allocation budgets, which
+        // do not depend on speed, stay): this test is about the reload that meters the decode, not
+        // about how fast the machine decodes. The page budget is the largest the setting accepts.
+        let (result, observation) = with_worker_env(|| {
+            let budget = crate::setup_guard::SETUP_CPU_BUDGET_MS_RANGE.end().to_string();
+            run_isolated_apply_observed(
+                &base,
+                &update,
+                wire::OPERATION_APPLY,
+                &[
+                    (wire::SETUP_CPU_BUDGET_ENV, budget.as_str()),
+                    (wire::TEXT_CPU_BUDGET_TEST_ENV, "10000"),
+                ],
+            )
+        });
+        assert!(
+            matches!(
+                result,
+                Err(IsolatedApplyError::CpuCeiling | IsolatedApplyError::WallCeiling)
+            ),
+            "the full window pays the decode of every text inside its ceiling: {result:?}"
+        );
+        assert_eq!(observation.setup_guard, None, "no guard fired: {observation:?}");
+        assert_eq!(
+            observation.decision,
+            Some(WindowDecision::Fallback(FallbackReason::FactsAbsent)),
+            "{observation:?}"
+        );
+    }
+
+    /// A-4 on the real worker: the host's setting of the setup CPU budget reaches the worker. A page
+    /// whose setup costs more than half a second of CPU trips the CPU guard of a worker given a
+    /// budget of 500 ms.
+    ///
+    /// The cost is spread over many cheap texts (1,000 texts of 150 nested marks: about 1.5 ms of CPU
+    /// each in a debug build, 2 s together) so that no single text comes near the per-text limit of
+    /// 50 ms. With a few dear texts (250 of 450 marks, 14 ms each, 27 ms under a loaded host) one
+    /// text's CPU clock could pass 50 ms, and the per-text guard would answer `Text` before the
+    /// cumulative budget was reached.
+    #[test]
+    fn the_setup_cpu_budget_of_the_host_reaches_the_worker() {
+        let base = crate::engine::window_text_guard_tests::nested_marks_page(1_000, 1_000, 150);
+        let update = a_title_update_on(&base);
+        let (_result, observation) =
+            isolated_apply_real_observed_with_budget(&base, &update, WindowMode::Incremental, 500);
+        assert_eq!(
+            observation.setup_guard,
+            Some(crate::setup_guard::Fired::Cpu),
+            "{observation:?}"
+        );
+    }
+
+    #[test]
+    fn an_update_concurrent_with_the_base_is_reported_as_not_sequential_by_the_worker() {
+        let mut base = crate::LoroCollabEngine::new_empty(1);
+        base.apply_content_operation(&Operation::CreateNode {
+            id: NodeId::from("a"),
+            parent: None,
+            index: 0,
+            kind: NodeKind::Block,
+        })
+        .expect("create applies");
+        let root_frontier = base.frontier();
+        let author = |text: &str| {
+            let mut writer = base.fork().expect("fork succeeds");
+            writer
+                .apply_content_operation(&Operation::InsertText {
+                    id: NodeId::from("a"),
+                    index: 0,
+                    text: text.into(),
+                })
+                .expect("text applies");
+            writer.export_from(&root_frontier).expect("export succeeds")
+        };
+        let first = author("one");
+        let concurrent = author("two");
+        let mut server =
+            crate::LoroCollabEngine::load(&base.export_snapshot().expect("export succeeds")).expect("the base loads");
+        server.import_update(&first).expect("the first update is accepted");
+        let snapshot = server.export_snapshot().expect("export succeeds");
+
+        let (result, observation) = isolated_apply_real_observed(&snapshot, &concurrent, WindowMode::Incremental);
+        result.expect("the concurrent update is accepted by the full computation");
+        assert_eq!(
+            observation.decision,
+            Some(WindowDecision::Fallback(FallbackReason::NotSequential)),
+            "{observation:?}"
+        );
+    }
+
+    /// Runs `body` with the wall watchdog of the metered window of this thread widened to `millis`.
+    fn with_metered_wall_ms<T>(millis: u64, body: impl FnOnce() -> T) -> T {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                METERED_WALL_OVERRIDE_MS.with(|slot| slot.set(None));
+            }
+        }
+        METERED_WALL_OVERRIDE_MS.with(|slot| slot.set(Some(millis)));
+        let _reset = Reset;
+        body()
+    }
+
+    /// The point of the decision record: a worker killed by the CPU ceiling after the check decided
+    /// `NotSequential` has still told the host so.
+    ///
+    /// The product's wall deadline of the window is 100 ms, so a 50 ms CPU burn needs the worker to
+    /// hold half a core for 100 ms. A test binary that runs its tests on every core, next to other
+    /// load, can starve a worker for longer than that in one burst, and the attempts of one run
+    /// (250 ms apart) then all land in the burst. This test is about the decision surviving the CPU
+    /// kill, not about the wall deadline (which has its own tests), so its wall watchdog is widened to
+    /// two seconds while the CPU ceiling stays at 50 ms. A wall kill is still not a pass: it is an
+    /// inconclusive attempt, as before.
+    #[test]
+    fn a_cpu_kill_after_a_not_sequential_decision_keeps_the_decision() {
+        let observation = conclusive_run("a CPU kill after the decision", || {
+            let (result, observation) = with_metered_wall_ms(2_000, || {
+                isolated_apply_injected_observed(&format!("decision_then_burn={}:150000", not_sequential_code()))
+            });
+            match result {
+                Err(IsolatedApplyError::CpuCeiling) => Some(observation),
+                // Starved: killed at the wall deadline before it burned the ceiling. The record was
+                // written first, so it is also kept; the test wants the CPU kill specifically.
+                Err(IsolatedApplyError::WallCeiling) => None,
+                other => panic!("a 150 ms burn over the ceiling ended as {other:?}"),
+            }
+        });
+        assert_eq!(
+            observation.decision,
+            Some(WindowDecision::Fallback(FallbackReason::NotSequential)),
+            "{observation:?}"
+        );
+    }
+
+    #[test]
+    fn a_wall_kill_after_a_decision_keeps_the_decision() {
+        let observation = conclusive_run("a wall kill after the decision", || {
+            let (result, observation) =
+                isolated_apply_injected_observed(&format!("decision_then_sleep={}:300", not_sequential_code()));
+            match result {
+                Err(IsolatedApplyError::WallCeiling) => observation.decision.map(|_| observation),
+                other => panic!("a 300 ms sleep ended as {other:?}"),
+            }
+        });
+        assert_eq!(
+            observation.decision,
+            Some(WindowDecision::Fallback(FallbackReason::NotSequential)),
+            "{observation:?}"
+        );
+    }
+
+    /// A worker that is blocked rather than busy: killed at the wall deadline with almost no CPU
+    /// consumed and without a decision, the observation that tells starvation from a heavy job.
+    #[test]
+    fn a_blocked_worker_is_wall_killed_with_low_cpu() {
+        let (result, observation) = isolated_apply_injected_observed("wall_sleep_millis=150");
+        assert!(matches!(result, Err(IsolatedApplyError::WallCeiling)), "{result:?}");
+        assert!(
+            observation
+                .metered_cpu_us
+                .is_some_and(|cpu_us| cpu_us < CPU_ACCOUNTING_SLACK_US),
+            "a blocked worker consumed CPU: {observation:?}"
+        );
+        assert_eq!(observation.decision, None, "no check decided before the kill");
+        assert!(
+            observation.setup_cpu_us.is_some(),
+            "the CPU of the setup is observed: {observation:?}"
+        );
+    }
+
+    /// Under contention a job that burns less than the CPU ceiling can be wall-killed. Whenever the
+    /// host sees a wall kill of a 33 ms burn, the CPU it observed is far below the ceiling, which
+    /// is what the write path reads as starvation (`apps/api` `refusal.rs`, below 40 ms).
+    #[test]
+    fn every_wall_kill_of_a_burn_under_the_ceiling_shows_less_cpu_than_the_starvation_threshold() {
+        let (_, under_micros, _) = boundary_runs();
+        let threshold_us = super::super::DECODE_APPLY_CPU_MS_MAX * 1_000 * 4 / 5;
+        for _ in 0..6 {
+            let (result, observation) = isolated_apply_injected_observed(&format!("cpu_burn_micros={under_micros}"));
+            if matches!(result, Err(IsolatedApplyError::WallCeiling)) {
+                let cpu_us = observation
+                    .metered_cpu_us
+                    .expect("the kernel reports the CPU of the worker");
+                assert!(
+                    cpu_us < threshold_us,
+                    "a wall kill of a {under_micros}us burn shows {cpu_us}us of CPU, not below {threshold_us}us"
+                );
+            }
+        }
+    }
+
+    /// Runs `body` with the setup timeout of this thread shortened to `millis`.
+    fn with_setup_timeout<T>(millis: u64, body: impl FnOnce() -> T) -> T {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                SETUP_TIMEOUT_OVERRIDE_MS.with(|slot| slot.set(None));
+            }
+        }
+        SETUP_TIMEOUT_OVERRIDE_MS.with(|slot| slot.set(Some(millis)));
+        let _reset = Reset;
+        body()
+    }
+
+    #[test]
+    fn a_setup_timeout_is_typed_and_reports_the_setup_cpu() {
+        // A sleeping setup: killed at the (shortened) timeout having consumed little CPU.
+        let (result, observation) =
+            with_setup_timeout(400, || isolated_apply_injected_observed("setup_sleep_millis=5000"));
+        let Err(IsolatedApplyError::HostFailure(failure)) = result else {
+            panic!("a setup that outlasts the timeout is a host failure, got {result:?}");
+        };
+        assert_eq!(failure.kind, HostFailureKind::SetupTimeout, "{failure:?}");
+        assert_eq!(observation.metered_cpu_us, None, "the metered window never opened");
+        let sleeping_cpu_us = observation
+            .setup_cpu_us
+            .expect("the kernel reports the CPU of a killed worker");
+        assert!(
+            sleeping_cpu_us < 300_000,
+            "a sleeping setup consumed {sleeping_cpu_us}us of CPU"
+        );
+        // The wall time of the setup is reported too, so that CPU well below it reads as starvation.
+        let wall_us = observation
+            .setup_wall_us
+            .expect("the wall time of a killed setup is reported");
+        assert!(wall_us >= 400_000, "killed at the timeout: {wall_us}us of wall time");
+        assert!(
+            sleeping_cpu_us * 2 < wall_us,
+            "a sleeping setup had little CPU for its wall time"
+        );
+
+        // A burning setup: killed at the timeout having consumed CPU for most of it.
+        let burned_us = conclusive_run("a burning setup", || {
+            let (result, observation) =
+                with_setup_timeout(600, || isolated_apply_injected_observed("setup_burn_micros=5000000"));
+            let Err(IsolatedApplyError::HostFailure(failure)) = result else {
+                panic!("a burning setup that outlasts the timeout is a host failure, got {result:?}");
+            };
+            assert_eq!(failure.kind, HostFailureKind::SetupTimeout);
+            observation.setup_cpu_us.filter(|cpu_us| *cpu_us >= 250_000)
+        });
+        assert!(burned_us >= 250_000);
+    }
+
+    #[test]
+    fn spawn_resource_errors_are_typed() {
+        for errno in [libc::EAGAIN, libc::ENOMEM, libc::EMFILE, libc::ENFILE] {
+            let IsolatedApplyError::HostFailure(failure) = spawn_failure(&std::io::Error::from_raw_os_error(errno))
+            else {
+                panic!("a failed spawn is a host failure");
+            };
+            assert_eq!(failure.kind, HostFailureKind::SpawnResources, "errno {errno}");
+        }
+        for errno in [libc::ENOENT, libc::EACCES, libc::ENOEXEC] {
+            let IsolatedApplyError::HostFailure(failure) = spawn_failure(&std::io::Error::from_raw_os_error(errno))
+            else {
+                panic!("a failed spawn is a host failure");
+            };
+            assert_eq!(failure.kind, HostFailureKind::Spawn, "errno {errno}");
+        }
+    }
+
+    #[test]
+    fn exit_signals_and_statuses_are_typed() {
+        let kind = |error: IsolatedApplyError| match error {
+            IsolatedApplyError::HostFailure(failure) => failure.kind,
+            other => panic!("expected a host failure, got {other:?}"),
+        };
+        assert_eq!(kind(classify_signal(libc::SIGKILL)), HostFailureKind::ForeignKill);
+        assert_eq!(kind(classify_signal(libc::SIGSEGV)), HostFailureKind::Crash);
+        assert_eq!(kind(classify_signal(libc::SIGBUS)), HostFailureKind::Crash);
+    }
+
+    /// Runs the host against a stand-in program that is not the worker.
+    fn isolated_apply_against(program: &str) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+        isolated_apply_against_request(program, &[])
+    }
+
+    /// [`isolated_apply_against`] with a base snapshot field of the given bytes in the request.
+    fn isolated_apply_against_request(program: &str, base: &[u8]) -> Result<IsolatedApplySuccess, IsolatedApplyError> {
+        let guard = env_lock().lock();
+        // SAFETY: held under `env_lock()`, so no other test in this module reads or writes
+        // `WORKER_BINARY_PATH_ENV` while this is set.
+        unsafe {
+            std::env::set_var(WORKER_BINARY_PATH_ENV, program);
+        }
+        let result = isolated_apply(base, &[]);
+        // SAFETY: same reasoning as the `set_var` call above; still held under `env_lock()`.
+        unsafe {
+            std::env::remove_var(WORKER_BINARY_PATH_ENV);
+        }
+        drop(guard);
+        result
+    }
+
+    /// Status 71 (the worker could not arm or close its CPU ceiling) gets its own message but the
+    /// same classification as any other non-zero exit: a host failure, never a document refusal.
+    #[test]
+    fn exit_status_71_is_a_host_failure_with_its_own_message() {
+        let IsolatedApplyError::HostFailure(arm) = nonzero_exit_failure(Some(71)) else {
+            panic!("status 71 must be a host failure");
+        };
+        assert!(arm.detail.contains("could not arm its CPU ceiling"), "{arm:?}");
+        let IsolatedApplyError::HostFailure(other) = nonzero_exit_failure(Some(3)) else {
+            panic!("status 3 must be a host failure");
+        };
+        assert!(other.detail.contains("non-zero status Some(3)"), "{other:?}");
+        assert_eq!(format!("{:?}", arm.kind), format!("{:?}", other.kind));
+    }
+
+    /// A worker that exits successfully without a decision record violates the protocol: the host
+    /// never accepts a response it cannot place (the worker always writes the record first).
+    #[test]
+    fn a_completed_response_without_a_decision_record_is_a_protocol_failure() {
+        let result = isolated_apply_against("/bin/true");
+        let Err(IsolatedApplyError::HostFailure(failure)) = result else {
+            panic!("a zero exit without a response is a host failure, got {result:?}");
+        };
+        assert_eq!(failure.kind, HostFailureKind::Protocol, "{failure:?}");
+        assert!(failure.detail.contains("decision record"), "{failure:?}");
+    }
+
+    #[test]
+    fn a_non_zero_exit_is_a_crash() {
+        let result = isolated_apply_against("/bin/false");
+        let Err(IsolatedApplyError::HostFailure(failure)) = result else {
+            panic!("a non-zero exit is a host failure, got {result:?}");
+        };
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
+    }
+
+    #[test]
+    fn a_missing_worker_binary_is_a_spawn_failure() {
+        let result = isolated_apply_against("/nonexistent/isolated-apply-worker");
+        let Err(IsolatedApplyError::HostFailure(failure)) = result else {
+            panic!("a missing worker is a host failure, got {result:?}");
+        };
+        assert_eq!(failure.kind, HostFailureKind::Spawn, "{failure:?}");
+    }
+
+    /// A stand-in worker: a shell script with this body, in a directory of its own.
+    fn stand_in_worker(name: &str, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("collab-stand-in-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the stand-in directory is created");
+        let path = dir.join("worker");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("the stand-in is written");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("the stand-in is executable");
+        path
+    }
+
+    /// A request base field far larger than a pipe holds (64 KiB on Linux): a child that never reads
+    /// it makes the host's write fail with `EPIPE` once the child has exited, whatever the
+    /// scheduling, because the write cannot complete into the pipe's buffer.
+    fn a_request_larger_than_the_pipe() -> Vec<u8> {
+        vec![0; 4 * 1024 * 1024]
+    }
+
+    /// The ordering of the request write and the child's end. A failed request write never decides
+    /// the classification: the host waits for the child, reads what it produced, and classifies by
+    /// its actual outcome, so these are the same as when the write succeeds. The stand-ins make the
+    /// write fail on purpose (they exit without reading a request that cannot fit the pipe); the one
+    /// that exits after reading it makes it succeed.
+    #[test]
+    fn a_failed_request_write_does_not_decide_the_classification() {
+        let base = a_request_larger_than_the_pipe();
+        let classify = |name: &str, body: &str, request: &[u8]| {
+            let path = stand_in_worker(name, body);
+            let result = isolated_apply_against_request(path.to_str().expect("a UTF-8 path"), request);
+            let _ = std::fs::remove_dir_all(path.parent().expect("a directory"));
+            let Err(IsolatedApplyError::HostFailure(failure)) = result else {
+                panic!("{name}: a host failure, got {result:?}");
+            };
+            failure
+        };
+
+        // Exits 0 before it reads the request: the write fails, and it is still a protocol failure
+        // (exit 0 without a decision record), with the write error as the detail.
+        let failure = classify("exits-first", "exit 0", &base);
+        assert_eq!(failure.kind, HostFailureKind::Protocol, "{failure:?}");
+        assert!(failure.detail.contains("decision record"), "{failure:?}");
+        assert!(failure.detail.contains("request write failed"), "{failure:?}");
+
+        // Exits non-zero before it reads the request: a crash, by its status.
+        let failure = classify("exits-nonzero", "exit 3", &base);
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
+        assert!(failure.detail.contains("non-zero status Some(3)"), "{failure:?}");
+
+        // Killed by a signal it did not get from the host before it reads the request: classified
+        // by its signal, as before (a foreign SIGKILL is a host short of resources, not a crash).
+        let failure = classify("killed-first", "kill -KILL $$", &base);
+        assert_eq!(failure.kind, HostFailureKind::ForeignKill, "{failure:?}");
+        let failure = classify("segfault-first", "kill -SEGV $$", &base);
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
+        assert!(failure.detail.contains("signal"), "{failure:?}");
+
+        // Exits 0 after it has read the whole request: the write succeeded, the same classification
+        // and no write error in the detail.
+        let failure = classify("exits-after-reading", "cat >/dev/null\nexit 0", &base);
+        assert_eq!(failure.kind, HostFailureKind::Protocol, "{failure:?}");
+        assert!(!failure.detail.contains("request write failed"), "{failure:?}");
+        let failure = classify("exits-after-reading-nonzero", "cat >/dev/null\nexit 3", &base);
+        assert_eq!(failure.kind, HostFailureKind::Crash, "{failure:?}");
     }
 }

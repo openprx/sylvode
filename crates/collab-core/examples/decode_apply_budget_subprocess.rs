@@ -3,7 +3,7 @@
 //! -- not a library-level simulation. This exists to answer one specific question the
 //! library-level example cannot: does routing the same decode/apply/snapshot work through the
 //! real worker process (fresh `fork`+`exec`, the `CountingAllocator` armed as the process's actual
-//! `#[global_allocator]`, real `SIGPROF`/`ITIMER_PROF` arming) cost meaningfully more CPU time than
+//! `#[global_allocator]`, real `SIGPROF` process-CPU-clock timer arming) cost meaningfully more CPU time than
 //! the bare library calls measured in-process, e.g. from the counting allocator's per-allocation
 //! atomic bookkeeping (`isolation::alloc::CountingAllocator`) once armed.
 //!
@@ -13,7 +13,7 @@
 //! # Why this measures the child's CPU time, not wall clock
 //!
 //! `getrusage(RUSAGE_CHILDREN)` is a kernel-maintained accumulator of exactly the same quantity
-//! (`ru_utime` + `ru_stime`, user + system CPU time) that `ITIMER_PROF` decrements against for a
+//! (`ru_utime` + `ru_stime`, user + system CPU time) that the process-CPU-clock timer counts for a
 //! process's own execution -- but read from the parent, accumulated over every child that has
 //! exited so far. This binary spawns exactly one child per measurement (via `isolated_apply`), so
 //! diffing `RUSAGE_CHILDREN` immediately before and after one call isolates that child's total CPU

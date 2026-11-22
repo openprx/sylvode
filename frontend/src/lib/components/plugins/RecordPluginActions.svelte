@@ -5,7 +5,7 @@
 		entryPluginKey,
 		sameEntry,
 		type RecordPluginActionSurface
-	} from '#lib/plugins/placements.js';
+	} from '#lib/plugins/record-entries.js';
 
 	let { recordId, surface }: { recordId: string; surface: RecordPluginActionSurface } = $props();
 	const actions = $derived($surface?.recordId === recordId ? $surface : null);
@@ -23,12 +23,11 @@
 		{/each}
 		{#if actions.more.length}
 			<details class="relative">
-				<summary
-					class="cursor-pointer rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600"
+				<summary class="cursor-pointer rounded-control border border-input px-3 py-1.5 text-sm"
 					>{$t('plugins.host.more')}</summary
 				>
 				<ul
-					class="absolute right-0 z-20 mt-1 min-w-44 space-y-1 rounded-md border border-slate-300 bg-white p-2 shadow dark:border-slate-600 dark:bg-slate-900"
+					class="absolute right-0 z-20 mt-1 min-w-44 space-y-1 rounded-float border border-overlay-line bg-overlay p-2 shadow-overlay"
 				>
 					{#each actions.more as entry (`${entryPluginKey(entry)}:${entry.id}`)}
 						<li>

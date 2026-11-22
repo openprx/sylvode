@@ -2333,17 +2333,17 @@ mod flow_database_tests {
         .await;
         exec(
             state,
-            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, $2)",
+            "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, $2) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
             vec![workspace_id.into(), flow_enabled.into()],
         )
         .await;
         (workspace_id, owner_id)
     }
 
-    /// A workspace + owner member with **no** `flow_workspace_settings` row at all — unlike
-    /// [`seed_workspace`], which always inserts one (`flow_enabled` true or false). Used by the
-    /// `features/flow` "never provisioned" default test, where the row's mere absence (not an
-    /// explicit `flow_enabled=false`) is exactly what is under test.
+    /// A workspace + owner member with **no** `flow_workspace_settings` row at all (the row the
+    /// workspace trigger creates is deleted again) — unlike [`seed_workspace`], which always has
+    /// one (`flow_enabled` true or false). Used by the `features/flow` "no row" default test,
+    /// where the row's mere absence is exactly what is under test.
     async fn seed_bare_workspace(state: &AppState) -> (Uuid, Uuid) {
         let workspace_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
@@ -2368,6 +2368,13 @@ mod flow_database_tests {
             state,
             "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
             vec![workspace_id.into(), owner_id.into()],
+        )
+        .await;
+        // The workspace trigger provisions a settings row; this helper wants none.
+        exec(
+            state,
+            "DELETE FROM flow_workspace_settings WHERE workspace_id = $1",
+            vec![workspace_id.into()],
         )
         .await;
         (workspace_id, owner_id)
@@ -4493,7 +4500,7 @@ mod flow_database_tests {
     // ---- `GET|PUT /workspaces/{workspace_id}/features/flow` ----
 
     #[tokio::test]
-    async fn get_feature_on_a_never_provisioned_workspace_returns_the_column_defaults() {
+    async fn get_feature_on_a_workspace_without_a_row_returns_the_column_defaults() {
         let scratch = scratch_or_skip!("feature-default");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_bare_workspace(&state).await;
@@ -4504,7 +4511,7 @@ mod flow_database_tests {
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         let body = body_json(response).await;
         assert_eq!(body["code"], 0, "{body}");
-        assert_eq!(body["data"]["flow_enabled"], false, "{body}");
+        assert_eq!(body["data"]["flow_enabled"], true, "{body}");
         assert_eq!(body["data"]["default_member_level"], "edit", "{body}");
         assert_eq!(body["data"]["authz_epoch"], 0, "{body}");
         assert!(body["data"]["updated_at"].is_null(), "{body}");
@@ -4531,7 +4538,7 @@ mod flow_database_tests {
     async fn admin_put_enables_flow_and_the_change_is_persisted_and_visible_to_a_later_get() {
         let scratch = scratch_or_skip!("feature-put-persist");
         let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_bare_workspace(&state).await;
+        let (workspace_id, owner_id) = seed_workspace(&state, false).await;
         let claims = claims_for(owner_id);
 
         let put_response = to_response(
@@ -9202,8 +9209,8 @@ mod flow_database_tests {
                     .uri(format!("/api/v1/flow/workspaces/{workspace_id}/objects"))
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .header(axum::http::header::AUTHORIZATION, format!("Bearer {raw_token}"))
-                    .header("x-openpr-mcp-surface", "mcp_stdio")
-                    .header("x-openpr-mcp-tool", "flow.object_create")
+                    .header("x-sylvode-mcp-surface", "mcp_stdio")
+                    .header("x-sylvode-mcp-tool", "flow.object_create")
                     .body(axum::body::Body::from(
                         json!({
                             "object_type": "page",
@@ -9283,16 +9290,14 @@ mod flow_database_tests {
     }
 
     /// ADR-0020 D3 through the production `bot_or_user_auth_middleware` and a real
-    /// `workspace_bots` row: the canonical `X-Sylvode-MCP-*` headers, the legacy
-    /// `X-OpenPR-MCP-*` headers (a pre-1.0 `mcp-server` against this API), and both together with
-    /// equal values all reach `business_events.source` with the same attribution; any
-    /// disagreement — across spellings or between repeated occurrences — is refused with the
-    /// envelope's `401` and writes nothing.
+    /// `workspace_bots` row: the `X-Sylvode-MCP-*` headers reach `business_events.source`; a
+    /// disagreement between repeated occurrences of one header is refused with the envelope's
+    /// `401` and writes nothing.
     // The axum route pattern below contains `{workspace_id}`, which is axum's path-parameter
     // syntax and not a format argument, but is indistinguishable from one to the lint.
     #[allow(clippy::literal_string_with_formatting_args)]
     #[tokio::test]
-    async fn mcp_attribution_headers_accept_either_spelling_and_refuse_disagreement() {
+    async fn mcp_attribution_headers_reach_the_event_source_and_refuse_disagreement() {
         #[derive(FromQueryResult)]
         struct SourceRow {
             source: Value,
@@ -9368,31 +9373,13 @@ mod flow_database_tests {
             }
         };
 
-        let accepted: [(&str, &'static [(&'static str, &'static str)]); 3] = [
-            (
-                "canonical only",
-                &[
-                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
-                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
-                ],
-            ),
-            (
-                "legacy only",
-                &[
-                    ("X-OpenPR-MCP-Surface", "mcp_stdio"),
-                    ("X-OpenPR-MCP-Tool", "flow.object_create"),
-                ],
-            ),
-            (
-                "both equal",
-                &[
-                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
-                    ("X-OpenPR-MCP-Surface", "mcp_stdio"),
-                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
-                    ("X-OpenPR-MCP-Tool", "flow.object_create"),
-                ],
-            ),
-        ];
+        let accepted: [(&str, &'static [(&'static str, &'static str)]); 1] = [(
+            "both headers",
+            &[
+                ("X-Sylvode-MCP-Surface", "mcp_stdio"),
+                ("X-Sylvode-MCP-Tool", "flow.object_create"),
+            ],
+        )];
         for (case, headers) in accepted {
             let body = create(headers).await;
             assert_eq!(body["code"], 0, "{case}: the request must be accepted: {body}");
@@ -9424,23 +9411,7 @@ mod flow_database_tests {
         .expect("business_events query runs")
         .len();
 
-        let refused: [(&str, &'static [(&'static str, &'static str)]); 4] = [
-            (
-                "surface spellings disagree",
-                &[
-                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
-                    ("X-OpenPR-MCP-Surface", "mcp_http"),
-                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
-                ],
-            ),
-            (
-                "tool spellings disagree",
-                &[
-                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
-                    ("X-Sylvode-MCP-Tool", "flow.object_create"),
-                    ("X-OpenPR-MCP-Tool", "flow.object_delete"),
-                ],
-            ),
+        let refused: [(&str, &'static [(&'static str, &'static str)]); 2] = [
             (
                 "repeated canonical tool disagrees",
                 &[
@@ -9450,10 +9421,10 @@ mod flow_database_tests {
                 ],
             ),
             (
-                "repeated legacy surface disagrees",
+                "repeated canonical surface disagrees",
                 &[
-                    ("X-OpenPR-MCP-Surface", "mcp_stdio"),
-                    ("X-OpenPR-MCP-Surface", "mcp_http"),
+                    ("X-Sylvode-MCP-Surface", "mcp_stdio"),
+                    ("X-Sylvode-MCP-Surface", "mcp_http"),
                 ],
             ),
         ];
@@ -9467,6 +9438,17 @@ mod flow_database_tests {
                 "{case}: {body}"
             );
         }
+
+        // Without attribution headers nothing is declared: the credential is registered for a
+        // transport, and no `X-Sylvode-MCP-Surface` declares it.
+        let undeclared = create(&[]).await;
+        assert_eq!(undeclared["code"], 401, "{undeclared}");
+        assert!(
+            undeclared["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("not valid for the presented transport")),
+            "{undeclared}"
+        );
 
         let events_after = SourceRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -10882,6 +10864,10 @@ mod flow_database_tests {
     #[tokio::test]
     async fn flow_package_import_export_upload_preview_commit_status_runs_through_real_http_shapes() {
         use tower::ServiceExt as _;
+        if !cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+            return;
+        }
 
         let scratch = scratch_or_skip!("package-route-chain");
         let state = state_for(scratch.db.clone());
@@ -11351,6 +11337,10 @@ mod flow_database_tests {
 
     #[tokio::test]
     async fn preview_manifest_summary_lists_the_package_source_projects() {
+        if !cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+            return;
+        }
         let scratch = scratch_or_skip!("package-manifest-summary");
         let state = state_for(scratch.db.clone());
         let fixture = exported_project_package(&state).await;
@@ -11487,6 +11477,10 @@ mod flow_database_tests {
 
     #[tokio::test]
     async fn package_roundtrip_reports_unmapped_projects_and_lineage_conflicts_in_preview() {
+        if !cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+            return;
+        }
         let scratch = scratch_or_skip!("package-roundtrip");
         let state = state_for(scratch.db.clone());
         let fixture = exported_project_package(&state).await;

@@ -4,7 +4,6 @@ import type {
 	PluginManifestV3,
 	PluginReadV3,
 	PluginSlotV3,
-	PluginUpload,
 	PluginUploadV3
 } from '../../api/plugin-packages';
 import { orderAmountTemplate, type CreatorDraft } from './template';
@@ -19,14 +18,11 @@ export interface CreatorOrigin {
 export interface CreatorTemplate<Draft> {
 	id: CreatorTemplateId;
 	profile: 'wasm' | 'ui';
-	output: 'openpr.plugin.v2' | 'openpr.plugin.v3';
 	slots: PluginSlotV3[];
 	defaults(origin: CreatorOrigin): Draft;
 	read(stored: string | null, origin: CreatorOrigin): Draft;
 	invalid(draft: Draft): string[];
-	build(
-		draft: Draft
-	): Promise<{ upload: PluginUpload | PluginUploadV3; html: string; json: string }>;
+	build(draft: Draft): Promise<{ upload: PluginUploadV3; html: string; json: string }>;
 	review(draft: Draft): {
 		slots: PluginContributionV3[];
 		reads: PluginReadV3[];
@@ -90,17 +86,6 @@ export function draftStorageKey(
 	return `sv.plugin.creator.v2:${scope}:${encodeURIComponent(actor)}:${templateId}:${draftId}`;
 }
 
-/** The v1 key an order amount draft was stored under before templates existed. */
-export function legacyDraftKey(
-	scope: 'personal' | 'project',
-	actor: string,
-	draftId: string
-): string {
-	return scope === 'personal'
-		? `sv.plugin.creator.v1:personal:${encodeURIComponent(actor)}:${draftId}`
-		: `sv.plugin.creator.v1:${actor}:${draftId}`;
-}
-
 export const KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 const SEMVER =
 	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -127,6 +112,7 @@ function label(value: unknown): value is string {
 		value.length > 0 &&
 		encoder.encode(value).length <= 120 &&
 		value === value.trim() &&
+		// eslint-disable-next-line no-control-regex -- rejects control characters on purpose
 		!/[\u0000-\u001f\u007f-\u009f]/.test(value)
 	);
 }

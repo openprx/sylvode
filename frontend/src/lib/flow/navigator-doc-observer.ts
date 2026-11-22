@@ -15,7 +15,11 @@ export function observeNavigatorDocument(
 	let unsubscribeDoc = () => {};
 	let initialized = false;
 	const unsubscribeGeneration = binding.docGeneration.subscribe(() => {
-		unsubscribeDoc();
+		try {
+			unsubscribeDoc();
+		} catch {
+			// The previous doc was discarded after a failed import; there is nothing to detach.
+		}
 		unsubscribeDoc = binding.doc.subscribe((event) => {
 			editorObservation(binding.doc, changed, () => {
 				changed();

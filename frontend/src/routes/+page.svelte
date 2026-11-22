@@ -1,4 +1,5 @@
 <script>
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
@@ -9,10 +10,10 @@
 		const user = get(authStore).user;
 		if (user) {
 			// Logged in: redirect to workspace selector
-			goto('/workspace');
+			goto(resolve('/(app)/workspace'));
 		} else {
 			// Not logged in: redirect to login page
-			goto('/auth/login');
+			goto(resolve('/(auth)/auth/login'));
 		}
 	});
 </script>
@@ -41,6 +42,6 @@
 
 	p {
 		font-size: 1.2rem;
-		color: #666;
+		color: var(--rf-secondary);
 	}
 </style>

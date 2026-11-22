@@ -1,9 +1,12 @@
 //! Private Page identity registry. No recipient DTO or authorization is derived from these rows.
 //! Caller must hold the accepted Page-head lock and use its existing `DatabaseTransaction`.
+use super::collab::limits::DOCUMENT_LOCK_HOLD_MS_MAX;
 use crate::error::ApiError;
 use collab_core::block_identity::{Alias, AliasState, reconcile_alias};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -142,44 +145,125 @@ pub fn visible_graph_hash(blocks: &[PreparedBlock], members: &[(Uuid, String)]) 
     Ok(Sha256::digest(bytes).into())
 }
 
-/// Test-only statement counter: proves the statement count of `reconcile` does not depend on page size.
+/// Test-only statement recorder: proves the statement count and the rows per statement of
+/// `reconcile` do not depend on page size, and keeps the elapsed time of every statement so a test
+/// can print where the time goes.
 #[cfg(test)]
 pub(crate) mod statement_probe {
-    use std::cell::Cell;
+    use std::cell::RefCell;
     use std::future::Future;
+    use std::time::Duration;
+
+    /// One recorded statement: the rows it is bounded to carry and how long it took.
+    #[derive(Clone, Debug)]
+    pub struct Record {
+        pub rows: usize,
+        pub elapsed: Duration,
+        pub label: String,
+    }
 
     tokio::task_local! {
-        static COUNTER: Cell<usize>;
+        static RECORDS: RefCell<Vec<Record>>;
     }
 
-    /// Record one database round trip for the surrounding `count` scope, if any.
-    pub fn note() {
-        let _ = COUNTER.try_with(|counter| counter.set(counter.get() + 1));
+    /// Record one finished database round trip for the surrounding `count` scope, if any.
+    pub fn record(rows: usize, sql: &str, elapsed: Duration) {
+        let label = sql.split_whitespace().take(6).collect::<Vec<_>>().join(" ");
+        let _ = RECORDS.try_with(|records| {
+            records.borrow_mut().push(Record { rows, elapsed, label });
+        });
     }
 
-    /// Run `future` and return its output with the number of statements noted while it ran.
-    pub async fn count<F: Future>(future: F) -> (F::Output, usize) {
-        COUNTER
-            .scope(Cell::new(0), async {
+    /// Run `future` and return its output with the statements recorded while it ran.
+    pub async fn count<F: Future>(future: F) -> (F::Output, Vec<Record>) {
+        RECORDS
+            .scope(RefCell::new(Vec::new()), async {
                 let output = future.await;
-                (output, COUNTER.with(Cell::get))
+                (output, RECORDS.with(|records| records.borrow().clone()))
             })
             .await
     }
+
+    /// The `limit` slowest statements, slowest first, as printable lines.
+    pub fn slowest(records: &[Record], limit: usize) -> Vec<String> {
+        let mut ordered = records.iter().collect::<Vec<_>>();
+        ordered.sort_by_key(|record| std::cmp::Reverse(record.elapsed));
+        ordered
+            .into_iter()
+            .take(limit)
+            .map(|record| format!("{:?} rows={} {}", record.elapsed, record.rows, record.label))
+            .collect()
+    }
 }
 
-/// Maximum number of rows one registry bulk write statement carries. The production per-statement cap
-/// (`DOCUMENT_LOCK_HOLD_MS_MAX`, 100 ms) is reached by a single statement of about 10,000 inserted
-/// placements, so a statement whose row count scales with the number of new or changed blocks is
-/// issued in chunks of at most this many rows. The statement count therefore depends only on
-/// `ceil(changed rows / BULK_ROWS_MAX)`, never on unchanged blocks.
-pub(crate) const BULK_ROWS_MAX: usize = 2_000;
+/// Maximum number of rows any registry statement whose size depends on the page carries. The
+/// per-statement cap (`DOCUMENT_LOCK_HOLD_MS_MAX`, 100 ms) was reached by a single statement of
+/// about 10,000 rows on a loaded database, so every such statement (the locking read, the removal
+/// scan, the retirement, every bulk write and the legacy seal) is issued in chunks of at most this
+/// many rows. The statement count therefore depends only on the number of chunks.
+pub(crate) const REGISTRY_ROWS_PER_STATEMENT: usize = 500;
 
-/// Ranges of at most `BULK_ROWS_MAX` consecutive rows covering `0..len`, in order.
+/// Upper bound on new placements one bounded transaction registers, so one write never adds more
+/// than this many rows to the lock wait of a collaborator, even on fast hardware.
+pub(crate) const REGISTRATION_ROWS_PER_TRANSACTION_MAX: usize = 4 * REGISTRY_ROWS_PER_STATEMENT;
+
+/// Part of the staging budget kept back after registration for the checkpoint, share and seal statements.
+pub(crate) const REGISTRATION_TAIL_RESERVE: Duration = Duration::from_millis(DOCUMENT_LOCK_HOLD_MS_MAX);
+
+/// How many blocks without an active placement ("pending" blocks) one transaction may register.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RegistrationAllowance {
+    /// Register every pending block in this transaction (creation, import, packages).
+    Complete,
+    /// Register pending blocks in chunk groups while the deadline and the row bound allow.
+    Bounded {
+        /// No further group starts when `now + the last group's measured duration` passes it.
+        deadline: Instant,
+        /// Upper bound on newly registered rows in this transaction.
+        max_rows: usize,
+        /// Groups are admitted regardless of the deadline until this many rows are registered,
+        /// which guarantees progress to callers that loop until the page is complete.
+        min_rows: usize,
+    },
+}
+
+impl RegistrationAllowance {
+    /// The write-path allowance: the deadline is `REGISTRATION_TAIL_RESERVE` before the end of a
+    /// staging `budget` that started at `started`.
+    pub(crate) fn within(started: Instant, budget: Duration) -> Self {
+        Self::bounded(started, budget, REGISTRATION_ROWS_PER_TRANSACTION_MAX, 0)
+    }
+
+    /// Like [`Self::within`] with explicit row bounds.
+    pub(crate) fn bounded(started: Instant, budget: Duration, max_rows: usize, min_rows: usize) -> Self {
+        Self::Bounded {
+            deadline: started
+                .checked_add(budget.saturating_sub(REGISTRATION_TAIL_RESERVE))
+                .unwrap_or(started),
+            max_rows,
+            min_rows,
+        }
+    }
+}
+
+/// What one `reconcile` call did beyond its writes.
+#[derive(Debug)]
+pub(crate) struct ReconcileOutcome {
+    /// Logical ids whose shares were suspended; private audit metadata, read by tests only.
+    #[cfg(test)]
+    pub suspended: Vec<Uuid>,
+    /// Snapshot blocks still without an active placement after this transaction.
+    pub pending: usize,
+    /// Whether the incremental path ran; tests only.
+    #[cfg(test)]
+    pub incremental: bool,
+}
+
+/// Ranges of at most `REGISTRY_ROWS_PER_STATEMENT` consecutive rows covering `0..len`, in order.
 fn chunk_ranges(len: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
     (0..len)
-        .step_by(BULK_ROWS_MAX)
-        .map(move |start| start..(start + BULK_ROWS_MAX).min(len))
+        .step_by(REGISTRY_ROWS_PER_STATEMENT)
+        .map(move |start| start..(start + REGISTRY_ROWS_PER_STATEMENT).min(len))
 }
 
 /// The rows of one chunk as an owned column, or an internal error if the range is out of bounds.
@@ -189,7 +273,60 @@ fn column<T: Clone>(rows: &[T], range: &std::ops::Range<usize>) -> Result<Vec<T>
         .ok_or_else(ApiError::internal)
 }
 
-/// Latest placement of one physical CID, as locked by the bulk read of `reconcile`.
+/// Run one registry statement. `rows` is the number of rows the statement is bounded to carry; it
+/// never exceeds `REGISTRY_ROWS_PER_STATEMENT`, and tests record it with the elapsed time.
+pub(crate) async fn execute(
+    tx: &DatabaseTransaction,
+    rows: usize,
+    sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> Result<sea_orm::ExecResult, ApiError> {
+    debug_assert!(rows <= REGISTRY_ROWS_PER_STATEMENT);
+    #[cfg(test)]
+    let started = Instant::now();
+    let result = tx
+        .execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+        .await;
+    #[cfg(test)]
+    statement_probe::record(rows, sql, started.elapsed());
+    Ok(result?)
+}
+
+/// Like [`execute`], for a statement that returns rows.
+pub(crate) async fn query_all(
+    tx: &DatabaseTransaction,
+    rows: usize,
+    sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> Result<Vec<sea_orm::QueryResult>, ApiError> {
+    debug_assert!(rows <= REGISTRY_ROWS_PER_STATEMENT);
+    #[cfg(test)]
+    let started = Instant::now();
+    let result = tx
+        .query_all(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+        .await;
+    #[cfg(test)]
+    statement_probe::record(rows, sql, started.elapsed());
+    Ok(result?)
+}
+
+/// Like [`execute`], for a statement that returns at most one row.
+pub(crate) async fn query_one(
+    tx: &DatabaseTransaction,
+    sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> Result<Option<sea_orm::QueryResult>, ApiError> {
+    #[cfg(test)]
+    let started = Instant::now();
+    let result = tx
+        .query_one(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+        .await;
+    #[cfg(test)]
+    statement_probe::record(1, sql, started.elapsed());
+    Ok(result?)
+}
+
+/// Latest placement of one physical CID, as locked by the chunked read of `reconcile`.
 #[derive(FromQueryResult)]
 struct LatestPlacement {
     id: Uuid,
@@ -220,133 +357,76 @@ struct WritePlan {
     new_hashes: Vec<Vec<u8>>,
 }
 
-/// Reconcile one accepted head. No independent commit, connection or raw client identity input.
-///
-/// Multi-Page operations must lock all Page heads in UUID order before calling this function.
-/// Affected shares are suspended in this transaction; returned IDs are private audit metadata.
-///
-/// Rows whose content did not change are neither rewritten nor carried by any write statement. One
-/// bulk locking read covers all blocks; every write statement carries at most `BULK_ROWS_MAX` rows, so
-/// the number of write statements depends only on `ceil(changed rows / BULK_ROWS_MAX)`.
-pub async fn reconcile(
-    tx: &DatabaseTransaction,
-    scope_id: Uuid,
-    page_id: Uuid,
-    accepted_head: i64,
-    blocks: &[PreparedBlock],
-) -> Result<Vec<Uuid>, ApiError> {
-    let mut seen = BTreeSet::new();
-    if accepted_head < 0
-        || blocks
-            .iter()
-            .any(|b| b.physical_cid.is_empty() || b.physical_cid.len() > 256 || !seen.insert(b.physical_cid.as_str()))
-    {
-        return Err(ApiError::invalid_update("invalid logical block reconciliation input"));
+/// Decide one block against the latest placement of its CID and append its writes to `plan`.
+fn plan_block(
+    plan: &mut WritePlan,
+    suspend: &mut Vec<Uuid>,
+    block: &PreparedBlock,
+    old: Option<&LatestPlacement>,
+) -> Result<(), ApiError> {
+    let alias = old.map(|old| Alias {
+        logical_id: old.logical_id,
+        generation: old.generation.unsigned_abs(),
+        state: match old.state.as_str() {
+            "active" => AliasState::Active,
+            "deleted" => AliasState::Deleted,
+            _ => AliasState::Moved,
+        },
+    });
+    let decision = reconcile_alias(alias, Uuid::new_v4())
+        .map_err(|_| ApiError::invalid_update("logical placement generation conflict"))?;
+    let generation = i64::try_from(decision.generation)
+        .map_err(|_| ApiError::invalid_update("logical placement generation exhausted"))?;
+    if decision.fresh_identity {
+        plan.fresh_ids.push(decision.logical_id);
     }
-    // The checkpoint lock additionally serializes initial registration for existing Pages.
-    #[cfg(test)]
-    statement_probe::note();
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO flow_block_checkpoints(scope_id,page_id,accepted_head) VALUES($1,$2,0) ON CONFLICT DO NOTHING",
-        vec![scope_id.into(), page_id.into()],
-    ))
-    .await?;
-    #[cfg(test)]
-    statement_probe::note();
-    let checkpoint = tx
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT accepted_head FROM flow_block_checkpoints WHERE scope_id=$1 AND page_id=$2 FOR UPDATE",
-            vec![scope_id.into(), page_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| ApiError::invalid_update("missing block checkpoint"))?;
-    if checkpoint.try_get::<i64>("", "accepted_head")? > accepted_head {
-        return Err(ApiError::invalid_update("stale block reconciliation head"));
+    let retired = alias.is_some_and(|alias| alias.state != AliasState::Active);
+    // The fence upsert changes a row only when it is missing, or not yet retired and either
+    // retired now or pointing at another first identity; skip every fence that is already right.
+    let fence_changes = old.is_none_or(|old| match (old.fence_first_logical_id, old.fence_ever_retired) {
+        (Some(first), Some(ever_retired)) => !ever_retired && (retired || first != decision.logical_id),
+        _ => true,
+    });
+    if fence_changes {
+        plan.fence_cids.push(block.physical_cid.clone());
+        plan.fence_logical.push(decision.logical_id);
+        plan.fence_retired.push(retired);
     }
-    let cids = blocks.iter().map(|b| b.physical_cid.clone()).collect::<Vec<_>>();
-    // Locks exactly the rows the former per-block query locked: the latest placement of every CID.
-    #[cfg(test)]
-    statement_probe::note();
-    let latest = LatestPlacement::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT p.id,p.physical_cid,p.logical_id,p.generation,p.state,p.content_hash,f.first_logical_id AS fence_first_logical_id,f.ever_retired AS fence_ever_retired FROM flow_block_placements p LEFT JOIN flow_block_alias_fences f ON f.scope_id=p.scope_id AND f.page_id=p.page_id AND f.physical_cid=p.physical_cid WHERE p.id IN (SELECT DISTINCT ON (h.physical_cid) h.id FROM flow_block_placements h WHERE h.scope_id=$1 AND h.page_id=$2 AND h.physical_cid=ANY($3::text[]) ORDER BY h.physical_cid,h.alias_order DESC) ORDER BY p.id FOR UPDATE OF p",
-        vec![scope_id.into(), page_id.into(), cids.clone().into()],
-    ))
-    .all(tx)
-    .await?;
-    let mut latest_by_cid = HashMap::with_capacity(latest.len());
-    for row in latest {
-        if latest_by_cid.insert(row.physical_cid.clone(), row).is_some() {
-            return Err(ApiError::internal());
+    if let Some(old) = old.filter(|row| row.state == "active") {
+        if old.content_hash != block.content_hash {
+            plan.hash_ids.push(old.id);
+            plan.hash_values.push(block.content_hash.to_vec());
         }
+    } else {
+        plan.activate_ids.push(decision.logical_id);
+        plan.new_ids.push(Uuid::new_v4());
+        plan.new_logical.push(decision.logical_id);
+        plan.new_cids.push(block.physical_cid.clone());
+        plan.new_generations.push(generation);
+        plan.new_hashes.push(block.content_hash.to_vec());
     }
-    let mut suspend = Vec::new();
-    let mut plan = WritePlan::default();
-    for block in blocks {
-        let old = latest_by_cid.get(&block.physical_cid);
-        let alias = old.map(|old| Alias {
-            logical_id: old.logical_id,
-            generation: old.generation.unsigned_abs(),
-            state: match old.state.as_str() {
-                "active" => AliasState::Active,
-                "deleted" => AliasState::Deleted,
-                _ => AliasState::Moved,
-            },
-        });
-        let decision = reconcile_alias(alias, Uuid::new_v4())
-            .map_err(|_| ApiError::invalid_update("logical placement generation conflict"))?;
-        let generation = i64::try_from(decision.generation)
-            .map_err(|_| ApiError::invalid_update("logical placement generation exhausted"))?;
-        if decision.fresh_identity {
-            plan.fresh_ids.push(decision.logical_id);
-        }
-        let retired = alias.is_some_and(|alias| alias.state != AliasState::Active);
-        // The fence upsert changes a row only when it is missing, or not yet retired and either
-        // retired now or pointing at another first identity; skip every fence that is already right.
-        let fence_changes = old.is_none_or(|old| match (old.fence_first_logical_id, old.fence_ever_retired) {
-            (Some(first), Some(ever_retired)) => !ever_retired && (retired || first != decision.logical_id),
-            _ => true,
-        });
-        if fence_changes {
-            plan.fence_cids.push(block.physical_cid.clone());
-            plan.fence_logical.push(decision.logical_id);
-            plan.fence_retired.push(retired);
-        }
-        if let Some(old) = old.filter(|row| row.state == "active") {
-            if old.content_hash != block.content_hash {
-                plan.hash_ids.push(old.id);
-                plan.hash_values.push(block.content_hash.to_vec());
-            }
-        } else {
-            plan.activate_ids.push(decision.logical_id);
-            plan.new_ids.push(Uuid::new_v4());
-            plan.new_logical.push(decision.logical_id);
-            plan.new_cids.push(block.physical_cid.clone());
-            plan.new_generations.push(generation);
-            plan.new_hashes.push(block.content_hash.to_vec());
-        }
-        if decision.suspend_shares {
-            suspend.push(decision.logical_id);
-        }
+    if decision.suspend_shares {
+        suspend.push(decision.logical_id);
     }
+    Ok(())
+}
+
+/// Execute the chunked write statements of one plan, in dependency order.
+async fn flush_plan(tx: &DatabaseTransaction, scope_id: Uuid, page_id: Uuid, plan: &WritePlan) -> Result<(), ApiError> {
     for range in chunk_ranges(plan.fresh_ids.len()) {
-        #[cfg(test)]
-        statement_probe::note();
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+        execute(
+            tx,
+            range.len(),
             "INSERT INTO flow_logical_blocks(id,state) SELECT v.id,'active' FROM unnest($1::uuid[]) WITH ORDINALITY AS v(id,ord) ORDER BY v.ord",
             vec![column(&plan.fresh_ids, &range)?.into()],
-        ))
+        )
         .await?;
     }
     for range in chunk_ranges(plan.fence_cids.len()) {
         // Data-identical to the former per-block upsert, but an unchanged fence is not rewritten.
-        #[cfg(test)]
-        statement_probe::note();
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+        execute(
+            tx,
+            range.len(),
             "INSERT INTO flow_block_alias_fences(scope_id,page_id,physical_cid,first_logical_id,ever_retired) SELECT $1,$2,v.cid,v.logical_id,v.retired FROM unnest($3::text[],$4::uuid[],$5::bool[]) WITH ORDINALITY AS v(cid,logical_id,retired,ord) ORDER BY v.ord ON CONFLICT(scope_id,page_id,physical_cid) DO UPDATE SET ever_retired=true WHERE NOT flow_block_alias_fences.ever_retired AND (EXCLUDED.ever_retired OR flow_block_alias_fences.first_logical_id<>EXCLUDED.first_logical_id)",
             vec![
                 scope_id.into(),
@@ -355,37 +435,34 @@ pub async fn reconcile(
                 column(&plan.fence_logical, &range)?.into(),
                 column(&plan.fence_retired, &range)?.into(),
             ],
-        ))
+        )
         .await?;
     }
     for range in chunk_ranges(plan.hash_ids.len()) {
-        #[cfg(test)]
-        statement_probe::note();
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+        execute(
+            tx,
+            range.len(),
             "UPDATE flow_block_placements p SET content_hash=v.hash FROM unnest($1::uuid[],$2::bytea[]) AS v(id,hash) WHERE p.id=v.id AND p.content_hash IS DISTINCT FROM v.hash",
             vec![
                 column(&plan.hash_ids, &range)?.into(),
                 column(&plan.hash_values, &range)?.into(),
             ],
-        ))
+        )
         .await?;
     }
     for range in chunk_ranges(plan.activate_ids.len()) {
-        #[cfg(test)]
-        statement_probe::note();
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+        execute(
+            tx,
+            range.len(),
             "UPDATE flow_logical_blocks SET state='active' WHERE id=ANY($1::uuid[]) AND state<>'active'",
             vec![column(&plan.activate_ids, &range)?.into()],
-        ))
+        )
         .await?;
     }
     for range in chunk_ranges(plan.new_ids.len()) {
-        #[cfg(test)]
-        statement_probe::note();
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+        execute(
+            tx,
+            range.len(),
             "INSERT INTO flow_block_placements(id,logical_id,scope_id,page_id,physical_cid,generation,state,content_hash) SELECT v.id,v.logical_id,$1,$2,v.cid,v.generation,'active',v.hash FROM unnest($3::uuid[],$4::uuid[],$5::text[],$6::int8[],$7::bytea[]) WITH ORDINALITY AS v(id,logical_id,cid,generation,hash,ord) ORDER BY v.ord",
             vec![
                 scope_id.into(),
@@ -396,71 +473,583 @@ pub async fn reconcile(
                 column(&plan.new_generations, &range)?.into(),
                 column(&plan.new_hashes, &range)?.into(),
             ],
-        ))
+        )
         .await?;
     }
-    // Placements no longer present are retired in chunks; each round retires at most `BULK_ROWS_MAX`
-    // and the loop ends at the first round that retires fewer.
-    let mut removed_ids = Vec::new();
-    loop {
-        #[cfg(test)]
-        statement_probe::note();
-        let removed = tx.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
-            "UPDATE flow_block_placements SET state='deleted',retired_at=now() WHERE id IN (SELECT id FROM flow_block_placements WHERE scope_id=$1 AND page_id=$2 AND state='active' AND NOT(physical_cid=ANY($3::text[])) ORDER BY id LIMIT $4 FOR UPDATE) RETURNING logical_id",
-            vec![scope_id.into(),page_id.into(),cids.clone().into(),i64::try_from(BULK_ROWS_MAX).map_err(|_| ApiError::internal())?.into()])).await?;
-        let round = removed.len();
-        for row in removed {
-            removed_ids.push(row.try_get::<Uuid>("", "logical_id")?);
+    Ok(())
+}
+
+/// Which reconcile a caller asks for. The caller never decides soundness: `Incremental` is only a
+/// permission, and the guard in [`reconcile_in_mode`] decides whether it is used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReconcileMode {
+    /// Every block of the Page is read, locked and compared, and every active placement is scanned.
+    Full,
+    /// Only blocks whose (CID, content hash) differ from the registry baseline are read and locked,
+    /// and only CIDs that left the document are retired, when the checkpoint guard allows it.
+    Incremental,
+}
+
+/// The (CID, content hash) set a reconcile left in the registry, remembered per Page by this process.
+struct BaselineEntry {
+    head: i64,
+    digest: [u8; 32],
+    blocks: Arc<HashMap<String, [u8; 32]>>,
+}
+
+/// Process-wide memory of the last registry states. It is only a hint: an entry is used when the
+/// committed checkpoint names the same head and the same digest, and never otherwise.
+#[derive(Default)]
+struct BaselineCache {
+    pages: HashMap<Uuid, (u64, Vec<BaselineEntry>)>,
+    clock: u64,
+    cids: usize,
+}
+
+/// Pages remembered at most, and CIDs remembered in total (about 30 MB at the largest CID size).
+const BASELINE_PAGES_MAX: usize = 64;
+const BASELINE_CIDS_MAX: usize = 200_000;
+/// Entries kept per Page: the newest and its predecessor, so a rolled-back write does not make the
+/// next write fall back to the full reconcile.
+const BASELINE_ENTRIES_PER_PAGE: usize = 2;
+
+#[cfg(not(test))]
+static BASELINES: std::sync::LazyLock<parking_lot::Mutex<BaselineCache>> = std::sync::LazyLock::new(Default::default);
+
+#[cfg(test)]
+thread_local! {
+    /// Tests run one per thread on a current-thread runtime, so a per-thread memory gives every
+    /// test the cache of its own Pages: a test running in parallel can neither evict its entries
+    /// (the page and CID bounds are process-wide) nor see them.
+    static TEST_BASELINES: std::cell::RefCell<BaselineCache> = std::cell::RefCell::new(BaselineCache::default());
+}
+
+/// Run `f` on the remembered registry states of this process (of this test thread under `cfg(test)`).
+fn with_baselines<R>(f: impl FnOnce(&mut BaselineCache) -> R) -> R {
+    #[cfg(not(test))]
+    {
+        f(&mut BASELINES.lock())
+    }
+    #[cfg(test)]
+    {
+        TEST_BASELINES.with(|cache| f(&mut cache.borrow_mut()))
+    }
+}
+
+impl BaselineCache {
+    fn find(&mut self, page: Uuid, head: i64, digest: &[u8]) -> Option<Arc<HashMap<String, [u8; 32]>>> {
+        self.clock = self.clock.wrapping_add(1);
+        let clock = self.clock;
+        let (stamp, entries) = self.pages.get_mut(&page)?;
+        let entry = entries
+            .iter()
+            .find(|entry| entry.head == head && entry.digest.as_slice() == digest)?;
+        *stamp = clock;
+        Some(Arc::clone(&entry.blocks))
+    }
+
+    fn store(&mut self, page: Uuid, entry: BaselineEntry) {
+        self.clock = self.clock.wrapping_add(1);
+        let clock = self.clock;
+        let slot = self.pages.entry(page).or_insert_with(|| (clock, Vec::new()));
+        slot.0 = clock;
+        slot.1.retain(|old| old.head != entry.head);
+        slot.1.insert(0, entry);
+        slot.1.truncate(BASELINE_ENTRIES_PER_PAGE);
+        self.recount();
+        while (self.pages.len() > BASELINE_PAGES_MAX || self.cids > BASELINE_CIDS_MAX) && self.pages.len() > 1 {
+            let oldest = self
+                .pages
+                .iter()
+                .filter(|(id, _)| **id != page)
+                .min_by_key(|(_, (stamp, _))| *stamp)
+                .map(|(id, _)| *id);
+            let Some(oldest) = oldest else { break };
+            self.pages.remove(&oldest);
+            self.recount();
         }
-        if round < BULK_ROWS_MAX {
+    }
+
+    fn forget(&mut self, page: Uuid) {
+        self.pages.remove(&page);
+        self.recount();
+    }
+
+    fn recount(&mut self) {
+        self.cids = self
+            .pages
+            .values()
+            .flat_map(|(_, entries)| entries.iter())
+            .map(|entry| entry.blocks.len())
+            .sum();
+    }
+}
+
+/// Digest of the registry-relevant content of a block set: the sorted (CID, content hash) pairs.
+/// Parent, order and the other `PreparedBlock` fields never reach a placement row.
+fn registry_digest(blocks: &[PreparedBlock]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut ordered = blocks.iter().collect::<Vec<_>>();
+    ordered.sort_unstable_by(|left, right| left.physical_cid.cmp(&right.physical_cid));
+    let mut hasher = Sha256::new();
+    for block in ordered {
+        hasher.update(block.physical_cid.len().to_be_bytes());
+        hasher.update(block.physical_cid.as_bytes());
+        hasher.update(block.content_hash);
+    }
+    hasher.finalize().into()
+}
+
+/// What changed between the baseline and the new block set, in document order.
+struct Delta<'a> {
+    /// Blocks whose CID is new or whose content hash differs: the only blocks that are locked and planned.
+    touched: Vec<&'a PreparedBlock>,
+    /// CIDs of the baseline that are no longer in the document.
+    removed: Vec<String>,
+}
+
+fn diff<'a>(baseline: &HashMap<String, [u8; 32]>, blocks: &'a [PreparedBlock]) -> Delta<'a> {
+    #[cfg(test)]
+    let mutation = mutation::current();
+    let present = blocks
+        .iter()
+        .map(|block| block.physical_cid.as_str())
+        .collect::<HashSet<_>>();
+    let mut removed = baseline
+        .keys()
+        .filter(|cid| !present.contains(cid.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    removed.sort_unstable();
+    let mut touched = Vec::new();
+    for block in blocks {
+        match baseline.get(&block.physical_cid) {
+            None => touched.push(block),
+            Some(hash) if *hash != block.content_hash => touched.push(block),
+            Some(_) => {}
+        }
+    }
+    #[cfg(test)]
+    mutation::apply(mutation, baseline, &mut touched, &mut removed);
+    Delta { touched, removed }
+}
+
+/// Deliberate bugs for the mutation checks of the differential test. Task-local, so a mutated test
+/// never disturbs a test running in parallel.
+#[cfg(test)]
+pub(crate) mod mutation {
+    use super::PreparedBlock;
+    use std::collections::HashMap;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Mutation {
+        /// CIDs that left the document are never retired.
+        SkipDeletes,
+        /// The guard accepts the newest remembered state without comparing it with the checkpoint.
+        TrustStaleCheckpoint,
+        /// A new CID whose content equals a removed CID is treated as the same (moved) block.
+        MissMovedBlock,
+        /// Content changes of a CID that stays are ignored.
+        IgnoreContentChanges,
+    }
+
+    tokio::task_local! {
+        static ACTIVE: Mutation;
+    }
+
+    pub fn current() -> Option<Mutation> {
+        ACTIVE.try_with(|mutation| *mutation).ok()
+    }
+
+    pub async fn with<F: std::future::Future>(mutation: Mutation, future: F) -> F::Output {
+        ACTIVE.scope(mutation, future).await
+    }
+
+    pub fn apply(
+        mutation: Option<Mutation>,
+        baseline: &HashMap<String, [u8; 32]>,
+        touched: &mut Vec<&PreparedBlock>,
+        removed: &mut Vec<String>,
+    ) {
+        match mutation {
+            Some(Mutation::SkipDeletes) => removed.clear(),
+            Some(Mutation::MissMovedBlock) => {
+                let removed_hashes = removed.iter().filter_map(|cid| baseline.get(cid)).collect::<Vec<_>>();
+                touched.retain(|block| {
+                    baseline.contains_key(&block.physical_cid) || !removed_hashes.contains(&&block.content_hash)
+                });
+            }
+            Some(Mutation::IgnoreContentChanges) => touched.retain(|block| !baseline.contains_key(&block.physical_cid)),
+            Some(Mutation::TrustStaleCheckpoint) | None => {}
+        }
+    }
+}
+
+/// Compare the registry of one Page with the full reconcile of `blocks`, writing and locking nothing.
+///
+/// Returns up to `limit` human-readable differences. An empty list means one active placement per
+/// block with the block's content hash and an active logical identity, no other active placement,
+/// and nothing pending.
+///
+/// Statements: one keyset scan round per `REGISTRY_ROWS_PER_STATEMENT` active placements and one
+/// checkpoint read. Meant for tests and for a later periodic or on-demand verification.
+pub async fn verify_registry(
+    tx: &DatabaseTransaction,
+    scope_id: Uuid,
+    page_id: Uuid,
+    blocks: &[PreparedBlock],
+    limit: usize,
+) -> Result<Vec<String>, ApiError> {
+    let expected = blocks
+        .iter()
+        .map(|block| (block.physical_cid.as_str(), block.content_hash))
+        .collect::<HashMap<_, _>>();
+    let mut differences = Vec::new();
+    let mut note = |text: String| {
+        if differences.len() < limit {
+            differences.push(text);
+        }
+    };
+    let pending = query_one(
+        tx,
+        "SELECT pending_registrations FROM flow_block_checkpoints WHERE scope_id=$1 AND page_id=$2",
+        vec![scope_id.into(), page_id.into()],
+    )
+    .await?
+    .map(|row| row.try_get::<i32>("", "pending_registrations"))
+    .transpose()?;
+    if pending != Some(0) {
+        note(format!("pending registrations: {pending:?}"));
+    }
+    let scan_limit = i64::try_from(REGISTRY_ROWS_PER_STATEMENT).map_err(|_| ApiError::internal())?;
+    let mut seen = HashSet::new();
+    let mut cursor = String::new();
+    loop {
+        let rows = query_all(
+            tx,
+            REGISTRY_ROWS_PER_STATEMENT,
+            "SELECT p.physical_cid,p.content_hash,l.state AS logical_state FROM flow_block_placements p JOIN flow_logical_blocks l ON l.id=p.logical_id WHERE p.scope_id=$1 AND p.page_id=$2 AND p.state='active' AND p.physical_cid>$3 ORDER BY p.physical_cid LIMIT $4",
+            vec![scope_id.into(), page_id.into(), cursor.clone().into(), scan_limit.into()],
+        )
+        .await?;
+        let round = rows.len();
+        for row in rows {
+            cursor = row.try_get::<String>("", "physical_cid")?;
+            let hash = row.try_get::<Vec<u8>>("", "content_hash")?;
+            match expected.get(cursor.as_str()) {
+                None => note(format!("active placement without a block: {cursor}")),
+                Some(want) if want.as_slice() != hash.as_slice() => note(format!("content hash differs: {cursor}")),
+                Some(_) => {}
+            }
+            if row.try_get::<String>("", "logical_state")? != "active" {
+                note(format!("active placement of an inactive identity: {cursor}"));
+            }
+            seen.insert(cursor.clone());
+        }
+        if round < REGISTRY_ROWS_PER_STATEMENT {
             break;
         }
     }
-    for range in chunk_ranges(removed_ids.len()) {
+    for cid in expected.keys() {
+        if !seen.contains(*cid) {
+            note(format!("block without an active placement: {cid}"));
+        }
+    }
+    Ok(differences)
+}
+
+/// Reconcile one accepted head. No independent commit, connection or raw client identity input.
+///
+/// Multi-Page operations must lock all Page heads in UUID order before calling this function.
+/// Affected shares are suspended in this transaction; returned IDs are private audit metadata.
+///
+/// Rows whose content did not change are neither rewritten nor carried by any write statement.
+/// Every statement whose size depends on the page carries at most `REGISTRY_ROWS_PER_STATEMENT`
+/// rows: the locking read and the removal scan walk the page in chunks, and so do all writes.
+/// Blocks that have an active placement are always processed in full. Blocks without one ("pending")
+/// are registered in chunk groups while `allowance` permits; the rest stays pending, is counted in
+/// `ReconcileOutcome::pending` and in the checkpoint, and is registered by a later call. The legacy
+/// comment seal runs only in the call that leaves nothing pending.
+pub(crate) async fn reconcile(
+    tx: &DatabaseTransaction,
+    scope_id: Uuid,
+    page_id: Uuid,
+    accepted_head: i64,
+    blocks: &[PreparedBlock],
+    allowance: RegistrationAllowance,
+) -> Result<ReconcileOutcome, ApiError> {
+    reconcile_in_mode(
+        tx,
+        scope_id,
+        page_id,
+        accepted_head,
+        blocks,
+        allowance,
+        ReconcileMode::Full,
+    )
+    .await
+}
+
+/// [`reconcile`] with a choice of mode.
+///
+/// The incremental path is taken only when ALL of these hold, read under the checkpoint row lock
+/// (so they cannot change before this transaction ends):
+/// 1. `mode` is `Incremental` and `allowance` is `Bounded` (the accepted-write path; creation,
+///    import and package callers pass `Complete` and always reconcile in full);
+/// 2. the checkpoint has no pending registrations;
+/// 3. `accepted_head` is exactly one past the checkpoint's `accepted_head`;
+/// 4. the checkpoint's `registry_digest` is set and equals the digest of a block set this process
+///    remembers for exactly that checkpoint head (the set the last reconcile registered).
+///
+/// Every other case (first registration, resumable registration, a lagging, missing or foreign
+/// checkpoint, a digest cleared by a repair, another process or an older binary having written the
+/// Page, a cold process) runs the full reconcile, which also rewrites the digest. The incremental
+/// path locks, plans and writes the blocks that are new or changed against the remembered set and
+/// retires the CIDs that left the document; the result equals the full reconcile of the same input
+/// because the guard proves the registry holds exactly the remembered (CID, content hash) set.
+///
+/// Lock order is the same in both paths: the caller's Page head lock, the checkpoint row, the
+/// latest placement rows in document order (a subset of the full path's rows), the retired rows,
+/// then shares. Only the set of locked rows is smaller.
+pub(crate) async fn reconcile_in_mode(
+    tx: &DatabaseTransaction,
+    scope_id: Uuid,
+    page_id: Uuid,
+    accepted_head: i64,
+    blocks: &[PreparedBlock],
+    allowance: RegistrationAllowance,
+    mode: ReconcileMode,
+) -> Result<ReconcileOutcome, ApiError> {
+    let mut seen = HashSet::with_capacity(blocks.len());
+    if accepted_head < 0
+        || blocks
+            .iter()
+            .any(|b| b.physical_cid.is_empty() || b.physical_cid.len() > 256 || !seen.insert(b.physical_cid.as_str()))
+    {
+        return Err(ApiError::invalid_update("invalid logical block reconciliation input"));
+    }
+    // The checkpoint lock additionally serializes initial registration for existing Pages.
+    execute(
+        tx,
+        1,
+        "INSERT INTO flow_block_checkpoints(scope_id,page_id,accepted_head) VALUES($1,$2,0) ON CONFLICT DO NOTHING",
+        vec![scope_id.into(), page_id.into()],
+    )
+    .await?;
+    let checkpoint = query_one(
+        tx,
+        "SELECT accepted_head,pending_registrations,registry_digest FROM flow_block_checkpoints WHERE scope_id=$1 AND page_id=$2 FOR UPDATE",
+        vec![scope_id.into(), page_id.into()],
+    )
+    .await?
+    .ok_or_else(|| ApiError::invalid_update("missing block checkpoint"))?;
+    let checkpoint_head = checkpoint.try_get::<i64>("", "accepted_head")?;
+    if checkpoint_head > accepted_head {
+        return Err(ApiError::invalid_update("stale block reconciliation head"));
+    }
+    let digest = registry_digest(blocks);
+    let baseline = if mode == ReconcileMode::Incremental
+        && matches!(allowance, RegistrationAllowance::Bounded { .. })
+        && checkpoint.try_get::<i32>("", "pending_registrations")? == 0
+        && checkpoint_head.checked_add(1) == Some(accepted_head)
+    {
+        let witness = checkpoint.try_get::<Option<Vec<u8>>>("", "registry_digest")?;
         #[cfg(test)]
-        statement_probe::note();
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+        let trust_stale = mutation::current() == Some(mutation::Mutation::TrustStaleCheckpoint);
+        #[cfg(not(test))]
+        let trust_stale = false;
+        with_baselines(|cache| {
+            if trust_stale {
+                cache
+                    .pages
+                    .get(&page_id)
+                    .and_then(|(_, entries)| entries.first())
+                    .map(|entry| Arc::clone(&entry.blocks))
+            } else {
+                witness.and_then(|witness| cache.find(page_id, checkpoint_head, &witness))
+            }
+        })
+    } else {
+        None
+    };
+    let delta = baseline.as_deref().map(|baseline| diff(baseline, blocks));
+    let work = delta
+        .as_ref()
+        .map_or_else(|| blocks.iter().collect::<Vec<_>>(), |delta| delta.touched.clone());
+    // Locks exactly the rows the former per-block query locked: the latest placement of every CID.
+    // Every writer of these rows holds the Page head lock first, so locking chunk by chunk cannot
+    // deadlock and the set of locked rows is the same as one statement over all CIDs.
+    let mut latest_by_cid = HashMap::with_capacity(work.len());
+    for chunk in work.chunks(REGISTRY_ROWS_PER_STATEMENT) {
+        let cids = chunk.iter().map(|b| b.physical_cid.clone()).collect::<Vec<_>>();
+        let rows = query_all(
+            tx,
+            chunk.len(),
+            "SELECT p.id,p.physical_cid,p.logical_id,p.generation,p.state,p.content_hash,f.first_logical_id AS fence_first_logical_id,f.ever_retired AS fence_ever_retired FROM flow_block_placements p LEFT JOIN flow_block_alias_fences f ON f.scope_id=p.scope_id AND f.page_id=p.page_id AND f.physical_cid=p.physical_cid WHERE p.id IN (SELECT DISTINCT ON (h.physical_cid) h.id FROM flow_block_placements h WHERE h.scope_id=$1 AND h.page_id=$2 AND h.physical_cid=ANY($3::text[]) ORDER BY h.physical_cid,h.alias_order DESC) ORDER BY p.id FOR UPDATE OF p",
+            vec![scope_id.into(), page_id.into(), cids.into()],
+        )
+        .await?;
+        for row in rows {
+            let row = LatestPlacement::from_query_result(&row, "")?;
+            if latest_by_cid.insert(row.physical_cid.clone(), row).is_some() {
+                return Err(ApiError::internal());
+            }
+        }
+    }
+    let mut suspend = Vec::new();
+    let mut active_plan = WritePlan::default();
+    let mut pending = Vec::new();
+    for block in work.iter().copied() {
+        let old = latest_by_cid.get(&block.physical_cid);
+        if old.is_some_and(|old| old.state == "active") {
+            plan_block(&mut active_plan, &mut suspend, block, old)?;
+        } else {
+            pending.push(block);
+        }
+    }
+    flush_plan(tx, scope_id, page_id, &active_plan).await?;
+    // Pending blocks are registered in document order, one chunk group at a time. Registering a
+    // CID at a later head gives the same identity decision as if it had first appeared there: the
+    // decision depends only on the latest placement of the CID, which no writer changes while the
+    // CID is pending.
+    let mut registered = 0_usize;
+    let mut last_group = Duration::ZERO;
+    while registered < pending.len() {
+        let take = match allowance {
+            RegistrationAllowance::Complete => REGISTRY_ROWS_PER_STATEMENT,
+            RegistrationAllowance::Bounded {
+                deadline,
+                max_rows,
+                min_rows,
+            } => {
+                let remaining = max_rows.saturating_sub(registered);
+                let forced = registered < min_rows;
+                if remaining == 0
+                    || (!forced && Instant::now().checked_add(last_group).is_none_or(|end| end > deadline))
+                {
+                    break;
+                }
+                remaining.min(REGISTRY_ROWS_PER_STATEMENT)
+            }
+        };
+        let started = Instant::now();
+        let mut plan = WritePlan::default();
+        for block in pending.iter().skip(registered).take(take) {
+            plan_block(&mut plan, &mut suspend, block, latest_by_cid.get(&block.physical_cid))?;
+        }
+        flush_plan(tx, scope_id, page_id, &plan).await?;
+        registered = registered.saturating_add(take).min(pending.len());
+        last_group = started.elapsed();
+    }
+    let pending_left = pending.len().saturating_sub(registered);
+    // Placements of CIDs no longer present are found by a keyset scan over the Page's active
+    // placements (unlocked: the head and checkpoint locks are held) and retired in chunks. The
+    // retirement takes the row locks of exactly the rows it changes. The incremental path retires
+    // the CIDs that left the baseline directly.
+    let mut removed_ids = Vec::new();
+    if let Some(delta) = &delta {
+        for chunk in delta.removed.chunks(REGISTRY_ROWS_PER_STATEMENT) {
+            let removed = query_all(
+                tx,
+                chunk.len(),
+                "UPDATE flow_block_placements SET state='deleted',retired_at=now() WHERE scope_id=$1 AND page_id=$2 AND physical_cid=ANY($3::text[]) AND state='active' RETURNING logical_id",
+                vec![scope_id.into(), page_id.into(), chunk.to_vec().into()],
+            )
+            .await?;
+            for row in removed {
+                removed_ids.push(row.try_get::<Uuid>("", "logical_id")?);
+            }
+        }
+    } else {
+        let present = blocks
+            .iter()
+            .map(|block| block.physical_cid.as_str())
+            .collect::<HashSet<_>>();
+        let mut absent = Vec::new();
+        let mut cursor = String::new();
+        let scan_limit = i64::try_from(REGISTRY_ROWS_PER_STATEMENT).map_err(|_| ApiError::internal())?;
+        loop {
+            let rows = query_all(
+                tx,
+                REGISTRY_ROWS_PER_STATEMENT,
+                "SELECT id,physical_cid FROM flow_block_placements WHERE scope_id=$1 AND page_id=$2 AND state='active' AND physical_cid>$3 ORDER BY physical_cid LIMIT $4",
+                vec![scope_id.into(), page_id.into(), cursor.clone().into(), scan_limit.into()],
+            )
+            .await?;
+            let round = rows.len();
+            for row in rows {
+                cursor = row.try_get::<String>("", "physical_cid")?;
+                if !present.contains(cursor.as_str()) {
+                    absent.push(row.try_get::<Uuid>("", "id")?);
+                }
+            }
+            if round < REGISTRY_ROWS_PER_STATEMENT {
+                break;
+            }
+        }
+        for range in chunk_ranges(absent.len()) {
+            let removed = query_all(
+                tx,
+                range.len(),
+                "UPDATE flow_block_placements SET state='deleted',retired_at=now() WHERE id=ANY($1::uuid[]) AND state='active' RETURNING logical_id",
+                vec![column(&absent, &range)?.into()],
+            )
+            .await?;
+            for row in removed {
+                removed_ids.push(row.try_get::<Uuid>("", "logical_id")?);
+            }
+        }
+    }
+    for range in chunk_ranges(removed_ids.len()) {
+        execute(
+            tx,
+            range.len(),
             "UPDATE flow_logical_blocks SET state='deleted' WHERE id=ANY($1::uuid[])",
             vec![column(&removed_ids, &range)?.into()],
-        ))
+        )
         .await?;
     }
     suspend.extend(removed_ids);
-    #[cfg(test)]
-    statement_probe::note();
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE flow_block_checkpoints SET accepted_head=$3 WHERE scope_id=$1 AND page_id=$2",
-        vec![scope_id.into(), page_id.into(), accepted_head.into()],
-    ))
+    execute(
+        tx,
+        1,
+        "UPDATE flow_block_checkpoints SET accepted_head=$3,pending_registrations=$4,registry_digest=$5 WHERE scope_id=$1 AND page_id=$2",
+        vec![
+            scope_id.into(),
+            page_id.into(),
+            accepted_head.into(),
+            i32::try_from(pending_left).map_err(|_| ApiError::internal())?.into(),
+            (pending_left == 0).then(|| digest.to_vec()).into(),
+        ],
+    )
     .await?;
     suspend.sort_unstable();
     suspend.dedup();
     if !suspend.is_empty() {
-        #[cfg(test)]
-        statement_probe::note();
-        tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,
-            "UPDATE flow_block_shares SET state='suspended',auth_revision=auth_revision+1 WHERE state='active' AND id IN (SELECT share_id FROM flow_block_share_members WHERE logical_id=ANY($1::uuid[]))",
-            vec![suspend.clone().into()])).await?;
+        for chunk in suspend.chunks(REGISTRY_ROWS_PER_STATEMENT) {
+            execute(tx, chunk.len(),
+                "UPDATE flow_block_shares SET state='suspended',auth_revision=auth_revision+1 WHERE state='active' AND id IN (SELECT share_id FROM flow_block_share_members WHERE logical_id=ANY($1::uuid[]))",
+                vec![chunk.to_vec().into()]).await?;
+        }
     }
     // Project only fixed member relationships and relative ordering, never absolute source position.
-    let by_cid = blocks
-        .iter()
-        .map(|block| (block.physical_cid.as_str(), block))
-        .collect::<HashMap<_, _>>();
-    #[cfg(test)]
-    statement_probe::note();
-    let shares=tx.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
+    let shares = query_all(tx, 1,
         "SELECT id,projection_hash FROM flow_block_shares WHERE source_scope_id=$1 AND source_page_id=$2 AND state<>'revoked' ORDER BY id FOR UPDATE",
-        vec![scope_id.into(),page_id.into()])).await?;
+        vec![scope_id.into(),page_id.into()]).await?;
+    // Built only when the Page has shares: it is the one remaining O(page) structure of this phase.
+    let by_cid = if shares.is_empty() {
+        HashMap::new()
+    } else {
+        blocks
+            .iter()
+            .map(|block| (block.physical_cid.as_str(), block))
+            .collect::<HashMap<_, _>>()
+    };
     for share in shares {
         let share_id = share.try_get::<Uuid>("", "id")?;
-        #[cfg(test)]
-        statement_probe::note();
-        let rows=tx.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
+        let rows = query_all(tx, 1,
             "SELECT m.member_id,p.physical_cid FROM flow_block_share_members m JOIN flow_block_placements p ON p.logical_id=m.logical_id AND p.state='active' WHERE m.share_id=$1 AND p.scope_id=$2 AND p.page_id=$3",
-            vec![share_id.into(),scope_id.into(),page_id.into()])).await?;
+            vec![share_id.into(),scope_id.into(),page_id.into()]).await?;
         let mut members = Vec::new();
         for row in rows {
             members.push((
@@ -470,34 +1059,55 @@ pub async fn reconcile(
         }
         for (member, cid) in &members {
             if let Some(asset) = by_cid.get(cid.as_str()).and_then(|block| block.asset_id) {
-                #[cfg(test)]
-                statement_probe::note();
-                tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_block_share_asset_aliases(share_id,member_id,alias_id,source_scope_id,source_page_id,asset_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(share_id,member_id,asset_id) DO NOTHING",vec![share_id.into(),(*member).into(),Uuid::new_v4().into(),scope_id.into(),page_id.into(),asset.into()])).await?;
+                execute(tx, 1,"INSERT INTO flow_block_share_asset_aliases(share_id,member_id,alias_id,source_scope_id,source_page_id,asset_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(share_id,member_id,asset_id) DO NOTHING",vec![share_id.into(),(*member).into(),Uuid::new_v4().into(),scope_id.into(),page_id.into(),asset.into()]).await?;
             }
         }
         let hash = visible_graph_hash(blocks, &members)?;
         if share.try_get::<Vec<u8>>("", "projection_hash")? != hash {
-            #[cfg(test)]
-            statement_probe::note();
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
+            execute(
+                tx,
+                1,
                 "UPDATE flow_block_shares SET projection_hash=$2,content_revision=content_revision+1 WHERE id=$1",
                 vec![share_id.into(), hash.to_vec().into()],
-            ))
+            )
             .await?;
         }
     }
-    super::block_anchors::sync_legacy(tx, page_id, blocks).await?;
-    Ok(suspend)
+    if pending_left == 0 {
+        super::block_anchors::sync_legacy(tx, page_id, blocks).await?;
+        // Remembered before the caller commits. If the transaction rolls back the checkpoint keeps
+        // the older head and digest, and the guard refuses this entry.
+        let remembered = BaselineEntry {
+            head: accepted_head,
+            digest,
+            blocks: Arc::new(
+                blocks
+                    .iter()
+                    .map(|block| (block.physical_cid.clone(), block.content_hash))
+                    .collect(),
+            ),
+        };
+        with_baselines(|cache| cache.store(page_id, remembered));
+    } else {
+        with_baselines(|cache| cache.forget(page_id));
+    }
+    Ok(ReconcileOutcome {
+        #[cfg(test)]
+        suspended: suspend,
+        pending: pending_left,
+        #[cfg(test)]
+        incremental: delta.is_some(),
+    })
 }
 
 /// Accepted-write hook, inactive until the complete registry-capable process barrier is raised.
 /// The process barrier is separate from client editor model5.
-pub async fn reconcile_accepted(
+pub(crate) async fn reconcile_accepted(
     tx: &DatabaseTransaction,
     object: Uuid,
     seq: i64,
     blocks: &[PreparedBlock],
+    allowance: RegistrationAllowance,
 ) -> Result<(), ApiError> {
     if super::scope::capabilities(tx).await?.minimum_reader_version < 5 {
         return Ok(());
@@ -506,7 +1116,16 @@ pub async fn reconcile_accepted(
     if identity.object_type != "page" {
         return Ok(());
     }
-    reconcile(tx, identity.scope_id, object, seq, blocks).await?;
+    reconcile_in_mode(
+        tx,
+        identity.scope_id,
+        object,
+        seq,
+        blocks,
+        allowance,
+        ReconcileMode::Incremental,
+    )
+    .await?;
     Ok(())
 }
 
@@ -521,6 +1140,7 @@ pub(crate) async fn preserve_editor_aliases(
         return Ok(());
     }
     let scope = super::scope::identity(tx, page).await?.scope_id;
+    let mut moved_any = false;
     for block in blocks {
         let Some(alias) = &block.legacy_alias else {
             continue;
@@ -566,6 +1186,16 @@ pub(crate) async fn preserve_editor_aliases(
         ))
         .await?;
         tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_block_placements(id,logical_id,scope_id,page_id,physical_cid,generation,state,content_hash) VALUES($1,$2,$3,$4,$5,$6,'active',$7)",vec![Uuid::new_v4().into(),logical.into(),scope.into(),page.into(),block.physical_cid.clone().into(),generation.into(),block.content_hash.to_vec().into()])).await?;
+        moved_any = true;
+    }
+    if moved_any {
+        // Placements changed outside `reconcile`: the next reconcile of the Page runs in full.
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE flow_block_checkpoints SET registry_digest=NULL WHERE scope_id=$1 AND page_id=$2",
+            vec![scope.into(), page.into()],
+        ))
+        .await?;
     }
     Ok(())
 }
@@ -646,6 +1276,9 @@ pub(crate) mod fixtures {
         (0..count).map(|index| block(index, version)).collect()
     }
 }
+
+#[cfg(test)]
+mod incremental_tests;
 
 #[cfg(test)]
 #[allow(clippy::indexing_slicing, clippy::print_stderr)]
@@ -873,7 +1506,7 @@ mod tests {
             legacy_alias: None,
             content_hash: [7; 32],
         }];
-        reconcile(&tx, scope, page, 0, &blocks).await.unwrap();
+        complete(&tx, scope, page, 0, &blocks).await.unwrap();
         let original = logical(&tx, page).await;
         let share = Uuid::new_v4();
         let member = Uuid::new_v4();
@@ -887,7 +1520,7 @@ mod tests {
         ))
         .await
         .unwrap();
-        reconcile(&tx, scope, page, 2, &blocks).await.unwrap();
+        complete(&tx, scope, page, 2, &blocks).await.unwrap();
         let revision = tx
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -906,7 +1539,7 @@ mod tests {
             legacy_alias: None,
             content_hash: [8; 32],
         }];
-        reconcile(&tx, scope, page, 3, &edited).await.unwrap();
+        complete(&tx, scope, page, 3, &edited).await.unwrap();
         let revision = tx
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -917,8 +1550,8 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(revision.try_get::<i64>("", "content_revision").unwrap(), 2);
-        reconcile(&tx, scope, page, 4, &[]).await.unwrap();
-        let suspended = reconcile(&tx, scope, page, 5, &blocks).await.unwrap();
+        complete(&tx, scope, page, 4, &[]).await.unwrap();
+        let suspended = complete(&tx, scope, page, 5, &blocks).await.unwrap().suspended;
         let status = tx
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -940,10 +1573,10 @@ mod tests {
         ))
         .await
         .unwrap();
-        reconcile(&tx, scope, page, 6, &blocks).await.unwrap();
+        complete(&tx, scope, page, 6, &blocks).await.unwrap();
         let after_move_restore = logical(&tx, page).await;
         assert_ne!(after_move_restore.0, original.0);
-        assert!(reconcile(&tx, scope, page, 5, &blocks).await.is_err());
+        assert!(complete(&tx, scope, page, 5, &blocks).await.is_err());
         tx.rollback().await.unwrap();
         let row = db
             .query_one(Statement::from_string(
@@ -960,7 +1593,7 @@ mod tests {
     use super::fixtures::{block, blocks, page};
     use crate::flow::scope_runtime::fixture::register_running_readers;
     use sea_orm::DatabaseConnection;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::time::{Duration, Instant};
 
     /// Verbatim copy of the per-block implementation that `reconcile` replaced. Only the one-time
@@ -1135,7 +1768,7 @@ mod tests {
         let placements = tx
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT physical_cid,logical_id,generation,state,encode(content_hash,'hex') AS hash,(retired_at IS NOT NULL) AS retired FROM flow_block_placements WHERE page_id=$1 ORDER BY physical_cid,alias_order",
+                "SELECT physical_cid,logical_id,generation,state,encode(content_hash,'hex') AS hash,(retired_at IS NOT NULL) AS retired FROM flow_block_placements WHERE page_id=$1 ORDER BY physical_cid COLLATE \"C\",alias_order",
                 vec![page.into()],
             ))
             .await
@@ -1160,7 +1793,7 @@ mod tests {
         for row in tx
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT physical_cid,first_logical_id,ever_retired FROM flow_block_alias_fences WHERE page_id=$1 ORDER BY physical_cid",
+                "SELECT physical_cid,first_logical_id,ever_retired FROM flow_block_alias_fences WHERE page_id=$1 ORDER BY physical_cid COLLATE \"C\"",
                 vec![page.into()],
             ))
             .await
@@ -1243,7 +1876,7 @@ mod tests {
     }
 
     /// Suspended logical identities of one reconciliation, as sorted physical CIDs.
-    fn suspended_cids(suspend: &[Uuid], cid_of: &HashMap<Uuid, String>) -> Vec<String> {
+    pub(super) fn suspended_cids(suspend: &[Uuid], cid_of: &HashMap<Uuid, String>) -> Vec<String> {
         let mut cids = suspend
             .iter()
             .map(|id| cid_of.get(id).cloned().unwrap_or_else(|| "<unknown>".into()))
@@ -1252,15 +1885,36 @@ mod tests {
         cids
     }
 
+    /// Share lines without the revision counter: restoring several members one step at a time
+    /// legitimately bumps `content_revision` once per visible projection change.
+    fn without_content_revision(lines: &[String]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| {
+                if line.starts_with("share ") {
+                    line.split(' ')
+                        .filter(|token| !token.starts_with("content="))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                } else {
+                    line.clone()
+                }
+            })
+            .collect()
+    }
+
     /// Run the new and the reference implementation on two Pages and require identical results.
+    /// A third Page registers its pending blocks one row per transaction and must converge to the
+    /// same state, modulo the revision counter.
     async fn apply_both(
         tx: &DatabaseTransaction,
         (scope_a, page_a): (Uuid, Uuid),
         (scope_b, page_b): (Uuid, Uuid),
+        (scope_c, page_c): (Uuid, Uuid),
         head: i64,
         blocks: &[PreparedBlock],
     ) {
-        let new = reconcile(tx, scope_a, page_a, head, blocks).await.unwrap();
+        let new = complete(tx, scope_a, page_a, head, blocks).await.unwrap().suspended;
         let old = reconcile_reference(tx, scope_b, page_b, head, blocks).await.unwrap();
         let (new_lines, new_cids) = dump(tx, page_a).await;
         let (old_lines, old_cids) = dump(tx, page_b).await;
@@ -1270,9 +1924,30 @@ mod tests {
             suspended_cids(&old, &old_cids),
             "suspended identities diverge at head {head}"
         );
+        let mut stepwise = Vec::new();
+        loop {
+            let outcome = bounded(tx, scope_c, page_c, head, blocks, 1).await.unwrap();
+            stepwise.extend(outcome.suspended);
+            if outcome.pending == 0 {
+                break;
+            }
+        }
+        let (step_lines, step_cids) = dump(tx, page_c).await;
+        assert_eq!(
+            without_content_revision(&step_lines),
+            without_content_revision(&old_lines),
+            "single-row registration steps diverge at head {head}"
+        );
+        stepwise.sort_unstable();
+        stepwise.dedup();
+        assert_eq!(
+            suspended_cids(&stepwise, &step_cids),
+            suspended_cids(&old, &old_cids),
+            "single-row registration steps suspend other identities at head {head}"
+        );
     }
 
-    async fn add_share(
+    pub(super) async fn add_share(
         tx: &DatabaseTransaction,
         (actor, scope, page): (Uuid, Uuid, Uuid),
         blocks: &[PreparedBlock],
@@ -1303,7 +1978,7 @@ mod tests {
         .unwrap();
     }
 
-    async fn scratch_with_leases(label: &str) -> Option<crate::routes::context::tenant_fixture::Scratch> {
+    pub(super) async fn scratch_with_leases(label: &str) -> Option<crate::routes::context::tenant_fixture::Scratch> {
         let scratch = crate::routes::context::tenant_fixture::scratch(label).await?;
         register_running_readers(&scratch.db).await;
         Some(scratch)
@@ -1318,19 +1993,20 @@ mod tests {
         let db = &scratch.db;
         let (actor_a, scope_a, page_a) = page(db).await;
         let (actor_b, scope_b, page_b) = page(db).await;
-        let (a, b) = ((scope_a, page_a), (scope_b, page_b));
+        let (actor_c, scope_c, page_c) = page(db).await;
+        let (a, b, c) = ((scope_a, page_a), (scope_b, page_b), (scope_c, page_c));
         let tx = db.begin().await.unwrap();
         // 1. Three fresh blocks.
         let step1 = vec![block(0, 1), block(1, 1), block(2, 1)];
-        apply_both(&tx, a, b, 0, &step1).await;
+        apply_both(&tx, a, b, c, 0, &step1).await;
         // 2. Change one block, add two, remove one.
         let step2 = vec![block(0, 1), block(1, 2), block(3, 1), block(4, 1)];
-        apply_both(&tx, a, b, 1, &step2).await;
+        apply_both(&tx, a, b, c, 1, &step2).await;
         // 3. Restore the removed CID: deleted alias, generation + 1, suspension.
         let step3 = vec![block(0, 1), block(1, 2), block(2, 1), block(3, 1), block(4, 1)];
-        apply_both(&tx, a, b, 2, &step3).await;
+        apply_both(&tx, a, b, c, 2, &step3).await;
         // 4. A moved placement reconciled again takes a fresh identity.
-        for page in [page_a, page_b] {
+        for page in [page_a, page_b, page_c] {
             tx.execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "UPDATE flow_block_placements SET state='moved',retired_at=now() WHERE page_id=$1 AND physical_cid=$2 AND state='active'",
@@ -1339,75 +2015,265 @@ mod tests {
             .await
             .unwrap();
         }
-        apply_both(&tx, a, b, 3, &step3).await;
+        apply_both(&tx, a, b, c, 3, &step3).await;
         // 5. Shares with members, then a content change and a member removal.
-        for (actor, scope, page) in [(actor_a, scope_a, page_a), (actor_b, scope_b, page_b)] {
+        for (actor, scope, page) in [
+            (actor_a, scope_a, page_a),
+            (actor_b, scope_b, page_b),
+            (actor_c, scope_c, page_c),
+        ] {
             add_share(&tx, (actor, scope, page), &step3, &block(1, 2).physical_cid).await;
             add_share(&tx, (actor, scope, page), &step3, &block(3, 1).physical_cid).await;
         }
-        apply_both(&tx, a, b, 4, &step3).await;
+        apply_both(&tx, a, b, c, 4, &step3).await;
         let step5 = vec![block(0, 1), block(1, 3), block(2, 1), block(3, 1), block(4, 1)];
-        apply_both(&tx, a, b, 5, &step5).await;
+        apply_both(&tx, a, b, c, 5, &step5).await;
         let step6 = vec![block(0, 1), block(1, 3), block(2, 1), block(4, 1)];
-        apply_both(&tx, a, b, 6, &step6).await;
+        apply_both(&tx, a, b, c, 6, &step6).await;
         let (lines, _) = dump(&tx, page_a).await;
         assert!(
             lines.iter().any(|line| line.starts_with("share suspended")),
             "the member removal must suspend its share: {lines:?}"
         );
         // 7. Everything removed, then everything restored.
-        apply_both(&tx, a, b, 7, &[]).await;
-        apply_both(&tx, a, b, 8, &step3).await;
+        apply_both(&tx, a, b, c, 7, &[]).await;
+        apply_both(&tx, a, b, c, 8, &step3).await;
         tx.rollback().await.unwrap();
         scratch.drop_self().await;
     }
 
-    async fn counted(tx: &DatabaseTransaction, scope: Uuid, page: Uuid, head: i64, blocks: &[PreparedBlock]) -> usize {
-        let (result, count) = statement_probe::count(reconcile(tx, scope, page, head, blocks)).await;
-        result.unwrap();
-        count
+    /// `reconcile` with every pending block registered in this call.
+    async fn complete(
+        tx: &DatabaseTransaction,
+        scope: Uuid,
+        page: Uuid,
+        head: i64,
+        blocks: &[PreparedBlock],
+    ) -> Result<ReconcileOutcome, ApiError> {
+        reconcile(tx, scope, page, head, blocks, RegistrationAllowance::Complete).await
+    }
+
+    /// `reconcile` registering at most `max_rows` pending blocks, with no deadline.
+    async fn bounded(
+        tx: &DatabaseTransaction,
+        scope: Uuid,
+        page: Uuid,
+        head: i64,
+        blocks: &[PreparedBlock],
+        max_rows: usize,
+    ) -> Result<ReconcileOutcome, ApiError> {
+        let allowance = RegistrationAllowance::Bounded {
+            deadline: Instant::now() + Duration::from_hours(1),
+            max_rows,
+            min_rows: 0,
+        };
+        reconcile(tx, scope, page, head, blocks, allowance).await
+    }
+
+    async fn counted(
+        tx: &DatabaseTransaction,
+        scope: Uuid,
+        page: Uuid,
+        head: i64,
+        blocks: &[PreparedBlock],
+        allowance: RegistrationAllowance,
+    ) -> (ReconcileOutcome, Vec<statement_probe::Record>) {
+        let (result, records) = statement_probe::count(reconcile(tx, scope, page, head, blocks, allowance)).await;
+        (result.unwrap(), records)
+    }
+
+    async fn pending_of(db: &impl ConnectionTrait, page: Uuid) -> i32 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT pending_registrations FROM flow_block_checkpoints WHERE page_id=$1",
+            vec![page.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "pending_registrations")
+        .unwrap()
+    }
+
+    /// Rounds of the removal scan over `active` placements: it ends at the first round below the chunk size.
+    fn scan_rounds(active: usize) -> usize {
+        active / REGISTRY_ROWS_PER_STATEMENT + 1
     }
 
     #[tokio::test]
-    async fn reconcile_statement_count_depends_only_on_changed_rows() {
+    async fn reconcile_statements_carry_bounded_rows() {
         let Some(scratch) = scratch_with_leases(&format!("block_registry_count_{}", Uuid::new_v4().simple())).await
         else {
             eprintln!("SKIPPED (no database)");
             return;
         };
         let db = &scratch.db;
-        let sizes = [50, BULK_ROWS_MAX, 2 * BULK_ROWS_MAX + 1];
+        let chunk = REGISTRY_ROWS_PER_STATEMENT;
+        let sizes = [50, chunk, 2 * chunk + 1, 10_000];
         let mut first = Vec::new();
         let mut steady = Vec::new();
         for size in sizes {
             let (_, scope, page) = page(db).await;
             let tx = db.begin().await.unwrap();
             let initial = blocks(size, 1);
-            first.push(counted(&tx, scope, page, 0, &initial).await);
+            let (outcome, records) = counted(&tx, scope, page, 0, &initial, RegistrationAllowance::Complete).await;
+            assert_eq!(outcome.pending, 0);
+            assert!(
+                records.iter().all(|record| record.rows <= chunk),
+                "size {size}: a first-registration statement carries more than {chunk} rows"
+            );
+            first.push(records.len());
             let mut changed = initial.clone();
             changed[0] = block(0, 2);
-            steady.push(counted(&tx, scope, page, 1, &changed).await);
+            let (_, records) = counted(&tx, scope, page, 1, &changed, RegistrationAllowance::Complete).await;
+            assert!(
+                records.iter().all(|record| record.rows <= chunk),
+                "size {size}: a steady-state statement carries more than {chunk} rows"
+            );
+            eprintln!(
+                "size {size}: slowest steady statements {:?}",
+                statement_probe::slowest(&records, 3)
+            );
+            steady.push(records.len());
             tx.rollback().await.unwrap();
         }
         eprintln!("reconcile statements: first registration {first:?}, steady state {steady:?}");
-        assert!(
-            steady.windows(2).all(|pair| pair[0] == pair[1]),
-            "steady state must not grow with the page: {steady:?}"
-        );
-        // First registration issues four chunked statements per new-row kind (logical blocks, fences,
-        // activation, placements); each kind adds one statement per further chunk of new blocks.
-        for (size, count) in sizes.iter().zip(&first) {
-            let extra_chunks = size.div_ceil(BULK_ROWS_MAX) - 1;
-            assert_eq!(*count, first[0] + 4 * extra_chunks, "size {size}: {first:?}");
+        // Steady state: the locking read has one statement per chunk of blocks and the removal scan
+        // one round per chunk of active placements (the scan's last round is the short one).
+        for (size, count) in sizes.iter().zip(&steady) {
+            let expected = steady[0] + (size.div_ceil(chunk) - 1) + (scan_rounds(*size) - scan_rounds(sizes[0]));
+            assert_eq!(*count, expected, "size {size}: {steady:?}");
         }
-        assert!(
-            first.iter().chain(&steady).all(|count| *count <= 30),
-            "{first:?} {steady:?}"
-        );
+        // First registration adds, per further chunk of new blocks, the four statements of a chunk
+        // group (logical blocks, fences, activation, placements) and one locking read. The scan also
+        // sees the registered rows and the Page's own initial block, and the share suspension
+        // (every fresh identity plus the retired initial block) is chunked as well.
+        for (size, count) in sizes.iter().zip(&first) {
+            let groups = size.div_ceil(chunk);
+            let expected = first[0]
+                + 5 * (groups - 1)
+                + (scan_rounds(size + 1) - scan_rounds(sizes[0] + 1))
+                + ((size + 1).div_ceil(chunk) - (sizes[0] + 1).div_ceil(chunk));
+            assert_eq!(*count, expected, "size {size}: {first:?}");
+        }
+        // A bounded registration issues exactly one chunk group per `chunk` rows of allowance.
+        let size = 2 * chunk + 1;
+        let mut counts = Vec::new();
+        for max_rows in [0, chunk, 2 * chunk] {
+            let (_, scope, page) = page(db).await;
+            let tx = db.begin().await.unwrap();
+            let allowance = RegistrationAllowance::Bounded {
+                deadline: Instant::now() + Duration::from_hours(1),
+                max_rows,
+                min_rows: 0,
+            };
+            let (outcome, records) = counted(&tx, scope, page, 0, &blocks(size, 1), allowance).await;
+            assert_eq!(outcome.pending, size - max_rows);
+            assert_eq!(pending_of(&tx, page).await, i32::try_from(size - max_rows).unwrap());
+            // Everything else that grows with the registered rows: the scan rounds and the suspension chunks.
+            counts.push((
+                records.len(),
+                scan_rounds(max_rows + 1) + (max_rows + 1).div_ceil(chunk),
+            ));
+            tx.rollback().await.unwrap();
+        }
+        for (groups, window) in counts.windows(2).enumerate() {
+            let (before, after) = (window[0], window[1]);
+            assert_eq!(
+                after.0 - before.0,
+                4 + (after.1 - before.1),
+                "allowance step {groups} must add exactly one chunk group: {counts:?}"
+            );
+        }
         scratch.drop_self().await;
     }
 
-    async fn row_versions(tx: &DatabaseTransaction, page: Uuid) -> Vec<String> {
+    /// Registering through bounded steps ends in the same state as one complete registration.
+    #[tokio::test]
+    async fn bounded_registration_converges_to_complete_registration() {
+        let Some(scratch) = scratch_with_leases(&format!("block_registry_conv_{}", Uuid::new_v4().simple())).await
+        else {
+            eprintln!("SKIPPED (no database)");
+            return;
+        };
+        let db = &scratch.db;
+        let (_, reference_scope, reference_page) = page(db).await;
+        let tx = db.begin().await.unwrap();
+        let reference_blocks = blocks(1_100, 1);
+        complete(&tx, reference_scope, reference_page, 1, &reference_blocks)
+            .await
+            .unwrap();
+        let (expected, _) = dump(&tx, reference_page).await;
+        for (size, max_rows) in [(40_usize, 1_usize), (1_100, 499), (1_100, 1_000)] {
+            let (_, scope, page_id) = page(db).await;
+            let target = blocks(size, 1);
+            let mut pending = size;
+            let mut steps = 0;
+            while pending > 0 {
+                let outcome = bounded(&tx, scope, page_id, 1, &target, max_rows).await.unwrap();
+                assert_eq!(
+                    outcome.pending,
+                    pending - max_rows.min(pending),
+                    "size {size}, allowance {max_rows}: each step registers exactly min(allowance, pending)"
+                );
+                assert_eq!(pending_of(&tx, page_id).await, i32::try_from(outcome.pending).unwrap());
+                pending = outcome.pending;
+                steps += 1;
+            }
+            assert_eq!(steps, size.div_ceil(max_rows));
+            if size == 1_100 {
+                let (lines, _) = dump(&tx, page_id).await;
+                let diff = lines.iter().zip(&expected).find(|(left, right)| left != right);
+                assert_eq!(
+                    (lines.len(), diff),
+                    (expected.len(), None),
+                    "allowance {max_rows} must converge to the reference"
+                );
+            }
+        }
+        // A deadline already in the past registers nothing, succeeds, and leaves everything pending.
+        let (_, scope, page_id) = page(db).await;
+        let target = blocks(600, 1);
+        let past = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+        let outcome = reconcile(
+            &tx,
+            scope,
+            page_id,
+            1,
+            &target,
+            RegistrationAllowance::Bounded {
+                deadline: past,
+                max_rows: usize::MAX,
+                min_rows: 0,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.pending, 600);
+        // ... unless a minimum is demanded, which guarantees progress for completion loops.
+        let outcome = reconcile(
+            &tx,
+            scope,
+            page_id,
+            1,
+            &target,
+            RegistrationAllowance::Bounded {
+                deadline: past,
+                max_rows: usize::MAX,
+                min_rows: 1,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome.pending, 100,
+            "the first group is forced: one chunk of {REGISTRY_ROWS_PER_STATEMENT}"
+        );
+        tx.rollback().await.unwrap();
+        scratch.drop_self().await;
+    }
+
+    pub(super) async fn row_versions(tx: &DatabaseTransaction, page: Uuid) -> Vec<String> {
         tx.query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT 'p:'||id::text||':'||xmin::text AS v FROM flow_block_placements WHERE page_id=$1 UNION ALL SELECT 'f:'||physical_cid||':'||xmin::text FROM flow_block_alias_fences WHERE page_id=$1 ORDER BY 1",
@@ -1431,14 +2297,14 @@ mod tests {
         let (_, scope, page) = page(db).await;
         let initial = blocks(500, 1);
         let tx = db.begin().await.unwrap();
-        reconcile(&tx, scope, page, 0, &initial).await.unwrap();
+        complete(&tx, scope, page, 0, &initial).await.unwrap();
         tx.commit().await.unwrap();
         // A separate transaction gets a new xid, so any rewritten row would show a new xmin.
         let tx = db.begin().await.unwrap();
         let before = row_versions(&tx, page).await;
         // 500 placements and 500 fences, plus the Page's own initial block (removed at the first head).
         assert_eq!(before.len(), 1_002);
-        reconcile(&tx, scope, page, 1, &initial).await.unwrap();
+        complete(&tx, scope, page, 1, &initial).await.unwrap();
         assert_eq!(
             before,
             row_versions(&tx, page).await,
@@ -1446,7 +2312,7 @@ mod tests {
         );
         let mut changed = initial.clone();
         changed[7] = block(7, 2);
-        reconcile(&tx, scope, page, 2, &changed).await.unwrap();
+        complete(&tx, scope, page, 2, &changed).await.unwrap();
         let after = row_versions(&tx, page).await;
         let rewritten = before.iter().zip(&after).filter(|(old, new)| old != new).count();
         assert_eq!(rewritten, 1, "a single changed block must rewrite exactly one row");
@@ -1455,7 +2321,7 @@ mod tests {
     }
 
     /// Mirrors the production per-statement caps (100 ms statement, 80 ms lock) of the locked phase.
-    async fn begin_capped(db: &DatabaseConnection) -> DatabaseTransaction {
+    pub(super) async fn begin_capped(db: &DatabaseConnection) -> DatabaseTransaction {
         let tx = db.begin().await.unwrap();
         crate::flow::collab::write::set_locked_phase_statement_budgets(&tx, 1)
             .await
@@ -1464,10 +2330,37 @@ mod tests {
     }
 
     /// The locked-phase staging budget of `collab::write` (4 x the document lock hold limit).
-    const STAGING_BUDGET: Duration = Duration::from_millis(400);
+    const STAGING_BUDGET: Duration = crate::flow::collab::write::LOCKED_PHASE_STAGING_BUDGET;
+
+    fn quiet_qualified() -> bool {
+        std::env::var("OPENPR_FLOW_QUIET_PG_QUALIFIED").is_ok_and(|value| value == "1")
+    }
+
+    /// One capped transaction of a completion-style registration: at least one chunk group, the
+    /// production row bound, the production deadline. Returns the outcome, its wall time and statements.
+    async fn capped_step(
+        db: &DatabaseConnection,
+        scope: Uuid,
+        page: Uuid,
+        head: i64,
+        blocks: &[PreparedBlock],
+    ) -> (ReconcileOutcome, Duration, Vec<statement_probe::Record>) {
+        let tx = begin_capped(db).await;
+        let started = Instant::now();
+        let allowance = RegistrationAllowance::bounded(
+            started,
+            STAGING_BUDGET,
+            REGISTRATION_ROWS_PER_TRANSACTION_MAX,
+            REGISTRY_ROWS_PER_STATEMENT,
+        );
+        let (outcome, records) = counted(&tx, scope, page, head, blocks, allowance).await;
+        let elapsed = started.elapsed();
+        tx.commit().await.unwrap();
+        (outcome, elapsed, records)
+    }
 
     #[tokio::test]
-    async fn reconcile_10k_blocks_within_statement_and_staging_budgets() {
+    async fn reconcile_10k_blocks_under_production_statement_caps() {
         let Some(scratch) = scratch_with_leases(&format!("block_registry_10k_{}", Uuid::new_v4().simple())).await
         else {
             eprintln!("SKIPPED (no database)");
@@ -1476,51 +2369,83 @@ mod tests {
         let db = &scratch.db;
         let (_, scope, page_id) = page(db).await;
         let initial = blocks(10_000, 1);
-        let tx = begin_capped(db).await;
-        let started = Instant::now();
-        reconcile(&tx, scope, page_id, 0, &initial).await.unwrap();
-        let first = started.elapsed();
-        tx.commit().await.unwrap();
+        let mut steps = Vec::new();
+        let mut interleaved_write = false;
+        loop {
+            let (outcome, elapsed, records) = capped_step(db, scope, page_id, 0, &initial).await;
+            eprintln!(
+                "10k registration step {}: {elapsed:?}, pending {}, slowest statements {:?}",
+                steps.len() + 1,
+                outcome.pending,
+                statement_probe::slowest(&records, 5)
+            );
+            assert!(records.iter().all(|record| record.rows <= REGISTRY_ROWS_PER_STATEMENT));
+            steps.push(elapsed);
+            if outcome.pending == 0 {
+                break;
+            }
+            assert!(steps.len() < 64, "registration must converge");
+            if !interleaved_write {
+                // The page stays writable while it is partly registered.
+                let tx = begin_capped(db).await;
+                let mut changed = initial.clone();
+                changed[5_000] = block(5_000, 2);
+                bounded(&tx, scope, page_id, 0, &changed, 0).await.unwrap();
+                tx.commit().await.unwrap();
+                interleaved_write = true;
+            }
+        }
+        assert!(
+            interleaved_write,
+            "the first registration step must leave blocks pending"
+        );
         let mut changed = initial.clone();
-        changed[5_000] = block(5_000, 2);
+        changed[5_000] = block(5_000, 3);
+        let tx = db.begin().await.unwrap();
+        let before = row_versions(&tx, page_id).await;
+        tx.rollback().await.unwrap();
         let tx = begin_capped(db).await;
         let started = Instant::now();
-        reconcile(&tx, scope, page_id, 1, &changed).await.unwrap();
+        let (outcome, records) = counted(&tx, scope, page_id, 1, &changed, RegistrationAllowance::Complete).await;
         let steady = started.elapsed();
-        tx.commit().await.unwrap();
-        // Regression evidence: the removed per-block implementation on a 1,550-block page.
-        let (_, reference_scope, reference_page) = page(db).await;
-        let reference_blocks = blocks(1_550, 1);
-        let tx = db.begin().await.unwrap();
-        reconcile_reference(&tx, reference_scope, reference_page, 0, &reference_blocks)
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-        let mut reference_changed = reference_blocks.clone();
-        reference_changed[10] = block(10, 2);
-        let tx = db.begin().await.unwrap();
-        let started = Instant::now();
-        reconcile_reference(&tx, reference_scope, reference_page, 1, &reference_changed)
-            .await
-            .unwrap();
-        let reference = started.elapsed();
+        let after = row_versions(&tx, page_id).await;
         tx.commit().await.unwrap();
         eprintln!(
-            "reconcile timings: bulk first registration (10000) {first:?}, bulk steady state (10000) {steady:?}, reference steady state (1550) {reference:?}"
+            "10k steady write: {steady:?}, slowest statements {:?}",
+            statement_probe::slowest(&records, 5)
         );
-        assert!(first < STAGING_BUDGET, "first registration took {first:?}");
-        assert!(steady < Duration::from_millis(300), "steady state took {steady:?}");
-        if std::env::var("OPENPR_FLOW_QUIET_PG_QUALIFIED").is_ok_and(|value| value == "1") {
+        assert_eq!(outcome.pending, 0);
+        assert!(records.iter().all(|record| record.rows <= REGISTRY_ROWS_PER_STATEMENT));
+        assert_eq!(before.len(), after.len());
+        let rewritten = before.iter().zip(&after).filter(|(old, new)| old != new).count();
+        assert_eq!(rewritten, 1, "a single changed block must rewrite exactly one row");
+        if quiet_qualified() {
+            for step in &steps {
+                assert!(*step < STAGING_BUDGET, "registration step took {step:?}");
+            }
             assert!(steady < Duration::from_millis(100), "steady state took {steady:?}");
         }
         scratch.drop_self().await;
     }
 
-    /// A large Page written before the registry was active is sealed by its first write afterwards:
-    /// it must fit the locked-phase budgets and register exactly what the old loop registered,
-    /// including the one-time adoption of legacy comment identifiers.
+    async fn anchor_count(db: &DatabaseConnection, page: Uuid) -> i64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS n FROM flow_block_comment_anchors WHERE source_page_id=$1",
+            vec![page.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "n")
+        .unwrap()
+    }
+
+    /// A large Page written before the registry was active stays writable while its first
+    /// registration takes several bounded writes; the legacy seal runs once, in the write that
+    /// completes the registration, and the final state equals the old per-block loop's.
     #[tokio::test]
-    async fn large_legacy_page_first_write_registers_like_the_old_loop() {
+    async fn large_legacy_page_stays_writable_and_seals_on_completion() {
         let Some(scratch) = scratch_with_leases(&format!("block_registry_upgrade_{}", Uuid::new_v4().simple())).await
         else {
             eprintln!("SKIPPED (no database)");
@@ -1549,14 +2474,52 @@ mod tests {
         db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5 WHERE singleton")
             .await
             .unwrap();
-        let tx = begin_capped(db).await;
-        let first_write = tokio::time::timeout(STAGING_BUDGET, reconcile_accepted(&tx, page_a, 0, &legacy)).await;
-        first_write
-            .expect("first write after the floor is raised must fit the staging budget")
-            .unwrap();
-        tx.commit().await.unwrap();
+        let sealed = |db: &DatabaseConnection| {
+            let db = db.clone();
+            async move {
+                db.query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1",
+                    vec![page_a.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get::<bool>("", "legacy_anchors_sealed")
+                .unwrap()
+            }
+        };
+        let mut timings = Vec::new();
+        for expected in [3_000, 1_000, 0] {
+            let tx = begin_capped(db).await;
+            let started = Instant::now();
+            let (statements, outcome) = {
+                let allowance = RegistrationAllowance::Bounded {
+                    deadline: started + STAGING_BUDGET,
+                    max_rows: 2_000,
+                    min_rows: 0,
+                };
+                let (result, records) =
+                    statement_probe::count(reconcile_accepted(&tx, page_a, 0, &legacy, allowance)).await;
+                result.unwrap();
+                (records, pending_of(&tx, page_a).await)
+            };
+            timings.push(started.elapsed());
+            tx.commit().await.unwrap();
+            eprintln!(
+                "legacy write: {:?}, pending {outcome}, slowest statements {:?}",
+                timings.last().unwrap(),
+                statement_probe::slowest(&statements, 5)
+            );
+            assert_eq!(outcome, expected);
+            if expected > 0 {
+                assert!(!sealed(db).await, "no seal before the registration is complete");
+                assert_eq!(anchor_count(db, page_a).await, 0, "no anchor rows before completion");
+            }
+        }
+        assert!(sealed(db).await, "the completing write seals the legacy anchors");
         let tx = db.begin().await.unwrap();
-        reconcile_reference(&tx, scope_b, page_b, 0, &legacy).await.unwrap();
+        complete(&tx, scope_b, page_b, 0, &legacy).await.unwrap();
         let (new_lines, _) = dump(&tx, page_a).await;
         let (old_lines, _) = dump(&tx, page_b).await;
         assert!(
@@ -1574,6 +2537,84 @@ mod tests {
         );
         assert_eq!(new_lines, old_lines);
         tx.rollback().await.unwrap();
+        if quiet_qualified() {
+            for timing in &timings {
+                assert!(*timing < STAGING_BUDGET, "capped step took {timing:?}");
+            }
+        }
+        scratch.drop_self().await;
+    }
+
+    /// A block that is still pending has no identity yet: binding a comment to it is retryable,
+    /// and an unknown block stays a plain refusal once the registration is complete.
+    #[tokio::test]
+    async fn bind_new_on_pending_block_is_retryable() {
+        let Some(scratch) = scratch_with_leases(&format!("block_registry_bind_{}", Uuid::new_v4().simple())).await
+        else {
+            eprintln!("SKIPPED (no database)");
+            return;
+        };
+        let db = &scratch.db;
+        let (actor, scope, page_id) = page(db).await;
+        let target = blocks(700, 1);
+        let tx = db.begin().await.unwrap();
+        let outcome = bounded(&tx, scope, page_id, 0, &target, REGISTRY_ROWS_PER_STATEMENT)
+            .await
+            .unwrap();
+        assert_eq!(outcome.pending, 200);
+        tx.commit().await.unwrap();
+        let comment = |block: &str| {
+            let id = Uuid::new_v4();
+            let block = block.to_string();
+            async move {
+                exec(db,"INSERT INTO flow_comments(id,scope_id,object_id,block_id,author_id,body) VALUES($1,$2,$3,$4,$5,'Anchor note')",vec![id.into(),scope.into(),page_id.into(),block.into(),actor.into()]).await;
+                id
+            }
+        };
+        let contention = crate::error::ApiErrorKind::ServerDraining(crate::error::ServerDrainingReason::Contention);
+        let pending_block = comment("cid:650:Map").await;
+        assert_eq!(
+            super::super::block_anchors::bind_new(db, pending_block, page_id, Some("cid:650:Map"), None)
+                .await
+                .unwrap_err()
+                .kind(),
+            contention
+        );
+        let registered_block = comment("cid:10:Map").await;
+        super::super::block_anchors::bind_new(db, registered_block, page_id, Some("cid:10:Map"), None)
+            .await
+            .unwrap();
+        let tx = db.begin().await.unwrap();
+        assert_eq!(
+            bounded(&tx, scope, page_id, 0, &target, REGISTRY_ROWS_PER_STATEMENT)
+                .await
+                .unwrap()
+                .pending,
+            0
+        );
+        tx.commit().await.unwrap();
+        // The refused comment's transaction rolls back in production; its retry is a new comment.
+        let pending_block = comment("cid:650:Map").await;
+        super::super::block_anchors::bind_new(db, pending_block, page_id, Some("cid:650:Map"), None)
+            .await
+            .unwrap();
+        let state = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT state FROM flow_block_comment_anchors WHERE comment_id=$1",
+                vec![pending_block.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get::<String>("", "state")
+            .unwrap();
+        assert_eq!(state, "known");
+        let unknown = comment("cid:99999:Map").await;
+        let refusal = super::super::block_anchors::bind_new(db, unknown, page_id, Some("cid:99999:Map"), None)
+            .await
+            .unwrap_err();
+        assert_eq!(refusal.kind(), crate::error::ApiErrorKind::InvalidUpdate);
         scratch.drop_self().await;
     }
 }

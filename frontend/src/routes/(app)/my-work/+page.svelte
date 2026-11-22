@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -45,7 +46,13 @@
 	}
 
 	function goToIssue(workspaceId: string, projectId: string, issueId: string) {
-		goto(`/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}`);
+		goto(
+			resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]', {
+				workspaceId,
+				projectId,
+				issueId
+			})
+		);
 	}
 
 	function formatRelativeTime(dateText: string): string {
@@ -72,24 +79,14 @@
 		return map[priority] || priority;
 	}
 
-	function getStatusClass(status: string): string {
-		const map: Record<string, string> = {
-			backlog: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
-			todo: 'bg-blue-500/20 dark:bg-blue-500/30 text-blue-700 dark:text-blue-300',
-			in_progress: 'bg-amber-500/20 dark:bg-amber-500/30 text-amber-700 dark:text-amber-300',
-			done: 'bg-emerald-500/20 dark:bg-emerald-500/30 text-emerald-700 dark:text-emerald-300'
-		};
-		return map[status] || 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300';
-	}
-
 	function getPriorityClass(priority: string): string {
 		const map: Record<string, string> = {
-			low: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
-			medium: 'bg-blue-500/20 dark:bg-blue-500/30 text-blue-700 dark:text-blue-300',
-			high: 'bg-orange-500/20 dark:bg-orange-500/30 text-orange-700 dark:text-orange-300',
-			urgent: 'bg-red-500/20 dark:bg-red-500/30 text-red-700 dark:text-red-300'
+			low: 'bg-surface text-fg',
+			medium: 'bg-surface text-fg',
+			high: 'bg-warning-soft text-warning',
+			urgent: 'bg-danger-soft text-danger'
 		};
-		return map[priority] || 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300';
+		return map[priority] || 'bg-surface text-fg';
 	}
 
 	function getStatusIcon(status: string): string {
@@ -110,16 +107,16 @@
 <div class="mx-auto max-w-7xl">
 	<!-- Header -->
 	<div class="mb-8">
-		<h1 class="mb-2 text-3xl font-bold text-slate-900 dark:text-slate-100">
+		<h1 class="mb-2 text-3xl font-semibold text-fg">
 			{$t('workspace.myWork')}
 		</h1>
-		<p class="text-slate-600 dark:text-slate-400">{$t('workspace.myWorkDesc')}</p>
+		<p class="text-fg-muted">{$t('workspace.myWorkDesc')}</p>
 	</div>
 
 	<!-- Loading State -->
 	{#if loading}
 		<div class="flex items-center justify-center py-12">
-			<div class="text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+			<div class="text-fg-muted">{$t('common.loading')}</div>
 		</div>
 
 		<!-- Empty State -->
@@ -133,15 +130,13 @@
 		<!-- Issues by Status -->
 	{:else}
 		<div class="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-4">
-			{#each ['backlog', 'todo', 'in_progress', 'done'] as status}
+			{#each ['backlog', 'todo', 'in_progress', 'done'] as status, index (index)}
 				{@const issues = groupedIssues[status]}
 				<Card>
 					<div class="mb-4 flex items-center justify-between">
-						<h3
-							class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100"
-						>
+						<h3 class="flex items-center gap-2 text-lg font-semibold text-fg">
 							<svg
-								class="h-5 w-5 text-slate-500 dark:text-slate-400"
+								class="h-5 w-5 text-fg-muted"
 								fill="none"
 								stroke="currentColor"
 								viewBox="0 0 24 24"
@@ -155,30 +150,28 @@
 							</svg>
 							{formatStatus(status)}
 						</h3>
-						<span
-							class="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-						>
+						<span class="rounded-full bg-surface px-2 py-1 text-xs font-medium text-fg-muted">
 							{issues.length}
 						</span>
 					</div>
 
 					{#if issues.length === 0}
-						<div class="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+						<div class="py-8 text-center text-sm text-fg-muted">
 							{$t('common.noItems')}
 						</div>
 					{:else}
 						<div class="space-y-3">
 							{#each issues as issue (issue.id)}
 								<button
-									class="w-full rounded-md border border-slate-200 bg-white p-3 text-left transition-all hover:border-blue-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-500"
+									class="w-full rounded-card border border-line bg-raised p-3 text-left transition-all hover:border-line-strong"
 									onclick={() => goToIssue(issue.workspace_id, issue.project_id, issue.id)}
 								>
 									<div class="mb-2 flex items-start justify-between gap-2">
-										<p class="line-clamp-2 text-sm font-medium text-slate-900 dark:text-slate-100">
+										<p class="line-clamp-2 text-sm font-medium text-fg">
 											{issue.title}
 										</p>
 									</div>
-									<div class="mb-2 text-xs text-slate-500 dark:text-slate-400">
+									<div class="mb-2 text-xs text-fg-muted">
 										{issue.project_name}
 									</div>
 									<div class="flex flex-wrap items-center gap-2">
@@ -187,7 +180,7 @@
 										>
 											{formatPriority(issue.priority)}
 										</span>
-										<span class="text-xs text-slate-500 dark:text-slate-400">
+										<span class="text-xs text-fg-muted">
 											{formatRelativeTime(issue.updated_at)}
 										</span>
 									</div>
@@ -203,17 +196,17 @@
 		<div class="mt-8 grid grid-cols-2 gap-6 md:grid-cols-4">
 			<Card>
 				<div class="text-center">
-					<div class="text-3xl font-bold text-slate-900 dark:text-slate-100">{myIssues.length}</div>
-					<div class="mt-1 text-sm text-slate-600 dark:text-slate-400">{$t('common.total')}</div>
+					<div class="text-3xl font-semibold text-fg">{myIssues.length}</div>
+					<div class="mt-1 text-sm text-fg-muted">{$t('common.total')}</div>
 				</div>
 			</Card>
-			{#each ['backlog', 'todo', 'in_progress', 'done'] as status}
+			{#each ['backlog', 'todo', 'in_progress', 'done'] as status, index (index)}
 				<Card>
 					<div class="text-center">
-						<div class="text-3xl font-bold text-slate-900 dark:text-slate-100">
+						<div class="text-3xl font-semibold text-fg">
 							{groupedIssues[status].length}
 						</div>
-						<div class="mt-1 text-sm text-slate-600 dark:text-slate-400">
+						<div class="mt-1 text-sm text-fg-muted">
 							{formatStatus(status)}
 						</div>
 					</div>

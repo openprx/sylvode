@@ -21,7 +21,7 @@ services:
     image: postgres:18
     # The postgres image initialises itself from these; they are read by the image's entrypoint,
     # not by Sylvode. POSTGRES_PASSWORD must match the password inside database.url in
-    # config/sylvode.compose.toml (or the legacy config/openpr.compose.toml).
+    # config/sylvode.compose.toml.
     environment:
       POSTGRES_DB: openpr
       POSTGRES_USER: openpr
@@ -51,7 +51,6 @@ services:
     command: ["/app/api", "--config", "/app/config/sylvode.toml"]
     environment:
       SV_FORM_PLUGIN_PACKAGES_ENABLED: "${SV_FORM_PLUGIN_PACKAGES_ENABLED:-0}"
-      SV_FORM_PLUGIN_LAYOUTS_ENABLED: "${SV_FORM_PLUGIN_LAYOUTS_ENABLED:-0}"
     ports:
       - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_API_PORT:-8081}:8080"
     volumes:
@@ -160,28 +159,26 @@ services:
     networks:
       - openpr-network
 
-  # The optional Sylvode Webhook receiver, built from this repository (apps/webhook) with
-  # `docker compose --profile connectors build webhook`. The image carries /app/sylvode-webhook and
-  # the legacy /app/openpr-webhook. A local build is tagged with the image name below, the name
-  # releases publish under: compose builds it when no image of that name is present, and
-  # `docker compose pull webhook` fetches a published one instead. To run a specific published
-  # release, pin it, for example SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/sylvode-webhook:<sylvode version>
-  # (the image tag is the Sylvode release version). A pre-merge standalone image
-  # (ghcr.io/openprx/openpr-webhook, last tag 0.3.3) also needs the command /app/openpr-webhook. Pin a version tag rather than
-  # :latest in production. SYLVODE_WEBHOOK_IMAGE / SYLVODE_WEBHOOK_CONFIG override the defaults;
-  # scripts/start.sh maps the legacy OPENPR_WEBHOOK_IMAGE / OPENPR_WEBHOOK_CONFIG onto them.
-  webhook:
+  # The optional Sylvode runner, built from this repository (apps/runner) with
+  # `docker compose --profile connectors build runner`. A local build is tagged with the image name
+  # below, the name releases publish under: compose builds it when no image of that name is
+  # present, and `docker compose pull runner` fetches a published one instead. To run a specific
+  # published release, pin it, for example SYLVODE_RUNNER_IMAGE=ghcr.io/openprx/sylvode-runner:<sylvode version>
+  # (the image tag is the Sylvode release version). Pin a version tag rather than :latest in
+  # production. SYLVODE_RUNNER_IMAGE / SYLVODE_RUNNER_CONFIG / SYLVODE_RUNNER_PORT override the
+  # defaults.
+  runner:
     profiles:
       - connectors
     build:
       context: .
-      dockerfile: apps/webhook/Dockerfile
-    image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/sylvode-webhook:latest}
+      dockerfile: apps/runner/Dockerfile
+    image: ${SYLVODE_RUNNER_IMAGE:-ghcr.io/openprx/sylvode-runner:latest}
     volumes:
-      - ${SYLVODE_WEBHOOK_CONFIG:-./config/sylvode-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro
-    command: ["/app/sylvode-webhook", "/etc/sylvode-webhook/config.toml"]
+      - ${SYLVODE_RUNNER_CONFIG:-./config/sylvode-runner.example.toml}:/etc/sylvode-runner/config.toml:ro
+    command: ["/app/sylvode-runner", "/etc/sylvode-runner/config.toml"]
     ports:
-      - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_WEBHOOK_PORT:-9090}:9090"
+      - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_RUNNER_PORT:-9090}:9090"
     networks:
       - openpr-network
     restart: unless-stopped

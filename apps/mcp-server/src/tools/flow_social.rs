@@ -63,6 +63,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
 
 pub fn list_comments_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.comments.list".to_string(),
         description: "List comment threads on a Flow object. Requires view access. Deleted comments are omitted."
             .to_string(),
@@ -85,6 +86,7 @@ pub async fn list_comments(client: &OpenPrClient, args: Value) -> CallToolResult
 
 pub fn create_comment_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.comments.create".to_string(),
         description: "Create a comment or a one-level reply on a Flow object. Requires comment access. \
 mentions are user UUIDs; only workspace members are notified."
@@ -133,6 +135,7 @@ pub async fn create_comment(client: &OpenPrClient, args: Value) -> CallToolResul
 
 pub fn update_comment_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.comments.update".to_string(),
         description: "Edit the caller's own Flow comment. Requires comment access.".to_string(),
         input_schema: object_schema(
@@ -177,6 +180,7 @@ pub async fn update_comment(client: &OpenPrClient, args: Value) -> CallToolResul
 
 pub fn delete_comment_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.comments.delete".to_string(),
         description: "Soft-delete a Flow comment. The author needs comment access; full access can delete any."
             .to_string(),
@@ -207,6 +211,7 @@ pub async fn delete_comment(client: &OpenPrClient, args: Value) -> CallToolResul
 
 pub fn resolve_comment_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.comments.resolve".to_string(),
         description: "Resolve or reopen a top-level Flow comment. Requires edit access, or comment access when you are the author."
             .to_string(),
@@ -245,6 +250,7 @@ pub async fn resolve_comment(client: &OpenPrClient, args: Value) -> CallToolResu
 
 pub fn list_share_links_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.shares.list".to_string(),
         description: "List public read-only links for a Flow page. Requires full access. Raw tokens are not returned."
             .to_string(),
@@ -262,6 +268,7 @@ pub async fn list_share_links(client: &OpenPrClient, args: Value) -> CallToolRes
 
 pub fn create_share_link_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.shares.create".to_string(),
         description: "Create a public read-only link for one Flow page. Requires full access. The raw token is returned once and does not include child objects."
             .to_string(),
@@ -297,6 +304,7 @@ pub async fn create_share_link(client: &OpenPrClient, args: Value) -> CallToolRe
 
 pub fn revoke_share_link_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.shares.revoke".to_string(),
         description: "Revoke a public Flow page link. Requires full access. Later reads answer not_found.".to_string(),
         input_schema: object_schema(&[("link_id", json!({ "type": "string" }))], &["link_id"]),
@@ -319,6 +327,7 @@ pub async fn revoke_share_link(client: &OpenPrClient, args: Value) -> CallToolRe
 
 pub fn set_appearance_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.appearance.set".to_string(),
         description: "Set a Flow page icon and cover. Icon is {kind:emoji,emoji} or {kind:image,asset_id}. Cover is {kind:gallery,gallery_id,position} or {kind:upload,asset_id,position}. Position is 0 to 1. Requires edit access. Omit a field to clear it."
             .to_string(),
@@ -350,6 +359,7 @@ pub async fn set_appearance(client: &OpenPrClient, args: Value) -> CallToolResul
 
 pub fn upload_appearance_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.appearance.upload".to_string(),
         description: "Upload a png, jpeg, webp, or gif (max 2 MiB, standard base64) for a Flow page icon or cover. Requires edit access. The returned asset_id is then passed to flow.appearance.set."
             .to_string(),
@@ -380,6 +390,7 @@ pub async fn upload_appearance(client: &OpenPrClient, args: Value) -> CallToolRe
 
 pub fn restore_version_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.restore".to_string(),
         description: "Restore a Flow page to an accepted history sequence as a new forward change. Concurrent edits are kept. Requires edit access."
             .to_string(),
@@ -418,12 +429,14 @@ pub async fn restore_version(client: &OpenPrClient, args: Value) -> CallToolResu
 
 pub fn list_trash_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.trash.list".to_string(),
-        description: "List archived Flow objects in a workspace that the caller can view.".to_string(),
+        description: "List archived Flow objects in a workspace that the caller can view. With project_id the listing is limited to the archived objects of that project; a runner bot must name one of its connected projects.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "workspace_id": { "type": "string" },
+                "project_id": { "type": "string", "description": "Project UUID; limits the listing to that project's archived objects" },
                 "cursor": { "type": "string" },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
             },
@@ -436,6 +449,7 @@ pub fn list_trash_tool() -> ToolDefinition {
 #[derive(Debug, Deserialize)]
 struct TrashInput {
     workspace_id: String,
+    project_id: Option<String>,
     cursor: Option<String>,
     limit: Option<u64>,
 }
@@ -447,13 +461,19 @@ pub async fn list_trash(client: &OpenPrClient, args: Value) -> CallToolResult {
     };
     respond_data(
         client
-            .list_flow_trash(&input.workspace_id, input.cursor.as_deref(), input.limit)
+            .list_flow_trash(
+                &input.workspace_id,
+                input.project_id.as_deref(),
+                input.cursor.as_deref(),
+                input.limit,
+            )
             .await,
     )
 }
 
 pub fn purge_object_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.purge".to_string(),
         description: "Permanently delete an archived Flow object and its archived descendants. Requires full access on every object in the subtree. Active subpages must be archived first."
             .to_string(),
@@ -471,6 +491,7 @@ pub async fn purge_object(client: &OpenPrClient, args: Value) -> CallToolResult 
 
 pub fn list_mention_candidates_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "flow.mentions.list".to_string(),
         description: "List people who can be @mentioned on a Flow object: workspace members and guests who hold a grant. Requires comment access. Mention notifications are still sent only to workspace members."
             .to_string(),

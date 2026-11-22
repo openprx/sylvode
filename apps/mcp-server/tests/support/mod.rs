@@ -46,6 +46,11 @@ pub struct McpSettings<'a> {
     pub bind_addr: Option<&'a str>,
 }
 
+/// `[mcp]` lines that list the whole registry, for the tests that call registry tools by name.
+/// The default of a deployment is `search`, where those names are refused.
+#[allow(dead_code)]
+pub const FULL_TOOLS: &str = "tool_mode = \"full\"\n";
+
 /// A configuration file in a private temporary directory, deleted when the test drops it.
 ///
 /// It has to outlive the child process that reads it, so tests keep it next to the child.
@@ -67,6 +72,7 @@ impl Drop for ConfigFile {
 }
 
 /// Writes a complete configuration file carrying `settings`.
+#[allow(dead_code)]
 pub fn write_config(settings: &McpSettings<'_>) -> Result<ConfigFile, Box<dyn Error>> {
     write_config_with_extra_mcp_keys(settings, "")
 }
@@ -104,7 +110,7 @@ pub fn write_config_with_extra_mcp_keys(
     }
     source.push_str(extra_mcp_keys);
 
-    let path = dir.join("openpr.toml");
+    let path = dir.join("sylvode.toml");
     fs::write(&path, source)?;
     Ok(ConfigFile { dir, path })
 }

@@ -387,7 +387,7 @@ async fn legacy_restricted_parent_creation_is_fenced_and_leaves_no_residue() {
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     ))
     .await
@@ -881,7 +881,7 @@ async fn legacy_artifacts_capture_policy_and_only_old_page_text_has_a_safe_excep
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     ))
     .await
@@ -1649,7 +1649,7 @@ async fn legacy_v2_search_distinguishes_project_unprojected_and_all_visible() {
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     ))
     .await
@@ -1983,7 +1983,7 @@ async fn destination_admin_removes_only_placement_and_can_replay_without_source_
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     ))
     .await
@@ -2040,7 +2040,7 @@ async fn personal_forms_reference_uses_real_target_workspace_and_scope_receipts(
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled,bridge_enabled) VALUES($1,true,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled,bridge_enabled) VALUES($1,true,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled, bridge_enabled = EXCLUDED.bridge_enabled",
         vec![workspace.into()],
     ))
     .await
@@ -2459,13 +2459,19 @@ async fn new_legacy_page_is_editor_ready_while_existing_conversion_cutover_is_of
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     ))
     .await
     .unwrap();
     scope::legacy_scope(db, workspace).await.unwrap();
-    assert!(!scope::capabilities(db).await.unwrap().scope_native_legacy);
+    assert!(
+        scope::capabilities(db).await.unwrap().scope_native_legacy,
+        "legacy editor initialization is on by default"
+    );
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET scope_native_legacy=false WHERE singleton")
+        .await
+        .unwrap();
     let state = test_state(db.clone());
     let created = api::flow::command::create_object(
         &state,
@@ -2505,10 +2511,134 @@ async fn new_legacy_page_is_editor_ready_while_existing_conversion_cutover_is_of
     scratch.close().await;
 }
 
+/// The default state: `scope_native_legacy` is on, so a Page an agent created in a workspace with an
+/// older editor model can be upgraded to the rich editor, and the switch still closes the path.
 #[tokio::test]
+async fn workspace_page_upgrades_to_the_rich_editor_with_scope_native_legacy_on() {
+    use collab_core::CollabEngine;
+    use serde_json::json;
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let owner = user(db).await;
+    let workspace = Uuid::new_v4();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspaces(id,slug,name,created_by) VALUES($1,$2,'Legacy upgrade',$3)",
+        vec![workspace.into(), workspace.to_string().into(), owner.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+        vec![workspace.into(), owner.into()],
+    ))
+    .await
+    .unwrap();
+    assert!(
+        workspace_flow_enabled(db, workspace).await,
+        "the workspace trigger left Flow on"
+    );
+    scope::legacy_scope(db, workspace).await.unwrap();
+    assert!(scope::capabilities(db).await.unwrap().scope_native_legacy);
+    let state = test_state(db.clone());
+    let created = api::flow::command::create_object(
+        &state,
+        api::flow::command::CreateObjectInput {
+            workspace_id: workspace,
+            actor_id: owner,
+            actor_is_bot: false,
+            object_type: "page".into(),
+            project_id: None,
+            parent_object_id: None,
+            title: "Agent page".into(),
+            idempotency_key: "agent-page".into(),
+            message: None,
+            origin: api::flow::event_origin::CommandOrigin::first_request_from(
+                api::flow::event_origin::EventSurface::Rest,
+            ),
+        },
+    )
+    .await
+    .unwrap();
+    let object = created.object.id;
+    let mut engine = collab_core::LoroCollabEngine::new_empty(21);
+    engine.set_title("Agent page").unwrap();
+    engine
+        .apply_operation(&collab_core::Operation::CreateNode {
+            id: "old-block".into(),
+            parent: None,
+            index: 0,
+            kind: collab_core::NodeKind::Block,
+        })
+        .unwrap();
+    let bytes = engine.export_snapshot().unwrap();
+    let frontier = engine.frontier().as_bytes().to_vec();
+    let doc: Uuid = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM collab_documents WHERE object_id=$1",
+            vec![object.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE collab_documents SET snapshot=$2,snapshot_checksum=$3,snapshot_frontier=$4,head_frontier=$4 WHERE id=$1",vec![doc.into(),bytes.clone().into(),api::flow::collab::bootstrap::content_hash(&bytes).into(),frontier.clone().into()])).await.unwrap();
+    let mut view = scope::object_view(db, object, owner).await.unwrap();
+    api::flow::scope_editor::decorate(db, object, owner, &mut view)
+        .await
+        .unwrap();
+    assert_eq!(*view.field("editor_state"), "migration_required");
+    assert_eq!(*view.field("editor_initialization_supported"), true);
+    let expected = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &frontier);
+
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET scope_native_legacy=false WHERE singleton")
+        .await
+        .unwrap();
+    let refused = api::flow::scope_editor::initialize(db, object, owner, json!({}), &expected, "agent-upgrade-off")
+        .await
+        .unwrap_err();
+    assert!(format!("{refused:?}").contains("scope_native_legacy_disabled"));
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET scope_native_legacy=true WHERE singleton")
+        .await
+        .unwrap();
+    api::flow::scope_editor::initialize(db, object, owner, json!({}), &expected, "agent-upgrade")
+        .await
+        .unwrap();
+    let mut upgraded = scope::object_view(db, object, owner).await.unwrap();
+    api::flow::scope_editor::decorate(db, object, owner, &mut upgraded)
+        .await
+        .unwrap();
+    assert_eq!(*upgraded.field("editor_state"), "ready");
+    drop(state);
+    scratch.close().await;
+}
+
+async fn workspace_flow_enabled(db: &DatabaseConnection, workspace: Uuid) -> bool {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT flow_enabled FROM flow_workspace_settings WHERE workspace_id=$1",
+        vec![workspace.into()],
+    ))
+    .await
+    .unwrap()
+    .is_some_and(|row| row.try_get::<bool>("", "flow_enabled").unwrap())
+}
+
+#[tokio::test]
+#[allow(
+    clippy::print_stderr,
+    reason = "report the platform skip without a tracing subscriber"
+)]
 async fn pre_change_v1_browser_package_promotes_with_old_fingerprint_and_current_projection() {
     use api::flow::package_import::*;
     use serde_json::json;
+    if !cfg!(target_os = "linux") {
+        eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+        return;
+    }
     let scratch = Scratch::new().await;
     let db = &scratch.db;
     let owner = user(db).await;
@@ -2529,7 +2659,7 @@ async fn pre_change_v1_browser_package_promotes_with_old_fingerprint_and_current
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     ))
     .await
@@ -2630,7 +2760,7 @@ async fn legacy_raw_typed_packages_refuse_and_explicit_scope_kind_selection_reco
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     ))
     .await
@@ -2760,6 +2890,9 @@ async fn personal_import_transport_stages_real_archive_and_obeys_workflow_and_pl
     let owner = user(db).await;
     let (scope, _) = scope::personal_home(db, owner).await.unwrap();
     let state = test_state(db.clone());
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET personal_package_imports=false WHERE singleton")
+        .await
+        .unwrap();
     let request = axum::http::Request::builder()
         .header("content-type", "application/json")
         .body(axum::body::Body::from(
@@ -2848,6 +2981,9 @@ async fn personal_scope_export_selects_supported_kinds_excludes_root_and_preserv
         .unwrap();
     let object = Uuid::parse_str(created.field("object").field("id").as_str().unwrap()).unwrap();
     let document = Uuid::parse_str(created.field("object").field("document_id").as_str().unwrap()).unwrap();
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET personal_scope_package_exports=false WHERE singleton")
+        .await
+        .unwrap();
     assert!(
         api::flow::scope_export::create_scope(
             db,
@@ -3026,7 +3162,7 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled,bridge_enabled) VALUES($1,true,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled,bridge_enabled) VALUES($1,true,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled, bridge_enabled = EXCLUDED.bridge_enabled",
         vec![workspace.into()],
     ))
     .await
@@ -3326,6 +3462,162 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
     scratch.close().await;
 }
 
+/// `cross_workspace_forms_conversion` (default on) gates converting a Page of one workspace into the
+/// Forms of a workspace: the switch refuses with its typed reason, and with it on the preview,
+/// commit, replay and status all work for a workspace source.
+#[tokio::test]
+async fn workspace_page_converts_into_another_workspace_forms_when_the_switch_is_on() {
+    use api::flow::{
+        bridge,
+        event_origin::{CommandOrigin, EventSurface},
+    };
+    use serde_json::json;
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let owner = user(db).await;
+    let mut workspaces = Vec::new();
+    for name in ["Conversion source workspace", "Conversion target workspace"] {
+        let workspace = Uuid::new_v4();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workspaces(id,slug,name,created_by) VALUES($1,$2,$3,$4)",
+            vec![
+                workspace.into(),
+                workspace.to_string().into(),
+                name.into(),
+                owner.into(),
+            ],
+        ))
+        .await
+        .unwrap();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+            vec![workspace.into(), owner.into()],
+        ))
+        .await
+        .unwrap();
+        workspaces.push(workspace);
+    }
+    let [source_workspace, destination] = workspaces[..] else {
+        panic!("two workspaces were created")
+    };
+    assert!(workspace_flow_enabled(db, source_workspace).await);
+    assert!(workspace_flow_enabled(db, destination).await);
+    let project = Uuid::new_v4();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO projects(id,workspace_id,key,name,created_by) VALUES($1,$2,'XCONV','Cross conversion',$3)",
+        vec![project.into(), destination.into(), owner.into()],
+    ))
+    .await
+    .unwrap();
+    scope::legacy_scope(db, source_workspace).await.unwrap();
+    let state = test_state(db.clone());
+    let created = api::flow::command::create_object(
+        &state,
+        api::flow::command::CreateObjectInput {
+            workspace_id: source_workspace,
+            actor_id: owner,
+            actor_is_bot: false,
+            object_type: "page".into(),
+            project_id: None,
+            parent_object_id: None,
+            title: "Workspace conversion source".into(),
+            idempotency_key: "workspace-conversion-source".into(),
+            message: None,
+            origin: CommandOrigin::first_request_from(EventSurface::Rest),
+        },
+    )
+    .await
+    .unwrap();
+    let source = created.object.id;
+    let frontier = scope::object_view(db, source, owner)
+        .await
+        .unwrap()
+        .field("frontier")
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let preview_input = |key: &str| bridge::ScopeConversionPreviewInput {
+        source_object_id: source,
+        source_frontier: frontier.clone(),
+        target_type: "form".into(),
+        mapping: json!({"target_project_id":project,"key":"converted_workspace","name":"Workspace form","schema":{"version":"openpr.form.schema.v1","fields":[{"field_id":"portable_subject","key":"subject","label":"Subject","type":"text","required":true}]}}),
+        idempotency_key: key.into(),
+        destination_workspace_id: destination,
+        destination_project_id: Some(project),
+    };
+    assert!(
+        scope::capabilities(db).await.unwrap().cross_workspace_forms_conversion,
+        "workspace Forms conversion is on by default"
+    );
+    db.execute_unprepared(
+        "UPDATE flow_runtime_capabilities SET cross_workspace_forms_conversion=false WHERE singleton",
+    )
+    .await
+    .unwrap();
+    let refused = bridge::preview_scope_conversion(&state, owner, preview_input("workspace-conversion-off"))
+        .await
+        .unwrap_err();
+    assert!(format!("{refused:?}").contains("scope_forms_conversion_disabled"));
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET cross_workspace_forms_conversion=true WHERE singleton")
+        .await
+        .unwrap();
+    let preview = bridge::preview_scope_conversion(&state, owner, preview_input("workspace-conversion-preview"))
+        .await
+        .unwrap();
+    let commit_input = || bridge::ConversionCommitInput {
+        preview_id: preview.preview_id,
+        source_frontier: frontier.clone(),
+        target_schema_version: 0,
+        idempotency_key: "workspace-conversion-commit".into(),
+        confirm: true,
+    };
+    let job = bridge::commit_scope_conversion(
+        &state,
+        owner,
+        commit_input(),
+        CommandOrigin::first_request_from(EventSurface::Rest),
+    )
+    .await
+    .unwrap();
+    assert_eq!(job.status, "completed");
+    assert_eq!(job.created_target_ids.len(), 1);
+    assert_eq!(
+        bridge::commit_scope_conversion(
+            &state,
+            owner,
+            commit_input(),
+            CommandOrigin::first_request_from(EventSurface::Rest)
+        )
+        .await
+        .unwrap()
+        .job_id,
+        job.job_id
+    );
+    assert_eq!(
+        bridge::scope_conversion_status(&state, owner, job.job_id)
+            .await
+            .unwrap()
+            .status,
+        "completed"
+    );
+    let target = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT workspace_id,project_id FROM project_forms WHERE id=$1",
+            vec![job.created_target_ids.first().copied().expect("one target").into()],
+        ))
+        .await
+        .unwrap()
+        .expect("the converted form exists");
+    assert_eq!(target.try_get::<Uuid>("", "workspace_id").unwrap(), destination);
+    assert_eq!(target.try_get::<Uuid>("", "project_id").unwrap(), project);
+    drop(state);
+    scratch.close().await;
+}
+
 #[tokio::test]
 async fn retention_skips_nonleaf_and_destination_deletion_preserves_personal_source() {
     use axum::{
@@ -3385,7 +3677,7 @@ async fn retention_skips_nonleaf_and_destination_deletion_preserves_personal_sou
     .unwrap();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     ))
     .await

@@ -8,7 +8,7 @@
  * `EventSurface::BOT_CREDENTIAL_SURFACES` in `apps/api/src/flow/event_origin.rs`, is read at run
  * time, spelled through `EventSurface::as_wire`, and compared with `BOT_TRANSPORT_SURFACES`, so
  * adding a surface on either side without the other fails here. The route that validates
- * `transport_surface` (`apps/api/src/routes/bot.rs`) is checked to still validate against that
+ * `transport_surface` (`apps/api/src/services/bots.rs`) is checked to still validate against that
  * list rather than a copy of its own.
  *
  * The page itself is checked for the three places the surface has to appear: the create form
@@ -40,7 +40,7 @@ const MEMBERS_PAGE = join(
 const suite = new Suite('bot-transport-surfaces');
 
 const EVENT_ORIGIN = 'apps/api/src/flow/event_origin.rs';
-const BOT_ROUTE = 'apps/api/src/routes/bot.rs';
+const BOT_ROUTE = 'apps/api/src/services/bots.rs';
 
 /** Rust source with line and block comments removed, so commented-out code is never matched. */
 function rustCode(relative: string): string {
@@ -155,7 +155,7 @@ suite.check(
 suite.check(
 	'the API default for an omitted surface is still rest, which the form never relies on',
 	() => {
-		const source = readFileSync(join(REPO, 'apps/api/src/routes/bot.rs'), 'utf8');
+		const source = readFileSync(join(REPO, 'apps/api/src/services/bots.rs'), 'utf8');
 		assert(
 			/value\.unwrap_or_else\(\|\| "rest"\.to_string\(\)\)/.test(source),
 			'normalize_transport_surface changed its default; re-check the README and this form'

@@ -1,0 +1,25 @@
+{
+	"ui": {
+		"select": {
+			"placeholder": "选择一项",
+			"none": "无",
+			"search": "搜索",
+			"noMatch": "没有与“{q}”匹配的选项。",
+			"loading": "正在加载选项",
+			"failed": "无法加载选项。",
+			"retry": "重试",
+			"unavailable": "不可用：{reason}",
+			"sample": {
+				"label": "状态",
+				"choose": "选择状态",
+				"backlog": "待办",
+				"progress": "进行中",
+				"review": "评审",
+				"done": "已完成",
+				"blocked": "已阻塞，等待其他团队",
+				"blockedReason": "已被工作流锁定",
+				"error": "请选择状态后继续。"
+			}
+		}
+	}
+}

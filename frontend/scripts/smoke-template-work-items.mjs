@@ -383,6 +383,7 @@ location.replace('/workspace/${workspaceId}/projects/${plan.projectId}/issues?te
 		return;
 	}
 	if (pathname === '/api/v1/upload' && req.method === 'POST') {
+		// eslint-disable-next-line @typescript-eslint/no-unused-vars -- the loop binding is required to drain the body
 		for await (const _chunk of req) {
 			// Drain request body so XMLHttpRequest observes a completed upload.
 		}

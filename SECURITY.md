@@ -15,11 +15,6 @@ fix.
 | Latest release | Yes |
 | Any earlier release | No, upgrade to the latest release |
 
-The legacy names that the compatibility matrix keeps (the `mcp-server` CLI subcommands,
-`config/openpr.toml`, `OPENPR_*` compose variables, `openpr://` resource URIs and
-`openpr-<target>` release archives) are part of the same build and receive the same fixes. See
-[the compatibility matrix](docs/sylvode-v1.0-compatibility.md).
-
 ## Reporting a vulnerability
 
 Please do not open a public issue, pull request or discussion for a security problem.
@@ -77,16 +72,16 @@ These areas carry the highest impact, and reports about them are especially welc
   `sse` transports each request is made with the caller's own bearer token, which the MCP
   server forwards to the API; only `/health` is reachable without one. Acting without a
   valid token, acting beyond a token's permissions or workspace, the MCP project policy
-  gate admitting a call it should refuse, or forging the `X-Sylvode-MCP-*` /
-  `X-OpenPR-MCP-*` attribution recorded in the audit trail is in scope.
+  gate admitting a call it should refuse, or forging the `X-Sylvode-MCP-*`
+  attribution recorded in the audit trail is in scope.
 - **Webhooks and outbound requests.** Outbound webhook deliveries are signed with
   HMAC-SHA256 over the raw body in `X-Webhook-Signature: sha256=<hex>`. Delivery targets
   that resolve to loopback, private, link-local or other internal addresses are refused
   unless listed in `[outbound] allowed_hosts`, and redirects are not followed. A forged or
   unverifiable signature, a way past the outbound address filter (SSRF), or a secret
   leaking into logs or stored delivery records is in scope. The inbound side, the Sylvode
-  Webhook receiver, lives in [`apps/webhook`](apps/webhook) and its own
-  [security notes](apps/webhook/SECURITY.md) describe what it verifies.
+  runner, lives in [`apps/runner`](apps/runner) and its own
+  [security notes](apps/runner/SECURITY.md) describe what it verifies.
 - **Collaboration sessions.** Live editing uses short-lived tickets bound to an origin in
   `[flow] collab_allowed_origins`. Joining, reading or writing a document without the
   corresponding Flow permission, or keeping access after it is revoked, is in scope.

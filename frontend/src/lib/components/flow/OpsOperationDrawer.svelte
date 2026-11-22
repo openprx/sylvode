@@ -108,18 +108,18 @@
 		class="mt-2 grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-[max-content_1fr]"
 		data-testid={testid}
 	>
-		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.operation')}</dt>
+		<dt class="text-fg-muted">{$t('flow.operations.receipt.operation')}</dt>
 		<dd>
 			{OPERATION_NAME_KEYS[receipt.operation]
 				? $t(OPERATION_NAME_KEYS[receipt.operation])
 				: receipt.operation}
 		</dd>
-		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.mode')}</dt>
+		<dt class="text-fg-muted">{$t('flow.operations.receipt.mode')}</dt>
 		<dd data-testid={`${testid}-mode`} data-mode={receiptMode(receipt)}>
 			{$t(RECEIPT_MODE_KEYS[receiptMode(receipt)])}
 		</dd>
 		{#if receipt.scope}
-			<dt class="text-slate-500 dark:text-slate-400">
+			<dt class="text-fg-muted">
 				{$t('flow.operations.receipt.scope.label')}
 			</dt>
 			<dd data-testid={`${testid}-scope`} data-kind={receipt.scope.kind}>
@@ -133,24 +133,24 @@
 				>
 			</dd>
 		{/if}
-		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.status')}</dt>
+		<dt class="text-fg-muted">{$t('flow.operations.receipt.status')}</dt>
 		<dd class="font-mono">{receipt.status}</dd>
-		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.expectedHead')}</dt>
+		<dt class="text-fg-muted">{$t('flow.operations.receipt.expectedHead')}</dt>
 		<dd class="font-mono">{receipt.expected_head_seq}</dd>
 		{#if typeof receipt.observed_head_seq === 'number'}
-			<dt class="text-slate-500 dark:text-slate-400">
+			<dt class="text-fg-muted">
 				{$t('flow.operations.receipt.observedHead')}
 			</dt>
 			<dd class="font-mono">{receipt.observed_head_seq}</dd>
 		{/if}
-		<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.operationId')}</dt>
+		<dt class="text-fg-muted">{$t('flow.operations.receipt.operationId')}</dt>
 		<dd class="break-all font-mono text-xs" data-testid={`${testid}-operation-id`}>
 			{receipt.operation_id}
 		</dd>
 		{#if receipt.started_at}
-			<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.startedAt')}</dt>
+			<dt class="text-fg-muted">{$t('flow.operations.receipt.startedAt')}</dt>
 			<dd class="text-xs">{formatTime(receipt.started_at)}</dd>
-			<dt class="text-slate-500 dark:text-slate-400">{$t('flow.operations.receipt.finishedAt')}</dt>
+			<dt class="text-fg-muted">{$t('flow.operations.receipt.finishedAt')}</dt>
 			<dd class="text-xs">
 				{receipt.finished_at
 					? formatTime(receipt.finished_at)
@@ -158,7 +158,7 @@
 			</dd>
 		{/if}
 		{#if receipt.audit_event_id}
-			<dt class="text-slate-500 dark:text-slate-400">
+			<dt class="text-fg-muted">
 				{$t('flow.operations.receipt.auditEventId')}
 			</dt>
 			<dd class="break-all font-mono text-xs" data-testid={`${testid}-audit-event`}>
@@ -166,11 +166,7 @@
 			</dd>
 		{/if}
 		{#each receiptRows(receipt) as row (row.field)}
-			<dt
-				class={row.labelKey
-					? 'text-slate-500 dark:text-slate-400'
-					: 'font-mono text-xs text-slate-500 dark:text-slate-400'}
-			>
+			<dt class={row.labelKey ? 'text-fg-muted' : 'font-mono text-xs text-fg-muted'}>
 				{row.labelKey ? $t(row.labelKey) : row.field}
 			</dt>
 			<dd class="break-all font-mono text-xs" data-field={row.field}>{row.value}</dd>
@@ -179,29 +175,29 @@
 	{@const changes = receiptChanges(receipt)}
 	{@const warningKeys = receiptWarningKeys(receipt)}
 	<section class="mt-3" data-testid={`${testid}-changes`}>
-		<h4 class="text-sm font-medium text-slate-900 dark:text-slate-100">
+		<h4 class="text-sm font-medium text-fg">
 			{$t('flow.operations.receipt.changesHeading')}
 		</h4>
 		{#if changes.length === 0}
-			<p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+			<p class="mt-1 text-sm text-fg-muted">
 				{$t('flow.operations.receipt.changesNone')}
 			</p>
 		{/if}
 		{#each changes as change, index (index)}
 			<div
-				class="mt-2 rounded-md border border-slate-200 p-2 dark:border-slate-700"
+				class="mt-2 rounded-card border border-line p-2"
 				data-testid={`${testid}-change`}
 				data-kind={change.kind}
 				data-changed={String(change.changed)}
 			>
 				<p class="break-all text-sm">{$t(change.labelKey, { values: { id: change.subjectId } })}</p>
-				<p class="text-xs text-slate-500 dark:text-slate-400">
+				<p class="text-xs text-fg-muted">
 					{change.changed
 						? $t('flow.operations.receipt.change.changed')
 						: $t('flow.operations.receipt.change.unchanged')}
 				</p>
 				<table class="mt-1 w-full table-fixed text-left text-xs">
-					<thead class="text-slate-500 dark:text-slate-400">
+					<thead class="text-fg-muted">
 						<tr>
 							<th scope="col" class="py-1 pr-2">{$t('flow.operations.receipt.change.field')}</th>
 							<th scope="col" class="py-1 pr-2">{$t('flow.operations.receipt.change.before')}</th>
@@ -236,10 +232,10 @@
 	</section>
 	{#if warningKeys.length > 0}
 		<section class="mt-3" data-testid={`${testid}-warnings`}>
-			<h4 class="text-sm font-medium text-amber-900 dark:text-amber-200">
+			<h4 class="text-sm font-medium text-warning">
 				{$t('flow.operations.receipt.warningsHeading')}
 			</h4>
-			<ul class="mt-1 list-disc space-y-1 pl-5 text-sm text-amber-900 dark:text-amber-200">
+			<ul class="mt-1 list-disc space-y-1 pl-5 text-sm text-warning">
 				{#each warningKeys as key, index (index)}
 					<li>{$t(key)}</li>
 				{/each}
@@ -258,26 +254,21 @@
 		<div class="space-y-4" data-testid="flow-ops-drawer" data-kind={snap.kind}>
 			<p class="sr-only" role="status" aria-live="polite">{announcement}</p>
 			<div class="text-sm">
-				<p class="text-slate-500 dark:text-slate-400">
+				<p class="text-fg-muted">
 					{snap.kind === 'rebuild'
 						? $t('flow.operations.drawer.targetObject')
 						: $t('flow.operations.drawer.targetDocument')}
 				</p>
-				<p
-					class="break-all font-mono text-slate-900 dark:text-slate-100"
-					data-testid="flow-ops-drawer-target"
-				>
+				<p class="break-all font-mono text-fg" data-testid="flow-ops-drawer-target">
 					{snap.targetId}
 				</p>
 			</div>
 
 			{#if snap.kind === 'verify'}
-				<label
-					class="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-slate-900 dark:text-slate-100"
-				>
+				<label class="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-fg">
 					<input
 						type="checkbox"
-						class="h-5 w-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+						class="h-5 w-5"
 						checked={snap.deep}
 						disabled={snap.busy || snap.closed}
 						onchange={setDeep}
@@ -287,27 +278,24 @@
 			{/if}
 
 			<div>
-				<label
-					for="flow-ops-expected-head"
-					class="block text-sm font-medium text-slate-700 dark:text-slate-300"
-				>
+				<label for="flow-ops-expected-head" class="block text-sm font-medium text-fg">
 					{$t('flow.operations.drawer.expectedHead')}
 				</label>
 				<input
 					id="flow-ops-expected-head"
 					inputmode="numeric"
-					class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 px-3 font-mono text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-800"
+					class="mt-1 block min-h-11 w-full rounded-control border border-input px-3 font-mono text-sm bg-field"
 					value={snap.expectedHeadText}
 					disabled={snap.busy || snap.closed || snap.executed !== null}
 					aria-describedby="flow-ops-expected-head-hint"
 					aria-invalid={headInvalid}
 					oninput={setHead}
 				/>
-				<p id="flow-ops-expected-head-hint" class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+				<p id="flow-ops-expected-head-hint" class="mt-1 text-xs text-fg-muted">
 					{headLabelHint}
 				</p>
 				{#if headInvalid}
-					<p class="mt-1 text-xs text-red-700 dark:text-red-300">
+					<p class="mt-1 text-xs text-danger">
 						{$t('flow.operations.drawer.invalidHead')}
 					</p>
 				{/if}
@@ -316,7 +304,7 @@
 			{#if snap.executed === null}
 				<button
 					type="button"
-					class="min-h-11 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-800"
+					class="min-h-11 rounded-control bg-primary rf-filled px-4 text-sm font-medium text-on-primary disabled:bg-surface disabled:text-fg-muted"
 					disabled={!snap.canDryRun}
 					onclick={dryRun}
 					data-testid="flow-ops-drawer-dry-run"
@@ -331,7 +319,7 @@
 
 			{#if snap.failure}
 				<div
-					class="flex flex-col gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+					class="flex flex-col gap-3 rounded-card border border-line bg-danger-soft p-3 text-sm text-danger sm:flex-row sm:items-center sm:justify-between"
 					role="alert"
 					data-testid="flow-ops-drawer-error"
 				>
@@ -344,7 +332,7 @@
 					{#if snap.retry === 'dry_run'}
 						<button
 							type="button"
-							class="min-h-11 rounded-md border border-red-300 px-4 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-700"
+							class="min-h-11 rounded-control border border-danger px-4 text-sm font-medium"
 							onclick={dryRun}
 						>
 							{$t('flow.operations.retry')}
@@ -352,7 +340,7 @@
 					{:else if snap.retry === 'execute'}
 						<button
 							type="button"
-							class="min-h-11 rounded-md border border-red-300 px-4 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-700"
+							class="min-h-11 rounded-control border border-danger px-4 text-sm font-medium"
 							onclick={execute}
 						>
 							{$t('flow.operations.retry')}
@@ -362,13 +350,11 @@
 			{/if}
 
 			{#if snap.preview && snap.executed === null}
-				<div
-					class="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50"
-				>
-					<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">
+				<div class="rounded-card border border-line bg-surface p-3">
+					<h3 class="text-sm font-semibold text-fg">
 						{$t('flow.operations.drawer.previewHeading')}
 					</h3>
-					<p class="mt-1 text-xs font-medium text-amber-800 dark:text-amber-300">
+					<p class="mt-1 text-xs font-medium text-warning">
 						{$t('flow.operations.drawer.previewNote')}
 					</p>
 					{@render receiptView(snap.preview, 'flow-ops-preview')}
@@ -376,17 +362,14 @@
 
 				{#if snap.kind !== 'verify'}
 					<div>
-						<label
-							for="flow-ops-confirm"
-							class="block text-sm font-medium text-slate-700 dark:text-slate-300"
-						>
+						<label for="flow-ops-confirm" class="block text-sm font-medium text-fg">
 							{snap.kind === 'rebuild'
 								? $t('flow.operations.drawer.confirmLabelObject')
 								: $t('flow.operations.drawer.confirmLabelDocument')}
 						</label>
 						<input
 							id="flow-ops-confirm"
-							class="mt-1 block min-h-11 w-full rounded-md border border-slate-300 px-3 font-mono text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-slate-600 dark:bg-slate-800"
+							class="mt-1 block min-h-11 w-full rounded-control border border-input px-3 font-mono text-sm bg-field"
 							autocomplete="off"
 							spellcheck="false"
 							value={snap.confirmText}
@@ -394,14 +377,14 @@
 							oninput={setConfirm}
 						/>
 						{#if snap.confirmText !== '' && !snap.confirmMatches}
-							<p class="mt-1 text-xs text-red-700 dark:text-red-300">
+							<p class="mt-1 text-xs text-danger">
 								{$t('flow.operations.drawer.confirmMismatch')}
 							</p>
 						{/if}
 					</div>
 					<button
 						type="button"
-						class="min-h-11 rounded-md bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:opacity-50 dark:focus-visible:ring-offset-slate-800"
+						class="min-h-11 rounded-control bg-danger-soft px-4 text-sm font-medium text-danger disabled:bg-surface disabled:text-fg-muted"
 						disabled={!snap.canExecute}
 						onclick={execute}
 						data-testid="flow-ops-drawer-execute"
@@ -416,13 +399,11 @@
 			{/if}
 
 			{#if snap.executed}
-				<div
-					class="rounded-md border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/30"
-				>
-					<h3 class="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+				<div class="rounded-card border border-line bg-success-soft p-3">
+					<h3 class="text-sm font-semibold text-fg">
 						{$t('flow.operations.drawer.executedHeading')}
 					</h3>
-					<p class="mt-1 text-xs text-emerald-800 dark:text-emerald-300">
+					<p class="mt-1 text-xs text-success">
 						{$t('flow.operations.drawer.executedNote')}
 					</p>
 					{@render receiptView(snap.executed, 'flow-ops-executed')}

@@ -7,12 +7,14 @@
 	import { resolve } from '$app/paths';
 	import { workspacesApi, type Workspace } from '#lib/api/workspaces.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import Card from '#lib/components/Card.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Textarea from '#lib/components/Textarea.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { resolveWorkspaceAdmin } from '#lib/flow/flow-settings.js';
+	import ConnectedAppsWorkspace from '#lib/oauth/ConnectedAppsWorkspace.svelte';
 
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 
@@ -65,8 +67,14 @@
 
 	async function handleDeleteWorkspace() {
 		if (!workspace) return;
+		const nameValues = { values: { name: workspace.name } };
 		if (
-			!confirm(get(t)('workspace.deleteConfirmIrreversible', { values: { name: workspace.name } }))
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('workspace.deleteTitle', nameValues),
+				body: get(t)('workspace.deleteBody'),
+				confirmLabel: get(t)('workspace.deleteAction', nameValues)
+			}))
 		) {
 			return;
 		}
@@ -80,29 +88,27 @@
 		}
 
 		toast.success(get(t)('workspace.deleteSuccess'));
-		goto('/workspace');
+		goto(resolve('/(app)/workspace'));
 	}
 </script>
 
 <div class="mx-auto max-w-5xl space-y-6">
 	<div>
-		<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">
+		<h1 class="text-2xl font-semibold text-fg">
 			{$t('workspace.settingsTitle')}
 		</h1>
-		<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+		<p class="mt-1 text-sm text-fg-muted">
 			{$t('workspace.settingsSubtitle')}
 		</p>
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else}
 		<Card>
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('workspace.basicInfo')}
 			</h2>
 			<div class="mt-4 grid grid-cols-1 gap-4">
@@ -116,19 +122,24 @@
 				<Textarea label={$t('workspace.description')} bind:value={form.description} rows={4} />
 			</div>
 			<div class="mt-4 flex justify-end">
-				<Button loading={saving} onclick={saveWorkspace}>{$t('settings.save')}</Button>
+				<Button variant="primary" loading={saving} onclick={saveWorkspace}
+					>{$t('settings.save')}</Button
+				>
 			</div>
 		</Card>
 
 		<Card>
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('workspace.labelManagement')}
 			</h2>
-			<p class="mt-2 text-sm text-slate-600 dark:text-slate-300">
+			<p class="mt-2 text-sm text-fg-muted">
 				{$t('workspace.labelManagementDesc')}
 			</p>
 			<div class="mt-4">
-				<Button variant="secondary" onclick={() => goto(`/workspace/${workspaceId}/projects`)}>
+				<Button
+					variant="secondary"
+					onclick={() => goto(resolve('/(app)/workspace/[workspaceId]/projects', { workspaceId }))}
+				>
 					{$t('workspace.goToProjectList')}
 				</Button>
 			</div>
@@ -137,14 +148,17 @@
 		<Card>
 			<div class="flex items-center justify-between">
 				<div>
-					<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+					<h2 class="text-lg font-semibold text-fg">
 						{$t('workflow.settingsTitle')}
 					</h2>
-					<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+					<p class="mt-1 text-sm text-fg-muted">
 						{$t('workflow.settingsDesc')}
 					</p>
 				</div>
-				<Button variant="secondary" onclick={() => goto(`/workspace/${workspaceId}/workflows`)}>
+				<Button
+					variant="secondary"
+					onclick={() => goto(resolve('/(app)/workspace/[workspaceId]/workflows', { workspaceId }))}
+				>
 					{$t('workflow.manageWorkflows')}
 				</Button>
 			</div>
@@ -154,10 +168,10 @@
 			<Card>
 				<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<div>
-						<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+						<h2 class="text-lg font-semibold text-fg">
 							{$t('flow.settings.entry.title')}
 						</h2>
-						<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+						<p class="mt-1 text-sm text-fg-muted">
 							{$t('flow.settings.entry.description')}
 						</p>
 					</div>
@@ -171,11 +185,13 @@
 			</Card>
 		{/if}
 
+		<ConnectedAppsWorkspace {workspaceId} workspaceName={workspace?.name ?? ''} />
+
 		<Card>
-			<h2 class="text-lg font-semibold text-red-700">{$t('workspace.dangerZone')}</h2>
-			<p class="mt-2 text-sm text-slate-600 dark:text-slate-300">{$t('workspace.deleteDesc')}</p>
+			<h2 class="text-lg font-semibold text-danger">{$t('workspace.dangerZone')}</h2>
+			<p class="mt-2 text-sm text-fg-muted">{$t('workspace.deleteDesc')}</p>
 			<div class="mt-4">
-				<Button variant="danger" loading={deleting} onclick={handleDeleteWorkspace}
+				<Button variant="danger-quiet" loading={deleting} onclick={handleDeleteWorkspace}
 					>{$t('workspace.deleteWorkspace')}</Button
 				>
 			</div>

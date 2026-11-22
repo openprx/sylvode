@@ -1,0 +1,61 @@
+{
+	"shell": {
+		"column": {
+			"collapse": "收起侧栏",
+			"search": "搜索",
+			"unread": "{count} 条未读",
+			"backToList": "返回{name}",
+			"scope": {
+				"menuLabel": "切换范围",
+				"personal": "个人",
+				"workspace": "工作区",
+				"loading": "正在加载工作区…",
+				"retry": "无法加载工作区，重试",
+				"all": "全部工作区…"
+			},
+			"things": {
+				"projects": "项目",
+				"workspaces": "工作区",
+				"forms": "表单",
+				"flow": "Flow",
+				"agents": "智能体",
+				"bots": "机器人"
+			},
+			"home": {
+				"overview": "概览",
+				"notifications": "通知",
+				"myWork": "我的工作",
+				"recent": "最近"
+			},
+			"projects": {
+				"personalCaption": "项目属于某个工作区",
+				"current": "项目"
+			},
+			"flow": {
+				"private": "私人",
+				"off": "此工作区未开启 Flow",
+				"unavailablePersonal": "你的账号暂不可使用 Flow。",
+				"settingsLink": "Flow 设置"
+			},
+			"agents": {
+				"bots": "机器人",
+				"connected": "已连接的机器人",
+				"personalEmpty": "当前版本中，智能体属于某个工作区。",
+				"noBots": "此工作区没有机器人。",
+				"noConnection": "未连接机器人",
+				"choose": "在列表中选择一个智能体。"
+			},
+			"governance": {
+				"centre": "治理中心",
+				"proposals": "提案",
+				"templates": "提案模板",
+				"impact": "影响评审",
+				"decisions": "决策分析",
+				"trust": "信任榜",
+				"appeals": "信任申诉",
+				"config": "治理配置",
+				"audit": "审计日志"
+			}
+		}
+	}
+}

@@ -1,12 +1,9 @@
-//! The workspace command groups shared by the `mcp-server` and `sylvode` executables.
+//! The command line of the `mcp-server` and `sylvode` executables.
 //!
 //! `projects`, `work-items`, `comments`, `labels`, `sprints`, `search`, `files`,
 //! `operation-logs` and `tools` are defined exactly once, here, as [`BusinessCommands`], and run
-//! by exactly one handler, [`run_business`]. `mcp-server` mounts them beside `serve` through
-//! [`Cli`]; `sylvode` mounts the very same enum through [`BusinessCli`] (ADR-0020 D5). Both
-//! executables therefore parse the same arguments, resolve configuration the same way, print
-//! the same bytes and exit with the same codes for every one of these commands; only the
-//! program name in `--help` differs.
+//! by exactly one handler, [`run_business`]. `sylvode` mounts them through [`BusinessCli`];
+//! `mcp-server` offers only `serve` and `doctor` through [`Cli`].
 
 // Argument objects are assembled by key; allow indexing for this module.
 #![allow(clippy::indexing_slicing)]
@@ -17,13 +14,15 @@ use std::path::PathBuf;
 use base64::Engine as _;
 use clap::builder::PossibleValuesParser;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
-use platform::config::{MCP_BOT_TOKEN_REQUIRED, McpConfig, McpRuntime, McpTransport, OpenPrConfig, Secret};
+use platform::config::{
+    MCP_BOT_TOKEN_REQUIRED, McpConfig, McpRuntime, McpToolMode, McpTransport, OpenPrConfig, Secret,
+};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_CLI, TRANSPORT_LABEL_CLI_TOOLS_CALL, transport_label};
 use crate::protocol::{CallToolResult, ToolContent};
-use crate::server::McpServer;
+use crate::server::{McpServer, ToolSurface};
 use crate::tools::work_items::WORK_ITEM_PRIORITIES;
 
 /// Tracing target of the MCP server and of the workspace commands, and the scope of the
@@ -43,20 +42,25 @@ pub enum OutputFormat {
     Table,
 }
 
-/// Sylvode MCP server and CLI tool. The `mcp-server` executable remains a compatibility shim.
+/// Sylvode MCP server.
 #[derive(Debug, Parser)]
-#[command(name = "mcp-server", about = "Sylvode MCP server and CLI tool", long_about = None, version)]
-#[command(arg_required_else_help = true)]
+#[command(name = "mcp-server", about = "Sylvode MCP server", long_about = None, version)]
+#[command(arg_required_else_help = true, subcommand_required = false)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
+
+    /// Print this binary's one-row `sylvode.doctor.v1` report (version, task protocol, tool mode)
+    /// and exit. Reads no secrets and probes nothing; installers and `sylvode-runner doctor` use it.
+    #[arg(long)]
+    pub check: bool,
 
     #[command(flatten)]
     pub global: GlobalArgs,
 }
 
-/// The workspace command groups as `sylvode` mounts them: the same [`BusinessCommands`] and
-/// [`GlobalArgs`] as [`Cli`], without `serve`.
+/// The workspace command groups as `sylvode` mounts them: [`BusinessCommands`] and
+/// [`GlobalArgs`].
 ///
 /// Build the parser with [`business_cli_command`], which only adjusts help prose that names
 /// the program.
@@ -74,7 +78,7 @@ pub struct BusinessCli {
 /// The options every workspace command and `serve` accept, wherever they appear on the line.
 #[derive(Debug, Args)]
 pub struct GlobalArgs {
-    /// Path to the configuration file [default: config/sylvode.toml; legacy config/openpr.toml fallback]
+    /// Path to the configuration file [default: config/sylvode.toml]
     ///
     /// Global because every subcommand needs it: the settings it carries are read before
     /// the subcommand is dispatched, so `mcp-server projects list --config <path>` has to
@@ -106,11 +110,11 @@ pub struct GlobalArgs {
 pub enum Commands {
     /// Run the MCP server (default mode)
     Serve(ServeArgs),
-    #[command(flatten)]
-    Business(BusinessCommands),
+    /// Check the prerequisites of this MCP server: configuration, tmux, agent CLIs, runner, API
+    Doctor(DoctorArgs),
 }
 
-/// The nine workspace command groups, shared verbatim by `mcp-server` and `sylvode`.
+/// The nine workspace command groups mounted by `sylvode`.
 #[derive(Debug, Subcommand)]
 pub enum BusinessCommands {
     /// Manage projects
@@ -216,6 +220,25 @@ pub enum Transport {
     Stdio,
 }
 
+/// The tool listing of `serve --tools`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ToolsMode {
+    /// The entry tools and the task tools; everything else through `sylvode_search`, `sylvode_read`
+    /// and `sylvode_write`.
+    Search,
+    /// Every tool, callable by name.
+    Full,
+}
+
+impl From<ToolsMode> for McpToolMode {
+    fn from(mode: ToolsMode) -> Self {
+        match mode {
+            ToolsMode::Search => Self::Search,
+            ToolsMode::Full => Self::Full,
+        }
+    }
+}
+
 impl From<Transport> for McpTransport {
     fn from(transport: Transport) -> Self {
         match transport {
@@ -247,6 +270,40 @@ pub struct ServeArgs {
     /// Bind address for HTTP/SSE transports (overrides `mcp.bind_addr`) [default: 127.0.0.1:8090]
     #[arg(long)]
     pub bind_addr: Option<String>,
+    /// Tools to list (overrides `mcp.tool_mode`) [default: search]. Not valid with --flow-only.
+    #[arg(long, value_enum)]
+    pub tools: Option<ToolsMode>,
+}
+
+/// The agent CLIs `doctor --cli` accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DoctorCli {
+    Claude,
+    Codex,
+    Opencode,
+}
+
+impl From<DoctorCli> for sylvode_prereq::Cli {
+    fn from(cli: DoctorCli) -> Self {
+        match cli {
+            DoctorCli::Claude => Self::Claude,
+            DoctorCli::Codex => Self::Codex,
+            DoctorCli::Opencode => Self::Opencode,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// Print the report as JSON instead of a table
+    #[arg(long)]
+    pub json: bool,
+    /// Agent CLIs to check, including whether the MCP server is registered in them
+    #[arg(long = "cli", value_enum, num_args = 1.., value_name = "CLI")]
+    pub clis: Vec<DoctorCli>,
+    /// Evaluate programs on the PATH a service unit would have, not the shell's
+    #[arg(long)]
+    pub as_service: bool,
 }
 
 // ---- Projects ----
@@ -590,34 +647,6 @@ fn fmt_val(v: &Value) -> String {
 
 /// The subcommand path a command line selected, as typed: `projects list`, `search`.
 ///
-/// Names only, never argument values, so it is safe to print: a value may be a token.
-pub fn subcommand_path(matches: &clap::ArgMatches) -> String {
-    let mut path = Vec::new();
-    let mut current = matches;
-    while let Some((name, next)) = current.subcommand() {
-        path.push(name);
-        current = next;
-    }
-    path.join(" ")
-}
-
-/// Tells the user, on stderr and once per process, that `mcp-server <subcommand>` is deprecated
-/// in favour of `sylvode <subcommand>` (ADR-0020 D2).
-///
-/// Never stdout: a workspace command's stdout is a machine contract, and nothing about it may
-/// change. A failed write is dropped rather than reported, because stderr is the only channel
-/// it could be reported on and D2 forbids the notice from failing the command; `writeln!` is
-/// used instead of `eprintln!` because the latter panics when stderr cannot be written.
-pub fn report_legacy_invocation(subcommand: &str) {
-    static REPORTED: std::sync::Once = std::sync::Once::new();
-    REPORTED.call_once(|| {
-        let notice = platform::deprecation::legacy_cli_invocation(subcommand);
-        let mut stderr = std::io::stderr().lock();
-        let written = writeln!(stderr, "{notice}").and_then(|()| stderr.flush());
-        drop(written);
-    });
-}
-
 /// Runs one workspace command end to end: configuration, identity, the tool call and its
 /// output. The single handler behind every [`BusinessCommands`] variant in both executables.
 pub async fn run_business(global: &GlobalArgs, command: &BusinessCommands) -> anyhow::Result<()> {
@@ -626,7 +655,7 @@ pub async fn run_business(global: &GlobalArgs, command: &BusinessCommands) -> an
     // the API as the configured identity and cannot run without one.
     let client =
         build_client(&mcp, Some(configured_bot_token(&mcp)?))?.with_transport_label(business_transport_label(command));
-    run_cli_command(command, &global.format, client).await
+    run_cli_command(command, &global.format, client, mcp.allow_write_call).await
 }
 
 /// The transport surface a workspace command declares to the API (`mcp-surface-v1.md`,
@@ -666,10 +695,6 @@ pub fn prepare_runtime(global: &GlobalArgs, serve: Option<&ServeArgs>) -> anyhow
             "{}",
             platform::logging::StreamOverride::MESSAGE
         );
-    }
-    // Emitted only now: the logger it goes through did not exist while the file was loading.
-    if let Some(notice) = platform::config::take_legacy_discovery_notice() {
-        tracing::warn!("{notice}");
     }
 
     apply_cli_overrides(&mut config.mcp, global, serve)?;
@@ -712,7 +737,11 @@ pub fn build_client(mcp: &McpRuntime, credential: Option<Secret>) -> anyhow::Res
 /// validation, so it is checked here — against the same rules, reported against the flag
 /// that carried it. Values that came from the file are left alone: they are already
 /// validated, and checking them twice is how one bad value grows two different messages.
-fn apply_cli_overrides(mcp: &mut McpConfig, global: &GlobalArgs, serve: Option<&ServeArgs>) -> anyhow::Result<()> {
+pub(crate) fn apply_cli_overrides(
+    mcp: &mut McpConfig,
+    global: &GlobalArgs,
+    serve: Option<&ServeArgs>,
+) -> anyhow::Result<()> {
     if let Some(api_url) = global.api_url.as_deref() {
         mcp.api_url = Some(checked_api_url(api_url)?);
     }
@@ -728,6 +757,9 @@ fn apply_cli_overrides(mcp: &mut McpConfig, global: &GlobalArgs, serve: Option<&
         }
         if let Some(bind_addr) = serve.bind_addr.as_deref() {
             mcp.bind_addr = Some(checked_bind_addr(bind_addr)?);
+        }
+        if let Some(tools) = serve.tools {
+            mcp.tool_mode = tools.into();
         }
     }
     Ok(())
@@ -810,12 +842,15 @@ fn split_host_port(authority: &str) -> Option<(&str, &str)> {
     authority.rsplit_once(':')
 }
 
+/// Runs one workspace command through the same server a transport builds, so `[mcp]
+/// allow_write_call = false` refuses a write command here exactly as it does on a transport.
 async fn run_cli_command(
     command: &BusinessCommands,
     format: &OutputFormat,
     client: OpenPrClient,
+    allow_write_call: bool,
 ) -> anyhow::Result<()> {
-    let server = McpServer::new(client);
+    let server = McpServer::for_surface(client, ToolSurface::new(McpToolMode::Full, allow_write_call));
 
     // Files upload requires async disk I/O before calling execute_tool, handle it separately
     if let BusinessCommands::Files(files_cmd) = command {
@@ -1004,7 +1039,7 @@ mod tests {
         checked_workspace_id, parse_tool_args_json, tool_invocation,
     };
     use clap::{CommandFactory, Parser};
-    use platform::config::DEFAULT_MCP_API_URL;
+    use platform::config::{DEFAULT_MCP_API_URL, McpConfig, McpToolMode};
     use serde_json::json;
 
     /// `--priority` accepts exactly what the `work_items.*` tools accept, in both executables:
@@ -1021,7 +1056,7 @@ mod tests {
                 tool.name
             );
         }
-        let parsers = [("mcp-server", Cli::command()), ("sylvode", business_cli_command())];
+        let parsers = [("sylvode", business_cli_command())];
         for (program, parser) in parsers {
             for action in ["create", "update"] {
                 let mut parser = parser.clone();
@@ -1059,13 +1094,12 @@ mod tests {
     #[test]
     fn work_items_create_sends_a_state_only_when_asked() {
         let parse = |extra: &[&str]| {
-            let mut line = vec!["mcp-server", "work-items", "create", "--project", "p", "--title", "t"];
+            let mut line = vec!["sylvode", "work-items", "create", "--project", "p", "--title", "t"];
             line.extend_from_slice(extra);
-            let cli = Cli::try_parse_from(line).unwrap_or_else(|error| panic!("{error}"));
-            let Commands::Business(command) = cli.command else {
-                panic!("not a workspace command");
-            };
-            tool_invocation(&command).unwrap_or_else(|error| panic!("{error}")).1
+            let cli = BusinessCli::try_parse_from(line).unwrap_or_else(|error| panic!("{error}"));
+            tool_invocation(&cli.command)
+                .unwrap_or_else(|error| panic!("{error}"))
+                .1
         };
         let without = parse(&[]);
         assert_eq!(without.get("state"), None, "{without}");
@@ -1075,8 +1109,8 @@ mod tests {
 
     #[test]
     fn parses_generic_tool_call_command() {
-        let cli = Cli::try_parse_from([
-            "mcp-server",
+        let cli = BusinessCli::try_parse_from([
+            "sylvode",
             "tools",
             "call",
             "--name",
@@ -1087,7 +1121,7 @@ mod tests {
         .expect("generic tools call command should parse");
 
         match cli.command {
-            Commands::Business(BusinessCommands::Tools(cmd)) => match cmd.action {
+            BusinessCommands::Tools(cmd) => match cmd.action {
                 ToolsAction::Call { name, args_json } => {
                     assert_eq!(name, "forms.list");
                     assert_eq!(
@@ -1102,8 +1136,8 @@ mod tests {
 
     #[test]
     fn parses_operation_log_filters() {
-        let cli = Cli::try_parse_from([
-            "mcp-server",
+        let cli = BusinessCli::try_parse_from([
+            "sylvode",
             "operation-logs",
             "list",
             "--tool-name",
@@ -1116,7 +1150,7 @@ mod tests {
         .expect("operation log command should parse");
 
         match cli.command {
-            Commands::Business(BusinessCommands::OperationLogs(command)) => match command.action {
+            BusinessCommands::OperationLogs(command) => match command.action {
                 OperationLogsAction::List {
                     tool_name,
                     outcome,
@@ -1239,9 +1273,9 @@ mod tests {
     #[test]
     fn no_help_screen_shows_a_markdown_escape() {
         let mut screens = Vec::new();
-        let mut legacy = Cli::command();
-        legacy.build();
-        help_screens(&mut legacy, "mcp-server", &mut screens);
+        let mut server = Cli::command();
+        server.build();
+        help_screens(&mut server, "mcp-server", &mut screens);
         let mut business = business_cli_command();
         business.build();
         help_screens(&mut business, "sylvode", &mut screens);
@@ -1261,10 +1295,7 @@ mod tests {
             .find(|(path, _)| path == "sylvode projects list")
             .map(|(_, help)| help.as_str())
             .unwrap_or_default();
-        assert!(
-            config_help.contains("[default: config/sylvode.toml; legacy config/openpr.toml fallback]"),
-            "{config_help}"
-        );
+        assert!(config_help.contains("[default: config/sylvode.toml]"), "{config_help}");
     }
 
     #[test]
@@ -1272,6 +1303,46 @@ mod tests {
         assert!(parse_tool_args_json(r#"{"project_id":"project-1"}"#).is_ok());
         assert!(parse_tool_args_json("[]").is_err());
         assert!(parse_tool_args_json("{not-json}").is_err());
+    }
+
+    /// `--tools` is optional so that `[mcp] tool_mode` decides when it is absent, and a flag wins
+    /// over the file in both directions.
+    #[test]
+    fn the_tools_flag_defers_to_the_file_when_absent_and_overrides_it_when_given() {
+        let serve = |extra: &[&str]| {
+            let mut args = vec!["mcp-server", "serve"];
+            args.extend(extra);
+            match Cli::try_parse_from(args)
+                .expect("serve should parse")
+                .command
+                .expect("a subcommand")
+            {
+                Commands::Serve(args) => args,
+                Commands::Doctor(_) => panic!("expected serve command"),
+            }
+        };
+        assert_eq!(serve(&[]).tools, None);
+        assert_eq!(serve(&["--tools", "full"]).tools, Some(super::ToolsMode::Full));
+        assert_eq!(serve(&["--tools", "search"]).tools, Some(super::ToolsMode::Search));
+        assert!(Cli::try_parse_from(["mcp-server", "serve", "--tools", "everything"]).is_err());
+
+        let global = Cli::try_parse_from(["mcp-server", "serve"])
+            .expect("bare serve parses")
+            .global;
+        for (configured, flag, expected) in [
+            (McpToolMode::Search, None, McpToolMode::Search),
+            (McpToolMode::Full, None, McpToolMode::Full),
+            (McpToolMode::Search, Some("full"), McpToolMode::Full),
+            (McpToolMode::Full, Some("search"), McpToolMode::Search),
+        ] {
+            let mut mcp = McpConfig {
+                tool_mode: configured,
+                ..McpConfig::default()
+            };
+            let args = flag.map_or_else(|| serve(&[]), |flag| serve(&["--tools", flag]));
+            super::apply_cli_overrides(&mut mcp, &global, Some(&args)).expect("overrides apply");
+            assert_eq!(mcp.tool_mode, expected, "{configured:?} with {flag:?}");
+        }
     }
 
     /// An unspecified `--bind-addr` must stay `None` so `[mcp] bind_addr` still decides.
@@ -1282,21 +1353,21 @@ mod tests {
         let cli = Cli::try_parse_from(["mcp-server", "serve", "--transport", "http"])
             .expect("serve http command should parse");
 
-        match cli.command {
+        match cli.command.expect("a subcommand") {
             Commands::Serve(args) => {
                 assert!(matches!(args.transport, Some(Transport::Http)));
                 assert_eq!(args.bind_addr, None);
             }
-            Commands::Business(_) => panic!("expected serve command"),
+            Commands::Doctor(_) => panic!("expected serve command"),
         }
 
         let bare = Cli::try_parse_from(["mcp-server", "serve"]).expect("bare serve should parse");
-        match bare.command {
+        match bare.command.expect("a subcommand") {
             Commands::Serve(args) => {
                 assert!(args.transport.is_none());
                 assert!(args.bind_addr.is_none());
             }
-            Commands::Business(_) => panic!("expected serve command"),
+            Commands::Doctor(_) => panic!("expected serve command"),
         }
     }
 
@@ -1305,33 +1376,30 @@ mod tests {
     /// `mcp-server projects list --config <path>` fail to parse.
     #[test]
     fn the_config_flag_parses_on_every_subcommand() {
+        let config = Some(std::path::Path::new("/etc/sylvode.toml"));
+        let serve = Cli::try_parse_from(["mcp-server", "serve", "--config", "/etc/sylvode.toml"])
+            .unwrap_or_else(|error| panic!("serve should parse: {error}"));
+        assert_eq!(serve.global.config.as_deref(), config);
         for args in [
-            vec!["mcp-server", "serve", "--config", "/etc/openpr.toml"],
-            vec!["mcp-server", "projects", "list", "--config", "/etc/openpr.toml"],
+            vec!["sylvode", "projects", "list", "--config", "/etc/sylvode.toml"],
+            vec!["sylvode", "work-items", "get", "PRX-1", "--config", "/etc/sylvode.toml"],
+            vec!["sylvode", "search", "anything", "--config", "/etc/sylvode.toml"],
             vec![
-                "mcp-server",
-                "work-items",
-                "get",
-                "PRX-1",
-                "--config",
-                "/etc/openpr.toml",
-            ],
-            vec!["mcp-server", "search", "anything", "--config", "/etc/openpr.toml"],
-            vec![
-                "mcp-server",
+                "sylvode",
                 "tools",
                 "call",
                 "--name",
                 "forms.list",
                 "--config",
-                "/etc/openpr.toml",
+                "/etc/sylvode.toml",
             ],
-            vec!["mcp-server", "--config", "/etc/openpr.toml", "projects", "list"],
+            vec!["sylvode", "--config", "/etc/sylvode.toml", "projects", "list"],
         ] {
-            let cli = Cli::try_parse_from(&args).unwrap_or_else(|error| panic!("{args:?} should parse: {error}"));
+            let cli =
+                BusinessCli::try_parse_from(&args).unwrap_or_else(|error| panic!("{args:?} should parse: {error}"));
             assert_eq!(
                 cli.global.config.as_deref(),
-                Some(std::path::Path::new("/etc/openpr.toml")),
+                config,
                 "{args:?} did not carry the config path"
             );
         }
@@ -1345,22 +1413,30 @@ mod tests {
     }
 
     /// `BUSINESS_GROUPS` is what `sylvode` routes on, so it has to name exactly the groups the
-    /// shared enum defines, in both parsers, and `serve` must stay `mcp-server`'s alone.
+    /// enum defines. `mcp-server` has `serve` and `doctor` only: a workspace command typed
+    /// after it is an unknown command.
     #[test]
-    fn the_business_group_list_matches_both_parsers() {
-        let legacy: Vec<String> = Cli::command()
-            .get_subcommands()
-            .map(|command| command.get_name().to_string())
-            .filter(|name| name != "serve")
-            .collect();
+    fn the_business_group_list_matches_the_parser() {
         let sylvode: Vec<String> = BusinessCli::command()
             .get_subcommands()
             .map(|command| command.get_name().to_string())
             .collect();
-        assert_eq!(legacy, BUSINESS_GROUPS);
         assert_eq!(sylvode, BUSINESS_GROUPS);
-        assert!(Cli::command().find_subcommand("serve").is_some());
-        assert!(BusinessCli::command().find_subcommand("serve").is_none());
+        let server: Vec<String> = Cli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_string())
+            .filter(|name| name != "help")
+            .collect();
+        assert_eq!(server, ["serve", "doctor"]);
+        for own in ["serve", "doctor"] {
+            assert!(BusinessCli::command().find_subcommand(own).is_none(), "{own}");
+        }
+        for group in BUSINESS_GROUPS {
+            assert!(
+                Cli::try_parse_from(["mcp-server", group]).is_err(),
+                "mcp-server accepted {group}"
+            );
+        }
     }
 
     /// The `sylvode` parser renames the program in help prose and never mentions `serve`, which

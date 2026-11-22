@@ -43,18 +43,18 @@
 	});
 
 	const linkClass =
-		'inline-flex min-h-11 items-center rounded px-2 text-sm font-medium text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-300';
+		'inline-flex min-h-11 items-center rounded px-2 text-sm font-medium text-fg underline';
 
 	const badgeClass: Record<string, string> = {
-		controlled: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100',
-		read_only: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100',
-		unconfigured: 'bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100',
-		no_access: 'bg-red-100 text-red-900 dark:bg-red-900 dark:text-red-100'
+		controlled: 'bg-surface text-fg',
+		read_only: 'bg-surface text-fg',
+		unconfigured: 'bg-warning-soft text-fg',
+		no_access: 'bg-danger-soft text-danger'
 	};
 </script>
 
 <article
-	class="not-prose my-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+	class="not-prose my-3 rounded-card border border-line bg-raised p-4"
 	data-testid="flow-bridge-card"
 	data-source-scope={scopeId}
 	data-mode={mode}
@@ -64,13 +64,10 @@
 >
 	<div class="flex flex-wrap items-start gap-2">
 		<div class="min-w-0 flex-1">
-			<p class="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+			<p class="text-xs font-medium uppercase tracking-wide text-fg-muted">
 				{$t(REFERENCE_MODE_KEYS[mode])} · {$t(TARGET_TYPE_KEYS[reference.target_type])}
 			</p>
-			<h3
-				class="truncate text-sm font-semibold text-slate-900 dark:text-slate-100"
-				data-testid="flow-bridge-card-title"
-			>
+			<h3 class="truncate text-sm font-semibold text-fg" data-testid="flow-bridge-card-title">
 				{reference.title || $t('flow.bridge.card.untitled')}
 			</h3>
 		</div>
@@ -85,41 +82,38 @@
 	{#if mode === 'embed'}
 		<div class="mt-3" data-testid="flow-bridge-embed-body" aria-live="polite">
 			{#if !viewable || content?.kind === 'restricted'}
-				<p
-					class="text-sm text-slate-500 dark:text-slate-400"
-					data-testid="flow-bridge-embed-restricted"
-				>
+				<p class="text-sm text-fg-muted" data-testid="flow-bridge-embed-restricted">
 					{$t('flow.bridge.card.restricted')}
 				</p>
 			{:else if !content}
-				<p class="text-sm text-slate-500">{$t('common.loading')}</p>
+				<p class="text-sm text-fg-muted">{$t('common.loading')}</p>
 			{:else if content.kind === 'failed'}
-				<p class="text-sm text-red-600" role="alert">{$t('flow.bridge.card.contentFailed')}</p>
+				<p class="text-sm text-danger" role="alert">{$t('flow.bridge.card.contentFailed')}</p>
 			{:else if content.kind === 'record'}
 				{#if content.fields.length === 0}
-					<p class="text-sm text-slate-500">{$t('flow.bridge.card.emptyRecord')}</p>
+					<p class="text-sm text-fg-muted">{$t('flow.bridge.card.emptyRecord')}</p>
 				{:else}
 					<dl class="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
 						{#each content.fields as field (field.label)}
-							<dt class="font-medium text-slate-600 dark:text-slate-300">{field.label}</dt>
-							<dd class="break-words text-slate-900 dark:text-slate-100">{field.value}</dd>
+							<dt class="font-medium text-fg-muted">{field.label}</dt>
+							<dd class="break-words text-fg">{field.value}</dd>
 						{/each}
 					</dl>
 				{/if}
 			{:else if content.kind === 'form'}
-				<p class="text-sm text-slate-700 dark:text-slate-200">
+				<p class="text-sm text-fg">
 					{content.description || $t('flow.bridge.card.noDescription')}
 				</p>
-				<p class="mt-1 text-xs text-slate-500">
+				<p class="mt-1 text-xs text-fg-muted">
 					{$t('flow.bridge.card.fieldCount', { values: { count: content.fieldCount } })}
 				</p>
 			{/if}
 		</div>
-		<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+		<p class="mt-2 text-xs text-fg-muted">
 			{$t('flow.canvas.slashMenu.embedNote')}
 		</p>
 	{:else}
-		<p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+		<p class="mt-2 text-xs text-fg-muted">
 			{$t('flow.canvas.slashMenu.referenceNote')}
 		</p>
 	{/if}
@@ -157,7 +151,7 @@
 		{/if}
 		<button
 			type="button"
-			class="ml-auto inline-flex min-h-11 items-center rounded px-3 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-red-300 dark:hover:bg-red-950"
+			class="ml-auto inline-flex min-h-11 items-center rounded px-3 text-sm font-medium text-danger hover:bg-danger-soft"
 			data-testid="flow-bridge-card-remove"
 			onclick={() => onremove(reference.reference_id)}
 		>

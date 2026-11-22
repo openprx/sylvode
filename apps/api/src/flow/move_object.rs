@@ -853,6 +853,7 @@ async fn plan_document(
     // (`write::replay_stable_update_id`).
     let update_id = write::replay_stable_update_id(document_id, &input.idempotency_key);
     let request = write::UpdateRequest {
+        rebase_policy: crate::flow::collab::write::RebasePolicy::None,
         document_id,
         update_id,
         bytes,
@@ -1123,7 +1124,18 @@ async fn run_locked_phase(
         else {
             continue;
         };
-        match write::stage_one_document(tx, request, prepared, dispatch_max_attempts).await? {
+        match write::stage_one_document(
+            tx,
+            request,
+            prepared,
+            dispatch_max_attempts,
+            crate::flow::block_registry::RegistrationAllowance::within(
+                std::time::Instant::now(),
+                write::LOCKED_PHASE_STAGING_BUDGET,
+            ),
+        )
+        .await?
+        {
             write::StagedOutcome::Ready(staged) => advanced.push(AdvancedDocument {
                 document_id: *document_id,
                 accepted: write::Accepted {
@@ -2499,7 +2511,7 @@ mod database_tests {
         exec(
             db,
             "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled, default_member_level) \
-             VALUES ($1, true, 'edit')",
+             VALUES ($1, true, 'edit') ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled, default_member_level = EXCLUDED.default_member_level",
             vec![workspace_id.into()],
         )
         .await;
@@ -3200,12 +3212,12 @@ mod database_tests {
                 let mut currently_in_a = false;
                 for sample in 0..(WARMUPS + MEASUREMENTS) {
                     let target = if currently_in_a { nav_b } else { nav_a };
-                    run_move(
+                    Box::pin(run_move(
                         &state,
                         &collab,
                         &fx,
                         &move_input(page, fx.owner_id, "owner", json!({ "target_object_id": target })),
-                    )
+                    ))
                     .await
                     .unwrap_or_else(|err| panic!("two-document sample {sample} failed: {err:?}"));
                     currently_in_a = !currently_in_a;

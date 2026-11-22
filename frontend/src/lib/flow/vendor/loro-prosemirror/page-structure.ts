@@ -41,18 +41,31 @@ export function logicalRootChildren(doc: LoroDocType): LoroNode[] {
 	return structureEntries(doc).map((entry) => entry.block);
 }
 /** Only the root writer uses this mutable logical list. Tree changes are committed after diffing. */
-export function structuredWriter(doc: LoroDocType,requiresModel5=false): {
+export function structuredWriter(
+	doc: LoroDocType,
+	requiresModel5 = false
+): {
 	list: LoroChildrenListType;
 	finish: (depths: number[]) => void;
-	beforeUserWrites:()=>void;
+	beforeUserWrites: () => void;
 } {
 	const physical = doc.getMap('doc').get('children') as LoroList;
 	const entries = logicalRootChildren(doc);
 	const tree = (doc as LoroDoc).getTree('flow_editor_structure');
-	const meta=(doc as LoroDoc).getMap('flow_editor_structure_meta');
-	let needsFloor=requiresModel5&&meta.get('model')!=='rich_page_v5';
-	const writeFloor=()=>{if(needsFloor){meta.set('model','rich_page_v5');needsFloor=false;}};
-	const beforeUserWrites=()=>{if(needsFloor){writeFloor();doc.commit({origin:'sys:storage'});}};
+	const meta = (doc as LoroDoc).getMap('flow_editor_structure_meta');
+	let needsFloor = requiresModel5 && meta.get('model') !== 'rich_page_v5';
+	const writeFloor = () => {
+		if (needsFloor) {
+			meta.set('model', 'rich_page_v5');
+			needsFloor = false;
+		}
+	};
+	const beforeUserWrites = () => {
+		if (needsFloor) {
+			writeFloor();
+			doc.commit({ origin: 'sys:storage' });
+		}
+	};
 	const list = {
 		withStorageCreation: (create: () => LoroMap) => {
 			doc.commit({ origin: 'loroSyncPlugin' });
@@ -105,5 +118,5 @@ export function structuredWriter(doc: LoroDocType,requiresModel5=false): {
 			if (typeof cid === 'string' && !keep.has(cid) && !node.isDeleted()) tree.delete(node.id);
 		}
 	};
-	return { list, finish,beforeUserWrites };
+	return { list, finish, beforeUserWrites };
 }

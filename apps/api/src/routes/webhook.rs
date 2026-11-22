@@ -6,59 +6,18 @@ use axum::{
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use uuid::Uuid;
 
-use crate::entities::webhook::{CreateWebhookRequest, UpdateWebhookRequest, WEBHOOK_EVENTS};
+use crate::entities::webhook::{CreateWebhookRequest, UpdateWebhookRequest};
 use crate::{
     error::ApiError,
-    events::{BusinessEventInput, dispatcher::ensure_workspace_subscriber_slot, insert_business_event},
     outbound::validate_outbound_url,
     response::{ApiResponse, PaginatedData},
+    services::{
+        bots::ManagedPolicy,
+        webhooks::{self, NewWebhook},
+    },
 };
-
-#[derive(Debug, FromQueryResult)]
-struct WebhookRow {
-    pub id: Uuid,
-    pub workspace_id: Uuid,
-    pub name: Option<String>,
-    pub url: String,
-    pub events: serde_json::Value,
-    pub active: bool,
-    pub bot_user_id: Option<Uuid>,
-    pub created_by: Uuid,
-    pub created_at: platform::timestamp::Timestamp,
-    pub updated_at: platform::timestamp::Timestamp,
-    pub last_triggered_at: Option<platform::timestamp::Timestamp>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WebhookResponse {
-    pub id: Uuid,
-    pub workspace_id: Uuid,
-    pub name: Option<String>,
-    pub url: String,
-    pub events: Vec<String>,
-    pub active: bool,
-    pub bot_user_id: Option<Uuid>,
-    pub created_by: Uuid,
-    pub created_at: platform::timestamp::Timestamp,
-    pub updated_at: platform::timestamp::Timestamp,
-    pub last_triggered_at: Option<platform::timestamp::Timestamp>,
-}
-
-/// The answer to creating a webhook or rotating its secret: the webhook plus its signing secret.
-///
-/// This is the only place the secret ever leaves the API, once, so the receiver can be configured
-/// with it (including one the server generated). [`WebhookResponse`], which list, get and update
-/// answer with and which is copied into the webhook's business events, has no secret field.
-#[derive(Debug, Serialize)]
-pub struct WebhookWithSecretResponse {
-    #[serde(flatten)]
-    pub webhook: WebhookResponse,
-    /// HMAC-SHA256 key of `X-Webhook-Signature`; not retrievable afterwards.
-    pub secret: String,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct ListDeliveriesQuery {
@@ -80,27 +39,6 @@ pub struct WebhookDeliveryResponse {
     pub success: bool,
     pub delivered_at: Option<platform::timestamp::Timestamp>,
     pub created_at: platform::timestamp::Timestamp,
-}
-
-impl TryFrom<WebhookRow> for WebhookResponse {
-    type Error = ApiError;
-
-    fn try_from(row: WebhookRow) -> Result<Self, Self::Error> {
-        let events: Vec<String> = serde_json::from_value(row.events).map_err(|_| ApiError::Internal)?;
-        Ok(Self {
-            id: row.id,
-            workspace_id: row.workspace_id,
-            name: row.name,
-            url: row.url,
-            events,
-            active: row.active,
-            bot_user_id: row.bot_user_id,
-            created_by: row.created_by,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            last_triggered_at: row.last_triggered_at,
-        })
-    }
 }
 
 /// GET /`api/v1/workspaces/:workspace_id/webhooks/:webhook_id/deliveries`
@@ -248,73 +186,31 @@ pub async fn create_webhook(
         .await
         .map_err(|err| ApiError::BadRequest(format!("invalid url: {err}")))?;
 
-    // Validate events
-    for event in &req.events {
-        if !WEBHOOK_EVENTS.contains(&event.as_str()) {
-            return Err(ApiError::BadRequest(format!("Invalid event type: {event}")));
-        }
-    }
-
-    if let Some(bot_user_id) = req.bot_user_id {
-        ensure_bot_user(&state, bot_user_id).await?;
-    }
-
-    // Prefer explicit secret, otherwise generate one. Either way it is returned in this response
-    // only, so a generated one can be handed to the receiver.
-    let secret = req.secret.unwrap_or_else(generate_secret);
-
-    let webhook_id = Uuid::new_v4();
-    let now = platform::timestamp::Timestamp::now();
-    let active = req.enabled.or(req.active).unwrap_or(true);
-
     let tx = state.db.begin().await?;
-
-    // `subscribers_per_workspace_max` (`limits-v1.md`, `limit_kind: workspace_subscribers`, frozen
-    // at 100): a webhook is v0.4's only subscriber kind, so this endpoint is where a workspace's
-    // subscriber directory grows. Checked inside the transaction that inserts the row, and only
-    // for a row that would actually be active — an inactive webhook is not a subscriber (the
-    // dispatcher's own directory query and `webhook_trigger.rs` both require `active = true`).
-    if active {
-        ensure_workspace_subscriber_slot(&tx, workspace_id, None).await?;
-    }
-
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"INSERT INTO webhooks
-               (id, workspace_id, name, url, secret, events, active, bot_user_id, created_by, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-        vec![
-            webhook_id.into(),
-            workspace_id.into(),
-            name.into(),
-            req.url.into(),
-            secret.clone().into(),
-            serde_json::to_value(&req.events)
-                .map_err(|_| ApiError::Internal)?
-                .into(),
-            active.into(),
-            req.bot_user_id.into(),
-            user_id.into(),
-            now.into(),
-            now.into(),
-        ],
-    ))
+    let created = webhooks::create(
+        &tx,
+        NewWebhook {
+            workspace_id,
+            actor_id: user_id,
+            name,
+            url: req.url,
+            secret: req.secret,
+            events: req.events,
+            active: req.enabled.or(req.active).unwrap_or(true),
+            bot_user_id: req.bot_user_id,
+        },
+        ManagedPolicy::Refuse,
+    )
     .await?;
-
-    let response = find_webhook_response_with_conn(&tx, webhook_id).await?;
-    insert_webhook_event(&tx, &response, "webhook.created", user_id).await?;
     tx.commit().await?;
 
-    Ok(ApiResponse::success(WebhookWithSecretResponse {
-        webhook: response,
-        secret,
-    }))
+    Ok(ApiResponse::success(created))
 }
 
 /// POST /`api/v1/workspaces/:workspace_id/webhooks/:webhook_id/rotate-secret`
 ///
 /// Replaces the signing secret with a newly generated one and returns it, once. Deliveries signed
-/// from now on use the new secret, so the receiver has to be given it (`sylvode-webhook` accepts
+/// from now on use the new secret, so the receiver has to be given it (`sylvode-runner` accepts
 /// several `webhook_secrets` at once, which allows a rotation without dropping deliveries).
 pub async fn rotate_webhook_secret(
     State(state): State<AppState>,
@@ -325,32 +221,11 @@ pub async fn rotate_webhook_secret(
 
     verify_workspace_admin(&state, workspace_id, user_id).await?;
 
-    let secret = generate_secret();
     let tx = state.db.begin().await?;
-    let result = tx
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE webhooks SET secret = $1, updated_at = $2 WHERE id = $3 AND workspace_id = $4",
-            vec![
-                secret.clone().into(),
-                platform::timestamp::Timestamp::now().into(),
-                webhook_id.into(),
-                workspace_id.into(),
-            ],
-        ))
-        .await?;
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound("Webhook not found".to_string()));
-    }
-
-    let response = find_webhook_response_with_conn(&tx, webhook_id).await?;
-    insert_webhook_event(&tx, &response, "webhook.secret_rotated", user_id).await?;
+    let rotated = webhooks::rotate_secret(&tx, workspace_id, webhook_id, user_id, ManagedPolicy::Refuse).await?;
     tx.commit().await?;
 
-    Ok(ApiResponse::success(WebhookWithSecretResponse {
-        webhook: response,
-        secret,
-    }))
+    Ok(ApiResponse::success(rotated))
 }
 
 /// GET /`api/v1/workspaces/:workspace_id/webhooks`
@@ -363,23 +238,7 @@ pub async fn list_webhooks(
 
     verify_workspace_access(&state, workspace_id, user_id).await?;
 
-    let webhooks = state
-        .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id, workspace_id, name, url, events, active, bot_user_id, created_by, created_at, updated_at, last_triggered_at FROM webhooks WHERE workspace_id = $1 ORDER BY created_at DESC",
-            vec![workspace_id.into()],
-        ))
-        .await?;
-
-    let responses: Vec<WebhookResponse> = webhooks
-        .iter()
-        .map(|r| {
-            let row = WebhookRow::from_query_result(r, "")?;
-            WebhookResponse::try_from(row)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
+    let responses = webhooks::list(&state.db, workspace_id).await?;
     Ok(ApiResponse::success(PaginatedData::from_items(responses)))
 }
 
@@ -393,18 +252,7 @@ pub async fn get_webhook(
 
     verify_workspace_access(&state, workspace_id, user_id).await?;
 
-    let webhook = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id, workspace_id, name, url, events, active, bot_user_id, created_by, created_at, updated_at, last_triggered_at FROM webhooks WHERE id = $1 AND workspace_id = $2",
-            vec![webhook_id.into(), workspace_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Webhook not found".to_string()))?;
-
-    let response = WebhookResponse::try_from(WebhookRow::from_query_result(&webhook, "")?)?;
-
+    let response = webhooks::get(&state.db, workspace_id, webhook_id).await?;
     Ok(ApiResponse::success(response))
 }
 
@@ -419,101 +267,14 @@ pub async fn update_webhook(
 
     verify_workspace_admin(&state, workspace_id, user_id).await?;
 
-    // Validate events if provided
-    if let Some(ref events) = req.events {
-        for event in events {
-            if !WEBHOOK_EVENTS.contains(&event.as_str()) {
-                return Err(ApiError::BadRequest(format!("Invalid event type: {event}")));
-            }
-        }
-    }
-    if let Some(bot_user_id) = req.bot_user_id {
-        ensure_bot_user(&state, bot_user_id).await?;
-    }
     if let Some(url) = req.url.as_deref() {
         validate_outbound_url(url)
             .await
             .map_err(|err| ApiError::BadRequest(format!("invalid url: {err}")))?;
     }
 
-    // Build dynamic UPDATE query
-    let mut updates = Vec::new();
-    let mut params: Vec<sea_orm::Value> = Vec::new();
-    let mut param_idx = 1;
-
-    if let Some(name) = req.name {
-        updates.push(format!("name = ${param_idx}"));
-        params.push(name.into());
-        param_idx += 1;
-    }
-    if let Some(url) = req.url {
-        updates.push(format!("url = ${param_idx}"));
-        params.push(url.into());
-        param_idx += 1;
-    }
-    if let Some(secret) = req.secret {
-        updates.push(format!("secret = ${param_idx}"));
-        params.push(secret.into());
-        param_idx += 1;
-    }
-    if let Some(events) = req.events {
-        updates.push(format!("events = ${param_idx}"));
-        params.push(serde_json::to_value(&events).map_err(|_| ApiError::Internal)?.into());
-        param_idx += 1;
-    }
-    let activating = req.enabled.or(req.active).unwrap_or(false);
-    if let Some(active) = req.enabled.or(req.active) {
-        updates.push(format!("active = ${param_idx}"));
-        params.push(active.into());
-        param_idx += 1;
-    }
-    if req.bot_user_id.is_some() {
-        updates.push(format!("bot_user_id = ${param_idx}"));
-        params.push(req.bot_user_id.into());
-        param_idx += 1;
-    }
-
-    if updates.is_empty() {
-        return Err(ApiError::BadRequest("No fields to update".to_string()));
-    }
-
-    updates.push(format!("updated_at = ${param_idx}"));
-    params.push(platform::timestamp::Timestamp::now().into());
-    param_idx += 1;
-
-    let webhook_id_idx = param_idx;
-    params.push(webhook_id.into());
-    param_idx += 1;
-    let workspace_id_idx = param_idx;
-    params.push(workspace_id.into());
-
-    let sql = format!(
-        "UPDATE webhooks SET {} WHERE id = ${} AND workspace_id = ${}",
-        updates.join(", "),
-        webhook_id_idx,
-        workspace_id_idx
-    );
-
     let tx = state.db.begin().await?;
-
-    // `subscribers_per_workspace_max` (`limits-v1.md`, `limit_kind: workspace_subscribers`):
-    // switching a webhook on grows the workspace's active subscriber directory exactly like
-    // creating one, so the same ceiling applies here. The webhook being updated is excluded from
-    // the tally and counted once as the slot it takes, so re-saving an already-active webhook in a
-    // workspace sitting exactly at the ceiling is not rejected.
-    if activating {
-        ensure_workspace_subscriber_slot(&tx, workspace_id, Some(webhook_id)).await?;
-    }
-
-    let result = tx
-        .execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, params))
-        .await?;
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound("Webhook not found".to_string()));
-    }
-
-    let response = find_webhook_response_with_conn(&tx, webhook_id).await?;
-    insert_webhook_event(&tx, &response, "webhook.updated", user_id).await?;
+    let response = webhooks::update(&tx, workspace_id, webhook_id, user_id, req, ManagedPolicy::Refuse).await?;
     tx.commit().await?;
 
     Ok(ApiResponse::success(response))
@@ -530,83 +291,13 @@ pub async fn delete_webhook(
     verify_workspace_admin(&state, workspace_id, user_id).await?;
 
     let tx = state.db.begin().await?;
-    let webhook = find_webhook_response_with_conn(&tx, webhook_id).await?;
-    insert_webhook_event(&tx, &webhook, "webhook.deleted", user_id).await?;
-
-    let result = tx
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "DELETE FROM webhooks WHERE id = $1 AND workspace_id = $2",
-            vec![webhook_id.into(), workspace_id.into()],
-        ))
-        .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound("Webhook not found".to_string()));
-    }
+    webhooks::delete(&tx, workspace_id, webhook_id, user_id, ManagedPolicy::Refuse).await?;
     tx.commit().await?;
 
     Ok(ApiResponse::ok())
 }
 
 // Helper functions
-async fn find_webhook_response_with_conn<C>(db: &C, webhook_id: Uuid) -> Result<WebhookResponse, ApiError>
-where
-    C: ConnectionTrait,
-{
-    let webhook = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id, workspace_id, name, url, events, active, bot_user_id, created_by, created_at, updated_at, last_triggered_at FROM webhooks WHERE id = $1",
-            vec![webhook_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Webhook not found".to_string()))?;
-
-    WebhookResponse::try_from(WebhookRow::from_query_result(&webhook, "")?)
-}
-
-async fn insert_webhook_event<C>(
-    db: &C,
-    webhook: &WebhookResponse,
-    event_type: &str,
-    actor_id: Uuid,
-) -> Result<(), ApiError>
-where
-    C: ConnectionTrait,
-{
-    insert_business_event(
-        db,
-        BusinessEventInput {
-            workspace_id: webhook.workspace_id,
-            project_id: None,
-            event_type: event_type.to_string(),
-            aggregate_type: "webhook".to_string(),
-            aggregate_id: webhook.id.to_string(),
-            actor_id: Some(actor_id),
-            source: json!({ "type": "user", "actor_id": actor_id }),
-            payload: json!({
-                "webhook_id": webhook.id,
-                "workspace_id": webhook.workspace_id,
-                "name": webhook.name,
-                "url": webhook.url,
-                "events": webhook.events,
-                "active": webhook.active,
-                "bot_user_id": webhook.bot_user_id
-            }),
-            metadata: json!({
-                "webhook_id": webhook.id,
-                "legacy_webhook": true
-            }),
-            correlation_id: None,
-            causation_id: None,
-            idempotency_key: None,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
 async fn verify_workspace_admin(state: &AppState, workspace_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
     let result = state
         .db
@@ -644,15 +335,6 @@ async fn verify_workspace_access(state: &AppState, workspace_id: Uuid, user_id: 
         return Err(ApiError::Forbidden("Access denied".to_string()));
     }
 
-    Ok(())
-}
-
-async fn ensure_bot_user(state: &AppState, bot_user_id: Uuid) -> Result<(), ApiError> {
-    if !crate::services::bot_identity::is_bot_user(&state.db, bot_user_id).await? {
-        return Err(ApiError::BadRequest(
-            "bot_user_id must reference a bot user".to_string(),
-        ));
-    }
     Ok(())
 }
 
@@ -744,74 +426,6 @@ async fn audit_stored_endpoints(state: &AppState) -> Result<usize, ApiError> {
 
 /// Per endpoint budget for [`audit_stored_endpoints`], which resolves DNS.
 const STORED_ENDPOINT_AUDIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-fn generate_secret() -> String {
-    use rand::Rng;
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let mut rng = rand::thread_rng();
-    (0..64)
-        .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
-            CHARSET.get(idx).copied().map_or('A', char::from)
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod secret_exposure_tests {
-    use super::{WebhookResponse, WebhookWithSecretResponse, generate_secret};
-    use uuid::Uuid;
-
-    fn webhook() -> WebhookResponse {
-        let now = platform::timestamp::Timestamp::now();
-        WebhookResponse {
-            id: Uuid::new_v4(),
-            workspace_id: Uuid::new_v4(),
-            name: Some("receiver".to_string()),
-            url: "https://receiver.example.com/webhook".to_string(),
-            events: vec!["issue.assigned".to_string()],
-            active: true,
-            bot_user_id: None,
-            created_by: Uuid::new_v4(),
-            created_at: now,
-            updated_at: now,
-            last_triggered_at: None,
-        }
-    }
-
-    #[test]
-    fn only_the_create_and_rotate_answer_carries_the_secret() {
-        let plain = serde_json::to_value(webhook()).expect("serializes");
-        assert!(
-            plain.get("secret").is_none(),
-            "list, get and update never show the secret"
-        );
-
-        let secret = generate_secret();
-        let created = serde_json::to_value(WebhookWithSecretResponse {
-            webhook: webhook(),
-            secret: secret.clone(),
-        })
-        .expect("serializes");
-        assert_eq!(
-            created.get("secret").and_then(serde_json::Value::as_str),
-            Some(secret.as_str())
-        );
-        assert_eq!(
-            created.get("url").and_then(serde_json::Value::as_str),
-            Some("https://receiver.example.com/webhook"),
-            "the webhook fields stay at the top level"
-        );
-    }
-
-    #[test]
-    fn generated_secrets_are_long_and_distinct() {
-        let first = generate_secret();
-        assert_eq!(first.len(), 64);
-        assert!(first.chars().all(|c| c.is_ascii_alphanumeric()));
-        assert_ne!(first, generate_secret());
-    }
-}
 
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]

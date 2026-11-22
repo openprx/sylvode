@@ -423,8 +423,8 @@ pub async fn prepare(
     if source_identity.object_type != "page" || target_identity.object_type != "page" {
         return Err(error("transfer_requires_pages"));
     }
-    super::block_anchors::baseline_for_read(db, source).await?;
-    super::block_anchors::baseline_for_read(db, input.target_object_id).await?;
+    super::block_anchors::complete_registration(db, source).await?;
+    super::block_anchors::complete_registration(db, input.target_object_id).await?;
     let pages = super::page_transfer_prepare::pages(db, source, input.target_object_id)
         .await
         .map_err(|_| error("transfer_registry_not_current"))?;
@@ -446,7 +446,7 @@ pub async fn prepare(
     }
     let mut source_engine = super::document::load_head_engine(db, a.document_id).await?;
     let mut target_engine = super::document::load_head_engine(db, b.document_id).await?;
-    if !source_engine.has_editor_doc() || !target_engine.has_editor_doc() {
+    if !source_engine.has_editor_doc().map_err(map)? || !target_engine.has_editor_doc().map_err(map)? {
         return Err(error("explicit_editor_initialization_required"));
     }
     source_engine.initialize_page_structure_model(5).map_err(map)?;
@@ -699,7 +699,10 @@ pub(super) fn insert_selected(
                         kind: NodeKind::Block,
                     })
                     .map_err(map)?;
-                let cid = engine.resolve_content_node_id(&alias.as_str().into()).to_string();
+                let cid = engine
+                    .resolve_content_node_id(&alias.as_str().into())
+                    .map_err(map)?
+                    .to_string();
                 engine
                     .apply_content_operation(&Operation::SetProperty {
                         id: cid.as_str().into(),
@@ -780,7 +783,21 @@ async fn stage_document(
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_object_projections SET document_seq=$2,document_frontier=$3,title=$4,state=$5,plain_text=$6,updated_at=now() WHERE object_id=$1",vec![identity.id.into(),seq.into(),prepared.after_frontier.clone().into(),prepared.title.clone().into(),prepared.state_json.clone().into(),prepared.plain_text.clone().into()])).await?;
     super::body_assets::reconcile_accepted(tx, identity.id, seq, &prepared.asset_references).await?;
     super::child_pages::reconcile_accepted(tx, identity.id, Some(actor), seq, &prepared.child_references).await?;
-    super::block_registry::reconcile_accepted(tx, identity.id, seq, &prepared.logical_blocks).await?;
+    // Both Pages were completed at prepare and their frontiers are verified at commit, so only the
+    // transferred blocks are pending here; the first chunk group always registers them.
+    super::block_registry::reconcile_accepted(
+        tx,
+        identity.id,
+        seq,
+        &prepared.logical_blocks,
+        super::block_registry::RegistrationAllowance::bounded(
+            std::time::Instant::now(),
+            super::collab::write::LOCKED_PHASE_STAGING_BUDGET,
+            super::block_registry::REGISTRATION_ROWS_PER_TRANSACTION_MAX,
+            super::block_registry::REGISTRY_ROWS_PER_STATEMENT,
+        ),
+    )
+    .await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE flow_objects SET updated_at=now(),updated_by=$2 WHERE id=$1",
@@ -984,6 +1001,7 @@ async fn commit_once(
             placeholder = Some(
                 source_engine
                     .resolve_content_node_id(&alias.as_str().into())
+                    .map_err(map)?
                     .to_string(),
             );
         }
@@ -1704,6 +1722,7 @@ async fn publish_committed(
             should_advance_snapshot: false,
         };
         let request = write::UpdateRequest {
+            rebase_policy: crate::flow::collab::write::RebasePolicy::None,
             document_id: document,
             update_id: update,
             bytes: bytes.to_vec(),

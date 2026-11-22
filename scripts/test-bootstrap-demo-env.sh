@@ -2,8 +2,7 @@
 # Checks how scripts/bootstrap-restaurant-demo.sh reads its inputs, without an API.
 #
 # The non-local URL guard runs before any request, so a remote API URL shows which variable the
-# script read: SYLVODE_* is canonical, OPENPR_* still works with exactly one deprecation notice,
-# and the two set to different values are refused rather than one silently winning.
+# script read: only SYLVODE_* names are inputs, and a legacy OPENPR_* name is ignored.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,33 +31,35 @@ echo "bootstrap-restaurant-demo.sh inputs"
 
 status="$(run SYLVODE_API_URL=http://example.com)"
 if [[ "$status" == 2 ]] && grep -q "Refusing to seed a non-local API URL: http://example.com" "$OUT" && ! grep -q "deprecated" "$OUT"; then
-  ok "SYLVODE_API_URL is read, without a deprecation notice"
+  ok "SYLVODE_API_URL is read"
 else
-  bad "SYLVODE_API_URL is read, without a deprecation notice"
+  bad "SYLVODE_API_URL is read"
 fi
 
-status="$(run OPENPR_API_URL=http://example.com)"
-if [[ "$status" == 2 ]] && grep -q "Refusing to seed a non-local API URL: http://example.com" "$OUT" \
-  && [[ "$(grep -c "legacy environment variable OPENPR_API_URL is deprecated; use SYLVODE_API_URL instead" "$OUT")" == 1 ]]; then
-  ok "legacy OPENPR_API_URL still works and prints one notice"
-else
-  bad "legacy OPENPR_API_URL still works and prints one notice"
-fi
-
+# A legacy OPENPR_API_URL next to the canonical one is not read: the refusal names the canonical
+# value, and there is no notice and no conflict error.
 status="$(run SYLVODE_API_URL=http://example.com OPENPR_API_URL=http://example.org)"
-if [[ "$status" == 2 ]] && grep -q "SYLVODE_API_URL conflicts with legacy OPENPR_API_URL" "$OUT" && ! grep -q "Refusing to seed" "$OUT"; then
-  ok "conflicting canonical and legacy values are refused"
+if [[ "$status" == 2 ]] && grep -q "Refusing to seed a non-local API URL: http://example.com" "$OUT" \
+  && ! grep -qE "deprecated|conflicts" "$OUT"; then
+  ok "a legacy OPENPR_API_URL is ignored"
 else
-  bad "conflicting canonical and legacy values are refused"
+  bad "a legacy OPENPR_API_URL is ignored"
 fi
 
 # 0.0.0.0 is not one of the local names the guard allows, and a connection to it fails at once.
-status="$(run SYLVODE_API_URL=http://0.0.0.0:1 OPENPR_DEMO_ALLOW_REMOTE=1 SYLVODE_DEMO_VERIFY_MCP_HTTP=0)"
-if [[ "$status" != 0 ]] && ! grep -q "Refusing to seed" "$OUT" \
-  && grep -q "legacy environment variable OPENPR_DEMO_ALLOW_REMOTE is deprecated" "$OUT"; then
-  ok "a legacy flag combines with canonical inputs"
+status="$(run SYLVODE_API_URL=http://0.0.0.0:1 SYLVODE_DEMO_ALLOW_REMOTE=1 SYLVODE_DEMO_VERIFY_MCP_HTTP=0)"
+if [[ "$status" != 0 ]] && ! grep -q "Refusing to seed" "$OUT"; then
+  ok "a canonical flag combines with canonical inputs"
 else
-  bad "a legacy flag combines with canonical inputs"
+  bad "a canonical flag combines with canonical inputs"
+fi
+
+status="$(run SYLVODE_API_URL=http://0.0.0.0:1 OPENPR_DEMO_ALLOW_REMOTE=1 SYLVODE_DEMO_VERIFY_MCP_HTTP=0)"
+if [[ "$status" == 2 ]] && grep -q "Refusing to seed a non-local API URL: http://0.0.0.0:1" "$OUT" \
+  && ! grep -q "deprecated" "$OUT"; then
+  ok "a legacy flag is ignored"
+else
+  bad "a legacy flag is ignored"
 fi
 
 if bash "$SCRIPT" --help | grep -q "SYLVODE_DEMO_ALLOW_REMOTE=1" && ! bash "$SCRIPT" --help | grep -qE '^  OPENPR_'; then

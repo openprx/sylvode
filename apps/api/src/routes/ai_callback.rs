@@ -15,16 +15,15 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
+    middleware::bot_auth::BotAuthContext,
     response::{ApiResponse, PaginatedData},
     services::{
         ai_task_service::{
-            AiTaskRow, AttemptEnd, CreateAiTaskInput, create_ai_task, insert_ai_task_business_event,
-            insert_ai_task_event, next_retry_time, notify_ai_task_failed, status_after_failed_attempt,
-            valid_reference_type, valid_task_type,
+            AiTaskRow, AiTaskWithProtocol, CreateAiTaskInput, DispatchOrigin, create_ai_task, load_protocol_row,
+            task_with_protocol_columns, valid_reference_type, valid_task_type,
         },
         trust_score_service::{is_project_admin_or_owner, is_project_member, is_system_admin},
     },
-    webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
 };
 
 #[derive(Debug, Deserialize)]
@@ -44,47 +43,6 @@ pub struct CreateAiTaskRequest {
     pub payload: Option<Value>,
     pub idempotency_key: Option<String>,
     pub max_attempts: Option<i32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct FailTaskRequest {
-    pub error_message: Option<String>,
-    pub payload: Option<Value>,
-    /// `false` fails the task now instead of scheduling a retry while attempts remain: the caller
-    /// knows a repeat cannot succeed (for example no agent matches the task). Defaults to `true`.
-    pub retry: Option<bool>,
-}
-
-/// The optional `?attempt=N` of the complete and fail callbacks.
-///
-/// `N` is the attempt number (the delivery's `attempts`) the caller ran. With it, the callback is accepted only while that very
-/// attempt is `processing`, so a late callback from an attempt the worker has already timed out
-/// and re-queued, or failed, cannot end a later attempt or a re-queued task. Without it the
-/// callback behaves as before.
-#[derive(Debug, Default, Deserialize)]
-pub struct CallbackAttemptQuery {
-    pub attempt: Option<i32>,
-}
-
-/// Whether a complete (`allow_pending = false`) or fail (`allow_pending = true`) callback for
-/// `attempt` may end a task in `status` at attempt `attempts`. An attempt-qualified callback needs
-/// that attempt to be `processing`; an unqualified fail also accepts a task already rescheduled to
-/// `pending`, as it always has.
-fn check_callback_attempt(
-    status: &str,
-    attempts: i32,
-    attempt: Option<i32>,
-    allow_pending: bool,
-) -> Result<(), String> {
-    match attempt {
-        Some(attempt) if status == "processing" && attempt == attempts => Ok(()),
-        Some(attempt) if status == "processing" => Err(format!(
-            "task is not in processing status for attempt {attempt} (current attempt {attempts})"
-        )),
-        None if status == "processing" || (allow_pending && status == "pending") => Ok(()),
-        None if allow_pending => Err("task cannot be failed in current status".to_string()),
-        Some(_) | None => Err("task is not in processing status".to_string()),
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -107,15 +65,16 @@ pub struct AiTaskResponse {
     pub completed_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub acknowledged_at: Option<String>,
+    pub plan: Option<String>,
+    pub last_progress_at: Option<String>,
+    pub lease_expires_at: Option<String>,
+    pub runner_phase: Option<String>,
 }
 
-#[derive(Debug, FromQueryResult)]
-struct ProjectRow {
-    workspace_id: Uuid,
-}
-
-impl From<AiTaskRow> for AiTaskResponse {
-    fn from(value: AiTaskRow) -> Self {
+impl From<AiTaskWithProtocol> for AiTaskResponse {
+    fn from(entry: AiTaskWithProtocol) -> Self {
+        let AiTaskWithProtocol { task: value, protocol } = entry;
         Self {
             id: value.id,
             project_id: value.project_id,
@@ -135,253 +94,23 @@ impl From<AiTaskRow> for AiTaskResponse {
             completed_at: value.completed_at.map(platform::timestamp::Timestamp::to_rfc3339),
             created_at: value.created_at.to_rfc3339(),
             updated_at: value.updated_at.to_rfc3339(),
+            acknowledged_at: protocol.acknowledged_at.map(platform::timestamp::Timestamp::to_rfc3339),
+            plan: protocol.plan,
+            last_progress_at: protocol
+                .last_progress_at
+                .map(platform::timestamp::Timestamp::to_rfc3339),
+            lease_expires_at: protocol
+                .lease_expires_at
+                .map(platform::timestamp::Timestamp::to_rfc3339),
+            runner_phase: protocol.runner_phase,
         }
     }
 }
 
-pub async fn complete_task(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    Path(task_id): Path<Uuid>,
-    Query(attempt): Query<CallbackAttemptQuery>,
-    Json(result): Json<Value>,
-) -> Result<impl IntoResponse, ApiError> {
-    let actor_id = parse_user_id(&claims)?;
-    let mut task = find_task(&state, task_id).await?;
-    ensure_actor_can_operate(&state, &task, actor_id).await?;
-
-    check_callback_attempt(&task.status, task.attempts, attempt.attempt, false).map_err(ApiError::BadRequest)?;
-
-    let previous_status = task.status.clone();
-    let now = Timestamp::now();
-    // Compare-and-set on the state checked above: a worker timeout, a fail callback or a second
-    // complete that commits in between makes this update match nothing instead of overwriting it.
-    let updated = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            UPDATE ai_tasks
-            SET status = 'completed',
-                result = $2,
-                error_message = NULL,
-                completed_at = $3,
-                updated_at = $3
-            WHERE id = $1
-              AND status = 'processing'
-              AND attempts = $4
-            RETURNING
-                id,
-                project_id,
-                ai_participant_id,
-                task_type,
-                reference_type,
-                reference_id,
-                status,
-                priority,
-                payload,
-                result,
-                error_message,
-                idempotency_key,
-                attempts,
-                max_attempts,
-                next_retry_at,
-                started_at,
-                completed_at,
-                created_at,
-                updated_at
-        ",
-        vec![task_id.into(), result.clone().into(), now.into(), task.attempts.into()],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::BadRequest("task is not in processing status".to_string()))?;
-
-    task = updated.clone();
-    insert_ai_task_event(&state.db, task_id, "completed", json!({ "result": result })).await?;
-    insert_ai_task_business_event(
-        &state.db,
-        &task,
-        "ai_task.completed",
-        Some(actor_id),
-        json!({ "type": "ai_callback", "actor_id": actor_id }),
-        json!({ "result": task.result }),
-        Some(previous_status.as_str()),
-    )
-    .await?;
-    let project = find_project(&state, task.project_id).await?;
-    trigger_webhooks(
-        state.clone(),
-        TriggerContext {
-            event: WebhookEvent::AiTaskCompleted,
-            workspace_id: project.workspace_id,
-            project_id: task.project_id,
-            actor_id,
-            issue_id: None,
-            comment_id: None,
-            label_id: None,
-            sprint_id: None,
-            changes: None,
-            mentions: Vec::new(),
-            extra_data: Some(json!({
-                "task_id": task.id.to_string(),
-                "task_type": task.task_type,
-                "status": task.status,
-                "reference_type": task.reference_type,
-                "reference_id": task.reference_id.map(|v| v.to_string()),
-                "result": task.result,
-            })),
-        },
-    );
-
-    Ok(ApiResponse::success(AiTaskResponse::from(task)))
-}
-
-pub async fn fail_task(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    Path(task_id): Path<Uuid>,
-    Query(attempt): Query<CallbackAttemptQuery>,
-    Json(req): Json<FailTaskRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let actor_id = parse_user_id(&claims)?;
-    let mut task = find_task(&state, task_id).await?;
-    ensure_actor_can_operate(&state, &task, actor_id).await?;
-
-    check_callback_attempt(&task.status, task.attempts, attempt.attempt, true).map_err(ApiError::BadRequest)?;
-
-    let previous_status = task.status.clone();
-    let now = Timestamp::now();
-    let message = req
-        .error_message
-        .clone()
-        .unwrap_or_else(|| "task execution failed".to_string());
-
-    let end = if req.retry.unwrap_or(true) {
-        AttemptEnd::RetryWhileAttemptsRemain
-    } else {
-        AttemptEnd::Terminal
-    };
-    let will_retry = status_after_failed_attempt(task.attempts, task.max_attempts, end) == "pending";
-    let (next_status, next_retry_at, event_type) = if will_retry {
-        (
-            "pending",
-            Some(next_retry_time(task.attempts + 1)),
-            "retried".to_string(),
-        )
-    } else {
-        ("failed", None, "failed".to_string())
-    };
-
-    let updated = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            UPDATE ai_tasks
-            SET status = $2,
-                error_message = $3,
-                next_retry_at = $4,
-                completed_at = CASE WHEN $2 = 'failed' THEN $5 ELSE completed_at END,
-                updated_at = $5
-            WHERE id = $1
-              AND status = $6
-              AND attempts = $7
-            RETURNING
-                id,
-                project_id,
-                ai_participant_id,
-                task_type,
-                reference_type,
-                reference_id,
-                status,
-                priority,
-                payload,
-                result,
-                error_message,
-                idempotency_key,
-                attempts,
-                max_attempts,
-                next_retry_at,
-                started_at,
-                completed_at,
-                created_at,
-                updated_at
-        ",
-        vec![
-            task_id.into(),
-            next_status.into(),
-            message.clone().into(),
-            next_retry_at.into(),
-            now.into(),
-            previous_status.clone().into(),
-            task.attempts.into(),
-        ],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::BadRequest("task cannot be failed in current status".to_string()))?;
-
-    task = updated.clone();
-    insert_ai_task_event(
-        &state.db,
-        task_id,
-        &event_type,
-        json!({
-            "error_message": message,
-            "payload": req.payload.clone(),
-            "attempts": task.attempts,
-            "max_attempts": task.max_attempts,
-            "next_retry_at": task.next_retry_at.map(platform::timestamp::Timestamp::to_rfc3339),
-        }),
-    )
-    .await?;
-    insert_ai_task_business_event(
-        &state.db,
-        &task,
-        if task.status == "failed" {
-            "ai_task.failed"
-        } else {
-            "ai_task.retried"
-        },
-        Some(actor_id),
-        json!({ "type": "ai_callback", "actor_id": actor_id }),
-        json!({
-            "error_message": message,
-            "payload": req.payload.clone(),
-            "attempts": task.attempts,
-            "max_attempts": task.max_attempts,
-            "next_retry_at": task.next_retry_at.map(platform::timestamp::Timestamp::to_rfc3339),
-        }),
-        Some(previous_status.as_str()),
-    )
-    .await?;
-
-    if task.status == "failed" {
-        notify_ai_task_failed(&state, &task, actor_id).await?;
-    }
-
-    Ok(ApiResponse::success(AiTaskResponse::from(task)))
-}
-
-pub async fn report_progress(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    Path(task_id): Path<Uuid>,
-    Json(payload): Json<Value>,
-) -> Result<impl IntoResponse, ApiError> {
-    let actor_id = parse_user_id(&claims)?;
-    let task = find_task(&state, task_id).await?;
-    ensure_actor_can_operate(&state, &task, actor_id).await?;
-
-    insert_ai_task_event(&state.db, task_id, "progress", payload.clone()).await?;
-    insert_ai_task_business_event(
-        &state.db,
-        &task,
-        "ai_task.progress",
-        Some(actor_id),
-        json!({ "type": "ai_callback", "actor_id": actor_id }),
-        json!({ "progress": payload }),
-        Some(task.status.as_str()),
-    )
-    .await?;
-    Ok(ApiResponse::ok())
+/// The response for a task row that was just written: its protocol columns are read next to it.
+async fn response_for(db: &impl ConnectionTrait, task: AiTaskRow) -> Result<AiTaskResponse, ApiError> {
+    let protocol = load_protocol_row(db, task.id).await?;
+    Ok(AiTaskResponse::from(AiTaskWithProtocol { task, protocol }))
 }
 
 pub async fn list_project_ai_tasks(
@@ -398,7 +127,7 @@ pub async fn list_project_ai_tasks(
     if let Some(status) = query.status.as_ref()
         && !matches!(
             status.as_str(),
-            "pending" | "processing" | "completed" | "failed" | "cancelled"
+            "pending" | "processing" | "acknowledged" | "completed" | "failed" | "cancelled"
         )
     {
         return Err(ApiError::BadRequest("invalid status filter".to_string()));
@@ -459,7 +188,12 @@ pub async fn list_project_ai_tasks(
                     started_at,
                     completed_at,
                     created_at,
-                    updated_at
+                    updated_at,
+                    acknowledged_at,
+                    plan,
+                    last_progress_at,
+                    lease_expires_at,
+                    runner_phase
                 FROM ai_tasks
                 WHERE project_id = $1 AND status = $2
                 ORDER BY priority DESC, created_at DESC
@@ -490,7 +224,12 @@ pub async fn list_project_ai_tasks(
                     started_at,
                     completed_at,
                     created_at,
-                    updated_at
+                    updated_at,
+                    acknowledged_at,
+                    plan,
+                    last_progress_at,
+                    lease_expires_at,
+                    runner_phase
                 FROM ai_tasks
                 WHERE project_id = $1
                 ORDER BY priority DESC, created_at DESC
@@ -501,7 +240,7 @@ pub async fn list_project_ai_tasks(
         )
     };
 
-    let items = AiTaskRow::find_by_statement(Statement::from_sql_and_values(
+    let items = AiTaskWithProtocol::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         &list_sql,
         list_values,
@@ -519,6 +258,130 @@ pub async fn list_project_ai_tasks(
         per_page,
         total_pages,
     }))
+}
+
+/// At most this many tasks are listed for one issue.
+const ISSUE_TASK_LIMIT: i64 = 50;
+/// At most this many events are listed for one task: its newest, oldest first within the window.
+const TASK_EVENT_LIMIT: i64 = 100;
+/// A string inside an event payload is cut to this many characters.
+const EVENT_STRING_CHARS: usize = 2000;
+
+#[derive(Debug, FromQueryResult)]
+struct IssueScopeRow {
+    project_id: Uuid,
+    workspace_id: Uuid,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct TaskEventRow {
+    task_id: Uuid,
+    event_type: String,
+    payload: Value,
+    created_at: Timestamp,
+    /// How many events the task has in all.
+    total: i64,
+}
+
+/// `payload` with every string value cut to [`EVENT_STRING_CHARS`] characters.
+fn cut_long_strings(payload: Value) -> Value {
+    match payload {
+        Value::String(text) => match text.char_indices().nth(EVENT_STRING_CHARS) {
+            Some((end, _)) => Value::String(text[..end].to_string()),
+            None => Value::String(text),
+        },
+        Value::Array(items) => Value::Array(items.into_iter().map(cut_long_strings).collect()),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| (key, cut_long_strings(value)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// `GET /api/v1/issues/{issue_id}/ai-tasks`: the agent tasks of one issue, newest first.
+///
+/// Each task carries its newest [`TASK_EVENT_LIMIT`] events oldest first, and `events_omitted`
+/// telling that older ones were left out. Members of the issue's project and bots of its workspace may read it.
+pub async fn list_issue_ai_tasks(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(issue_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let scope = IssueScopeRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT wi.project_id, p.workspace_id FROM work_items wi \
+         INNER JOIN projects p ON p.id = wi.project_id WHERE wi.id = $1",
+        vec![issue_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("issue not found".to_string()))?;
+    if let Some(Extension(bot)) = bot {
+        if bot.workspace_id != scope.workspace_id {
+            return Err(ApiError::Forbidden("bot not authorized for this issue".to_string()));
+        }
+    } else if !is_project_member(&state.db, scope.project_id, parse_user_id(&claims)?).await? {
+        return Err(ApiError::Forbidden("project access denied".to_string()));
+    }
+
+    let tasks = AiTaskWithProtocol::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!(
+            "SELECT {} FROM ai_tasks \
+             WHERE project_id = $1 \
+               AND ((reference_type = 'work_item' AND reference_id = $2) \
+                    OR (reference_type = 'comment' AND payload->>'issue_id' = $2::text)) \
+             ORDER BY created_at DESC, id LIMIT $3",
+            task_with_protocol_columns()
+        ),
+        vec![scope.project_id.into(), issue_id.into(), ISSUE_TASK_LIMIT.into()],
+    ))
+    .all(&state.db)
+    .await?;
+
+    let task_ids: Vec<Uuid> = tasks.iter().map(|entry| entry.task.id).collect();
+    let events = TaskEventRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT task_id, event_type, payload, created_at, total FROM ( \
+             SELECT task_id, event_type, payload, created_at, id, \
+                    ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY created_at DESC, id DESC) AS position, \
+                    COUNT(*) OVER (PARTITION BY task_id) AS total \
+             FROM ai_task_events WHERE task_id = ANY($1) \
+         ) ranked WHERE position <= $2 ORDER BY created_at, id",
+        vec![task_ids.into(), TASK_EVENT_LIMIT.into()],
+    ))
+    .all(&state.db)
+    .await?;
+
+    let items = tasks
+        .into_iter()
+        .map(|entry| {
+            let task_events: Vec<Value> = events
+                .iter()
+                .filter(|event| event.task_id == entry.task.id)
+                .map(|event| {
+                    json!({
+                        "event_type": event.event_type,
+                        "payload": cut_long_strings(event.payload.clone()),
+                        "created_at": event.created_at.to_rfc3339(),
+                    })
+                })
+                .collect();
+            let events_omitted = events
+                .iter()
+                .any(|event| event.task_id == entry.task.id && event.total > TASK_EVENT_LIMIT);
+            let mut item = json!(AiTaskResponse::from(entry));
+            if let Some(object) = item.as_object_mut() {
+                object.insert("events".to_string(), Value::Array(task_events));
+                object.insert("events_omitted".to_string(), Value::Bool(events_omitted));
+            }
+            item
+        })
+        .collect::<Vec<_>>();
+    Ok(ApiResponse::success(items))
 }
 
 pub async fn create_project_ai_task(
@@ -551,6 +414,7 @@ pub async fn create_project_ai_task(
     let task = create_ai_task(
         &state.db,
         CreateAiTaskInput {
+            origin: DispatchOrigin::Request,
             project_id,
             ai_participant_id: req.ai_participant_id,
             actor_id: Some(user_id),
@@ -566,7 +430,7 @@ pub async fn create_project_ai_task(
     .await?;
 
     let task = task.ok_or_else(|| ApiError::Conflict("idempotency key already exists".to_string()))?;
-    Ok(ApiResponse::success(AiTaskResponse::from(task)))
+    Ok(ApiResponse::success(response_for(&state.db, task).await?))
 }
 
 async fn ensure_project_ai_participant(
@@ -650,63 +514,6 @@ async fn ensure_reference_in_project(
             "reference_id does not name an entity of this project".to_string(),
         ))
     }
-}
-
-async fn ensure_actor_can_operate(state: &AppState, task: &AiTaskRow, actor_id: Uuid) -> Result<(), ApiError> {
-    if task.ai_participant_id == actor_id {
-        return Ok(());
-    }
-    if is_system_admin(&state.db, actor_id).await? {
-        return Ok(());
-    }
-    Err(ApiError::Forbidden(
-        "task can only be updated by assigned ai participant".to_string(),
-    ))
-}
-
-async fn find_task(state: &AppState, task_id: Uuid) -> Result<AiTaskRow, ApiError> {
-    AiTaskRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            SELECT
-                id,
-                project_id,
-                ai_participant_id,
-                task_type,
-                reference_type,
-                reference_id,
-                status,
-                priority,
-                payload,
-                result,
-                error_message,
-                idempotency_key,
-                attempts,
-                max_attempts,
-                next_retry_at,
-                started_at,
-                completed_at,
-                created_at,
-                updated_at
-            FROM ai_tasks
-            WHERE id = $1
-        ",
-        vec![task_id.into()],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::NotFound("ai task not found".to_string()))
-}
-
-async fn find_project(state: &AppState, project_id: Uuid) -> Result<ProjectRow, ApiError> {
-    ProjectRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT workspace_id FROM projects WHERE id = $1",
-        vec![project_id.into()],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::NotFound("project not found".to_string()))
 }
 
 fn parse_user_id(claims: &JwtClaims) -> Result<Uuid, ApiError> {
@@ -879,104 +686,14 @@ mod reference_scope_database_tests {
     }
 }
 
-/// Only a task's own AI participant (or a system administrator) may complete or fail it, whatever
-/// kind of bot or person asks.
+/// The project task list against a migrated scratch database.
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
-mod participant_authority_database_tests {
-    use super::{ensure_actor_can_operate, find_task};
-    use crate::error::ApiError;
-    use crate::routes::context::tenant_fixture::{exec, seed_bot_user, seed_tenant};
-    use crate::scratch_or_skip;
-    use uuid::Uuid;
-
-    #[tokio::test]
-    async fn only_the_participant_bot_may_operate_its_task() {
-        let scratch = scratch_or_skip!("ai_task_participant_authority");
-        let db = &scratch.db;
-        let tenant = seed_tenant(db, "pa").await;
-        let participant = seed_bot_user(db, &tenant).await;
-        let other_bot = seed_bot_user(db, &tenant).await;
-        let task_id = Uuid::new_v4();
-        exec(
-            db,
-            "INSERT INTO ai_tasks (id, project_id, ai_participant_id, task_type, status) \
-             VALUES ($1, $2, $3, 'issue_assigned', 'processing')",
-            vec![task_id.into(), tenant.project_id.into(), participant.into()],
-        )
-        .await;
-        let state = super::reference_scope_database_tests::state_for(db.clone());
-        let task = find_task(&state, task_id).await.expect("task exists");
-
-        ensure_actor_can_operate(&state, &task, participant)
-            .await
-            .expect("the participant operates its own task");
-        for outsider in [other_bot, tenant.member_id] {
-            assert!(
-                matches!(
-                    ensure_actor_can_operate(&state, &task, outsider).await,
-                    Err(ApiError::Forbidden(_))
-                ),
-                "{outsider} is not the task's participant"
-            );
-        }
-        scratch.drop_self().await;
-    }
-}
-
-#[cfg(test)]
-mod callback_attempt_tests {
-    use super::check_callback_attempt;
-
-    #[test]
-    fn an_attempt_qualified_callback_needs_that_attempt_to_be_processing() {
-        assert!(check_callback_attempt("processing", 2, Some(2), false).is_ok());
-        assert!(check_callback_attempt("processing", 2, Some(2), true).is_ok());
-        let late = check_callback_attempt("processing", 3, Some(2), false).expect_err("a later attempt runs");
-        assert!(
-            late.contains("attempt 2") && late.contains("current attempt 3"),
-            "{late}"
-        );
-        for status in ["pending", "failed", "completed", "cancelled"] {
-            for allow_pending in [false, true] {
-                assert_eq!(
-                    check_callback_attempt(status, 2, Some(2), allow_pending),
-                    Err("task is not in processing status".to_string()),
-                    "{status} is not the attempt's processing state"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn an_unqualified_callback_keeps_the_previous_rules() {
-        assert!(check_callback_attempt("processing", 1, None, false).is_ok());
-        assert!(check_callback_attempt("pending", 1, None, false).is_err());
-        assert!(check_callback_attempt("processing", 1, None, true).is_ok());
-        assert!(check_callback_attempt("pending", 1, None, true).is_ok());
-        assert_eq!(
-            check_callback_attempt("failed", 1, None, true),
-            Err("task cannot be failed in current status".to_string())
-        );
-        assert_eq!(
-            check_callback_attempt("completed", 1, None, false),
-            Err("task is not in processing status".to_string())
-        );
-    }
-}
-
-/// The complete and fail callbacks against a migrated scratch database: the attempt guard, the
-/// compare-and-set on the task's state, and `retry = false`.
-#[cfg(test)]
-#[allow(clippy::expect_used, clippy::panic)]
-mod callback_guard_database_tests {
-    use super::{CallbackAttemptQuery, FailTaskRequest, complete_task, fail_task, find_task};
-    use crate::error::ApiError;
+mod list_filter_database_tests {
     use crate::routes::context::tenant_fixture::{Tenant, count, exec, seed_bot_user, seed_tenant};
     use crate::scratch_or_skip;
-    use axum::extract::{Extension, Json, Path, Query, State};
+    use axum::extract::{Extension, Path, Query, State};
     use platform::auth::{JwtClaims, TokenType};
-    use serde_json::json;
     use uuid::Uuid;
 
     fn claims(user: Uuid) -> JwtClaims {
@@ -1014,64 +731,31 @@ mod callback_guard_database_tests {
         task_id
     }
 
-    fn fail_request(retry: Option<bool>) -> FailTaskRequest {
-        FailTaskRequest {
-            error_message: Some("no agent".to_string()),
-            payload: None,
-            retry,
-        }
-    }
-
     #[tokio::test]
-    async fn a_late_complete_from_an_earlier_attempt_is_refused() {
-        let scratch = scratch_or_skip!("ai_callback_late_complete");
+    async fn the_list_filter_accepts_acknowledged() {
+        let scratch = scratch_or_skip!("ai_callback_list_acknowledged");
         let db = &scratch.db;
-        let tenant = seed_tenant(db, "lc").await;
+        let tenant = seed_tenant(db, "la").await;
         let bot = seed_bot_user(db, &tenant).await;
-        let task_id = seed_task(db, &tenant, bot, "processing", 2).await;
+        let task_id = seed_task(db, &tenant, bot, "acknowledged", 1).await;
         let state = super::reference_scope_database_tests::state_for(db.clone());
 
-        let late = complete_task(
-            State(state.clone()),
-            Extension(claims(bot)),
-            Path(task_id),
-            Query(CallbackAttemptQuery { attempt: Some(1) }),
-            Json(json!({"status": "success"})),
+        let listed = super::list_project_ai_tasks(
+            State(state),
+            Extension(claims(tenant.member_id)),
+            Path(tenant.project_id),
+            Query(super::ListAiTasksQuery {
+                status: Some("acknowledged".to_string()),
+                page: None,
+                per_page: None,
+            }),
         )
         .await;
-        let Err(ApiError::BadRequest(message)) = late else {
-            panic!("attempt 1 is no longer processing");
-        };
-        assert!(message.contains("attempt 1"), "{message}");
-        assert_eq!(find_task(&state, task_id).await.expect("task").status, "processing");
-
-        complete_task(
-            State(state.clone()),
-            Extension(claims(bot)),
-            Path(task_id),
-            Query(CallbackAttemptQuery { attempt: Some(2) }),
-            Json(json!({"status": "success"})),
-        )
-        .await
-        .unwrap_or_else(|err| panic!("the current attempt completes: {err:?}"));
-        assert_eq!(find_task(&state, task_id).await.expect("task").status, "completed");
-
-        let again = complete_task(
-            State(state.clone()),
-            Extension(claims(bot)),
-            Path(task_id),
-            Query(CallbackAttemptQuery::default()),
-            Json(json!({"status": "success"})),
-        )
-        .await;
-        assert!(
-            matches!(again, Err(ApiError::BadRequest(_))),
-            "a completed task stays completed"
-        );
+        assert!(listed.is_ok(), "acknowledged is a valid status filter");
         assert_eq!(
             count(
                 db,
-                "SELECT COUNT(*)::bigint AS count FROM ai_task_events WHERE task_id = $1 AND event_type = 'completed'",
+                "SELECT COUNT(*)::bigint AS count FROM ai_tasks WHERE id = $1 AND status = 'acknowledged'",
                 vec![task_id.into()],
             )
             .await,
@@ -1079,94 +763,256 @@ mod callback_guard_database_tests {
         );
         scratch.drop_self().await;
     }
+}
 
-    #[tokio::test]
-    async fn an_attempt_qualified_fail_does_not_touch_a_requeued_task() {
-        let scratch = scratch_or_skip!("ai_callback_late_fail");
-        let db = &scratch.db;
-        let tenant = seed_tenant(db, "lf").await;
-        let bot = seed_bot_user(db, &tenant).await;
-        // Timed out and re-queued by the worker: pending, attempt 1 already counted.
-        let task_id = seed_task(db, &tenant, bot, "pending", 1).await;
-        let state = super::reference_scope_database_tests::state_for(db.clone());
+/// The issue timeline endpoint and the protocol fields of the project list, against a migrated
+/// scratch database.
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing, clippy::too_many_lines)]
+mod issue_timeline_tests {
+    use super::{ListAiTasksQuery, list_issue_ai_tasks, list_project_ai_tasks};
+    use crate::error::ApiError;
+    use crate::routes::context::tenant_fixture::{
+        bot_context_for, claims_for, exec, seed_bot_user, seed_tenant, seed_work_item, state_for,
+    };
+    use crate::scratch_or_skip;
+    use crate::services::ai_task_fixture::seed_task_for;
+    use axum::{
+        Extension,
+        extract::{Path, Query, State},
+        response::IntoResponse,
+    };
+    use serde_json::{Value, json};
+    use uuid::Uuid;
 
-        let late = fail_task(
-            State(state.clone()),
-            Extension(claims(bot)),
-            Path(task_id),
-            Query(CallbackAttemptQuery { attempt: Some(1) }),
-            Json(fail_request(None)),
+    async fn body(answer: Result<impl IntoResponse, ApiError>) -> Result<Value, ApiError> {
+        let response = answer?.into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("the body reads");
+        Ok(serde_json::from_slice(&bytes).expect("the body is JSON"))
+    }
+
+    async fn timeline(
+        db: &sea_orm::DatabaseConnection,
+        user: Uuid,
+        bot: Option<crate::middleware::bot_auth::BotAuthContext>,
+        issue: Uuid,
+    ) -> Result<Value, ApiError> {
+        body(
+            list_issue_ai_tasks(
+                State(state_for(db.clone())),
+                Extension(claims_for(user)),
+                bot.map(Extension),
+                Path(issue),
+            )
+            .await,
         )
-        .await;
-        assert!(matches!(late, Err(ApiError::BadRequest(_))), "attempt 1 already ended");
-        let task = find_task(&state, task_id).await.expect("task");
-        assert_eq!((task.status.as_str(), task.attempts), ("pending", 1));
-        scratch.drop_self().await;
+        .await
     }
 
     #[tokio::test]
-    async fn retry_false_fails_the_task_with_attempts_left() {
-        let scratch = scratch_or_skip!("ai_callback_fail_terminal");
+    async fn a_member_sees_the_assignment_and_mention_tasks_with_their_events() {
+        let scratch = scratch_or_skip!("timeline_members");
         let db = &scratch.db;
-        let tenant = seed_tenant(db, "ft").await;
+        let tenant = seed_tenant(db, "tl").await;
         let bot = seed_bot_user(db, &tenant).await;
-        let terminal = seed_task(db, &tenant, bot, "processing", 1).await;
-        let retried = seed_task(db, &tenant, bot, "processing", 1).await;
-        let state = super::reference_scope_database_tests::state_for(db.clone());
+        let issue = seed_work_item(db, &tenant, "Fix").await;
+        let other_issue = seed_work_item(db, &tenant, "Other").await;
+        let comment = Uuid::new_v4();
 
-        fail_task(
-            State(state.clone()),
-            Extension(claims(bot)),
-            Path(terminal),
-            Query(CallbackAttemptQuery { attempt: Some(1) }),
-            Json(fail_request(Some(false))),
+        let assignment = seed_task_for(
+            db,
+            &tenant,
+            bot,
+            "processing",
+            1,
+            0,
+            ("issue_assigned", Some("work_item"), Some(issue)),
+            json!({}),
         )
-        .await
-        .unwrap_or_else(|err| panic!("the participant fails its task: {err:?}"));
-        let task = find_task(&state, terminal).await.expect("task");
-        assert_eq!(task.status, "failed");
-        assert!(task.completed_at.is_some());
+        .await;
+        let mention = seed_task_for(
+            db,
+            &tenant,
+            bot,
+            "completed",
+            1,
+            0,
+            ("comment_requested", Some("comment"), Some(comment)),
+            json!({"issue_id": issue.to_string()}),
+        )
+        .await;
+        let unrelated = seed_task_for(
+            db,
+            &tenant,
+            bot,
+            "processing",
+            1,
+            0,
+            ("issue_assigned", Some("work_item"), Some(other_issue)),
+            json!({}),
+        )
+        .await;
+        exec(
+            db,
+            "UPDATE ai_tasks SET created_at = now() - interval '1 hour' WHERE id = $1",
+            vec![assignment.into()],
+        )
+        .await;
 
-        fail_task(
-            State(state.clone()),
-            Extension(claims(bot)),
-            Path(retried),
-            Query(CallbackAttemptQuery::default()),
-            Json(fail_request(None)),
+        // 105 events on the assignment, the first with a long string, in a known order.
+        exec(
+            db,
+            "INSERT INTO ai_task_events (id, task_id, event_type, payload, created_at) \
+             SELECT gen_random_uuid(), $1, 'progress', \
+                    jsonb_build_object('n', n, 'note', CASE WHEN n = 105 THEN repeat('y', 2500) ELSE 'ok' END), \
+                    now() - interval '1 day' + make_interval(secs => n) \
+             FROM generate_series(1, 105) AS n",
+            vec![assignment.into()],
         )
-        .await
-        .unwrap_or_else(|err| panic!("the participant fails its task: {err:?}"));
-        let task = find_task(&state, retried).await.expect("task");
+        .await;
+        exec(
+            db,
+            "UPDATE ai_tasks SET status = 'acknowledged', plan = 'the plan', acknowledged_at = now(), \
+             last_progress_at = now(), runner_phase = 'pushed' WHERE id = $1",
+            vec![assignment.into()],
+        )
+        .await;
+
+        let answer = timeline(db, tenant.member_id, None, issue)
+            .await
+            .expect("a member reads");
+        let items = answer["data"].as_array().expect("a list");
+        assert_eq!(items.len(), 2, "the unrelated issue's task is not listed");
+        assert_eq!(items[0]["id"], mention.to_string(), "newest first");
+        assert_eq!(items[1]["id"], assignment.to_string());
+        assert!(items.iter().all(|item| item["id"] != unrelated.to_string()));
+
+        let events = items[1]["events"].as_array().expect("events");
+        assert_eq!(events.len(), 100, "at most 100 events");
         assert_eq!(
-            task.status, "pending",
-            "the default still retries while attempts remain"
+            events[0]["payload"]["n"], 6,
+            "the newest 100 of 105, oldest first within them"
         );
-        assert!(task.next_retry_at.is_some());
+        assert_eq!(events[99]["payload"]["n"], 105, "the newest event is kept");
+        assert_eq!(items[1]["events_omitted"], true);
+        assert_eq!(items[0]["events_omitted"], false);
+        assert_eq!(
+            events[99]["payload"]["note"].as_str().expect("note").chars().count(),
+            2000
+        );
+        assert_eq!(items[1]["plan"], "the plan");
+        assert_eq!(items[1]["runner_phase"], "pushed");
+        assert!(items[1]["acknowledged_at"].is_string());
+        assert_eq!(items[0]["events"], json!([]));
         scratch.drop_self().await;
     }
 
-    /// The participant rule is unchanged: another bot's token cannot fail the task, with or
-    /// without `retry = false`.
     #[tokio::test]
-    async fn another_bot_still_cannot_fail_the_task() {
-        let scratch = scratch_or_skip!("ai_callback_other_bot");
+    async fn the_timeline_is_for_members_and_bots_of_the_workspace() {
+        let scratch = scratch_or_skip!("timeline_access");
         let db = &scratch.db;
-        let tenant = seed_tenant(db, "ob").await;
+        let tenant = seed_tenant(db, "ta").await;
+        let other = seed_tenant(db, "tb").await;
         let bot = seed_bot_user(db, &tenant).await;
-        let other = seed_bot_user(db, &tenant).await;
-        let task_id = seed_task(db, &tenant, bot, "processing", 1).await;
-        let state = super::reference_scope_database_tests::state_for(db.clone());
+        let foreign_bot = seed_bot_user(db, &other).await;
+        let issue = seed_work_item(db, &tenant, "Fix").await;
 
-        let refused = fail_task(
-            State(state.clone()),
-            Extension(claims(other)),
-            Path(task_id),
-            Query(CallbackAttemptQuery { attempt: Some(1) }),
-            Json(fail_request(Some(false))),
+        let outsider = timeline(db, other.member_id, None, issue).await;
+        assert!(
+            matches!(outsider, Err(ApiError::Forbidden(_))),
+            "a non-member is refused"
+        );
+        let own = timeline(
+            db,
+            bot,
+            Some(bot_context_for(bot, tenant.workspace_id, &["read"])),
+            issue,
+        )
+        .await
+        .expect("a bot of the workspace reads");
+        assert_eq!(own["data"], json!([]));
+        let foreign = timeline(
+            db,
+            foreign_bot,
+            Some(bot_context_for(foreign_bot, other.workspace_id, &["read"])),
+            issue,
         )
         .await;
-        assert!(matches!(refused, Err(ApiError::Forbidden(_))));
-        assert_eq!(find_task(&state, task_id).await.expect("task").status, "processing");
+        assert!(matches!(foreign, Err(ApiError::Forbidden(_))));
+        let missing = timeline(db, tenant.member_id, None, Uuid::new_v4()).await;
+        assert!(matches!(missing, Err(ApiError::NotFound(_))));
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn the_project_list_carries_the_protocol_fields() {
+        let scratch = scratch_or_skip!("timeline_project_list");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "pf").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        let old = seed_task_for(db, &tenant, bot, "completed", 1, 0, ("manual", None, None), Value::Null).await;
+        exec(
+            db,
+            "UPDATE ai_tasks SET lease_expires_at = NULL WHERE id = $1",
+            vec![old.into()],
+        )
+        .await;
+        let fresh = seed_task_for(
+            db,
+            &tenant,
+            bot,
+            "acknowledged",
+            1,
+            0,
+            ("manual", None, None),
+            Value::Null,
+        )
+        .await;
+        exec(
+            db,
+            "UPDATE ai_tasks SET plan = 'p', runner_phase = 'queued', acknowledged_at = now(), \
+             last_progress_at = now() WHERE id = $1",
+            vec![fresh.into()],
+        )
+        .await;
+
+        let answer = body(
+            list_project_ai_tasks(
+                State(state_for(db.clone())),
+                Extension(claims_for(tenant.member_id)),
+                axum::extract::Path(tenant.project_id),
+                Query(ListAiTasksQuery {
+                    status: None,
+                    page: None,
+                    per_page: None,
+                }),
+            )
+            .await,
+        )
+        .await
+        .expect("the list loads");
+        let items = answer["data"]["items"].as_array().expect("items");
+        let find = |id: Uuid| items.iter().find(|item| item["id"] == id.to_string()).expect("listed");
+        let old_item = find(old);
+        for field in [
+            "acknowledged_at",
+            "plan",
+            "last_progress_at",
+            "lease_expires_at",
+            "runner_phase",
+        ] {
+            assert!(
+                old_item.get(field).is_some_and(Value::is_null),
+                "{field} is null for an old row"
+            );
+        }
+        let fresh_item = find(fresh);
+        assert_eq!(fresh_item["plan"], "p");
+        assert_eq!(fresh_item["runner_phase"], "queued");
+        assert!(fresh_item["acknowledged_at"].is_string());
+        assert!(fresh_item["lease_expires_at"].is_string());
         scratch.drop_self().await;
     }
 }

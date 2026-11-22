@@ -8,7 +8,8 @@
 	import { setTheme, theme, type Theme } from '#lib/theme.js';
 	import Card from '#lib/components/Card.svelte';
 	import Input from '#lib/components/Input.svelte';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
+	import ConnectedAppsPersonal from '#lib/oauth/ConnectedAppsPersonal.svelte';
 	import { locale, t } from 'svelte-i18n';
 
 	let loading = $state(true);
@@ -149,19 +150,17 @@
 
 <div class="mx-auto max-w-7xl space-y-6">
 	<div>
-		<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('settings.title')}</h1>
-		<p class="mt-1 text-sm text-slate-600 dark:text-slate-400">{$t('settings.subtitle')}</p>
+		<h1 class="text-2xl font-semibold text-fg">{$t('settings.title')}</h1>
+		<p class="mt-1 text-sm text-fg-muted">{$t('settings.subtitle')}</p>
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-lg border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else}
 		<Card>
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('settings.profile')}
 			</h2>
 			<div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -177,13 +176,12 @@
 				</div>
 			</div>
 			<div class="mt-4">
-				<label
-					class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
-					for="language">{$t('settings.language')}</label
+				<label class="mb-1 block text-sm font-medium text-fg" for="language"
+					>{$t('settings.language')}</label
 				>
 				<select
 					id="language"
-					class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					onchange={(e) => setLocale((e.target as HTMLSelectElement).value)}
 					value={$locale}
 				>
@@ -192,12 +190,12 @@
 				</select>
 			</div>
 			<div class="mt-4">
-				<label class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" for="theme"
+				<label class="mb-1 block text-sm font-medium text-fg" for="theme"
 					>{$t('settings.theme')}</label
 				>
 				<select
 					id="theme"
-					class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+					class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					onchange={handleThemeChange}
 					value={currentTheme}
 				>
@@ -207,12 +205,14 @@
 				</select>
 			</div>
 			<div class="mt-4 flex justify-end">
-				<Button loading={savingProfile} onclick={saveProfile}>{$t('settings.saveProfile')}</Button>
+				<Button variant="primary" loading={savingProfile} onclick={saveProfile}
+					>{$t('settings.saveProfile')}</Button
+				>
 			</div>
 		</Card>
 
 		<Card>
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('settings.changePassword')}
 			</h2>
 			<div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -233,17 +233,17 @@
 				/>
 			</div>
 			<div class="mt-4 flex justify-end">
-				<Button loading={savingPassword} onclick={updatePassword}
+				<Button variant="primary" loading={savingPassword} onclick={updatePassword}
 					>{$t('settings.updatePassword')}</Button
 				>
 			</div>
 		</Card>
 
 		<Card>
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('settings.notifications')}
 			</h2>
-			<div class="mt-4 space-y-3 text-sm text-slate-700 dark:text-slate-300">
+			<div class="mt-4 space-y-3 text-sm text-fg">
 				<label class="flex items-center gap-2">
 					<input type="checkbox" bind:checked={notificationPrefs.emailNotification} />
 					{$t('settings.emailNotifications')}
@@ -258,10 +258,12 @@
 				</label>
 			</div>
 			<div class="mt-4 flex justify-end">
-				<Button loading={savingNotifications} onclick={saveNotificationPrefs}
+				<Button variant="primary" loading={savingNotifications} onclick={saveNotificationPrefs}
 					>{$t('settings.savePrefs')}</Button
 				>
 			</div>
 		</Card>
+
+		<ConnectedAppsPersonal />
 	{/if}
 </div>

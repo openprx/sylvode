@@ -12,8 +12,7 @@ first user registration/login, workspace creation, restaurant scenario project
 creation, and sample universal-form records for menu, tables, order, order
 line, parent-child link, and business report.
 
-Environment (each SYLVODE_* name also accepts the legacy OPENPR_* name it
-replaces, with a deprecation notice; setting both to different values is an error):
+Environment:
   SYLVODE_API_URL                API base URL. Default: http://localhost:8081
   SYLVODE_DEMO_EMAIL             Demo login email. Default: demo@sylvode.local
   SYLVODE_DEMO_PASSWORD          Demo login password. Default: SylvodeDemo123!
@@ -27,8 +26,7 @@ replaces, with a deprecation notice; setting both to different values is an erro
                                  configuration file. Default: auto, write only when
                                  that file already exists.
   SYLVODE_DEMO_CONFIG_PATH       MCP configuration file carrying [mcp].
-                                 Default: canonical repo config/sylvode.compose.mcp.toml,
-                                 with config/openpr.compose.mcp.toml as a legacy fallback.
+                                 Default: repo config/sylvode.compose.mcp.toml.
   SYLVODE_DEMO_RESTART_MCP=0     Do not recreate running compose mcp-server.
                                  Default: 1.
   SYLVODE_DEMO_VERIFY_MCP_HTTP   Verify local MCP JSON-RPC after bootstrap.
@@ -60,34 +58,22 @@ require_cmd() {
 require_cmd node
 
 # The MCP server reads no environment variables; its settings live in the TOML file compose
-# mounts. Use the same canonical-first, legacy-fallback decision as start.sh so credentials are
-# never written to a different file from the one the running container reads.
-# shellcheck source=scripts/lib/sylvode_compat.sh
-source "$ROOT_DIR/scripts/lib/sylvode_compat.sh"
-
-# Inputs are read under their SYLVODE_* names, with the OPENPR_* names they replace as a fallback
-# (one deprecation notice per legacy name on stderr; both set to different values is refused).
-# The resolved value is handed on under the OPENPR_* name, which is what the rest of this script
-# and its embedded node and python blocks read.
+# mounts. Inputs are read under their SYLVODE_* names only. The value is handed on under the
+# OPENPR_* name, which is what the rest of this script and its embedded node and python blocks
+# read; an OPENPR_* value already in the environment is dropped, never used.
 for demo_input in API_URL DEMO_EMAIL DEMO_PASSWORD DEMO_NAME DEMO_WORKSPACE_SLUG DEMO_WORKSPACE_NAME \
   DEMO_PROJECT_KEY DEMO_PROJECT_NAME DEMO_ALLOW_REMOTE DEMO_WRITE_CONFIG DEMO_CONFIG_PATH \
   DEMO_RESTART_MCP DEMO_VERIFY_MCP_HTTP DEMO_MCP_URL DEMO_MCP_HEALTH_URL MCP_BOT_TOKEN; do
-  demo_value=""
-  sylvode_resolve_env_into demo_value "" "SYLVODE_$demo_input" "OPENPR_$demo_input" "" "environment variable" || exit 2
+  sylvode_input="SYLVODE_$demo_input"
+  demo_value="${!sylvode_input:-}"
   if [[ -n "$demo_value" ]]; then
     export "OPENPR_$demo_input=$demo_value"
   else
     unset "OPENPR_$demo_input"
   fi
 done
-unset demo_input demo_value
-if [[ -n "${OPENPR_DEMO_CONFIG_PATH:-}" ]]; then
-  DEMO_CONFIG_PATH=$OPENPR_DEMO_CONFIG_PATH
-else
-  DEMO_CONFIG_PATH=$(sylvode_select_config \
-    "$ROOT_DIR/config/sylvode.compose.mcp.toml" \
-    "$ROOT_DIR/config/openpr.compose.mcp.toml")
-fi
+unset demo_input demo_value sylvode_input
+DEMO_CONFIG_PATH="${OPENPR_DEMO_CONFIG_PATH:-$ROOT_DIR/config/sylvode.compose.mcp.toml}"
 
 require_cmd python3
 
@@ -274,8 +260,6 @@ async function tokenCanAccessWorkspace(botToken, workspaceId) {
     {
       'X-Sylvode-MCP-Surface': 'mcp_http',
       'X-Sylvode-MCP-Tool': 'projects.list',
-      'X-OpenPR-MCP-Surface': 'mcp_http',
-      'X-OpenPR-MCP-Tool': 'projects.list',
     },
   );
   return result.response.ok && result.payload?.code === 0;
@@ -655,7 +639,10 @@ async function verify() {
     return;
   }
 
-  const response = await fetchWithTimeout(mcpUrl, {
+  // projects.list is called by its registry name, which needs the whole registry listed.
+  const callUrl = new URL(mcpUrl);
+  callUrl.searchParams.set('tools', 'full');
+  const response = await fetchWithTimeout(callUrl.toString(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

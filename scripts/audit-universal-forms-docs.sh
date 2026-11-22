@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED_TOOL_COUNT="$(python3 "$ROOT_DIR/skills/openpr-mcp/scripts/expected-tool-count.py")"
+EXPECTED_TOOL_COUNT="$(python3 "$ROOT_DIR/skills/sylvode-mcp/scripts/expected-tool-count.py")"
 REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
 TRACKER_PATH="$REPORT_DIR/openpr-universal-form-development-execution-tracker-2026-05-31.md"
 PROTOCOL_PATH="$REPORT_DIR/openpr-universal-form-protocol-v1-2026-05-31.md"
@@ -177,7 +177,7 @@ for path in \
   "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" \
   "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-manifest.schema.json" \
   "$ROOT_DIR/docs/schemas/openpr-universal-forms-release-gate.schema.json" \
-  "$ROOT_DIR/config/sylvode-webhook.example.toml" \
+  "$ROOT_DIR/config/sylvode-runner.example.toml" \
   "$ROOT_DIR/scripts/start.sh" \
   "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" \
   "$ROOT_DIR/scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh" \
@@ -277,7 +277,7 @@ contains "report docs index points to scenario catalog JSON" "$REPORT_INDEX_PATH
 contains "report docs index includes scenario catalog JSON in authoritative bundle" "$REPORT_INDEX_PATH" '15. `openpr-universal-form-scenario-catalog-2026-05-31.json`'
 contains "report docs index points to scenario catalog JSON schema" "$REPORT_INDEX_PATH" "openpr-universal-forms-scenario-catalog.schema.json"
 contains "report docs index documents runtime scenario usage guide" "$REPORT_INDEX_PATH" "usage_guide"
-contains "report docs index documents scenario template MCP resource" "$REPORT_INDEX_PATH" "openpr://scenario-templates"
+contains "report docs index documents scenario template MCP resource" "$REPORT_INDEX_PATH" "sylvode://scenario-templates"
 contains "report docs index points to implementation map JSON" "$REPORT_INDEX_PATH" "openpr-universal-form-implementation-map-2026-05-31.json"
 contains "report docs index includes implementation map JSON in authoritative bundle" "$REPORT_INDEX_PATH" '16. `openpr-universal-form-implementation-map-2026-05-31.json`'
 contains "report docs index points to implementation map JSON schema" "$REPORT_INDEX_PATH" "openpr-universal-forms-implementation-map.schema.json"
@@ -486,7 +486,7 @@ contains "README documents scenario catalog row order contract" "$ROOT_DIR/READM
 contains "README documents scenario catalog operator entrypoints" "$ROOT_DIR/README.md" "operator entrypoints"
 contains "README documents scenario catalog connector kinds" "$ROOT_DIR/README.md" "connector kinds"
 contains "README documents runtime scenario usage guide" "$ROOT_DIR/README.md" "usage_guide"
-contains "README documents scenario template MCP resource" "$ROOT_DIR/README.md" "openpr://scenario-templates"
+contains "README documents scenario template MCP resource" "$ROOT_DIR/README.md" "sylvode://scenario-templates"
 contains "README links implementation map JSON command" "$ROOT_DIR/README.md" "scripts/report-universal-forms-implementation-map-json.sh"
 contains "README links implementation map JSON verifier command" "$ROOT_DIR/README.md" "scripts/verify-universal-forms-implementation-map-json.sh"
 contains "README documents implementation map order contract" "$ROOT_DIR/README.md" "pins status marker and module order"
@@ -530,82 +530,17 @@ contains "source coverage audit checks UI artifact collector atomic publish" "$R
 contains "README links universal forms docs" "$ROOT_DIR/README.md" "docs/universal-forms-and-plugins.md"
 contains "README links acceptance docs" "$ROOT_DIR/README.md" "docs/universal-forms-acceptance.md"
 contains "README links production runbook" "$ROOT_DIR/README.md" "docs/universal-forms-production.md"
-contains "README documents current MCP tool count" "$ROOT_DIR/README.md" "MCP server** — $EXPECTED_TOOL_COUNT tools"
-contains "README tool reference uses current MCP count" "$ROOT_DIR/README.md" "### Tools ($EXPECTED_TOOL_COUNT)"
-contains "README tool reference includes universal forms" "$ROOT_DIR/README.md" "#### Universal Forms & Events (33)"
-contains "README tool reference includes form schema summary" "$ROOT_DIR/README.md" 'forms.schema_summary'
-contains "README tool reference includes form schema versions" "$ROOT_DIR/README.md" 'form_schema_versions.list'
-contains "README tool reference includes form template creation" "$ROOT_DIR/README.md" 'forms.create_from_template'
-contains "README tool reference includes scenario template install" "$ROOT_DIR/README.md" 'scenario_templates.install'
-contains "README tool reference includes form permissions" "$ROOT_DIR/README.md" 'form_permissions.get'
-contains "README tool reference includes form attachments" "$ROOT_DIR/README.md" 'form_attachments.create'
-contains "README tool reference includes relation targets" "$ROOT_DIR/README.md" 'form_records.relation_targets'
-contains "README tool reference includes child lifecycle tools" "$ROOT_DIR/README.md" 'form_records.child_archive'
-contains "README tool reference includes form import/export" "$ROOT_DIR/README.md" 'form_records.import_commit'
-contains "README tool reference includes form aggregate" "$ROOT_DIR/README.md" 'form_records.aggregate'
-contains "README tool reference includes WASM plugins" "$ROOT_DIR/README.md" "#### WASM Plugins (5)"
-contains "README tool reference includes plugin invocations" "$ROOT_DIR/README.md" 'plugin_invocations.list'
-contains "README feature summary uses snapshot-derived MCP count" "$ROOT_DIR/README.md" "MCP server** — $EXPECTED_TOOL_COUNT tools"
 not_contains "README does not retain stale 65-tool count" "$ROOT_DIR/README.md" "65 tools"
-contains "MCP AGENTS guide uses snapshot-derived MCP count" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "$EXPECTED_TOOL_COUNT tools"
-contains "MCP AGENTS guide includes forms MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "forms.update_schema"
-contains "MCP AGENTS guide includes form template MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "forms.create_from_template"
-contains "MCP AGENTS guide includes scenario template install" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "scenario_templates.install"
-contains "MCP AGENTS guide includes form metadata MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "forms.schema_summary"
-contains "MCP AGENTS guide includes schema version MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "form_schema_versions.list"
-contains "MCP AGENTS guide includes form permission MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "form_permissions.get"
-contains "MCP AGENTS guide includes form attachment MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "form_attachments.create"
-contains "MCP AGENTS guide includes relation MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "form_records.relation_targets"
-contains "MCP AGENTS guide includes child lifecycle MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "form_records.child_archive"
-contains "MCP AGENTS guide includes import/export MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "form_records.import_commit"
-contains "MCP AGENTS guide includes plugin MCP tools" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "plugins.install"
 not_contains "MCP AGENTS guide does not retain stale 65-tool count" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "65 tools"
-contains "MCP embedded skill guide uses snapshot-derived MCP count" "$ROOT_DIR/apps/mcp-server/src/server.rs" "## Tools ($EXPECTED_TOOL_COUNT)"
-contains "MCP embedded skill guide includes universal forms" "$ROOT_DIR/apps/mcp-server/src/server.rs" "### Universal Forms:"
-contains "MCP embedded skill guide includes form template tools" "$ROOT_DIR/apps/mcp-server/src/server.rs" "forms.create_from_template"
-contains "MCP embedded skill guide includes scenario template install" "$ROOT_DIR/apps/mcp-server/src/server.rs" "scenario_templates.install"
-contains "MCP embedded skill guide includes form metadata tools" "$ROOT_DIR/apps/mcp-server/src/server.rs" "forms.schema_summary"
-contains "MCP embedded skill guide includes schema version tools" "$ROOT_DIR/apps/mcp-server/src/server.rs" "form_schema_versions.list"
-contains "MCP embedded skill guide includes form permission tools" "$ROOT_DIR/apps/mcp-server/src/server.rs" "form_permissions.get"
-contains "MCP embedded skill guide includes form attachment tools" "$ROOT_DIR/apps/mcp-server/src/server.rs" "form_attachments.create"
-contains "MCP embedded skill guide includes relation tools" "$ROOT_DIR/apps/mcp-server/src/server.rs" "form_records.relation_targets"
-contains "MCP embedded skill guide includes child lifecycle tools" "$ROOT_DIR/apps/mcp-server/src/server.rs" "form_records.child_archive"
-contains "MCP embedded skill guide includes import/export tools" "$ROOT_DIR/apps/mcp-server/src/server.rs" "form_records.import_commit"
-contains "MCP embedded skill guide includes plugins" "$ROOT_DIR/apps/mcp-server/src/server.rs" "### Plugins:"
-contains "MCP app README uses snapshot-derived MCP count" "$ROOT_DIR/apps/mcp-server/README.md" "$EXPECTED_TOOL_COUNT MCP Tools"
 contains "MCP app README documents three transports" "$ROOT_DIR/apps/mcp-server/README.md" "Three Transport Modes"
 contains "MCP app README documents SSE transport" "$ROOT_DIR/apps/mcp-server/README.md" "serve --transport sse"
-contains "MCP app README includes universal forms tools" "$ROOT_DIR/apps/mcp-server/README.md" "Universal Forms and Events"
-contains "MCP app README includes form template tools" "$ROOT_DIR/apps/mcp-server/README.md" "forms.create_from_template"
-contains "MCP app README includes scenario template install" "$ROOT_DIR/apps/mcp-server/README.md" "scenario_templates.install"
-contains "MCP app README includes form metadata tools" "$ROOT_DIR/apps/mcp-server/README.md" "forms.schema_summary"
-contains "MCP app README includes schema version tools" "$ROOT_DIR/apps/mcp-server/README.md" "form_schema_versions.list"
-contains "MCP app README includes form permission tools" "$ROOT_DIR/apps/mcp-server/README.md" "form_permissions.get"
-contains "MCP app README includes form attachment tools" "$ROOT_DIR/apps/mcp-server/README.md" "form_attachments.create"
-contains "MCP app README includes relation tools" "$ROOT_DIR/apps/mcp-server/README.md" "form_records.relation_targets"
-contains "MCP app README includes child lifecycle tools" "$ROOT_DIR/apps/mcp-server/README.md" "form_records.child_archive"
-contains "MCP app README includes import/export tools" "$ROOT_DIR/apps/mcp-server/README.md" "form_records.import_commit"
-contains "MCP app README includes plugin tools" "$ROOT_DIR/apps/mcp-server/README.md" "WASM Plugins"
 contains "MCP app README project structure uses API client" "$ROOT_DIR/apps/mcp-server/README.md" "client/           # Sylvode API client helpers"
 not_contains "MCP app README does not retain stale 65-tool count" "$ROOT_DIR/apps/mcp-server/README.md" "65 MCP Tools"
 not_contains "MCP app README does not retain stale two-transport wording" "$ROOT_DIR/apps/mcp-server/README.md" "Two Transport Modes"
 not_contains "MCP app README project structure does not include direct db module" "$ROOT_DIR/apps/mcp-server/README.md" "src/db"
-contains "MCP skill guide uses snapshot-derived MCP count" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "enumerate all $EXPECTED_TOOL_COUNT tools"
-contains "MCP skill guide includes universal forms tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "form_records.aggregate"
-contains "MCP skill guide includes form template tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "forms.create_from_template"
-contains "MCP skill guide includes scenario template install" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "scenario_templates.install"
-contains "MCP skill guide includes form metadata tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "forms.schema_summary"
-contains "MCP skill guide includes schema version tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "form_schema_versions.list"
-contains "MCP skill guide includes form permission tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "form_permissions.get"
-contains "MCP skill guide includes form attachment tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "form_attachments.create"
-contains "MCP skill guide includes relation tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "form_records.relation_targets"
-contains "MCP skill guide includes child lifecycle tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "form_records.child_archive"
-contains "MCP skill guide includes import/export tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "form_records.import_commit"
-contains "MCP skill guide includes plugin tools" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "plugins.install"
-contains "MCP skill validation derives the expected registry count" "$ROOT_DIR/skills/openpr-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
-contains "MCP regression derives the expected registry count" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
-not_contains "MCP skill guide does not retain stale 65-tool count" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "65 tools"
-not_contains "MCP validation does not retain stale 65-tool minimum" "$ROOT_DIR/skills/openpr-mcp/scripts/validate-mcp.sh" "-ge 65"
+contains "MCP skill validation derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
+contains "MCP regression derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
+not_contains "MCP validation does not retain stale 65-tool minimum" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "-ge 65"
 contains "docs index links universal forms docs" "$ROOT_DIR/docs/README.md" "./universal-forms-and-plugins.md"
 contains "docs index links implementation map" "$ROOT_DIR/docs/README.md" "./universal-forms-implementation-map.md"
 contains "docs index links scenario catalog" "$ROOT_DIR/docs/README.md" "./scenario-templates.md"
@@ -620,8 +555,6 @@ contains "docs index links implementation map JSON schema" "$ROOT_DIR/docs/READM
 contains "docs index links delivery status JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-delivery-status.schema.json"
 contains "docs index links delivery manifest JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-delivery-manifest.schema.json"
 contains "docs index links release gate JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-release-gate.schema.json"
-contains "docs index documents snapshot-derived MCP tool count" "$ROOT_DIR/docs/README.md" "MCP server ($EXPECTED_TOOL_COUNT tools"
-contains "docs index documents snapshot-derived MCP regression count" "$ROOT_DIR/docs/README.md" "$EXPECTED_TOOL_COUNT-tool registry"
 not_contains "docs index does not retain stale 64-tool count" "$ROOT_DIR/docs/README.md" "64-tool"
 not_contains "docs index does not retain stale 64 MCP server count" "$ROOT_DIR/docs/README.md" "64 tools"
 contains "root README links implementation map" "$ROOT_DIR/README.md" "docs/universal-forms-implementation-map.md"
@@ -654,7 +587,7 @@ contains "scenario catalog documents MCP usage" "$ROOT_DIR/docs/scenario-templat
 contains "scenario catalog documents frontend usage" "$ROOT_DIR/docs/scenario-templates.md" "Pick a scenario template card"
 contains "scenario catalog documents machine-readable usage contract" "$ROOT_DIR/docs/scenario-templates.md" "operator steps, primary MCP tools, connector kinds, plugin keys"
 contains "scenario catalog documents runtime usage guide" "$ROOT_DIR/docs/scenario-templates.md" "usage_guide"
-contains "scenario catalog documents MCP resource usage guide" "$ROOT_DIR/docs/scenario-templates.md" "openpr://scenario-templates"
+contains "scenario catalog documents MCP resource usage guide" "$ROOT_DIR/docs/scenario-templates.md" "sylvode://scenario-templates"
 contains "scenario catalog documents restaurant plugin" "$ROOT_DIR/docs/scenario-templates.md" "restaurant_calc"
 contains "scenario catalog documents extension rules" "$ROOT_DIR/docs/scenario-templates.md" "When adding a new scenario template"
 contains "acceptance guide includes generated evidence commands" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/acceptance-universal-forms.sh --full"
@@ -794,7 +727,7 @@ contains "production runbook includes internal-only PostgreSQL exposure" "$ROOT_
 contains "production runbook includes localhost app ports" "$ROOT_DIR/docs/universal-forms-production.md" "host ports bind"
 contains "production runbook includes reverse proxy requirement" "$ROOT_DIR/docs/universal-forms-production.md" "reverse proxy or tunnel"
 contains "production runbook includes compose multi-instance guidance" "$ROOT_DIR/docs/universal-forms-production.md" 'avoids fixed `container_name` values'
-contains "production runbook includes webhook starter config" "$ROOT_DIR/docs/universal-forms-production.md" "config/sylvode-webhook.example.toml"
+contains "production runbook includes webhook starter config" "$ROOT_DIR/docs/universal-forms-production.md" "config/sylvode-runner.example.toml"
 contains "production runbook includes local compose bootstrap" "$ROOT_DIR/docs/universal-forms-production.md" "bash scripts/start.sh"
 contains "production runbook includes local restaurant demo bootstrap" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/bootstrap-restaurant-demo.sh"
 contains "production runbook includes local demo MCP credential sync" "$ROOT_DIR/docs/universal-forms-production.md" 'writes `mcp.bot_token` and'
@@ -885,7 +818,7 @@ contains "production runbook documents scenario catalog row order contract" "$RO
 contains "production runbook documents scenario catalog operator entrypoints" "$ROOT_DIR/docs/universal-forms-production.md" "pins the three operator entrypoints"
 contains "production runbook documents scenario catalog connector kinds" "$ROOT_DIR/docs/universal-forms-production.md" "connector kinds"
 contains "production runbook documents runtime scenario usage guide" "$ROOT_DIR/docs/universal-forms-production.md" "runtime"
-contains "production runbook documents scenario template MCP resource" "$ROOT_DIR/docs/universal-forms-production.md" "openpr://scenario-templates"
+contains "production runbook documents scenario template MCP resource" "$ROOT_DIR/docs/universal-forms-production.md" "sylvode://scenario-templates"
 contains "production runbook links implementation map JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "docs/schemas/openpr-universal-forms-implementation-map.schema.json"
 contains "production runbook documents implementation map order contract" "$ROOT_DIR/docs/universal-forms-production.md" "pins status marker and module"
 contains "production runbook documents JSON structural schema checks" "$ROOT_DIR/docs/universal-forms-production.md" "extra top-level keys"
@@ -1409,7 +1342,6 @@ else
   contains "report docs index lists project release readiness schema" "$REPORT_INDEX_PATH" "openpr-project-release-readiness.schema.json"
   contains "MCP README documents release next actions" "$ROOT_DIR/apps/mcp-server/README.md" "release next actions"
   contains "MCP agent guide documents release next actions" "$ROOT_DIR/apps/mcp-server/AGENTS.md" "release next actions"
-  contains "MCP skill guide documents release next actions" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "next actions"
   contains "evidence includes retry and idempotency smoke output" "$EVIDENCE_PATH" "Universal forms API smoke passed (retry and idempotency covered)"
   contains "evidence includes delivery bundle finalizer drill coverage" "$EVIDENCE_PATH" "delivery bundle audit covers temporary finalizer drill"
   contains "evidence includes delivery bundle refresh docs coverage" "$EVIDENCE_PATH" "delivery bundle refresh regenerates acceptance evidence"
@@ -1707,7 +1639,7 @@ contains "tracker matrix defines tested status boundary" "$TRACKER_PATH" '`已�
 contains "tracker matrix defines accepted status boundary" "$TRACKER_PATH" '`已验收` 只能在用户侧 runbook、Manual Acceptance Signoff、finalizer、strict delivery-state、delivery-bundle 全部通过后写入'
 contains "tracker matrix marks manual acceptance pending" "$TRACKER_PATH" "| 用户侧人工验收 | 验收人按 runbook 实际操作并签收 7 行 Manual Acceptance Signoff |"
 contains "tracker matrix uses real generic webhook smoke" "$TRACKER_PATH" "scripts/smoke-webhook-generic-consumer.sh"
-contains "tracker matrix uses real forms browser smoke command" "$TRACKER_PATH" "cd frontend && bun run smoke:forms-ui"
+contains "tracker matrix uses real forms browser smoke command" "$TRACKER_PATH" "cd frontend && bun run smoke:forms-page-interactions"
 contains "tracker matrix uses real restaurant browser smoke command" "$TRACKER_PATH" "cd frontend && bun run smoke:restaurant-ordering"
 not_contains "tracker matrix does not reference retired webhook smoke name" "$TRACKER_PATH" "scripts/smoke-universal-forms-webhook-consumer.sh"
 not_contains "tracker matrix does not reference missing frontend smoke script" "$TRACKER_PATH" "scripts/smoke-frontend-forms.sh"

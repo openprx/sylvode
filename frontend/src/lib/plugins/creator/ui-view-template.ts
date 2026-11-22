@@ -55,6 +55,7 @@ export const sampleRecordId = '00000000-0000-4000-8000-000000000001';
 export const maxHtmlBytes = 65536;
 const keyPattern = /^[a-z][a-z0-9_]*$/;
 const releasePattern = /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})$/;
+// eslint-disable-next-line no-control-regex -- rejects control characters on purpose
 const control = /[\u0000-\u001f\u007f-\u009f]/;
 const encoder = new TextEncoder();
 const defaultFormKey = 'order_line';
@@ -252,7 +253,6 @@ export async function buildUiViewPackage(
 export const uiViewTemplate: CreatorTemplate<UiViewDraft> = {
 	id: 'ui_view',
 	profile: 'ui',
-	output: 'openpr.plugin.v3',
 	slots: uiViewSlots,
 	defaults: defaultUiViewDraft,
 	read: readUiViewDraft,

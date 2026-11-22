@@ -27,9 +27,12 @@ use sha2::{Digest, Sha256};
 use std::time::Instant;
 use uuid::Uuid;
 
+/// Re-exported so the delegated branch (under `oauth/`, which must not name Flow modules) can name
+/// the surface type that `BotAuthContext` already exposes.
+pub use crate::flow::event_origin::EventSurface;
 use crate::{
     error::ApiError,
-    flow::event_origin::EventSurface,
+    oauth::{delegated, tokens::TokenKind, validate::TokenSource},
     response::OperationResponseMeta,
     routes::auth::{extract_bearer_token, extract_cookie_token},
 };
@@ -37,37 +40,28 @@ use crate::{
 /// Canonical MCP attribution headers (ADR-0020 D3).
 const MCP_TOOL_HEADER: &str = "x-sylvode-mcp-tool";
 const MCP_SURFACE_HEADER: &str = "x-sylvode-mcp-surface";
-/// Legacy spellings, still sent by every 1.x `mcp-server` next to the canonical ones and by any
-/// pre-1.0 client on its own. Accepted for the whole 1.x line.
-const LEGACY_MCP_TOOL_HEADER: &str = "x-openpr-mcp-tool";
-const LEGACY_MCP_SURFACE_HEADER: &str = "x-openpr-mcp-surface";
 
-/// The MCP attribution a request presented, after the canonical and legacy spellings have been
-/// reconciled. Values that are not visible ASCII are treated as absent, as before.
+/// The MCP attribution a request presented. Values that are not visible ASCII are treated as
+/// absent, as before.
 #[derive(Debug, Clone, Copy, Default)]
 struct McpAttribution<'a> {
     surface: Option<&'a str>,
     tool: Option<&'a str>,
 }
 
-/// Reconciles every occurrence of one attribution field across its canonical and legacy header
-/// names.
+/// Reads one attribution header, which may be repeated.
 ///
 /// Fail-closed (ADR-0020 D3): every occurrence must carry byte-identical values, otherwise the
-/// request is rejected. These headers become audit evidence, so silently preferring one spelling
-/// over the other would let a caller record an attribution the other header contradicts.
-fn reconcile_attribution_header<'a>(
-    headers: &'a axum::http::HeaderMap,
-    canonical: &str,
-    legacy: &str,
-) -> Result<Option<&'a str>, ApiError> {
-    let mut values = headers.get_all(canonical).iter().chain(headers.get_all(legacy).iter());
+/// request is rejected. These headers become audit evidence, so silently preferring one line over
+/// another would let a caller record an attribution another line contradicts.
+fn attribution_header<'a>(headers: &'a axum::http::HeaderMap, name: &str) -> Result<Option<&'a str>, ApiError> {
+    let mut values = headers.get_all(name).iter();
     let Some(first) = values.next() else {
         return Ok(None);
     };
     if values.any(|other| other.as_bytes() != first.as_bytes()) {
         return Err(ApiError::Unauthorized(format!(
-            "conflicting MCP attribution headers: every `{canonical}` / `{legacy}` value must be identical"
+            "conflicting MCP attribution headers: every `{name}` value must be identical"
         )));
     }
     Ok(first.to_str().ok())
@@ -76,8 +70,8 @@ fn reconcile_attribution_header<'a>(
 /// The single reader of the MCP attribution headers; every consumer goes through it.
 fn mcp_attribution(headers: &axum::http::HeaderMap) -> Result<McpAttribution<'_>, ApiError> {
     Ok(McpAttribution {
-        surface: reconcile_attribution_header(headers, MCP_SURFACE_HEADER, LEGACY_MCP_SURFACE_HEADER)?,
-        tool: reconcile_attribution_header(headers, MCP_TOOL_HEADER, LEGACY_MCP_TOOL_HEADER)?,
+        surface: attribution_header(headers, MCP_SURFACE_HEADER)?,
+        tool: attribution_header(headers, MCP_TOOL_HEADER)?,
     })
 }
 
@@ -138,8 +132,24 @@ fn credential_bound_surface(attribution: McpAttribution<'_>, registered: &str) -
     }
 }
 
+/// The tool a request forwarded by the MCP server names, validated like a bot's. Used by the
+/// delegated branch only, and only for a request that arrived under the forwarding credential.
+/// Conflicting duplicate attribution headers are an error, as on the bot path.
+pub(crate) fn forwarded_tool_name(headers: &axum::http::HeaderMap) -> Result<Option<String>, ApiError> {
+    Ok(operation_tool_name(mcp_attribution(headers)?))
+}
+
 fn operation_tool_name(attribution: McpAttribution<'_>) -> Option<String> {
-    let value = attribution.tool?.trim();
+    recordable_tool_name(attribution.tool?)
+}
+
+/// The tool name the operation log records for an attribution value.
+///
+/// `None` when the value is not a dotted lower-case name (`work_items.update`,
+/// `tasks.acknowledge`). Public so that the MCP server's tests can prove every name it sends is
+/// recorded.
+pub fn recordable_tool_name(value: &str) -> Option<String> {
+    let value = value.trim();
     let mut segments = value.split('.');
     let valid_segment = |segment: &str| {
         !segment.is_empty()
@@ -378,6 +388,25 @@ pub async fn require_workspace_access_from_auth(
     bot: Option<&BotAuthContext>,
     workspace_id: Uuid,
 ) -> Result<(Uuid, String, bool), ApiError> {
+    // A delegated request works in the grant's workspace only, as a plain `member` whatever the
+    // user's stored role is: administration is never reachable through a connected application.
+    // The membership row is read again here, so removal takes effect on the next request.
+    if let Some(delegated) = delegated::current() {
+        if delegated.workspace_id != workspace_id {
+            return Err(ApiError::Forbidden("outside the connected workspace".to_string()));
+        }
+        state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+                vec![workspace_id.into(), delegated.user_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| ApiError::NotFound("workspace not found or access denied".to_string()))?;
+        return Ok((delegated.user_id, "member".to_string(), false));
+    }
+
     if let Some(bot_ctx) = bot {
         if bot_ctx.workspace_id != workspace_id {
             return Err(ApiError::Forbidden("bot not authorized for this workspace".to_string()));
@@ -437,7 +466,13 @@ pub async fn bot_or_user_auth_middleware(
 ) -> Result<Response, ApiError> {
     let started = Instant::now();
     let mut operation_context = None;
-    let token = extract_bearer_token(req.headers())
+    let header_token = extract_bearer_token(req.headers());
+    let token_source = if header_token.is_some() {
+        TokenSource::Header
+    } else {
+        TokenSource::Cookie
+    };
+    let token = header_token
         .or_else(|| extract_cookie_token(req.headers(), "access_token"))
         .ok_or_else(|| ApiError::Unauthorized("missing access token".to_string()))?;
 
@@ -453,11 +488,19 @@ pub async fn bot_or_user_auth_middleware(
             transport_surface: String,
             is_active: bool,
             expires_at: Option<platform::timestamp::Timestamp>,
+            /// A project bot connection made this bot: its token is limited to the projects it is
+            /// connected to (`runner_bot_scope`).
+            runner: bool,
+            /// The bot's user is not disabled. An instance administrator who disables the user stops
+            /// the token, whatever the token's own flag says.
+            user_active: bool,
         }
 
         let bot = BotRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            r"SELECT id, workspace_id, permissions, transport_surface, is_active, expires_at
+            r"SELECT id, workspace_id, permissions, transport_surface, is_active, expires_at,
+                      EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner,
+                      COALESCE((SELECT u.is_active FROM users u WHERE u.id = workspace_bots.id), true) AS user_active
                FROM workspace_bots
                WHERE token_hash = $1",
             vec![token_hash.into()],
@@ -467,7 +510,7 @@ pub async fn bot_or_user_auth_middleware(
         .map_err(ApiError::internal_database_failure)?
         .ok_or_else(|| ApiError::Unauthorized("invalid bot token".to_string()))?;
 
-        if !bot.is_active {
+        if !bot.is_active || !bot.user_active {
             return Err(ApiError::Unauthorized("bot token is disabled".to_string()));
         }
         if let Some(expires_at) = bot.expires_at
@@ -483,8 +526,8 @@ pub async fn bot_or_user_auth_middleware(
             let _ = db
                 .execute(Statement::from_sql_and_values(
                     DbBackend::Postgres,
-                    "UPDATE workspace_bots SET last_used_at = $1 WHERE id = $2",
-                    vec![Timestamp::now().into(), bot_id.into()],
+                    "UPDATE workspace_bots SET last_used_at = now() WHERE id = $1",
+                    vec![bot_id.into()],
                 ))
                 .await;
         });
@@ -538,6 +581,31 @@ pub async fn bot_or_user_auth_middleware(
             }
             return Err(error);
         }
+        // A runner bot reaches only the routes and projects its connections allow.
+        let method = req.method().as_str().to_owned();
+        let (mut parts, body) = req.into_parts();
+        let scope = super::runner_bot_scope::authorize(
+            &state.db,
+            bot.id,
+            bot.workspace_id,
+            bot.runner,
+            &method,
+            &mut parts,
+            body,
+        )
+        .await;
+        match scope {
+            Ok(body) => req = Request::from_parts(parts, body),
+            Err(error) => {
+                let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+                if let Err(audit_error) =
+                    record_operation(&state.db, authenticated_operation, 403, Some("forbidden"), duration_ms).await
+                {
+                    tracing::error!(error = %audit_error, "bot operation log write failed for a refused bot request");
+                }
+                return Err(error);
+            }
+        }
         operation_context = Some(authenticated_operation);
 
         req.extensions_mut().insert(context);
@@ -549,6 +617,11 @@ pub async fn bot_or_user_auth_middleware(
             exp: 0,
             sv: 0,
         });
+    } else if token.starts_with(TokenKind::Access.prefix()) {
+        // ── Delegated path: an `sva_` access token issued to a connected application. Reached
+        // only after the bot prefix has failed to claim the token; a delegated token is never
+        // handed to the JWT verifier below, and neither older kind is ever handed to this branch.
+        return Ok(delegated::handle(&state, req, next, &token, token_source).await);
     } else {
         // ── JWT path. Live sessions are re-checked against users.session_version. ──
         let jwt = JwtManager::new(
@@ -811,32 +884,45 @@ mod tests {
         }
     }
 
-    /// ADR-0020 D3: canonical `X-Sylvode-MCP-*`, legacy `X-OpenPR-MCP-*`, either alone or both
-    /// with equal values is accepted; any disagreement is refused rather than resolved.
+    /// The attribution names the MCP server sends for the task protocol and the search entry tools are
+    /// recorded. They were single words (`sylvode_task_ack`), which the dotted rule dropped, so
+    /// every task write was logged without a tool name.
     #[test]
-    fn attribution_accepts_either_spelling_and_refuses_disagreement() {
+    fn the_task_and_entry_attribution_names_are_recorded() {
+        for name in [
+            "tasks.get",
+            "tasks.acknowledge",
+            "tasks.progress",
+            "tasks.complete",
+            "tasks.fail",
+            "entry.overview",
+            "entry.search",
+        ] {
+            assert_eq!(super::recordable_tool_name(name).as_deref(), Some(name), "{name}");
+        }
+        for name in [
+            "sylvode_task_ack",
+            "",
+            "Tasks.get",
+            "tasks.",
+            ".get",
+            "a b.c",
+            "tasks.get;drop",
+        ] {
+            assert_eq!(super::recordable_tool_name(name), None, "{name:?}");
+        }
+    }
+
+    /// ADR-0020 D3: the `X-Sylvode-MCP-*` headers are read; repeated lines of one header must
+    /// agree.
+    #[test]
+    fn attribution_reads_the_headers_and_refuses_disagreement() {
         for (case, pairs) in [
             (
-                "canonical only",
+                "canonical",
                 &[
                     ("x-sylvode-mcp-surface", "mcp_http"),
                     ("x-sylvode-mcp-tool", "projects.list"),
-                ][..],
-            ),
-            (
-                "legacy only",
-                &[
-                    ("x-openpr-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-tool", "projects.list"),
-                ][..],
-            ),
-            (
-                "both equal",
-                &[
-                    ("x-sylvode-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-surface", "mcp_http"),
-                    ("x-sylvode-mcp-tool", "projects.list"),
-                    ("x-openpr-mcp-tool", "projects.list"),
                 ][..],
             ),
             (
@@ -844,7 +930,7 @@ mod tests {
                 &[
                     ("x-sylvode-mcp-surface", "mcp_http"),
                     ("x-sylvode-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-tool", "projects.list"),
+                    ("x-sylvode-mcp-tool", "projects.list"),
                 ][..],
             ),
         ] {
@@ -856,38 +942,24 @@ mod tests {
 
         for (case, pairs) in [
             (
-                "surface canonical vs legacy",
-                &[
-                    ("x-sylvode-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-surface", "mcp_sse"),
-                ][..],
-            ),
-            (
-                "tool canonical vs legacy",
-                &[
-                    ("x-sylvode-mcp-tool", "projects.list"),
-                    ("x-openpr-mcp-tool", "projects.delete"),
-                ][..],
-            ),
-            (
-                "duplicate canonical surface",
+                "duplicate surface",
                 &[
                     ("x-sylvode-mcp-surface", "mcp_http"),
                     ("x-sylvode-mcp-surface", "mcp_sse"),
                 ][..],
             ),
             (
-                "duplicate legacy tool",
+                "duplicate tool",
                 &[
-                    ("x-openpr-mcp-tool", "projects.list"),
-                    ("x-openpr-mcp-tool", "projects.delete"),
+                    ("x-sylvode-mcp-tool", "projects.list"),
+                    ("x-sylvode-mcp-tool", "projects.delete"),
                 ][..],
             ),
             (
-                "case differs",
+                "case differs between lines",
                 &[
                     ("x-sylvode-mcp-surface", "mcp_http"),
-                    ("x-openpr-mcp-surface", "MCP_HTTP"),
+                    ("x-sylvode-mcp-surface", "MCP_HTTP"),
                 ][..],
             ),
         ] {

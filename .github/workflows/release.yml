@@ -119,6 +119,8 @@ jobs:
           cross build --release -p worker --bin worker --target ${{ matrix.target }}
           cross build --release -p mcp-server --bin mcp-server --target ${{ matrix.target }}
           cross build --release -p mcp-server --bin sylvode --target ${{ matrix.target }}
+          # The runner ships in its own archive on the Unix targets (it is Unix-only).
+          cross build --release -p sylvode-runner --bins --target ${{ matrix.target }}
 
       # Builds every workspace binary, collab-isolated-apply-worker included.
       - name: Build all binaries (native)
@@ -138,9 +140,20 @@ jobs:
           cd staging
           tar czf ../sylvode-${{ matrix.suffix }}.tar.gz -- *
           cd ..
-          cp sylvode-${{ matrix.suffix }}.tar.gz openpr-${{ matrix.suffix }}.tar.gz
           sha256sum sylvode-${{ matrix.suffix }}.tar.gz > sylvode-${{ matrix.suffix }}.tar.gz.sha256
-          sha256sum openpr-${{ matrix.suffix }}.tar.gz > openpr-${{ matrix.suffix }}.tar.gz.sha256
+
+      # The runner archive: the executable, flat. The runner is Unix-only, so there is no Windows one.
+      - name: Package runner (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p staging-runner
+          for bin in sylvode-runner; do
+            test -x target/${{ matrix.target }}/release/$bin
+            cp target/${{ matrix.target }}/release/$bin staging-runner/
+            chmod +x staging-runner/$bin
+          done
+          (cd staging-runner && tar czf ../sylvode-runner-${{ matrix.suffix }}.tar.gz -- *)
+          sha256sum sylvode-runner-${{ matrix.suffix }}.tar.gz > sylvode-runner-${{ matrix.suffix }}.tar.gz.sha256
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -154,12 +167,10 @@ jobs:
             Copy-Item $src staging/
           }
           Compress-Archive -Path staging/* -DestinationPath sylvode-${{ matrix.suffix }}.zip
-          Copy-Item sylvode-${{ matrix.suffix }}.zip openpr-${{ matrix.suffix }}.zip
           # The same "<hash>  <file>" line sha256sum writes, so `sha256sum -c` checks it.
-          foreach ($archive in @("sylvode-${{ matrix.suffix }}.zip", "openpr-${{ matrix.suffix }}.zip")) {
-            $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-            [System.IO.File]::WriteAllText("$archive.sha256", "$hash  $archive`n")
-          }
+          $archive = "sylvode-${{ matrix.suffix }}.zip"
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$archive.sha256", "$hash  $archive`n")
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -170,10 +181,8 @@ jobs:
             sylvode-${{ matrix.suffix }}.tar.gz.sha256
             sylvode-${{ matrix.suffix }}.zip
             sylvode-${{ matrix.suffix }}.zip.sha256
-            openpr-${{ matrix.suffix }}.tar.gz
-            openpr-${{ matrix.suffix }}.tar.gz.sha256
-            openpr-${{ matrix.suffix }}.zip
-            openpr-${{ matrix.suffix }}.zip.sha256
+            sylvode-runner-${{ matrix.suffix }}.tar.gz
+            sylvode-runner-${{ matrix.suffix }}.tar.gz.sha256
           if-no-files-found: error
 
   build-frontend:
@@ -196,9 +205,7 @@ jobs:
           bun run build
           tar czf ../sylvode-frontend.tar.gz build/ nginx.conf
           cd ..
-          cp sylvode-frontend.tar.gz openpr-frontend.tar.gz
           sha256sum sylvode-frontend.tar.gz > sylvode-frontend.tar.gz.sha256
-          sha256sum openpr-frontend.tar.gz > openpr-frontend.tar.gz.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -207,19 +214,98 @@ jobs:
           path: |
             sylvode-frontend.tar.gz
             sylvode-frontend.tar.gz.sha256
-            openpr-frontend.tar.gz
-            openpr-frontend.tar.gz.sha256
           if-no-files-found: error
+
+  # One image per architecture, each built on a native runner (no emulation), checked, and pushed
+  # under a per-architecture tag. publish-runner-image joins them into the final tags.
+  # Only this job and the manifest job can write packages.
+  build-runner-image:
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/openprx/sylvode-runner
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Build the image
+        run: docker build -f apps/runner/Dockerfile -t "runner-check:${{ matrix.arch }}" .
+
+      # The same kind of check the Image contents job in ci.yml makes for the api and worker images.
+      - name: Check the image contents
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          img="runner-check:${{ matrix.arch }}"
+          docker run --rm --entrypoint sh "$img" -c 'test -x /app/sylvode-runner'
+          out="$(docker run --rm "$img" /app/sylvode-runner --version)"
+          echo "sylvode-runner --version: $out"
+          grep -qF "$version" <<<"$out" || { echo "::error::image reports '$out', not $version"; exit 1; }
+          user="$(docker run --rm --entrypoint id "$img" -u)"
+          test "$user" != 0 || { echo "::error::image runs as root"; exit 1; }
+
+      - name: Log in to ghcr.io
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+
+      - name: Push the per-architecture image
+        run: |
+          set -euo pipefail
+          target="$IMAGE:${RELEASE_TAG#v}-linux-${{ matrix.arch }}"
+          docker tag "runner-check:${{ matrix.arch }}" "$target"
+          docker push "$target"
+
+  # Joins the two per-architecture images into a multi-platform image and publishes the final
+  # tags: the release version and latest.
+  publish-runner-image:
+    needs: build-runner-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to ghcr.io
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+
+      - name: Create and push the multi-platform tags
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          src="ghcr.io/openprx/sylvode-runner"
+          docker buildx imagetools create \
+            -t "ghcr.io/openprx/sylvode-runner:$version" -t ghcr.io/openprx/sylvode-runner:latest \
+            "$src:$version-linux-amd64" "$src:$version-linux-arm64"
+          docker buildx imagetools inspect "ghcr.io/openprx/sylvode-runner:$version"
 
   # Publishes only when the version check and every build and package job succeeded; a failed
   # or cancelled leg leaves no release behind.
   release:
-    needs: [verify-version, build, build-frontend]
+    needs: [verify-version, build, build-frontend, publish-runner-image]
     if: >-
       always()
       && needs.verify-version.result == 'success'
       && needs.build.result == 'success'
       && needs.build-frontend.result == 'success'
+      && needs.publish-runner-image.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -234,16 +320,25 @@ jobs:
         run: |
           set -euo pipefail
           for file in sylvode-linux-amd64.tar.gz sylvode-linux-arm64.tar.gz sylvode-macos-amd64.tar.gz \
-                      sylvode-macos-arm64.tar.gz sylvode-windows-amd64.zip sylvode-frontend.tar.gz; do
+                      sylvode-macos-arm64.tar.gz sylvode-windows-amd64.zip sylvode-frontend.tar.gz \
+                      sylvode-runner-linux-amd64.tar.gz sylvode-runner-linux-arm64.tar.gz \
+                      sylvode-runner-macos-amd64.tar.gz sylvode-runner-macos-arm64.tar.gz; do
             test -s "artifacts/$file" || { echo "::error::missing release archive $file"; exit 1; }
             test -s "artifacts/$file.sha256" || { echo "::error::missing checksum $file.sha256"; exit 1; }
           done
           (cd artifacts && sha256sum -c ./*.sha256)
           # Flow collaborative writes need collab-isolated-apply-worker beside api, in every
-          # platform archive and its deprecated alias.
-          for archive in artifacts/*-linux-*.tar.gz artifacts/*-macos-*.tar.gz; do
+          # platform archive.
+          for archive in artifacts/sylvode-linux-*.tar.gz artifacts/sylvode-macos-*.tar.gz; do
             listing="$(tar tzf "$archive")"
             for bin in api collab-isolated-apply-worker; do
+              grep -qx "$bin" <<<"$listing" || { echo "::error::$archive lacks $bin"; exit 1; }
+            done
+          done
+          # The runner archives carry the runner executable.
+          for archive in artifacts/sylvode-runner-*.tar.gz; do
+            listing="$(tar tzf "$archive")"
+            for bin in sylvode-runner; do
               grep -qx "$bin" <<<"$listing" || { echo "::error::$archive lacks $bin"; exit 1; }
             done
           done
@@ -265,7 +360,8 @@ jobs:
           body: |
             ## Sylvode ${{ env.RELEASE_TAG }}
 
-            Pre-built binaries for Sylvode (API server, Worker, MCP server, native CLI, Frontend).
+            Pre-built binaries for Sylvode (API server, Worker, MCP server, native CLI, Frontend)
+            and the runner.
 
             ### Downloads
 
@@ -277,17 +373,19 @@ jobs:
             | macOS | Apple Silicon | `sylvode-macos-arm64.tar.gz` |
             | Windows | x86_64 | `sylvode-windows-amd64.zip` |
             | Frontend | Static | `sylvode-frontend.tar.gz` |
+            | Runner | Linux and macOS, amd64 and arm64 | `sylvode-runner-<platform>.tar.gz` |
 
             Each archive contains `api`, `collab-isolated-apply-worker`, `worker`,
-            legacy-compatible `mcp-server`, and the new `sylvode` CLI, with a `.sha256` file to
+            `mcp-server`, and the `sylvode` CLI, with a `.sha256` file to
             check it (`sha256sum -c`). Keep `collab-isolated-apply-worker` in the same directory
             as `api`: the API spawns it for every Flow collaborative write.
-            Matching `openpr-*` archive names are published as deprecated aliases with the same
-            content; they are not removed before Sylvode v2.0.
+            Each `sylvode-runner-<platform>.tar.gz` contains the `sylvode-runner` executable; there is
+            no Windows build of the runner.
+            The runner container image is `ghcr.io/openprx/sylvode-runner:<version>`
+            (the release tag without the `v`; also `latest`), for linux/amd64 and linux/arm64.
 
             Before upgrading, read the "Breaking and behaviour changes" section of
             [CHANGELOG.md](https://github.com/openprx/sylvode/blob/${{ env.RELEASE_TAG }}/CHANGELOG.md)
-            for this release. Legacy OpenPR names keep working with a deprecation warning; see the
-            [compatibility matrix](https://github.com/openprx/sylvode/blob/${{ env.RELEASE_TAG }}/docs/sylvode-v1.0-compatibility.md).
+            for this release.
 
             See [README.md](https://github.com/openprx/sylvode#readme) for setup instructions.

@@ -56,7 +56,7 @@ export const FLOW_LOCAL_ERROR_CODES = ['network_error'] as const satisfies reado
 export const PACKAGE_ROUND_TRIP_ERROR_CODES = ['checksum_mismatch', 'unsupported_format'] as const;
 
 /** `server_draining`'s frozen, REQUIRED discriminator values. */
-export const SERVER_DRAINING_REASONS = ['drain', 'contention'] as const;
+export const SERVER_DRAINING_REASONS = ['drain', 'contention', 'apply_busy'] as const;
 export type ServerDrainingReason = (typeof SERVER_DRAINING_REASONS)[number];
 
 /** The WebSocket close code the server uses to end a session because the workspace is draining
@@ -84,7 +84,25 @@ export const INVALID_UPDATE_REASONS = [
 	'causal_dependency_missing',
 	'cross_workspace_relation'
 ] as const;
-export type InvalidUpdateReason = (typeof INVALID_UPDATE_REASONS)[number];
+/** Reasons only this client mints (never on the wire, so not part of the approved server table):
+ * `rebase_state_mismatch` -- the re-encoded unsent edits did not reproduce the document the editor
+ * shows, so they stay in the recovery draft instead of being sent. `sending_paused` -- the server
+ * kept answering `contention`, so sending is parked and the changes are kept on this device.
+ * `remote_update_unreadable` -- the document engine failed on bytes the server provided, even
+ * after the document was rebuilt, so editing is stopped. */
+export const CLIENT_INVALID_UPDATE_REASONS = [
+	'rebase_state_mismatch',
+	'sending_paused',
+	'remote_update_unreadable'
+] as const;
+export type InvalidUpdateReason =
+	| (typeof INVALID_UPDATE_REASONS)[number]
+	| (typeof CLIENT_INVALID_UPDATE_REASONS)[number];
+
+const KNOWN_INVALID_UPDATE_REASONS: readonly string[] = [
+	...INVALID_UPDATE_REASONS,
+	...CLIENT_INVALID_UPDATE_REASONS
+];
 
 /** What the caller must do for one named `invalid_update` reason (the table's "调用方该做什么"
  * column). `integrity_repair` is the defensive reason: stop ordinary writes and hand over to the
@@ -117,7 +135,10 @@ const INVALID_UPDATE_ACTIONS: Readonly<Record<InvalidUpdateReason, InvalidUpdate
 	// "按 integrity 失败显示，指向运维页；不重试". Only a READ path (`GET relations`) reports it
 	// now: a create/move target outside the workspace answers `not_found`, like a missing one
 	// (`error-mapping-v1.md` `cross_workspace_relation` row, narrowed 2026-10-10).
-	cross_workspace_relation: 'integrity_repair'
+	cross_workspace_relation: 'integrity_repair',
+	rebase_state_mismatch: 'keep_in_recovery_draft',
+	sending_paused: 'surface_error',
+	remote_update_unreadable: 'surface_error'
 };
 
 /**
@@ -135,7 +156,7 @@ export function invalidUpdateDisposition(
 	if (typeof error.details !== 'object' || error.details === null) return null;
 	const reason = (error.details as { reason?: unknown }).reason;
 	if (typeof reason !== 'string') return null;
-	if (!(INVALID_UPDATE_REASONS as readonly string[]).includes(reason)) return null;
+	if (!KNOWN_INVALID_UPDATE_REASONS.includes(reason)) return null;
 	const known = reason as InvalidUpdateReason;
 	return {
 		reason: known,
@@ -164,6 +185,26 @@ export function parseServerDrainingReason(details: unknown): ServerDrainingReaso
 	return (SERVER_DRAINING_REASONS as readonly string[]).includes(reason)
 		? (reason as ServerDrainingReason)
 		: null;
+}
+
+/** How a load refusal (`server_draining` / `apply_busy`) wants its write retried: `resend` sends
+ * the same update id again, `rebase` re-encodes the unsent local edits on top of the head and
+ * sends them under a new id. `null` when `details.retry_mode` is missing or unknown: the producer
+ * violated the contract, and the caller fails closed (a permanent refusal) instead of guessing. */
+export type RetryMode = 'resend' | 'rebase';
+
+export function parseRetryMode(details: unknown): RetryMode | null {
+	if (typeof details !== 'object' || details === null) return null;
+	const mode = (details as { retry_mode?: unknown }).retry_mode;
+	return mode === 'resend' || mode === 'rebase' ? mode : null;
+}
+
+/** The retry mode of an `apply_busy` refusal, or `null` when `error` is not one or its mode is
+ * unusable. */
+export function applyBusyRetryMode(error: Pick<FlowError, 'code' | 'details'>): RetryMode | null {
+	if (error.code !== 'server_draining') return null;
+	if (parseServerDrainingReason(error.details) !== 'apply_busy') return null;
+	return parseRetryMode(error.details);
 }
 
 /** `details.retry_after_ms` when the producer supplied a usable one, else `null`. It is a LOWER
@@ -219,6 +260,14 @@ const DRAIN_DISPOSITIONS: Readonly<
 		keepConnection: true,
 		reconnects: false,
 		closeCode: null
+	},
+	apply_busy: {
+		reason: 'apply_busy',
+		i18nKey: 'flow.error.server_draining.apply_busy',
+		syncState: 'local',
+		keepConnection: true,
+		reconnects: false,
+		closeCode: null
 	}
 };
 
@@ -231,6 +280,9 @@ export function drainDisposition(
 	if (error.code !== 'server_draining') return null;
 	const reason = parseServerDrainingReason(error.details);
 	if (!reason) return null;
+	// `apply_busy` without a usable `retry_mode` violates the contract: fail closed like an
+	// unknown reason.
+	if (reason === 'apply_busy' && parseRetryMode(error.details) === null) return null;
 	return { ...DRAIN_DISPOSITIONS[reason], retryAfterMs: parseRetryAfterMs(error.details) };
 }
 

@@ -1,0 +1,61 @@
+{
+	"shell": {
+		"column": {
+			"collapse": "Collapse sidebar",
+			"search": "Search",
+			"unread": "{count} unread",
+			"backToList": "Back to {name}",
+			"scope": {
+				"menuLabel": "Switch scope",
+				"personal": "Personal",
+				"workspace": "Workspace",
+				"loading": "Loading workspaces…",
+				"retry": "Could not load workspaces. Retry",
+				"all": "All workspaces…"
+			},
+			"things": {
+				"projects": "projects",
+				"workspaces": "workspaces",
+				"forms": "forms",
+				"flow": "Flow",
+				"agents": "agents",
+				"bots": "bots"
+			},
+			"home": {
+				"overview": "Overview",
+				"notifications": "Notifications",
+				"myWork": "My work",
+				"recent": "Recent"
+			},
+			"projects": {
+				"personalCaption": "Projects belong to a workspace",
+				"current": "Project"
+			},
+			"flow": {
+				"private": "Private",
+				"off": "Flow is off in this workspace",
+				"unavailablePersonal": "Flow is not available for your account.",
+				"settingsLink": "Flow settings"
+			},
+			"agents": {
+				"bots": "Bots",
+				"connected": "Connected bots",
+				"personalEmpty": "Agents belong to a workspace in this version.",
+				"noBots": "No bots in this workspace.",
+				"noConnection": "No bot connected",
+				"choose": "Choose an agent in the list."
+			},
+			"governance": {
+				"centre": "Governance centre",
+				"proposals": "Proposals",
+				"templates": "Proposal templates",
+				"impact": "Impact reviews",
+				"decisions": "Decision analytics",
+				"trust": "Trust board",
+				"appeals": "Trust appeals",
+				"config": "Governance config",
+				"audit": "Audit logs"
+			}
+		}
+	}
+}

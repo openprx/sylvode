@@ -1005,7 +1005,7 @@ async fn workspace_transfer_keeps_admission_and_write_guards() {
     .await;
     fixture::exec(
         db,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true)",
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
         vec![workspace.into()],
     )
     .await;
@@ -1128,7 +1128,13 @@ async fn workspace_transfer_keeps_admission_and_write_guards() {
     assert!(prepare(reader, target).await.is_err(), "Read cannot write the target");
     let err = prepare(owner, legacy).await.unwrap_err();
     assert!(format!("{err:?}").contains("explicit_editor_initialization_required"));
-    assert!(!document::load_head_engine(db, legacy.1).await.unwrap().has_editor_doc());
+    assert!(
+        !document::load_head_engine(db, legacy.1)
+            .await
+            .unwrap()
+            .has_editor_doc()
+            .unwrap()
+    );
 
     let prepared = prepare(owner, target).await.unwrap();
     let id = Uuid::parse_str(

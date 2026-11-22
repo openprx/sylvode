@@ -38,6 +38,14 @@
 # Listen address as host:port. Default: the binary's own default.
 # bind_addr = "0.0.0.0:8081"
 
+# Reverse proxies (IP addresses or CIDR blocks) whose X-Forwarded-For / X-Real-IP headers the api
+# believes when it needs the real client address (per-address rate limits). A request from any
+# other peer has those headers ignored, so a direct caller cannot forge its address. Setting this
+# REPLACES the default. Default: loopback (127.0.0.0/8, ::1/128) and 172.16.0.0/12, the range
+# Docker hands to the compose bridge network the bundled nginx runs on. Podman and custom
+# networks use other ranges: list yours here.
+# trusted_proxies = ["127.0.0.0/8", "::1/128", "172.16.0.0/12"]
+
 
 # ---------------------------------------------------------------------------------------------
 # [database] — PostgreSQL connection and pool shape.
@@ -151,10 +159,21 @@ operation_log_retention_days = 30
 [ai_tasks]
 # A delivered task that is neither completed nor failed by the receiver within this many seconds
 # is taken back by the worker: re-queued while attempts remain, failed otherwise. Keep it well
-# above the receiver's longest agent run plus its queue wait (sylvode-webhook `timeout_secs`,
+# above the runner's longest agent run plus its queue wait (sylvode-runner `timeout_secs`,
 # 900 by default, times the tasks that can wait for a `cli_max_concurrency` slot).
 # Default: 3600. Accepted range: 60..=604800.
 processing_timeout_secs = 3600
+# Each acknowledge, progress report or runner heartbeat moves an active task's deadline to this
+# many seconds from now. Default: 1800. Accepted range: 60..=86400.
+lease_extension_secs = 1800
+# No extension moves a task's deadline past this many seconds after it was picked up. Must not be
+# below processing_timeout_secs. Default: 86400. Accepted range: processing_timeout_secs..=604800.
+max_processing_secs = 86400
+# Deepest hop of a bot-to-bot chain. A task a human or an inbound alert starts is depth 0; a task
+# a bot causes while it runs a task (a mention or an assignment) is one deeper. A hop beyond this
+# depth, or one that brings the same bot into a chain twice for the same work item, creates no
+# task and is recorded as an `ai_task.chain_refused` event. Default: 3. Accepted range: 1..=10.
+max_chain_depth = 3
 
 
 # ---------------------------------------------------------------------------------------------
@@ -206,6 +225,25 @@ allow_private = false
 # (their run crashed or was abandoned), so they can be retried. The API also sweeps once at
 # startup. Default: 60. Must be between 1 and 86400.
 # conversion_reap_interval_secs = 60
+#
+# EXPERIMENTAL, off by default. Whether the collab write window may decide a write's structural
+# limits incrementally, from the facts of the page and the units the update touched, instead of
+# running the full computation for every write. The limits enforced are the same. With it on, the
+# worker also refuses an update that rewrites the logical id of an existing tree node. An update
+# whose tree ops name a parent that does not exist is refused with either setting. It is off by
+# default because a crafted update can make one text so costly that the page's later writes are all
+# refused, which the full computation never allows; the hardening is not finished.
+# Default: false.
+# incremental_window = false
+#
+# CPU time, in milliseconds, that the worker's unmetered setup (load of the page, prewarm and the
+# facts of the page that the incremental window starts from) may consume before it gives up on the
+# facts and the write is decided by the full window. The limit is machine-dependent: the default
+# was calibrated on a runner about 3.6 times slower than a developer machine; a host that is
+# slower than that may raise it so its largest honest pages stay on the incremental window. The
+# worker's setup is cut by a wall timeout of 5 seconds whatever this value is, so the accepted
+# range is 500 to 4000. Default: 2500.
+# setup_cpu_budget_ms = 2500
 
 
 # ---------------------------------------------------------------------------------------------
@@ -249,3 +287,94 @@ transport = "stdio"
 # present its caller's own bot token, and the process holds no identity of its own to fall back
 # to, so an unauthenticated caller can reach nothing but /health.
 # bind_addr = "127.0.0.1:8090"
+
+# Delegated access (OAuth). Set all three or none: a partial set refuses to start and names what
+# is missing. Without them this server accepts workspace bot tokens only and answers 401 to a
+# delegated `sva_` token.
+#   oauth_issuer           The issuer of the authorization server; equal to [oauth] issuer.
+#   oauth_resource         The URL that receives JSON-RPC posts, as a client reaches it; equal to
+#                          [oauth] mcp_resource.
+#   oauth_forward_secret   The credential this server presents to the API when it forwards a
+#                          delegated token; equal to [oauth] internal_forward_secret. At least 32
+#                          bytes. Never logged.
+# oauth_issuer = "https://sylvode.example.com"
+# oauth_resource = "https://sylvode.example.com/mcp"
+# oauth_forward_secret = "replace_with_at_least_32_random_bytes"
+
+# Which tools the MCP server lists. "search" (default): sylvode_overview, sylvode_search,
+# sylvode_read, sylvode_write and the task tools; every other tool is found with sylvode_search
+# and called through sylvode_read or sylvode_write. "full": the whole registry is listed and
+# callable by name. `serve --tools search|full` overrides this for stdio; on http and sse a
+# connection chooses with `?tools=` or the `X-Sylvode-Tool-Mode` header and falls back to this
+# value. Connected (OAuth) applications ignore it.
+# tool_mode = "search"
+
+# Whether the bot may use write tools. Default: true. false disables every write tool except the
+# task lifecycle tools (sylvode_task_get, _ack, _progress, _complete, _fail), which a runner bot
+# needs: sylvode_write answers that writes are disabled, and in full mode, on every transport
+# and in the command line (`mcp-server tools call`, `projects create`, ...) a tool the catalogue
+# marks as writing is refused before any request. Reads are not affected.
+# allow_write_call = true
+
+
+# ---------------------------------------------------------------------------------------------
+# [oauth] — authorization server for the API and the MCP server. Optional; off by default.
+#
+# Without `issuer` the feature does not exist: the discovery documents answer 404 and no
+# delegated token is accepted. With it, Sylvode lets the registered client (Ramflux) obtain
+# short-lived, revocable access to one workspace on behalf of a signed-in person, who chooses the
+# workspace, the projects and the access on a consent page. Only the issuer is required.
+# ---------------------------------------------------------------------------------------------
+[oauth]
+# The public origin of this Sylvode, exactly as clients reach the web UI: an https URL with no
+# path, for example "https://sylvode.example.com". It appears byte for byte in the metadata and in
+# every authorization response.
+# issuer = "https://sylvode.example.com"
+
+# Identifier of the API as a protected resource. Default: "<issuer>/api".
+# api_resource = "https://sylvode.example.com/api"
+
+# Identifier of the MCP server as a protected resource, the URL that receives JSON-RPC posts.
+# Required, together with internal_forward_secret, when the MCP server serves delegated callers;
+# must equal [mcp] oauth_resource.
+# mcp_resource = "https://sylvode.example.com/mcp"
+
+# Credential the MCP server presents when it forwards a delegated token to the API. At least 32
+# bytes; must equal [mcp] oauth_forward_secret. Never logged.
+# internal_forward_secret = "replace_with_at_least_32_random_bytes"
+
+# Local development only: allow an http issuer on 127.0.0.1 or [::1]. Refused for any other host.
+# allow_insecure_loopback_issuer = false
+
+# Lifetimes and limits. Defaults shown; the accepted range is in brackets.
+# access_token_ttl_seconds = 600              # [60, 3600]
+# refresh_token_idle_days = 30                # [1, 90] unused refresh tokens expire
+# grant_max_lifetime_days = 365               # [1, 730] a connection ends after this, always
+# authorization_code_ttl_seconds = 60         # [10, 600]
+# max_active_grants_per_user_client = 10      # [1, 50]
+# event_feed_retention_days = 7               # [1, 30]
+# event_backfill_max_events = 1000            # [100, 10000]
+# event_backfill_max_age_hours = 72           # [1, 168]
+# max_streams_per_process = 2000              # [10, 20000]
+
+# Origins allowed to embed Sylvode views in a frame (cross-origin embedding). Default: none.
+# embed_frame_ancestors = []
+
+
+# ---------------------------------------------------------------------------------------------
+# [inbound] — the alert chain: external security products post events to
+# POST /api/v1/inbound/events with a per-project source credential. Optional; off by default.
+#
+# With enabled = false the endpoint answers 503 to every caller. Sources and alert rules are
+# managed by workspace owners and admins through the API. Defaults shown; the accepted range is in
+# brackets.
+# ---------------------------------------------------------------------------------------------
+[inbound]
+enabled = false
+# max_body_bytes = 65536                          # [4096, 262144]
+# signature_tolerance_secs = 300                  # [30, 900] allowed clock difference of a signed request
+# auth_failures_per_minute_per_ip = 30            # [1, 1000]
+# max_active_alert_tasks_per_workspace = 5        # [1, 100] bot tasks that alerts may have active at once
+# max_alerts_per_rule_per_hour = 60               # [1, 10000] work items one rule may open per hour
+# event_retention_days = 30                       # [1, 365] how long stored events are kept
+# followup_interval_secs = 2                      # [1, 60] how often the worker looks for ended alert tasks

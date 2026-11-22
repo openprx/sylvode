@@ -5,14 +5,11 @@ business-form engine, collaborative Flow pages, WASM plugins, and a first-class
 MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, and
 **PostgreSQL 18**.
 
-> **Formerly OpenPR.** Releases up to 0.2.21 were published as OpenPR. Existing
-> OpenPR names (the `mcp-server` CLI commands, `config/openpr.toml`, `OPENPR_*`
-> compose variables, `openpr://` resources, `openpr-*` release archives) keep
-> working with a deprecation warning and are not removed before Sylvode v2.0;
-> stable identifiers such as the REST API, MCP tool names, database names and the
-> plugin ABI are not renamed at all. See the
-> [v1.0 compatibility matrix](docs/sylvode-v1.0-compatibility.md) and
-> [CHANGELOG.md](CHANGELOG.md).
+> **Formerly OpenPR.** Releases up to 0.2.21 were published as OpenPR. The old
+> OpenPR names (`config/openpr.toml`, `OPENPR_*` compose variables, `openpr-*`
+> release archives, `X-OpenPR-*` headers, `openpr://` resource URIs) are not
+> supported. Stable identifiers such as the REST API, MCP tool names, database
+> names and the plugin ABI were not renamed. See [CHANGELOG.md](CHANGELOG.md).
 
 ## What It Provides
 
@@ -22,7 +19,7 @@ MCP server for AI agents. Built with **Rust** (Axum + SeaORM), **SvelteKit**, an
 - **Sylvode Flow** — collaborative pages and objects with live multi-user editing (Loro CRDT over WebSocket), Collections and records, a workspace navigator, search, Forms conversion, and export/import packages. Off by default; enabled per workspace.
 - **WASM plugins** — per-project sandboxed plugins for field validation, formulas, and event handlers.
 - **Events** — transactional business-event ledger and HMAC-signed webhooks.
-- **MCP server** — 140 tools, 4 static resources, 22 resource templates, 3 transports.
+- **MCP server** — a search-first tool surface for agents (see [Tools](#tools)), static guides and resource templates, 3 transports.
 - **`sylvode` CLI** — fifteen command groups for Flow and workspace operations, with a stable JSON output contract.
 - **Scenario templates** — 6 ready-to-start setups: `code_delivery_default`, `contract_review_default`, `equipment_maintenance_default`, `quality_corrective_action_default`, `customer_delivery_default`, `restaurant_ordering_default`.
 
@@ -64,10 +61,8 @@ local user who can traverse `config/` can therefore read them, so protect the
 directory instead, for example `chmod 750 config` (or the deployment directory
 above it) with the deploying user as owner.
 Services publish on `${SYLVODE_BIND_HOST:-127.0.0.1}`: frontend `:3000`, API
-`:8081`, MCP `:8090`. `scripts/start.sh` maps the documented legacy environment
-aliases to these canonical compose inputs. `bash scripts/start.sh --check-config`
-only generates and validates the configuration, without building or starting
-anything.
+`:8081`, MCP `:8090`. `bash scripts/start.sh --check-config` only generates and
+validates the configuration, without building or starting anything.
 The `api` image ships `collab-isolated-apply-worker` next to `/app/api`: the API spawns it for
 every Flow collaborative write and looks for it in its own directory, so without it every edit
 fails. `--no-build` therefore expects `api`, `collab-isolated-apply-worker`, `worker` and
@@ -76,8 +71,7 @@ same directory when installing them (or point `COLLAB_ISOLATED_APPLY_WORKER_PATH
 Flow collaborative writes and object diffs require a Linux API server (the isolated-apply
 boundary of ADR-0014 is Linux-only); on macOS and Windows they are refused with `server_rejected`
 (`isolated_apply_unsupported_platform`). Projects, Forms, MCP, the CLI and Flow reads work on
-every release platform; see the
-[platform matrix](docs/sylvode-v1.0-compatibility.md#platform-matrix).
+every release platform.
 The generated `[flow] collab_allowed_origins` lists the addresses the frontend
 is published at (for the default bind, `http://localhost:3000` and
 `http://127.0.0.1:3000`), so live editing works on first start; replace it with
@@ -87,7 +81,7 @@ empty, which refuses every live-editing session.
 For demo data once healthy, `scripts/bootstrap-restaurant-demo.sh` creates a
 demo account, workspace, `restaurant_ordering_default` project with sample
 records, and a workspace-scoped bot token; it refuses non-local API URLs unless
-`SYLVODE_DEMO_ALLOW_REMOTE=1` (legacy `OPENPR_DEMO_ALLOW_REMOTE` still accepted).
+`SYLVODE_DEMO_ALLOW_REMOTE=1`.
 
 ### Local development
 
@@ -111,9 +105,8 @@ cargo run --bin mcp-server -- serve --config config/sylvode.toml --transport htt
 > `mcp.api_url` follows the same rule: `http://localhost:8081` from the host,
 > the `api` service address from inside the compose network.
 >
-> `--config` is optional; every binary first looks for `config/sylvode.toml`.
-> A legacy `config/openpr.toml` is discovered when the new path is absent. If both
-> exist, startup fails until `--config` explicitly selects one.
+> `--config` is optional; every binary looks for `config/sylvode.toml` when it is
+> absent.
 
 ## Configuration
 
@@ -123,8 +116,7 @@ variable at all**. The path comes from `--config <PATH>`, defaulting to
 `config/sylvode.toml` relative to the process working directory. A missing file
 is a startup error, never a silent fallback: the binaries never invent a
 database URL or a signing key. `config/sylvode.example.toml` is the annotated
-reference. The old `config/openpr.toml` default remains a compatibility fallback,
-but never silently wins over the new path.
+reference.
 
 Unknown keys are rejected, so a misspelled setting fails startup instead of
 being silently ignored.
@@ -140,7 +132,7 @@ being silently ignored.
 | `[ai_tasks]` | worker | `processing_timeout_secs` (`3600`, range `60..=604800`; how long a delivered AI task may stay `processing` before the worker re-queues it, or fails it after its last attempt) |
 | `[migrations]` | api | `replay` (`false`), `continue_on_error` (`false`) — both are escape hatches; turn one on deliberately, then turn it back off |
 | `[outbound]` | api, worker | `allowed_hosts` — a TOML **array of strings** (`[]`), `allow_private` (`false`) |
-| `[flow]` | api, worker | `dispatch_max_attempts` (`10`), `collab_allowed_origins` — a TOML array of `scheme://host[:port]` origins allowed to open live collaboration sessions (`[]`; empty refuses every session, so list the web UI's origin to enable live editing), `conversion_reap_interval_secs` (`60`, range `1..=86400`; how often the api reclaims conversion jobs left `started` for more than 15 minutes) |
+| `[flow]` | api, worker | `dispatch_max_attempts` (`10`), `collab_allowed_origins` — a TOML array of `scheme://host[:port]` origins allowed to open live collaboration sessions (`[]`; empty refuses every session, so list the web UI's origin to enable live editing), `conversion_reap_interval_secs` (`60`, range `1..=86400`; how often the api reclaims conversion jobs left `started` for more than 15 minutes), `incremental_window` (experimental, `false`; `true` lets a collab write decide its structural limits from the page's facts and the units the update touched instead of by the full computation), `setup_cpu_budget_ms` (`2500`, range `500..=4000`; CPU time the worker's setup may consume before the page is decided by the full window, raise it on a host slower than the reference runner) |
 | `[mcp]` | mcp-server, sylvode | `api_url` (`http://localhost:8081`), `bot_token` (`opr_` prefix; **required** for `stdio` and the CLI subcommands, unused by `http`/`sse`), `workspace_id` (**required**, real non-nil UUID), `transport` — `stdio` \| `http` \| `sse` (`stdio`), `bind_addr` (`127.0.0.1:8090`) |
 
 > **Eager shape, lazy presence.** Every value the file *does* contain is
@@ -173,12 +165,13 @@ internal address is refused, and redirects are not followed.
 matched literally and case-insensitively — no wildcards, no URLs, no paths, all
 three are rejected at startup because they would silently never match. Internal
 receivers (compose services, in-cluster bots) must be listed there or their
-deliveries are refused. `outbound.allow_private = true` disables the checks
+deliveries are refused. The runner address of a project bot connection is checked the same
+way when it is entered, so a runner on an internal address must be listed too. `outbound.allow_private = true` disables the checks
 entirely and is only for a closed network you control end to end.
 
 ```toml
 [outbound]
-allowed_hosts = ["webhook:9090", "api:8080", "mcp-server:8090", "frontend:80"]
+allowed_hosts = ["runner:9090", "api:8080", "mcp-server:8090", "frontend:80"]
 allow_private = false
 ```
 
@@ -239,7 +232,7 @@ bot at most one bot task:
   without `bot_context` and queues no AI task for it. Other bots are unaffected.
 
 A delivery without `bot_context` is still sent, so a subscription keeps seeing
-every event it subscribes to as a plain notification; `sylvode-webhook` answers
+every event it subscribes to as a plain notification; `sylvode-runner` answers
 it `not_bot_task`.
 
 **How a worker AI task ends.** The worker picks a pending task up (`processing`,
@@ -248,27 +241,35 @@ exactly one of these ways, each writing the `retried` or `failed` task event and
 the matching `ai_task.*` business event with the reason, and `ai.task_failed`
 when the task is failed:
 
-- **The receiver takes it** (`dispatched`) and reports the outcome through
-  `POST /api/v1/ai/callbacks/task/{id}/complete` or `.../fail`. Only the task's
-  own AI participant (its bot token) or a system administrator may call them.
-  A callback may name its attempt (`?attempt=N`, the delivery's `attempts`); it
-  is then accepted only while that attempt is `processing`, so a late callback
-  never ends a re-queued or later attempt. `fail` with `"retry": false` fails
-  the task at once instead of scheduling a retry.
-- **The receiver declines it** in its answer: `no_agent`, `ignored`, `refused`
+- **The runner takes it** (`dispatched`) and the task ends through the task protocol:
+  the agent (or the runner, for a task it cannot hand over) calls
+  `POST /api/v1/ai/tasks/{id}/complete` or `.../fail?attempt=N`. Only the task's own bot
+  (its token) or a system administrator may call them, and only while that very attempt is
+  active, so a late call never ends a re-queued or later attempt. `fail` with
+  `"retryable": false` fails the task at once instead of scheduling a retry. The older
+  `/api/v1/ai/callbacks/task/...` endpoints no longer exist.
+- **The runner declines it** in its answer: `no_agent`, `ignored`, `refused`
   (for example safe mode), or an HTTP 4xx other than 408, 409, 425 and 429. The
   worker fails the task at once, without using up the remaining attempts, with
-  an error message that quotes the answer: a repeat seconds later would get the
-  same answer, and the receiver may hold no token that can end the task itself.
-  Fix the receiver's configuration and assign the task again.
+  an error message such as `the runner refused the task (path_outside_allowlist): ...`
+  (the runner's own `reason_code` is stored in the event next to the text): a repeat
+  seconds later would get the same answer, and the runner may hold no token that
+  can end the task itself. Fix the runner's configuration and assign the task
+  again. For a project that has execution settings the issue also gets a
+  `Could not start: ...` comment.
 - **The delivery fails** (no active webhook, a transport error, HTTP 5xx, 408,
   409, 425, 429): the task goes back to `pending` with a delay of
   `attempts * 30` seconds while attempts remain, and is failed after the last.
 - **Nothing ends it** within `[ai_tasks] processing_timeout_secs` (default one
   hour): the worker re-queues it while attempts remain and fails it after the
   last, with a message naming the timeout and the attempt. This covers a
-  receiver that stopped, an agent that hangs, and a callback that was refused or
-  lost. Keep the timeout well above the receiver's longest agent run.
+  runner that stopped, an agent that hangs, and a callback that was refused or
+  lost. Keep the timeout well above the runner's longest agent run.
+
+A bot connected to a project (see below) has a **delivery hold**: after the
+connection is made, and after its credentials are rotated, the worker leaves the
+bot's pending tasks `pending` until the runner has used the new token (its
+start-up handshake does), for at most one hour.
 
 Whichever of these commits first wins; the others find the attempt no longer
 `processing` and change nothing.
@@ -282,7 +283,7 @@ and awaits them sequentially.
 
 | Pipeline             | Source                                                                 | Behavior                                                      |
 | -------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
-| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s; fails a task the receiver declines; re-queues or fails a task left `processing` past `[ai_tasks] processing_timeout_secs` |
+| AI task dispatch     | `ai_tasks`                                                             | POSTs to bot webhooks, HMAC-signed; retry delay `max(attempts, 1) * 30` s; fails a task the runner declines; holds a newly connected bot's tasks until its token has been used; re-queues or fails a task left `processing` past `[ai_tasks] processing_timeout_secs` |
 | Operation-log cleanup | `bot_operation_logs`                                                  | Deletes metadata records older than `[audit]` retention       |
 | Form jobs            | `form_import_jobs`, `form_export_jobs`, `form_attachment_package_jobs` | Plus expiry cleanup of package artifacts and signature values |
 | Proposal settlement  | `proposals`                                                            | Settles expired proposals (moved off the API read path)       |
@@ -329,7 +330,7 @@ MCP authenticates to the API with **bot tokens** (prefix `opr_`), managed under
 activity feeds, is scoped to one workspace, creates a bot user for audit-trail
 integrity (`entity_type = bot`, `agent_type = mcp`; the same kind of identity an
 administrator creates, so it can be assigned work, named as a webhook's bot user
-and registered as an AI participant), and carries `read`, `write` or `admin` permissions that the
+and connected to a project), and carries `read`, `write` or `admin` permissions that the
 API enforces: safe methods need `read`, every other method needs `write`, and
 `admin` implies both.
 
@@ -368,11 +369,6 @@ No `env` block: the binary reads no environment variables, so `mcp.api_url`,
 names. An absolute path is what makes this work — the default
 `config/sylvode.toml` is relative to whatever working directory the MCP client
 happens to launch the process in.
-
-The legacy `mcp-server` CLI commands and `config/openpr.toml` remain supported
-and print a deprecation warning; they are not removed before Sylvode v2.0. See
-[the compatibility matrix](docs/sylvode-v1.0-compatibility.md) for conflict
-handling, the warnings and the earliest possible removal versions.
 
 > `--api-url`, `--bot-token`, `--workspace-id`, `--transport` and `--bind-addr`
 > exist as command-line overrides and win over the file. Prefer the file for
@@ -424,44 +420,26 @@ curl -X POST "http://localhost:8090/messages?session_id=<uuid>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}'
 ```
 
-### Tools (140)
+### Tools
 
-Per-domain counts; the total and sorted-name hash are pinned in
-`apps/mcp-server/tool-registry-baseline.json` and checked against the live registry.
+<!-- BEGIN GENERATED: tool-count (sylvode-skillgen; do not edit) -->
+The MCP server registers 153 tools in 19 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](skills/sylvode-mcp/reference/tools.md).
+<!-- END GENERATED: tool-count -->
 
-| Domain                    | Count | Representative tools                                                      |
-| ------------------------- | ----: | ------------------------------------------------------------------------- |
-| Universal forms & events  |    34 | `forms.create`, `forms.update_schema`, `form_records.create`, `events.tail` |
-| Work items                |    11 | `work_items.create`, `work_items.get_by_identifier`, `work_items.search`   |
-| Scenario tools            |     9 | `code.change_proposal.create`, `documents.review_risk`, `approval.request` |
-| Flow                      |    42 | `objects.create`, `objects.convert_commit`, `collab.status`, `legacy_pages.import_commit` |
-| Project types & resources |     6 | `project_types.get`, `project_resources.create`                            |
-| Projects                  |     5 | `projects.list`, `projects.create`                                         |
-| Labels                    |     5 | `labels.create`, `labels.list_by_project`                                  |
-| Plugins                   |     5 | `plugins.install`, `plugins.invoke`, `plugin_invocations.list`             |
-| Proposals & check results |     5 | `proposals.create`, `check_results.create`                                 |
-| Sprints                   |     4 | `sprints.create`, `sprints.update`                                         |
-| Comments                  |     3 | `comments.create`, `comments.list`                                         |
-| Context                   |     3 | `context.get_project`, `context.get_agent_policy`                          |
-| Scenario templates        |     3 | `scenario_templates.list`, `scenario_templates.install`                    |
-| Operation records         |     1 | `bot_operation_logs.list`                                                  |
-| Single-tool domains       |   4×1 | `files.upload`, `members.list`, `search.all`, `release.readiness.get`      |
-
-The full list with exact parameter schemas is generated from the code — do not
-transcribe it. Get it with `cargo run --bin list-tools` (no running API needed)
-or a `tools/list` JSON-RPC call.
+The sorted tool names and the read or write class of every tool are pinned in
+`apps/mcp-server/tool-registry-baseline.json` and checked against the live registry. Get the
+exact parameter schemas with `cargo run --bin list-tools` (no running API needed) or
+`sylvode_search` / `tools/list`.
 
 ### Resources
 
-Four static resources — `sylvode://skills/openpr-mcp`, `sylvode://guides/agents`,
-`sylvode://guides/workflows`, `sylvode://scenario-templates` — plus 22 resource
-templates are returned by `resources/templates/list`. The templates include the existing
-project, Forms, scenario and issue resources plus all five frozen Flow resources:
-`sylvode://objects/{object_id}`, object history and schema, Collection records, and the
-workspace/project navigator. The registry lists only `sylvode://` canonical identities;
-`resources/read` continues to accept the corresponding `openpr://` alias for every one and
-returns `_meta.canonical_uri` with the canonical identity, plus `_meta.deprecation` naming the
-replacement and the earliest removal (Sylvode v2.0).
+Five static resources — the skill `sylvode://skills/sylvode-mcp` and its tool reference
+`sylvode://skills/sylvode-mcp/tools`, `sylvode://guides/agents`, `sylvode://guides/workflows`,
+`sylvode://scenario-templates` — plus 21 resource templates are returned by `resources/list` and
+`resources/templates/list`. The templates include the project, Forms, scenario and issue
+resources plus all five frozen Flow resources: `sylvode://objects/{object_id}`, object history
+and schema, Collection records, and the workspace/project navigator. Only the canonical
+`sylvode://` identities exist.
 
 ### Command-line client: `sylvode`
 
@@ -477,7 +455,7 @@ configuration file as the MCP server (`[mcp] api_url`, `bot_token`,
 | Workspace | `projects`, `work-items`, `comments`, `labels`, `sprints`, `search`, `files`, `operation-logs`, `tools` | The tool's JSON on stdout, errors on stderr with exit code 1, global `--workspace-id` |
 
 `--format json` (the default) is the stable machine contract; `--format table` is
-a human display. `tools call` reaches any of the 140 tools by name, an escape
+a human display. `tools call` reaches any tool by name, an escape
 hatch for anything without a dedicated subcommand. It declares the transport
 surface `cli_tools_call` rather than `cli`, so it needs a bot token issued for
 that surface (see the surface table above).
@@ -493,12 +471,8 @@ sylvode features flow get --workspace <uuid>
 sylvode objects get <object-uuid> --render markdown
 ```
 
-`mcp-server` is the MCP server (`mcp-server serve`). It still accepts the nine
-workspace groups as a deprecated alias: `mcp-server <group> ...` runs the same
-command with byte-identical stdout and the same exit code, and prints one
-deprecation warning on stderr. It is not removed before Sylvode v2.0; switch
-scripts to `sylvode <group> ...`. The Flow groups exist only under `sylvode`, and
-`serve` only under `mcp-server`.
+`mcp-server` is the MCP server (`mcp-server serve`). The workspace groups and the Flow groups
+exist only under `sylvode`, and `serve` only under `mcp-server`.
 
 ## API
 
@@ -515,8 +489,9 @@ Flow (`/flow/*`, `/collab/*`, `/workspaces/{id}/flow/*`); forms (`/forms/*`,
 plugins and events (`/plugins/*`, `/check-results/*`);
 governance (`/proposals/*`, `/proposal-comments/*`, `/decisions/*`,
 `/decision-domains/*`, `/governance/*`, `/trust-scores/*`,
-`/impact-reviews/*`, `/vetoers/*`); AI (`/ai/*`, `/ai-participants/*`,
-`/ai-learning/*`); templates (`/scenario-templates/*`, `/project-types/*`,
+`/impact-reviews/*`, `/vetoers/*`); AI (`/ai/*`, `/ai-learning/*`, the
+project-scoped `/projects/{id}/ai-participants/{bot_id}/learning`); bot connections
+(`/projects/{id}/bot-connections`, `.../{bot_id}`, `.../{bot_id}/disable`, `/enable`, `/rotate`); templates (`/scenario-templates/*`, `/project-types/*`,
 `/proposal-templates/*`); files and misc (`/upload`, `/uploads/*`, `/search`,
 `/export/*`, `/notifications/*`).
 
@@ -541,7 +516,7 @@ All under `scripts/`.
 
 | Group       | Scripts                                                                   |
 | ----------- | ------------------------------------------------------------------------- |
-| Lifecycle   | `start.sh` (first-run `config/sylvode.compose.toml` + `config/sylvode.compose.mcp.toml` + compose `.env`, random bootstrap secrets, build release binaries, `compose up -d`; legacy OpenPR filenames are discovered), `dev-up.sh` (PostgreSQL only, for host-side Rust), `stop.sh`, `clean.sh` (**tears down volumes** — destroys database data, asks to confirm) |
+| Lifecycle   | `start.sh` (first-run `config/sylvode.compose.toml` + `config/sylvode.compose.mcp.toml` + compose `.env`, random bootstrap secrets, build release binaries, `compose up -d`), `dev-up.sh` (PostgreSQL only, for host-side Rust), `stop.sh`, `clean.sh` (**tears down volumes** — destroys database data, asks to confirm) |
 | Database    | `init-db.sh` (apply migrations in order), `backup-db.sh` (gzipped dump into `backups/`), `restore-db.sh`                                                                                                                              |
 | Verification | `e2e-test.sh` (one-shot end-to-end with automatic teardown), `test-api.sh`, `test-mcp.sh` (legacy v0.4 integration checks), `verify.sh` (component health check)                                                                            |
 | Development | `dev-check.sh` (`cargo fmt --check`, `check`, `clippy -D warnings`, `test`), `ci-universal-forms-gates.sh` (reproduce the CI-only `Universal Forms Gates` bundle locally)                                                              |
@@ -571,7 +546,7 @@ defaults `baseURL` to `http://localhost:3000`; point it at another frontend with
 **Frontend smoke scripts — 6 `.mjs` scripts** in `frontend/scripts/`, run via
 `bun run smoke:*` (`smoke:connections`,
 `smoke:phase1-project-types`, `smoke:project-template`,
-`smoke:template-work-items`, `smoke:forms-ui`, `smoke:restaurant-ordering`).
+`smoke:template-work-items`, `smoke:forms-record-list`, `smoke:restaurant-ordering`).
 
 **CI.** The `universal-forms` job is not a conventional test suite — it is in-repo
 shell audits that grep and pattern-match the source tree to assert that claimed
@@ -585,10 +560,9 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 - `docs/universal-forms-production.md` — production runbook
 - `docs/universal-forms-implementation-map.md` — source module / verification command map
 - `docs/plugins/openpr-plugin-v1.wit` — plugin ABI v1
-- `docs/sylvode-v1.0-compatibility.md` — OpenPR compatibility names, deprecation warnings and upgrade sequence
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` — release notes, contributor guide, security policy
 - `apps/mcp-server/AGENTS.md` — coding-agent workflow patterns and tool examples
-- `skills/openpr-mcp/SKILL.md` — governed MCP skill package
+- `skills/sylvode-mcp/SKILL.md` — the MCP skill package (single hand-written source; generated files are checked by `sylvode-skillgen --check`)
 
 ## Tech Stack
 
@@ -603,7 +577,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 | Repository                                                   | Description                                      |
 | ------------------------------------------------------------ | ------------------------------------------------ |
 | [Sylvode](https://github.com/openprx/sylvode)                | Core platform (this repo)                        |
-| [Sylvode Webhook](apps/webhook)                              | Webhook receiver for external integrations (in this repo) |
+| [Sylvode runner](apps/runner)                                | Receives Sylvode task deliveries and runs agents (in this repo) |
 | [prx](https://github.com/openprx/prx)                        | AI assistant framework with built-in Sylvode MCP |
 | [prx-memory](https://github.com/openprx/prx-memory)          | Local-first MCP memory for coding agents         |
 | [wacli](https://github.com/openprx/wacli)                    | WhatsApp CLI with JSON-RPC daemon                |

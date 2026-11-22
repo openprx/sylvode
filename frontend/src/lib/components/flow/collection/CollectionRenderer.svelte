@@ -134,15 +134,13 @@
 </script>
 
 {#if $viewState.collection || $viewState.status === 'error'}
-	<div
-		class="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2 dark:border-slate-800"
-	>
-		<p class="flex-1 text-xs text-slate-500 dark:text-slate-400">
+	<div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-2">
+		<p class="flex-1 text-xs text-fg-muted">
 			{$t('flow.personal.refreshHint')}
 		</p>
 		<button
 			type="button"
-			class="min-h-11 rounded-md border border-slate-300 px-3 text-sm disabled:opacity-50"
+			class="min-h-11 rounded-control border border-fg bg-raised px-3 text-sm disabled:bg-surface disabled:text-fg-muted disabled:border-line"
 			data-testid="collection-refresh"
 			disabled={refreshing || $viewState.status === 'loading' || hasPendingWritesIn($viewState)}
 			aria-busy={refreshing}
@@ -152,16 +150,16 @@
 {/if}
 
 {#if $viewState.status === 'error'}
-	<div class="p-8 text-center text-sm text-red-600" role="alert">
+	<div class="p-8 text-center text-sm text-danger" role="alert">
 		{$t($viewState.errorKey ?? 'flow.collection.loadFailed')}
 	</div>
 {:else if $viewState.status === 'loading' && !$viewState.collection}
-	<div class="p-8 text-center text-sm text-slate-500" aria-live="polite">
+	<div class="p-8 text-center text-sm text-fg-muted" aria-live="polite">
 		{$t('common.loading')}
 	</div>
 {:else if recordId}
 	{#if missingRecord}
-		<p class="p-8 text-center text-sm text-slate-500" role="alert">{$t('flow.record.notFound')}</p>
+		<p class="p-8 text-center text-sm text-fg-muted" role="alert">{$t('flow.record.notFound')}</p>
 	{:else if panelComponent}
 		{@const Panel = panelComponent}
 
@@ -174,9 +172,7 @@
 		data-mode={$viewState.mode}
 	>
 		<div class="flex min-w-0 flex-1 flex-col">
-			<div
-				class="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2 dark:border-slate-800"
-			>
+			<div class="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
 				<div
 					role="tablist"
 					aria-label={$t('flow.collection.view.tabs')}
@@ -189,10 +185,10 @@
 							id={`collection-view-tab-${view.viewId}`}
 							aria-selected={view.viewId === $viewState.activeViewId}
 							tabindex={view.viewId === $viewState.activeViewId ? 0 : -1}
-							class="min-h-11 rounded px-3 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 {view.viewId ===
+							class="min-h-11 rounded px-3 text-sm font-medium {view.viewId ===
 							$viewState.activeViewId
-								? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-								: 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}"
+								? 'bg-primary rf-filled text-on-primary'
+								: 'text-fg-muted hover:bg-surface'}"
 							data-view-kind={view.kind ?? ''}
 							data-testid="collection-view-tab"
 							onclick={() => void controller.setActiveView(view.viewId)}
@@ -206,15 +202,15 @@
 							</span>
 						</button>
 					{:else}
-						<span class="text-xs text-slate-500">{$t('flow.collection.view.none')}</span>
+						<span class="text-xs text-fg-muted">{$t('flow.collection.view.none')}</span>
 					{/each}
 				</div>
 				<div class="ml-auto flex items-center gap-2">
 					<button
 						type="button"
-						class="min-h-11 rounded border px-3 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 {schemaMode
-							? 'border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100'
-							: 'border-slate-300 text-slate-700 dark:border-slate-600 dark:text-slate-200'}"
+						class="min-h-11 rounded border px-3 text-sm font-medium {schemaMode
+							? 'border-line bg-warning-soft text-fg'
+							: 'border-line-strong text-fg'}"
 						aria-pressed={schemaMode}
 						data-testid="collection-schema-toggle"
 						onclick={() => void toggleSchemaMode()}
@@ -225,17 +221,14 @@
 			</div>
 
 			{#if $viewState.collection?.fieldSecrecyEnabled}
-				<p
-					class="border-b border-slate-200 px-4 py-2 text-xs text-slate-500 dark:border-slate-800"
-					role="note"
-				>
+				<p class="border-b border-line px-4 py-2 text-xs text-fg-muted" role="note">
 					{$t('flow.collection.secrecyNotice')}
 				</p>
 			{/if}
 
 			{#if $viewState.notice}
 				<div
-					class="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+					class="flex items-center gap-3 border-b border-line bg-warning-soft px-4 py-2 text-sm text-fg"
 					role="status"
 					data-notice-code={$viewState.notice.code ?? ''}
 				>
@@ -259,7 +252,7 @@
 
 				<View {controller} snapshot={$viewState} {scopeId} />
 			{:else}
-				<p class="p-4 text-sm text-slate-500" aria-live="polite">{$t('common.loading')}</p>
+				<p class="p-4 text-sm text-fg-muted" aria-live="polite">{$t('common.loading')}</p>
 			{/if}
 		</div>
 

@@ -19,8 +19,10 @@ use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
     services::{
-        ai_task_service::{CreateAiTaskInput, create_ai_task},
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         bot_identity::is_bot_user,
+        issues::{IssueRef, insert_activity},
+        work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
@@ -133,21 +135,21 @@ fn build_auth_extensions(claims: JwtClaims, bot: Option<Extension<BotAuthContext
 /// inside the workspace. A sprint in another project and a sprint that does not exist produce the
 /// same `BadRequest`, so this does not become an oracle of its own.
 /// One assignment of an issue, as queued by [`queue_assignment_ai_task`].
-struct AssignmentTaskInput {
-    project_id: Uuid,
-    issue_id: Uuid,
-    assignee_id: Uuid,
-    actor_id: Uuid,
-    trigger: &'static str,
-    idempotency_key: String,
+pub(crate) struct AssignmentTaskInput {
+    pub(crate) project_id: Uuid,
+    pub(crate) issue_id: Uuid,
+    pub(crate) assignee_id: Uuid,
+    pub(crate) actor_id: Uuid,
+    pub(crate) trigger: &'static str,
+    pub(crate) idempotency_key: String,
 }
 
 /// What an assignment produced: whether the assignee is a bot, and the bots that received their
 /// task for it as a worker AI task (to pass to `trigger_webhooks_after_ai_tasks`).
 #[derive(Debug, Default)]
-struct AssignmentOutcome {
-    assignee_is_bot: bool,
-    ai_task_bots: Vec<Uuid>,
+pub(crate) struct AssignmentOutcome {
+    pub(crate) assignee_is_bot: bool,
+    pub(crate) ai_task_bots: Vec<Uuid>,
 }
 
 /// Whether assigning `assignee_id` queues an `issue_assigned` AI task.
@@ -160,7 +162,7 @@ const fn assignment_queues_ai_task(actor_id: Uuid, assignee_id: Uuid, assignee_i
     assignee_is_bot && actor_id.as_u128() != assignee_id.as_u128()
 }
 
-async fn queue_assignment_ai_task(
+pub(crate) async fn queue_assignment_ai_task(
     db: &impl ConnectionTrait,
     input: AssignmentTaskInput,
 ) -> Result<AssignmentOutcome, ApiError> {
@@ -171,9 +173,24 @@ async fn queue_assignment_ai_task(
             ai_task_bots: Vec::new(),
         });
     }
-    let queued = create_ai_task(
+    // Assigning a runner bot that this project has not enabled is allowed (the issue is its
+    // assignee) but starts nothing: the bot is not given a task it may not run.
+    if let Some(block) = runner_bot_block(db, input.project_id, input.assignee_id).await? {
+        tracing::info!(
+            issue_id = %input.issue_id,
+            bot_id = %input.assignee_id,
+            reason = block.code(),
+            "assignment queued no task"
+        );
+        return Ok(AssignmentOutcome {
+            assignee_is_bot,
+            ai_task_bots: Vec::new(),
+        });
+    }
+    let queued = dispatch_ai_task(
         db,
         CreateAiTaskInput {
+            origin: DispatchOrigin::Request,
             project_id: input.project_id,
             ai_participant_id: input.assignee_id,
             actor_id: Some(input.actor_id),
@@ -192,9 +209,22 @@ async fn queue_assignment_ai_task(
         },
     )
     .await?;
-    if queued.is_none() {
+    match queued {
+        DispatchOutcome::Created(_) => {}
         // The same key was queued before: the bot already holds its task for this assignment.
-        tracing::debug!(issue_id = %input.issue_id, bot_id = %input.assignee_id, "assignment task already queued");
+        DispatchOutcome::Duplicate => {
+            tracing::debug!(issue_id = %input.issue_id, bot_id = %input.assignee_id, "assignment task already queued");
+        }
+        // The assignment stands and the bot stays in the list below: it is also the bots whose
+        // webhook delivery must not carry `bot_context`, which would start the bot.
+        DispatchOutcome::ChainRefused(refusal) => {
+            tracing::info!(
+                issue_id = %input.issue_id,
+                bot_id = %input.assignee_id,
+                reason = refusal.code(),
+                "assignment queued no task"
+            );
+        }
     }
     Ok(AssignmentOutcome {
         assignee_is_bot,
@@ -260,6 +290,11 @@ pub async fn create_issue(
 
     require_workspace_access(&state, &extensions, project.workspace_id).await?;
 
+    // A connected application may not assign a work item to an agent (nothing is written yet).
+    if let Some(assignee_id) = req.assignee_id {
+        crate::oauth::delegated::refuse_agent_dispatch(&state.db, &[assignee_id]).await?;
+    }
+
     // Validate state by effective workflow (project > workspace > system)
     let issue_state = if let Some(requested) = req.state {
         validate_project_state(&state, project_id, &requested).await?;
@@ -303,47 +338,23 @@ pub async fn create_issue(
         None
     };
 
-    let mut values: Vec<sea_orm::Value> = vec![
-        issue_id.into(),
-        project_id.into(),
-        req.title.clone().into(),
-        description.clone().into(),
-        issue_state.clone().into(),
-        issue_priority.clone().into(),
-    ];
-
-    if let Some(aid) = req.assignee_id {
-        values.push(aid.into());
-    } else {
-        values.push(sea_orm::Value::from(None::<Uuid>));
-    }
-    let assignee_param = "$7";
-
-    if let Some(dt) = due_at {
-        values.push(dt.into());
-    } else {
-        values.push(sea_orm::Value::from(None::<platform::timestamp::Timestamp>));
-    }
-    let due_param = "$8";
-
-    values.push(user_id.into());
-    values.push(now.into());
-    values.push(now.into());
-    values.push(
-        req.sprint_id
-            .map_or_else(|| sea_orm::Value::from(None::<Uuid>), sea_orm::Value::from),
-    );
-
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            format!(
-                "INSERT INTO work_items (id, project_id, title, description, state, priority, assignee_id, due_at, created_by, created_at, updated_at, sprint_id) VALUES ($1, $2, $3, $4, $5, $6, {assignee_param}, {due_param}, $9, $10, $11, $12)",
-            ),
-            values,
-        ))
-        .await?;
+    insert_work_item(
+        &state.db,
+        &NewWorkItem {
+            id: issue_id,
+            project_id,
+            title: &req.title,
+            description: &description,
+            state: &issue_state,
+            priority: &issue_priority,
+            assignee_id: req.assignee_id,
+            due_at,
+            created_by: user_id,
+            sprint_id: req.sprint_id,
+            now,
+        },
+    )
+    .await?;
 
     // The assignment is queued as an AI task before any delivery is triggered, so every delivery
     // of this request knows that the bot already has its one task for it.
@@ -791,6 +802,11 @@ pub async fn update_issue(
 
     require_workspace_access(&state, &extensions, current_issue.workspace_id).await?;
 
+    // A connected application may not assign a work item to an agent (nothing is written yet).
+    if let Some(assignee_id) = req.assignee_id {
+        crate::oauth::delegated::refuse_agent_dispatch(&state.db, &[assignee_id]).await?;
+    }
+
     // Validate state and priority if provided
     if let Some(ref state_val) = req.state {
         validate_project_state(&state, current_issue.project_id, state_val).await?;
@@ -1021,35 +1037,13 @@ pub async fn update_issue(
         });
     }
 
+    let issue_ref = IssueRef {
+        id: issue_id,
+        project_id: current_issue.project_id,
+        workspace_id: current_issue.workspace_id,
+    };
     for change in &changes {
-        let detail_text = change.detail.to_string();
-
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"
-                INSERT INTO activities (
-                    id, workspace_id, project_id, issue_id, user_id, action, detail, created_at,
-                    resource_type, resource_id, event_type, actor_id, payload
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb)
-            ",
-            vec![
-                Uuid::new_v4().into(),
-                current_issue.workspace_id.into(),
-                current_issue.project_id.into(),
-                issue_id.into(),
-                user_id.into(),
-                change.action.into(),
-                detail_text.clone().into(),
-                now.into(),
-                "issue".into(),
-                issue_id.into(),
-                change.action.into(),
-                user_id.into(),
-                detail_text.into(),
-            ],
-        ))
-        .await?;
+        insert_activity(&tx, &issue_ref, user_id, change.action, &change.detail, now).await?;
     }
 
     if let Some(new_assignee) = requested_assignee
@@ -1302,11 +1296,11 @@ pub async fn delete_issue(
     Ok(ApiResponse::ok())
 }
 
-/// GET /api/v1/issues/by-identifier/:identifier (bot-auth)
+/// GET /api/v1/issues/by-identifier/:identifier (bot-auth, or a connected application)
 /// Get a work item by its short identifier, e.g. "PRX-42".
 pub async fn get_issue_by_identifier(
     State(state): State<AppState>,
-    Extension(bot): Extension<BotAuthContext>,
+    crate::oauth::delegated::CallerWorkspace(workspace_id): crate::oauth::delegated::CallerWorkspace,
     Path(identifier): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Parse "PREFIX-N"
@@ -1350,7 +1344,7 @@ pub async fn get_issue_by_identifier(
               AND UPPER(p.key) = UPPER($2)
               AND wi.sequence_number = $3
         ",
-        vec![bot.workspace_id.into(), prefix.into(), seq_num.into()],
+        vec![workspace_id.into(), prefix.into(), seq_num.into()],
     ))
     .one(&state.db)
     .await?

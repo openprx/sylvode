@@ -22,7 +22,7 @@
 
 {#if display.kind === 'restricted' || display.kind === 'empty' || display.kind === 'invalid'}
 	<span
-		class="text-slate-400 italic dark:text-slate-500"
+		class="text-fg-muted italic"
 		data-cell-placeholder={display.kind}
 		title={$t(CELL_PLACEHOLDER_KEYS[display.kind])}
 	>
@@ -36,10 +36,7 @@
 {:else if display.kind === 'options'}
 	<span class="flex flex-wrap gap-1">
 		{#each display.values as option (option)}
-			<span
-				class="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200"
-				>{option}</span
-			>
+			<span class="rounded bg-surface px-1.5 py-0.5 text-xs text-fg">{option}</span>
 		{/each}
 	</span>
 {:else if display.kind === 'relation'}
@@ -48,7 +45,7 @@
 			<a
 				href={resolve('/(app)/flow/[objectId]', { objectId: id })}
 				data-source-scope={scopeId}
-				class="text-xs text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400"
+				class="text-xs text-fg underline"
 				>{$t('flow.collection.value.relationLink', { values: { id: id.slice(0, 8) } })}</a
 			>
 		{/each}

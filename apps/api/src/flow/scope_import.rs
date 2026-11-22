@@ -6,7 +6,6 @@
 use super::{collab::authz::PermissionLevel, package_import as shared, scope};
 use crate::error::ApiError;
 use crate::flow::json_value::FlowJson;
-use base64::{Engine, engine::general_purpose::STANDARD};
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 use serde::Deserialize;
@@ -258,137 +257,6 @@ pub async fn preview(
     tx.commit().await?;
     Ok(result)
 }
-#[cfg(test)]
-tokio::task_local! {
-    // Explicit developer unit-test isolation boundary only. No production environment/request
-    // flag can populate this proof map; production always executes the isolated worker below.
-    static TEST_VERIFIED_REPLAY: BTreeMap<Uuid,collab_core::isolation::wire::ReplayDiffResult>;
-}
-async fn replay_snapshot(
-    snapshot: Vec<u8>,
-    request: collab_core::isolation::wire::ReplayDiffRequest,
-    object: Uuid,
-) -> Result<collab_core::isolation::wire::ReplayDiffResult, ApiError> {
-    #[cfg(test)]
-    if let Ok(Some(result)) = TEST_VERIFIED_REPLAY.try_with(|map| map.get(&object).cloned()) {
-        return Ok(result);
-    }
-    let result = tokio::task::spawn_blocking(move || collab_core::isolation::isolated_diff(&snapshot, &request))
-        .await
-        .map_err(|_| ApiError::internal())?;
-    result.map_err(|e| {
-        super::query::isolated_diff_error(e, object, || {
-            ApiError::checksum_mismatch("package snapshot cannot be reconstructed")
-        })
-    })
-}
-struct Validated {
-    source: Uuid,
-    snapshot: Vec<u8>,
-    frontier: Vec<u8>,
-    semantic: collab_core::SemanticSnapshot,
-    title: String,
-}
-async fn validate_snapshots(bytes: &[u8], plan: &shared::PackagePlan) -> Result<Vec<Validated>, ApiError> {
-    let mut result = Vec::new();
-    for object in &plan.objects {
-        let snapshot = shared::member_bytes(bytes, &format!("documents/{}/snapshot.bin", object.source_document_id))?;
-        let frontier = STANDARD
-            .decode(&object.accepted_frontier)
-            .map_err(|_| ApiError::unsupported_format("invalid accepted frontier"))?;
-        let prefix = format!("documents/{}/updates/", object.source_document_id);
-        let mut updates = plan
-            .verified
-            .manifest
-            .members
-            .iter()
-            .filter(|m| m.kind == "update" && m.path.starts_with(&prefix))
-            .map(|m| {
-                let seq = m
-                    .path
-                    .strip_prefix(&prefix)
-                    .and_then(|s| s.strip_suffix(".bin"))
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .ok_or_else(|| ApiError::unsupported_format("invalid package update sequence"))?;
-                Ok((seq, m.path.clone()))
-            })
-            .collect::<Result<Vec<_>, ApiError>>()?;
-        updates.sort_by_key(|v| v.0);
-        let first = object
-            .accepted_seq
-            .saturating_sub(i64::try_from(updates.len()).unwrap_or(i64::MAX))
-            .saturating_add(1);
-        let mut encoded = Vec::new();
-        for (index, (seq, path)) in updates.into_iter().enumerate() {
-            if seq < 1 || seq != first.saturating_add(i64::try_from(index).unwrap_or(i64::MAX)) {
-                return Err(ApiError::checksum_mismatch("package history tail is discontinuous"));
-            }
-            encoded.push(STANDARD.encode(shared::member_bytes(bytes, &path)?));
-        }
-        let request = collab_core::isolation::wire::ReplayDiffRequest {
-            snapshot_frontier: frontier.clone(),
-            updates: Vec::new(),
-            from_frontier: frontier.clone(),
-            to_frontier: frontier.clone(),
-            package_updates_base64: Some(encoded),
-        };
-        let validated = replay_snapshot(snapshot, request, object.source_object_id).await?;
-        let hash = match super::package::semantic_model(&plan.verified.manifest)? {
-            super::package::PackageSemanticModel::V1 => {
-                validated.legacy_package_semantic_hash_v1.clone().ok_or_else(|| {
-                    ApiError::unsupported_protocol("isolated worker lacks the v1 package fingerprint reader")
-                })?
-            }
-            super::package::PackageSemanticModel::V2 => {
-                validated.legacy_package_semantic_hash_v2.clone().ok_or_else(|| {
-                    ApiError::unsupported_protocol("isolated worker lacks the v2 package fingerprint reader")
-                })?
-            }
-            super::package::PackageSemanticModel::V3 => {
-                validated.legacy_package_semantic_hash_v3.clone().ok_or_else(|| {
-                    ApiError::unsupported_protocol("isolated worker lacks the v3 package fingerprint reader")
-                })?
-            }
-            super::package::PackageSemanticModel::V4 => {
-                validated.legacy_package_semantic_hash_v4.clone().ok_or_else(|| {
-                    ApiError::unsupported_protocol("isolated worker lacks the v4 compatible package reader")
-                })?
-            }
-            super::package::PackageSemanticModel::V5 => validated.to_snapshot.semantic_hash(),
-        };
-        if hash != object.semantic_hash {
-            return Err(ApiError::checksum_mismatch(
-                "package semantic fingerprint disagrees with its versioned reader",
-            ));
-        }
-        match validated.package_reference_remap_required {
-            Some(false) => {}
-            Some(true) => return Err(super::package::inner_reference_refusal()),
-            None => {
-                return Err(ApiError::unsupported_protocol(
-                    "isolated worker lacks package reference validation",
-                ));
-            }
-        }
-        let snapshot = STANDARD
-            .decode(
-                validated
-                    .validated_head_snapshot_base64
-                    .as_deref()
-                    .ok_or_else(|| ApiError::unsupported_protocol("isolated worker lacks package replay support"))?,
-            )
-            .map_err(|_| ApiError::internal())?;
-        super::collab::bootstrap::check_bootstrap_decoded_bytes(u64::try_from(snapshot.len()).unwrap_or(u64::MAX))?;
-        result.push(Validated {
-            source: object.source_object_id,
-            snapshot,
-            frontier,
-            semantic: validated.to_snapshot,
-            title: validated.to_title,
-        });
-    }
-    Ok(result)
-}
 fn map_ids(mapping: &Value, name: &str) -> Result<BTreeMap<Uuid, Uuid>, ApiError> {
     serde_json::from_value(mapping.field(name).clone())
         .map_err(|_| ApiError::checksum_mismatch("frozen import mapping cannot be decoded"))
@@ -515,7 +383,7 @@ pub async fn commit(
     }
     let plan = shared::parse_plan(&bytes, &hash)?;
     known_plan(&plan)?;
-    let validated = validate_snapshots(&bytes, &plan).await?;
+    let validated = super::import_replay::validate_documents(&bytes, &plan).await?;
     let objects = map_ids(&mapping, "object_map")?;
     let documents = map_ids(&mapping, "document_map")?;
     let relations = map_ids(&mapping, "relation_map")?;
@@ -643,6 +511,7 @@ pub async fn commit(
                 target,
                 object.accepted_seq,
                 &super::block_registry::prepare(&valid.semantic)?,
+                super::block_registry::RegistrationAllowance::Complete,
             )
             .await?;
             super::body_assets::reconcile_accepted(
@@ -772,8 +641,10 @@ impl CommitInput {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use super::super::import_replay::TEST_VERIFIED_REPLAY;
     use super::*;
     use crate::routes::context::tenant_fixture::{exec, scratch};
+    use base64::{Engine, engine::general_purpose::STANDARD};
     use collab_core::CollabEngine;
     async fn counts(db: &DatabaseConnection) -> BTreeMap<String, i64> {
         let mut values = BTreeMap::new();
@@ -829,6 +700,12 @@ mod tests {
             "/tests/fixtures/flow-v2/legacy-browser-package-v1"
         ));
         let bytes = std::fs::read(path.join("package.zip")).unwrap();
+        exec(
+            db,
+            "UPDATE flow_runtime_capabilities SET personal_package_imports=false WHERE singleton",
+            vec![],
+        )
+        .await;
         assert!(
             upload(db, scope_id, user, bytes.clone(), None, "import-upload")
                 .await

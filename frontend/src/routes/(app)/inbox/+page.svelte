@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -19,6 +20,7 @@
 	let operatingId = $state<string | null>(null);
 	let markingAll = $state(false);
 
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- plain cache that nothing renders from
 	const issueRouteCache = new Map<string, string>();
 
 	onMount(async () => {
@@ -90,10 +92,42 @@
 		}
 	}
 
+	// The alert chain writes `<kind>:<argument>` content built from Sylvode values only.
+	function alertNotificationContent(content: string): string | null {
+		const translate = get(t);
+		const alertSeverity = content.match(/^alert_(opened|escalated):([A-Z]+):([\s\S]*)$/);
+		if (alertSeverity) {
+			const key =
+				alertSeverity[1] === 'opened'
+					? 'notification.alertOpenedContent'
+					: 'notification.alertEscalatedContent';
+			return translate(key, {
+				values: { severity: alertSeverity[2], title: alertSeverity[3] }
+			});
+		}
+		const withArgument: Array<[string, string, string]> = [
+			['alert_task_completed:', 'notification.alertTaskCompletedContent', 'title'],
+			['alert_task_failed:', 'notification.alertTaskFailedContent', 'title'],
+			['alert_suppressed:', 'notification.alertSuppressedContent', 'rule'],
+			['alert_source_throttled:', 'notification.alertSourceThrottledContent', 'source']
+		];
+		for (const [prefix, key, name] of withArgument) {
+			if (content.startsWith(prefix)) {
+				return translate(key, { values: { [name]: content.substring(prefix.length) } });
+			}
+		}
+		return null;
+	}
+
 	function getNotificationContent(notification: Notification): string {
 		if (notification.content.startsWith('issue_assigned:')) {
 			const issue = notification.content.substring('issue_assigned:'.length);
 			return get(t)('notification.issueAssignedContent', { values: { issue } });
+		}
+
+		const alertContent = alertNotificationContent(notification.content);
+		if (alertContent) {
+			return alertContent;
 		}
 
 		if (notification.content.startsWith('mentioned_by:')) {
@@ -172,7 +206,11 @@
 			return null;
 		}
 
-		const route = `/workspace/${projectResponse.data.workspace_id}/projects/${projectResponse.data.id}/issues/${issueId}`;
+		const route = resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]', {
+			workspaceId: projectResponse.data.workspace_id,
+			projectId: projectResponse.data.id,
+			issueId
+		});
 		issueRouteCache.set(issueId, route);
 		return route;
 	}
@@ -192,20 +230,19 @@
 			await markRead(notification.id);
 		}
 
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- cached in-app issue path
 		goto(route);
 	}
 </script>
 
 <div class="mx-auto max-w-7xl space-y-6">
-	<div
-		class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5"
-	>
+	<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div>
-				<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">
+				<h1 class="text-2xl font-semibold text-fg">
 					{$t('notification.title')}
 				</h1>
-				<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+				<p class="mt-1 text-sm text-fg-muted">
 					{$t('notification.unreadReadCount', {
 						values: { unread: unreadNotifications.length, read: readNotifications.length }
 					})}
@@ -215,13 +252,13 @@
 				<button
 					onclick={markAllRead}
 					disabled={unreadNotifications.length === 0 || markingAll}
-					class="rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+					class="rounded-control rf-filled bg-primary px-3 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted"
 				>
 					{markingAll ? $t('common.processing') : $t('notification.markAllRead')}
 				</button>
 				<button
 					type="button"
-					class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm text-slate-600 dark:text-slate-300"
+					class="rounded-control border border-input bg-field px-3 py-2 text-sm text-fg-muted"
 					disabled
 				>
 					{$t('common.settings')}
@@ -231,30 +268,26 @@
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-8 text-center text-slate-500 dark:text-slate-400"
-		>
+		<div class="rounded-card border border-line bg-raised p-8 text-center text-fg-muted">
 			<div
-				class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"
+				class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-fg border-t-transparent"
 			></div>
 			{$t('notification.loading')}
 		</div>
 	{:else if errorMessage}
-		<div class="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
-			<p class="mb-2 text-sm font-medium text-red-700">{$t('notification.loadFailed')}</p>
-			<p class="mb-4 text-sm text-red-600">{errorMessage}</p>
+		<div class="rounded-card border bg-danger-soft p-6 text-center">
+			<p class="mb-2 text-sm font-medium text-danger">{$t('notification.loadFailed')}</p>
+			<p class="mb-4 text-sm text-danger">{errorMessage}</p>
 			<button
 				onclick={loadNotifications}
-				class="rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
+				class="rounded-control bg-danger-soft px-4 py-2 text-sm text-danger"
 			>
 				{$t('common.retry')}
 			</button>
 		</div>
 	{:else if notifications.length === 0}
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-12 text-center"
-		>
-			<div class="mb-3 flex justify-center text-slate-400">
+		<div class="rounded-card border border-line bg-raised p-12 text-center">
+			<div class="mb-3 flex justify-center text-fg-muted">
 				<svg class="h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path
 						stroke-linecap="round"
@@ -264,31 +297,26 @@
 					></path>
 				</svg>
 			</div>
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('notification.noNotifications')}</p>
+			<p class="text-sm text-fg-muted">{$t('notification.noNotifications')}</p>
 		</div>
 	{:else}
 		<section class="space-y-3">
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('notification.unread')} ({unreadNotifications.length})
 			</h2>
 			{#if unreadNotifications.length === 0}
-				<div
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 text-sm text-slate-500 dark:text-slate-400"
-				>
+				<div class="rounded-card border border-line bg-raised p-5 text-sm text-fg-muted">
 					{$t('notification.noUnread')}
 				</div>
 			{:else}
 				<div class="space-y-3">
 					{#each unreadNotifications as item (item.id)}
-						<div
-							class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5"
-						>
+						<div class="rounded-card border border-line bg-raised p-4 sm:p-5">
 							<div class="flex items-start justify-between gap-3">
 								<div class="flex min-w-0 gap-3">
-									<span class="mt-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500"
-									></span>
+									<span class="mt-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-badge"></span>
 									<div
-										class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+										class="inline-flex h-8 w-8 items-center justify-center rounded-control bg-surface text-fg-muted"
 									>
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path
@@ -300,15 +328,15 @@
 										</svg>
 									</div>
 									<div class="min-w-0">
-										<p class="font-medium text-slate-900 dark:text-slate-100">
+										<p class="font-medium text-fg">
 											{getNotificationTitle(item)}
 										</p>
-										<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+										<p class="mt-1 text-sm text-fg-muted">
 											{getNotificationContent(item)}
 										</p>
 									</div>
 								</div>
-								<span class="shrink-0 text-xs text-slate-500 dark:text-slate-400"
+								<span class="shrink-0 text-xs text-fg-muted"
 									>{formatRelativeTime(item.created_at)}</span
 								>
 							</div>
@@ -316,7 +344,7 @@
 								{#if item.related_issue_id}
 									<button
 										onclick={() => goToIssue(item)}
-										class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+										class="rounded-control border border-fg bg-raised px-3 py-1.5 text-sm text-fg hover:bg-surface"
 									>
 										{$t('notification.viewIssue')}
 									</button>
@@ -324,14 +352,14 @@
 								<button
 									onclick={() => markRead(item.id)}
 									disabled={operatingId === item.id}
-									class="rounded-md border border-blue-200 px-3 py-1.5 text-sm text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+									class="rounded-control border px-3 py-1.5 text-sm text-fg hover:bg-surface disabled:bg-surface disabled:text-fg-muted"
 								>
 									{operatingId === item.id ? $t('common.processing') : $t('notification.markRead')}
 								</button>
 								<button
 									onclick={() => deleteNotification(item.id)}
 									disabled={operatingId === item.id}
-									class="rounded-md border border-red-200 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60"
+									class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 								>
 									{$t('common.delete')}
 								</button>
@@ -343,25 +371,21 @@
 		</section>
 
 		<section class="space-y-3">
-			<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+			<h2 class="text-lg font-semibold text-fg">
 				{$t('notification.read')} ({readNotifications.length})
 			</h2>
 			{#if readNotifications.length === 0}
-				<div
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 text-sm text-slate-500 dark:text-slate-400"
-				>
+				<div class="rounded-card border border-line bg-raised p-5 text-sm text-fg-muted">
 					{$t('notification.noRead')}
 				</div>
 			{:else}
 				<div class="space-y-3">
 					{#each readNotifications as item (item.id)}
-						<div
-							class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5 opacity-80"
-						>
+						<div class="rounded-card border border-line bg-raised p-4 sm:p-5 opacity-80">
 							<div class="flex items-start justify-between gap-3">
 								<div class="flex min-w-0 gap-3">
 									<div
-										class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+										class="inline-flex h-8 w-8 items-center justify-center rounded-control bg-surface text-fg-muted"
 									>
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path
@@ -373,15 +397,15 @@
 										</svg>
 									</div>
 									<div class="min-w-0">
-										<p class="font-medium text-slate-900 dark:text-slate-100">
+										<p class="font-medium text-fg">
 											{getNotificationTitle(item)}
 										</p>
-										<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+										<p class="mt-1 text-sm text-fg-muted">
 											{getNotificationContent(item)}
 										</p>
 									</div>
 								</div>
-								<span class="shrink-0 text-xs text-slate-500 dark:text-slate-400"
+								<span class="shrink-0 text-xs text-fg-muted"
 									>{formatRelativeTime(item.created_at)}</span
 								>
 							</div>
@@ -389,7 +413,7 @@
 								{#if item.related_issue_id}
 									<button
 										onclick={() => goToIssue(item)}
-										class="rounded-md border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+										class="rounded-control border border-fg bg-raised px-3 py-1.5 text-sm text-fg hover:bg-surface"
 									>
 										{$t('notification.viewIssue')}
 									</button>
@@ -397,7 +421,7 @@
 								<button
 									onclick={() => deleteNotification(item.id)}
 									disabled={operatingId === item.id}
-									class="rounded-md border border-red-200 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60"
+									class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft disabled:bg-surface disabled:text-fg-muted"
 								>
 									{$t('common.delete')}
 								</button>

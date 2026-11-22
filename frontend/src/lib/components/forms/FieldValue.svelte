@@ -72,7 +72,7 @@
 <!-- eslint-disable svelte/no-navigation-without-resolve -- links here are record values (sanitised mailto/tel/http URLs, attachment downloads) or full record page paths built by the caller, not app routes to resolve -->
 
 {#snippet empty()}
-	<span class="text-slate-500 dark:text-slate-400" data-field-value-empty
+	<span class="text-fg-muted" data-field-value-empty
 		><span aria-hidden="true">—</span><span class="sr-only">{$t('forms.recordPanel.empty')}</span
 		></span
 	>
@@ -92,7 +92,7 @@
 			{#if overflowing || expanded}
 				<button
 					type="button"
-					class="mt-1 inline-flex min-h-6 items-center rounded text-xs font-medium text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-blue-300"
+					class="mt-1 inline-flex min-h-6 items-center rounded-control text-xs font-medium text-fg hover:underline"
 					aria-expanded={expanded}
 					onclick={() => (expanded = !expanded)}
 					>{expanded ? $t('forms.recordPanel.showLess') : $t('forms.recordPanel.showMore')}</button
@@ -124,16 +124,14 @@
 	>
 {:else if display.kind === 'rating'}
 	<span
-		class="inline-flex items-center gap-0.5 text-amber-500 {panel ? 'text-base' : 'text-xs'}"
+		class="inline-flex items-center gap-0.5 text-warning {panel ? 'text-base' : 'text-xs'}"
 		role="img"
 		aria-label={$t('forms.fieldValue.ratingOf', {
 			values: { value: display.value, max: display.max }
 		})}
 	>
 		{#each stars(display.value, display.max) as filled, index (index)}
-			<span aria-hidden="true" class={filled ? '' : 'text-slate-300 dark:text-slate-600'}
-				>{filled ? '★' : '☆'}</span
-			>
+			<span aria-hidden="true" class={filled ? '' : 'text-fg-muted'}>{filled ? '★' : '☆'}</span>
 		{/each}
 	</span>
 {:else if display.kind === 'progress'}
@@ -143,19 +141,15 @@
 		aria-label={$t('forms.fieldValue.percent', { values: { value: Math.round(display.value) } })}
 	>
 		<span
-			class="relative h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700 {panel
-				? 'w-30'
-				: 'w-12'}"
+			class="relative h-1.5 overflow-hidden rounded-full bg-surface {panel ? 'w-30' : 'w-12'}"
 			aria-hidden="true"
 		>
 			<span
-				class="absolute inset-y-0 start-0 rounded-full bg-blue-600 dark:bg-blue-400"
+				class="absolute inset-y-0 start-0 rounded-full bg-primary"
 				style={`width:${display.value}%`}
 			></span>
 		</span>
-		<span class="text-xs tabular-nums text-slate-700 dark:text-slate-200" aria-hidden="true"
-			>{display.text}</span
-		>
+		<span class="text-xs tabular-nums text-fg" aria-hidden="true">{display.text}</span>
 	</span>
 {:else if display.kind === 'date'}
 	<time datetime={display.iso} class={panel ? '' : 'block truncate'} title={display.iso}
@@ -167,16 +161,16 @@
 	{:else}
 		<span class="inline-flex max-w-full items-center gap-1">
 			<OptionValueBadges {field} value={display.labels.slice(0, 2)} />
-			<span class="text-xs text-slate-500 dark:text-slate-400">+{display.labels.length - 2}</span>
+			<span class="text-xs text-fg-muted">+{display.labels.length - 2}</span>
 		</span>
 	{/if}
 {:else if display.kind === 'boolean'}
 	<span class="inline-flex items-center gap-1.5">
 		{#if display.value}
-			<Check class="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+			<Check class="h-4 w-4 text-success" aria-hidden="true" />
 			<span>{$t('forms.fieldValue.yes')}</span>
 		{:else}
-			<Minus class="h-4 w-4 text-slate-400" aria-hidden="true" />
+			<Minus class="h-4 w-4 text-fg-muted" aria-hidden="true" />
 			<span>{$t('forms.fieldValue.no')}</span>
 		{/if}
 	</span>
@@ -189,24 +183,18 @@
 					{display.name}
 				{:else}
 					{$t('forms.fieldValue.unknownMember')}
-					<span class="font-mono text-xs text-slate-500 dark:text-slate-400" dir="ltr"
-						>{shortId(display.userId)}</span
-					>
+					<span class="font-mono text-xs text-fg-muted" dir="ltr">{shortId(display.userId)}</span>
 				{/if}
 			</span>
 			{#if panel && display.email && display.email !== display.name}
-				<span class="block truncate text-xs text-slate-500 dark:text-slate-400"
-					>{display.email}</span
-				>
+				<span class="block truncate text-xs text-fg-muted">{display.email}</span>
 			{/if}
 		</span>
 	</span>
 {:else if display.kind === 'link'}
 	<a
 		href={display.href}
-		class="break-all text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-blue-300 {panel
-			? ''
-			: 'block truncate'}"
+		class="break-all text-fg underline-offset-2 hover:underline {panel ? '' : 'block truncate'}"
 		dir={display.scheme === 'tel' ? 'ltr' : undefined}
 		data-row-ignore>{display.text}</a
 	>
@@ -214,9 +202,7 @@
 	<span class={panel ? 'block' : 'block truncate'} data-field-value-location>
 		{#if display.label}<span class="me-1">{display.label}</span>{/if}
 		{#if panel || !display.label}
-			<span class="font-mono text-xs text-slate-600 dark:text-slate-300" dir="ltr"
-				>{display.coordinates}</span
-			>
+			<span class="font-mono text-xs text-fg-muted" dir="ltr">{display.coordinates}</span>
 		{/if}
 	</span>
 {:else if display.kind === 'images'}
@@ -225,7 +211,7 @@
 			{#each display.items as item, index (item.src + index)}
 				<button
 					type="button"
-					class="h-18 w-18 overflow-hidden rounded-md border border-slate-200 bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:border-slate-700 dark:bg-slate-800"
+					class="h-18 w-18 overflow-hidden rounded-control border border-line bg-surface"
 					aria-label={$t('forms.fieldValue.openImage', { values: { index: index + 1 } })}
 					data-field-value-image={index}
 					onclick={(event) => onpreviewimage?.(display.items, index, event.currentTarget)}
@@ -234,9 +220,7 @@
 				</button>
 			{/each}
 			{#if display.blocked > 0}
-				<span class="self-center text-xs text-amber-700 dark:text-amber-300"
-					>{$t('forms.fieldValue.linkBlocked')}</span
-				>
+				<span class="self-center text-xs text-warning">{$t('forms.fieldValue.linkBlocked')}</span>
 			{/if}
 		</span>
 	{:else if display.items.length > 0}
@@ -244,17 +228,15 @@
 			<img
 				src={display.items[0].src}
 				alt={display.items[0].alt}
-				class="h-6 w-6 rounded object-cover"
+				class="h-6 w-6 rounded-control object-cover"
 				loading="lazy"
 			/>
 			{#if display.items.length > 1}
-				<span class="text-xs text-slate-500 dark:text-slate-400">+{display.items.length - 1}</span>
+				<span class="text-xs text-fg-muted">+{display.items.length - 1}</span>
 			{/if}
 		</span>
 	{:else}
-		<span class="text-xs text-amber-700 dark:text-amber-300"
-			>{$t('forms.fieldValue.linkBlocked')}</span
-		>
+		<span class="text-xs text-warning">{$t('forms.fieldValue.linkBlocked')}</span>
 	{/if}
 {:else if display.kind === 'files'}
 	{#if panel}
@@ -264,7 +246,7 @@
 					{#if item.thumb && !item.blocked}
 						<button
 							type="button"
-							class="h-8 w-8 shrink-0 overflow-hidden rounded border border-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:border-slate-700"
+							class="h-8 w-8 shrink-0 overflow-hidden rounded-control border border-line"
 							aria-label={$t('forms.fieldValue.openImage', { values: { index: index + 1 } })}
 							onclick={(event) =>
 								onpreviewimage?.(
@@ -276,33 +258,32 @@
 							<img src={item.thumb} alt="" class="h-full w-full object-cover" loading="lazy" />
 						</button>
 					{:else}
-						<FileText class="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+						<FileText class="h-4 w-4 shrink-0 text-fg-muted" aria-hidden="true" />
 					{/if}
 					<span class="min-w-0 flex-1">
 						<span class="block truncate" title={item.name}>{item.name}</span>
 						{#if item.typeLabel || item.sizeLabel}
-							<span class="block text-xs text-slate-500 dark:text-slate-400"
+							<span class="block text-xs text-fg-muted"
 								>{[item.typeLabel, item.sizeLabel].filter(Boolean).join(' · ')}</span
 							>
 						{/if}
 					</span>
 					{#if item.blocked}
-						<span
-							class="text-xs text-amber-700 dark:text-amber-300"
-							data-record-detail-attachment-value-blocked>{$t('forms.fieldValue.linkBlocked')}</span
+						<span class="text-xs text-warning" data-record-detail-attachment-value-blocked
+							>{$t('forms.fieldValue.linkBlocked')}</span
 						>
 					{:else}
 						<a
 							href={item.href}
 							target="_blank"
 							rel="noopener noreferrer"
-							class="inline-flex min-h-6 items-center rounded px-1 text-xs font-medium text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"
+							class="inline-flex min-h-6 items-center rounded-control px-1 text-xs font-medium text-fg hover:underline"
 							>{$t('forms.fieldValue.open')}</a
 						>
 						<a
 							href={item.download}
 							download={item.name}
-							class="inline-flex min-h-6 items-center rounded px-1 text-xs font-medium text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300"
+							class="inline-flex min-h-6 items-center rounded-control px-1 text-xs font-medium text-fg hover:underline"
 							>{$t('forms.fieldValue.download')}</a
 						>
 					{/if}
@@ -310,7 +291,7 @@
 			{/each}
 		</ul>
 	{:else}
-		<span class="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
+		<span class="inline-flex items-center gap-1 text-fg-muted">
 			<Paperclip class="h-3.5 w-3.5" aria-hidden="true" />
 			<span class="text-xs tabular-nums">{display.items.length}</span>
 			<span class="sr-only"
@@ -320,13 +301,11 @@
 	{/if}
 {:else if display.kind === 'signature'}
 	{#if display.blocked}
-		<span class="text-xs text-amber-700 dark:text-amber-300"
-			>{$t('forms.fieldValue.linkBlocked')}</span
-		>
+		<span class="text-xs text-warning">{$t('forms.fieldValue.linkBlocked')}</span>
 	{:else if panel}
 		<button
 			type="button"
-			class="rounded-md border border-slate-200 bg-white p-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:border-slate-700"
+			class="rounded-control border border-line bg-raised p-1"
 			onclick={(event) =>
 				onpreviewimage?.(
 					[
@@ -343,12 +322,12 @@
 			<img
 				src={display.src}
 				alt={$t('forms.fieldValue.signatureAlt', { values: { field: label } })}
-				class="h-16 w-40 bg-white object-contain"
+				class="h-16 w-40 bg-raised object-contain"
 			/>
 		</button>
 	{:else}
 		<span
-			class="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+			class="inline-flex items-center gap-1 rounded-control bg-surface px-1.5 py-0.5 text-xs text-fg"
 		>
 			<PenLine class="h-3 w-3" aria-hidden="true" />
 			{$t('forms.fieldValue.signed')}
@@ -356,13 +335,11 @@
 	{/if}
 {:else if display.kind === 'relation'}
 	{#if !display.available && !recordHref}
-		<span class="text-slate-500 dark:text-slate-400"
-			>{$t('forms.fieldValue.unavailableRecord')}</span
-		>
+		<span class="text-fg-muted">{$t('forms.fieldValue.unavailableRecord')}</span>
 	{:else}
 		<a
 			href={recordHref?.(display.recordId)}
-			class="inline-flex min-h-6 max-w-full items-center gap-1 rounded-md border border-slate-200 px-2 py-0.5 text-sm text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:border-slate-700 dark:text-blue-300 dark:hover:bg-blue-950/40"
+			class="inline-flex min-h-6 max-w-full items-center gap-1 rounded-control border border-line px-2 py-0.5 text-sm text-fg hover:bg-surface"
 			data-row-ignore
 			data-field-value-relation={display.recordId}
 			onclick={(event) => openRelation(event, display.recordId, display.sameForm)}
@@ -374,7 +351,7 @@
 		</a>
 	{/if}
 {:else if display.kind === 'children'}
-	<span class="text-slate-600 dark:text-slate-300"
+	<span class="text-fg-muted"
 		>{$t('forms.fieldValue.childRows', { values: { count: display.count } })}</span
 	>
 {/if}

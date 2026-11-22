@@ -51,7 +51,7 @@ use crate::{
             CreateExportJobRequest, ExportColumnResponse, ExportRecordRowResponse, ExportRecordsPolicyResponse,
             ExportRecordsQuery, ExportRecordsResponse, build_records_csv, create_export_job_input,
             export_columns_from_config, export_display_value, export_records_format, export_records_include_archived,
-            export_records_limit, export_records_query_from_job, export_records_scope,
+            export_records_limit, export_records_query_from_job, export_records_scope, is_numeric_field_type,
         },
         record_import::{
             CreateImportJobRequest, ImportMappingTemplateConfig, ImportRecordInput, ImportRecordPreviewRow,
@@ -1574,6 +1574,7 @@ async fn export_records_for_form(
         .map(|field| ExportColumnResponse {
             key: field.key.clone(),
             label: field.label.clone(),
+            numeric: is_numeric_field_type(&field.field_type),
         })
         .collect::<Vec<_>>();
 
@@ -1699,16 +1700,9 @@ pub async fn export_form_attachment_package(
     )
 }
 
-/// Canonical and legacy names of the attachment-package count headers (ADR-0020 D3). Both are
-/// emitted on every package download with the same value throughout 1.x.
-const ATTACHMENT_COUNT_HEADERS: [HeaderName; 2] = [
-    HeaderName::from_static("x-sylvode-attachment-count"),
-    HeaderName::from_static("x-openpr-attachment-count"),
-];
-const ATTACHMENT_FILE_COUNT_HEADERS: [HeaderName; 2] = [
-    HeaderName::from_static("x-sylvode-attachment-file-count"),
-    HeaderName::from_static("x-openpr-attachment-file-count"),
-];
+/// Names of the attachment-package count headers (ADR-0020 D3), sent on every package download.
+const ATTACHMENT_COUNT_HEADER: HeaderName = HeaderName::from_static("x-sylvode-attachment-count");
+const ATTACHMENT_FILE_COUNT_HEADER: HeaderName = HeaderName::from_static("x-sylvode-attachment-file-count");
 
 /// The ZIP download response shared by the synchronous export and the package-job download.
 fn attachment_package_response(
@@ -1726,12 +1720,8 @@ fn attachment_package_response(
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/zip"));
     headers.insert(header::CONTENT_DISPOSITION, content_disposition);
-    for name in ATTACHMENT_COUNT_HEADERS {
-        headers.insert(name, attachment_count.clone());
-    }
-    for name in ATTACHMENT_FILE_COUNT_HEADERS {
-        headers.insert(name, binary_file_count.clone());
-    }
+    headers.insert(ATTACHMENT_COUNT_HEADER, attachment_count);
+    headers.insert(ATTACHMENT_FILE_COUNT_HEADER, binary_file_count);
     Ok(response)
 }
 
@@ -6645,8 +6635,7 @@ where
             metadata: json!({
                 "form_id": form.id,
                 "form_key": form.key,
-                "record_id": record_id,
-                "legacy_form_events": true
+                "record_id": record_id
             }),
             correlation_id: None,
             causation_id: None,
@@ -8199,11 +8188,10 @@ mod record_link_database_tests {
         .map(|_| ())
     }
 
-    /// ADR-0020 D3: the attachment-package download carries the canonical
-    /// `X-Sylvode-Attachment-*` count headers and the legacy `X-OpenPR-Attachment-*` ones, each
-    /// once and with the same value, on the response the handler actually returns.
+    /// ADR-0020 D3: the attachment-package download carries the `X-Sylvode-Attachment-*` count
+    /// headers, each once, on the response the handler actually returns.
     #[tokio::test]
-    async fn the_attachment_package_download_carries_both_count_header_spellings() {
+    async fn the_attachment_package_download_carries_the_count_headers() {
         let scratch = scratch_or_skip!("package_headers");
         let state = state_for(&scratch);
 
@@ -8264,9 +8252,7 @@ mod record_link_database_tests {
         };
         assert_eq!(all("content-type"), ["application/zip"]);
         assert_eq!(all("x-sylvode-attachment-count"), ["2"]);
-        assert_eq!(all("x-openpr-attachment-count"), ["2"]);
         assert_eq!(all("x-sylvode-attachment-file-count"), ["0"]);
-        assert_eq!(all("x-openpr-attachment-file-count"), ["0"]);
 
         scratch.drop_self().await;
     }

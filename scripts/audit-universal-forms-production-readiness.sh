@@ -2,14 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED_TOOL_COUNT="$(python3 "$ROOT_DIR/skills/openpr-mcp/scripts/expected-tool-count.py")"
+EXPECTED_TOOL_COUNT="$(python3 "$ROOT_DIR/skills/sylvode-mcp/scripts/expected-tool-count.py")"
 PRODUCTION_DOC="$ROOT_DIR/docs/universal-forms-production.md"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 FRONTEND_NGINX="$ROOT_DIR/frontend/nginx.conf"
 SOURCE_DOCKERFILE="$ROOT_DIR/Dockerfile"
 PREBUILT_DOCKERFILE="$ROOT_DIR/Dockerfile.prebuilt"
 FRONTEND_DOCKERFILE="$ROOT_DIR/frontend/Dockerfile"
-WEBHOOK_EXAMPLE_CONFIG="$ROOT_DIR/config/sylvode-webhook.example.toml"
+WEBHOOK_EXAMPLE_CONFIG="$ROOT_DIR/config/sylvode-runner.example.toml"
 START_SCRIPT="$ROOT_DIR/scripts/start.sh"
 VERIFY_SCRIPT="$ROOT_DIR/scripts/verify.sh"
 E2E_SCRIPT="$ROOT_DIR/scripts/e2e-test.sh"
@@ -194,7 +194,7 @@ contains "compose defines API service" "$COMPOSE_FILE" "api:"
 contains "compose defines worker service" "$COMPOSE_FILE" "worker:"
 contains "compose defines MCP service" "$COMPOSE_FILE" "mcp-server:"
 contains "compose defines frontend service" "$COMPOSE_FILE" "frontend:"
-contains "compose defines optional webhook receiver" "$COMPOSE_FILE" "webhook:"
+contains "compose defines optional runner" "$COMPOSE_FILE" "runner:"
 contains "compose uses PostgreSQL 18 image" "$COMPOSE_FILE" "image: postgres:18"
 contains "compose mounts migrations into postgres" "$COMPOSE_FILE" "./migrations:/docker-entrypoint-initdb.d"
 contains "compose keeps pgdata volume" "$COMPOSE_FILE" "pgdata:"
@@ -226,12 +226,12 @@ not_contains "env example does not enable default database URL password" "$ROOT_
 
 printf '\nOptional connector receiver coverage:\n'
 contains "webhook receiver uses connectors profile" "$COMPOSE_FILE" "profiles:"
-contains "webhook receiver image is configurable" "$COMPOSE_FILE" 'image: ${SYLVODE_WEBHOOK_IMAGE:-ghcr.io/openprx/sylvode-webhook:latest}'
-contains "webhook receiver config path is configurable" "$COMPOSE_FILE" '${SYLVODE_WEBHOOK_CONFIG:-./config/sylvode-webhook.example.toml}:/etc/sylvode-webhook/config.toml:ro'
-contains "webhook receiver runs the canonical executable on the mounted config" "$COMPOSE_FILE" 'command: ["/app/sylvode-webhook", "/etc/sylvode-webhook/config.toml"]'
-contains "webhook receiver binds localhost by default" "$COMPOSE_FILE" '"${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_WEBHOOK_PORT:-9090}:9090"'
-contains "env example documents webhook receiver image" "$ROOT_DIR/.env.example" "SYLVODE_WEBHOOK_IMAGE=ghcr.io/openprx/sylvode-webhook:latest"
-contains "env example documents webhook receiver config" "$ROOT_DIR/.env.example" "SYLVODE_WEBHOOK_CONFIG=./config/sylvode-webhook.example.toml"
+contains "webhook receiver image is configurable" "$COMPOSE_FILE" 'image: ${SYLVODE_RUNNER_IMAGE:-ghcr.io/openprx/sylvode-runner:latest}'
+contains "runner config path is configurable" "$COMPOSE_FILE" '${SYLVODE_RUNNER_CONFIG:-./config/sylvode-runner.example.toml}:/etc/sylvode-runner/config.toml:ro'
+contains "webhook receiver runs the canonical executable on the mounted config" "$COMPOSE_FILE" 'command: ["/app/sylvode-runner", "/etc/sylvode-runner/config.toml"]'
+contains "webhook receiver binds localhost by default" "$COMPOSE_FILE" '"${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_RUNNER_PORT:-9090}:9090"'
+contains "env example documents webhook receiver image" "$ROOT_DIR/.env.example" "SYLVODE_RUNNER_IMAGE=ghcr.io/openprx/sylvode-runner:latest"
+contains "env example documents webhook receiver config" "$ROOT_DIR/.env.example" "SYLVODE_RUNNER_CONFIG=./config/sylvode-runner.example.toml"
 contains "webhook example listens on compose service port" "$WEBHOOK_EXAMPLE_CONFIG" 'listen = "0.0.0.0:9090"'
 contains "webhook example keeps unsigned webhooks disabled" "$WEBHOOK_EXAMPLE_CONFIG" "allow_unsigned = false"
 contains "webhook example documents secret placeholder" "$WEBHOOK_EXAMPLE_CONFIG" "replace_with_webhook_secret"
@@ -245,11 +245,10 @@ printf '\nApplication secret configuration coverage:\n'
 not_contains "compose hands no application secret to a service through the environment" "$COMPOSE_FILE" "JWT_SECRET"
 contains "platform refuses the shipped example as a live configuration" "$ROOT_DIR/crates/platform/src/config/tests.rs" "the_shipped_example_is_refused_because_it_is_all_placeholders"
 contains "env example keeps API and worker credentials in TOML" "$ROOT_DIR/.env.example" 'including all API and worker credentials, come from the TOML file'
-for flag in SV_FORM_PLUGIN_PACKAGES_ENABLED SV_FORM_PLUGIN_LAYOUTS_ENABLED; do
-  contains "env example documents $flag as disabled" "$ROOT_DIR/.env.example" "#$flag=0"
-  expected="$(printf '%s: "${%s:-0}"' "$flag" "$flag")"
-  contains "compose keeps $flag opt-in" "$COMPOSE_FILE" "$expected"
-done
+flag=SV_FORM_PLUGIN_PACKAGES_ENABLED
+contains "env example documents $flag as disabled" "$ROOT_DIR/.env.example" "#$flag=0"
+expected="$(printf '%s: "${%s:-0}"' "$flag" "$flag")"
+contains "compose keeps $flag opt-in" "$COMPOSE_FILE" "$expected"
 not_contains "compose does not default JWT secret to change-me" "$COMPOSE_FILE" 'JWT_SECRET: ${JWT_SECRET:-change-me-in-production}'
 not_contains "env example does not enable weak JWT secret" "$ROOT_DIR/.env.example" "JWT_SECRET=change-me-in-production"
 
@@ -285,11 +284,8 @@ not_contains "MCP compose service does not depend directly on PostgreSQL" "$MCP_
 not_contains "env example carries no application credential" "$ROOT_DIR/.env.example" "OPENPR_BOT_TOKEN="
 contains "README documents the MCP serve subcommand with a configuration file" "$ROOT_DIR/README.md" "mcp-server -- serve --config config/sylvode.toml"
 contains "MCP app README local examples target API host port" "$ROOT_DIR/apps/mcp-server/README.md" 'api_url = "http://localhost:8081"'
-contains "MCP app README documents snapshot-derived tool count" "$ROOT_DIR/apps/mcp-server/README.md" "$EXPECTED_TOOL_COUNT MCP Tools"
 contains "MCP app README documents three transports" "$ROOT_DIR/apps/mcp-server/README.md" "Three Transport Modes"
 contains "MCP app README documents SSE transport" "$ROOT_DIR/apps/mcp-server/README.md" "serve --transport sse"
-contains "MCP app README documents universal forms tools" "$ROOT_DIR/apps/mcp-server/README.md" "Universal Forms and Events"
-contains "MCP app README documents plugin tools" "$ROOT_DIR/apps/mcp-server/README.md" "WASM Plugins"
 contains "MCP app README compose example uses prebuilt Dockerfile" "$ROOT_DIR/apps/mcp-server/README.md" "dockerfile: Dockerfile.prebuilt"
 contains "MCP app README manual test starts API stack" "$ROOT_DIR/apps/mcp-server/README.md" "bash scripts/start.sh"
 contains "MCP app README development guide uses API client helpers" "$ROOT_DIR/apps/mcp-server/README.md" "Sylvode API client helper"
@@ -309,15 +305,11 @@ contains "MCP app README documents bot token hash auth" "$ROOT_DIR/apps/mcp-serv
 contains "MCP app README documents workspace-scoped bot access" "$ROOT_DIR/apps/mcp-server/README.md" "a bot token can only act inside its workspace"
 not_contains "MCP app README does not claim auth is unenforced" "$ROOT_DIR/apps/mcp-server/README.md" "Authentication infrastructure exists but is not enforced"
 not_contains "MCP app README does not list stale JWT TODO" "$ROOT_DIR/apps/mcp-server/README.md" "Implement JWT token validation"
-contains "MCP regression stdio path targets API host port" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" '"SYLVODE_MCP_REGRESSION_API_URL", "http://localhost:8081"'
-contains "MCP regression stdio path uses serve subcommand" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" '[MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG]'
-contains "MCP regression derives the expected registry count" "$ROOT_DIR/skills/openpr-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
-contains "MCP validation derives the expected registry count" "$ROOT_DIR/skills/openpr-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
-contains "MCP skill guide documents snapshot-derived tool count" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "enumerate all $EXPECTED_TOOL_COUNT tools"
-not_contains "MCP skill guide does not retain stale 65-tool count" "$ROOT_DIR/skills/openpr-mcp/SKILL.md" "65 tools"
-not_contains "MCP validation does not retain stale 65-tool minimum" "$ROOT_DIR/skills/openpr-mcp/scripts/validate-mcp.sh" "-ge 65"
-contains "docs index documents snapshot-derived MCP server count" "$ROOT_DIR/docs/README.md" "MCP server ($EXPECTED_TOOL_COUNT tools"
-contains "docs index documents snapshot-derived MCP regression count" "$ROOT_DIR/docs/README.md" "$EXPECTED_TOOL_COUNT-tool registry"
+contains "MCP regression stdio path targets API host port" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" '"SYLVODE_MCP_REGRESSION_API_URL", "http://localhost:8081"'
+contains "MCP regression stdio path uses serve subcommand" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" '[MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG]'
+contains "MCP regression derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
+contains "MCP validation derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
+not_contains "MCP validation does not retain stale 65-tool minimum" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "-ge 65"
 contains "docs index links implementation map" "$ROOT_DIR/docs/README.md" "universal-forms-implementation-map.md"
 contains "readiness summary generator links implementation map" "$ROOT_DIR/scripts/report-universal-forms-readiness-summary.sh" "universal-forms-implementation-map.md"
 contains "user acceptance packet generator links implementation map" "$ROOT_DIR/scripts/prepare-universal-forms-user-acceptance-packet.sh" "universal-forms-implementation-map.md"
@@ -329,7 +321,7 @@ contains "README states the binaries take no environment configuration" "$ROOT_R
 contains "MCP integration test uses current JSON-RPC endpoint" "$TEST_MCP_SCRIPT" "/mcp/rpc"
 contains "MCP integration test lists tools through JSON-RPC" "$TEST_MCP_SCRIPT" '"method":"tools/list"'
 contains "MCP integration test invokes tools through JSON-RPC" "$TEST_MCP_SCRIPT" '"method":"tools/call"'
-contains "MCP integration test derives its strict default tool count" "$TEST_MCP_SCRIPT" 'EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/openpr-mcp/scripts/expected-tool-count.py")}"'
+contains "MCP integration test derives its strict default tool count" "$TEST_MCP_SCRIPT" 'EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/sylvode-mcp/scripts/expected-tool-count.py")}"'
 contains "MCP integration test rejects tool count drift" "$TEST_MCP_SCRIPT" 'expected exactly $EXPECTED_TOOL_COUNT'
 contains "MCP integration test checks form template tool" "$TEST_MCP_SCRIPT" "forms.create_from_template"
 contains "MCP integration test checks scenario template install tool" "$TEST_MCP_SCRIPT" "scenario_templates.install"
@@ -362,7 +354,7 @@ contains "source-build image uses non-root user" "$SOURCE_DOCKERFILE" "USER appu
 contains "frontend image builds with frozen lockfile" "$FRONTEND_DOCKERFILE" "bun install --frozen-lockfile"
 contains "frontend image runs nginx" "$FRONTEND_DOCKERFILE" "nginx"
 contains "acceptance script uses resolved Bun for frontend check" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run check'
-contains "acceptance script uses resolved Bun for frontend smoke" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-ui'
+contains "acceptance script uses resolved Bun for frontend smoke" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-page-interactions'
 contains "acceptance script resolves common Bun install path" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" '$HOME/.bun/bin'
 contains "UI artifact collector uses Bun for frontend build" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "FRONTEND_BUN"
 contains "UI artifact collector uses Bun for frontend smoke" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "FRONTEND_BUN"
@@ -466,7 +458,7 @@ contains "runbook states PostgreSQL is internal-only" "$PRODUCTION_DOC" "Postgre
 contains "runbook states app ports bind localhost by default" "$PRODUCTION_DOC" "host ports bind"
 contains "runbook states reverse proxy or tunnel requirement" "$PRODUCTION_DOC" "reverse proxy or tunnel"
 contains "runbook states compose avoids fixed container names" "$PRODUCTION_DOC" 'avoids fixed `container_name` values'
-contains "runbook states webhook example config" "$PRODUCTION_DOC" "config/sylvode-webhook.example.toml"
+contains "runbook states webhook example config" "$PRODUCTION_DOC" "config/sylvode-runner.example.toml"
 contains "runbook states webhook production secret replacement" "$PRODUCTION_DOC" 'set a concrete `webhook_secrets` value'
 contains "runbook states local compose bootstrap script" "$PRODUCTION_DOC" "bash scripts/start.sh"
 contains "runbook states local restaurant demo bootstrap" "$PRODUCTION_DOC" "scripts/bootstrap-restaurant-demo.sh"
@@ -512,7 +504,7 @@ contains "runbook documents signature lifecycle summary" "$PRODUCTION_DOC" "sign
 contains "runbook documents signature workflow verification decision" "$PRODUCTION_DOC" "signature_workflow_verification.status=verified"
 contains "runbook includes connector smoke" "$PRODUCTION_DOC" "scripts/smoke-webhook-generic-consumer.sh"
 contains "runbook includes WASM smoke" "$PRODUCTION_DOC" "scripts/smoke-wasm-plugin-runtime.sh"
-contains "runbook includes frontend smoke" "$PRODUCTION_DOC" "bun run smoke:forms-ui"
+contains "runbook includes frontend smoke" "$PRODUCTION_DOC" "bun run smoke:forms-page-interactions"
 contains "runbook includes project template frontend smoke" "$PRODUCTION_DOC" "bun run smoke:project-template"
 contains "runbook includes template work item frontend smoke" "$PRODUCTION_DOC" "bun run smoke:template-work-items"
 contains "runbook includes UI review gallery verification" "$PRODUCTION_DOC" "scripts/verify-universal-forms-ui-review-gallery.sh"

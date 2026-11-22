@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
@@ -12,7 +13,7 @@
 		type SearchResult
 	} from '#lib/api/search.js';
 	import { toast } from '#lib/stores/toast.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import { previewText } from '#lib/utils/search.js';
 
 	let query = $state('');
@@ -40,12 +41,12 @@
 	async function runSearch() {
 		if (!query.trim()) {
 			results = [];
-			goto('/search', { replaceState: true });
+			goto(resolve('/(app)/search'), { replaceState: true });
 			return;
 		}
 
 		searching = true;
-		goto(`/search?q=${encodeURIComponent(query.trim())}`, { replaceState: true });
+		goto(resolve(`/(app)/search?q=${encodeURIComponent(query.trim())}`), { replaceState: true });
 		const response = await searchApi.search(query.trim());
 		if (response.code !== 0) {
 			toast.error(response.message);
@@ -109,8 +110,8 @@
 
 <div class="mx-auto max-w-6xl space-y-6">
 	<div>
-		<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('search.title')}</h1>
-		<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('search.helper')}</p>
+		<h1 class="text-2xl font-semibold text-fg">{$t('search.title')}</h1>
+		<p class="mt-1 text-sm text-fg-muted">{$t('search.helper')}</p>
 	</div>
 
 	<form
@@ -118,110 +119,100 @@
 			event.preventDefault();
 			runSearch();
 		}}
-		class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+		class="rounded-card border border-line bg-raised p-4"
 	>
 		<div class="flex gap-3">
 			<input
 				type="search"
 				bind:value={query}
 				placeholder={$t('search.placeholder')}
-				class="flex-1 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="flex-1 rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 			/>
-			<Button type="submit" loading={searching}>{$t('common.search')}</Button>
+			<Button variant="primary" type="submit" loading={searching}>{$t('common.search')}</Button>
 		</div>
 	</form>
 
 	{#if searching}
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('search.searching')}
 		</div>
 	{:else if query.trim() && results.length === 0}
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
-		>
+		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
 			{$t('search.noResults')}
 		</div>
 	{:else if results.length > 0}
 		<div class="space-y-4">
 			{#if issues.length > 0}
-				<section
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
-				>
-					<h2
-						class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
-					>
+				<section class="rounded-card border border-line bg-raised p-4">
+					<h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
 						Issues ({issues.length})
 					</h2>
 					<div class="mt-3 space-y-2">
 						{#each issues as item (item.id)}
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app path built at runtime, or # when none -->
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
-								class="block rounded-md border border-slate-200 dark:border-slate-700 p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="block rounded-control border border-line p-3 hover:bg-surface"
 							>
-								<p class="font-medium text-slate-900 dark:text-slate-100">{item.title}</p>
+								<p class="font-medium text-fg">{item.title}</p>
 								{#if item.description}
-									<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+									<p class="mt-1 text-sm text-fg-muted line-clamp-2">
 										{previewText(item.description, 100)}
 									</p>
 								{/if}
 							</a>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						{/each}
 					</div>
 				</section>
 			{/if}
 
 			{#if projects.length > 0}
-				<section
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
-				>
-					<h2
-						class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
-					>
+				<section class="rounded-card border border-line bg-raised p-4">
+					<h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
 						Projects ({projects.length})
 					</h2>
 					<div class="mt-3 space-y-2">
 						{#each projects as item (item.id)}
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app path built at runtime, or # when none -->
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
-								class="block rounded-md border border-slate-200 dark:border-slate-700 p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="block rounded-control border border-line p-3 hover:bg-surface"
 							>
-								<p class="font-medium text-slate-900 dark:text-slate-100">{item.name}</p>
+								<p class="font-medium text-fg">{item.name}</p>
 								{#if item.description}
-									<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+									<p class="mt-1 text-sm text-fg-muted line-clamp-2">
 										{previewText(item.description, 100)}
 									</p>
 								{/if}
 							</a>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						{/each}
 					</div>
 				</section>
 			{/if}
 
 			{#if comments.length > 0}
-				<section
-					class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
-				>
-					<h2
-						class="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
-					>
+				<section class="rounded-card border border-line bg-raised p-4">
+					<h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
 						Comments ({comments.length})
 					</h2>
 					<div class="mt-3 space-y-2">
 						{#each comments as item (item.id)}
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- in-app path built at runtime, or # when none -->
 							<a
 								href={resolveHref(item) ?? '#'}
 								onclick={(event) => handleResultClick(event, item)}
-								class="block rounded-md border border-slate-200 dark:border-slate-700 p-3 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
+								class="block rounded-control border border-line p-3 hover:bg-surface"
 							>
-								<p class="font-medium text-slate-900 dark:text-slate-100">{$t('issue.comments')}</p>
-								<p class="mt-1 text-sm text-slate-600 dark:text-slate-300 line-clamp-2">
+								<p class="font-medium text-fg">{$t('issue.comments')}</p>
+								<p class="mt-1 text-sm text-fg-muted line-clamp-2">
 									{previewText(item.body, 100)}
 								</p>
 							</a>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						{/each}
 					</div>
 				</section>

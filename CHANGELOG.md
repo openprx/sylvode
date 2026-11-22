@@ -10,7 +10,280 @@ name.
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-11-19
+## [0.5.0] - 2026-11-23
+
+### Added
+
+- **Runner `doctor`, `--check` and `config check`; degraded start-up; installer checks.**
+  `sylvode-runner doctor` prints the shared prerequisite report (exit 0, 2 or 1); a missing
+  prerequisite degrades the service (`/health` `prereq` and `degraded`) instead of refusing it;
+  `scripts/install.sh` runs doctor with the service's `PATH` before installing, takes
+  `--headless-only` and `--dry-run`, warns about missing linger, rewrites an unchanged unit never,
+  and runs doctor again in the service context.
+- **Runner tmux channel.** `sylvode-runner` keeps one tmux session per project key, queues tasks
+  first in first out, types each into an idle, empty prompt as a bracketed paste, follows turns
+  through CLI hooks (`sylvode-runner hook`), reminds and fails forgotten acknowledgements and
+  completions, and rebuilds its state from `GET /ai/tasks/active` after a restart. New
+  subcommands: `sessions [--prune]`, `trust KEY`, `release KEY`.
+
+### Removed
+
+- **`mcp-server <command>` workspace form.** `mcp-server` offers only `serve` and `doctor`; the workspace
+  commands exist only under `sylvode`, and the old form fails as an unknown command.
+- **Legacy task callbacks and `agent_type = "cli"`.** The API no longer serves
+  `POST /api/v1/ai/callbacks/task/{id}/complete`, `.../fail` or `.../progress`; a task ends through
+  the task protocol (`POST /api/v1/ai/tasks/{id}/complete` or `.../fail?attempt=N`). The runner
+  refuses `agent_type = "cli"` (use `agent_type = "runner"` with the headless channel), and the
+  keys that only it used: `[agents.cli]`, `[agents.ai_task_callback]`, `[features] cli_enabled`
+  and `callback_enabled`, and `[ai_task_callback] max_output_chars`. A forwarding agent
+  (`webhook`, `openclaw`, `openprx`, `custom`) completes the task through the protocol when the hand-over works (so it runs once) and fails
+  the task with `source: "runner"` when it does not. Tasks sent over the tunnel are answered
+  `failed`.
+
+### Changed
+
+- **Flow is on by default everywhere.** A workspace has Flow on unless an administrator switches it
+  off: `flow_workspace_settings.flow_enabled` defaults to `true`, a trigger creates the settings row
+  with every workspace, and migration `0115_flow_default_on.sql` backfills the rows of existing
+  workspaces without touching a row that is switched off. The four capabilities
+  `scope_native_legacy`, `personal_package_imports`, `personal_scope_package_exports` and
+  `cross_workspace_forms_conversion` now default on as well (switched on once for an existing
+  database). The switches themselves stay. See `docs/runbooks/flow-runtime-capabilities.md`.
+- **Runner hardening, third review.** Busy, choice and dialog detection reads only the CLI's own
+  chrome at the bottom of the screen; a screen hold is bounded (`screen_hold_secs`, default 600) and
+  then fails the waiting tasks as retryable; an acknowledged task is busy even if its
+  `UserPromptSubmit` hook was lost; a CLI is restarted for a changed directory only when its screen
+  is calm. Hook messages are checked against the launch's nonce before any work is spent, the
+  sender's ancestry is read without a `ps` per hop (`/proc` on Linux, one `ps -A` snapshot on
+  macOS), at most 32 connections are read at once, and an unreadable `session.json` admits nothing.
+  Hooks are ordered by a per-session counter, not the clock. The configuration file and the
+  canonical state directory are denied to the CLI, and no allowed root may contain the file. Extra
+  read rules count as confined only as `Read|Glob|Grep(/{dir}/...)`. A pushed task that cannot be
+  adopted after a restart fails as retryable. `--prune` never ends a working CLI. A successful
+  forward completes the task. The installer follows `[runner.tmux] enabled` (`--headless-only` is
+  removed), skips the macOS service-context check unless root, and `/health` returns only `status`
+  and `protocol`. The stand-in CLI of the tests never writes environment values, and every probe
+  starts with an allow-listed environment.
+- **MCP search mode is the default tool listing.** `tools/list` offers nine tools:
+  `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the five task tools.
+  Registry tools are found with `sylvode_search` and called through `sylvode_read` or
+  `sylvode_write`; calling a registry name directly is refused unless the connection chose full
+  mode (`[mcp] tool_mode = "full"`, `serve --tools full`, `?tools=full` or the
+  `X-Sylvode-Tool-Mode: full` header). `[mcp] allow_write_call = false` disables every write tool except the five task lifecycle tools, in every mode and in the command line.
+  Connected (OAuth) applications are not affected: they keep the scoped read tools.
+- **The retired `X-OpenPR-MCP-*` attribution headers and the `openpr://` resource URIs are gone.**
+  `mcp-server` sends only `X-Sylvode-MCP-Surface` and `X-Sylvode-MCP-Tool`, the API reads only
+  those, and a resource is read by its `sylvode://` identity only (`resources/read` of an
+  `openpr://` URI answers unknown resource, with no `_meta.deprecation`).
+- **MCP security fixes.** `[mcp] allow_write_call = false` now refuses every write tool in every
+  mode and in the command line; an ownership bearing id a tool does not declare is refused before
+  any request; a tool with a closed schema is validated on every door; repeated or conflicting tool
+  mode parameters are a 400; the task and entry tools are attributed to dotted names so the
+  operation log records them; a bot asking for another bot's task gets the answer for a missing
+  one; a repeated task end with other content is a 409.
+- **The MCP skill is `sylvode-mcp`.** `skills/openpr-mcp` is renamed to `skills/sylvode-mcp` and
+  rewritten for an agent that receives a task message: the task procedure (get, acknowledge with a
+  plan, progress, complete or fail), what Sylvode does on completion (`reply_policy`), search mode
+  as the default way of working and full mode as the opt-in. The resources are
+  `sylvode://skills/sylvode-mcp` (the skill) and `sylvode://skills/sylvode-mcp/tools` (every tool);
+  `sylvode://skills/openpr-mcp` is gone, with no alias. The server's `instructions` and the guide
+  resources are the generated skill files. `sylvode-skillgen --check` (and the CI job
+  `skills-sync`) fails when a tool list, count or the skill no longer follows the MCP server;
+  `sylvode-skillgen --write` regenerates.
+- The project-resource MCP tools (`project_resources.*`, `code.resources.list`,
+  `code.directory.get`) and the `sylvode://projects/{project_id}/resources` resource template are
+  parked: they are no longer registered, listed or callable.
+
+### Added
+
+- **Connect bots to a project.** A project is connected to one or several bots that run its agent
+  tasks on runners; a connection is (project, bot) and holds its own execution settings (enabled,
+  channel, CLI, working directory). `POST /api/v1/projects/{id}/bot-connections` creates (or
+  reuses) the bot, its token, a managed webhook, the AI participant registration and the
+  connection in one transaction and returns the runner configuration block (token and signing
+  secret) once, with `Cache-Control: no-store`. `GET .../bot-connections`, `GET`, `PATCH`,
+  `DELETE .../bot-connections/{bot_id}` and `.../{bot_id}/disable`, `/enable`, `/rotate` complete
+  it; every write carries the connection's `version`. A project has at most one tmux connection per
+  CLI type (409 naming the bot that holds it); headless connections are not limited. A task uses
+  the connection of its project and its bot, and the task view names the tmux session
+  (`session_name`, `<KEY>-<cli>`). Owners and admins only; bots and
+  connected applications are refused. The runner address is checked with the outbound policy
+  (`[outbound] allowed_hosts`). `GET` answers a status computed from the runner's report
+  (`PUT /api/v1/ai/runner/report`, sanitised, 16 KiB limit), the token's use and the latest delivery.
+  Rows a connection made are reported as `managed_by` on the Bots and Webhooks endpoints and are
+  protected there. After a connection or a rotation the worker holds the bot's tasks until the runner
+  has used the new token (at most one hour); runner refusals carry a stored `reason_code` and read
+  "the runner refused the task (...)". Removing the last connection revokes the token and deletes
+  the webhook and seat; deleting a project does the same. Alert rules warn with
+  `bot_not_connected_to_project` instead of `bot_has_no_active_webhook`.
+  Operations: `docs/runbooks/bot-connections.md`.
+  Hardening: a runner bot receives a project's tasks only while the project has an enabled
+  connection for it (task creation, worker pick-up and delivery; pending tasks without one are
+  failed with a reason and an issue comment); its token reaches only the routes of a fixed table and
+  only the projects it is connected to; it is never seated above member; a delivery connects to the
+  address its URL check resolved, and a runner's answer body is never copied into an issue; plain
+  `http://` runner addresses need a host in `[outbound] allowed_hosts`; rotation, the disable that
+  switches the token off, removal and project deletion re-evaluate cached permissions and open
+  sessions; disabling a bot's user stops its token.
+
+- **MCP tool catalogue and task tools.** One catalogue entry per tool (category, read or write,
+  summary, keywords), `annotations.readOnlyHint` in the full listing, `list-tools --json`, and the
+  tools `sylvode_task_get`, `sylvode_task_ack`, `sylvode_task_progress`, `sylvode_task_complete` and
+  `sylvode_task_fail` for the task protocol of a bot.
+
+- **Sylvode as an OAuth 2.1 authorization server for its own API and MCP server (P4).** A person
+  can connect Ramflux, the one pre-registered public client, to one workspace: Ramflux holds its own
+  credentials and Sylvode proxies nothing. Off until `[oauth] issuer` is configured; see
+  `docs/runbooks/oauth-authorization-server.md` for configuration, operation and rollback.
+  - *Endpoints.* `POST /api/v1/oauth/authorization-requests` and `.../{request_id}/decision` (the
+    consent flow with PKCE `S256`, exact redirect matching with loopback ports, one consent token
+    per request), `POST /api/v1/oauth/token` (authorization code and refresh token grants, refresh
+    rotation with reuse detection, code replay detection), `POST /api/v1/oauth/revoke` (RFC 7009),
+    the RFC 8414 and RFC 9728 discovery documents, and `GET /api/v1/oauth/connection` for a
+    connected application to describe its own grant. Tokens are opaque (`svc_`, `sva_`, `svr_`),
+    stored as hashes, bound to one resource (API or MCP) and checked against live state on every
+    request, so revocation is immediate.
+  - *Scopes of the first release.* The client may be granted `projects:read`, `work_items:read`,
+    `notifications:read`, `tasks:read` and `offline_access`. Write scopes, forms and surfaces are
+    in the vocabulary and refused for this client. A delegated request acts as the person with the
+    workspace role capped at `member`, inside the one workspace and, when chosen, the selected
+    projects of the grant; routes outside a fixed allow-list are refused. Starting, assigning or
+    re-dispatching an agent is never available to a connected application: the check sits in the
+    function that creates an agent task.
+  - *Event stream.* `GET /api/v1/oauth/events/stream` pushes `notification.created`,
+    `notification.read`, `task.created` and `task.status_changed` as server-sent events, filtered
+    when each is delivered (workspace, scope, owner, project set, present membership), with resume
+    by `Last-Event-ID`, a bounded backlog, back-pressure, limits per grant, user and process, and
+    closing control messages (`revoked`, `reauth`, `lagged`, `resync_required`). The worker writes
+    the feed from a transactional outbox and prunes it. nginx serves the path unbuffered.
+  - *Management.* A person lists and disconnects their connections; a workspace owner or admin
+    lists and disconnects the workspace's and switches connected applications on or off; an
+    instance administrator disables or re-enables the client. These accept a first-party session
+    only. Password change, admin reset, disabling an account, removal from a workspace, disabling
+    the client and switching a workspace off revoke the affected grants in the transaction of the
+    change itself.
+  - *MCP.* The MCP server accepts delegated tokens on `POST /mcp/rpc` and offers eight read tools
+    (`projects.list`, `projects.get`, `context.get_project`, `work_items.list`, `work_items.get`,
+    `work_items.get_by_identifier`, `work_items.list_labels`, `comments.list`); a project argument
+    outside the grant is refused before the API is called. Search, the project label list, the forms
+    tools and everything that writes stay available to bot and user tokens only.
+  - *Deviations from the MCP authorization specification.* Only the pre-registered client exists:
+    there is no dynamic client registration and no client metadata documents. The specification
+    says an MCP server must not pass a received token through; this server forwards the caller's
+    MCP-audience token to Sylvode's own API together with an internal forwarding credential
+    (`oauth.internal_forward_secret`, the same value as `mcp.oauth_forward_secret`), and the API
+    accepts an MCP-audience token only with it. The MCP server is a stateless facade over its own
+    API, and the API is the issuer and the policy point for both audiences.
+  - *Operations.* Migration `0109` (twelve tables, one seeded client, four triggers on
+    `notifications` and `ai_tasks`); the worker prunes the event feed after
+    `oauth.event_feed_retention_days`, audit rows after 180 days, operation logs after 90 days and
+    expired requests, codes and tokens daily. Revocations, consent and token issue take row locks in
+    one fixed order so they cannot deadlock or leave a usable token behind.
+
+### Changed
+
+- **Form plugin protocols 1 and 2 removed; protocol 3 is the only one.** Installing an
+  `openpr.plugin.v2` manifest now fails with `manifest_protocol_unsupported`. The
+  `plugin-panels` discovery and invoke routes, the host's bridge 1, the per-package layout code and
+  the `SV_FORM_PLUGIN_LAYOUTS_ENABLED` switch are gone; the Plugin Creator's order amount template
+  now builds a protocol 3 `wasm` package with the same `amount.*` capabilities and the same panel
+  behaviour, so it needs `SV_FORM_PLUGIN_EXTENSIONS_ENABLED=1` like every other protocol 3
+  package. No migration: `form_plugin_layouts` and rows of the retired protocols stay in the
+  database, unread and unwritten (see `docs/universal-forms-and-plugins.md`).
+- **Forms page restructured.** The Forms page is split into a state object, controllers, pure
+  modules and components, with unit tests for the modules and a browser smoke for the
+  interactions. Internal refactor, no behaviour change.
+- **Flow writes no longer walk the whole page to guard the editor-model floor.** The isolated
+  apply step used to read every editor block once before each import (twice on model 5 pages)
+  only to refuse an update that lowers a page from editor model 5. It now reads the model 5
+  marker before and after the import and scans the imported operations, which costs the same for
+  a 200-block page and a 5,000-block page. The few updates that remove or re-type a block
+  container, or touch the document root, fall back to an exact check. The same updates are
+  refused as before (`editor_model_floor_downgrade`). The semantic snapshot now also yields the
+  floor of the state it read, so the host no longer walks a second time. The guard never trusts
+  the fields of an operation that a client chooses: every deletion on the top-level block list
+  goes to the exact check, which decides from the document's actual state. Four differences
+  affect invalid or hostile input only: a base document that fails the current rules is no
+  longer re-checked before the import (the check after the import still rejects an invalid
+  result); an update that is invalid in several ways at once may report a different first
+  reason; and the editor document, the structure index and its metadata are read through their
+  typed root containers everywhere, so a second root container with the same name and another
+  type no longer makes the floor check and the page reader disagree (before, such a page could
+  fail the floor check on replay until the next snapshot compaction); and, as the fourth, an
+  update from a client that creates or writes a root container with a reserved name
+  (`doc`, `flow_editor_structure`, `flow_editor_structure_meta`, `flow_editor_aliases`, `order`,
+  `tree`, `meta`) and a container type other than the expected one is refused as an invalid update
+  (`reserved_root_container_type`), as is an update whose operations cannot all be inspected
+  (`reserved_root_scan_incomplete`). Such a second root made every later write of that page read
+  the whole document more than once, and compaction does not remove it. No product client
+  creates one. The rule applies to updates a client offers for acceptance only: replay of stored
+  history, snapshot rebuilds and integrity checks still accept a page that already carries such a
+  root, and the check costs the update, not the page. An uploaded package whose document carries
+  such a root, in its snapshot or in its update tail, is refused the same way on import.
+- **The webhook receiver is now the Sylvode runner.** The crate is `sylvode-runner` in
+  `apps/runner`, the executable is `sylvode-runner`, the release archive is
+  `sylvode-runner-<target>.tar.gz` and the image is `ghcr.io/openprx/sylvode-runner`. The old
+  receiver names are not kept: the executables `sylvode-webhook` and `openpr-webhook`, their
+  archives and images, the `SYLVODE_WEBHOOK_*` and `OPENPR_WEBHOOK_*` variables, the `sylvode_webhook`
+  and `openpr_webhook` log targets, the `X-OpenPR-Signature` inbound header and the
+  `X-OpenPR-MCP-Surface` callback header are gone. The callback `source` and the `no_agent` answer
+  name `sylvode-runner`.
+  - *Deployment.* The compose service is `runner` (`SYLVODE_RUNNER_PORT`, `SYLVODE_RUNNER_IMAGE`,
+    `SYLVODE_RUNNER_CONFIG`), and the generated `[outbound] allowed_hosts` lists `runner:9090`. The
+    example configuration is `config/sylvode-runner.example.toml`, the smoke scripts are
+    `scripts/smoke-runner-routing.sh` and `scripts/smoke-browser-mention-runner.sh`
+    (`SYLVODE_RUNNER_DIR`), and the installer manages `sylvode-runner.service` (Linux) or
+    `dev.sylvode.runner` (macOS) only.
+
+### Removed
+
+- **The AI participants API and page.** `GET/POST /api/v1/projects/{id}/ai-participants`, its
+  `{id}` routes and `/stats`, the AI participants page, the overview's assistant cards and the
+  placeholder participants a scenario template used to create are gone: a bot is a project's AI
+  participant only through a bot connection. Migration `0112` makes the participant key
+  `(project_id, id)` (one bot, several projects), drops the stored-only columns `model`,
+  `provider`, `api_endpoint` and `capabilities`, and drops the learning records' foreign key.
+  Learning records are read per project: `GET /api/v1/projects/{id}/ai-participants/{bot_id}/learning`
+  and `.../alignment-stats` replace `/api/v1/ai-participants/{id}/...`. The
+  project-level execution settings endpoints are removed (each connection holds its settings), and
+  the project context lists them as `executions`, one per connection. The worker's end reason `receiver_declined` is now `runner_declined`.
+
+### Fixed
+
+- **A Flow package import validates every uploaded document in the isolated worker.** The
+  workspace package import used to decode the uploaded snapshot and update tail inside the API
+  process and the import transaction, with no content limit and no meter, and stored the uploaded
+  snapshot as it was. Both package imports (workspace and personal scope) now run each document
+  through the import operation of the worker (load, replay, scans of the whole history for reserved
+  roots and unresolved tree references, projection, every content limit) before the transaction
+  opens, and store the head the worker returned after the API process has loaded it again and
+  compared its own projection, title, reference verdict and fingerprint with the worker's report.
+  A package that exceeds a content limit or an import ceiling is refused as `limit_exceeded`
+  naming the limit, and nothing is stored. The import window has its own named budget
+  (`IMPORT_DECODE_CPU_MS_MAX` 2,000 ms, `IMPORT_DECODE_WALL_MS_MAX` 5,000 ms,
+  `IMPORT_ISOLATED_MEMORY_BYTES_MAX` 512 MiB), applied by that operation only; the write window
+  keeps 50 ms, 100 ms and 128 MiB. Off Linux a package import is refused as
+  `isolated_apply_unsupported_platform`. A portable graph package whose versions need more than
+  16,384 mark edits to replay is refused (`portable_graph_replay_work`), at export too, and the
+  replay no longer runs on the async executor.
+
+- **Deleting a workspace or a project that holds content works.** A workspace with a Flow Page
+  that had an accepted collaboration update answered `database error` and stayed, because the
+  delete cascade reached the event row before the update that references it. Workspace and project
+  deletion now remove the rows that block the cascade first (accepted updates, event dispatch and
+  delivery rows, import jobs, scope command receipts, conversion jobs, previews and lineage,
+  plugin bindings, activities and notifications) inside the same transaction, and remove the
+  workspace's legacy Flow scope with it. No foreign key changed. If content outside the deleted
+  workspace or project still restricts it, the request is refused with a typed `invalid_update`
+  (`details.reason = "retained_by_external_reference"`) and nothing is deleted.
+- **Flow: large Pages stay writable on slower databases.** Every statement of the block registry
+  whose size depended on the Page (the locking read, the removal of absent blocks, the legacy
+  comment seal and the bulk writes) now carries at most 500 rows. The first registration of an
+  existing Page is resumable: each accepted write registers new blocks only while it fits its
+  staging budget and records the rest in `flow_block_checkpoints.pending_registrations`
+  (migration `0107`, additive). Comment lists, anchored comments, block shares and transfers
+  finish the registration in short capped steps before they read block identities.
+
 
 ### Added
 
@@ -212,7 +485,7 @@ name.
   for 1,400 and 5,000 block pages.
 - **The plugin package concurrency budget** (four concurrent runs per process) is now covered by
   a unit test.
-- **Flow: personal Flow and the shipped installation-wide Flow capabilities are on by default.** Migration `0106_flow_capabilities_default_on.sql` defaults `personal_provisioning`, `personal_writes`, `external_mounts`, `personal_forms_conversion`, `block_transfers_enabled`, `portable_page_packages_enabled` and `portable_graph_packages_enabled` on and raises `minimum_reader_version` to 5, so a fresh installation needs no manual SQL before users can open a personal Flow space and write Pages. `scope_native_legacy`, `personal_package_imports`, `personal_scope_package_exports` and `cross_workspace_forms_conversion` stay off. See `docs/runbooks/flow-runtime-capabilities.md`.
+- **Flow: personal Flow and the shipped installation-wide Flow capabilities are on by default.** Migration `0106_flow_capabilities_default_on.sql` defaults `personal_provisioning`, `personal_writes`, `external_mounts`, `personal_forms_conversion`, `block_transfers_enabled`, `portable_page_packages_enabled` and `portable_graph_packages_enabled` on and raises `minimum_reader_version` to 5, so a fresh installation needs no manual SQL before users can open a personal Flow space and write Pages. `scope_native_legacy`, `personal_package_imports`, `personal_scope_package_exports` and `cross_workspace_forms_conversion` were switched on later by `0115_flow_default_on.sql`. See `docs/runbooks/flow-runtime-capabilities.md`.
 
 ### Fixed
 
@@ -419,8 +692,7 @@ name.
   membership.
 
 This release renames the product from OpenPR to Sylvode and adds Sylvode Flow. Read
-**Breaking and behaviour changes** before upgrading, then follow the upgrade sequence in the
-[v1.0 compatibility matrix](docs/sylvode-v1.0-compatibility.md#upgrade-sequence). Every legacy
+**Breaking and behaviour changes** before upgrading. Every legacy
 OpenPR name keeps working; see **Deprecated**.
 
 ### Fixed
@@ -481,8 +753,7 @@ OpenPR name keeps working; see **Deprecated**.
   `cli_tools_call` for `tools call` (see **`tools call` declares its own transport surface**) —
   on the Members page or with `POST /api/v1/workspaces/{id}/bots` and `"transport_surface"`, then
   put the new token in that client's configuration (`mcp.bot_token`, the agent's bearer token or
-  `--bot-token`). Existing tokens are not rebound automatically; see the
-  [upgrade sequence](docs/sylvode-v1.0-compatibility.md#upgrade-sequence).
+  `--bot-token`). Existing tokens are not rebound automatically.
 - **Outbound webhook `User-Agent` changed** from `OpenPR-Webhook/1.0` to
   `Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)`. A `User-Agent` cannot be sent twice,
   so receivers that match the old value **exactly** or as a **prefix** no longer match and must
@@ -1357,8 +1628,7 @@ replacement and the earliest removal.
   off Linux the isolated-apply entry points refuse every Flow collaborative write and object diff
   with `server_rejected` (`details.reason = "isolated_apply_unsupported_platform"`,
   `write_state: not_applied`) instead of applying anything outside the boundary, `api` logs one
-  startup `warn`, and `collab-isolated-apply-worker` is a stub that exits with status 2. See the
-  [platform matrix](docs/sylvode-v1.0-compatibility.md#platform-matrix).
+  startup `warn`, and `collab-isolated-apply-worker` is a stub that exits with status 2.
 - Flow collaboration: publishing the cross-instance fanout notice after a committed update no
   longer reports a failure on every write. The statement filtered on `pg_notify(..) IS NULL`,
   which is never true (`pg_notify` returns `void`), so it returned no row and the API logged

@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Read};
 
-use base64::Engine as _;
 use collab_core::{CollabEngine, LoroCollabEngine};
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
@@ -548,6 +547,11 @@ pub async fn commit_package_import(
         ));
     }
 
+    // Everything that decodes, replays or projects the uploaded documents happens here, in the
+    // isolated worker and outside of any transaction: the transaction below only stores what the
+    // worker validated (see `import_replay`).
+    let prepared = prepare_documents(db, request).await?;
+
     let tx = db.begin().await?;
     lock_authorization_epoch(&tx, request.workspace_id).await?;
     let preview = load_preview(&tx, request).await?;
@@ -569,8 +573,17 @@ pub async fn commit_package_import(
     }
     let mapping: FrozenImportMapping = serde_json::from_value(preview.mapping.clone())
         .map_err(|_| ApiError::checksum_mismatch("frozen import mapping cannot be decoded"))?;
-    let artifact = load_artifact_tx(&tx, request.workspace_id, preview.artifact_id, &request.principal).await?;
-    let plan = parse_plan(&artifact.package_bytes, &request.package_sha256)?;
+    let (plan, validated) = prepared.ok_or_else(ApiError::internal)?;
+    // The artifact is addressed by its digest: the package the documents were validated from is
+    // the package this transaction promotes, or the import is refused.
+    confirm_artifact_tx(
+        &tx,
+        request.workspace_id,
+        preview.artifact_id,
+        &request.principal,
+        &request.package_sha256,
+    )
+    .await?;
     validate_frozen_mapping(&mapping, &plan, request.workspace_id, request.conflict_policy)?;
     // Re-read lineage inside the promotion transaction: preview only reports conflicts, and an
     // import committed after the preview must not be silently skipped or duplicated either.
@@ -618,7 +631,7 @@ pub async fn commit_package_import(
     #[cfg(test)]
     fail_promotion_at(request.preview_id, PromotionFaultPoint::JobStarted)?;
 
-    let (created, reused) = promote_objects(&tx, &artifact.package_bytes, &plan, &mapping, request, import_id).await?;
+    let (created, reused) = promote_objects(&tx, &validated, &plan, &mapping, request, import_id).await?;
     let detached = promote_relations(&tx, &plan, &mapping, request, import_id).await?;
     #[cfg(test)]
     fail_promotion_at(request.preview_id, PromotionFaultPoint::RelationsPromoted)?;
@@ -697,6 +710,54 @@ pub async fn commit_package_import(
     fail_promotion_at(request.preview_id, PromotionFaultPoint::PreviewLinked)?;
     tx.commit().await?;
     Ok(report)
+}
+
+/// The documents of the package of a commit, validated in the isolated worker, with its plan.
+/// `None` for a preview that an earlier commit already completed: the transaction answers it with
+/// the stored report and validates nothing again.
+async fn prepare_documents(
+    db: &DatabaseConnection,
+    request: &CommitImportRequest,
+) -> Result<Option<(PackagePlan, Vec<super::import_replay::ValidatedDocument>)>, ApiError> {
+    let preview = load_preview(db, request).await?;
+    if preview.committed_import_id.is_some() {
+        return Ok(None);
+    }
+    let artifact = load_artifact(db, request.workspace_id, preview.artifact_id, &request.principal).await?;
+    let plan = parse_plan(&artifact.package_bytes, &request.package_sha256)?;
+    let validated = super::import_replay::validate_documents(&artifact.package_bytes, &plan).await?;
+    Ok(Some((plan, validated)))
+}
+
+/// Re-reads, inside the promotion transaction, the artifact the documents were validated from and
+/// refuses the import unless it is still the caller's, unexpired and of the committed digest. The
+/// package bytes are not read again.
+async fn confirm_artifact_tx<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+    artifact_id: Uuid,
+    principal: &ImportPrincipal,
+    package_sha256: &str,
+) -> Result<(), ApiError> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT actor_kind,actor_id,package_sha256,expires_at \
+             FROM flow_package_artifacts WHERE id=$1 AND workspace_id=$2 AND purpose='import' FOR SHARE",
+            vec![artifact_id.into(), workspace_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| ApiError::not_found("import artifact not found".to_string()))?;
+    if row.try_get::<String>("", "actor_kind")? != principal.kind
+        || row.try_get::<Uuid>("", "actor_id")? != principal.id
+        || row.try_get::<Timestamp>("", "expires_at")? <= Timestamp::now()
+    {
+        return Err(ApiError::not_found("import artifact not found".to_string()));
+    }
+    if row.try_get::<String>("", "package_sha256")? != package_sha256 {
+        return Err(ApiError::checksum_mismatch("import artifact changed"));
+    }
+    Ok(())
 }
 
 fn enforce_admin(principal: &ImportPrincipal) -> Result<(), ApiError> {
@@ -1143,7 +1204,7 @@ async fn lineage_targets<C: ConnectionTrait>(
 
 async fn promote_objects(
     tx: &sea_orm::DatabaseTransaction,
-    package: &[u8],
+    validated: &[super::import_replay::ValidatedDocument],
     plan: &PackagePlan,
     mapping: &FrozenImportMapping,
     request: &CommitImportRequest,
@@ -1175,21 +1236,15 @@ async fn promote_objects(
                 .get(&object.source_document_id)
                 .copied()
                 .ok_or_else(ApiError::internal)?;
-            let snapshot = reconstruct_head(package, &plan.verified.manifest, object)?;
-            let engine = LoroCollabEngine::load(&snapshot)
-                .map_err(|_| ApiError::checksum_mismatch("import snapshot cannot be decoded"))?;
-            super::package::require_supported_snapshot(&engine)?;
-            let semantic = engine
-                .semantic_snapshot()
-                .map_err(|_| ApiError::checksum_mismatch("import semantic state cannot be decoded"))?;
-            let accepted_frontier = decode_frontier(&object.accepted_frontier)?;
-            if package_semantic_hash(&engine, &plan.verified.manifest)? != object.semantic_hash
-                || !engine.matches_frontier(&accepted_frontier)
-            {
-                return Err(ApiError::checksum_mismatch(
-                    "imported document head fingerprint does not match object metadata",
-                ));
-            }
+            // The head the worker validated, its projection and its title: what is stored comes
+            // from here, never from the uploaded bytes.
+            let valid = validated
+                .iter()
+                .find(|document| document.source == source_id)
+                .ok_or_else(ApiError::internal)?;
+            let accepted_frontier = valid.frontier.clone();
+            let snapshot = valid.snapshot.clone();
+            let semantic = &valid.semantic;
             if mapping.conflict_policy == ConflictPolicy::ReuseImportLineage {
                 #[derive(FromQueryResult)]
                 struct ExistingHead {
@@ -1215,7 +1270,7 @@ async fn promote_objects(
                         ApiError::checksum_mismatch("reused import lineage points at an invalid document")
                     })?;
                     if existing.head_seq != object.accepted_seq
-                        || !engine.matches_frontier(&existing.head_frontier)
+                        || !super::frontier::same(&accepted_frontier, &existing.head_frontier)?
                         || package_semantic_hash(&existing_engine, &plan.verified.manifest)? != object.semantic_hash
                     {
                         return Err(ApiError::stale_frontier(
@@ -1274,9 +1329,9 @@ async fn promote_objects(
                     object_id: target_object,
                     document_seq: object.accepted_seq,
                     document_frontier: accepted_frontier,
-                    title: engine.title().map_err(|_| ApiError::internal())?,
-                    state: projection::state_json(&semantic).map_err(|_| ApiError::internal())?,
-                    plain_text: projection::plain_text(&semantic),
+                    title: valid.title.clone(),
+                    state: projection::state_json(semantic).map_err(|_| ApiError::internal())?,
+                    plain_text: projection::plain_text(semantic),
                 },
             )
             .await?;
@@ -1285,14 +1340,15 @@ async fn promote_objects(
                     tx,
                     target_object,
                     object.accepted_seq,
-                    &super::block_registry::prepare(&semantic)?,
+                    &super::block_registry::prepare(semantic)?,
+                    super::block_registry::RegistrationAllowance::Complete,
                 )
                 .await?;
                 super::body_assets::reconcile_accepted(
                     tx,
                     target_object,
                     object.accepted_seq,
-                    &super::body_assets::typed_references(&semantic)?,
+                    &super::body_assets::typed_references(semantic)?,
                 )
                 .await?;
             }
@@ -1325,48 +1381,6 @@ async fn promote_objects(
         }
     }
     Ok((created, reused))
-}
-
-pub(crate) fn reconstruct_head(
-    package: &[u8],
-    manifest: &ExportPackageManifest,
-    object: &PackageObject,
-) -> Result<Vec<u8>, ApiError> {
-    let snapshot_path = format!("documents/{}/snapshot.bin", object.source_document_id);
-    let snapshot = member_bytes(package, &snapshot_path)?;
-    let mut engine = LoroCollabEngine::load(&snapshot)
-        .map_err(|_| ApiError::checksum_mismatch("package snapshot cannot be decoded"))?;
-    let prefix = format!("documents/{}/updates/", object.source_document_id);
-    let mut updates: Vec<_> = manifest
-        .members
-        .iter()
-        .filter(|member| member.path.starts_with(&prefix))
-        .map(|member| {
-            let seq = member
-                .path
-                .strip_prefix(&prefix)
-                .and_then(|tail| tail.strip_suffix(".bin"))
-                .and_then(|value| value.parse::<i64>().ok())
-                .ok_or_else(|| ApiError::unsupported_format("update sequence path is invalid"))?;
-            Ok((seq, member.path.as_str()))
-        })
-        .collect::<Result<_, ApiError>>()?;
-    updates.sort_unstable_by_key(|(seq, _)| *seq);
-    let first_seq = object
-        .accepted_seq
-        .saturating_sub(i64::try_from(updates.len()).unwrap_or(i64::MAX))
-        .saturating_add(1);
-    for (index, (seq, path)) in updates.into_iter().enumerate() {
-        if seq != first_seq.saturating_add(i64::try_from(index).unwrap_or(i64::MAX)) {
-            return Err(ApiError::checksum_mismatch("package update tail has a sequence gap"));
-        }
-        engine
-            .import_update(&member_bytes(package, path)?)
-            .map_err(|_| ApiError::checksum_mismatch("package update cannot be applied"))?;
-    }
-    engine
-        .export_snapshot()
-        .map_err(|_| ApiError::checksum_mismatch("package head cannot be compacted"))
 }
 
 async fn promote_relations<C: ConnectionTrait>(
@@ -1482,12 +1496,6 @@ pub(crate) fn sanitize_governance(value: &Value) -> Result<Value, ApiError> {
         object.remove(key);
     }
     Ok(Value::Object(object))
-}
-
-fn decode_frontier(encoded: &str) -> Result<Vec<u8>, ApiError> {
-    base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|_| ApiError::unsupported_format("accepted frontier is not valid base64"))
 }
 
 fn parse_manifest_uuid(manifest: &ExportPackageManifest) -> Result<Uuid, ApiError> {
@@ -1614,11 +1622,52 @@ mod tests {
     };
     use crate::flow::event_origin::{CommandOrigin, EventSurface};
     use crate::flow::export::{CreateExportRequest, ExportPrincipal, ExportScope, create_package_export};
+    use crate::flow::package::{PackageMemberInput, build_package};
     use crate::routes::context::tenant_fixture::{exec, scratch, seed_tenant};
+    use base64::Engine as _;
     use platform::{
         app::AppState,
         config::{AppConfig, Secret},
     };
+
+    /// In-process replay of an uploaded document, for the unit tests of the fingerprints and of the
+    /// host's shadow-root check on fixtures. Production never decodes uploaded bytes here: the
+    /// isolated worker does (`import_replay`).
+    fn reconstruct_head(
+        package: &[u8],
+        manifest: &ExportPackageManifest,
+        object: &PackageObject,
+    ) -> Result<Vec<u8>, ApiError> {
+        let snapshot_path = format!("documents/{}/snapshot.bin", object.source_document_id);
+        let snapshot = member_bytes(package, &snapshot_path)?;
+        let mut engine = LoroCollabEngine::load(&snapshot)
+            .map_err(|_| ApiError::checksum_mismatch("package snapshot cannot be decoded"))?;
+        let prefix = format!("documents/{}/updates/", object.source_document_id);
+        let mut updates: Vec<_> = manifest
+            .members
+            .iter()
+            .filter(|member| member.path.starts_with(&prefix))
+            .map(|member| {
+                let seq = member
+                    .path
+                    .strip_prefix(&prefix)
+                    .and_then(|tail| tail.strip_suffix(".bin"))
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .ok_or_else(|| ApiError::unsupported_format("update sequence path is invalid"))?;
+                Ok((seq, member.path.as_str()))
+            })
+            .collect::<Result<_, ApiError>>()?;
+        updates.sort_unstable_by_key(|(seq, _)| *seq);
+        for (_, path) in updates {
+            engine
+                .import_update(&member_bytes(package, path)?)
+                .map_err(|_| ApiError::checksum_mismatch("package update cannot be applied"))?;
+        }
+        super::super::package::require_no_shadow_roots(&engine)?;
+        engine
+            .export_snapshot()
+            .map_err(|_| ApiError::checksum_mismatch("package head cannot be compacted"))
+    }
 
     #[test]
     fn owned_v1_browser_package_uses_exact_legacy_fingerprint_and_v2_does_not() {
@@ -1736,6 +1785,142 @@ mod tests {
             package_semantic_hash(&engine, &v2).unwrap(),
             plan.objects[0].semantic_hash
         );
+    }
+
+    /// The stored legacy browser package, rebuilt with `snapshot` as its document snapshot and,
+    /// when given, `tail` as the single update after it.
+    fn rebuilt_package(snapshot: &[u8], tail: Option<&[u8]>) -> (Vec<u8>, String) {
+        rebuilt_package_with_frontier(snapshot, tail, None)
+    }
+
+    /// [`rebuilt_package`] whose object names `frontier` as its accepted frontier, for a snapshot
+    /// that is not the one of the stored fixture.
+    fn rebuilt_package_with_frontier(
+        snapshot: &[u8],
+        tail: Option<&[u8]>,
+        frontier: Option<&[u8]>,
+    ) -> (Vec<u8>, String) {
+        let path = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/flow-v2/legacy-browser-package-v1"
+        ));
+        let bytes = std::fs::read(path.join("package.zip")).unwrap();
+        let contract: Value = serde_json::from_slice(&std::fs::read(path.join("contract.json")).unwrap()).unwrap();
+        let plan = parse_plan(&bytes, contract["package_sha256"].as_str().unwrap()).unwrap();
+        let document = plan.objects[0].source_document_id;
+        let mut members = Vec::new();
+        for member in &plan.verified.manifest.members {
+            let mut body = if member.kind == "snapshot" {
+                snapshot.to_vec()
+            } else {
+                member_bytes(&bytes, &member.path).unwrap()
+            };
+            if member.kind == "object" && (tail.is_some() || frontier.is_some()) {
+                let mut object: Value = serde_json::from_slice(&body).unwrap();
+                if tail.is_some() {
+                    object["accepted_seq"] = json!(1);
+                }
+                if let Some(frontier) = frontier {
+                    object["accepted_frontier"] = json!(base64::engine::general_purpose::STANDARD.encode(frontier));
+                }
+                body = serde_jcs::to_vec(&object).unwrap();
+            }
+            members.push(PackageMemberInput {
+                path: member.path.clone(),
+                kind: member.kind.clone(),
+                bytes: body,
+            });
+        }
+        if let Some(tail) = tail {
+            members.push(PackageMemberInput {
+                path: format!("documents/{document}/updates/1.bin"),
+                kind: "update".into(),
+                bytes: tail.to_vec(),
+            });
+            members.push(PackageMemberInput {
+                path: "history/events.jsonl".into(),
+                kind: "event".into(),
+                bytes: Vec::new(),
+            });
+        }
+        let mut manifest = plan.verified.manifest;
+        if tail.is_some() {
+            manifest.history.included = true;
+            manifest.counts.updates = 1;
+            manifest.history.through_seq_by_document.insert(document.to_string(), 1);
+        }
+        let built = build_package(manifest, members).unwrap();
+        (built.bytes, built.package_sha256)
+    }
+
+    fn reconstruct(package: (Vec<u8>, String)) -> Result<Vec<u8>, ApiError> {
+        let (bytes, hash) = package;
+        let plan = parse_plan(&bytes, &hash)?;
+        reconstruct_head(&bytes, &plan.verified.manifest, &plan.objects[0])
+    }
+
+    fn assert_shadow_refusal(outcome: Result<Vec<u8>, ApiError>, what: &str) {
+        let error = outcome.expect_err(what);
+        assert_eq!(error.kind(), crate::error::ApiErrorKind::InvalidUpdate, "{what}");
+        let rendered = format!("{error:?}");
+        assert!(rendered.contains("reserved_root_container_type"), "{what}: {rendered}");
+    }
+
+    /// An uploaded document that carries a shadow root is refused with a typed error naming the
+    /// reason, whether the root sits in the uploaded snapshot or arrives in its uploaded tail. The
+    /// same package without the shadow is accepted as before.
+    #[test]
+    fn a_package_document_with_a_shadow_root_is_refused() {
+        let clean = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot"
+        ))
+        .unwrap();
+        // Unmodified: accepted, with and without an update tail.
+        reconstruct(rebuilt_package(&clean, None)).unwrap();
+        let benign = {
+            let doc = loro::LoroDoc::new();
+            doc.import(&clean).unwrap();
+            doc.set_peer_id(9_100_000).unwrap();
+            let from = doc.oplog_vv();
+            doc.get_map("scratch_root").insert("k", 1).unwrap();
+            doc.commit();
+            doc.export(loro::ExportMode::updates(&from)).unwrap()
+        };
+        reconstruct(rebuilt_package(&clean, Some(&benign))).unwrap();
+
+        for (name, kind) in [
+            ("flow_editor_structure_meta", "text"),
+            ("doc", "list"),
+            ("order", "text"),
+        ] {
+            let shadow_update = |base: &[u8]| {
+                let doc = loro::LoroDoc::new();
+                doc.import(base).unwrap();
+                doc.set_peer_id(9_100_001).unwrap();
+                let from = doc.oplog_vv();
+                match kind {
+                    "text" => doc.get_text(name).insert(0, "x").unwrap(),
+                    _ => doc.get_list(name).insert(0, 1).unwrap(),
+                }
+                doc.commit();
+                doc.export(loro::ExportMode::updates(&from)).unwrap()
+            };
+            // In the uploaded snapshot (state and history).
+            let doc = loro::LoroDoc::new();
+            doc.import(&clean).unwrap();
+            doc.import(&shadow_update(&clean)).unwrap();
+            let with_shadow = doc.export(loro::ExportMode::Snapshot).unwrap();
+            assert_shadow_refusal(
+                reconstruct(rebuilt_package(&with_shadow, None)),
+                &format!("snapshot with a shadow {name}"),
+            );
+            // In the uploaded update tail only.
+            assert_shadow_refusal(
+                reconstruct(rebuilt_package(&clean, Some(&shadow_update(&clean)))),
+                &format!("tail with a shadow {name}"),
+            );
+        }
     }
 
     #[test]
@@ -1992,6 +2177,10 @@ mod tests {
 
     #[tokio::test]
     async fn flow_package_import_preview_writes_no_canonical_state_and_commit_remaps_exact_document_heads() {
+        if !cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+            return;
+        }
         let Some(scratch) = scratch("flow_package_import_roundtrip").await else {
             eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
             return;
@@ -2191,6 +2380,10 @@ mod tests {
 
     #[tokio::test]
     async fn flow_package_import_promotion_fault_rolls_back_every_canonical_row_and_completion_event() {
+        if !cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+            return;
+        }
         let Some(scratch) = scratch("flow_package_import_rollback").await else {
             eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
             return;
@@ -2236,6 +2429,136 @@ mod tests {
                 "fault point {point:?}"
             );
         }
+        scratch.drop_self().await;
+    }
+
+    /// A page whose one block is one character over `text_block_chars_max` in the snapshot of its
+    /// upload, followed by a small update: a document the product cannot write (a write above the
+    /// limit is refused) and an upload can carry, because nothing but the import window bounds the
+    /// content of a snapshot. Returns the snapshot, the tail and the frontier of the head.
+    fn oversized_page_upload() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut engine = LoroCollabEngine::new_empty(1);
+        engine.initialize_page_editor().unwrap();
+        let id = collab_core::NodeId::from("b00000");
+        engine
+            .apply_content_operation(&collab_core::Operation::CreateNode {
+                id: id.clone(),
+                parent: None,
+                index: 0,
+                kind: collab_core::NodeKind::Block,
+            })
+            .unwrap();
+        engine
+            .apply_content_operation(&collab_core::Operation::InsertText {
+                id,
+                index: 0,
+                text: "x".repeat(collab_core::limits::TEXT_BLOCK_CHARS_MAX + 1),
+            })
+            .unwrap();
+        let snapshot = engine.export_snapshot().unwrap();
+        let before = engine.frontier();
+        engine.set_title("after the snapshot").unwrap();
+        (
+            snapshot,
+            engine.export_from(&before).unwrap(),
+            engine.frontier().as_bytes().to_vec(),
+        )
+    }
+
+    async fn counted(db: &DatabaseConnection, table: &str) -> i64 {
+        db.query_one(Statement::from_string(
+            DbBackend::Postgres,
+            format!("SELECT count(*)::bigint AS n FROM {table}"),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "n")
+        .unwrap()
+    }
+
+    /// A-2: an upload whose head is above a documented content limit is refused as `limit_exceeded`
+    /// naming the limit, every time, and nothing is stored: no object, no document, no job.
+    #[tokio::test]
+    async fn flow_package_import_refuses_a_snapshot_over_a_content_limit_and_stores_nothing() {
+        if !cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
+            return;
+        }
+        let Some(scratch) = scratch("flow_package_import_limit").await else {
+            eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
+            return;
+        };
+        crate::flow::scope_runtime::fixture::register_running_readers(&scratch.db).await;
+        let state = state_for(scratch.db.clone());
+        let (workspace, owner) = enabled_workspace(&state, "package_limit").await;
+        let (snapshot, tail, frontier) = oversized_page_upload();
+        let package = rebuilt_package_with_frontier(&snapshot, Some(&tail), Some(&frontier)).0;
+        let before = canonical_count(&state.db, workspace).await;
+        let (_, commit) = prepare_preview(&state.db, workspace, owner, package, "limit").await;
+        for attempt in 0..2 {
+            let error = commit_package_import(&state.db, &commit)
+                .await
+                .expect_err("an upload over a content limit must be refused");
+            assert_eq!(
+                error.kind(),
+                crate::error::ApiErrorKind::LimitExceeded,
+                "attempt {attempt}: {error:?}"
+            );
+            let ApiError::Typed { details, .. } = &error else {
+                panic!("a typed error");
+            };
+            let details = details.as_ref().unwrap();
+            assert_eq!(details["limit_kind"], "text_block_chars");
+            assert_eq!(details["limit"], collab_core::limits::TEXT_BLOCK_CHARS_MAX);
+        }
+        assert_eq!(canonical_count(&state.db, workspace).await, before);
+        for table in ["flow_import_jobs", "flow_import_lineage"] {
+            assert_eq!(counted(&state.db, table).await, 0, "{table}");
+        }
+        scratch.drop_self().await;
+    }
+
+    /// The same package, valid, off Linux: the isolated worker does not run there, so the import is
+    /// refused as a platform defect and never decodes the upload in the API process.
+    #[tokio::test]
+    async fn flow_package_import_is_refused_where_the_worker_does_not_run() {
+        if cfg!(target_os = "linux") {
+            eprintln!("NOT EXECUTED: this refusal is the behaviour of a build without the worker");
+            return;
+        }
+        let Some(scratch) = scratch("flow_package_import_platform").await else {
+            eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
+            return;
+        };
+        crate::flow::scope_runtime::fixture::register_running_readers(&scratch.db).await;
+        let state = state_for(scratch.db.clone());
+        let (workspace, owner) = enabled_workspace(&state, "package_platform").await;
+        let clean = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot"
+        ))
+        .unwrap();
+        let tail = {
+            let doc = loro::LoroDoc::new();
+            doc.import(&clean).unwrap();
+            doc.set_peer_id(9_100_000).unwrap();
+            let from = doc.oplog_vv();
+            doc.get_map("scratch_root").insert("k", 1).unwrap();
+            doc.commit();
+            doc.export(loro::ExportMode::updates(&from)).unwrap()
+        };
+        let package = rebuilt_package(&clean, Some(&tail)).0;
+        let before = canonical_count(&state.db, workspace).await;
+        let (_, commit) = prepare_preview(&state.db, workspace, owner, package, "platform").await;
+        let error = commit_package_import(&state.db, &commit).await.expect_err("refused");
+        assert_eq!(error.kind(), crate::error::ApiErrorKind::ServerRejected, "{error:?}");
+        assert!(
+            format!("{error:?}").contains("isolated_apply_unsupported_platform"),
+            "{error:?}"
+        );
+        assert_eq!(canonical_count(&state.db, workspace).await, before);
+        assert_eq!(counted(&state.db, "flow_import_jobs").await, 0);
         scratch.drop_self().await;
     }
 }

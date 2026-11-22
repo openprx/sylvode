@@ -190,10 +190,7 @@ suite.check('moving a block range accounts for the hole it leaves', () => {
 });
 
 suite.check('navigator pages append by id and scroll loads near the bottom', () => {
-	const merged = mergeObjectPage(
-		[{ id: 'a' }, { id: 'b' }],
-		[{ id: 'b' }, { id: 'c' }]
-	);
+	const merged = mergeObjectPage([{ id: 'a' }, { id: 'b' }], [{ id: 'b' }, { id: 'c' }]);
 	assertDeepEqual(
 		merged.map((item) => item.id),
 		['a', 'b', 'c'],

@@ -241,15 +241,17 @@ const wasmLoaderKey = Object.keys(manifest).find(
 	(key) => wasmAsset && manifest[key].assets?.includes(wasmAsset)
 );
 const ENGINE_KEYS = Object.keys(manifest).filter(
-	(key) => key === LORO_BINDING || key === wasmLoaderKey || /node_modules\/(loro-crdt|prosemirror-)/.test(key)
+	(key) =>
+		key === LORO_BINDING ||
+		key === wasmLoaderKey ||
+		/node_modules\/(loro-crdt|prosemirror-)/.test(key)
 );
 
 /** Maps a route source path to its generated node index, via `.svelte-kit/generated`. */
 function nodeKeyForRoute(routeSuffix: string): string {
 	for (const entry of readdirSync(GENERATED_NODES)) {
 		const source = readFileSync(join(GENERATED_NODES, entry), 'utf8');
-		if (source.includes(routeSuffix))
-			return `${GENERATED_CLIENT}/nodes/${entry}`;
+		if (source.includes(routeSuffix)) return `${GENERATED_CLIENT}/nodes/${entry}`;
 	}
 	throw new Error(`no generated node imports a route matching ${routeSuffix}`);
 }
@@ -286,8 +288,14 @@ suite.check('the engine reaches the Flow route only through a dynamic import', (
 	);
 	assert(wasmLoaderKey !== undefined, 'no emitted chunk loads the Loro WASM asset');
 	const dynamicEntries = [...closure].flatMap((key) => manifest[key]?.dynamicImports ?? []);
-	assert(dynamicEntries.includes(LORO_BINDING), 'the Flow route does not dynamically import the editor binding');
-	assert(staticClosure(LORO_BINDING).has(wasmLoaderKey), 'the editor binding does not load the Loro WASM chunk');
+	assert(
+		dynamicEntries.includes(LORO_BINDING),
+		'the Flow route does not dynamically import the editor binding'
+	);
+	assert(
+		staticClosure(LORO_BINDING).has(wasmLoaderKey),
+		'the editor binding does not load the Loro WASM chunk'
+	);
 	const adapter = readFileSync(join(ROOT, 'src/lib/flow/editor-adapter.ts'), 'utf8');
 	for (const module of [
 		'./vendor/loro-prosemirror/index',
@@ -472,7 +480,9 @@ if (!chrome) {
 				);
 				assertEqual(parsed.violations, 0, 'instantiating the engine raised a CSP violation');
 				assert(
-					site.requests.some((request) => request.path === '/' + wasmAsset && request.status === 200),
+					site.requests.some(
+						(request) => request.path === '/' + wasmAsset && request.status === 200
+					),
 					'the browser did not load the WASM asset from the static site'
 				);
 				engineExercisedCleanly = true;

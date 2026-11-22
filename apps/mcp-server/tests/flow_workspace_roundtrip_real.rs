@@ -6,6 +6,7 @@
     reason = "gate harness emits one machine-readable result and an explicit unavailable-environment notice"
 )]
 
+use platform::config::McpToolMode;
 use std::{collections::BTreeMap, error::Error, time::Duration};
 
 use api::{
@@ -338,18 +339,24 @@ async fn full_workspace_roundtrip_compares_every_document_graph_lineage_and_repo
     let server_task = tokio::spawn(async move {
         let _ = axum::serve(listener, package_router(state)).await;
     });
-    let source = McpServer::new(OpenPrClient::new(ClientConfig {
-        base_url: format!("http://{address}"),
-        credential: Some(Secret::new(source_token)),
-        workspace_id: source_workspace.to_string(),
-        transport_label: TRANSPORT_LABEL_STDIO,
-    })?);
-    let target = McpServer::new(OpenPrClient::new(ClientConfig {
-        base_url: format!("http://{address}"),
-        credential: Some(Secret::new(target_token)),
-        workspace_id: target_workspace.to_string(),
-        transport_label: TRANSPORT_LABEL_STDIO,
-    })?);
+    let source = McpServer::new(
+        OpenPrClient::new(ClientConfig {
+            base_url: format!("http://{address}"),
+            credential: Some(Secret::new(source_token)),
+            workspace_id: source_workspace.to_string(),
+            transport_label: TRANSPORT_LABEL_STDIO,
+        })?,
+        McpToolMode::Full,
+    );
+    let target = McpServer::new(
+        OpenPrClient::new(ClientConfig {
+            base_url: format!("http://{address}"),
+            credential: Some(Secret::new(target_token)),
+            workspace_id: target_workspace.to_string(),
+            transport_label: TRANSPORT_LABEL_STDIO,
+        })?,
+        McpToolMode::Full,
+    );
 
     let exported = result_json(
         &source

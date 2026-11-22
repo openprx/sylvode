@@ -59,6 +59,8 @@ pub struct RestoreVersionBody {
 
 #[derive(Debug, Deserialize)]
 pub struct TrashQuery {
+    /// Limits the listing to the archived objects of this project.
+    pub project_id: Option<Uuid>,
     pub cursor: Option<String>,
     pub limit: Option<u64>,
 }
@@ -196,7 +198,9 @@ pub async fn get_flow_trash(
     let extensions = build_auth_extensions(claims, bot);
     for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
         let access = policy::begin_flow_read(&state, &extensions, workspace_id).await?;
-        let Some(page) = trash::list_trash(&state, &access, query.cursor.as_deref(), query.limit).await? else {
+        let Some(page) =
+            trash::list_trash(&state, &access, query.project_id, query.cursor.as_deref(), query.limit).await?
+        else {
             continue;
         };
         return Ok(ApiResponse::success(page));

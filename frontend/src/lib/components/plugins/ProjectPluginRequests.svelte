@@ -2,17 +2,11 @@
 	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { apiClient } from '#lib/api/client.js';
-	import {
-		isV3,
-		pluginLibraryApi,
-		type AnyPluginManifest,
-		type ProjectPluginRequest
-	} from '#lib/api/plugin-packages.js';
+	import { pluginLibraryApi, type ProjectPluginRequest } from '#lib/api/plugin-packages.js';
 	import { grantOptionsV3, slotLabelKey } from '#lib/plugins/layout-v3.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 
 	let { projectId, onApproved }: { projectId: string; onApproved: () => Promise<void> } = $props();
-	const asAny = (value: AnyPluginManifest) => value;
 	let requests = $state<ProjectPluginRequest[]>([]);
 	let offered = $state(false);
 	let failed = $state(false);
@@ -72,21 +66,21 @@
 {#if offered || failed}
 	<section
 		aria-labelledby="plugin-library-requests"
-		class="space-y-3 rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+		class="space-y-3 rounded-card border border-line bg-raised p-4"
 	>
 		<h2 id="plugin-library-requests" class="font-semibold">{$t('plugins.library.requests')}</h2>
 		{#if failed}
-			<p role="alert" class="text-sm text-red-800 dark:text-red-200">
+			<p role="alert" class="text-sm text-danger">
 				{$t('plugins.library.requestsFailed')}
 			</p>
 			<Button variant="secondary" onclick={load}>{$t('plugins.library.retry')}</Button>
 		{:else if !requests.length}
-			<p class="text-sm text-slate-600 dark:text-slate-300">{$t('plugins.library.noRequests')}</p>
+			<p class="text-sm text-fg-muted">{$t('plugins.library.noRequests')}</p>
 		{/if}
 		{#if requests.length}
-			<ul class="divide-y divide-slate-200 dark:divide-slate-700">
+			<ul class="divide-y divide-line">
 				{#each requests as item (item.source_id)}
-					{@const manifest = asAny(item.manifest)}
+					{@const manifest = item.manifest}
 					<li class="space-y-2 py-3">
 						<div class="flex flex-wrap items-center justify-between gap-2">
 							<div>
@@ -106,62 +100,48 @@
 							</Button>
 						</div>
 						{#if selected?.source_id === item.source_id}
-							<div class="space-y-3 border-l-2 border-blue-500 pl-3 text-sm">
+							<div class="space-y-3 border-l-2 border-line-strong pl-3 text-sm">
 								<p>{$t('plugins.library.submittedBy', { values: { owner: item.owner_id } })}</p>
 								<p class="break-all font-mono text-xs">SHA-256 {item.package_sha256}</p>
-								{#if isV3(manifest)}
-									<p>{$t(`plugins.layoutV3.profile.${manifest.profile}`)}</p>
-									<h4 class="font-medium">{$t('plugins.contributedLocations')}</h4>
-									<ul class="list-disc pl-5">
-										{#each manifest.contributions as contribution (contribution.id)}
-											<li>
-												{contribution.label} · {$t(slotLabelKey(contribution.slot))} ·
-												{contribution.route
-													? $t('plugins.layoutV3.route', { values: { route: contribution.route } })
-													: $t('plugins.layoutV3.form', {
-															values: { form: contribution.form_key }
-														})}
-											</li>
-										{/each}
-									</ul>
-									<h4 class="font-medium">{$t('plugins.layoutV3.grantsTitle')}</h4>
-									<ul class="list-disc pl-5">
-										{#each grantOptionsV3(manifest) as option (option.grant)}
-											<li>
-												{#if option.kind === 'display'}
-													{$t('plugins.layoutV3.grant.display')}
-												{:else if option.kind === 'read' && option.read}
-													{$t('plugins.layoutV3.grant.read', {
-														values: {
-															fields: option.read.fields.join(', '),
-															form: option.read.form_key
-														}
+								<p>{$t(`plugins.layoutV3.profile.${manifest.profile}`)}</p>
+								<h4 class="font-medium">{$t('plugins.contributedLocations')}</h4>
+								<ul class="list-disc pl-5">
+									{#each manifest.contributions as contribution (contribution.id)}
+										<li>
+											{contribution.label} · {$t(slotLabelKey(contribution.slot))} ·
+											{contribution.route
+												? $t('plugins.layoutV3.route', { values: { route: contribution.route } })
+												: $t('plugins.layoutV3.form', {
+														values: { form: contribution.form_key }
 													})}
-												{:else}
-													{$t(`plugins.capability.${option.grant}`)}
-												{/if}
-											</li>
-										{/each}
-									</ul>
-								{:else}
-									<p>
-										{$t('plugins.creator.targetForm', {
-											values: { form: manifest.ui.form_key }
-										})}
-									</p>
-									<h4 class="font-medium">{$t('plugins.requestedCapabilities')}</h4>
-									<ul class="list-disc pl-5">
-										{#each manifest.capabilities as capability (capability.name)}
-											<li>{$t(`plugins.capability.${capability.name}`)}</li>
-										{/each}
-									</ul>
-								{/if}
+										</li>
+									{/each}
+								</ul>
+								<h4 class="font-medium">{$t('plugins.layoutV3.grantsTitle')}</h4>
+								<ul class="list-disc pl-5">
+									{#each grantOptionsV3(manifest) as option (option.grant)}
+										<li>
+											{#if option.kind === 'display'}
+												{$t('plugins.layoutV3.grant.display')}
+											{:else if option.kind === 'read' && option.read}
+												{$t('plugins.layoutV3.grant.read', {
+													values: {
+														fields: option.read.fields.join(', '),
+														form: option.read.form_key
+													}
+												})}
+											{:else}
+												{$t(`plugins.capability.${option.grant}`)}
+											{/if}
+										</li>
+									{/each}
+								</ul>
 								<p>{$t('plugins.library.approvalHelp')}</p>
 								<div class="flex flex-wrap gap-2">
-									<Button disabled={busy} onclick={() => review(true)}
+									<Button variant="primary" disabled={busy} onclick={() => review(true)}
 										>{$t('plugins.library.approve')}</Button
 									>
-									<Button variant="danger" disabled={busy} onclick={() => review(false)}
+									<Button variant="danger-quiet" disabled={busy} onclick={() => review(false)}
 										>{$t('plugins.library.reject')}</Button
 									>
 									<Button
@@ -178,7 +158,7 @@
 				{/each}
 			</ul>
 		{/if}
-		{#if error}<p role="alert" class="text-sm text-red-800 dark:text-red-200">{$t(error)}</p>{/if}
+		{#if error}<p role="alert" class="text-sm text-danger">{$t(error)}</p>{/if}
 		{#if notice}<p role="status" class="text-sm">{$t(notice)}</p>{/if}
 	</section>
 {/if}

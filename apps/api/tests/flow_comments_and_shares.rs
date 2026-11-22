@@ -199,7 +199,7 @@ async fn comments_and_public_links_follow_object_permissions() {
     }
     exec(
         db,
-        "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled, default_member_level) VALUES ($1, true, 'view')",
+        "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled, default_member_level) VALUES ($1, true, 'view') ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled, default_member_level = EXCLUDED.default_member_level",
         vec![workspace_id.into()],
     )
     .await;

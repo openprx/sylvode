@@ -22,8 +22,14 @@ PATTERN="${PRIVATE_IPV4}|${TOKEN_LITERAL}"
 # path<TAB>exact line text<TAB>reason
 EXEMPTIONS=$'apps/api/src/outbound.rs\t            "10.0.0.1",\ttest input: the outbound URL guard must refuse a private address
 frontend/docker-entrypoint.d/10-resolver.sh\t# and per host (podman hands out 10.89.0.1 on one machine and 10.89.3.1 on another), so\texplains why the resolver address is discovered at runtime instead of hard-coded
-apps/webhook/src/config.rs\t            "192.168.1.5:9090",\ttest input: allow_unsigned on a LAN listen address must be refused without the acknowledgement
-apps/webhook/src/config.rs\t            "ws://10.0.0.5:8080/t",\ttest input: a plain ws:// tunnel URL to a private, non-loopback host must be refused without the acknowledgement'
+apps/runner/src/config.rs\t            "192.168.1.5:9090",\ttest input: allow_unsigned on a LAN listen address must be refused without the acknowledgement
+apps/runner/src/config.rs\t            "ws://10.0.0.5:8080/t",\ttest input: a plain ws:// tunnel URL to a private, non-loopback host must be refused without the acknowledgement
+apps/api/src/outbound.rs	        let private: std::net::SocketAddr = "10.1.2.3:443".parse().expect("addr");	test input: a name that resolves to a private address among public ones must be refused
+apps/api/src/services/bot_connections.rs	        assert!(validate_runner_url_with("http://10.0.0.5:9", "", true).await.is_ok());	test input: the private switch lets a private runner address through
+apps/runner/src/config.rs	            "http://10.1.2.3:8083",	test input: a plain http:// API address on a private, non-loopback host must be refused without the acknowledgement
+apps/api/src/security.rs	        let h = headers(&[("x-forwarded-for", "9.9.9.9, 203.0.113.7, 172.18.0.5")]);	test input: a container-bridge hop must be recognised as trusted by the default trusted-proxy ranges
+apps/api/src/security.rs	            client_ip(&h, Some(peer("172.18.0.2:5555")), &trusted),	test input: a container-bridge peer must be trusted by the default trusted-proxy ranges
+apps/api/src/security.rs	        let h = headers(&[("x-forwarded-for", "127.0.0.2, 172.17.0.1")]);	test input: an all-trusted chain made of loopback and container-bridge addresses covered by the default trusted-proxy ranges'
 
 exempt() {
   local rel=$1 text=$2 e_path e_text e_reason

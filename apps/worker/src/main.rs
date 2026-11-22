@@ -10,7 +10,9 @@ use platform::{
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 mod ai_tasks;
+mod alert_followup;
 mod flow;
+mod oauth_feed;
 
 /// Operation-log retention runs once per day; the first run happens at worker startup.
 const OPERATION_LOG_CLEANUP_INTERVAL: std::time::Duration = std::time::Duration::from_hours(24);
@@ -18,8 +20,7 @@ const OPERATION_LOG_CLEANUP_INTERVAL: std::time::Duration = std::time::Duration:
 #[derive(Debug, Parser)]
 struct WorkerArgs {
     /// Path of the configuration file. Defaults to `config/sylvode.toml` relative to the working
-    /// directory, with `config/openpr.toml` as a legacy fallback. The worker reads no environment
-    /// variables, so this file is its only input.
+    /// directory. The worker reads no environment variables, so this file is its only input.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
     #[arg(long, default_value_t = 4)]
@@ -59,16 +60,14 @@ async fn main() -> anyhow::Result<()> {
     // Initialised only once the file parsed, so a configuration error is reported by the process
     // exit rather than swallowed by a subscriber the file was supposed to describe.
     logging::init(&config.logging, "worker")?;
-    // Emitted only now: the logger it goes through did not exist while the file was loading.
-    if let Some(notice) = platform::config::take_legacy_discovery_notice() {
-        tracing::warn!("{notice}");
-    }
     // from_config first: it reports a missing database url and signing key together, so the
     // operator fixes both in one pass instead of being walked through them one at a time.
     let cfg = AppConfig::from_config(&config, "worker", "0.0.0.0:8081")?;
     let db = connect_db(&config.database_runtime()?).await?;
     api::flow::scope_runtime::spawn(db.clone(), "worker").await?;
     api::flow::scope_runtime::spawn(db.clone(), "maintenance").await?;
+    tokio::spawn(oauth_feed::run(db.clone(), runtime.oauth.clone()));
+    tokio::spawn(alert_followup::run(db.clone(), runtime.inbound));
     let state = AppState {
         cfg: cfg.clone(),
         db: db.clone(),
@@ -114,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
         // Attempts nobody ended within the processing timeout are taken back first: re-queued
         // tasks are picked up again once their retry delay has passed, exhausted ones are failed.
         // `FOR UPDATE SKIP LOCKED` makes this safe to run from several worker replicas at once.
-        match ai_tasks::end_stalled_tasks(&state, ai_task_processing_timeout_secs, args.concurrency).await {
+        match ai_tasks::end_stalled_tasks(&state, args.concurrency).await {
             Ok(0) => {}
             Ok(ended) => tracing::info!(ended, "stalled AI task attempts ended"),
             Err(err) => tracing::warn!(error = %err, "stalled AI task sweep failed"),
@@ -125,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("worker shutting down");
                 break;
             }
-            result = ai_tasks::process_pending_tasks(&state, &client, args.concurrency) => {
+            result = ai_tasks::process_pending_tasks(&state, args.concurrency, ai_task_processing_timeout_secs) => {
                 if let Err(err) = result {
                     tracing::warn!(error = %err, "task polling failed");
                 }

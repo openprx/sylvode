@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED_TOOL_COUNT="$(python3 "$ROOT_DIR/skills/openpr-mcp/scripts/expected-tool-count.py")"
+EXPECTED_TOOL_COUNT="$(python3 "$ROOT_DIR/skills/sylvode-mcp/scripts/expected-tool-count.py")"
 
 usage() {
   cat <<'EOF'
@@ -148,6 +148,7 @@ for path in \
   apps/api/src/routes/form.rs \
   apps/api/src/routes/plugin.rs \
   apps/api/src/routes/webhook.rs \
+  apps/api/src/services/webhooks.rs \
   apps/api/src/routes/check_result.rs \
   apps/api/src/routes/project_type.rs \
   apps/api/src/routes/scenario_template.rs \
@@ -242,9 +243,9 @@ contains "auth route persists notification preferences" "apps/api/src/routes/aut
 
 printf '\nWorker and event delivery coverage:\n'
 contains "worker emits AI task business events" "apps/worker/src/ai_tasks.rs" "ai_task.picked_up"
-contains "legacy webhook route emits created business events" "apps/api/src/routes/webhook.rs" "webhook.created"
-contains "legacy webhook route emits updated business events" "apps/api/src/routes/webhook.rs" "webhook.updated"
-contains "legacy webhook route emits deleted business events" "apps/api/src/routes/webhook.rs" "webhook.deleted"
+contains "webhook service emits created business events" "apps/api/src/services/webhooks.rs" "webhook.created"
+contains "webhook service emits updated business events" "apps/api/src/services/webhooks.rs" "webhook.updated"
+contains "webhook service emits deleted business events" "apps/api/src/services/webhooks.rs" "webhook.deleted"
 contains "check result route emits created business events" "apps/api/src/routes/check_result.rs" "check_result.created"
 contains "check result route emits proposed business events" "apps/api/src/routes/check_result.rs" "check_result.proposed"
 contains "check result route emits proposal business events" "apps/api/src/routes/check_result.rs" "proposal.created_from_check_result"
@@ -311,74 +312,11 @@ contains "MCP exposes plugin install" "apps/mcp-server/src/tools/plugins.rs" "pl
 contains "MCP exposes plugin invoke" "apps/mcp-server/src/tools/plugins.rs" "plugins.invoke"
 contains "MCP registry pins current tool count" "apps/mcp-server/src/tools/mod.rs" "tools.len(),"
 contains "MCP registry embeds its versioned surface snapshot" "apps/mcp-server/src/tools/mod.rs" 'include_str!("mcp-surface-v05.snapshot.md")'
-contains "MCP embedded skill guide exposes snapshot-derived tool count" "apps/mcp-server/src/server.rs" "## Tools ($EXPECTED_TOOL_COUNT)"
-contains "MCP embedded skill guide exposes universal forms" "apps/mcp-server/src/server.rs" "### Universal Forms:"
-contains "MCP embedded skill guide lists scenario install" "apps/mcp-server/src/server.rs" "scenario_templates.install"
-contains "MCP embedded skill guide lists forms.duplicate" "apps/mcp-server/src/server.rs" "forms.duplicate"
-contains "MCP embedded skill guide lists forms.create_from_template" "apps/mcp-server/src/server.rs" "forms.create_from_template"
-contains "MCP embedded skill guide lists form metadata tools" "apps/mcp-server/src/server.rs" "forms.schema_summary"
-contains "MCP embedded skill guide lists schema version tools" "apps/mcp-server/src/server.rs" "form_schema_versions.list"
-contains "MCP embedded skill guide lists form permission tools" "apps/mcp-server/src/server.rs" "form_permissions.get"
-contains "MCP embedded skill guide lists form attachment tools" "apps/mcp-server/src/server.rs" "form_attachments.create"
-contains "MCP embedded skill guide lists relation tools" "apps/mcp-server/src/server.rs" "form_records.relation_targets"
-contains "MCP embedded skill guide lists child lifecycle tools" "apps/mcp-server/src/server.rs" "form_records.child_archive"
-contains "MCP embedded skill guide lists import/export tools" "apps/mcp-server/src/server.rs" "form_records.import_commit"
-contains "MCP embedded skill guide exposes plugins" "apps/mcp-server/src/server.rs" "### Plugins:"
 contains "MCP AGENTS guide exposes snapshot-derived tool count" "apps/mcp-server/AGENTS.md" "$EXPECTED_TOOL_COUNT tools"
-contains "MCP AGENTS guide lists universal forms tools" "apps/mcp-server/AGENTS.md" "form_records.aggregate"
-contains "MCP AGENTS guide lists scenario install" "apps/mcp-server/AGENTS.md" "scenario_templates.install"
-contains "MCP AGENTS guide lists forms.duplicate" "apps/mcp-server/AGENTS.md" "forms.duplicate"
-contains "MCP AGENTS guide lists forms.create_from_template" "apps/mcp-server/AGENTS.md" "forms.create_from_template"
-contains "MCP AGENTS guide lists form metadata tools" "apps/mcp-server/AGENTS.md" "forms.schema_summary"
-contains "MCP AGENTS guide lists schema version tools" "apps/mcp-server/AGENTS.md" "form_schema_versions.list"
-contains "MCP AGENTS guide lists form permission tools" "apps/mcp-server/AGENTS.md" "form_permissions.get"
-contains "MCP AGENTS guide lists form attachment tools" "apps/mcp-server/AGENTS.md" "form_attachments.create"
-contains "MCP AGENTS guide lists relation tools" "apps/mcp-server/AGENTS.md" "form_records.relation_targets"
-contains "MCP AGENTS guide lists child lifecycle tools" "apps/mcp-server/AGENTS.md" "form_records.child_archive"
-contains "MCP AGENTS guide lists import/export tools" "apps/mcp-server/AGENTS.md" "form_records.import_commit"
-contains "MCP AGENTS guide lists plugin tools" "apps/mcp-server/AGENTS.md" "plugin_invocations.list"
-contains "MCP app README exposes snapshot-derived tool count" "apps/mcp-server/README.md" "$EXPECTED_TOOL_COUNT MCP Tools"
 contains "MCP app README exposes three transports" "apps/mcp-server/README.md" "Three Transport Modes"
-contains "MCP app README lists universal forms tools" "apps/mcp-server/README.md" "form_records.aggregate"
-contains "MCP app README lists scenario install" "apps/mcp-server/README.md" "scenario_templates.install"
-contains "MCP app README lists forms.duplicate" "apps/mcp-server/README.md" "forms.duplicate"
-contains "MCP app README lists forms.create_from_template" "apps/mcp-server/README.md" "forms.create_from_template"
-contains "MCP app README lists form metadata tools" "apps/mcp-server/README.md" "forms.schema_summary"
-contains "MCP app README lists schema version tools" "apps/mcp-server/README.md" "form_schema_versions.list"
-contains "MCP app README lists form permission tools" "apps/mcp-server/README.md" "form_permissions.get"
-contains "MCP app README lists form attachment tools" "apps/mcp-server/README.md" "form_attachments.create"
-contains "MCP app README lists relation tools" "apps/mcp-server/README.md" "form_records.relation_targets"
-contains "MCP app README lists child lifecycle tools" "apps/mcp-server/README.md" "form_records.child_archive"
-contains "MCP app README lists import/export tools" "apps/mcp-server/README.md" "form_records.import_commit"
-contains "MCP app README lists plugin tools" "apps/mcp-server/README.md" "plugin_invocations.list"
 contains "MCP app README uses Sylvode API client structure" "apps/mcp-server/README.md" "client/           # Sylvode API client helpers"
-contains "MCP skill guide exposes snapshot-derived tool count" "skills/openpr-mcp/SKILL.md" "enumerate all $EXPECTED_TOOL_COUNT tools"
-contains "MCP skill guide lists universal forms tools" "skills/openpr-mcp/SKILL.md" "form_records.aggregate"
-contains "MCP skill guide lists scenario install" "skills/openpr-mcp/SKILL.md" "scenario_templates.install"
-contains "MCP skill guide lists forms.duplicate" "skills/openpr-mcp/SKILL.md" "forms.duplicate"
-contains "MCP skill guide lists forms.create_from_template" "skills/openpr-mcp/SKILL.md" "forms.create_from_template"
-contains "MCP skill guide lists form metadata tools" "skills/openpr-mcp/SKILL.md" "forms.schema_summary"
-contains "MCP skill guide lists schema version tools" "skills/openpr-mcp/SKILL.md" "form_schema_versions.list"
-contains "MCP skill guide lists form permission tools" "skills/openpr-mcp/SKILL.md" "form_permissions.get"
-contains "MCP skill guide lists form attachment tools" "skills/openpr-mcp/SKILL.md" "form_attachments.create"
-contains "MCP skill guide lists relation tools" "skills/openpr-mcp/SKILL.md" "form_records.relation_targets"
-contains "MCP skill guide lists child lifecycle tools" "skills/openpr-mcp/SKILL.md" "form_records.child_archive"
-contains "MCP skill guide lists import/export tools" "skills/openpr-mcp/SKILL.md" "form_records.import_commit"
-contains "MCP skill guide lists plugin tools" "skills/openpr-mcp/SKILL.md" "plugins.install"
-contains "MCP skill validation derives the expected registry count" "skills/openpr-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
-contains "MCP regression derives the expected registry count" "skills/openpr-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
-contains "MCP regression checks universal forms registry tools" "skills/openpr-mcp/scripts/mcp-regression.py" "form_records.aggregate"
-contains "MCP regression checks scenario install" "skills/openpr-mcp/scripts/mcp-regression.py" "scenario_templates.install"
-contains "MCP regression checks forms.duplicate" "skills/openpr-mcp/scripts/mcp-regression.py" "forms.duplicate"
-contains "MCP regression checks forms.create_from_template" "skills/openpr-mcp/scripts/mcp-regression.py" "forms.create_from_template"
-contains "MCP regression checks form metadata tools" "skills/openpr-mcp/scripts/mcp-regression.py" "forms.schema_summary"
-contains "MCP regression checks schema version tools" "skills/openpr-mcp/scripts/mcp-regression.py" "form_schema_versions.list"
-contains "MCP regression checks form permission tools" "skills/openpr-mcp/scripts/mcp-regression.py" "form_permissions.get"
-contains "MCP regression checks form attachment tools" "skills/openpr-mcp/scripts/mcp-regression.py" "form_attachments.create"
-contains "MCP regression checks relation tools" "skills/openpr-mcp/scripts/mcp-regression.py" "form_records.relation_targets"
-contains "MCP regression checks child lifecycle tools" "skills/openpr-mcp/scripts/mcp-regression.py" "form_records.child_archive"
-contains "MCP regression checks import/export tools" "skills/openpr-mcp/scripts/mcp-regression.py" "form_records.import_commit"
-contains "MCP regression checks plugin registry tools" "skills/openpr-mcp/scripts/mcp-regression.py" "plugin_invocations.list"
+contains "MCP skill validation derives the expected registry count" "skills/sylvode-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
+contains "MCP regression derives the expected registry count" "skills/sylvode-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
 contains "API agent policy enables form template MCP tool" "apps/api/src/routes/context.rs" "forms.create_from_template"
 contains "API agent policy enables scenario template install tool" "apps/api/src/routes/context.rs" "scenario_templates.install"
 contains "API agent policy enables form schema version MCP tools" "apps/api/src/routes/context.rs" "form_schema_versions.list"
@@ -390,16 +328,12 @@ contains "API agent policy enables child lifecycle MCP tools" "apps/api/src/rout
 not_contains "MCP guides do not retain stale 82-tool heading" "apps/mcp-server/src/server.rs" "## Tools (82)"
 not_contains "MCP AGENTS guide does not retain stale 82-tool count" "apps/mcp-server/AGENTS.md" "82 tools"
 not_contains "MCP app README does not retain stale 82-tool count" "apps/mcp-server/README.md" "82 MCP Tools"
-not_contains "MCP skill guide does not retain stale 82-tool count" "skills/openpr-mcp/SKILL.md" "82 tools"
 not_contains "MCP guides do not retain stale 65-tool heading" "apps/mcp-server/src/server.rs" "## Tools (65)"
 not_contains "MCP AGENTS guide does not retain stale 65-tool count" "apps/mcp-server/AGENTS.md" "65 tools"
 not_contains "MCP app README does not retain stale 65-tool count" "apps/mcp-server/README.md" "65 MCP Tools"
 not_contains "MCP app README does not retain stale two-transport wording" "apps/mcp-server/README.md" "Two Transport Modes"
 not_contains "MCP app README does not expose direct db module" "apps/mcp-server/README.md" "src/db"
-not_contains "MCP skill guide does not retain stale 65-tool count" "skills/openpr-mcp/SKILL.md" "65 tools"
-not_contains "MCP validation does not accept stale 65-tool minimum" "skills/openpr-mcp/scripts/validate-mcp.sh" "-ge 65"
-contains "docs index records snapshot-derived MCP tool count" "docs/README.md" "MCP server ($EXPECTED_TOOL_COUNT tools"
-contains "docs index records snapshot-derived MCP regression count" "docs/README.md" "$EXPECTED_TOOL_COUNT-tool registry"
+not_contains "MCP validation does not accept stale 65-tool minimum" "skills/sylvode-mcp/scripts/validate-mcp.sh" "-ge 65"
 contains "docs index links implementation map" "docs/README.md" "universal-forms-implementation-map.md"
 not_contains "docs index does not retain stale 64-tool count" "docs/README.md" "64-tool"
 not_contains "docs index does not retain stale 64 MCP server count" "docs/README.md" "64 tools"
@@ -413,7 +347,9 @@ for path in \
   frontend/src/lib/utils/scenario-template.ts \
   'frontend/src/routes/(app)/settings/+page.svelte' \
   'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' \
-  frontend/scripts/smoke-forms-ui.mjs \
+  frontend/scripts/forms-smoke-server.mjs \
+  frontend/scripts/smoke-forms-page-interactions.mjs \
+  frontend/scripts/smoke-forms-record-list.mjs \
   frontend/scripts/smoke-project-template-wizard.mjs \
   frontend/scripts/smoke-template-work-items.mjs \
   frontend/scripts/smoke-restaurant-ordering.mjs; do
@@ -426,21 +362,30 @@ contains "frontend forms API previews record imports" "frontend/src/lib/api/form
 contains "frontend forms API commits record imports" "frontend/src/lib/api/forms.ts" "importRecords"
 contains "frontend forms API gets permissions" "frontend/src/lib/api/forms.ts" "getPermissions"
 contains "frontend forms API updates permissions" "frontend/src/lib/api/forms.ts" "updatePermissions"
-contains "frontend forms route loads form records" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "loadRecords"
-contains "frontend forms route supports record edit" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "editingRecordId"
-contains "frontend forms route supports record links" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "createRecordLink"
-contains "frontend forms route shows print jobs" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "print_job"
-contains "frontend forms route supports import modal" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "showImportRecords"
-contains "frontend forms route parses CSV imports" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "parseCsvImport"
-contains "frontend forms route supports permission panel" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "saveMemberPermissions"
-contains "frontend forms route renders permission actions" 'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' "formPermissionActions"
+contains "frontend forms route loads form records" frontend/src/lib/forms/state/loaders.ts "loadRecords"
+contains "frontend forms route supports record edit" frontend/src/lib/forms/state/forms-page-state.svelte.ts "editingRecordId"
+contains "frontend forms route supports record links" frontend/src/lib/forms/state/record-detail.ts "createRecordLink"
+contains "frontend forms route shows print jobs" frontend/src/lib/forms/state/forms-page-state.svelte.ts "print_job"
+contains "frontend forms route supports import modal" frontend/src/lib/forms/state/forms-page-state.svelte.ts "showImportRecords"
+contains "frontend forms route parses CSV imports" frontend/src/lib/forms/state/import.ts "parseCsvImport"
+contains "frontend forms route supports permission panel" frontend/src/lib/forms/state/permissions.ts "saveMemberPermissions"
+contains "frontend forms route renders permission actions" frontend/src/lib/forms/page-constants.ts "formPermissionActions"
 contains "frontend settings saves profile through API" 'frontend/src/routes/(app)/settings/+page.svelte' "authApi.updateProfile"
 contains "frontend settings updates password through API" 'frontend/src/routes/(app)/settings/+page.svelte' "authApi.updatePassword"
 contains "frontend settings saves notification prefs through API" 'frontend/src/routes/(app)/settings/+page.svelte' "authApi.updatePreferences"
 not_contains "frontend settings does not fake save with timeout" 'frontend/src/routes/(app)/settings/+page.svelte' "setTimeout"
 not_contains "frontend i18n does not expose placeholder settings copy" "frontend/src/lib/i18n/en.json" "placeholder)"
 not_contains "frontend zh i18n does not expose placeholder settings copy" "frontend/src/lib/i18n/zh.json" "占位实现"
-contains "forms browser smoke covers mobile overflow" "frontend/scripts/smoke-forms-ui.mjs" "horizontal overflow"
+contains "forms browser smoke covers mobile overflow" "frontend/scripts/smoke-forms-page-interactions.mjs" "horizontal overflow"
+contains "forms browser smoke checks overflow at 390 px" "frontend/scripts/smoke-forms-page-interactions.mjs" "document.documentElement.scrollWidth"
+contains "forms browser smoke covers the durable record route" "frontend/scripts/smoke-forms-page-interactions.mjs" "the durable record page opens from its own route"
+contains "forms browser smoke covers field designer save payload" "frontend/scripts/smoke-forms-page-interactions.mjs" "field design: add a text field with help text and save the schema"
+contains "forms browser smoke covers detail layout save payload" "frontend/scripts/smoke-forms-page-interactions.mjs" "detail layout: a section title and description are saved"
+contains "forms browser smoke covers permissions save payload" "frontend/scripts/smoke-forms-page-interactions.mjs" "permissions: a role policy is saved with its scope and field denial"
+contains "forms browser smoke records its uncovered retired checks" "frontend/scripts/smoke-forms-page-interactions.mjs" "Not covered (the retired smoke asserted them"
+contains "forms record list smoke is wired into package scripts" "frontend/package.json" "smoke:forms-record-list"
+contains "forms page interactions smoke is wired into package scripts" "frontend/package.json" "smoke:forms-page-interactions"
+not_contains "package scripts do not keep the retired forms UI smoke" "frontend/package.json" "smoke:forms-ui"
 contains "project template wizard smoke covers template cards" "frontend/scripts/smoke-project-template-wizard.mjs" "data-template-card-seen"
 contains "project template wizard smoke covers scenario setup" "frontend/scripts/smoke-project-template-wizard.mjs" "data-scenario-dashboard-seen"
 contains "project template wizard smoke captures screenshots" "frontend/scripts/smoke-project-template-wizard.mjs" "OPENPR_PROJECT_TEMPLATE_SCREENSHOT_DIR"
@@ -452,7 +397,8 @@ contains "restaurant browser smoke captures screenshots" "frontend/scripts/smoke
 contains "acceptance uses resolved Bun frontend check" "scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run check'
 contains "acceptance includes project template wizard smoke" "scripts/acceptance-universal-forms.sh" "smoke:project-template"
 contains "acceptance includes template work items smoke" "scripts/acceptance-universal-forms.sh" "smoke:template-work-items"
-contains "acceptance uses resolved Bun frontend smoke" "scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-ui'
+contains "acceptance uses resolved Bun frontend smoke" "scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-page-interactions'
+contains "acceptance includes forms record list smoke" "scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-record-list'
 contains "acceptance resolves common Bun install path" "scripts/acceptance-universal-forms.sh" '$HOME/.bun/bin'
 contains "UI artifact collector uses Bun frontend build" "scripts/collect-universal-forms-ui-artifacts.sh" "FRONTEND_BUN"
 contains "UI artifact collector captures project template screenshots" "scripts/collect-universal-forms-ui-artifacts.sh" "OPENPR_PROJECT_TEMPLATE_SCREENSHOT_DIR"
@@ -568,7 +514,6 @@ contains "Phase 5 release readiness unit tests ready next action" "apps/api/src/
 contains "Phase 5 release readiness unit tests blocked next actions" "apps/api/src/routes/release_readiness.rs" "blocked_release_readiness_returns_gate_remediation_actions"
 contains "MCP release readiness tool description documents next actions" "apps/mcp-server/src/tools/release.rs" "next actions"
 contains "MCP release readiness tool unit tests next actions" "apps/mcp-server/src/tools/release.rs" "release_readiness_tool_documents_next_actions"
-contains "embedded MCP skill guide documents release next actions" "apps/mcp-server/src/server.rs" "gates, blockers, next actions"
 contains "Phase 5 release readiness smoke covers REST next actions" "scripts/smoke-phase5-release-readiness.sh" "ready release readiness should include reviewer next action"
 contains "Phase 5 release readiness smoke covers schema version" "scripts/smoke-phase5-release-readiness.sh" "release readiness schema version should match schema"
 contains "Phase 5 release readiness smoke covers schema path" "scripts/smoke-phase5-release-readiness.sh" "release readiness schema path should be stable"
@@ -1087,7 +1032,7 @@ contains "delivery manifest includes restore script" "scripts/prepare-universal-
 contains "delivery manifest includes stop script" "scripts/prepare-universal-forms-delivery-manifest.sh" "stop script"
 contains "delivery manifest includes clean script" "scripts/prepare-universal-forms-delivery-manifest.sh" "clean script"
 contains "MCP test script requires exact expected tool count" "scripts/test-mcp.sh" 'expected exactly $EXPECTED_TOOL_COUNT'
-contains "MCP test script derives its strict default tool count" "scripts/test-mcp.sh" 'EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/openpr-mcp/scripts/expected-tool-count.py")}"'
+contains "MCP test script derives its strict default tool count" "scripts/test-mcp.sh" 'EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/sylvode-mcp/scripts/expected-tool-count.py")}"'
 contains "MCP test script requires scenario template install" "scripts/test-mcp.sh" "scenario_templates.install"
 contains "MCP test script requires forms.duplicate" "scripts/test-mcp.sh" "forms.duplicate"
 contains "MCP test script requires form metadata tools" "scripts/test-mcp.sh" "forms.schema_summary"
@@ -1320,6 +1265,15 @@ contains "finalizer refreshes derived handoff after default finalization" "scrip
 contains "finalizer verifies official bundle after default finalization" "scripts/finalize-universal-forms-acceptance.sh" "post-finalization delivery bundle verified"
 contains "finalizer is idempotent for finalized trackers" "scripts/finalize-universal-forms-acceptance.sh" "universal forms acceptance already finalized in tracker"
 contains "docs audit allows partial manual signoff pending counts" "scripts/audit-universal-forms-docs.sh" "user acceptance packet pending rows match evidence"
+
+# Tool lists, counts and the skill text are generated from the tool catalogue; the generator is the
+# check (it replaces the hand-written greps for the guide, the AGENTS and README tool lists).
+if cargo run -q --locked -p mcp-server --bin sylvode-skillgen -- --check >/dev/null 2>&1; then
+  printf 'PASS: skill and generated tool blocks match the tool catalogue (sylvode-skillgen --check)\n'
+else
+  printf 'FAIL: skill and generated tool blocks are out of date; run cargo run -p mcp-server --bin sylvode-skillgen -- --write\n' >&2
+  failures=$((failures + 1))
+fi
 
 if [[ "$failures" -ne 0 ]]; then
   printf '\nUniversal forms source coverage audit failed: %s issue(s)\n' "$failures" >&2

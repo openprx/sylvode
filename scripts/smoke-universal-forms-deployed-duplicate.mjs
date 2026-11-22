@@ -46,7 +46,10 @@ async function api(path, options = {}) {
 }
 
 async function mcpTool(name, args = {}) {
-	const res = await fetch(mcpUrl, {
+	// Registry tools are called by name, which needs the whole registry listed.
+	const url = new URL(mcpUrl);
+	url.searchParams.set('tools', 'full');
+	const res = await fetch(url, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({

@@ -1,11 +1,10 @@
 //! Behavioural tests for the file backed configuration.
 
 use std::path::{Path, PathBuf};
-use std::{fs, process};
 
 use super::{
-    AppConfig, ConfigError, DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH, LogFormat, LogOutput, McpTransport, OpenPrConfig,
-    REDACTED, StdoutRole, StorageBackend, resolve_config_path, resolve_default_config_path,
+    AppConfig, ConfigError, DEFAULT_CONFIG_PATH, LogFormat, LogOutput, McpToolMode, McpTransport, OpenPrConfig,
+    REDACTED, StdoutRole, StorageBackend,
 };
 
 const WORKSPACE: &str = "0f8a1b2c-3d4e-4f60-8182-93a4b5c6d7e8";
@@ -228,6 +227,78 @@ fn ai_task_processing_timeout_is_bounded() {
             .unwrap_or_else(|error| panic!("valid timeout {secs} was rejected: {error}"));
         assert_eq!(config.ai_tasks.processing_timeout_secs, secs);
     }
+}
+
+#[test]
+fn ai_task_chain_depth_defaults_and_is_bounded() {
+    let config = parse("").expect("an empty file is valid");
+    assert_eq!(config.ai_tasks.max_chain_depth, 3);
+    for depth in [0, 11] {
+        let reported = issues(&format!("[ai_tasks]\nmax_chain_depth = {depth}\n"));
+        assert!(
+            reported.iter().any(|issue| issue.contains("ai_tasks.max_chain_depth")),
+            "invalid chain depth {depth} was not rejected: {reported:?}"
+        );
+    }
+    for depth in [1, 10] {
+        let config = parse(&format!("[ai_tasks]\nmax_chain_depth = {depth}\n"))
+            .unwrap_or_else(|error| panic!("valid chain depth {depth} was rejected: {error}"));
+        assert_eq!(config.ai_tasks.max_chain_depth, depth);
+    }
+}
+
+#[test]
+fn ai_task_lease_settings_default_and_are_bounded() {
+    let config = parse("").expect("an empty file is valid");
+    assert_eq!(config.ai_tasks.lease_extension_secs, 1_800);
+    assert_eq!(config.ai_tasks.max_processing_secs, 86_400);
+
+    for secs in [0, 59, 86_401] {
+        let reported = issues(&format!("[ai_tasks]\nlease_extension_secs = {secs}\n"));
+        assert!(
+            reported
+                .iter()
+                .any(|issue| issue.contains("ai_tasks.lease_extension_secs")),
+            "invalid lease extension {secs} was not rejected: {reported:?}"
+        );
+    }
+    for secs in [60, 86_400] {
+        let config = parse(&format!("[ai_tasks]\nlease_extension_secs = {secs}\n"))
+            .unwrap_or_else(|error| panic!("valid lease extension {secs} was rejected: {error}"));
+        assert_eq!(config.ai_tasks.lease_extension_secs, secs);
+    }
+
+    let reported = issues("[ai_tasks]\nmax_processing_secs = 604801\n");
+    assert!(
+        reported
+            .iter()
+            .any(|issue| issue.contains("ai_tasks.max_processing_secs")),
+        "{reported:?}"
+    );
+    for secs in [3_600, 604_800] {
+        let config = parse(&format!("[ai_tasks]\nmax_processing_secs = {secs}\n"))
+            .unwrap_or_else(|error| panic!("valid cap {secs} was rejected: {error}"));
+        assert_eq!(config.ai_tasks.max_processing_secs, secs);
+    }
+}
+
+#[test]
+fn ai_task_cap_below_the_timeout_names_both_keys() {
+    let reported = issues("[ai_tasks]\nprocessing_timeout_secs = 7200\nmax_processing_secs = 3600\n");
+    assert!(
+        reported.iter().any(|issue| {
+            issue.contains("ai_tasks.max_processing_secs") && issue.contains("ai_tasks.processing_timeout_secs")
+        }),
+        "{reported:?}"
+    );
+    let config = parse("[ai_tasks]\nprocessing_timeout_secs = 7200\nmax_processing_secs = 7200\n")
+        .expect("a cap equal to the timeout is valid");
+    assert_eq!(config.ai_tasks.max_processing_secs, 7_200);
+}
+
+#[test]
+fn an_unknown_ai_tasks_key_is_still_refused() {
+    assert!(parse("[ai_tasks]\nlease_extension = 60\n").is_err());
 }
 
 // ---- one error report for every problem ----
@@ -513,24 +584,6 @@ fn the_shipped_example_is_structurally_valid_toml_for_this_schema() {
     AppConfig::from_config(&config, "api", "0.0.0.0:8081").expect("the filled in example is enough to start the api");
 }
 
-#[test]
-fn sylvode_and_legacy_shipped_examples_have_the_same_valid_schema() {
-    for example in [
-        include_str!("../../../../config/sylvode.example.toml"),
-        include_str!("../../../../config/openpr.example.toml"),
-    ] {
-        let filled = example
-            .replace("replace_with_postgres_password", "s3cret")
-            .replace("replace_with_a_64_character_hex_secret", &"a".repeat(64))
-            .replace("replace_with_s3_access_key_id", "AKIAEXAMPLE")
-            .replace("replace_with_s3_secret_access_key", "s3-secret")
-            .replace("replace_with_opr_bot_token", "opr_live_token")
-            .replace("replace_with_mcp_inbound_token", "mcp-inbound-token-value")
-            .replace("replace_with_connector_credential", "connector-credential");
-        parse(&filled).expect("both shipped names must retain the same validated TOML schema");
-    }
-}
-
 // ---- uuids ----
 
 #[test]
@@ -807,69 +860,6 @@ fn a_directory_in_place_of_the_file_is_reported_as_unreadable() {
     );
 }
 
-#[test]
-fn sylvode_default_legacy_discovery_and_conflict_are_explicit() {
-    let root = std::env::temp_dir().join(format!("sylvode-config-compat-{}", process::id()));
-    let config_dir = root.join("config");
-    fs::create_dir_all(&config_dir).expect("test config directory");
-    let canonical = root.join(DEFAULT_CONFIG_PATH);
-    let legacy = root.join(LEGACY_CONFIG_PATH);
-
-    assert_eq!(
-        resolve_default_config_path(&root).expect("missing files select the new default"),
-        canonical
-    );
-    fs::write(&legacy, "[logging]\nformat='json'\n").expect("legacy fixture");
-    assert_eq!(
-        resolve_default_config_path(&root).expect("legacy-only config is discovered"),
-        legacy
-    );
-    fs::write(&canonical, "[logging]\nformat='json'\n").expect("canonical fixture");
-    let conflict = resolve_default_config_path(&root).expect_err("two implicit configs must fail closed");
-    assert!(
-        conflict
-            .to_string()
-            .contains("both config/sylvode.toml and legacy config/openpr.toml exist")
-    );
-    assert!(conflict.to_string().contains("--config explicitly"));
-
-    fs::remove_dir_all(root).expect("remove test config directory");
-}
-
-/// Only default discovery that falls back to the legacy file is marked for the ADR-0020 D2
-/// notice: not the canonical default, and not an explicit `--config` naming the legacy file.
-#[test]
-fn sylvode_only_default_discovery_of_the_legacy_file_is_marked_for_the_notice() {
-    let root = std::env::temp_dir().join(format!("sylvode-config-notice-{}", process::id()));
-    let config_dir = root.join("config");
-    fs::create_dir_all(&config_dir).expect("test config directory");
-    let canonical = root.join(DEFAULT_CONFIG_PATH);
-    let legacy = root.join(LEGACY_CONFIG_PATH);
-
-    fs::write(&legacy, "[logging]\nformat='json'\n").expect("legacy fixture");
-    assert_eq!(
-        resolve_config_path(None, &root).expect("legacy-only config is discovered"),
-        (legacy.clone(), true)
-    );
-    assert_eq!(
-        resolve_config_path(Some(&legacy), &root).expect("an explicit legacy path is accepted"),
-        (legacy.clone(), false)
-    );
-    assert_eq!(
-        resolve_config_path(Some(Path::new(LEGACY_CONFIG_PATH)), &root).expect("an explicit relative legacy path"),
-        (PathBuf::from(LEGACY_CONFIG_PATH), false)
-    );
-
-    fs::remove_file(&legacy).expect("remove legacy fixture");
-    fs::write(&canonical, "[logging]\nformat='json'\n").expect("canonical fixture");
-    assert_eq!(
-        resolve_config_path(None, &root).expect("canonical config is discovered"),
-        (canonical, false)
-    );
-
-    fs::remove_dir_all(root).expect("remove test config directory");
-}
-
 // ---- projection onto AppConfig ----
 
 #[test]
@@ -1079,6 +1069,43 @@ fn a_conversion_reap_interval_outside_one_second_to_one_day_is_refused() {
 }
 
 #[test]
+fn the_incremental_window_is_off_by_default_and_can_be_switched_on() {
+    assert!(!parse("").unwrap().flow.incremental_window);
+    assert!(!parse("[flow]\n").unwrap().flow.incremental_window);
+    assert!(
+        parse("[flow]\nincremental_window = true\n")
+            .unwrap()
+            .flow
+            .incremental_window
+    );
+    assert!(
+        !parse("[flow]\nincremental_window = false\n")
+            .unwrap()
+            .flow
+            .incremental_window
+    );
+    assert!(
+        parse("[flow]\nincremental_window = \"on\"\n").is_err(),
+        "a non-boolean value is refused"
+    );
+}
+
+#[test]
+fn the_setup_cpu_budget_defaults_to_2500_and_is_bounded() {
+    assert_eq!(parse("").unwrap().flow.setup_cpu_budget_ms, 2_500);
+    for value in [500_u64, 2_500, 3_000, 4_000] {
+        let configured = parse(&format!("[flow]\nsetup_cpu_budget_ms = {value}\n")).unwrap();
+        assert_eq!(configured.flow.setup_cpu_budget_ms, value);
+    }
+    for value in ["0", "499", "4001", "100000", "-1", "\"2500\"", "2.5"] {
+        assert!(
+            parse(&format!("[flow]\nsetup_cpu_budget_ms = {value}\n")).is_err(),
+            "{value} is refused"
+        );
+    }
+}
+
+#[test]
 fn flow_body_asset_limit_is_bounded_and_configurable() {
     let defaulted = parse("").unwrap();
     assert_eq!(defaulted.flow.body_asset_max_bytes, 52_428_800);
@@ -1091,4 +1118,468 @@ fn flow_body_asset_limit_is_bounded_and_configurable() {
                 .any(|issue| issue.contains("flow.body_asset_max_bytes"))
         );
     }
+}
+
+#[test]
+fn trusted_proxies_are_validated_and_optional() {
+    let absent = parse("[server]\napp_name = \"api\"\n").expect("valid");
+    assert!(absent.server.trusted_proxies.is_none());
+
+    let set = parse("[server]\ntrusted_proxies = [\"198.51.100.0/24\", \"::1\"]\n").expect("valid");
+    let list = set.server.trusted_proxies.expect("present");
+    assert_eq!(list.len(), 2);
+    assert!(
+        list.first()
+            .is_some_and(|block| block.contains("198.51.100.9".parse().unwrap()))
+    );
+
+    let found = issues("[server]\ntrusted_proxies = [\"10.0.0.0/40\", \"nope\"]\n");
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found.iter().all(|issue| issue.contains("server.trusted_proxies")));
+}
+
+// ---- [oauth] and the delegated-access keys of [mcp] ----
+
+const FORWARD_SECRET: &str = "forward-secret-for-tests-0123456789abcdef";
+
+fn oauth_file(oauth_body: &str) -> String {
+    format!("[oauth]\n{oauth_body}\n")
+}
+
+fn oauth_issues(oauth_body: &str) -> Vec<String> {
+    issues(&oauth_file(oauth_body))
+}
+
+fn assert_refused(body: &str, expected: &str) {
+    let reported = oauth_issues(body);
+    assert!(
+        reported.iter().any(|issue| issue.contains(expected)),
+        "expected {expected:?} for {body:?}, got {reported:?}"
+    );
+}
+
+#[test]
+fn the_authorization_server_is_off_unless_an_issuer_is_configured() {
+    assert!(parse("").expect("an empty file validates").oauth.is_none());
+    assert!(parse("[oauth]\n").expect("an empty section validates").oauth.is_none());
+    // Tuning values alone do not turn it on.
+    assert!(
+        parse(&oauth_file("access_token_ttl_seconds = 300"))
+            .expect("validates")
+            .oauth
+            .is_none()
+    );
+}
+
+#[test]
+fn an_issuer_alone_enables_it_with_every_default() {
+    let config = parse(&oauth_file("issuer = \"https://sylvode.example.com\"")).expect("validates");
+    let oauth = config.oauth.expect("enabled");
+    assert_eq!(oauth.issuer, "https://sylvode.example.com");
+    assert_eq!(oauth.api_resource, "https://sylvode.example.com/api");
+    assert_eq!(oauth.mcp_resource, None);
+    assert!(oauth.internal_forward_secret.is_none());
+    assert!(!oauth.allow_insecure_loopback_issuer);
+    assert_eq!(oauth.access_token_ttl_seconds, 600);
+    assert_eq!(oauth.refresh_token_idle_days, 30);
+    assert_eq!(oauth.grant_max_lifetime_days, 365);
+    assert_eq!(oauth.authorization_code_ttl_seconds, 60);
+    assert_eq!(oauth.max_active_grants_per_user_client, 10);
+    assert_eq!(oauth.event_feed_retention_days, 7);
+    assert_eq!(oauth.event_backfill_max_events, 1_000);
+    assert_eq!(oauth.event_backfill_max_age_hours, 72);
+    assert_eq!(oauth.max_streams_per_process, 2_000);
+    assert!(oauth.embed_frame_ancestors.is_empty());
+    // The in-memory constructor and the loader agree on every default.
+    assert_eq!(
+        format!("{oauth:?}"),
+        format!("{:?}", super::OAuthConfig::with_defaults("https://sylvode.example.com"))
+    );
+}
+
+#[test]
+fn issuer_rules() {
+    let refused = [
+        ("issuer = \"http://sylvode.example.com\"", "must use https"),
+        (
+            "issuer = \"http://localhost:8080\"\nallow_insecure_loopback_issuer = true",
+            "must use https",
+        ),
+        (
+            "issuer = \"http://192.0.2.5:8080\"\nallow_insecure_loopback_issuer = true",
+            "must use https",
+        ),
+        ("issuer = \"http://127.0.0.1:18097\"", "allow_insecure_loopback_issuer"),
+        (
+            "issuer = \"http://127.0.0.1\"\nallow_insecure_loopback_issuer = true",
+            "must name a port",
+        ),
+        ("issuer = \"https://sylvode.example.com/\"", "without a path"),
+        ("issuer = \"https://sylvode.example.com/ui\"", "without a path"),
+        ("issuer = \"https://sylvode.example.com?x=1\"", "without a path"),
+        ("issuer = \"https://sylvode.example.com#frag\"", "fragment"),
+        ("issuer = \"https://user:pw@sylvode.example.com\"", "credentials"),
+        ("issuer = \"ftp://sylvode.example.com\"", "absolute http or https"),
+        ("issuer = \"sylvode.example.com\"", "absolute http or https"),
+        ("issuer = \"https://\"", "names no host"),
+        ("issuer = \"https://sylvode.example.com:0\"", "invalid port"),
+        ("issuer = \"https://syl vode.example.com\"", "whitespace"),
+        ("issuer = \"replace_with_issuer\"", "placeholder"),
+        ("issuer = \"\"", "placeholder"),
+    ];
+    for (body, expected) in refused {
+        assert_refused(body, expected);
+    }
+    for body in [
+        "issuer = \"https://sylvode.example.com\"",
+        "issuer = \"https://sylvode.example.com:8443\"",
+        "issuer = \"http://127.0.0.1:18097\"\nallow_insecure_loopback_issuer = true",
+        "issuer = \"http://[::1]:18097\"\nallow_insecure_loopback_issuer = true",
+        "issuer = \"https://127.0.0.1:8443\"\nallow_insecure_loopback_issuer = true",
+    ] {
+        parse(&oauth_file(body)).unwrap_or_else(|err| panic!("{body:?} should validate: {err}"));
+    }
+}
+
+#[test]
+fn the_insecure_loopback_exception_is_refused_on_a_non_loopback_issuer() {
+    assert_refused(
+        "issuer = \"https://sylvode.example.com\"\nallow_insecure_loopback_issuer = true",
+        "requires oauth.issuer to name 127.0.0.1 or [::1]",
+    );
+    assert_refused("allow_insecure_loopback_issuer = true", "oauth.issuer is required");
+    // Not setting the flag keeps the issuer https even on loopback.
+    parse(&oauth_file("issuer = \"https://127.0.0.1:8443\"")).expect("https on loopback is fine");
+}
+
+#[test]
+fn resource_and_secret_keys_need_an_issuer_and_each_other() {
+    assert_refused(
+        "api_resource = \"https://sylvode.example.com/api\"",
+        "oauth.issuer is required",
+    );
+    assert_refused(
+        "mcp_resource = \"https://sylvode.example.com/mcp\"",
+        "oauth.issuer is required",
+    );
+    assert_refused(
+        &format!("internal_forward_secret = \"{FORWARD_SECRET}\""),
+        "oauth.issuer is required",
+    );
+    let issuer = "issuer = \"https://sylvode.example.com\"";
+    assert_refused(
+        &format!("{issuer}\nmcp_resource = \"https://sylvode.example.com/mcp\""),
+        "oauth.internal_forward_secret is required when oauth.mcp_resource is set",
+    );
+    assert_refused(
+        &format!("{issuer}\ninternal_forward_secret = \"{FORWARD_SECRET}\""),
+        "oauth.mcp_resource is required when oauth.internal_forward_secret is set",
+    );
+    assert_refused(
+        &format!("{issuer}\nmcp_resource = \"https://sylvode.example.com/mcp\"\ninternal_forward_secret = \"short\""),
+        "at least 32 bytes",
+    );
+    assert_refused(
+        &format!(
+            "{issuer}\nmcp_resource = \"https://sylvode.example.com/mcp\"\ninternal_forward_secret = \"replace_with_at_least_32_random_bytes\""
+        ),
+        "not a placeholder",
+    );
+    let config = parse(&oauth_file(&format!(
+        "{issuer}\nmcp_resource = \"https://sylvode.example.com/mcp\"\ninternal_forward_secret = \"{FORWARD_SECRET}\""
+    )))
+    .expect("validates")
+    .oauth
+    .expect("enabled");
+    assert_eq!(config.mcp_resource.as_deref(), Some("https://sylvode.example.com/mcp"));
+    assert_eq!(
+        config.internal_forward_secret.as_ref().map(super::Secret::expose),
+        Some(FORWARD_SECRET)
+    );
+    let rendered = format!("{config:?} {config:#?}");
+    assert!(!rendered.contains(FORWARD_SECRET), "{rendered}");
+}
+
+#[test]
+fn resource_url_rules() {
+    let issuer = "issuer = \"https://sylvode.example.com\"";
+    assert_refused(
+        &format!("{issuer}\napi_resource = \"https://sylvode.example.com/api#x\""),
+        "fragment",
+    );
+    assert_refused(
+        &format!("{issuer}\napi_resource = \"http://192.0.2.5/api\""),
+        "must use https",
+    );
+    assert_refused(&format!("{issuer}\napi_resource = \"/api\""), "absolute http or https");
+    let loopback = "issuer = \"http://127.0.0.1:18097\"\nallow_insecure_loopback_issuer = true";
+    let config = parse(&oauth_file(&format!(
+        "{loopback}\napi_resource = \"http://127.0.0.1:18097/api\"\nmcp_resource = \"http://127.0.0.1:8090/mcp/rpc\"\n\
+         internal_forward_secret = \"{FORWARD_SECRET}\""
+    )))
+    .expect("validates")
+    .oauth
+    .expect("enabled");
+    assert_eq!(config.api_resource, "http://127.0.0.1:18097/api");
+    assert_eq!(config.mcp_resource.as_deref(), Some("http://127.0.0.1:8090/mcp/rpc"));
+}
+
+#[test]
+fn every_numeric_setting_is_bounded() {
+    let issuer = "issuer = \"https://sylvode.example.com\"";
+    let bounds: [(&str, i64, i64); 9] = [
+        ("access_token_ttl_seconds", 60, 3_600),
+        ("refresh_token_idle_days", 1, 90),
+        ("grant_max_lifetime_days", 1, 730),
+        ("authorization_code_ttl_seconds", 10, 600),
+        ("max_active_grants_per_user_client", 1, 50),
+        ("event_feed_retention_days", 1, 30),
+        ("event_backfill_max_events", 100, 10_000),
+        ("event_backfill_max_age_hours", 1, 168),
+        ("max_streams_per_process", 10, 20_000),
+    ];
+    for (key, min, max) in bounds {
+        for ok in [min, max] {
+            parse(&oauth_file(&format!("{issuer}\n{key} = {ok}"))).unwrap_or_else(|err| panic!("{key} = {ok}: {err}"));
+        }
+        for bad in [min - 1, max + 1] {
+            assert_refused(
+                &format!("{issuer}\n{key} = {bad}"),
+                &format!("oauth.{key} must be between {min} and {max}"),
+            );
+        }
+    }
+    let config = parse(&oauth_file(&format!(
+        "{issuer}\nrefresh_token_idle_days = 7\ngrant_max_lifetime_days = 90"
+    )))
+    .expect("validates")
+    .oauth
+    .expect("enabled");
+    assert_eq!(
+        (config.refresh_token_idle_days, config.grant_max_lifetime_days),
+        (7, 90)
+    );
+}
+
+#[test]
+fn embed_origins_are_origins() {
+    let issuer = "issuer = \"https://sylvode.example.com\"";
+    assert_refused(
+        &format!("{issuer}\nembed_frame_ancestors = [\"https://app.example.com/path\"]"),
+        "without a path",
+    );
+    assert_refused(
+        &format!("{issuer}\nembed_frame_ancestors = [\"http://app.example.com\"]"),
+        "must use https",
+    );
+    let config = parse(&oauth_file(&format!(
+        "{issuer}\nembed_frame_ancestors = [\"https://App.Example.com\", \"https://other.example.com:8443\"]"
+    )))
+    .expect("validates")
+    .oauth
+    .expect("enabled");
+    assert_eq!(
+        config.embed_frame_ancestors,
+        ["https://app.example.com", "https://other.example.com:8443"]
+    );
+}
+
+#[test]
+fn an_unknown_oauth_key_is_refused() {
+    let error = parse(&oauth_file(
+        "issuer = \"https://sylvode.example.com\"\nregistration_endpoint = true",
+    ))
+    .expect_err("unknown keys are refused");
+    assert!(error.to_string().contains("registration_endpoint"), "{error}");
+}
+
+fn mcp_file(mcp_body: &str) -> String {
+    format!("[mcp]\nworkspace_id = \"{WORKSPACE}\"\ntransport = \"http\"\n{mcp_body}\n")
+}
+
+#[test]
+fn the_mcp_delegated_keys_are_all_or_nothing() {
+    let none = parse(&mcp_file("")).expect("validates").mcp_runtime().expect("runtime");
+    assert!(none.oauth.is_none());
+
+    let all = parse(&mcp_file(&format!(
+        "oauth_issuer = \"https://sylvode.example.com\"\noauth_resource = \"https://sylvode.example.com/mcp\"\n\
+         oauth_forward_secret = \"{FORWARD_SECRET}\""
+    )))
+    .expect("validates")
+    .mcp_runtime()
+    .expect("runtime");
+    let oauth = all.oauth.expect("delegated access is configured");
+    assert_eq!(oauth.issuer, "https://sylvode.example.com");
+    assert_eq!(oauth.resource, "https://sylvode.example.com/mcp");
+    assert_eq!(oauth.forward_secret.expose(), FORWARD_SECRET);
+    assert!(!format!("{oauth:?}").contains(FORWARD_SECRET));
+
+    let partial = [
+        (
+            "oauth_issuer = \"https://sylvode.example.com\"",
+            "mcp.oauth_resource, mcp.oauth_forward_secret",
+        ),
+        (
+            "oauth_resource = \"https://sylvode.example.com/mcp\"",
+            "mcp.oauth_issuer, mcp.oauth_forward_secret",
+        ),
+        (
+            &format!("oauth_forward_secret = \"{FORWARD_SECRET}\""),
+            "mcp.oauth_issuer, mcp.oauth_resource",
+        ),
+        (
+            "oauth_issuer = \"https://sylvode.example.com\"\noauth_resource = \"https://sylvode.example.com/mcp\"",
+            "missing: mcp.oauth_forward_secret",
+        ),
+    ];
+    for (body, missing) in partial {
+        let config = parse(&mcp_file(body)).expect("shape is fine, presence is the runtime's question");
+        let error = config
+            .mcp_runtime()
+            .expect_err("a partial set refuses to start")
+            .to_string();
+        assert!(error.contains("set together or not at all"), "{error}");
+        assert!(error.contains(missing), "{missing} not in {error}");
+    }
+}
+
+#[test]
+fn the_tool_mode_defaults_to_search_and_writes_are_allowed() {
+    let runtime = parse(&mcp_file("")).expect("validates").mcp_runtime().expect("runtime");
+    assert_eq!(runtime.tool_mode, McpToolMode::Search);
+    assert!(runtime.allow_write_call);
+}
+
+#[test]
+fn the_tool_mode_and_the_write_switch_are_read_from_the_file() {
+    let full = parse(&mcp_file("tool_mode = \"full\"\nallow_write_call = false"))
+        .expect("validates")
+        .mcp_runtime()
+        .expect("runtime");
+    assert_eq!(full.tool_mode, McpToolMode::Full);
+    assert!(!full.allow_write_call);
+    let search = parse(&mcp_file("tool_mode = \" Search \""))
+        .expect("validates")
+        .mcp_runtime()
+        .expect("runtime");
+    assert_eq!(search.tool_mode, McpToolMode::Search);
+}
+
+#[test]
+fn an_unknown_tool_mode_or_a_mistyped_switch_is_refused() {
+    let reported = issues(&mcp_file("tool_mode = \"everything\""));
+    assert!(
+        reported
+            .iter()
+            .any(|issue| issue.contains("mcp.tool_mode must be search or full")),
+        "{reported:?}"
+    );
+    assert!(parse(&mcp_file("allow_write_call = \"yes\"")).is_err());
+}
+
+#[test]
+fn the_mcp_delegated_keys_are_checked_for_shape() {
+    let reported = issues(&mcp_file(
+        "oauth_issuer = \"http://sylvode.example.com\"\noauth_resource = \"https://sylvode.example.com/mcp#x\"\n\
+         oauth_forward_secret = \"short\"",
+    ));
+    for expected in ["mcp.oauth_issuer", "mcp.oauth_resource", "mcp.oauth_forward_secret"] {
+        assert!(
+            reported.iter().any(|issue| issue.contains(expected)),
+            "{expected} in {reported:?}"
+        );
+    }
+    // Plain http is for a loopback literal only.
+    parse(&mcp_file(&format!(
+        "oauth_issuer = \"http://127.0.0.1:18097\"\noauth_resource = \"http://127.0.0.1:8090/mcp/rpc\"\n\
+         oauth_forward_secret = \"{FORWARD_SECRET}\""
+    )))
+    .expect("loopback http validates");
+}
+
+#[test]
+fn mcp_and_oauth_sections_must_agree_when_both_are_present() {
+    let base = |issuer: &str, resource: &str| {
+        format!(
+            "[oauth]\nissuer = \"https://sylvode.example.com\"\nmcp_resource = \"https://sylvode.example.com/mcp\"\n\
+             internal_forward_secret = \"{FORWARD_SECRET}\"\n{}",
+            mcp_file(&format!(
+                "oauth_issuer = \"{issuer}\"\noauth_resource = \"{resource}\"\noauth_forward_secret = \"{FORWARD_SECRET}\""
+            ))
+        )
+    };
+    parse(&base("https://sylvode.example.com", "https://sylvode.example.com/mcp")).expect("they agree");
+    let reported = issues(&base("https://other.example.com", "https://other.example.com/mcp"));
+    assert!(
+        reported
+            .iter()
+            .any(|i| i.contains("mcp.oauth_issuer must equal oauth.issuer")),
+        "{reported:?}"
+    );
+    assert!(
+        reported
+            .iter()
+            .any(|i| i.contains("mcp.oauth_resource must equal oauth.mcp_resource")),
+        "{reported:?}"
+    );
+}
+
+// ---- [inbound] ----
+
+#[test]
+fn the_inbound_endpoint_is_off_by_default_with_the_documented_limits() {
+    let config = parse("").expect("an empty file validates");
+    assert_eq!(config.inbound, super::InboundConfig::default());
+    assert!(!config.inbound.enabled);
+    assert_eq!(config.inbound.max_body_bytes, 65_536);
+    assert_eq!(config.inbound.signature_tolerance_secs, 300);
+    assert_eq!(config.inbound.auth_failures_per_minute_per_ip, 30);
+    assert_eq!(config.inbound.max_active_alert_tasks_per_workspace, 5);
+    assert_eq!(config.inbound.max_alerts_per_rule_per_hour, 60);
+    assert_eq!(config.inbound.event_retention_days, 30);
+    assert_eq!(config.inbound.followup_interval_secs, 2);
+}
+
+#[test]
+fn the_inbound_section_reads_every_key() {
+    let config = parse(
+        "[inbound]\nenabled = true\nmax_body_bytes = 8192\nsignature_tolerance_secs = 60\n\
+         auth_failures_per_minute_per_ip = 5\nmax_active_alert_tasks_per_workspace = 3\n\
+         max_alerts_per_rule_per_hour = 10\nevent_retention_days = 7\nfollowup_interval_secs = 5\n",
+    )
+    .expect("valid");
+    assert!(config.inbound.enabled);
+    assert_eq!(config.inbound.max_body_bytes, 8_192);
+    assert_eq!(config.inbound.signature_tolerance_secs, 60);
+    assert_eq!(config.inbound.auth_failures_per_minute_per_ip, 5);
+    assert_eq!(config.inbound.max_active_alert_tasks_per_workspace, 3);
+    assert_eq!(config.inbound.max_alerts_per_rule_per_hour, 10);
+    assert_eq!(config.inbound.event_retention_days, 7);
+    assert_eq!(config.inbound.followup_interval_secs, 5);
+}
+
+#[test]
+fn every_inbound_limit_has_an_accepted_range() {
+    for (key, bad) in [
+        ("max_body_bytes", [4_095_u32, 262_145]),
+        ("signature_tolerance_secs", [29, 901]),
+        ("auth_failures_per_minute_per_ip", [0, 1_001]),
+        ("max_active_alert_tasks_per_workspace", [0, 101]),
+        ("max_alerts_per_rule_per_hour", [0, 10_001]),
+        ("event_retention_days", [0, 366]),
+        ("followup_interval_secs", [0, 61]),
+    ] {
+        for value in bad {
+            let reported = issues(&format!("[inbound]\n{key} = {value}\n"));
+            assert!(
+                reported.iter().any(|issue| issue.contains(&format!("inbound.{key}"))),
+                "{key} = {value} should have been refused, got {reported:?}"
+            );
+        }
+    }
+    assert!(
+        parse("[inbound]\nbogus = 1\n").is_err(),
+        "an unknown inbound key is refused"
+    );
 }

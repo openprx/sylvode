@@ -1,0 +1,506 @@
+use crate::{background::Background, config::Config, dispatcher, signature};
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc;
+use tokio::time::{Duration, sleep};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::{HeaderValue, Request};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Envelope {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub ts: u64,
+    pub agent_id: String,
+    pub payload: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sig: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DispatchPayload {
+    #[serde(default)]
+    run_id: Option<String>,
+    #[serde(default)]
+    issue_id: Option<String>,
+    #[serde(default)]
+    body: Option<Value>,
+}
+
+/// The bytes a tunnel signature covers: the envelope serialized without `sig`.
+fn unsigned_envelope_bytes(envelope: &Envelope) -> Option<Vec<u8>> {
+    let mut unsigned = envelope.clone();
+    unsigned.sig = None;
+    serde_json::to_vec(&unsigned)
+        .map_err(|e| tracing::warn!("serialize envelope for signing failed: {e}"))
+        .ok()
+}
+
+pub fn sign_envelope_body(envelope: &Envelope, secret: &str) -> Option<String> {
+    unsigned_envelope_bytes(envelope).and_then(|bytes| signature::sign_payload(&bytes, secret).ok())
+}
+
+/// Whether the envelope carries a valid `sig` under `secret`, compared in constant time.
+///
+/// Every leading `sha256=` is removed from `sig` before it is decoded.
+pub fn verify_envelope_signature(envelope: &Envelope, secret: &str) -> bool {
+    envelope.sig.as_ref().is_some_and(|sig| {
+        unsigned_envelope_bytes(envelope).is_some_and(|bytes| {
+            signature::verify_digest_hex(&bytes, sig.trim_start_matches("sha256="), std::iter::once(secret))
+        })
+    })
+}
+
+fn now_ts() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+fn build_envelope(msg_type: &str, agent_id: &str, payload: Value, hmac_secret: Option<&str>) -> Envelope {
+    let mut env = Envelope {
+        id: Uuid::new_v4().to_string(),
+        msg_type: msg_type.to_string(),
+        ts: now_ts(),
+        agent_id: agent_id.to_string(),
+        payload,
+        sig: None,
+    };
+
+    if let Some(secret) = hmac_secret {
+        env.sig = sign_envelope_body(&env, secret).map(|s| format!("sha256={s}"));
+    }
+
+    env
+}
+
+/// How far a signed envelope's `ts` may be from now, in seconds.
+const MAX_ENVELOPE_AGE_SECS: u64 = 300;
+/// How many recent envelope ids are remembered to refuse a replay.
+const REMEMBERED_ENVELOPE_IDS: usize = 4096;
+
+/// Checks that follow signature verification: the envelope is addressed to this agent, and a
+/// signed envelope is fresh and not a replay of one already accepted. Without `hmac_secret`
+/// nothing in an envelope is authenticated, so only the address is checked.
+#[derive(Default)]
+struct InboundCheck {
+    seen: std::collections::HashSet<String>,
+    order: std::collections::VecDeque<String>,
+}
+
+impl InboundCheck {
+    fn check(&mut self, envelope: &Envelope, agent_id: &str, signed: bool) -> Result<(), &'static str> {
+        if envelope.agent_id != agent_id {
+            return Err("wrong_agent");
+        }
+        if !signed {
+            return Ok(());
+        }
+        if now_ts().abs_diff(envelope.ts) > MAX_ENVELOPE_AGE_SECS {
+            return Err("stale_envelope");
+        }
+        if self.seen.contains(&envelope.id) {
+            return Err("duplicate_envelope");
+        }
+        if self.order.len() >= REMEMBERED_ENVELOPE_IDS
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.seen.remove(&oldest);
+        }
+        self.seen.insert(envelope.id.clone());
+        self.order.push_back(envelope.id.clone());
+        Ok(())
+    }
+}
+
+/// The WebSocket handshake request for `url`, with the bearer token.
+///
+/// The request is built by tungstenite from the URL, so it carries the handshake headers
+/// (`Sec-WebSocket-Key`, `Sec-WebSocket-Version`, `Upgrade`, `Connection`, `Host`); a request
+/// built by hand without them is refused by tungstenite before anything is sent.
+fn handshake_request(url: &str, auth_token: Option<&str>) -> Result<Request<()>, String> {
+    let mut request = url.into_client_request().map_err(|e| e.to_string())?;
+    if let Some(token) = auth_token {
+        let value =
+            HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| format!("invalid auth_token: {e}"))?;
+        request.headers_mut().insert("Authorization", value);
+    }
+    Ok(request)
+}
+
+/// Sleeps for `secs`, or less when shutdown begins. Returns whether shutdown has begun.
+async fn pause_unless_shutdown(background: &Background, secs: u64) -> bool {
+    tokio::select! {
+        () = sleep(Duration::from_secs(secs)) => background.is_shutting_down(),
+        () = background.cancelled() => true,
+    }
+}
+
+pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
+    if !config.tunnel_enabled() {
+        return;
+    }
+
+    let Some(tunnel) = config.tunnel.clone() else {
+        return;
+    };
+
+    let Some(url) = tunnel.url.clone() else {
+        tracing::warn!("tunnel enabled but url is missing");
+        return;
+    };
+
+    // `agent_id` has no default: the control plane matches it against the agent it registered,
+    // so it must come from the operator's config.
+    let Some(agent_id) = tunnel.agent_id.clone().filter(|id| !id.trim().is_empty()) else {
+        tracing::warn!("tunnel enabled but agent_id is missing");
+        return;
+    };
+
+    if tunnel.auth_token.as_deref().unwrap_or(" ").trim().is_empty() {
+        tracing::warn!("tunnel enabled but auth_token is missing");
+        return;
+    }
+
+    let base_reconnect_secs = tunnel.reconnect_secs.max(1);
+    let heartbeat_secs = tunnel.heartbeat_secs.max(3);
+    let hmac_secret = tunnel.hmac_secret.clone();
+    let require_inbound_sig = tunnel.require_inbound_sig;
+    let max_backoff_secs = config
+        .runtime
+        .tunnel_reconnect_backoff_max_secs
+        .max(base_reconnect_secs);
+    let mut retry_secs = base_reconnect_secs;
+
+    loop {
+        if !(url.starts_with("wss://") || url.starts_with("ws://")) {
+            tracing::error!("tunnel url must start with ws:// or wss://: {url}");
+            if pause_unless_shutdown(&background, retry_secs).await {
+                return;
+            }
+            retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
+            continue;
+        }
+
+        if url.starts_with("ws://") {
+            tracing::warn!("tunnel using insecure ws:// transport; prefer wss:// in production");
+        }
+
+        let request = match handshake_request(&url, tunnel.auth_token.as_deref()) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("build tunnel request failed: {e}");
+                if pause_unless_shutdown(&background, retry_secs).await {
+                    return;
+                }
+                retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
+                continue;
+            }
+        };
+
+        let connected = tokio::select! {
+            connected = connect_async(request) => connected,
+            () = background.cancelled() => return,
+        };
+        match connected {
+            Ok((ws_stream, _)) => {
+                retry_secs = base_reconnect_secs;
+                tracing::info!("tunnel connected: {url}");
+                let (mut writer, mut reader) = ws_stream.split();
+                let mut inbound = InboundCheck::default();
+                let (tx, mut rx) = mpsc::channel::<Envelope>(128);
+
+                let writer_task = tokio::spawn(async move {
+                    while let Some(msg) = rx.recv().await {
+                        let text = match serde_json::to_string(&msg) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                tracing::warn!("serialize envelope failed: {e}");
+                                continue;
+                            }
+                        };
+                        if writer.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+
+                let hb_tx = tx.clone();
+                let hb_agent = agent_id.clone();
+                let hb_secret = hmac_secret.clone();
+                let heartbeat_task = tokio::spawn(async move {
+                    loop {
+                        sleep(Duration::from_secs(heartbeat_secs)).await;
+                        let hb = build_envelope("heartbeat", &hb_agent, json!({"alive": true}), hb_secret.as_deref());
+                        if hb_tx.send(hb).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+
+                // Shutdown stops reading new tasks; runs already accepted are cancelled by the
+                // same signal and still report their result before the writer closes.
+                while let Some(message) = tokio::select! {
+                    message = reader.next() => message,
+                    () = background.cancelled() => None,
+                } {
+                    let Ok(message) = message else { break };
+                    let Message::Text(text) = message else {
+                        continue;
+                    };
+
+                    let envelope: Envelope = match serde_json::from_str(&text) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!(error = ?e.to_string(), "invalid tunnel message");
+                            let _ = tx
+                                .send(build_envelope(
+                                    "error",
+                                    &agent_id,
+                                    json!({"reason":"invalid_json"}),
+                                    hmac_secret.as_deref(),
+                                ))
+                                .await;
+                            continue;
+                        }
+                    };
+
+                    // A refused envelope is answered with an `error`, except an `error` itself: a
+                    // peer that answers refusals the same way would otherwise keep both ends
+                    // answering each other.
+                    let answer_refusal = envelope.msg_type != "error";
+
+                    if require_inbound_sig && envelope.sig.is_none() {
+                        tracing::warn!(
+                            msg_id = ?envelope.id,
+                            "tunnel missing signature while require_inbound_sig=true"
+                        );
+                        if answer_refusal {
+                            let _ = tx
+                                .send(build_envelope(
+                                    "error",
+                                    &agent_id,
+                                    json!({"reason":"missing_signature","msg_id":envelope.id}),
+                                    hmac_secret.as_deref(),
+                                ))
+                                .await;
+                        }
+                        continue;
+                    }
+
+                    if let Some(secret) = &hmac_secret
+                        && !verify_envelope_signature(&envelope, secret)
+                    {
+                        tracing::warn!(msg_id = ?envelope.id, "tunnel signature verify failed");
+                        if answer_refusal {
+                            let _ = tx
+                                .send(build_envelope(
+                                    "error",
+                                    &agent_id,
+                                    json!({"reason":"bad_signature","msg_id":envelope.id}),
+                                    hmac_secret.as_deref(),
+                                ))
+                                .await;
+                        }
+                        continue;
+                    }
+
+                    if let Err(reason) = inbound.check(&envelope, &agent_id, hmac_secret.is_some()) {
+                        tracing::warn!(msg_id = ?envelope.id, reason, "tunnel envelope refused");
+                        if answer_refusal {
+                            let _ = tx
+                                .send(build_envelope(
+                                    "error",
+                                    &agent_id,
+                                    json!({"reason": reason, "msg_id": envelope.id}),
+                                    hmac_secret.as_deref(),
+                                ))
+                                .await;
+                        }
+                        continue;
+                    }
+
+                    if envelope.msg_type != "task.dispatch" {
+                        continue;
+                    }
+
+                    let dispatch =
+                        serde_json::from_value::<DispatchPayload>(envelope.payload.clone()).unwrap_or_else(|_| {
+                            DispatchPayload {
+                                run_id: None,
+                                issue_id: None,
+                                body: Some(envelope.payload.clone()),
+                            }
+                        });
+
+                    let run_id = dispatch.run_id.unwrap_or_else(|| format!("run-{}", Uuid::new_v4()));
+
+                    let issue_id = dispatch
+                        .issue_id
+                        .or_else(|| dispatch.body.as_ref().and_then(dispatcher::extract_issue_id));
+
+                    let _ = tx
+                        .send(build_envelope(
+                            "task.ack",
+                            &agent_id,
+                            json!({
+                                "run_id": run_id,
+                                "issue_id": issue_id,
+                                "status": "accepted"
+                            }),
+                            hmac_secret.as_deref(),
+                        ))
+                        .await;
+
+                    // `agent_type = "cli"` was removed, and with it the tasks the tunnel ran: the
+                    // control plane is told so instead of a task hanging.
+                    let _ = tx
+                        .send(build_envelope(
+                            "task.result",
+                            &agent_id,
+                            json!({
+                                "run_id": run_id,
+                                "issue_id": issue_id,
+                                "status": "failed",
+                                "summary": TUNNEL_RUNS_NO_TASKS
+                            }),
+                            hmac_secret.as_deref(),
+                        ))
+                        .await;
+                }
+
+                heartbeat_task.abort();
+                drop(tx);
+                let _ = writer_task.await;
+                if background.is_shutting_down() {
+                    tracing::info!("tunnel closed for shutdown");
+                    return;
+                }
+                tracing::warn!("tunnel disconnected, reconnecting in {retry_secs}s");
+            }
+            Err(e) => {
+                tracing::warn!("tunnel connect failed: {e}");
+            }
+        }
+
+        if pause_unless_shutdown(&background, retry_secs).await {
+            return;
+        }
+        retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
+    }
+}
+
+/// The answer to a `task.dispatch`: the runner runs no task over the tunnel any more.
+const TUNNEL_RUNS_NO_TASKS: &str = "the runner no longer runs tasks over the tunnel: agent_type = cli was removed; \
+use agent_type = runner";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_handshake_request_carries_the_websocket_headers_and_the_token() {
+        let request = handshake_request("wss://control.example.com/tunnel", Some("tok")).expect("request");
+        let headers = request.headers();
+        for name in [
+            "sec-websocket-key",
+            "sec-websocket-version",
+            "upgrade",
+            "connection",
+            "host",
+        ] {
+            assert!(headers.contains_key(name), "{name} missing");
+        }
+        assert_eq!(
+            headers.get("authorization").and_then(|v| v.to_str().ok()),
+            Some("Bearer tok")
+        );
+        assert!(handshake_request("wss://control.example.com/tunnel", Some("bad\ntoken")).is_err());
+    }
+
+    #[test]
+    fn envelope_serialization_contains_required_fields() {
+        let env = build_envelope("task.ack", "agent-1", json!({"run_id":"r1","status":"accepted"}), None);
+        let s = serde_json::to_string(&env).expect("serialize envelope");
+        assert!(s.contains("\"id\""));
+        assert!(s.contains("\"type\":\"task.ack\""));
+        assert!(s.contains("\"ts\""));
+        assert!(s.contains("\"agent_id\":\"agent-1\""));
+        assert!(s.contains("\"payload\""));
+    }
+
+    #[test]
+    fn envelope_signature_sign_and_verify() {
+        let mut env = build_envelope("heartbeat", "agent-1", json!({"alive":true}), None);
+        let sig = sign_envelope_body(&env, "secret").expect("sign");
+        env.sig = Some(format!("sha256={sig}"));
+
+        assert!(verify_envelope_signature(&env, "secret"));
+        assert!(!verify_envelope_signature(&env, "wrong-secret"));
+    }
+
+    #[test]
+    fn unsigned_envelope_fails_verification() {
+        let env = build_envelope("heartbeat", "agent-1", json!({"alive":true}), None);
+        assert!(!verify_envelope_signature(&env, "secret"));
+    }
+
+    fn signed(secret: &str) -> (Envelope, String) {
+        let env = build_envelope("task.dispatch", "agent-1", json!({"run_id":"r1"}), None);
+        let hex = sign_envelope_body(&env, secret).expect("sign");
+        (env, hex)
+    }
+
+    fn with_sig(mut env: Envelope, sig: &str) -> Envelope {
+        env.sig = Some(sig.to_string());
+        env
+    }
+
+    #[test]
+    fn envelope_signature_is_accepted_with_any_number_of_prefixes() {
+        let (env, hex) = signed("secret");
+        assert!(verify_envelope_signature(&with_sig(env.clone(), &hex), "secret"));
+        assert!(verify_envelope_signature(
+            &with_sig(env, &format!("sha256=sha256={hex}")),
+            "secret"
+        ));
+    }
+
+    #[test]
+    fn envelope_signature_in_uppercase_hex_is_refused() {
+        let (env, hex) = signed("secret");
+        assert!(!verify_envelope_signature(
+            &with_sig(env, &format!("sha256={}", hex.to_ascii_uppercase())),
+            "secret"
+        ));
+    }
+
+    #[test]
+    fn malformed_envelope_signatures_are_refused() {
+        let (env, hex) = signed("secret");
+        for sig in [
+            format!("sha256={}", &hex[..63]),
+            format!("sha256={}", &hex[..62]),
+            format!("sha256={hex}00"),
+            format!("sha256=g{}", &hex[1..]),
+            "sha256=".to_string(),
+            String::new(),
+        ] {
+            assert!(
+                !verify_envelope_signature(&with_sig(env.clone(), &sig), "secret"),
+                "{sig:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn envelope_signature_does_not_survive_a_changed_payload() {
+        let (mut env, hex) = signed("secret");
+        env.payload = json!({"run_id":"r2"});
+        assert!(!verify_envelope_signature(&with_sig(env, &hex), "secret"));
+    }
+}

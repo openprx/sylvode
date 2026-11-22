@@ -13,12 +13,16 @@
 	} from '#lib/bots/transport-surfaces.js';
 	import { createBotRequest } from '#lib/bots/create-bot-request.js';
 	import { membersApi, type WorkspaceMember, type WorkspaceMemberRole } from '#lib/api/members.js';
+	import { copyText } from '#lib/clipboard.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
-	import Button from '#lib/components/Button.svelte';
+	import Button from '#lib/ui/button/Button.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Modal from '#lib/components/Modal.svelte';
+	import ManagedNotice from '#lib/project/connection/ManagedNotice.svelte';
+	import { managedBotIds, managedLock, parseManagedBy } from '#lib/project/connection/managed.js';
 
 	type EditableRole = Exclude<WorkspaceMemberRole, 'owner'>;
 	type BotPermission = 'read' | 'write' | 'admin';
@@ -58,6 +62,11 @@
 	let bots = $state<Bot[]>([]);
 	let createdToken = $state<CreateBotResponse | null>(null);
 
+	/** Bots a project connection manages: their token and seat are changed on the project. */
+	const managedBots = $derived(managedBotIds(bots));
+	/** A managed bot's member row cannot be removed here: it leaves with its last connection. */
+	const memberLock = (userId: string) =>
+		managedLock(managedBots.has(userId) ? { kind: 'project_connection', projects: [] } : null);
 	const memberIds = $derived(new Set(members.map((member) => member.user_id)));
 
 	onMount(async () => {
@@ -121,7 +130,14 @@
 
 	async function removeMember(member: WorkspaceMember) {
 		const name = member.name || member.email || member.user_id;
-		if (!confirm(get(t)('members.removeConfirm', { values: { name } }))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('members.removeTitle', { values: { name } }),
+				body: get(t)('members.removeBody', { values: { name } }),
+				confirmLabel: get(t)('members.removeAction', { values: { name } })
+			}))
+		) {
 			return;
 		}
 
@@ -141,10 +157,14 @@
 			return;
 		}
 
+		const roleValues = { values: { email: member.email, role: nextRole } };
 		if (
-			!confirm(
-				get(t)('members.changeRoleConfirm', { values: { email: member.email, role: nextRole } })
-			)
+			!(await confirmAction({
+				tone: 'neutral',
+				title: get(t)('members.changeRoleTitle', roleValues),
+				body: get(t)('members.changeRoleBody', roleValues),
+				confirmLabel: get(t)('members.changeRoleAction', roleValues)
+			}))
 		) {
 			return;
 		}
@@ -239,7 +259,15 @@
 	}
 
 	async function revokeToken(bot: Bot) {
-		if (!confirm(get(t)('members.revokeConfirm', { values: { name: bot.name } }))) {
+		const nameValues = { values: { name: bot.name } };
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('members.revokeTitle', nameValues),
+				body: get(t)('members.revokeBody'),
+				confirmLabel: get(t)('members.revokeAction', nameValues)
+			}))
+		) {
 			return;
 		}
 
@@ -256,24 +284,8 @@
 
 	async function copyCreatedToken() {
 		if (!createdToken?.token) return;
-
-		try {
-			if (navigator.clipboard?.writeText) {
-				await navigator.clipboard.writeText(createdToken.token);
-			} else {
-				const ta = document.createElement('textarea');
-				ta.value = createdToken.token;
-				ta.style.position = 'fixed';
-				ta.style.opacity = '0';
-				document.body.appendChild(ta);
-				ta.select();
-				document.execCommand('copy');
-				document.body.removeChild(ta);
-			}
-			toast.success(get(t)('members.copyTokenSuccess'));
-		} catch {
-			toast.error(get(t)('members.copyTokenFailed'));
-		}
+		if (await copyText(createdToken.token)) toast.success(get(t)('members.copyTokenSuccess'));
+		else toast.error(get(t)('members.copyTokenFailed'));
 	}
 
 	function closeCreatedTokenModal() {
@@ -283,12 +295,12 @@
 
 	function getPermissionClass(permission: string): string {
 		if (permission === 'admin') {
-			return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300';
+			return 'bg-danger-soft text-danger';
 		}
 		if (permission === 'write') {
-			return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300';
+			return 'bg-warning-soft text-warning';
 		}
-		return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
+		return 'bg-surface text-fg';
 	}
 
 	/** A surface the server reports but this client does not know is shown verbatim. */
@@ -312,82 +324,71 @@
 <div class="mx-auto max-w-7xl space-y-6">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div>
-			<h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">{$t('members.title')}</h1>
-			<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">{$t('members.subtitle')}</p>
+			<h1 class="text-2xl font-semibold text-fg">{$t('members.title')}</h1>
+			<p class="mt-1 text-sm text-fg-muted">{$t('members.subtitle')}</p>
 		</div>
 
-		<Button onclick={() => (showInviteModal = true)}>{$t('members.addInternalUser')}</Button>
+		<Button variant="primary" onclick={() => (showInviteModal = true)}
+			>{$t('members.addInternalUser')}</Button
+		>
 	</div>
 
-	<div
-		class="rounded-lg border border-slate-200 dark:border-slate-700 bg-blue-50 p-4 text-sm text-blue-800"
-	>
+	<div class="rounded-card border border-line bg-surface p-4 text-sm text-fg">
 		{$t('members.roleDescription')}
 	</div>
 
 	{#if loading}
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-slate-500 dark:text-slate-400"
-		>
+		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('common.loading')}
 		</div>
 	{:else if members.length === 0}
-		<div
-			class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-slate-500 dark:text-slate-400"
-		>
+		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
 			{$t('members.empty')}
 		</div>
 	{:else}
-		<div
-			class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
-		>
+		<div class="overflow-hidden rounded-card border border-line bg-raised">
 			<div class="overflow-x-auto">
-				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
-					<thead class="bg-slate-50 dark:bg-slate-950">
+				<table class="min-w-full divide-y divide-line">
+					<thead class="bg-nav">
 						<tr>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.member')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('admin.email')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('admin.role')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.joinedAt')}</th
 							>
 							<th
-								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.actions')}</th
 							>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
+					<tbody class="divide-y divide-line bg-raised">
 						{#each members as member (member.user_id)}
 							<tr>
-								<td class="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100">
+								<td class="px-4 py-3 text-sm font-medium text-fg">
 									<div class="flex items-center gap-1.5">
 										{#if isBotMember(member)}
-											<BotIcon
-												class="h-4 w-4 text-cyan-700 dark:text-cyan-300"
-												title={$t('admin.botBadge')}
-											/>
+											<BotIcon class="h-4 w-4 text-fg-muted" title={$t('admin.botBadge')} />
 										{/if}
 										<span>{member.name || member.user_id}</span>
 									</div>
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
-									>{member.email || '-'}</td
-								>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+								<td class="px-4 py-3 text-sm text-fg-muted">{member.email || '-'}</td>
+								<td class="px-4 py-3 text-sm text-fg-muted">
 									{#if isBotMember(member)}
 										<span
-											class="inline-flex rounded-full bg-cyan-100 px-2.5 py-1 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
+											class="inline-flex rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-fg"
 										>
 											{getBotRoleLabel(member)}
 										</span>
@@ -399,7 +400,7 @@
 												const target = event.currentTarget as HTMLSelectElement;
 												changeRole(member, target.value as WorkspaceMemberRole);
 											}}
-											class="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:cursor-not-allowed disabled:bg-slate-100 dark:disabled:bg-slate-700"
+											class="rounded-control border border-input bg-field px-2 py-1 text-sm text-fg disabled:cursor-not-allowed disabled:bg-surface"
 										>
 											<option value="owner">{$t('roles.owner')}</option>
 											<option value="admin">{$t('roles.admin')}</option>
@@ -407,14 +408,15 @@
 										</select>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
-									>{formatDate(member.joined_at)}</td
-								>
+								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(member.joined_at)}</td>
 								<td class="px-4 py-3 text-right">
 									<Button
-										variant="danger"
+										variant="danger-quiet"
 										size="sm"
-										disabled={member.role === 'owner'}
+										disabled={member.role === 'owner' || memberLock(member.user_id).disabled}
+										disabledReason={memberLock(member.user_id).reasonKey
+											? $t(memberLock(member.user_id).reasonKey ?? '')
+											: undefined}
 										loading={removingMemberId === member.user_id}
 										onclick={() => removeMember(member)}
 									>
@@ -429,80 +431,84 @@
 		</div>
 	{/if}
 
-	<div
-		class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
-	>
+	<div class="overflow-hidden rounded-card border border-line bg-raised">
 		<div
-			class="flex flex-col gap-3 border-b border-slate-200 dark:border-slate-700 p-4 sm:flex-row sm:items-center sm:justify-between"
+			class="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between"
 		>
 			<div>
-				<h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+				<h2 class="text-lg font-semibold text-fg">
 					{$t('members.apiTokensTitle')}
 				</h2>
-				<p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+				<p class="mt-1 text-sm text-fg-muted">
 					{$t('members.apiTokensSubtitle')}
 				</p>
 			</div>
-			<Button size="sm" onclick={openCreateTokenModal}>{$t('members.createToken')}</Button>
+			<Button variant="primary" size="sm" onclick={openCreateTokenModal}
+				>{$t('members.createToken')}</Button
+			>
 		</div>
 
 		{#if botsLoading}
-			<div class="p-6 text-sm text-slate-500 dark:text-slate-400">{$t('common.loading')}</div>
+			<div class="p-6 text-sm text-fg-muted">{$t('common.loading')}</div>
 		{:else if bots.length === 0}
-			<div class="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
+			<div class="p-10 text-center text-sm text-fg-muted">
 				{$t('members.apiTokensEmpty')}
 			</div>
 		{:else}
 			<div class="overflow-x-auto">
-				<table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
-					<thead class="bg-slate-50 dark:bg-slate-950">
+				<table class="min-w-full divide-y divide-line">
+					<thead class="bg-nav">
 						<tr>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.tokenName')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.tokenPrefix')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.transportSurfaceColumn')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.permissions')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.status')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('members.lastUsedAt')}</th
 							>
 							<th
-								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.createdAt')}</th
 							>
 							<th
-								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400"
+								class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.actions')}</th
 							>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-slate-200 dark:divide-slate-700 bg-white dark:bg-slate-900">
+					<tbody class="divide-y divide-line bg-raised">
 						{#each bots as bot (bot.id)}
 							<tr>
-								<td class="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100"
-									>{bot.name}</td
-								>
-								<td class="px-4 py-3 text-sm font-mono text-slate-600 dark:text-slate-300"
-									>{bot.token_prefix}</td
-								>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+								<td class="px-4 py-3 text-sm font-medium text-fg">
+									<div>{bot.name}</div>
+									{#if parseManagedBy(bot.managed_by)}
+										{@const managed = parseManagedBy(bot.managed_by)}
+										{#if managed}
+											<div class="mt-1"><ManagedNotice {workspaceId} managedBy={managed} /></div>
+										{/if}
+									{/if}
+								</td>
+								<td class="px-4 py-3 text-sm font-mono text-fg-muted">{bot.token_prefix}</td>
+								<td class="px-4 py-3 text-sm text-fg-muted">
 									<span
-										class="inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+										class="inline-flex rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-fg"
 										title={getSurfaceDescription(bot.transport_surface)}
 										data-testid="bot-transport-surface"
 										data-surface={bot.transport_surface}
@@ -510,12 +516,12 @@
 										{getSurfaceLabel(bot.transport_surface)}
 									</span>
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+								<td class="px-4 py-3 text-sm text-fg-muted">
 									<div class="flex flex-wrap gap-1.5">
 										{#if bot.permissions.length === 0}
 											<span>-</span>
 										{:else}
-											{#each bot.permissions as permission}
+											{#each bot.permissions as permission, index (index)}
 												<span
 													class={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${getPermissionClass(permission)}`}
 												>
@@ -528,29 +534,29 @@
 								<td class="px-4 py-3 text-sm">
 									{#if bot.is_active}
 										<span
-											class="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+											class="inline-flex rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success"
 										>
 											{$t('members.tokenStatus.active')}
 										</span>
 									{:else}
 										<span
-											class="inline-flex rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300"
+											class="inline-flex rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-fg"
 										>
 											{$t('members.tokenStatus.disabled')}
 										</span>
 									{/if}
 								</td>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
-									>{formatDate(bot.last_used_at)}</td
-								>
-								<td class="px-4 py-3 text-sm text-slate-600 dark:text-slate-300"
-									>{formatDate(bot.created_at)}</td
-								>
+								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(bot.last_used_at)}</td>
+								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(bot.created_at)}</td>
 								<td class="px-4 py-3 text-right">
 									<Button
-										variant="danger"
+										variant="danger-quiet"
 										size="sm"
-										disabled={!bot.is_active}
+										disabled={!bot.is_active ||
+											managedLock(parseManagedBy(bot.managed_by)).disabled}
+										disabledReason={managedLock(parseManagedBy(bot.managed_by)).reasonKey
+											? $t(managedLock(parseManagedBy(bot.managed_by)).reasonKey ?? '')
+											: undefined}
 										loading={revokingBotId === bot.id}
 										onclick={() => revokeToken(bot)}
 									>
@@ -582,47 +588,45 @@
 				placeholder={$t('members.usernameOrEmailPlaceholder')}
 			/>
 			<div class="flex items-end">
-				<Button type="submit" loading={searchingUsers}>{$t('common.search')}</Button>
+				<Button variant="primary" type="submit" loading={searchingUsers}
+					>{$t('common.search')}</Button
+				>
 			</div>
 		</form>
 
 		<div>
-			<label
-				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
-				for="inviteRole">{$t('admin.role')}</label
+			<label class="mb-1 block text-sm font-medium text-fg" for="inviteRole"
+				>{$t('admin.role')}</label
 			>
 			<select
 				id="inviteRole"
 				bind:value={selectedRole}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 			>
 				<option value="member">{$t('roles.member')}</option>
 				<option value="admin">{$t('roles.admin')}</option>
 			</select>
 		</div>
 
-		<div
-			class="max-h-72 space-y-2 overflow-y-auto rounded-md border border-slate-200 dark:border-slate-700 p-2"
-		>
+		<div class="max-h-72 space-y-2 overflow-y-auto rounded-control border border-line p-2">
 			{#if searchingUsers}
-				<p class="p-2 text-sm text-slate-500 dark:text-slate-400">{$t('search.searching')}</p>
+				<p class="p-2 text-sm text-fg-muted">{$t('search.searching')}</p>
 			{:else if searchResults.length === 0}
-				<p class="p-2 text-sm text-slate-500 dark:text-slate-400">
+				<p class="p-2 text-sm text-fg-muted">
 					{$t('members.noSearchResults')}
 				</p>
 			{:else}
 				{#each searchResults as user (user.id)}
-					<div
-						class="flex items-center justify-between rounded-md px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 dark:bg-slate-950"
-					>
+					<div class="flex items-center justify-between rounded-row px-2 py-2 hover:bg-surface">
 						<div>
-							<p class="text-sm font-medium text-slate-900 dark:text-slate-100">{user.name}</p>
-							<p class="text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
+							<p class="text-sm font-medium text-fg">{user.name}</p>
+							<p class="text-xs text-fg-muted">{user.email}</p>
 						</div>
 						{#if memberIds.has(user.id)}
 							<Button size="sm" variant="secondary" disabled>{$t('members.added')}</Button>
 						{:else}
 							<Button
+								variant="primary"
 								size="sm"
 								loading={addingUserId === user.id}
 								onclick={() => addInternalUser(user.id)}
@@ -659,20 +663,20 @@
 		/>
 
 		<fieldset aria-describedby="tokenSurfaceHint">
-			<legend class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+			<legend class="mb-1 block text-sm font-medium text-fg">
 				{$t('members.transportSurface')}
-				<span class="text-red-600 dark:text-red-400" aria-hidden="true">*</span>
+				<span class="text-danger" aria-hidden="true">*</span>
 			</legend>
-			<p id="tokenSurfaceHint" class="mb-2 text-xs text-slate-500 dark:text-slate-400">
+			<p id="tokenSurfaceHint" class="mb-2 text-xs text-fg-muted">
 				{$t('members.transportSurfaceHint')}
 			</p>
 			<div class="space-y-2">
 				{#each BOT_TRANSPORT_SURFACES as surface (surface)}
 					<label
-						class="flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-blue-500 dark:focus-within:ring-blue-400 {tokenSurface ===
+						class="flex cursor-pointer items-start gap-3 rounded-control border px-3 py-2 text-sm {tokenSurface ===
 						surface
-							? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20'
-							: 'border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800'}"
+							? 'border-fg bg-surface'
+							: 'border-input bg-field'}"
 					>
 						<input
 							type="radio"
@@ -681,15 +685,11 @@
 							bind:group={tokenSurface}
 							required
 							aria-describedby={`tokenSurface-${surface}-description`}
-							class="mt-0.5 h-4 w-4 border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800"
+							class="mt-0.5 h-4 w-4 border-input accent-primary"
 						/>
 						<span>
-							<span class="block font-medium text-slate-900 dark:text-slate-100"
-								>{$t(surfaceLabelKey(surface))}</span
-							>
-							<span
-								id={`tokenSurface-${surface}-description`}
-								class="block text-xs text-slate-500 dark:text-slate-400"
+							<span class="block font-medium text-fg">{$t(surfaceLabelKey(surface))}</span>
+							<span id={`tokenSurface-${surface}-description`} class="block text-xs text-fg-muted"
 								>{$t(surfaceDescriptionKey(surface))}</span
 							>
 						</span>
@@ -699,19 +699,19 @@
 		</fieldset>
 
 		<div>
-			<p class="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+			<p class="mb-2 block text-sm font-medium text-fg">
 				{$t('members.permissions')}
 			</p>
 			<div class="flex flex-wrap gap-2">
-				{#each botPermissionOptions as permission}
+				{#each botPermissionOptions as permission, index (index)}
 					<label
-						class="inline-flex items-center gap-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300"
+						class="inline-flex items-center gap-2 rounded-control border border-input bg-field px-3 py-1.5 text-sm text-fg"
 					>
 						<input
 							type="checkbox"
 							checked={tokenPermissions.includes(permission)}
 							onchange={() => togglePermission(permission)}
-							class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800"
+							class="h-4 w-4 rounded border-input accent-primary"
 						/>
 						<span>{$t(`members.permission.${permission}`)}</span>
 					</label>
@@ -720,17 +720,16 @@
 		</div>
 
 		<div>
-			<label
-				class="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300"
-				for="tokenExpiresAt">{$t('members.expiresAt')}</label
+			<label class="mb-1 block text-sm font-medium text-fg" for="tokenExpiresAt"
+				>{$t('members.expiresAt')}</label
 			>
 			<input
 				id="tokenExpiresAt"
 				type="date"
 				bind:value={tokenExpiresAt}
-				class="w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 			/>
-			<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{$t('members.expiresAtHint')}</p>
+			<p class="mt-1 text-xs text-fg-muted">{$t('members.expiresAtHint')}</p>
 		</div>
 
 		<div class="flex justify-end gap-2 pt-2">
@@ -738,7 +737,9 @@
 				>{$t('common.cancel')}</Button
 			>
 
-			<Button type="submit" loading={creatingToken}>{$t('members.createToken')}</Button>
+			<Button variant="primary" type="submit" loading={creatingToken}
+				>{$t('members.createToken')}</Button
+			>
 		</div>
 	</form>
 </Modal>
@@ -751,12 +752,12 @@
 >
 	{#if createdToken}
 		<div class="space-y-4">
-			<div class="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+			<div class="rounded-control border bg-warning-soft p-3 text-sm text-warning">
 				{$t('members.tokenCreatedHint')}
 			</div>
 
 			<div
-				class="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-200"
+				class="rounded-control border bg-surface p-3 text-sm text-fg"
 				data-testid="created-token-surface"
 			>
 				<p class="font-medium">
@@ -769,25 +770,24 @@
 			</div>
 
 			<div>
-				<p class="mb-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+				<p class="mb-1 text-sm font-medium text-fg">
 					{$t('members.fullToken')}
 				</p>
-				<code
-					class="block rounded-md bg-slate-100 dark:bg-slate-950 p-3 text-xs sm:text-sm text-slate-900 dark:text-slate-100 break-all"
+				<code class="block rounded-control bg-surface p-3 text-xs sm:text-sm text-fg break-all"
 					>{createdToken.token}</code
 				>
 			</div>
 
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<div>
-					<p class="text-xs text-slate-500 dark:text-slate-400">{$t('members.tokenPrefix')}</p>
-					<p class="text-sm font-mono text-slate-700 dark:text-slate-200">
+					<p class="text-xs text-fg-muted">{$t('members.tokenPrefix')}</p>
+					<p class="text-sm font-mono text-fg">
 						{createdToken.token_prefix}
 					</p>
 				</div>
 				<div>
-					<p class="text-xs text-slate-500 dark:text-slate-400">{$t('common.createdAt')}</p>
-					<p class="text-sm text-slate-700 dark:text-slate-200">
+					<p class="text-xs text-fg-muted">{$t('common.createdAt')}</p>
+					<p class="text-sm text-fg">
 						{formatDate(createdToken.created_at)}
 					</p>
 				</div>
@@ -795,7 +795,7 @@
 
 			<div class="flex justify-end gap-2 pt-2">
 				<Button variant="secondary" onclick={closeCreatedTokenModal}>{$t('common.close')}</Button>
-				<Button onclick={copyCreatedToken}>{$t('members.copyToken')}</Button>
+				<Button variant="primary" onclick={copyCreatedToken}>{$t('members.copyToken')}</Button>
 			</div>
 		</div>
 	{/if}

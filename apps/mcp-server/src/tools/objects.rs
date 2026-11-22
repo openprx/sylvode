@@ -220,6 +220,7 @@ fn retain_client_method<T>(_method: T) {}
 
 pub fn reference_flow_object_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.reference".to_string(),
         description: "Create a permission-aware reference from a Flow object to a Form or Form record.".to_string(),
         input_schema: json!({"type":"object","properties":{
@@ -232,6 +233,7 @@ pub fn reference_flow_object_tool() -> ToolDefinition {
 
 pub fn unreference_flow_object_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.unreference".to_string(),
         description: "Remove a Flow-to-Forms reference without deleting its target.".to_string(),
         input_schema: json!({"type":"object","properties":{
@@ -243,6 +245,7 @@ pub fn unreference_flow_object_tool() -> ToolDefinition {
 
 pub fn convert_preview_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.convert_preview".to_string(),
         description: "Preview a frozen Flow-to-Forms conversion for 15 minutes.".to_string(),
         input_schema: json!({"type":"object","properties":{
@@ -256,6 +259,7 @@ pub fn convert_preview_tool() -> ToolDefinition {
 
 pub fn convert_commit_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.convert_commit".to_string(),
         description: "Commit a previously previewed conversion with frozen source and target versions.".to_string(),
         input_schema: json!({"type":"object","properties":{
@@ -269,6 +273,7 @@ pub fn convert_commit_tool() -> ToolDefinition {
 
 pub fn convert_status_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.convert_status".to_string(),
         description: "Read a conversion job after reauthorizing its Flow source.".to_string(),
         input_schema: json!({"type":"object","properties":{"job_id":{"type":"string"}},
@@ -278,6 +283,7 @@ pub fn convert_status_tool() -> ToolDefinition {
 
 pub fn convert_retry_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.convert_retry".to_string(),
         description: "Idempotently retry a failed conversion with all permissions rechecked.".to_string(),
         input_schema: json!({"type":"object","properties":{"job_id":{"type":"string"},"confirm":{"const":true},
@@ -288,6 +294,7 @@ pub fn convert_retry_tool() -> ToolDefinition {
 
 fn v08_tool(name: &str, description: &str, properties: &Value, required: &[&str]) -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: name.to_string(),
         description: description.to_string(),
         input_schema: json!({"type":"object","properties":properties,"required":required,"additionalProperties":false}),
@@ -1016,6 +1023,7 @@ pub async fn repair_quarantine(client: &OpenPrClient, args: Value) -> CallToolRe
 
 pub fn get_flow_object_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.get".to_string(),
         description: "Get one Flow object (title, semantic content, document seq/frontier). \
 Returns the same projection the REST and CLI surfaces read; never raw CRDT bytes."
@@ -1068,10 +1076,11 @@ pub async fn get_flow_object(client: &OpenPrClient, args: Value) -> CallToolResu
 
 pub fn query_flow_objects_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.query".to_string(),
         description: "List Flow objects in a workspace, scoped to one project or, with \
 unprojected=true, to objects that belong to no project. project_id and unprojected are mutually \
-exclusive."
+exclusive. A runner bot must pass the project_id of one of its connected projects."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -1150,6 +1159,7 @@ pub async fn query_flow_objects(client: &OpenPrClient, args: Value) -> CallToolR
 
 pub fn get_flow_object_history_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.history".to_string(),
         description: "Get one Flow object's accepted-update history page (seq, actor, origin, \
 message, semantic summary). No raw update bytes."
@@ -1226,6 +1236,7 @@ fn command_body(command_type: &str, payload: &Value, idempotency_key: &str, mess
 
 pub fn create_flow_object_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.create".to_string(),
         description: "Create a page, navigator, or Collection Flow object. A Collection with embed_page_id uses the server's atomic Page embed command (after_block_id places the embed block); Record creation is collection-scoped.".to_string(),
         input_schema: json!({
@@ -1335,6 +1346,7 @@ pub async fn create_flow_object(client: &OpenPrClient, args: Value) -> CallToolR
 
 pub fn patch_flow_object_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.patch".to_string(),
         description: "Atomically apply one to 100 semantic operations to a Flow object.".to_string(),
         input_schema: json!({
@@ -1391,6 +1403,7 @@ pub async fn patch_flow_object(client: &OpenPrClient, args: Value) -> CallToolRe
 
 pub fn move_flow_object_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.move".to_string(),
         description: "Move an object under target_object_id, the new parent; authorization is checked on both sides."
             .to_string(),
@@ -1459,6 +1472,7 @@ pub async fn move_flow_object(client: &OpenPrClient, args: Value) -> CallToolRes
 
 pub fn link_flow_objects_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.link".to_string(),
         description: "Create a typed relation after the API reauthorizes both source and target objects.".to_string(),
         input_schema: json!({
@@ -1511,6 +1525,7 @@ pub async fn link_flow_objects(client: &OpenPrClient, args: Value) -> CallToolRe
 
 pub fn unlink_flow_objects_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.unlink".to_string(),
         description: "Remove one relation from a source Flow object.".to_string(),
         input_schema: json!({
@@ -1559,6 +1574,7 @@ pub async fn unlink_flow_objects(client: &OpenPrClient, args: Value) -> CallTool
 
 pub fn diff_flow_object_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.diff".to_string(),
         description: "Read a semantic history diff without CRDT bytes or peer identifiers.".to_string(),
         input_schema: json!({
@@ -1612,6 +1628,7 @@ pub async fn diff_flow_object(client: &OpenPrClient, args: Value) -> CallToolRes
 
 pub fn get_flow_object_grants_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.grants_get".to_string(),
         description:
             "Read the caller's effective access; the API only includes the full grant roster for full_access callers."
@@ -1683,6 +1700,7 @@ fn validate_grants(grants: &[FlowGrantInput]) -> Result<(), CallToolResult> {
 
 pub fn set_flow_object_grants_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.grants_set".to_string(),
         description: "Replace explicit grants, or preview the same full-access-authorized change with zero writes and zero events.".to_string(),
         input_schema: json!({
@@ -1746,6 +1764,7 @@ pub async fn set_flow_object_grants(client: &OpenPrClient, args: Value) -> CallT
 
 pub fn set_flow_object_inheritance_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.inheritance_set".to_string(),
         description: "Set inheritance, optionally replacing initial grants atomically; dry_run retains the full authorization gate and writes nothing.".to_string(),
         input_schema: json!({
@@ -1816,6 +1835,7 @@ pub async fn set_flow_object_inheritance(client: &OpenPrClient, args: Value) -> 
 
 pub fn list_flow_object_relations_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.relations".to_string(),
         description: "List policy-filtered relations; an invisible opposite endpoint is represented only as visibility=unavailable.".to_string(),
         input_schema: json!({
@@ -1877,8 +1897,9 @@ pub async fn list_flow_object_relations(client: &OpenPrClient, args: Value) -> C
 
 pub fn search_flow_objects_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "objects.search".to_string(),
-        description: "Search one project or the projectless scope with per-result API reauthorization; bots have no all_visible escape hatch.".to_string(),
+        description: "Search one project or the projectless scope with per-result API reauthorization; bots have no all_visible escape hatch. A runner bot must pass the project_id of one of its connected projects.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -1958,6 +1979,7 @@ pub async fn search_flow_objects(client: &OpenPrClient, args: Value) -> CallTool
 
 pub fn get_flow_projection_lag_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "collab.projection_lag".to_string(),
         description: "Read policy-filtered projection lag aggregates and items without content or byte payloads."
             .to_string(),
@@ -2022,6 +2044,7 @@ fn query_suffix(params: &[String]) -> String {
 
 pub fn describe_collection_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "collections.describe".to_string(),
         description: "Describe a Collection with field IDs and labels, views, record count, schema seq, and projection seq. Reads typed projections only.".to_string(),
         input_schema: json!({
@@ -2058,6 +2081,7 @@ pub async fn describe_collection(client: &OpenPrClient, args: Value) -> CallTool
 
 pub fn query_collection_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "collections.query".to_string(),
         description: "Query typed Collection record projections with opaque cursor pagination, field-ID filter/sort/group, and field ID plus label metadata.".to_string(),
         input_schema: json!({
@@ -2125,6 +2149,7 @@ pub async fn query_collection(client: &OpenPrClient, args: Value) -> CallToolRes
 
 pub fn create_collection_record_tool() -> ToolDefinition {
     ToolDefinition {
+        annotations: None,
         name: "records.create".to_string(),
         description: "Create one Record inside a Collection using values keyed only by stable field UUID. The response and follow-up query include field IDs and labels.".to_string(),
         input_schema: json!({

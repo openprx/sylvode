@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { getContext } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { PLUGIN_ADMIN_CONTEXT } from '#lib/plugins/context.js';
@@ -9,8 +10,10 @@
 
 {#if canManage?.()}
 	<a
-		class="rounded-md px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 focus-visible:outline-blue-600 dark:text-blue-300 dark:hover:bg-slate-800"
-		href={`/workspace/${workspaceId}/projects/${projectId}/settings/plugins`}
-		>{$t('plugins.projectSettings')}</a
+		class="rounded-[var(--radius-sm)] px-4 py-2 text-sm font-medium text-fg hover:bg-surface"
+		href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/settings/plugins', {
+			workspaceId,
+			projectId
+		})}>{$t('plugins.projectSettings')}</a
 	>
 {/if}

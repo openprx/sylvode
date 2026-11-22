@@ -106,18 +106,34 @@ pub async fn get_project_context(
     let resources = load_resources(&state, project_id).await?;
     let governance = load_governance(&state, project_id).await?;
     let workflow = load_workflow(&state, project_id).await?;
-    let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
     let agent_policy = build_agent_policy(&project, project_type.as_ref(), governance.as_ref());
 
-    Ok(ApiResponse::success(json!({
+    let mut context = json!({
         "project": project,
         "project_type": project_type,
         "resources": resources,
         "governance": governance,
         "workflow": workflow,
-        "recent_decisions": decisions,
         "agent_policy": agent_policy,
-    })))
+    });
+    // Decisions are workspace-wide (a decision has no project of its own), so a connected
+    // application, whose grant may cover only some projects, gets none: no scope of the first
+    // release covers decisions, and the field is left out rather than sent empty, which would
+    // read as "no decisions".
+    //
+    // The executions (one per bot connection) are left out for the same callers: they name a directory on the
+    // runner's machine, which no connected application has a use for, and an absent key (unlike
+    // empty array) does not read as "this project has no connections".
+    if crate::oauth::delegated::current().is_none()
+        && let Some(object) = context.as_object_mut()
+    {
+        let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
+        object.insert("recent_decisions".to_owned(), json!(decisions));
+        let executions =
+            crate::services::execution_settings::list_for_project(&state.db, project_id, &project.key).await?;
+        object.insert("executions".to_owned(), json!(executions));
+    }
+    Ok(ApiResponse::success(context))
 }
 
 pub async fn get_project_governance_context(
@@ -130,14 +146,20 @@ pub async fn get_project_governance_context(
     ensure_project_context_access(&state, &claims, bot.as_ref().map(|b| &b.0), &project).await?;
     let governance = load_governance(&state, project_id).await?;
     let workflow = load_workflow(&state, project_id).await?;
-    let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
-
-    Ok(ApiResponse::success(json!({
+    let mut context = json!({
         "project_id": project_id,
         "governance": governance,
         "workflow": workflow,
-        "recent_decisions": decisions,
-    })))
+    });
+    // Same rule as the project context: workspace-wide decisions are not shown to a connected
+    // application.
+    if crate::oauth::delegated::current().is_none()
+        && let Some(object) = context.as_object_mut()
+    {
+        let decisions = load_recent_decisions(&state.db, project.workspace_id).await?;
+        object.insert("recent_decisions".to_owned(), json!(decisions));
+    }
+    Ok(ApiResponse::success(context))
 }
 
 pub async fn get_project_agent_policy(
@@ -366,7 +388,6 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
             "context.get_governance",
             "context.get_agent_policy",
             "release.readiness.get",
-            "project_resources.list",
             "members.list",
             "search.all",
         ]),
@@ -430,12 +451,7 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
     if capability_set.contains("code_context") {
         groups.insert(
             "code",
-            tool_set(&[
-                "code.resources.list",
-                "code.directory.get",
-                "code.task_context.get",
-                "code.change_proposal.create",
-            ]),
+            tool_set(&["code.task_context.get", "code.change_proposal.create"]),
         );
     }
 
@@ -528,17 +544,21 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
         || capability_set.contains("inspection")
         || capability_set.contains("corrective_action")
     {
-        groups.insert(
-            "resources",
-            tool_set(&[
-                "project_resources.list",
-                "project_resources.create",
-                "project_resources.update",
-                "project_resources.delete",
-                "files.upload",
-            ]),
-        );
+        groups.insert("resources", tool_set(&["files.upload"]));
     }
+
+    // The task protocol is never a policy choice: a policy that hid it would leave a task the
+    // bot cannot acknowledge, complete or fail.
+    groups.insert(
+        "tasks",
+        tool_set(&[
+            "sylvode_task_get",
+            "sylvode_task_ack",
+            "sylvode_task_progress",
+            "sylvode_task_complete",
+            "sylvode_task_fail",
+        ]),
+    );
 
     let enabled_tools = groups
         .values()
@@ -575,6 +595,7 @@ fn tool_set(tools: &[&'static str]) -> BTreeSet<&'static str> {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::tenant_fixture::{count, seed_decision, seed_proposal, seed_tenant};
     use super::{build_mcp_tool_registry, load_recent_decisions};
@@ -610,7 +631,17 @@ mod tests {
         assert!(tools.contains(&"proposals.create".to_string()));
         assert!(tools.contains(&"proposals.create_from_result".to_string()));
         assert!(tools.contains(&"check_results.create".to_string()));
-        assert!(tools.contains(&"project_resources.create".to_string()));
+        assert!(tools.contains(&"files.upload".to_string()));
+        for parked in [
+            "project_resources.list",
+            "project_resources.create",
+            "project_resources.update",
+            "project_resources.delete",
+            "code.resources.list",
+            "code.directory.get",
+        ] {
+            assert!(!tools.contains(&parked.to_string()), "{parked} is parked");
+        }
         assert!(tools.contains(&"forms.create_from_template".to_string()));
         assert!(tools.contains(&"scenario_templates.install".to_string()));
         assert!(tools.contains(&"forms.duplicate".to_string()));
@@ -632,6 +663,43 @@ mod tests {
         assert!(tools.contains(&"plugins.invoke".to_string()));
     }
 
+    /// The `tasks` group is added for every project type, whatever its capabilities.
+    #[test]
+    fn the_tasks_group_is_present_for_every_capability_set() {
+        // Groups are sorted sets.
+        let task_tools = [
+            "sylvode_task_ack",
+            "sylvode_task_complete",
+            "sylvode_task_fail",
+            "sylvode_task_get",
+            "sylvode_task_progress",
+        ];
+        for capabilities in [
+            json!([]),
+            json!(["mcp"]),
+            json!(["issues"]),
+            json!(["code_context"]),
+            json!(["documents", "forms"]),
+            json!(["inspection", "corrective_action"]),
+            json!([
+                "issues",
+                "sprints",
+                "mcp",
+                "governance",
+                "code_context",
+                "forms",
+                "plugins"
+            ]),
+        ] {
+            let registry = build_mcp_tool_registry(&capabilities);
+            assert_eq!(registry["groups"]["tasks"], json!(task_tools), "{capabilities}");
+            let tools = enabled_tools(&registry);
+            for tool in task_tools {
+                assert!(tools.contains(&tool.to_string()), "{tool} for {capabilities}");
+            }
+        }
+    }
+
     #[test]
     fn mcp_tool_registry_hides_disabled_capability_tools() {
         let registry = build_mcp_tool_registry(&json!(["issues", "mcp"]));
@@ -641,6 +709,53 @@ mod tests {
         assert!(!tools.iter().any(|tool| tool.starts_with("invocations.")));
         assert!(!tools.contains(&"sprints.create".to_string()));
         assert!(!tools.contains(&"proposals.create".to_string()));
+    }
+
+    /// The tool names the MCP server's catalogue knows, written by `sylvode-skillgen` (and checked
+    /// by `--check`). Every name the agent policy can enable must be one of them, so a policy can
+    /// never name a tool the server does not have.
+    #[test]
+    fn every_tool_the_policy_registry_names_is_in_the_catalogue_fixture() {
+        let fixture: Vec<String> = serde_json::from_str(include_str!("../../tests/fixtures/mcp-tool-names.json"))
+            .expect("the fixture is a JSON array of names");
+        assert!(fixture.len() > 100, "the fixture looks empty");
+        let every_capability = json!([
+            "issues",
+            "board",
+            "sprints",
+            "milestones",
+            "governance",
+            "approval",
+            "corrective_action",
+            "inspection",
+            "code_context",
+            "documents",
+            "attachments",
+            "forms",
+            "plugins",
+            "mcp"
+        ]);
+        for capabilities in [json!([]), every_capability] {
+            let registry = build_mcp_tool_registry(&capabilities);
+            for name in enabled_tools(&registry) {
+                assert!(
+                    fixture.contains(&name),
+                    "{name} is in the policy registry but not in the catalogue"
+                );
+            }
+        }
+    }
+
+    /// The `resources` group outlives the parked project-resource tools: for projects without
+    /// issues or board it is the only source of `files.upload`, and it holds nothing else.
+    #[test]
+    fn the_resources_group_holds_only_files_upload() {
+        let registry = build_mcp_tool_registry(&json!(["code_context", "mcp"]));
+        assert_eq!(registry["groups"]["resources"], json!(["files.upload"]));
+        assert!(registry["groups"].get("work_items").is_none());
+        let tools = enabled_tools(&registry);
+        assert!(tools.contains(&"files.upload".to_string()));
+        assert!(tools.contains(&"code.task_context.get".to_string()));
     }
 
     /// V2. `GET /projects/{id}/context` exposes `recent_decisions`, and the query behind it used
@@ -681,6 +796,103 @@ mod tests {
             3
         );
 
+        scratch.drop_self().await;
+    }
+
+    async fn context_body(
+        db: &sea_orm::DatabaseConnection,
+        user: uuid::Uuid,
+        bot: Option<crate::middleware::bot_auth::BotAuthContext>,
+        project: uuid::Uuid,
+    ) -> serde_json::Value {
+        use axum::response::IntoResponse;
+        let response = super::get_project_context(
+            axum::extract::State(super::tenant_fixture::state_for(db.clone())),
+            axum::Extension(super::tenant_fixture::claims_for(user)),
+            bot.map(axum::Extension),
+            axum::extract::Path(project),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("the context loads: {err:?}"))
+        .into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("the body reads");
+        serde_json::from_slice(&bytes).expect("the body is JSON")
+    }
+
+    /// The executions (one per bot connection) name a directory on the runner's machine: people and
+    /// bots get them (an empty array without a connection), a connected application gets no
+    /// `executions` key at all.
+    #[tokio::test]
+    async fn the_context_carries_the_executions_except_for_connected_applications() {
+        use super::tenant_fixture::{bot_context_for, exec, seed_bot_user, seed_connection, seed_connection_on};
+        use crate::middleware::bot_auth::EventSurface;
+        use crate::oauth::delegated::{DelegatedAuthContext, with_context};
+        use crate::oauth::scopes::{ProjectScope, ScopeSet, TokenResource};
+
+        let scratch = scratch_or_skip!("context_execution");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "cx").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        let second = seed_bot_user(db, &tenant).await;
+
+        let without = context_body(db, tenant.member_id, None, tenant.project_id).await;
+        assert_eq!(
+            without["data"]["executions"],
+            serde_json::json!([]),
+            "a project without connections reports an empty list: {without}"
+        );
+
+        seed_connection(db, &tenant, tenant.project_id, bot, true, "/work/a").await;
+        seed_connection_on(db, &tenant, tenant.project_id, second, false, "/work/b", "headless").await;
+        for (id, name) in [(bot, "Alpha"), (second, "Bravo")] {
+            exec(
+                db,
+                "UPDATE workspace_bots SET name = $2 WHERE id = $1",
+                vec![id.into(), name.to_string().into()],
+            )
+            .await;
+        }
+        let expected = serde_json::json!([
+            {"bot_id": bot, "bot_name": "Alpha", "enabled": true, "channel": "tmux", "cli": "claude",
+             "working_directory": "/work/a", "session_name": "Pcx-claude"},
+            {"bot_id": second, "bot_name": "Bravo", "enabled": false, "channel": "headless", "cli": "claude",
+             "working_directory": "/work/b", "session_name": null},
+        ]);
+        let person = context_body(db, tenant.member_id, None, tenant.project_id).await;
+        assert_eq!(person["data"]["executions"], expected);
+        let bot_view = context_body(
+            db,
+            bot,
+            Some(bot_context_for(bot, tenant.workspace_id, &["read"])),
+            tenant.project_id,
+        )
+        .await;
+        assert_eq!(bot_view["data"]["executions"], expected);
+
+        let delegated = DelegatedAuthContext {
+            grant_id: uuid::Uuid::new_v4(),
+            token_id: uuid::Uuid::new_v4(),
+            client_id: std::sync::Arc::from("ramflux"),
+            user_id: tenant.member_id,
+            workspace_id: tenant.workspace_id,
+            scopes: ScopeSet::all(),
+            projects: ProjectScope::All,
+            resource: TokenResource::Api,
+            surface: EventSurface::Rest,
+            tool_name: None,
+            request_id: uuid::Uuid::new_v4(),
+        };
+        let connected = with_context(delegated, context_body(db, tenant.member_id, None, tenant.project_id)).await;
+        assert!(
+            connected["data"].get("executions").is_none(),
+            "a connected application gets no executions key: {connected}"
+        );
+        assert!(
+            !connected.to_string().contains("/work/a"),
+            "the working directory does not leak: {connected}"
+        );
         scratch.drop_self().await;
     }
 }
@@ -920,6 +1132,146 @@ pub mod tenant_fixture {
         )
         .await;
         bot_id
+    }
+
+    /// The shared rows of a connected bot (token row, managed webhook, `bot_runners`) for a bot
+    /// user of `tenant`, written once per bot.
+    pub async fn seed_bot_runner(db: &impl ConnectionTrait, tenant: &Tenant, bot_id: Uuid) {
+        exec(
+            db,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix) \
+             VALUES ($1, $2, 'tenant bot', replace($1::text, '-', '') || replace($1::text, '-', ''), 'svb_test') \
+             ON CONFLICT (id) DO NOTHING",
+            vec![bot_id.into(), tenant.workspace_id.into()],
+        )
+        .await;
+        let hook = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, created_by) \
+             SELECT $1, $2, 'runner', 'https://93.184.216.34:9090/webhook', 'secret', '{}', $3 \
+             WHERE NOT EXISTS (SELECT 1 FROM bot_runners WHERE bot_id = $4)",
+            vec![
+                hook.into(),
+                tenant.workspace_id.into(),
+                tenant.member_id.into(),
+                bot_id.into(),
+            ],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO bot_runners (bot_id, workspace_id, webhook_id, runner_url) \
+             SELECT $1, $2, $3, 'https://93.184.216.34:9090' \
+             WHERE NOT EXISTS (SELECT 1 FROM bot_runners WHERE bot_id = $1)",
+            vec![bot_id.into(), tenant.workspace_id.into(), hook.into()],
+        )
+        .await;
+    }
+
+    /// A connection of `bot_id` to `project_id`, tmux and claude, in `working_directory`.
+    pub async fn seed_connection(
+        db: &impl ConnectionTrait,
+        tenant: &Tenant,
+        project_id: Uuid,
+        bot_id: Uuid,
+        enabled: bool,
+        working_directory: &str,
+    ) {
+        seed_connection_on(db, tenant, project_id, bot_id, enabled, working_directory, "tmux").await;
+    }
+
+    /// [`seed_connection`] on `channel` (`tmux` or `headless`).
+    pub async fn seed_connection_on(
+        db: &impl ConnectionTrait,
+        tenant: &Tenant,
+        project_id: Uuid,
+        bot_id: Uuid,
+        enabled: bool,
+        working_directory: &str,
+        channel: &str,
+    ) {
+        seed_bot_runner(db, tenant, bot_id).await;
+        exec(
+            db,
+            "INSERT INTO project_bot_connections (project_id, bot_id, enabled, working_directory, channel) \
+             VALUES ($1, $2, $3, $4, $5)",
+            vec![
+                project_id.into(),
+                bot_id.into(),
+                enabled.into(),
+                working_directory.to_string().into(),
+                channel.to_string().into(),
+            ],
+        )
+        .await;
+    }
+
+    /// A person who belongs to `tenant`'s workspace with `role` (`owner`, `admin` or `member`).
+    pub async fn seed_member(db: &impl ConnectionTrait, tenant: &Tenant, role: &str) -> Uuid {
+        let user_id = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active) \
+             VALUES ($1, $2, '!', 'tenant person', 'user', true)",
+            vec![user_id.into(), format!("{user_id}@tenant.test").into()],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)",
+            vec![tenant.workspace_id.into(), user_id.into(), role.to_string().into()],
+        )
+        .await;
+        user_id
+    }
+
+    /// The claims a request of `user` carries.
+    pub fn claims_for(user: Uuid) -> platform::auth::JwtClaims {
+        platform::auth::JwtClaims {
+            sub: user.to_string(),
+            email: format!("{user}@tenant.test"),
+            token_type: platform::auth::TokenType::Access,
+            iat: 0,
+            exp: 0,
+            sv: 0,
+        }
+    }
+
+    /// The context the bot middleware attaches for `bot`, with the given permissions.
+    pub fn bot_context_for(
+        bot: Uuid,
+        workspace_id: Uuid,
+        permissions: &[&str],
+    ) -> crate::middleware::bot_auth::BotAuthContext {
+        crate::middleware::bot_auth::BotAuthContext {
+            bot_id: bot,
+            workspace_id,
+            permissions: permissions.iter().map(|p| (*p).to_string()).collect(),
+            surface: crate::middleware::bot_auth::EventSurface::Rest,
+            tool_name: None,
+            request_id: Uuid::new_v4(),
+        }
+    }
+
+    /// An application state over `db` for calling handlers directly.
+    pub fn state_for(db: DatabaseConnection) -> platform::app::AppState {
+        use platform::config::{AppConfig, Secret};
+        platform::app::AppState {
+            cfg: AppConfig {
+                app_name: "tenant-fixture-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("tenant-fixture-test-secret"),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                default_author_id: None,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db,
+            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
+        }
     }
 
     #[derive(Debug, FromQueryResult)]

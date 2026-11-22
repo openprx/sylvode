@@ -21,8 +21,12 @@
 //! boundary pair is left unimplemented and reported as such; it belongs to the v0.4 transport
 //! work package.
 
+use std::collections::{BTreeMap, HashMap};
+
+use crate::engine::LoroCollabEngine;
+use crate::error::CollabError;
 use crate::operation::{NodeId, NodeKind, Operation};
-use crate::semantic::SemanticSnapshot;
+use crate::semantic::{SemanticNode, SemanticSnapshot};
 
 /// The subset of `limits-v1.md`'s frozen v0.4 `FlowLimitsV1` ceilings this module can check
 /// purely from operation/semantic-snapshot shape.
@@ -93,7 +97,7 @@ pub struct LimitViolation {
 /// ("recursive verification and stack has a hard bound") — the *new* node being created is what
 /// gets compared against the limit, so callers pass the depth of the *new* node's parent and this
 /// helper reports that parent's own depth.
-fn depth_of(snapshot: &SemanticSnapshot, id: &NodeId) -> usize {
+pub(crate) fn depth_of(snapshot: &SemanticSnapshot, id: &NodeId) -> usize {
     let mut current = id.clone();
     let mut depth = 0usize;
     let mut hops = 0usize;
@@ -110,6 +114,53 @@ fn depth_of(snapshot: &SemanticSnapshot, id: &NodeId) -> usize {
         }
     }
     depth
+}
+
+/// The depth of the deepest node, in one linear pass, stopping at `cap + 1`: the result is the
+/// exact maximum of [`depth_of`] when that is at most `cap` and `cap + 1` when it is more. Each
+/// node's depth is computed once (a node's depth is its parent's plus one), and a walk that cannot
+/// end (a cycle, which no real snapshot has) counts as over the cap, like [`depth_of`]'s own
+/// defensive result for it.
+pub(crate) fn max_depth_capped(snapshot: &SemanticSnapshot, cap: usize) -> usize {
+    let over = cap.saturating_add(1);
+    let mut known: std::collections::HashMap<&NodeId, usize> =
+        std::collections::HashMap::with_capacity(snapshot.nodes.len());
+    let mut path: Vec<&NodeId> = Vec::new();
+    let mut deepest = 0usize;
+    for start in snapshot.nodes.keys() {
+        if known.contains_key(start) {
+            continue;
+        }
+        path.clear();
+        let mut current = start;
+        // The depth of the node that follows the end of `path`, when the walk stopped at a node
+        // whose depth is known (or at a parent the snapshot does not hold, whose depth is 0).
+        let above = loop {
+            if let Some(depth) = known.get(current) {
+                break Some(*depth);
+            }
+            let Some(node) = snapshot.nodes.get(current) else {
+                break Some(0);
+            };
+            path.push(current);
+            match node.parent.as_ref() {
+                Some(parent) => current = parent,
+                None => break None,
+            }
+            if path.len() > snapshot.nodes.len() {
+                return over;
+            }
+        };
+        let first = above.map_or(0, |above| above.saturating_add(1));
+        for (depth, id) in (first..).zip(path.iter().rev()) {
+            if depth > cap {
+                return over;
+            }
+            known.insert(id, depth);
+            deepest = deepest.max(depth);
+        }
+    }
+    deepest
 }
 
 /// Height of the subtree rooted at `id`, counted as hops down to its deepest live-or-deleted
@@ -186,6 +237,31 @@ pub fn check_operation(
     operation: &Operation,
     limits: &DocumentLimits,
 ) -> Result<(), LimitViolation> {
+    check_operation_with(snapshot, operation, limits, &|metric| match metric {
+        Metric::LiveBlocks => live_count(snapshot, NodeKind::Block),
+        Metric::LiveNavigators => live_count(snapshot, NodeKind::NavigatorNode),
+        Metric::DocumentChars => document_text_chars(snapshot),
+    })
+}
+
+/// The document-wide aggregates [`check_operation_with`] reads. [`check_operation`] derives them
+/// from the snapshot on demand; [`OperationTracker`] keeps them current instead.
+#[derive(Debug, Clone, Copy)]
+enum Metric {
+    LiveBlocks,
+    LiveNavigators,
+    DocumentChars,
+}
+
+/// The decision logic of [`check_operation`], with the three aggregates supplied by the caller.
+/// The one place that decides, so a tracker and the per-snapshot check cannot disagree on
+/// precedence, limits or the numbers reported.
+fn check_operation_with(
+    snapshot: &SemanticSnapshot,
+    operation: &Operation,
+    limits: &DocumentLimits,
+    metric: &dyn Fn(Metric) -> usize,
+) -> Result<(), LimitViolation> {
     match operation {
         Operation::CreateNode { parent, kind, .. } => {
             if let Some(parent_id) = parent {
@@ -200,7 +276,7 @@ pub fn check_operation(
             }
             match kind {
                 NodeKind::Block => {
-                    let observed = live_count(snapshot, NodeKind::Block) + 1;
+                    let observed = metric(Metric::LiveBlocks) + 1;
                     if observed > limits.document_block_count_max {
                         return Err(LimitViolation {
                             limit_kind: "document_block_count",
@@ -210,7 +286,7 @@ pub fn check_operation(
                     }
                 }
                 NodeKind::NavigatorNode => {
-                    let observed = live_count(snapshot, NodeKind::NavigatorNode) + 1;
+                    let observed = metric(Metric::LiveNavigators) + 1;
                     if observed > limits.container_count_max {
                         return Err(LimitViolation {
                             limit_kind: "container_count",
@@ -234,7 +310,7 @@ pub fn check_operation(
                     observed: new_block_len as u64,
                 });
             }
-            let new_document_len = document_text_chars(snapshot) + added;
+            let new_document_len = metric(Metric::DocumentChars) + added;
             if new_document_len > limits.document_text_chars_max {
                 return Err(LimitViolation {
                     limit_kind: "document_text_chars",
@@ -314,6 +390,21 @@ pub fn check_snapshot(snapshot: &SemanticSnapshot, limits: &DocumentLimits) -> R
         .map(|id| depth_of(snapshot, id))
         .max()
         .unwrap_or(0);
+    check_snapshot_with_depth(snapshot, limits, max_depth)
+}
+
+/// [`check_snapshot`] with the deepest node's depth already known, so a caller that needs the depth
+/// for something else too computes it once. `max_depth` may be capped at `tree_depth_max + 1`
+/// (see [`max_depth_capped`]): the depth is only reported in a `tree_depth` violation, where the
+/// capped value then stands for "more than the limit".
+///
+/// # Errors
+/// The first violated limit, in the precedence of [`check_snapshot`].
+pub(crate) fn check_snapshot_with_depth(
+    snapshot: &SemanticSnapshot,
+    limits: &DocumentLimits,
+    max_depth: usize,
+) -> Result<(), LimitViolation> {
     if max_depth > limits.tree_depth_max {
         return Err(LimitViolation {
             limit_kind: "tree_depth",
@@ -367,6 +458,375 @@ pub fn check_snapshot(snapshot: &SemanticSnapshot, limits: &DocumentLimits) -> R
     Ok(())
 }
 
+/// Property that marks a snapshot node as an editor block (as opposed to a tree node).
+const CONTENT_SOURCE_KEY: &str = "content_source";
+const CONTENT_SOURCE_EDITOR: &str = "editor_doc";
+/// Property carrying an editor block's first logical id (its alias in the alias map).
+const LOGICAL_ID_KEY: &str = "logical_id";
+/// `SetProperty` keys that never change what the limits read, on an editor page.
+const INERT_EDITOR_PROPERTY_KEYS: [&str; 5] = ["indent", "level", "checked", "collapsed", "order"];
+
+fn is_editor_block(node: &SemanticNode) -> bool {
+    node.properties
+        .get(CONTENT_SOURCE_KEY)
+        .is_some_and(|source| source == CONTENT_SOURCE_EDITOR)
+}
+
+/// What [`OperationTracker`] holds: the snapshot as the engine would project it after the
+/// operations applied so far, and the three aggregates [`check_operation`] would derive from it.
+#[derive(Debug)]
+struct TrackedState {
+    snapshot: SemanticSnapshot,
+    live_blocks: usize,
+    live_navigators: usize,
+    document_chars: usize,
+    /// Whether the page has an editor document (blocks are editor blocks keyed by container id).
+    editor_doc: bool,
+    /// Logical id to the snapshot key of its editor block, built on first use.
+    aliases: Option<HashMap<NodeId, NodeId>>,
+    next_placeholder: u64,
+    /// An operation whose effect is not modelled has run: the next check re-reads the engine.
+    stale: bool,
+}
+
+impl TrackedState {
+    fn new(snapshot: SemanticSnapshot, editor_doc: bool) -> Self {
+        let live_blocks = live_count(&snapshot, NodeKind::Block);
+        let live_navigators = live_count(&snapshot, NodeKind::NavigatorNode);
+        let document_chars = document_text_chars(&snapshot);
+        Self {
+            snapshot,
+            live_blocks,
+            live_navigators,
+            document_chars,
+            editor_doc,
+            aliases: None,
+            next_placeholder: 0,
+            stale: false,
+        }
+    }
+
+    const fn metric(&self, metric: Metric) -> usize {
+        match metric {
+            Metric::LiveBlocks => self.live_blocks,
+            Metric::LiveNavigators => self.live_navigators,
+            Metric::DocumentChars => self.document_chars,
+        }
+    }
+
+    fn ensure_aliases(&mut self) -> &mut HashMap<NodeId, NodeId> {
+        let snapshot = &self.snapshot;
+        self.aliases.get_or_insert_with(|| {
+            let mut aliases = HashMap::new();
+            for (key, node) in &snapshot.nodes {
+                if is_editor_block(node)
+                    && let Some(logical) = node.properties.get(LOGICAL_ID_KEY)
+                {
+                    aliases
+                        .entry(NodeId::from(logical.as_str()))
+                        .or_insert_with(|| key.clone());
+                }
+            }
+            aliases
+        })
+    }
+
+    /// The snapshot key the engine resolves `id` to for a text or placement operation that
+    /// succeeded, or `None` when it cannot be told from what is held (the caller then re-reads).
+    fn target(&mut self, id: &NodeId) -> Option<NodeId> {
+        if !self.editor_doc {
+            return self.snapshot.nodes.contains_key(id).then(|| id.clone());
+        }
+        // The alias map is consulted first and its answer is final, as in the engine.
+        let canonical = self.ensure_aliases().get(id).cloned().unwrap_or_else(|| id.clone());
+        self.snapshot
+            .nodes
+            .get(&canonical)
+            .filter(|node| is_editor_block(node))
+            .map(|_| canonical)
+    }
+
+    fn add_node(&mut self, key: NodeId, node: SemanticNode) -> bool {
+        if self.snapshot.nodes.contains_key(&key) {
+            return false;
+        }
+        if !node.deleted {
+            match node.kind {
+                NodeKind::Block => self.live_blocks += 1,
+                NodeKind::NavigatorNode => self.live_navigators += 1,
+                _ => {}
+            }
+            self.document_chars += node.text.chars().count();
+        }
+        self.snapshot.nodes.insert(key, node);
+        true
+    }
+
+    fn placeholder_key(&mut self) -> NodeId {
+        loop {
+            let key = NodeId::from(format!("\u{0}tracked-block-{}", self.next_placeholder));
+            self.next_placeholder += 1;
+            if !self.snapshot.nodes.contains_key(&key) {
+                return key;
+            }
+        }
+    }
+
+    /// Applies the effect of `operation`, which the engine has just applied successfully, to the
+    /// held snapshot. `false` when the effect is not one of the modelled shapes or a fact it
+    /// needs is missing; nothing is changed then.
+    fn apply_effect(&mut self, operation: &Operation) -> bool {
+        match operation {
+            Operation::CreateNode { id, parent, kind, .. } => {
+                if self.editor_doc && *kind == NodeKind::Block {
+                    self.create_editor_block(id, parent.as_ref())
+                } else {
+                    self.create_tree_node(id, parent.as_ref(), *kind)
+                }
+            }
+            Operation::InsertText { id, index, text } => {
+                let Some(key) = self.target(id) else { return false };
+                let Some(node) = self.snapshot.nodes.get_mut(&key) else {
+                    return false;
+                };
+                let at = *index as usize;
+                if at > node.text.len() || !node.text.is_char_boundary(at) {
+                    return false;
+                }
+                node.text.insert_str(at, text);
+                if !node.deleted {
+                    self.document_chars += text.chars().count();
+                }
+                true
+            }
+            Operation::DeleteText { id, index, len } => {
+                let Some(key) = self.target(id) else { return false };
+                let Some(node) = self.snapshot.nodes.get_mut(&key) else {
+                    return false;
+                };
+                let start = *index as usize;
+                let Some(end) = start.checked_add(*len as usize) else {
+                    return false;
+                };
+                let Some(removed) = node.text.get(start..end).map(|range| range.chars().count()) else {
+                    return false;
+                };
+                node.text.replace_range(start..end, "");
+                if !node.deleted {
+                    self.document_chars = self.document_chars.saturating_sub(removed);
+                }
+                true
+            }
+            Operation::SetProperty { key, .. } => {
+                !self.editor_doc || INERT_EDITOR_PROPERTY_KEYS.contains(&key.as_str())
+            }
+            Operation::DeleteNode { .. } | Operation::MoveNode { .. } => false,
+        }
+    }
+
+    /// A block created in the editor document. Its snapshot key is a container id the engine
+    /// assigns and the caller cannot know, so it is held under a key no operation can name; the
+    /// logical id resolves to it through the alias map, as it does in the engine.
+    fn create_editor_block(&mut self, id: &NodeId, parent: Option<&NodeId>) -> bool {
+        let parent_key = match parent {
+            None => None,
+            Some(parent) => match self.target(parent) {
+                Some(key) => Some(key),
+                None => return false,
+            },
+        };
+        let key = self.placeholder_key();
+        let mut properties = BTreeMap::new();
+        properties.insert(CONTENT_SOURCE_KEY.to_owned(), CONTENT_SOURCE_EDITOR.to_owned());
+        properties.insert(LOGICAL_ID_KEY.to_owned(), id.to_string());
+        let node = SemanticNode {
+            parent: parent_key,
+            order_key: String::new(),
+            kind: NodeKind::Block,
+            text: String::new(),
+            properties,
+            deleted: false,
+        };
+        if !self.add_node(key.clone(), node) {
+            return false;
+        }
+        self.ensure_aliases().entry(id.clone()).or_insert(key);
+        true
+    }
+
+    fn create_tree_node(&mut self, id: &NodeId, parent: Option<&NodeId>, kind: NodeKind) -> bool {
+        if let Some(parent) = parent {
+            // The parent must be a live tree node the snapshot shows; a node under a deleted
+            // parent is itself reported deleted, which is not modelled.
+            match self.snapshot.nodes.get(parent) {
+                Some(node) if !node.deleted && (!self.editor_doc || !is_editor_block(node)) => {}
+                _ => return false,
+            }
+        }
+        self.add_node(
+            id.clone(),
+            SemanticNode {
+                parent: parent.cloned(),
+                order_key: String::new(),
+                kind,
+                text: String::new(),
+                properties: BTreeMap::new(),
+                deleted: false,
+            },
+        )
+    }
+}
+
+/// Exact incremental form of "take a fresh [`SemanticSnapshot`] before every operation of a
+/// batch and run [`check_operation`] on it".
+///
+/// It takes one snapshot (or is handed the caller's), holds that snapshot together with the
+/// aggregates [`check_operation`] reads (live block and navigator counts, total live characters,
+/// each node's text and parent link), and after every operation the engine accepts, applies that
+/// operation's effect to the held copy. Every decision is made by the same code as
+/// [`check_operation`], so the failing operation, the limit kind and the observed and limit
+/// numbers are those the per-operation snapshots give; the quirks of the snapshot view are kept
+/// because the held copy is that view (an editor alias is not a key, so `InsertText` on one reads
+/// zero current characters).
+///
+/// Modelled effects: creating a node (an editor block on an editor page, a tree node otherwise),
+/// inserting and deleting text, and setting a property that cannot change a counted value. Any
+/// other operation (moves, deletes, properties that can change a block's kind or text), and any
+/// modelled operation whose target cannot be identified from what is held, marks the copy stale:
+/// the next check reads the engine again, which is exactly what the per-operation path does.
+/// A batch of ordinary edits therefore costs one snapshot, and a batch of unmodelled operations
+/// costs what it always cost.
+#[derive(Debug, Default)]
+pub struct OperationTracker {
+    seed: Option<SemanticSnapshot>,
+    state: Option<TrackedState>,
+    snapshots: usize,
+}
+
+impl OperationTracker {
+    /// A tracker that builds itself at the first [`Self::check`]. `seed` is a snapshot of the
+    /// engine's current state the caller already holds; without it the first check takes one.
+    #[must_use]
+    pub const fn new(seed: Option<SemanticSnapshot>) -> Self {
+        Self {
+            seed,
+            state: None,
+            snapshots: 0,
+        }
+    }
+
+    /// How many times the tracker has built its view: from the seed or from the engine. One for
+    /// a batch of modelled operations, however long.
+    #[must_use]
+    pub const fn views_built(&self) -> usize {
+        self.snapshots
+    }
+
+    /// [`check_operation`] against the state after every operation observed so far.
+    ///
+    /// # Errors
+    /// The engine's failure to read a snapshot, or the [`LimitViolation`] as a [`CollabError`].
+    pub fn check(
+        &mut self,
+        engine: &LoroCollabEngine,
+        operation: &Operation,
+        limits: &DocumentLimits,
+    ) -> Result<(), CollabError> {
+        if self.state.as_ref().is_none_or(|state| state.stale) {
+            let snapshot = match self.seed.take() {
+                Some(snapshot) => snapshot,
+                None => engine.semantic_snapshot()?,
+            };
+            let editor_doc = engine.has_editor_doc()?;
+            self.state = Some(TrackedState::new(snapshot, editor_doc));
+            self.snapshots += 1;
+        }
+        let Some(state) = self.state.as_ref() else {
+            return Err(CollabError::OperationFailed {
+                reason: "operation tracker holds no state".into(),
+            });
+        };
+        check_operation_with(&state.snapshot, operation, limits, &|metric| state.metric(metric))
+            .map_err(CollabError::from)
+    }
+
+    /// Records that the engine accepted `operation`, which the last [`Self::check`] passed.
+    pub fn observe(&mut self, operation: &Operation) {
+        if let Some(state) = self.state.as_mut()
+            && !state.stale
+            && !state.apply_effect(operation)
+        {
+            state.stale = true;
+        }
+    }
+}
+
+/// Applies `operations` to `engine` in order, refusing at the first one that would break a limit.
+///
+/// The limits are judged against everything applied before the operation. An accepted operation
+/// stays applied when a later one fails. `seed` is a snapshot of the engine's current state, when
+/// the caller has one.
+///
+/// # Errors
+/// The first limit violation, snapshot failure or engine failure.
+pub fn apply_operations_checked(
+    engine: &mut LoroCollabEngine,
+    operations: &[Operation],
+    limits: &DocumentLimits,
+    seed: Option<SemanticSnapshot>,
+) -> Result<(), CollabError> {
+    run_checked(engine, operations, limits, &mut OperationTracker::new(seed), &mut 0)
+}
+
+/// [`apply_operations_checked`] with the caller's tracker, and `applied` counting the operations
+/// applied before the result.
+fn run_checked(
+    engine: &mut LoroCollabEngine,
+    operations: &[Operation],
+    limits: &DocumentLimits,
+    tracker: &mut OperationTracker,
+    applied: &mut usize,
+) -> Result<(), CollabError> {
+    for operation in operations {
+        tracker.check(engine, operation, limits)?;
+        engine.apply_content_operation(operation)?;
+        tracker.observe(operation);
+        *applied += 1;
+    }
+    Ok(())
+}
+
+/// The path [`apply_operations_checked`] replaced, kept as the oracle of its equivalence tests: a
+/// complete snapshot of the page before every operation. Returns how many operations were
+/// applied before the result.
+#[cfg(test)]
+pub(crate) fn apply_operations_checked_per_operation_snapshot(
+    engine: &mut LoroCollabEngine,
+    operations: &[Operation],
+    limits: &DocumentLimits,
+) -> (Result<(), CollabError>, usize) {
+    let mut applied = 0;
+    for operation in operations {
+        let snapshot = match engine.semantic_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => return (Err(error), applied),
+        };
+        if let Err(violation) = check_operation(&snapshot, operation, limits) {
+            return (Err(CollabError::from(violation)), applied);
+        }
+        if let Err(error) = engine.apply_content_operation(operation) {
+            return (Err(error), applied);
+        }
+        applied += 1;
+    }
+    (Ok(()), applied)
+}
+
+#[cfg(test)]
+mod operation_tracker_cost_tests;
+#[cfg(test)]
+mod operation_tracker_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,6 +842,75 @@ mod tests {
             properties: BTreeMap::new(),
             deleted: false,
         }
+    }
+
+    /// A deterministic forest with dangling parents and a few deep chains.
+    fn forest(size: usize, seed: u64) -> SemanticSnapshot {
+        let mut state = seed | 1;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut snapshot = SemanticSnapshot::default();
+        for index in 0..size {
+            let parent = match next() % 5 {
+                0 => None,
+                // A parent the snapshot does not hold.
+                1 if index % 7 == 0 => Some(format!("missing{index}")),
+                _ if index == 0 => None,
+                _ => Some(format!("n{}", usize::try_from(next() % (index as u64)).unwrap_or(0))),
+            };
+            snapshot.nodes.insert(
+                NodeId::from(format!("n{index}").as_str()),
+                node(parent.as_deref(), NodeKind::NavigatorNode, ""),
+            );
+        }
+        snapshot
+    }
+
+    #[test]
+    fn capped_depth_equals_the_exact_maximum_up_to_the_cap() {
+        for seed in 1..40 {
+            let snapshot = forest(60 + usize::try_from(seed).unwrap_or(0) * 7, seed);
+            let exact = snapshot
+                .nodes
+                .keys()
+                .map(|id| depth_of(&snapshot, id))
+                .max()
+                .unwrap_or(0);
+            for cap in [0, 1, 2, 3, exact.saturating_sub(1), exact, exact + 1, 1_000] {
+                let capped = max_depth_capped(&snapshot, cap);
+                assert_eq!(capped, exact.min(cap + 1), "seed {seed} cap {cap} exact {exact}");
+            }
+        }
+    }
+
+    #[test]
+    fn capped_depth_of_a_long_chain_is_linear_work_and_stops_at_the_cap() {
+        let mut snapshot = SemanticSnapshot::default();
+        for index in 0..20_000_usize {
+            let parent = (index > 0).then(|| format!("n{}", index - 1));
+            snapshot.nodes.insert(
+                NodeId::from(format!("n{index}").as_str()),
+                node(parent.as_deref(), NodeKind::NavigatorNode, ""),
+            );
+        }
+        assert_eq!(max_depth_capped(&snapshot, 32), 33);
+        assert_eq!(max_depth_capped(&snapshot, 100_000), 19_999);
+    }
+
+    #[test]
+    fn capped_depth_treats_a_cycle_as_over_the_cap() {
+        let mut snapshot = SemanticSnapshot::default();
+        snapshot
+            .nodes
+            .insert(NodeId::from("a"), node(Some("b"), NodeKind::NavigatorNode, ""));
+        snapshot
+            .nodes
+            .insert(NodeId::from("b"), node(Some("a"), NodeKind::NavigatorNode, ""));
+        assert_eq!(max_depth_capped(&snapshot, 32), 33);
     }
 
     #[test]

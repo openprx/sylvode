@@ -3,11 +3,12 @@
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { authStore } from '#lib/stores/auth.js';
-	import { vetoApi, type VetoerScope } from '#lib/api/veto.js';
+	import { vetoApi } from '#lib/api/veto.js';
 	import { isAdminUser } from '#lib/utils/auth.js';
 	import { trustApi, type Appeal, type AppealStatus } from '#lib/api/trust.js';
 	import { toast } from '#lib/stores/toast.js';
-	import Button from '#lib/components/Button.svelte';
+	import { confirmAction } from '#lib/ui/dialog/confirm.js';
+	import Button from '#lib/ui/button/Button.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Textarea from '#lib/components/Textarea.svelte';
@@ -67,6 +68,7 @@
 			return;
 		}
 
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const next = new Set<string>();
 		for (const row of res.data.items || []) {
 			if (row.user_id === meId && row.project_id && row.domain) {
@@ -89,11 +91,11 @@
 	function statusTone(status: AppealStatus): string {
 		switch (status) {
 			case 'accepted':
-				return 'bg-emerald-100 text-emerald-700';
+				return 'bg-surface text-fg';
 			case 'rejected':
-				return 'bg-red-100 text-red-700';
+				return 'bg-danger-soft text-danger';
 			default:
-				return 'bg-amber-100 text-amber-700';
+				return 'bg-warning-soft text-warning';
 		}
 	}
 
@@ -149,7 +151,14 @@
 	}
 
 	async function removeAppeal(item: Appeal) {
-		if (!confirm(get(t)('appeals.deleteConfirm'))) {
+		if (
+			!(await confirmAction({
+				tone: 'destructive',
+				title: get(t)('appeals.deleteTitle'),
+				body: get(t)('appeals.deleteBody'),
+				confirmLabel: get(t)('appeals.deleteAction')
+			}))
+		) {
 			return;
 		}
 		const res = await trustApi.deleteAppeal(item.id);
@@ -171,24 +180,22 @@
 </svelte:head>
 
 <div class="mx-auto max-w-6xl space-y-4">
-	<div
-		class="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
-	>
+	<div class="rounded-card border border-line bg-raised p-4">
 		<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">
+				<h1 class="text-xl font-semibold text-fg">
 					{$t('appeals.title')}
 				</h1>
-				<p class="text-sm text-slate-500">{$t('appeals.subtitle')}</p>
+				<p class="text-sm text-fg-muted">{$t('appeals.subtitle')}</p>
 			</div>
-			<Button onclick={() => (showCreate = true)}>{$t('appeals.create')}</Button>
+			<Button variant="primary" onclick={() => (showCreate = true)}>{$t('appeals.create')}</Button>
 		</div>
 
 		<div class="mb-4 flex flex-wrap gap-2">
 			<select
 				bind:value={statusFilter}
 				onchange={load}
-				class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+				class="rounded-control border border-input bg-field px-3 py-2 text-sm"
 			>
 				<option value="all">{$t('appeals.status.all')}</option>
 				<option value="pending">{$t('appeals.status.pending')}</option>
@@ -196,7 +203,7 @@
 				<option value="rejected">{$t('appeals.status.rejected')}</option>
 			</select>
 			<label
-				class="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+				class="inline-flex items-center gap-2 rounded-control border border-input bg-field px-3 py-2 text-sm"
 			>
 				<input type="checkbox" bind:checked={mineOnly} onchange={load} />
 				{$t('appeals.mineOnly')}
@@ -204,25 +211,25 @@
 		</div>
 
 		{#if loading}
-			<div class="py-8 text-center text-slate-500">{$t('common.loading')}</div>
+			<div class="py-8 text-center text-fg-muted">{$t('common.loading')}</div>
 		{:else if items.length === 0}
-			<div class="py-8 text-center text-slate-500">{$t('appeals.empty')}</div>
+			<div class="py-8 text-center text-fg-muted">{$t('appeals.empty')}</div>
 		{:else}
 			<div class="space-y-2">
 				{#each items as item (item.id)}
-					<div class="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+					<div class="rounded-card border border-line p-3">
 						<div class="flex flex-wrap items-start justify-between gap-3">
 							<div class="min-w-0 flex-1">
 								<div class="flex items-center gap-2">
-									<span class="font-medium text-slate-900 dark:text-slate-100"
+									<span class="font-medium text-fg"
 										>{$t('appeals.logId', { values: { id: item.log_id } })}</span
 									>
 									<span class={`rounded px-2 py-0.5 text-xs ${statusTone(item.status)}`}
 										>{appealStatusLabel(item.status)}</span
 									>
 								</div>
-								<p class="mt-1 text-sm text-slate-700 dark:text-slate-300">{item.reason}</p>
-								<p class="mt-1 text-xs text-slate-500">
+								<p class="mt-1 text-sm text-fg">{item.reason}</p>
+								<p class="mt-1 text-xs text-fg-muted">
 									{$t('appeals.meta', {
 										values: {
 											appellant: item.appellant_id,
@@ -231,7 +238,7 @@
 									})}
 								</p>
 								{#if item.review_note}
-									<p class="mt-1 text-xs text-slate-500">
+									<p class="mt-1 text-xs text-fg-muted">
 										{$t('appeals.reviewNote')}: {item.review_note}
 									</p>
 								{/if}
@@ -240,13 +247,14 @@
 							<div class="flex flex-wrap gap-2">
 								{#if item.status === 'pending' && canReviewAppeal(item)}
 									<Button
+										variant="primary"
 										size="sm"
 										onclick={() => reviewAppeal(item, 'accepted')}
 										loading={reviewingId === item.id}>{$t('appeals.accept')}</Button
 									>
 									<Button
 										size="sm"
-										variant="danger"
+										variant="danger-quiet"
 										onclick={() => reviewAppeal(item, 'rejected')}
 										loading={reviewingId === item.id}>{$t('appeals.reject')}</Button
 									>
@@ -287,7 +295,7 @@
 		<div class="flex justify-end gap-2">
 			<Button variant="secondary" onclick={() => (showCreate = false)}>{$t('common.cancel')}</Button
 			>
-			<Button type="submit" loading={saving}>{$t('common.submit')}</Button>
+			<Button variant="primary" type="submit" loading={saving}>{$t('common.submit')}</Button>
 		</div>
 	</form>
 </Modal>

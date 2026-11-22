@@ -90,6 +90,15 @@ const fn describe_json_kind(value: &Value) -> &'static str {
     }
 }
 
+/// `/api/v1/ai/tasks/{task_id}{suffix}?attempt={attempt}`. The caller has already checked that
+/// `task_id` is a canonical UUID.
+fn ai_task_path(task_id: &str, suffix: &str, attempt: u32) -> String {
+    format!(
+        "/api/v1/ai/tasks/{}{suffix}?attempt={attempt}",
+        urlencoding::encode(task_id)
+    )
+}
+
 /// Operation-log client label for the stdio transport.
 pub const TRANSPORT_LABEL_STDIO: &str = "mcp_stdio";
 /// Audit label of the HTTP transport.
@@ -103,11 +112,16 @@ pub const TRANSPORT_LABEL_CLI: &str = "cli";
 /// commands' `cli`.
 pub const TRANSPORT_LABEL_CLI_TOOLS_CALL: &str = "cli_tools_call";
 
-/// Attribution headers, canonical spelling first (ADR-0020 D3). Throughout 1.x the legacy
-/// `X-OpenPR-MCP-*` spelling is sent alongside with the identical value, so this client keeps
-/// working against a pre-1.0 API; the API refuses the request if the two ever disagree.
-const MCP_TOOL_HEADERS: [&str; 2] = ["X-Sylvode-MCP-Tool", "X-OpenPR-MCP-Tool"];
-const MCP_SURFACE_HEADERS: [&str; 2] = ["X-Sylvode-MCP-Surface", "X-OpenPR-MCP-Surface"];
+/// Attribution headers (ADR-0020 D3).
+const MCP_TOOL_HEADER: &str = "X-Sylvode-MCP-Tool";
+const MCP_SURFACE_HEADER: &str = "X-Sylvode-MCP-Surface";
+
+/// Names the forwarding component on a delegated call (`X-Sylvode-Forwarded-By: mcp-server`).
+const FORWARDED_BY_HEADER: &str = "X-Sylvode-Forwarded-By";
+/// Value of [`FORWARDED_BY_HEADER`].
+pub const FORWARDED_BY_VALUE: &str = "mcp-server";
+/// Carries the internal forwarding credential on a delegated call.
+const FORWARD_AUTH_HEADER: &str = "X-Sylvode-Forward-Auth";
 
 /// The audit label a configured transport is reported under.
 ///
@@ -163,6 +177,13 @@ pub struct OpenPrClient {
     transport_label: &'static str,
     operation_tool_name: Option<String>,
     flow_only: bool,
+    /// The internal forwarding credential, present only on a client acting for a delegated
+    /// (OAuth) caller. Every outbound request of such a client carries it; no other client does.
+    forward_credential: Option<Secret>,
+    /// HTTP client that never follows a redirect. A delegated call carries the forwarding
+    /// credential in a custom header, which a redirect would copy to whatever host the answer
+    /// names, so those calls are made with this client instead of `client`.
+    no_redirect_client: Client,
 }
 
 fn join_query(params: &[String]) -> String {
@@ -251,6 +272,11 @@ impl OpenPrClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+        let no_redirect_client = Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
         Ok(Self {
             client,
             base_url: config.base_url,
@@ -259,6 +285,8 @@ impl OpenPrClient {
             transport_label: config.transport_label,
             operation_tool_name: None,
             flow_only: false,
+            forward_credential: None,
+            no_redirect_client,
         })
     }
 
@@ -295,6 +323,32 @@ impl OpenPrClient {
             transport_label: self.transport_label,
             operation_tool_name: self.operation_tool_name.clone(),
             flow_only: self.flow_only,
+            // A legacy caller never carries the forwarding credential, so it cannot obtain the
+            // delegated surface at the API.
+            forward_credential: None,
+            no_redirect_client: self.no_redirect_client.clone(),
+        }
+    }
+
+    /// The same client, speaking to the API for a delegated (OAuth) caller.
+    ///
+    /// `token` is the caller's own MCP-audience access token, forwarded as `Authorization: Bearer`
+    /// together with the internal forwarding credential (deviation D2 of the authorization
+    /// contract). `workspace_id` is the workspace of the token's grant, taken from the token
+    /// context and nowhere else: the configured `[mcp] workspace_id` plays no part. Requests go
+    /// out through a client that does not follow redirects.
+    #[must_use]
+    pub fn acting_as_delegated(&self, token: Secret, workspace_id: &str, forward_credential: Secret) -> Self {
+        Self {
+            client: self.no_redirect_client.clone(),
+            base_url: self.base_url.clone(),
+            credential: Some(token),
+            workspace_id: workspace_id.to_string(),
+            transport_label: self.transport_label,
+            operation_tool_name: self.operation_tool_name.clone(),
+            flow_only: self.flow_only,
+            forward_credential: Some(forward_credential),
+            no_redirect_client: self.no_redirect_client.clone(),
         }
     }
 
@@ -309,6 +363,8 @@ impl OpenPrClient {
             transport_label,
             operation_tool_name: self.operation_tool_name.clone(),
             flow_only: self.flow_only,
+            forward_credential: self.forward_credential.clone(),
+            no_redirect_client: self.no_redirect_client.clone(),
         }
     }
 
@@ -318,7 +374,7 @@ impl OpenPrClient {
     #[must_use]
     pub fn recording_operation(&self, tool_name: &str) -> Self {
         let mut scoped = self.clone();
-        scoped.operation_tool_name = Some(tool_name.to_string());
+        scoped.operation_tool_name = Some(crate::tools::entry::attribution_name(tool_name).to_string());
         scoped
     }
 
@@ -332,15 +388,31 @@ impl OpenPrClient {
     }
 
     pub(crate) fn operation_headers(&self, request: RequestBuilder) -> RequestBuilder {
-        let request = MCP_SURFACE_HEADERS
-            .iter()
-            .fold(request, |request, name| request.header(*name, self.transport_label));
+        let request = self.forwarding_headers(request);
+        let request = request.header(MCP_SURFACE_HEADER, self.transport_label);
         match self.operation_tool_name.as_deref() {
-            Some(tool_name) => MCP_TOOL_HEADERS
-                .iter()
-                .fold(request, |request, name| request.header(*name, tool_name)),
+            Some(tool_name) => request.header(MCP_TOOL_HEADER, tool_name),
             None => request,
         }
+    }
+
+    /// The forwarding headers of a delegated call; the request unchanged for every other caller.
+    ///
+    /// The credential value is marked sensitive so that no debug output of the request shows it.
+    fn forwarding_headers(&self, request: RequestBuilder) -> RequestBuilder {
+        let Some(credential) = self.forward_credential.as_ref() else {
+            return request;
+        };
+        // The configuration validates the secret's shape; if a value that cannot be a header
+        // still arrives, the request goes out without it and the API refuses the token.
+        let Ok(mut value) = reqwest::header::HeaderValue::from_str(credential.expose()) else {
+            tracing::error!("The forwarding credential cannot be sent as a header value; the API will refuse the call");
+            return request;
+        };
+        value.set_sensitive(true);
+        request
+            .header(FORWARDED_BY_HEADER, FORWARDED_BY_VALUE)
+            .header(FORWARD_AUTH_HEADER, value)
     }
 
     /// Sends an authenticated request and rejects both transport-level failures and
@@ -427,7 +499,7 @@ impl OpenPrClient {
     }
 
     pub async fn update_project(&self, project_id: &str, body: Value) -> Result<Value, String> {
-        self.patch(&format!("/api/v1/projects/{}", urlencoding::encode(project_id)), &body)
+        self.put(&format!("/api/v1/projects/{}", urlencoding::encode(project_id)), &body)
             .await
     }
 
@@ -488,46 +560,69 @@ impl OpenPrClient {
         .await
     }
 
-    pub async fn list_project_resources(&self, project_id: &str) -> Result<Value, String> {
-        self.get(&format!(
-            "/api/v1/projects/{}/resources",
-            urlencoding::encode(project_id)
-        ))
-        .await
+    // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
+    // pub async fn list_project_resources(&self, project_id: &str) -> Result<Value, String> {
+    //     self.get(&format!(
+    //         "/api/v1/projects/{}/resources",
+    //         urlencoding::encode(project_id)
+    //     ))
+    //     .await
+    // }
+    //
+    // pub async fn create_project_resource(&self, project_id: &str, body: Value) -> Result<Value, String> {
+    //     self.post(
+    //         &format!("/api/v1/projects/{}/resources", urlencoding::encode(project_id)),
+    //         &body,
+    //     )
+    //     .await
+    // }
+    //
+    // pub async fn update_project_resource(
+    //     &self,
+    //     project_id: &str,
+    //     resource_id: &str,
+    //     body: Value,
+    // ) -> Result<Value, String> {
+    //     self.patch(
+    //         &format!(
+    //             "/api/v1/projects/{}/resources/{}",
+    //             urlencoding::encode(project_id),
+    //             urlencoding::encode(resource_id)
+    //         ),
+    //         &body,
+    //     )
+    //     .await
+    // }
+    //
+    // pub async fn delete_project_resource(&self, project_id: &str, resource_id: &str) -> Result<Value, String> {
+    //     self.delete(&format!(
+    //         "/api/v1/projects/{}/resources/{}",
+    //         urlencoding::encode(project_id),
+    //         urlencoding::encode(resource_id)
+    //     ))
+    //     .await
+    // }
+
+    // ---- Agent tasks (`/api/v1/ai/tasks`, own bot only) ----
+
+    pub async fn get_ai_task(&self, task_id: &str, attempt: u32) -> Result<Value, String> {
+        self.get(&ai_task_path(task_id, "", attempt)).await
     }
 
-    pub async fn create_project_resource(&self, project_id: &str, body: Value) -> Result<Value, String> {
-        self.post(
-            &format!("/api/v1/projects/{}/resources", urlencoding::encode(project_id)),
-            &body,
-        )
-        .await
+    pub async fn ack_ai_task(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/ack", attempt), &body).await
     }
 
-    pub async fn update_project_resource(
-        &self,
-        project_id: &str,
-        resource_id: &str,
-        body: Value,
-    ) -> Result<Value, String> {
-        self.patch(
-            &format!(
-                "/api/v1/projects/{}/resources/{}",
-                urlencoding::encode(project_id),
-                urlencoding::encode(resource_id)
-            ),
-            &body,
-        )
-        .await
+    pub async fn report_ai_task_progress(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/progress", attempt), &body).await
     }
 
-    pub async fn delete_project_resource(&self, project_id: &str, resource_id: &str) -> Result<Value, String> {
-        self.delete(&format!(
-            "/api/v1/projects/{}/resources/{}",
-            urlencoding::encode(project_id),
-            urlencoding::encode(resource_id)
-        ))
-        .await
+    pub async fn complete_ai_task(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/complete", attempt), &body).await
+    }
+
+    pub async fn fail_ai_task(&self, task_id: &str, attempt: u32, body: Value) -> Result<Value, String> {
+        self.post(&ai_task_path(task_id, "/fail", attempt), &body).await
     }
 
     // ---- Universal Forms ----
@@ -1621,14 +1716,24 @@ impl OpenPrClient {
     pub async fn list_flow_trash(
         &self,
         workspace_id: &str,
+        project_id: Option<&str>,
         cursor: Option<&str>,
         limit: Option<u64>,
     ) -> Result<Value, String> {
-        let query = match (cursor, limit) {
-            (Some(cursor), Some(limit)) => format!("?cursor={}&limit={limit}", urlencoding::encode(cursor)),
-            (Some(cursor), None) => format!("?cursor={}", urlencoding::encode(cursor)),
-            (None, Some(limit)) => format!("?limit={limit}"),
-            (None, None) => String::new(),
+        let mut pairs = Vec::new();
+        if let Some(project_id) = project_id {
+            pairs.push(format!("project_id={}", urlencoding::encode(project_id)));
+        }
+        if let Some(cursor) = cursor {
+            pairs.push(format!("cursor={}", urlencoding::encode(cursor)));
+        }
+        if let Some(limit) = limit {
+            pairs.push(format!("limit={limit}"));
+        }
+        let query = if pairs.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", pairs.join("&"))
         };
         self.get(&format!(
             "/api/v1/workspaces/{}/flow/trash{query}",
@@ -1918,9 +2023,7 @@ mod tests {
                     "code": 0,
                     "data": {
                         "tool": all("x-sylvode-mcp-tool"),
-                        "legacy_tool": all("x-openpr-mcp-tool"),
                         "surface": all("x-sylvode-mcp-surface"),
-                        "legacy_surface": all("x-openpr-mcp-surface"),
                         "authorization": headers.get("authorization").and_then(|value| value.to_str().ok())
                     }
                 }))
@@ -1934,11 +2037,9 @@ mod tests {
         let value: Value = client.get("/record").await?;
         let data = value.get("data").and_then(Value::as_object).ok_or("missing data")?;
 
-        // ADR-0020 D3: the canonical and the legacy spelling, each exactly once, same value.
+        // ADR-0020 D3: the attribution headers, each exactly once.
         assert_eq!(data.get("tool"), Some(&json!(["bot_operation_logs.list"])));
-        assert_eq!(data.get("legacy_tool"), Some(&json!(["bot_operation_logs.list"])));
         assert_eq!(data.get("surface"), Some(&json!(["cli"])));
-        assert_eq!(data.get("legacy_surface"), Some(&json!(["cli"])));
         assert_eq!(
             data.get("authorization").and_then(Value::as_str),
             Some("Bearer opr_test_token")

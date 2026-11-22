@@ -846,11 +846,7 @@ async fn load_bot_identity(db: &impl ConnectionTrait, bot_id: Uuid) -> Option<Bo
 
 /// `User-Agent` of every outbound webhook delivery (ADR-0020 D3): the webhook triggers here, the
 /// event dispatcher and the worker's AI-task dispatch.
-///
-/// The legacy `OpenPR-Webhook/1.0` product token stays in the comment section so receivers that
-/// match it as a substring keep working; receivers that match the old value exactly or as a
-/// prefix do not.
-pub const WEBHOOK_USER_AGENT: &str = "Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)";
+pub const WEBHOOK_USER_AGENT: &str = "Sylvode-Webhook/1.0";
 
 /// The headers a delivery is sent with, and the copy of them stored with the delivery record.
 ///
@@ -1284,11 +1280,7 @@ mod delivery_tests {
             .filter(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
             .map(|(_, value)| value.trim())
             .collect();
-        assert_eq!(
-            sent,
-            ["Sylvode-Webhook/1.0 (compatible; OpenPR-Webhook/1.0)"],
-            "exactly one User-Agent with both product tokens: {raw}"
-        );
+        assert_eq!(sent, ["Sylvode-Webhook/1.0"], "exactly one User-Agent: {raw}");
         assert_eq!(
             recorded.get("User-Agent").and_then(serde_json::Value::as_str),
             sent.first().copied()

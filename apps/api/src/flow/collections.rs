@@ -480,9 +480,13 @@ pub(crate) fn embed_position_after(
     after_block_id: &str,
 ) -> Result<(Option<NodeId>, u32), ApiError> {
     let engine = engine_at_head(boot)?;
-    let canonical = engine.resolve_content_node_id(&NodeId::from(after_block_id));
+    let canonical = engine
+        .resolve_content_node_id(&NodeId::from(after_block_id))
+        .map_err(|_| ApiError::internal())?;
     let semantic = engine.semantic_snapshot().map_err(|_| ApiError::internal())?;
-    if engine.has_editor_alias(after_block_id)
+    if engine
+        .has_editor_alias(after_block_id)
+        .map_err(|_| ApiError::internal())?
         || semantic.nodes.get(&canonical).is_some_and(|node| {
             node.properties
                 .get("content_source")
@@ -1245,6 +1249,7 @@ async fn execute_document_update(
         };
         let tx = state.db.begin().await?;
         let request = write::UpdateRequest {
+            rebase_policy: crate::flow::collab::write::RebasePolicy::None,
             document_id,
             update_id,
             bytes: bytes.clone(),
@@ -1275,6 +1280,10 @@ async fn execute_document_update(
                 &request,
                 &prepared,
                 crate::config::runtime().flow.dispatch_max_attempts,
+                crate::flow::block_registry::RegistrationAllowance::within(
+                    std::time::Instant::now(),
+                    write::LOCKED_PHASE_STAGING_BUDGET,
+                ),
             )
             .await?
             {
@@ -2973,6 +2982,7 @@ async fn create_collection_embed(
         write::set_locked_phase_statement_budgets(&tx, 1).await?;
         authz::fence_epoch_for_share(&tx, workspace_id, checked_epoch).await?;
         let request = write::UpdateRequest {
+            rebase_policy: crate::flow::collab::write::RebasePolicy::None,
             document_id: page.document_id,
             update_id,
             bytes: bytes.clone(),
@@ -2992,6 +3002,10 @@ async fn create_collection_embed(
             &request,
             &prepared,
             crate::config::runtime().flow.dispatch_max_attempts,
+            crate::flow::block_registry::RegistrationAllowance::within(
+                std::time::Instant::now(),
+                write::LOCKED_PHASE_STAGING_BUDGET,
+            ),
         )
         .await?;
         let write::StagedOutcome::Ready(staged) = staged else {
@@ -3617,7 +3631,7 @@ mod database_tests {
         exec(
             &state.db,
             "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled, default_member_level) \
-             VALUES ($1, true, 'edit')",
+             VALUES ($1, true, 'edit') ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled, default_member_level = EXCLUDED.default_member_level",
             vec![workspace_id.into()],
         )
         .await;

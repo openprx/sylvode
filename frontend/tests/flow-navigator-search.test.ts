@@ -658,7 +658,7 @@ await suite.checkAsync(
 		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
 			assert(String(input).endsWith('/api/v2/flow/objects'), 'canonical create endpoint');
 			bodies.push(JSON.parse(String(init?.body)));
- assertEqual(bodies.at(-1)?.scope_id,WS,'real selected scope in create body');
+			assertEqual(bodies.at(-1)?.scope_id, WS, 'real selected scope in create body');
 			return new Response(JSON.stringify(reply), {
 				headers: { 'Content-Type': 'application/json' }
 			});

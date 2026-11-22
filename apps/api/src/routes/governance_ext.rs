@@ -1328,18 +1328,6 @@ pub async fn get_project_audit_report(
     Ok(ApiResponse::success(report))
 }
 
-async fn get_ai_participant_project_id(db: &impl ConnectionTrait, ai_participant_id: &str) -> Result<Uuid, ApiError> {
-    let row = ProjectIdRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT project_id FROM ai_participants WHERE id = $1",
-        vec![ai_participant_id.to_string().into()],
-    ))
-    .one(db)
-    .await?
-    .ok_or_else(|| ApiError::NotFound("ai participant not found".to_string()))?;
-    Ok(row.project_id)
-}
-
 pub async fn get_ai_review_feedback(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -1390,20 +1378,24 @@ pub async fn get_ai_review_feedback(
 pub async fn get_ai_participant_learning(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
-    Path(ai_participant_id): Path<String>,
+    Path((project_id, ai_participant_id)): Path<(Uuid, String)>,
     Query(query): Query<AiLearningQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let user_id = parse_claim_user_id(&claims)?;
-    let project_id = get_ai_participant_project_id(&state.db, &ai_participant_id).await?;
     ensure_project_visible(&state, project_id, user_id).await?;
 
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;
 
-    let mut where_parts = vec!["ai_participant_id = $1".to_string()];
-    let mut values = vec![ai_participant_id.clone().into()];
-    let mut idx = 2;
+    // Records outlive a removed connection, so the scope is the project's reviews, not the
+    // participant row.
+    let mut where_parts = vec![
+        "ai_participant_id = $1".to_string(),
+        "review_id IN (SELECT id FROM impact_reviews WHERE project_id = $2)".to_string(),
+    ];
+    let mut values = vec![ai_participant_id.clone().into(), project_id.into()];
+    let mut idx = 3;
     if let Some(domain) = query.domain.as_deref() {
         let domain = domain.trim().to_ascii_lowercase();
         if !domain.is_empty() {
@@ -1472,10 +1464,9 @@ pub async fn get_ai_participant_learning(
 pub async fn get_ai_participant_alignment_stats(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
-    Path(ai_participant_id): Path<String>,
+    Path((project_id, ai_participant_id)): Path<(Uuid, String)>,
 ) -> Result<impl IntoResponse, ApiError> {
     let user_id = parse_claim_user_id(&claims)?;
-    let project_id = get_ai_participant_project_id(&state.db, &ai_participant_id).await?;
     ensure_project_visible(&state, project_id, user_id).await?;
 
     let stats = AlignmentStatsRow::find_by_statement(Statement::from_sql_and_values(
@@ -1488,6 +1479,7 @@ pub async fn get_ai_participant_alignment_stats(
                     ROW_NUMBER() OVER (ORDER BY created_at DESC) AS rn
                 FROM ai_learning_records
                 WHERE ai_participant_id = $1
+                  AND review_id IN (SELECT id FROM impact_reviews WHERE project_id = $2)
             )
             SELECT
                 COUNT(*)::bigint AS total,
@@ -1498,7 +1490,7 @@ pub async fn get_ai_participant_alignment_stats(
                 COUNT(*) FILTER (WHERE rn <= 5 AND outcome_alignment = 'aligned')::bigint AS recent_aligned
             FROM ordered
         ",
-        vec![ai_participant_id.clone().into()],
+        vec![ai_participant_id.clone().into(), project_id.into()],
     ))
     .one(&state.db)
     .await?
@@ -1634,6 +1626,105 @@ mod tenant_scoping_tests {
         ensure_proposal_in_scope(&scratch.db, &mine, &scope)
             .await
             .expect("a member sees their own workspace's draft proposal");
+
+        scratch.drop_self().await;
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+mod learning_scope_tests {
+    use super::{AiLearningQuery, get_ai_participant_alignment_stats, get_ai_participant_learning};
+    use crate::error::ApiError;
+    use crate::routes::context::tenant_fixture::{Tenant, claims_for, exec, seed_proposal, seed_tenant, state_for};
+    use crate::scratch_or_skip;
+    use axum::{
+        Extension,
+        extract::{Path, Query, State},
+        response::IntoResponse,
+    };
+    use sea_orm::DatabaseConnection;
+    use serde_json::Value;
+    use uuid::Uuid;
+
+    /// A review of `tenant`'s project with `count` learning records for `bot`.
+    async fn seed_learning(db: &DatabaseConnection, tenant: &Tenant, bot: &str, count: usize) {
+        let proposal = seed_proposal(db, Some(tenant.workspace_id), tenant.member_id).await;
+        let review = format!("REV-{}", Uuid::new_v4());
+        exec(
+            db,
+            "INSERT INTO impact_reviews (id, proposal_id, project_id) VALUES ($1, $2, $3)",
+            vec![review.clone().into(), proposal.clone().into(), tenant.project_id.into()],
+        )
+        .await;
+        for _ in 0..count {
+            exec(
+                db,
+                "INSERT INTO ai_learning_records \
+                 (ai_participant_id, review_id, proposal_id, domain, review_rating, outcome_alignment) \
+                 VALUES ($1, $2, $3, 'general', 'A', 'aligned')",
+                vec![bot.to_string().into(), review.clone().into(), proposal.clone().into()],
+            )
+            .await;
+        }
+    }
+
+    async fn body_of(response: axum::response::Response) -> Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    async fn learning(db: &DatabaseConnection, caller: Uuid, project: Uuid, bot: &str) -> Result<Value, ApiError> {
+        let answer = get_ai_participant_learning(
+            State(state_for(db.clone())),
+            Extension(claims_for(caller)),
+            Path((project, bot.to_string())),
+            Query(AiLearningQuery {
+                domain: None,
+                page: None,
+                per_page: None,
+            }),
+        )
+        .await?;
+        Ok(body_of(answer.into_response()).await)
+    }
+
+    async fn alignment(db: &DatabaseConnection, caller: Uuid, project: Uuid, bot: &str) -> Result<Value, ApiError> {
+        let answer = get_ai_participant_alignment_stats(
+            State(state_for(db.clone())),
+            Extension(claims_for(caller)),
+            Path((project, bot.to_string())),
+        )
+        .await?;
+        Ok(body_of(answer.into_response()).await)
+    }
+
+    /// The same bot id has learning records in two projects. Each project's route returns its own
+    /// records only, and a caller who is not a member of the project is refused.
+    #[tokio::test]
+    async fn learning_is_scoped_to_the_project_and_refuses_non_members() {
+        let scratch = scratch_or_skip!("learning_scope");
+        let db = &scratch.db;
+        let one = seed_tenant(db, "la").await;
+        let two = seed_tenant(db, "lb").await;
+        let bot = "shared-bot-id";
+        seed_learning(db, &one, bot, 2).await;
+        seed_learning(db, &two, bot, 3).await;
+
+        let mine = learning(db, one.member_id, one.project_id, bot).await.unwrap();
+        assert_eq!(mine["data"]["total"], 2, "{mine}");
+        let theirs = learning(db, two.member_id, two.project_id, bot).await.unwrap();
+        assert_eq!(theirs["data"]["total"], 3, "{theirs}");
+
+        let stats = alignment(db, one.member_id, one.project_id, bot).await.unwrap();
+        assert_eq!(stats["data"]["total"], 2, "{stats}");
+        let stats = alignment(db, two.member_id, two.project_id, bot).await.unwrap();
+        assert_eq!(stats["data"]["total"], 3, "{stats}");
+
+        let refused = learning(db, one.member_id, two.project_id, bot).await;
+        assert!(matches!(refused, Err(ApiError::Forbidden(_))), "{refused:?}");
+        let refused = alignment(db, two.member_id, one.project_id, bot).await;
+        assert!(matches!(refused, Err(ApiError::Forbidden(_))), "{refused:?}");
 
         scratch.drop_self().await;
     }

@@ -15,9 +15,14 @@
 //! their object storage from [`runtime`]; it installs its own configuration file at startup for
 //! the same reason.
 //!
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use platform::config::{DEFAULT_STORAGE_DIR, FlowConfig, OpenPrConfig, OutboundConfig, StorageBackend, StorageConfig};
+use platform::config::{
+    AiTasksConfig, DEFAULT_STORAGE_DIR, FlowConfig, InboundConfig, IpCidr, OAuthConfig, OpenPrConfig, OutboundConfig,
+    StorageBackend, StorageConfig,
+};
+
+use crate::security::default_trusted_proxies;
 
 /// The sections of the configuration file reached from outside `AppState`.
 #[derive(Clone, Debug)]
@@ -25,6 +30,14 @@ pub struct RuntimeConfig {
     pub storage: StorageConfig,
     pub outbound: OutboundConfig,
     pub flow: FlowConfig,
+    /// Lease and processing limits of AI tasks, shared with the worker's sweep.
+    pub ai_tasks: AiTasksConfig,
+    /// Peers allowed to vouch for a client address through `X-Forwarded-For` / `X-Real-IP`.
+    pub trusted_proxies: Vec<IpCidr>,
+    /// The authorization server settings, `None` when `[oauth] issuer` is not configured.
+    pub oauth: Option<Arc<OAuthConfig>>,
+    /// The alert chain's inbound endpoint settings (`[inbound]`, off by default).
+    pub inbound: InboundConfig,
 }
 
 impl RuntimeConfig {
@@ -34,6 +47,14 @@ impl RuntimeConfig {
             storage: config.storage.clone(),
             outbound: config.outbound.clone(),
             flow: config.flow.clone(),
+            ai_tasks: config.ai_tasks,
+            trusted_proxies: config
+                .server
+                .trusted_proxies
+                .clone()
+                .unwrap_or_else(default_trusted_proxies),
+            oauth: config.oauth.clone().map(Arc::new),
+            inbound: config.inbound,
         }
     }
 
@@ -57,6 +78,10 @@ impl RuntimeConfig {
             },
             outbound: OutboundConfig::default(),
             flow: FlowConfig::default(),
+            ai_tasks: AiTasksConfig::default(),
+            trusted_proxies: default_trusted_proxies(),
+            oauth: None,
+            inbound: InboundConfig::default(),
         }
     }
 }
@@ -77,6 +102,42 @@ pub fn install(config: &OpenPrConfig) -> Result<(), String> {
 /// The installed configuration, or the fallback described on [`RuntimeConfig::fallback`].
 pub fn runtime() -> &'static RuntimeConfig {
     RUNTIME.get_or_init(RuntimeConfig::fallback)
+}
+
+/// Whether the collab write window may decide incrementally (`[flow] incremental_window`).
+///
+/// Off unless the file turns it on. Unit tests turn it on for their own thread with
+/// [`test_support::enable_incremental_window`], so a test that exercises the incremental path says so.
+pub fn incremental_window() -> bool {
+    #[cfg(test)]
+    if let Some(forced) = test_support::OVERRIDE.with(std::cell::Cell::get) {
+        return forced;
+    }
+    runtime().flow.incremental_window
+}
+
+/// Per-thread overrides of settings for unit tests (every `#[tokio::test]` runs on one thread).
+#[cfg(test)]
+pub mod test_support {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(super) static OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    /// Holds `[flow] incremental_window = true` on this thread until it is dropped.
+    pub struct IncrementalWindowOn;
+
+    pub fn enable_incremental_window() -> IncrementalWindowOn {
+        OVERRIDE.with(|forced| forced.set(Some(true)));
+        IncrementalWindowOn
+    }
+
+    impl Drop for IncrementalWindowOn {
+        fn drop(&mut self) {
+            OVERRIDE.with(|forced| forced.set(None));
+        }
+    }
 }
 
 #[cfg(test)]

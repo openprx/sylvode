@@ -43,17 +43,27 @@
 //! missing value of the section at once, and [`AppConfig::from_config`] — the API's and the
 //! worker's single entry point — reports the missing database *and* auth values together.
 
+mod cidr;
 mod error;
+mod inbound;
+mod oauth;
 mod raw;
 mod secret;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use uuid::Uuid;
 
+pub use cidr::IpCidr;
 pub use error::{ConfigError, EXAMPLE_CONFIG_PATH};
+pub use inbound::InboundConfig;
+pub use oauth::{
+    DEFAULT_ACCESS_TOKEN_TTL_SECONDS, DEFAULT_AUTHORIZATION_CODE_TTL_SECONDS, DEFAULT_EVENT_BACKFILL_MAX_AGE_HOURS,
+    DEFAULT_EVENT_BACKFILL_MAX_EVENTS, DEFAULT_EVENT_FEED_RETENTION_DAYS, DEFAULT_GRANT_MAX_LIFETIME_DAYS,
+    DEFAULT_MAX_ACTIVE_GRANTS_PER_USER_CLIENT, DEFAULT_MAX_STREAMS_PER_PROCESS, DEFAULT_REFRESH_TOKEN_IDLE_DAYS,
+    MIN_FORWARD_SECRET_LEN, OAuthConfig,
+};
 pub use secret::{REDACTED, Secret};
 
 /// Where a binary looks for its configuration when no `--config` path is given.
@@ -61,9 +71,6 @@ pub use secret::{REDACTED, Secret};
 /// Relative to the process working directory, so a container that mounts the file at
 /// `/app/config/sylvode.toml` and runs with `/app` as its working directory needs no flag.
 pub const DEFAULT_CONFIG_PATH: &str = "config/sylvode.toml";
-
-/// v0.8 and older default. It is discovered only when the new default does not exist.
-pub const LEGACY_CONFIG_PATH: &str = "config/openpr.toml";
 
 /// Shortest accepted `auth.jwt_secret`.
 ///
@@ -82,13 +89,40 @@ pub const DEFAULT_OPERATION_LOG_RETENTION_DAYS: u32 = 30;
 
 /// Seconds an AI task may stay `processing` before the worker ends that attempt.
 ///
-/// Applies unless `[ai_tasks]` overrides it. Four times the receiver's default agent run limit
-/// (`sylvode-webhook` `cli.timeout_secs = 900`), so a run that is merely slow, or waits for a free
+/// Applies unless `[ai_tasks]` overrides it. Four times the runner's default agent run limit
+/// (`sylvode-runner` `cli.timeout_secs = 900`), so a run that is merely slow, or waits for a free
 /// executor slot, is not delivered a second time.
 pub const DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS: u64 = 3_600;
 
 /// Accepted range of `ai_tasks.processing_timeout_secs`: one minute to seven days.
 pub const AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS: std::ops::RangeInclusive<u64> = 60..=604_800;
+
+/// Seconds each acknowledge, progress report or runner heartbeat extends an active task's lease.
+///
+/// Applies unless `[ai_tasks]` overrides it.
+pub const DEFAULT_AI_TASK_LEASE_EXTENSION_SECS: u64 = 1_800;
+
+/// Accepted range of `ai_tasks.lease_extension_secs`: one minute to one day.
+pub const AI_TASK_LEASE_EXTENSION_RANGE_SECS: std::ops::RangeInclusive<u64> = 60..=86_400;
+
+/// Hard cap, in seconds from `started_at`, beyond which no heartbeat extends a task's lease.
+///
+/// Applies unless `[ai_tasks]` overrides it.
+pub const DEFAULT_AI_TASK_MAX_PROCESSING_SECS: u64 = 86_400;
+
+/// Largest accepted `ai_tasks.max_processing_secs`: seven days. The smallest accepted value is the
+/// configured `processing_timeout_secs`.
+pub const AI_TASK_MAX_PROCESSING_CEILING_SECS: u64 = 604_800;
+
+/// Deepest hop of a bot-to-bot chain.
+///
+/// A task a human or an inbound event starts is depth 0, a task a bot's action causes while it
+/// runs a task is one deeper than that task. A hop beyond this depth is refused. Applies unless
+/// `[ai_tasks]` overrides it.
+pub const DEFAULT_AI_TASK_MAX_CHAIN_DEPTH: u32 = 3;
+
+/// Accepted range of `ai_tasks.max_chain_depth`.
+pub const AI_TASK_MAX_CHAIN_DEPTH_RANGE: std::ops::RangeInclusive<u32> = 1..=10;
 
 /// `event_dispatch` expansion-failure retry ceiling assumed unless `[flow]` overrides it.
 ///
@@ -104,6 +138,20 @@ pub const DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS: u64 = 60;
 /// The existing upload ceiling, also used by independently owned Page body assets.
 pub const DEFAULT_FLOW_BODY_ASSET_MAX_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_FLOW_BODY_ASSET_BYTES: u64 = DEFAULT_FLOW_BODY_ASSET_MAX_BYTES;
+
+/// CPU milliseconds the isolated worker's unmetered setup may consume before it yields no base facts.
+///
+/// Assumed unless `[flow] setup_cpu_budget_ms` overrides it. The setup's own wall timeout is 5 s, so
+/// the budget leaves room for the load and for one text over it.
+pub const DEFAULT_FLOW_SETUP_CPU_BUDGET_MS: u64 = 2_500;
+
+/// Lower bound accepted for `flow.setup_cpu_budget_ms`: below it even honest pages would lose the
+/// incremental window.
+pub const MIN_FLOW_SETUP_CPU_BUDGET_MS: u64 = 500;
+
+/// Upper bound accepted for `flow.setup_cpu_budget_ms`: the setup timeout is 5 s of wall time, and
+/// a budget at or above 4 s would leave no room for the load and the one text that can run past it.
+pub const MAX_FLOW_SETUP_CPU_BUDGET_MS: u64 = 4_000;
 
 /// Upper bound accepted for `flow.conversion_reap_interval_secs` (one day).
 pub const MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS: u64 = 86_400;
@@ -133,6 +181,10 @@ pub struct OpenPrConfig {
     pub outbound: OutboundConfig,
     pub mcp: McpConfig,
     pub flow: FlowConfig,
+    /// `None` unless `[oauth] issuer` is set: the authorization server is off by default.
+    pub oauth: Option<OAuthConfig>,
+    /// `[inbound]`: the alert chain's inbound endpoint, off unless `enabled = true`.
+    pub inbound: InboundConfig,
 }
 
 impl OpenPrConfig {
@@ -140,13 +192,8 @@ impl OpenPrConfig {
     ///
     /// `explicit` is the path a `--config` flag carried. When it is `None`,
     /// [`DEFAULT_CONFIG_PATH`] is used, relative to the process working directory.
-    ///
-    /// When `explicit` is `None` and only the legacy [`LEGACY_CONFIG_PATH`] exists, the legacy
-    /// file is used and the process is marked so that [`take_legacy_discovery_notice`] returns
-    /// the deprecation notice once. An explicit path is the operator's deliberate choice and is
-    /// never marked, whatever it is called.
     pub fn load(explicit: Option<&Path>) -> Result<Self, ConfigError> {
-        let (path, legacy_discovered) = resolve_config_path(explicit, Path::new("."))?;
+        let path = explicit.map_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH), Path::to_path_buf);
         let source = match fs::read_to_string(&path) {
             Ok(source) => source,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -159,11 +206,7 @@ impl OpenPrConfig {
                 });
             }
         };
-        let config = Self::parse(&source, &absolute(&path))?;
-        if legacy_discovered {
-            LEGACY_DISCOVERED.store(true, Ordering::Relaxed);
-        }
-        Ok(config)
+        Self::parse(&source, &absolute(&path))
     }
 
     /// Validates configuration already held in memory. `origin` only labels diagnostics.
@@ -198,54 +241,6 @@ impl OpenPrConfig {
     }
 }
 
-/// Whether this process loaded the legacy configuration file through default discovery.
-static LEGACY_DISCOVERED: AtomicBool = AtomicBool::new(false);
-
-/// Whether the legacy discovery notice has already been handed out in this process.
-static LEGACY_NOTICE_TAKEN: AtomicBool = AtomicBool::new(false);
-
-/// The ADR-0020 D2 notice for a legacy configuration file found by default discovery, the
-/// first time it is asked for in a process that loaded one; `None` otherwise.
-///
-/// A binary calls this right after installing its logger and writes the result as one `warn`
-/// line. Loading happens before the logger exists — the logger is configured by the file — so
-/// the notice waits here rather than being emitted into a subscriber that is not there yet.
-/// The swap makes "once per process" structural: a second caller gets `None`.
-pub fn take_legacy_discovery_notice() -> Option<String> {
-    if !LEGACY_DISCOVERED.load(Ordering::Relaxed) || LEGACY_NOTICE_TAKEN.swap(true, Ordering::Relaxed) {
-        return None;
-    }
-    Some(crate::deprecation::legacy_config_discovery(
-        LEGACY_CONFIG_PATH,
-        DEFAULT_CONFIG_PATH,
-    ))
-}
-
-/// The file to read, and whether it is the legacy file reached by default discovery.
-fn resolve_config_path(explicit: Option<&Path>, base: &Path) -> Result<(PathBuf, bool), ConfigError> {
-    if let Some(path) = explicit {
-        return Ok((path.to_path_buf(), false));
-    }
-    let path = resolve_default_config_path(base)?;
-    let legacy = path == base.join(LEGACY_CONFIG_PATH);
-    Ok((path, legacy))
-}
-
-fn resolve_default_config_path(base: &Path) -> Result<PathBuf, ConfigError> {
-    let canonical = base.join(DEFAULT_CONFIG_PATH);
-    let legacy = base.join(LEGACY_CONFIG_PATH);
-    match (canonical.exists(), legacy.exists()) {
-        (true, true) => Err(ConfigError::Invalid {
-            path: absolute(&canonical),
-            issues: vec![format!(
-                "both {DEFAULT_CONFIG_PATH} and legacy {LEGACY_CONFIG_PATH} exist; pass --config explicitly or remove one so configuration precedence is never silent"
-            )],
-        }),
-        (false, true) => Ok(legacy),
-        (_, false) => Ok(canonical),
-    }
-}
-
 /// Builds the validation error a runtime accessor returns when values are missing.
 fn missing_values(origin: &Path, issues: Vec<String>) -> ConfigError {
     ConfigError::Invalid {
@@ -270,6 +265,9 @@ fn absolute(path: &Path) -> PathBuf {
 pub struct ServerConfig {
     pub app_name: Option<String>,
     pub bind_addr: Option<String>,
+    /// Reverse proxies whose `X-Forwarded-For` / `X-Real-IP` headers may be believed.
+    /// `None` means the key was absent and the API applies its built-in default.
+    pub trusted_proxies: Option<Vec<IpCidr>>,
 }
 
 /// What a binary that opens a database connection is told when `database.url` is absent.
@@ -496,15 +494,28 @@ impl Default for AuditConfig {
 /// `processing_timeout_secs` bounds how long a delivered task may stay `processing` without the
 /// receiver completing or failing it. After that the worker ends the attempt: the task goes back
 /// to `pending` while attempts remain and is failed otherwise.
+///
+/// `lease_extension_secs` is how far an acknowledge, a progress report or a runner heartbeat moves
+/// the lease of an active task; `max_processing_secs` is the hard cap from `started_at` that no
+/// extension passes.
+///
+/// `max_chain_depth` is the deepest hop of a bot-to-bot chain (see
+/// [`DEFAULT_AI_TASK_MAX_CHAIN_DEPTH`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AiTasksConfig {
     pub processing_timeout_secs: u64,
+    pub lease_extension_secs: u64,
+    pub max_processing_secs: u64,
+    pub max_chain_depth: u32,
 }
 
 impl Default for AiTasksConfig {
     fn default() -> Self {
         Self {
             processing_timeout_secs: DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS,
+            lease_extension_secs: DEFAULT_AI_TASK_LEASE_EXTENSION_SECS,
+            max_processing_secs: DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
+            max_chain_depth: DEFAULT_AI_TASK_MAX_CHAIN_DEPTH,
         }
     }
 }
@@ -524,12 +535,31 @@ impl Default for AiTasksConfig {
 ///
 /// `conversion_reap_interval_secs` is the period of the API's sweep that fails conversion jobs
 /// left `started` past the stale threshold (`rest-api-v1.md` v0.7).
+///
+/// `incremental_window` (experimental, default off) lets the collab write window decide the
+/// structural limits from the facts of the page and the units an update touched; off, every write
+/// runs the full computation, which is what the worker did before the incremental window existed.
+///
+/// `setup_cpu_budget_ms` is the CPU time the worker's unmetered setup (load, prewarm, base facts)
+/// may consume before it yields no facts and the page takes the full window. A slower host than the
+/// reference runner may raise it; a setup that times out at 5 s of wall time with at least 80 % of
+/// it consumed is treated as an exhausted setup (the full window is tried once), below that as a
+/// starved one (retried).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlowConfig {
     pub dispatch_max_attempts: i32,
     pub collab_allowed_origins: Vec<String>,
     pub conversion_reap_interval_secs: u64,
     pub body_asset_max_bytes: u64,
+    /// Whether the collab write window may decide the structural limits incrementally
+    /// (experimental, off by default). Off makes every write run the full computation (the bounded
+    /// cost the worker had before the incremental window), whatever the page: the worker's decision is then the full computation's for every
+    /// input, except that an update whose tree ops name a parent that does not exist is refused
+    /// with either setting (`collab_core::tree_refs`).
+    pub incremental_window: bool,
+    /// CPU budget of the worker's setup, in milliseconds; validated to the range from
+    /// [`MIN_FLOW_SETUP_CPU_BUDGET_MS`] to [`MAX_FLOW_SETUP_CPU_BUDGET_MS`], both included.
+    pub setup_cpu_budget_ms: u64,
 }
 
 impl Default for FlowConfig {
@@ -539,6 +569,8 @@ impl Default for FlowConfig {
             collab_allowed_origins: Vec::new(),
             conversion_reap_interval_secs: DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
             body_asset_max_bytes: DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
+            incremental_window: false,
+            setup_cpu_budget_ms: DEFAULT_FLOW_SETUP_CPU_BUDGET_MS,
         }
     }
 }
@@ -604,6 +636,34 @@ impl McpTransport {
     }
 }
 
+/// Which tools `tools/list` offers: the search entry tools (the default) or the whole registry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum McpToolMode {
+    /// `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools.
+    #[default]
+    Search,
+    /// Every registry tool, callable directly by name.
+    Full,
+}
+
+impl McpToolMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Search => "search",
+            Self::Full => "full",
+        }
+    }
+
+    /// The mode a value names (`search` or `full`, case-insensitive, surrounding blanks ignored).
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "search" => Some(Self::Search),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
 /// `[mcp]` — MCP server settings.
 ///
 /// Every field is optional so that the API and the worker can share the file without declaring a
@@ -621,6 +681,17 @@ pub struct McpConfig {
     pub workspace_id: Option<Uuid>,
     pub transport: McpTransport,
     pub bind_addr: Option<String>,
+    /// Issuer that vouches for delegated tokens. All three `oauth_*` keys are set together or not
+    /// at all; see [`McpConfig::runtime`].
+    pub oauth_issuer: Option<String>,
+    /// Identifier of this server as a protected resource (the URL that receives JSON-RPC posts).
+    pub oauth_resource: Option<String>,
+    /// Credential presented to the API when forwarding a delegated token. Never logged.
+    pub oauth_forward_secret: Option<Secret>,
+    /// Tool listing mode of the stdio transport and the default of the networked ones.
+    pub tool_mode: McpToolMode,
+    /// Whether `sylvode_write` may be used at all. `None` means the default, `true`.
+    pub allow_write_call: Option<bool>,
 }
 
 /// What a deployment whose transport has no per-request credential is told.
@@ -643,6 +714,7 @@ impl McpConfig {
         if self.workspace_id.is_none() {
             issues.push("mcp.workspace_id is required to run the MCP server".to_string());
         }
+        let oauth = self.oauth_runtime(&mut issues);
         let Some(workspace_id) = self.workspace_id.filter(|_| issues.is_empty()) else {
             return Err(ConfigError::Invalid {
                 path: origin.to_path_buf(),
@@ -658,8 +730,53 @@ impl McpConfig {
                 .bind_addr
                 .clone()
                 .unwrap_or_else(|| DEFAULT_MCP_BIND_ADDR.to_string()),
+            oauth,
+            tool_mode: self.tool_mode,
+            allow_write_call: self.allow_write_call.unwrap_or(true),
         })
     }
+
+    /// The three `oauth_*` keys are one unit: with none the server refuses delegated tokens, with
+    /// all of them it validates them, and a partial set is refused by name instead of silently
+    /// running without delegated access.
+    fn oauth_runtime(&self, problems: &mut Vec<String>) -> Option<McpOAuthRuntime> {
+        match (
+            self.oauth_issuer.as_ref(),
+            self.oauth_resource.as_ref(),
+            self.oauth_forward_secret.as_ref(),
+        ) {
+            (Some(issuer_url), Some(resource_url), Some(forward_secret)) => Some(McpOAuthRuntime {
+                issuer: issuer_url.clone(),
+                resource: resource_url.clone(),
+                forward_secret: forward_secret.clone(),
+            }),
+            (None, None, None) => None,
+            (issuer_url, resource_url, secret) => {
+                let missing: Vec<&str> = [
+                    ("mcp.oauth_issuer", issuer_url.is_none()),
+                    ("mcp.oauth_resource", resource_url.is_none()),
+                    ("mcp.oauth_forward_secret", secret.is_none()),
+                ]
+                .into_iter()
+                .filter_map(|(key, absent)| absent.then_some(key))
+                .collect();
+                problems.push(format!(
+                    "mcp.oauth_issuer, mcp.oauth_resource and mcp.oauth_forward_secret are set together or not at \
+                     all; missing: {}",
+                    missing.join(", ")
+                ));
+                None
+            }
+        }
+    }
+}
+
+/// The delegated-token settings of the MCP server, present only when all three keys are.
+#[derive(Clone, Debug)]
+pub struct McpOAuthRuntime {
+    pub issuer: String,
+    pub resource: String,
+    pub forward_secret: Secret,
 }
 
 /// `[mcp]` with the mandatory fields resolved, as the MCP server needs them.
@@ -672,6 +789,12 @@ pub struct McpRuntime {
     pub workspace_id: Uuid,
     pub transport: McpTransport,
     pub bind_addr: String,
+    /// `None` when `[mcp]` carries no `oauth_*` keys: delegated tokens are then refused.
+    pub oauth: Option<McpOAuthRuntime>,
+    /// `search` unless the file says `full`.
+    pub tool_mode: McpToolMode,
+    /// `true` unless the file says `false`; the runner writes `false` for its bots.
+    pub allow_write_call: bool,
 }
 
 /// The subset of the configuration carried in `AppState` and reached from request handlers.

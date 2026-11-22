@@ -20,6 +20,10 @@ path = "src/bin/list-tools.rs"
 name = "sylvode"
 path = "src/bin/sylvode.rs"
 
+[[bin]]
+name = "sylvode-skillgen"
+path = "src/bin/skillgen.rs"
+
 [dependencies]
 anyhow.workspace = true
 api = { path = "../api" }
@@ -30,6 +34,8 @@ platform = { path = "../../crates/platform" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
+sylvode-prereq = { path = "../../crates/sylvode-prereq", features = ["http"] }
 tokio.workspace = true
 tokio-stream = "0.1"
 tokio-util.workspace = true
@@ -41,7 +47,14 @@ collab-core = { path = "../../crates/collab-core" }
 hex = "0.4"
 sea-orm.workspace = true
 serde_jcs.workspace = true
-sha2 = "0.10"
+parking_lot = "0.12"
+tracing-subscriber.workspace = true
+
+# The end-to-end test that starts the shipped server from the files and argument vectors the
+# runner itself produces (`tests/runner_launch_e2e.rs`); the runner is Unix only.
+[target.'cfg(unix)'.dev-dependencies]
+sylvode-runner = { path = "../runner", features = ["test-support"] }
+toml.workspace = true
 
 [lints]
 workspace = true

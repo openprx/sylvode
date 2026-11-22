@@ -106,6 +106,12 @@ fn literal_host_ip(host: &str) -> Option<IpAddr> {
 
 /// Performs scheme, credential and literal-address checks without DNS resolution.
 pub fn parse_outbound_url(raw: &str) -> Result<reqwest::Url, String> {
+    parse_outbound_url_with(raw, &outbound_allowlist(), outbound_private_targets_allowed())
+}
+
+/// [`parse_outbound_url`] against an explicit allowlist (comma-separated hosts, each optionally
+/// with a port) and private-address switch instead of the installed configuration.
+pub fn parse_outbound_url_with(raw: &str, allowlist: &str, allow_private: bool) -> Result<reqwest::Url, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("endpoint must not be empty".to_string());
@@ -124,9 +130,7 @@ pub fn parse_outbound_url(raw: &str) -> Result<reqwest::Url, String> {
         .host_str()
         .ok_or_else(|| "endpoint must contain a host".to_string())?
         .to_string();
-    if outbound_private_targets_allowed()
-        || host_is_allowlisted(&host, url.port_or_known_default(), &outbound_allowlist())
-    {
+    if allow_private || host_is_allowlisted(&host, url.port_or_known_default(), allowlist) {
         return Ok(url);
     }
     if literal_host_ip(&host).is_some_and(is_blocked_ip) {
@@ -137,31 +141,87 @@ pub fn parse_outbound_url(raw: &str) -> Result<reqwest::Url, String> {
 
 /// Performs full outbound target validation, including DNS resolution.
 pub async fn validate_outbound_url(raw: &str) -> Result<reqwest::Url, String> {
-    let url = parse_outbound_url(raw)?;
-    if outbound_private_targets_allowed() {
-        return Ok(url);
+    validate_outbound_url_with(raw, &outbound_allowlist(), outbound_private_targets_allowed()).await
+}
+
+/// [`validate_outbound_url`] against an explicit allowlist and private-address switch.
+pub async fn validate_outbound_url_with(
+    raw: &str,
+    allowlist: &str,
+    allow_private: bool,
+) -> Result<reqwest::Url, String> {
+    resolve_outbound_target_with(raw, allowlist, allow_private)
+        .await
+        .map(|target| target.url)
+}
+
+/// A validated outbound URL, with the addresses its check saw for a resolved host name.
+///
+/// A caller that connects must connect to exactly these (see
+/// `reqwest::ClientBuilder::resolve_to_addrs`): resolving the name again at connect time would let
+/// a name that answered a public address to the check answer a private one to the connection.
+#[derive(Debug, Clone)]
+pub struct OutboundTarget {
+    pub url: reqwest::Url,
+    /// The host name and the checked addresses, or `None` when no resolution was needed (an
+    /// allow-listed host, a literal address, or private targets switched on).
+    pub pin: Option<(String, Vec<std::net::SocketAddr>)>,
+}
+
+/// [`validate_outbound_url`], returning the checked addresses as well.
+pub async fn resolve_outbound_target(raw: &str) -> Result<OutboundTarget, String> {
+    resolve_outbound_target_with(raw, &outbound_allowlist(), outbound_private_targets_allowed()).await
+}
+
+/// [`resolve_outbound_target`] against an explicit allowlist and private-address switch.
+pub async fn resolve_outbound_target_with(
+    raw: &str,
+    allowlist: &str,
+    allow_private: bool,
+) -> Result<OutboundTarget, String> {
+    let url = parse_outbound_url_with(raw, allowlist, allow_private)?;
+    if allow_private {
+        return Ok(OutboundTarget { url, pin: None });
     }
     let host = url.host_str().unwrap_or_default().to_string();
     let port = url.port_or_known_default();
-    if host_is_allowlisted(&host, port, &outbound_allowlist()) || literal_host_ip(&host).is_some() {
-        return Ok(url);
+    if host_is_allowlisted(&host, port, allowlist) || literal_host_ip(&host).is_some() {
+        return Ok(OutboundTarget { url, pin: None });
     }
     let addresses = tokio::net::lookup_host((host.as_str(), port.unwrap_or(443)))
         .await
         .map_err(|error| format!("endpoint host {host} could not be resolved: {error}"))?
         .collect::<Vec<_>>();
+    let addresses = checked_addresses(&host, addresses)?;
+    Ok(OutboundTarget {
+        url,
+        pin: Some((host, addresses)),
+    })
+}
+
+/// The resolved `addresses` of `host` when none is blocked.
+fn checked_addresses(host: &str, addresses: Vec<std::net::SocketAddr>) -> Result<Vec<std::net::SocketAddr>, String> {
     if addresses.is_empty() {
         return Err(format!("endpoint host {host} could not be resolved"));
     }
     if addresses.iter().any(|address| is_blocked_ip(address.ip())) {
         return Err(format!("endpoint host {host} resolves to a blocked address"));
     }
-    Ok(url)
+    Ok(addresses)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{host_is_allowlisted, is_blocked_ip, truncate_string};
+    use super::{checked_addresses, host_is_allowlisted, is_blocked_ip, truncate_string};
+
+    #[test]
+    fn checked_addresses_refuse_a_name_with_any_blocked_address() {
+        let public: std::net::SocketAddr = "93.184.216.34:443".parse().expect("addr");
+        let private: std::net::SocketAddr = "10.1.2.3:443".parse().expect("addr");
+        assert_eq!(checked_addresses("h", vec![public]).expect("public"), vec![public]);
+        assert!(checked_addresses("h", vec![public, private]).is_err());
+        assert!(checked_addresses("h", Vec::new()).is_err());
+    }
 
     #[test]
     fn diagnostics_truncate_on_character_boundaries() {

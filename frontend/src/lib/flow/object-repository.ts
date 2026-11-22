@@ -58,7 +58,12 @@ import {
 import { LiveProjectionStore } from './projection-store';
 import { checkUpdateBytes, negotiateFlowLimitsVersion } from './limits';
 import { clientError, flowErrorFromEnvelope } from './errors';
-import { openOutboxStore, type OutboxStore, type RecoveryDraftEntry } from './outbox';
+import {
+	openOutboxStore,
+	type OutboxEntry,
+	type OutboxStore,
+	type RecoveryDraftEntry
+} from './outbox';
 import { CACHE_DB_PREFIX, flowDatabaseName } from './local-data';
 import {
 	FlowOfflineSync,
@@ -181,6 +186,58 @@ async function deleteCachedSnapshot(userId: string | null, objectId: string): Pr
 
 /** Structural shape of a Loro map, wide enough to cover any container name (see `setTitle`'s
  * comment for why `LoroDocType.getMap` needs widening for non-`doc`/`data` containers). */
+/** At most this many rebuilds of a doc that cannot import server bytes, within `POISON_WINDOW_MS`. */
+const POISON_REBUILDS_MAX = 2;
+const POISON_WINDOW_MS = 60_000;
+/** Marks the error a replay throws when its doc was just discarded; it is not shown. */
+const DOC_REBUILD_REASON = 'doc_rebuild';
+
+function unreadableRemoteUpdate(): FlowError {
+	return {
+		code: 'invalid_update',
+		recoverable: false,
+		origin: 'client',
+		details: { reason: 'remote_update_unreadable' }
+	};
+}
+
+/**
+ * The ONE place remote bytes enter a doc that is (or may become) bound to the editor. Returns
+ * false when the engine threw: a failed `import` can panic the WASM module (a tree op under a
+ * parent that does not exist), after which every call on that doc throws too, so the caller must
+ * treat the doc as poisoned and never touch it again. A try/catch only: no copy, no decoding.
+ */
+function importRemote(doc: LoroDocType, chunks: readonly Uint8Array[]): boolean {
+	try {
+		for (const bytes of chunks) doc.import(bytes);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** A fresh doc holding exactly `chunks`; one the engine cannot import is freed and refused. */
+async function freshDocFrom(chunks: readonly Uint8Array[]): Promise<LoroDocType> {
+	const { LoroDoc } = await loadLoro();
+	const fresh = new LoroDoc() as unknown as LoroDocType;
+	if (importRemote(fresh, chunks)) return fresh;
+	try {
+		fresh.free();
+	} catch {
+		// Nothing left to release.
+	}
+	throw unreadableRemoteUpdate();
+}
+
+function docRebuildStarted(): FlowError {
+	return {
+		code: 'resync_required',
+		recoverable: true,
+		origin: 'client',
+		details: { reason: DOC_REBUILD_REASON }
+	};
+}
+
 export interface NamedLoroMap {
 	get(key: string): unknown;
 	set(key: string, value: unknown): void;
@@ -270,6 +327,8 @@ class OpenEntry implements OpenFlowObjectResult {
 	/** The next session `snapshot` replaces the doc instead of merging into it. */
 	rebuildOnSnapshot = false;
 	rebuildDone: (() => void) | null = null;
+	/** Times (ms) of the recent rebuilds of a doc that could not import server bytes. */
+	poisonRebuilds: number[] = [];
 
 	constructor(input: {
 		ownerUserId: string | null;
@@ -443,7 +502,8 @@ export class FlowObjectRepository {
 			throw { code: 'not_found', recoverable: false } satisfies FlowError;
 		}
 
-		const { LoroDoc } = await loadLoro();
+		const loro = await loadLoro();
+		const { LoroDoc } = loro;
 		if (!apiClient.isAuthSessionEpoch(authEpoch) || this.currentUserId() !== userId)
 			throw { code: 'unauthenticated', recoverable: true } satisfies FlowError;
 		const doc = new LoroDoc() as unknown as LoroDocType;
@@ -472,10 +532,13 @@ export class FlowObjectRepository {
 						return;
 					}
 					const target = liveDoc();
-					target.import(payload.snapshotBytes);
-					for (const update of payload.tailUpdates) {
-						target.import(update.bytes);
-					}
+					if (
+						!importRemote(target, [
+							payload.snapshotBytes,
+							...payload.tailUpdates.map((u) => u.bytes)
+						])
+					)
+						throw unreadableRemoteUpdate();
 					lastKnownFrontierBase64 = payload.headFrontier;
 					projection.applyEngineDiff(
 						{ documentId: object.document_id } satisfies EngineDiff,
@@ -493,7 +556,8 @@ export class FlowObjectRepository {
 					// A peer's committed update arrives with its bytes and is applied in seq order
 					// (the session already checked `seq == last+1`). `import` is not a local
 					// change, so it never re-enters the outbox below.
-					if (notice.remoteBytes) liveDoc().import(notice.remoteBytes);
+					if (notice.remoteBytes && !importRemote(liveDoc(), [notice.remoteBytes]))
+						throw unreadableRemoteUpdate();
 					lastKnownFrontierBase64 = notice.headFrontier;
 					if (
 						entry &&
@@ -514,6 +578,12 @@ export class FlowObjectRepository {
 				},
 				onFlowError: (error: FlowError) => {
 					flowErrorStore.set(error);
+				},
+				onImportFailure: () => {
+					// The import of server bytes threw, so the doc may be dead. Before the entry
+					// exists (the first snapshot) nothing is mounted: report the failure.
+					if (entry) void this.recoverUnreadableDoc(entry);
+					else flowErrorStore.set(unreadableRemoteUpdate());
 				},
 				onConnected: () => {
 					entry?.offline.onConnected();
@@ -555,20 +625,21 @@ export class FlowObjectRepository {
 			object
 		};
 
+		const limitViolation = (bytes: Uint8Array): FlowError | null => {
+			const violation = checkUpdateBytes(bytes, session.effectiveLimits);
+			return violation
+				? clientError('limit_exceeded', {
+						limit_kind: violation.limitKind,
+						limit: violation.limit,
+						observed: violation.observed
+					})
+				: null;
+		};
 		const host: OfflineSyncHost = {
 			objectId: input.objectId,
 			documentId: object.document_id,
 			peerId: () => liveDoc().peerIdStr,
-			limitViolation: (bytes) => {
-				const violation = checkUpdateBytes(bytes, session.effectiveLimits);
-				return violation
-					? clientError('limit_exceeded', {
-							limit_kind: violation.limitKind,
-							limit: violation.limit,
-							observed: violation.observed
-						})
-					: null;
-			},
+			limitViolation,
 			canWrite: () => this.canWrite(input.objectId),
 			bootstrap: () => this.acceptedBootstrap(input.objectId),
 			replaceWithAccepted: (bootstrap) => this.replaceWithAccepted(bootstrap),
@@ -586,14 +657,78 @@ export class FlowObjectRepository {
 				await Promise.race([rebuilt, new Promise<void>((resolve) => setTimeout(resolve, 15_000))]);
 			},
 			importIntoLive: (bytes) => {
-				liveDoc().import(bytes);
+				if (!importRemote(liveDoc(), [bytes])) {
+					// Replay stops; the rebuild below reconnects, and the next connect replays the
+					// queue onto the fresh doc.
+					if (entry) void this.recoverUnreadableDoc(entry);
+					throw docRebuildStarted();
+				}
 			},
+			commitPending: () => {
+				try {
+					liveDoc().commit();
+				} catch {
+					// A dead doc is handled by the rebuild paths; nothing to commit.
+				}
+			},
+			hasUncommittedEdits: () => {
+				try {
+					return (liveDoc() as unknown as RawLoroDoc).getPendingTxnLength() > 0;
+				} catch {
+					return false;
+				}
+			},
+			sessionHeadFrontier: () => (lastKnownFrontierBase64 === '' ? null : lastKnownFrontierBase64),
+			prepareRebase: (queued) => {
+				if (!entry) return { ok: false };
+				const target = entry;
+				const rebased = rebaseUnsentChanges(loro, liveDoc() as unknown as RawLoroDoc, queued);
+				if (!rebased.ok) return { ok: false, error: rebased.error };
+				if (!rebased.bytes) {
+					rebased.doc.free();
+					return {
+						ok: true,
+						bytes: null,
+						unreplayable: rebased.unreplayable,
+						adopt: () => undefined
+					};
+				}
+				const violation = limitViolation(rebased.bytes);
+				if (violation) {
+					rebased.doc.free();
+					return { ok: false, error: violation };
+				}
+				return {
+					ok: true,
+					bytes: rebased.bytes,
+					unreplayable: rebased.unreplayable,
+					adopt: () => {
+						// The editor rebinds to the new doc (the cursor may move); the old doc is
+						// retired like after any rebuild. It is never swapped back.
+						this.swapDoc(
+							target,
+							rebased.doc as unknown as LoroDocType,
+							get(target.projection.object).documentSeq,
+							() => lastKnownFrontierBase64
+						);
+					}
+				};
+			},
+			clearPausedNotice: () =>
+				flowErrorStore.update((shown) =>
+					(shown?.details as { reason?: string } | undefined)?.reason === 'sending_paused'
+						? null
+						: shown
+				),
 			scratchFrom: (bootstrap) => scratchReplicaFrom(bootstrap),
 			enterReadOnly: () => {
 				session.setPermissionReadOnly(true);
 				readOnlyStore.set(true);
 			},
-			reportError: (error) => flowErrorStore.set(error)
+			reportError: (error) => {
+				if ((error.details as { reason?: string } | undefined)?.reason !== DOC_REBUILD_REASON)
+					flowErrorStore.set(error);
+			}
 		};
 		const offline = new FlowOfflineSync(
 			await this.outbox(userId),
@@ -659,13 +794,18 @@ export class FlowObjectRepository {
 		}
 
 		this.open_.set(input.objectId, opened);
-		for (const hold of this.transferHolds.get(input.objectId) ?? []) this.attachTransferHold(opened, hold);
+		for (const hold of this.transferHolds.get(input.objectId) ?? [])
+			this.attachTransferHold(opened, hold);
 		return opened;
 	}
 
 	/** Routes the current doc's local updates into the outbox. Re-run after every rebuild. */
 	private subscribeLocal(entry: OpenEntry, frontier: () => string): void {
-		entry.unsubscribeLocal?.();
+		try {
+			entry.unsubscribeLocal?.();
+		} catch {
+			// The previous doc is dead (see `recoverUnreadableDoc`): nothing is left to detach.
+		}
 		const target = entry.doc;
 		if (entry.editorPaused) {
 			entry.unsubscribeLocal = null;
@@ -923,8 +1063,10 @@ export class FlowObjectRepository {
 				!apiClient.isAuthSessionEpoch(epoch)
 			)
 				return false;
-			doc.import(fromBase64(bootstrap.snapshot_base64));
-			for (const update of bootstrap.tail_updates) doc.import(fromBase64(update.bytes));
+			if (!importRemote(doc, bootstrapChunks(bootstrap))) {
+				void this.recoverUnreadableDoc(entry);
+				return false;
+			}
 			entry.projection.applyEngineDiff(
 				{ documentId: entry.handle.documentId } satisfies EngineDiff,
 				bootstrap.head_seq
@@ -936,7 +1078,9 @@ export class FlowObjectRepository {
 		}
 	}
 
-	transferEditingHeld(objectId: string): boolean { return !!this.transferHolds.get(objectId)?.size; }
+	transferEditingHeld(objectId: string): boolean {
+		return !!this.transferHolds.get(objectId)?.size;
+	}
 	openTransferEntry(objectId: string): OpenFlowObjectResult | null {
 		return this.open_.get(objectId) ?? null;
 	}
@@ -946,32 +1090,41 @@ export class FlowObjectRepository {
 		entry.operationHeldStore.set(true);
 		let releaseDoc = holdEditorWrites(entry.doc, operationId);
 		const stop = entry.docGeneration.subscribe(() => {
-			releaseDoc(); releaseDoc = holdEditorWrites(entry.doc, operationId);
+			releaseDoc();
+			releaseDoc = holdEditorWrites(entry.doc, operationId);
 		});
 		const release = () => {
-			stop(); releaseDoc(); entry.operationHolds.delete(operationId);
+			stop();
+			releaseDoc();
+			entry.operationHolds.delete(operationId);
 			entry.operationHeldStore.set(entry.operationHolds.size > 0);
 		};
 		entry.lifecycleAbort.signal.addEventListener('abort', release, { once: true });
 		this.transferHoldReleases.set(`${entry.handle.objectId}:${operationId}`, () => {
-			entry.lifecycleAbort.signal.removeEventListener('abort', release); release();
+			entry.lifecycleAbort.signal.removeEventListener('abort', release);
+			release();
 		});
 	}
 	private readonly transferHoldReleases = new Map<string, () => void>();
 	holdTransferEditing(objectIds: readonly string[], operationId: string): () => void {
 		for (const id of objectIds) {
 			let holds = this.transferHolds.get(id);
-			if (!holds) { holds = new Set(); this.transferHolds.set(id, holds); }
+			if (!holds) {
+				holds = new Set();
+				this.transferHolds.set(id, holds);
+			}
 			holds.add(operationId);
 			const entry = this.open_.get(id);
 			if (entry) this.attachTransferHold(entry, operationId);
 		}
 		return () => {
 			for (const id of objectIds) {
-				const holds = this.transferHolds.get(id); holds?.delete(operationId);
+				const holds = this.transferHolds.get(id);
+				holds?.delete(operationId);
 				if (!holds?.size) this.transferHolds.delete(id);
 				const key = `${id}:${operationId}`;
-				this.transferHoldReleases.get(key)?.(); this.transferHoldReleases.delete(key);
+				this.transferHoldReleases.get(key)?.();
+				this.transferHoldReleases.delete(key);
 			}
 		};
 	}
@@ -1152,10 +1305,20 @@ export class FlowObjectRepository {
 		entry: OpenEntry,
 		payload: SnapshotPayload
 	): Promise<void> {
-		const { LoroDoc } = await loadLoro();
-		const fresh = new LoroDoc() as unknown as LoroDocType;
-		fresh.import(payload.snapshotBytes);
-		for (const update of payload.tailUpdates) fresh.import(update.bytes);
+		let fresh: LoroDocType;
+		try {
+			fresh = await freshDocFrom([
+				payload.snapshotBytes,
+				...payload.tailUpdates.map((u) => u.bytes)
+			]);
+		} catch {
+			// The snapshot itself cannot be read; the bounded recovery decides between one more
+			// rebuild and stopping.
+			entry.rebuildDone?.();
+			entry.rebuildDone = null;
+			await this.recoverUnreadableDoc(entry);
+			return;
+		}
 		this.swapDoc(entry, fresh, payload.headSeq, () => payload.headFrontier);
 		entry.rebuildDone?.();
 		entry.rebuildDone = null;
@@ -1188,11 +1351,45 @@ export class FlowObjectRepository {
 	async rebuildFromAccepted(bootstrap: FlowBootstrap): Promise<void> {
 		const entry = this.open_.get(bootstrap.object_id);
 		if (!entry) return;
-		const { LoroDoc } = await loadLoro();
-		const fresh = new LoroDoc() as unknown as LoroDocType;
-		fresh.import(fromBase64(bootstrap.snapshot_base64));
-		for (const update of bootstrap.tail_updates) fresh.import(fromBase64(update.bytes));
+		const fresh = await freshDocFrom(bootstrapChunks(bootstrap));
 		this.swapDoc(entry, fresh, bootstrap.head_seq, () => bootstrap.head_frontier);
+	}
+
+	/**
+	 * The doc threw while importing bytes the server provided. A failed `import` can panic the WASM
+	 * engine (a tree op under a parent that does not exist), after which every call on the doc
+	 * throws, so the doc is discarded: a fresh one is built from the REST bootstrap (or, when this
+	 * user may not read it there, from the next session snapshot, as the outbox does), the editor
+	 * rebinds to it (`swapDoc` bumps the generation) and the session reconnects, which replays the
+	 * unsent queue exactly as every other resync does. At most `POISON_REBUILDS_MAX` rebuilds per
+	 * `POISON_WINDOW_MS`; after that the editor shows its load error instead of looping.
+	 */
+	async recoverUnreadableDoc(entry: OpenEntry): Promise<void> {
+		const now = Date.now();
+		entry.poisonRebuilds = entry.poisonRebuilds.filter((at) => now - at < POISON_WINDOW_MS);
+		if (entry.poisonRebuilds.length >= POISON_REBUILDS_MAX) {
+			this.stopOnUnreadableDoc(entry);
+			return;
+		}
+		entry.poisonRebuilds.push(now);
+		const objectId = entry.handle.objectId;
+		try {
+			const bootstrap = await this.acceptedBootstrap(objectId);
+			if (this.open_.get(objectId) !== entry) return;
+			if (bootstrap) await this.rebuildFromAccepted(bootstrap);
+			else entry.rebuildOnSnapshot = true;
+			await entry.session.reconnect('stale_frontier');
+		} catch {
+			this.stopOnUnreadableDoc(entry);
+		}
+	}
+
+	/** The rebuild budget is spent: show the error, stop editing and sending, keep the queue. The
+	 * unsent edits stay in the outbox (IndexedDB) and the recovery draft; the rest of the app runs. */
+	private stopOnUnreadableDoc(entry: OpenEntry): void {
+		entry.offline.setReadOnly(true);
+		entry.readOnlyStore.set(true);
+		entry.reportEditorFailure(unreadableRemoteUpdate());
 	}
 
 	async close(objectId: string): Promise<void> {
@@ -1207,13 +1404,24 @@ export class FlowObjectRepository {
 		entry.offline.dispose();
 		entry.unsubscribeLocal?.();
 		await entry.session.dispose();
-		clearBodyClipboard(entry.doc);
-		releaseEditorSession(entry.doc);
-		entry.doc.free();
+		// The current doc may be the one the engine panicked on (after the rebuild budget ran out):
+		// releasing it must not stop the rest of the teardown.
+		try {
+			clearBodyClipboard(entry.doc);
+			releaseEditorSession(entry.doc);
+			entry.doc.free();
+		} catch {
+			// Nothing left to release.
+		}
 		for (const retired of entry.retired) {
-			clearBodyClipboard(retired);
-			releaseEditorSession(retired);
-			retired.free();
+			// A retired doc may be one the engine panicked on; releasing it must not stop the rest.
+			try {
+				clearBodyClipboard(retired);
+				releaseEditorSession(retired);
+				retired.free();
+			} catch {
+				// Nothing left to release.
+			}
 		}
 	}
 
@@ -1343,9 +1551,9 @@ export class FlowObjectRepository {
 	async replaceWithAccepted(bootstrap: FlowBootstrap): Promise<void> {
 		const entry = this.open_.get(bootstrap.object_id);
 		if (!entry) return;
-		entry.doc.import(fromBase64(bootstrap.snapshot_base64));
-		for (const update of bootstrap.tail_updates) {
-			entry.doc.import(fromBase64(update.bytes));
+		if (!importRemote(entry.doc, bootstrapChunks(bootstrap))) {
+			void this.recoverUnreadableDoc(entry);
+			throw docRebuildStarted();
 		}
 		entry.projection.applyEngineDiff(
 			{ documentId: entry.handle.documentId } satisfies EngineDiff,
@@ -1534,6 +1742,13 @@ function objectToProjection(object: FlowObjectView): ObjectProjection {
 /** A throwaway Loro replica of one accepted bootstrap, used by the outbox to tell whether a
  * queued update is new to the server, already accepted, or dependent on something the server
  * never accepted (`offline-sync.ts`). Never bound to an editor, never sent anywhere. */
+function bootstrapChunks(bootstrap: FlowBootstrap): Uint8Array[] {
+	return [
+		fromBase64(bootstrap.snapshot_base64),
+		...bootstrap.tail_updates.map((update) => fromBase64(update.bytes))
+	];
+}
+
 async function scratchReplicaFrom(bootstrap: FlowBootstrap): Promise<ScratchReplica> {
 	const { LoroDoc } = await loadLoro();
 	const replica = new LoroDoc();
@@ -1552,4 +1767,158 @@ async function scratchReplicaFrom(bootstrap: FlowBootstrap): Promise<ScratchRepl
 			replica.free();
 		}
 	};
+}
+
+type LoroModule = typeof import('loro-crdt');
+type RawLoroDoc = import('loro-crdt').LoroDoc;
+
+/** The complete state of a doc as a comparable value: every container resolved, text containers
+ * as their delta (so the marks, `toJSON` renders a rich text as its plain string), and the empty
+ * root containers dropped: reading a root container (`getMap`) makes it appear without it
+ * holding any operation, and such a container never syncs. */
+function stateJson(loro: LoroModule, doc: RawLoroDoc): unknown {
+	const sorted = (value: unknown): unknown => {
+		if (Array.isArray(value)) return value.map(sorted);
+		if (typeof value !== 'object' || value === null) return value;
+		const record = value as Record<string, unknown>;
+		return Object.fromEntries(
+			Object.keys(record)
+				.sort()
+				.map((k) => [k, sorted(record[k])])
+		);
+	};
+	const json = sorted(
+		doc.toJsonWithReplacer((_key, value) =>
+			value instanceof loro.LoroText ? (value.toDelta() as never) : value
+		)
+	) as Record<string, unknown>;
+	const out: Record<string, unknown> = {};
+	for (const key of Object.keys(json)) {
+		const value = json[key];
+		const empty =
+			(Array.isArray(value) && value.length === 0) ||
+			(typeof value === 'object' &&
+				value !== null &&
+				!Array.isArray(value) &&
+				Object.keys(value).length === 0) ||
+			value === '';
+		if (!empty) out[key] = value;
+	}
+	return out;
+}
+
+function randomPeerId(): `${number}` {
+	const words = new Uint32Array(2);
+	crypto.getRandomValues(words);
+	// 52 random bits: a decimal peer id that is also a safe JS integer, never the reserved max.
+	return String(words[0] * 0x100000 + (words[1] >>> 12)) as `${number}`;
+}
+
+/**
+ * Re-encodes the unsent local changes of `live` as one update on a fork of everything else `live`
+ * holds (`FLOW-RETRYABLE-BUSY-DESIGN.md` 6.3). Loro changes are immutable and keep the
+ * dependencies they were made with, so "on top of the head" means new operations under a fresh
+ * peer id: `base` is `live` minus the changes the queued updates carry (including remote updates
+ * that arrived meanwhile, which are not ours to re-send); the fork at `base` gets the diff from
+ * `base` to `live` applied. The complete state (text marks included) is compared with `live`
+ * before anything is returned; on any difference the fork is freed and nothing changes.
+ *
+ * Nothing here may commit: the caller has committed the editor's open transaction and settled
+ * every update it emitted before this synchronous section. `unreplayable` names the queued
+ * entries whose operations the live doc does not hold (they depend on an intent that left the
+ * doc for the recovery draft): the re-encoding cannot carry them, so the caller drafts them.
+ */
+function rebaseUnsentChanges(
+	loro: LoroModule,
+	live: RawLoroDoc,
+	queued: readonly OutboxEntry[]
+):
+	| { ok: true; doc: RawLoroDoc; bytes: Uint8Array | null; unreplayable: ReadonlySet<string> }
+	| { ok: false; error: FlowError } {
+	let fork: RawLoroDoc | null = null;
+	let target: RawLoroDoc | null = null;
+	const mismatch = () => ({
+		ok: false as const,
+		error: clientError('invalid_update', { reason: 'rebase_state_mismatch' })
+	});
+	try {
+		const liveVersion = live.oplogVersion().toJSON();
+		const base = new Map(liveVersion);
+		const unreplayable = new Set<string>();
+		let partial = false;
+		for (const entry of queued) {
+			const meta = loro.decodeImportBlobMeta(entry.bytes, false);
+			let missing = false;
+			let applied = false;
+			for (const [peer, end] of meta.partialEndVersionVector.toJSON()) {
+				if ((liveVersion.get(peer) ?? 0) < end) missing = true;
+			}
+			for (const [peer, start] of meta.partialStartVersionVector.toJSON()) {
+				const current = base.get(peer);
+				if (current !== undefined && start < current) {
+					applied = true;
+					if (start === 0) base.delete(peer);
+					else base.set(peer, start);
+				}
+			}
+			if (missing) {
+				unreplayable.add(entry.updateId);
+				// Some of its changes are in the live doc: they must not be re-encoded, because
+				// the entry as a whole goes to the draft and restoring it would apply them twice.
+				if (applied) partial = true;
+			}
+		}
+		const baseFrontiers = live.vvToFrontiers(new loro.VersionVector(base));
+		fork = live.forkAt(baseFrontiers);
+		fork.setPeerId(randomPeerId());
+		const before = fork.oplogVersion();
+		let source = live;
+		if (partial) {
+			// The state to carry is the base plus the entries that go with it. An entry that
+			// cannot be applied on top of that (it builds on an excluded one) is excluded too.
+			for (let round = 0; round <= queued.length && target === null; round += 1) {
+				const candidate = live.forkAt(baseFrontiers);
+				let blocked: string | null = null;
+				for (const entry of queued) {
+					if (unreplayable.has(entry.updateId)) continue;
+					const status = candidate.import(entry.bytes);
+					if (status.pending && status.pending.size > 0) {
+						blocked = entry.updateId;
+						break;
+					}
+				}
+				if (blocked === null) target = candidate;
+				else {
+					candidate.free();
+					unreplayable.add(blocked);
+				}
+			}
+			if (target === null) {
+				fork.free();
+				return mismatch();
+			}
+			source = target;
+		}
+		fork.applyDiff(source.diff(baseFrontiers, source.frontiers(), false), { fullState: true });
+		fork.commit();
+		const same = JSON.stringify(stateJson(loro, fork)) === JSON.stringify(stateJson(loro, source));
+		target?.free();
+		if (!same) {
+			fork.free();
+			return mismatch();
+		}
+		if (fork.oplogVersion().compare(before) === 0) {
+			return { ok: true, doc: fork, bytes: null, unreplayable };
+		}
+		return {
+			ok: true,
+			doc: fork,
+			bytes: fork.export({ mode: 'update', from: before }),
+			unreplayable
+		};
+	} catch {
+		target?.free();
+		fork?.free();
+		return mismatch();
+	}
 }

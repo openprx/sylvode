@@ -106,9 +106,7 @@
 </script>
 
 <div class="space-y-2">
-	<label
-		class="inline-flex cursor-pointer items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
-	>
+	<label class="inline-flex cursor-pointer items-center gap-1 text-sm text-fg">
 		<span class="inline-flex items-center gap-1">
 			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path
@@ -125,20 +123,18 @@
 
 	{#if uploading}
 		<div class="space-y-1">
-			<div class="h-2 w-full overflow-hidden rounded bg-slate-100 dark:bg-slate-800">
+			<div class="h-2 w-full overflow-hidden rounded bg-surface">
 				<div
-					class="h-full rounded bg-blue-500 transition-all duration-200"
+					class="h-full rounded bg-primary transition-all duration-200"
 					style={`width: ${progress}%;`}
 				></div>
 			</div>
-			<p class="text-xs text-slate-500 dark:text-slate-400">{$t('search.searching')} {progress}%</p>
+			<p class="text-xs text-fg-muted">{$t('search.searching')} {progress}%</p>
 		</div>
 	{/if}
 
 	{#if previewUrl}
-		<div
-			class="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-2"
-		>
+		<div class="overflow-hidden rounded-control border border-line bg-surface p-2">
 			{#if isImageUploadMime(previewMimeType)}
 				<img
 					src={previewUrl}
@@ -146,7 +142,8 @@
 					class="max-h-32 rounded object-contain"
 				/>
 			{:else}
-				<!-- svelte-ignore a11y_media_has_caption: uploaded video previews do not have caption tracks available. -->
+				<!-- uploaded video previews do not have caption tracks available -->
+				<!-- svelte-ignore a11y_media_has_caption -->
 				<video src={previewUrl} controls class="max-h-48 rounded object-contain"></video>
 			{/if}
 		</div>

@@ -7,8 +7,7 @@ set -euo pipefail
 # Environment:
 #   MCP_URL                MCP base URL. Default: http://localhost:8090
 #   OPENPR_CONFIG_FILE     MCP configuration file the caller token is read from.
-#                          Default: canonical config/sylvode.compose.mcp.toml, with
-#                          config/openpr.compose.mcp.toml as a legacy fallback.
+#                          Default: config/sylvode.compose.mcp.toml.
 #   OPENPR_MCP_BOT_TOKEN   Call as this workspace bot instead (opr_ prefix).
 #
 # Exit codes:
@@ -21,15 +20,7 @@ set -euo pipefail
 
 MCP_URL="${MCP_URL:-http://localhost:8090}"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=scripts/lib/sylvode_compat.sh
-source "$PROJECT_ROOT/scripts/lib/sylvode_compat.sh"
-if [[ -n "${OPENPR_CONFIG_FILE:-}" ]]; then
-  CONFIG_FILE=$OPENPR_CONFIG_FILE
-else
-  CONFIG_FILE=$(sylvode_select_config \
-    "$PROJECT_ROOT/config/sylvode.compose.mcp.toml" \
-    "$PROJECT_ROOT/config/openpr.compose.mcp.toml")
-fi
+CONFIG_FILE="${OPENPR_CONFIG_FILE:-$PROJECT_ROOT/config/sylvode.compose.mcp.toml}"
 
 environment_unavailable() {
   local reason="$1"
@@ -47,7 +38,7 @@ done
 # Keep the default coupled to the repository-owned registry snapshot. An explicit override is
 # still useful when testing a deliberately rebased external deployment, but stale source defaults
 # must fail the same exact-count comparison below instead of silently weakening it.
-EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/openpr-mcp/scripts/expected-tool-count.py")}"
+EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/sylvode-mcp/scripts/expected-tool-count.py")}"
 
 # Probe the external runtime before reading credentials. A closed compose port
 # is an environment precondition failure, not evidence that MCP product code
@@ -144,7 +135,7 @@ echo ""
 
 # Test 2: List Tools
 echo "📋 Test 2: List Available Tools"
-tools_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc" \
+tools_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
@@ -236,7 +227,7 @@ echo ""
 
 # Test 3: Call a stable read-only tool.
 echo "📋 Test 3: Invoke Tool (projects.list)"
-call_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc" \
+call_response=$(curl -sS -X POST "$MCP_URL/mcp/rpc?tools=full" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MCP_BOT_TOKEN" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"projects.list","arguments":{}}}')
