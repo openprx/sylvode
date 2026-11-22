@@ -324,6 +324,25 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  # The Release workflow builds every workspace binary for Windows, and nothing else compiled that
+  # target before a tag: a Unix-only call then failed the release. Compiles the same package set
+  # for the same target, with the warnings policy of the release build.
+  windows-build:
+    name: Windows build
+    needs: lint
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: x86_64-pc-windows-msvc
+      - name: Check every workspace binary for Windows
+        run: cargo check --locked --target x86_64-pc-windows-msvc
+
   # Browser E2E against a real stack: release API + PostgreSQL + the built frontend behind a
   # same-origin proxy and the background worker, started by the same script used locally
   # (scripts/e2e-web-stack.sh). The specs it runs are listed (with the exclusions) in the run step.

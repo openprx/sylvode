@@ -290,6 +290,7 @@ impl Fired {
 ///
 /// A guard that cannot read its clock fails closed (no facts): a setup without a working clock is
 /// not bounded by anything but the wall timeout.
+#[cfg(unix)]
 #[allow(unsafe_code)]
 #[must_use]
 pub fn thread_cpu_nanos() -> Option<u64> {
@@ -304,6 +305,14 @@ pub fn thread_cpu_nanos() -> Option<u64> {
         return None;
     };
     Some(secs.saturating_mul(1_000_000_000).saturating_add(nanos))
+}
+
+/// No thread CPU clock is read on this platform, so every guard fails closed (no facts). The
+/// isolated apply worker, the only consumer that needs the facts, does not run here either.
+#[cfg(not(unix))]
+#[must_use]
+pub const fn thread_cpu_nanos() -> Option<u64> {
+    None
 }
 
 /// Where a text's own cost is measured from: the allocation and the CPU clock when its decode
