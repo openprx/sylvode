@@ -7,7 +7,9 @@
 //! 2. the bot token's last use (`workspace_bots.last_used_at`) against when its credentials were
 //!    issued (`bot_runners.credentials_issued_at`);
 //! 3. the runner's own report (`PUT /api/v1/ai/runner/report`), sanitised before it is stored: the
-//!    API keeps component names, states and versions, never a path, a hint or a detail.
+//!    API keeps component names, states and versions, never a path, a hint or a detail. A tmux
+//!    session row (`tmux_session`) keeps its project key, CLI type and five fixed-vocabulary fields:
+//!    no session name, path or pane id.
 
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
@@ -29,6 +31,26 @@ const DELIVERY_WINDOW_DAYS: i64 = 30;
 const DETAIL_CHARS: usize = 200;
 /// A version is `^[0-9A-Za-z.+_-]{1,64}$`.
 const MAX_VERSION_CHARS: usize = 64;
+/// How many `tmux_session` rows a report keeps.
+const MAX_SESSION_ROWS: usize = 64;
+/// A project key is `^[A-Z0-9]{1,32}$`.
+const MAX_PROJECT_KEY_CHARS: usize = 32;
+
+/// The values a `tmux_session` field may carry, by field. Anything else drops the field.
+const SESSION_FIELDS: [(&str, &[&str]); 5] = [
+    (
+        "state",
+        &["running", "absent", "cli_not_running", "ambiguous", "dialog"],
+    ),
+    ("created_by", &["runner", "operator"]),
+    ("hooks", &["seen", "none"]),
+    ("permissions", &["bypass", "normal", "unknown"]),
+    ("mcp", &["ok", "missing", "other", "stale"]),
+];
+/// The CLI types a session row may name.
+const SESSION_CLIS: [&str; 3] = ["claude", "codex", "opencode"];
+/// The channels the `posture` component reports on.
+const POSTURE_CHANNELS: [&str; 2] = ["tmux", "headless"];
 
 // ---------------------------------------------------------------------------------------------
 // The report
@@ -41,6 +63,60 @@ fn is_known_component(name: &str) -> bool {
         name,
         "tmux" | "cli.claude" | "cli.codex" | "cli.opencode" | "mcp_server" | "api_protocol"
     )
+}
+
+/// One `tmux_session` row: `project_key` and `cli` are required and checked, `status` is `ok`,
+/// `warn` or `fail`, and each of the fields in [`SESSION_FIELDS`] is kept when it holds one of its
+/// listed values. Nothing else is kept.
+fn sanitize_session_row(row: &Value) -> Option<Value> {
+    let key = row.get("project_key").and_then(Value::as_str).filter(|key| {
+        !key.is_empty()
+            && key.len() <= MAX_PROJECT_KEY_CHARS
+            && key.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+    })?;
+    let cli = row
+        .get("cli")
+        .and_then(Value::as_str)
+        .filter(|cli| SESSION_CLIS.contains(cli))?;
+    let status = row
+        .get("status")
+        .and_then(Value::as_str)
+        .filter(|status| matches!(*status, "ok" | "warn" | "fail"))?;
+    let mut kept = serde_json::Map::new();
+    kept.insert("component".to_string(), json!("tmux_session"));
+    kept.insert("project_key".to_string(), json!(key));
+    kept.insert("cli".to_string(), json!(cli));
+    kept.insert("status".to_string(), json!(status));
+    for (field, allowed) in SESSION_FIELDS {
+        if let Some(value) = row
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|value| allowed.contains(value))
+        {
+            kept.insert(field.to_string(), json!(value));
+        }
+    }
+    Some(Value::Object(kept))
+}
+
+/// The `posture` row: `status` and, per channel, whether the launch settings run with permission
+/// checks off (`bypass`: `{"tmux": bool, "headless": bool}`, each key only when it is a boolean).
+fn sanitize_posture_row(row: &Value) -> Option<Value> {
+    let status = row
+        .get("status")
+        .and_then(Value::as_str)
+        .filter(|status| matches!(*status, "ok" | "warn" | "fail"))?;
+    let mut bypass = serde_json::Map::new();
+    for channel in POSTURE_CHANNELS {
+        if let Some(flag) = row
+            .get("bypass")
+            .and_then(|bypass| bypass.get(channel))
+            .and_then(Value::as_bool)
+        {
+            bypass.insert(channel.to_string(), json!(flag));
+        }
+    }
+    Some(json!({ "component": "posture", "status": status, "bypass": bypass }))
 }
 
 fn short_version(value: Option<&Value>) -> Option<String> {
@@ -58,9 +134,10 @@ fn short_version(value: Option<&Value>) -> Option<String> {
 /// Reduces a runner's report to what the API keeps.
 ///
 /// That is `generated_by.version`, `generated_by.task_protocol`, and per known component its
-/// `component`, `status` (`ok`, `warn` or `fail`) and `version` (at most 64 characters).
-/// Everything else, including every unknown key at any depth, is dropped, so no host path reaches
-/// the database.
+/// `component`, `status` (`ok`, `warn` or `fail`) and `version` (at most 64 characters), plus the
+/// `tmux_session` rows and the `posture` row described on [`sanitize_session_row`] and
+/// [`sanitize_posture_row`]. Everything else, including every unknown key at any depth, is
+/// dropped, so no host path reaches the database.
 #[must_use]
 pub fn sanitize_report(body: &Value) -> Value {
     let generated_by = body.get("generated_by");
@@ -79,12 +156,19 @@ pub fn sanitize_report(body: &Value) -> Value {
         .get("components")
         .and_then(Value::as_array)
         .map(|rows| {
+            let mut sessions = 0_usize;
             rows.iter()
                 .filter_map(|row| {
-                    let name = row
-                        .get("component")
-                        .and_then(Value::as_str)
-                        .filter(|name| is_known_component(name))?;
+                    let name = row.get("component").and_then(Value::as_str)?;
+                    if name == "tmux_session" {
+                        let kept = sanitize_session_row(row)?;
+                        sessions += 1;
+                        return (sessions <= MAX_SESSION_ROWS).then_some(kept);
+                    }
+                    if name == "posture" {
+                        return sanitize_posture_row(row);
+                    }
+                    let name = Some(name).filter(|name| is_known_component(name))?;
                     let status = row
                         .get("status")
                         .and_then(Value::as_str)
@@ -644,6 +728,88 @@ mod tests {
             json!({"generated_by": {}, "components": []})
         );
         assert_eq!(MAX_REPORT_BYTES, 16 * 1024);
+    }
+
+    #[test]
+    fn tmux_session_rows_keep_only_the_listed_keys_and_values() {
+        let hostile = json!({"components": [
+            {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "warn",
+             "state": "running", "created_by": "operator", "hooks": "seen", "permissions": "bypass",
+             "mcp": "ok", "name": "QLA-claude", "pane": "%3", "path": "/srv/dev/work", "detail": "x"},
+            {"component": "tmux_session", "project_key": "QLA", "cli": "codex", "status": "ok",
+             "state": "<b>", "created_by": "robot", "hooks": 1, "permissions": "", "mcp": "stale"},
+            {"component": "tmux_session", "project_key": "qla", "cli": "claude", "status": "ok"},
+            {"component": "tmux_session", "project_key": "Q-1", "cli": "claude", "status": "ok"},
+            {"component": "tmux_session", "project_key": "", "cli": "claude", "status": "ok"},
+            {"component": "tmux_session", "project_key": "A".repeat(33), "cli": "claude", "status": "ok"},
+            {"component": "tmux_session", "project_key": "QLA", "cli": "vim", "status": "ok"},
+            {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "great"},
+            {"component": "tmux_session", "cli": "claude", "status": "ok"},
+        ]});
+        let kept = sanitize_report(&hostile);
+        assert_eq!(
+            kept["components"],
+            json!([
+                {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "warn",
+                 "state": "running", "created_by": "operator", "hooks": "seen", "permissions": "bypass",
+                 "mcp": "ok"},
+                {"component": "tmux_session", "project_key": "QLA", "cli": "codex", "status": "ok",
+                 "mcp": "stale"},
+            ])
+        );
+        let text = kept.to_string();
+        for leaked in ["QLA-claude", "%3", "/srv", "detail"] {
+            assert!(!text.contains(leaked), "{leaked} must not survive");
+        }
+        // Every value of the vocabulary is kept, nothing else.
+        for (field, allowed) in [
+            (
+                "state",
+                vec!["running", "absent", "cli_not_running", "ambiguous", "dialog"],
+            ),
+            ("created_by", vec!["runner", "operator"]),
+            ("hooks", vec!["seen", "none"]),
+            ("permissions", vec!["bypass", "normal", "unknown"]),
+            ("mcp", vec!["ok", "missing", "other", "stale"]),
+        ] {
+            for value in allowed {
+                let row = json!({"components": [{"component": "tmux_session", "project_key": "K1",
+                    "cli": "opencode", "status": "ok", field: value}]});
+                assert_eq!(
+                    sanitize_report(&row)["components"][0][field],
+                    json!(value),
+                    "{field} {value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn at_most_sixty_four_session_rows_are_kept_and_other_rows_are_not_counted() {
+        let row = json!({"component": "tmux_session", "project_key": "K1", "cli": "claude", "status": "ok"});
+        let mut rows = vec![row; 70];
+        rows.push(json!({"component": "tmux", "status": "ok"}));
+        let kept = sanitize_report(&json!({ "components": rows }));
+        let kept = kept["components"].as_array().expect("rows");
+        assert_eq!(kept.len(), 65);
+        assert_eq!(kept[64]["component"], "tmux");
+    }
+
+    #[test]
+    fn the_posture_row_keeps_status_and_boolean_bypass_flags_per_channel() {
+        let kept = sanitize_report(&json!({"components": [
+            {"component": "posture", "status": "warn",
+             "bypass": {"tmux": true, "headless": false, "other": true}, "launch_command": ["claude"]},
+            {"component": "posture", "status": "ok", "bypass": {"tmux": "yes"}},
+            {"component": "posture", "status": "nope"},
+        ]}));
+        assert_eq!(
+            kept["components"],
+            json!([
+                {"component": "posture", "status": "warn", "bypass": {"tmux": true, "headless": false}},
+                {"component": "posture", "status": "ok", "bypass": {}},
+            ])
+        );
     }
 
     /// A version is `^[0-9A-Za-z.+_-]{1,64}$`: no markup, no whitespace, no hidden characters.
