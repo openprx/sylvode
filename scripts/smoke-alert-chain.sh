@@ -311,7 +311,15 @@ expect_equal "both cap alerts opened a work item" 2 "$(cap_items | jget 'len(d)'
 outcomes="$(api GET "/api/v1/inbound-sources/$CAP_ID/events?limit=10" | jget 'sorted(e["outcome"] for e in d["data"])')"
 expect_equal "the second alert's task waits in the queue" "['alert_opened', 'task_queued']" "$outcomes"
 expect_equal "a queued task is not announced as suppressed" 0 "$(count_notifications alert_suppressed "smoke cap $RUN_ID")"
-queued_item="$(cap_items | jget '[i["id"] for i in d if i.get("assignee_id") in (None, "")][0]')"
+# Both cap work items are assigned to the bot when they open; the queued one is the one whose
+# alert reports a waiting task.
+queued_item=""
+for id in $(cap_items | jget '" ".join(i["id"] for i in d)'); do
+  if [[ "$(api GET "/api/v1/issues/$id/alert" | jget 'd["data"]["task_state"]')" == waiting ]]; then
+    queued_item="$id"
+  fi
+done
+expect_equal "one of the cap work items has a waiting task" 1 "$([[ -n "$queued_item" ]] && echo 1 || echo 0)"
 queued_alert="$(api GET "/api/v1/issues/$queued_item/alert")"
 expect_equal "the alert panel data shows the task as waiting" waiting "$(echo "$queued_alert" | jget 'd["data"]["task_state"]')"
 expect_equal "it shows when the wait ends" 1 "$(echo "$queued_alert" | jget '1 if d["data"]["queue_expires_at"] else 0')"
