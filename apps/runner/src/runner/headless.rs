@@ -124,6 +124,7 @@ pub fn prepare(config: &Config, state: &StateDir, accepted: &Accepted, mcp_serve
             &BotFiles {
                 bot_id: &bot.bot_id,
                 api_url: &bot.api_url,
+                workspace_id: &bot.workspace_id,
                 token: &bot.token,
                 tool_mode: &runner.mcp.tool_mode,
                 allow_write_call: allow_write,

@@ -574,14 +574,14 @@ async fn each_bots_deliveries_verify_only_with_its_own_secret() {
         .replace(
             "\n[[agents]]",
             &format!(
-                "\n[[ai_task_callback.bots]]\nbot_id = \"{OTHER_BOT}\"\ntoken = \"{}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-of-bot-two-xx\"\n\n[[agents]]\nid = \"{OTHER_BOT}\"\nname = \"Two\"\nagent_type = \"runner\"\nallowed_roots = [\"{}\"]\n[agents.route]\nbot_ids = [\"{OTHER_BOT}\"]\n\n[[agents]]",
+                "\n[[ai_task_callback.bots]]\nbot_id = \"{OTHER_BOT}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"{}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-of-bot-two-xx\"\n\n[[agents]]\nid = \"{OTHER_BOT}\"\nname = \"Two\"\nagent_type = \"runner\"\nallowed_roots = [\"{}\"]\n[agents.route]\nbot_ids = [\"{OTHER_BOT}\"]\n\n[[agents]]",
                 concat!("opr", "_", "ef01ef01ef01ef01ef01ef01ef01ef01ef01"),
                 other_root_path.display()
             ),
         )
         .replace(
-            &format!("bot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n"),
-            &format!("bot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-of-bot-one-xx\"\n"),
+            &format!("bot_id = \"{BOT}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n"),
+            &format!("bot_id = \"{BOT}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-of-bot-one-xx\"\n"),
         );
     let server = Server::start(RUNNER, &config, &[]).expect("starts");
     let delivery_for = |bot: &str, attempt: u32| {

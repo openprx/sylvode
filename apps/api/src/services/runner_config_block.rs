@@ -49,6 +49,9 @@ impl std::fmt::Debug for ConfigBlock {
 pub struct BlockInput<'a> {
     pub bot_name: &'a str,
     pub bot_id: Uuid,
+    /// The workspace the bot belongs to. A bot lives in exactly one workspace and the runner's MCP
+    /// server needs it to start, so it is a property of the bot entry and not of the project.
+    pub workspace_id: Uuid,
     pub project_key: &'a str,
     pub issued_at: Timestamp,
     /// The runner address as stored (no trailing slash).
@@ -159,8 +162,9 @@ pub fn build(input: &BlockInput<'_>) -> ConfigBlock {
     );
     let _ = write!(
         text,
-        "[[ai_task_callback.bots]]\nbot_id = {}\ntoken = {}\nsurface = \"mcp_stdio\"\n\n",
+        "[[ai_task_callback.bots]]\nbot_id = {}\nworkspace_id = {}\ntoken = {}\nsurface = \"mcp_stdio\"\n\n",
         toml_string(&bot_id.to_string()),
+        toml_string(&input.workspace_id.to_string()),
         toml_string(input.token)
     );
     let _ = write!(
@@ -200,6 +204,7 @@ mod tests {
     use uuid::Uuid;
 
     const BOT: &str = "00000000-0000-0000-0000-000000000000";
+    const WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
     const GOLDEN_TOKEN: &str = "opr_golden_fixture_token";
     const GOLDEN_SECRET: &str = "golden-fixture-signing-secret";
 
@@ -215,6 +220,7 @@ mod tests {
         BlockInput {
             bot_name: name,
             bot_id: Uuid::parse_str(BOT).expect("uuid"),
+            workspace_id: Uuid::parse_str(WORKSPACE).expect("uuid"),
             project_key: "SVWL",
             issued_at: Timestamp::parse_rfc3339("2026-11-21T10:00:00Z").expect("time"),
             runner_url: url,
@@ -278,6 +284,7 @@ mod tests {
         let bots = callback["bots"].as_array().expect("bots");
         assert_eq!(bots.len(), 1);
         assert_eq!(bots[0]["bot_id"].as_str(), Some(BOT));
+        assert_eq!(bots[0]["workspace_id"].as_str(), Some(WORKSPACE));
         assert_eq!(bots[0]["token"].as_str(), Some(token.as_str()));
         assert_eq!(bots[0]["surface"].as_str(), Some("mcp_stdio"));
         assert_eq!(table["runner"]["allowed_roots"][0].as_str(), Some("/srv/dev/work/svwl"));

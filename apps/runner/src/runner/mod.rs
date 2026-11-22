@@ -416,10 +416,18 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             "this runner has no usable token for the task's bot, or safe mode is on",
         ));
     };
+    let Some(workspace_id) = target.workspace_id else {
+        return Ok(refused(
+            agent,
+            "runner_agent_disabled",
+            "this runner has no workspace id for the task's bot",
+        ));
+    };
     let client = SvClient::new(http.clone(), target.api_url, target.token, target.surface);
     let bot_creds = BotCreds {
         bot_id: bot.to_string(),
         api_url: target.api_url.to_string(),
+        workspace_id: workspace_id.to_string(),
         token: target.token.to_string(),
     };
     let Ok(registry) = &state.runner.registry else {

@@ -19,6 +19,7 @@ api_url = "https://sylvode.example.net"
 
 [[ai_task_callback.bots]]
 bot_id = "00000000-0000-0000-0000-000000000000"
+workspace_id = "11111111-1111-4111-8111-111111111111"
 token = "opr_golden_fixture_token"
 surface = "mcp_stdio"
 

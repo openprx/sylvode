@@ -22,6 +22,8 @@ use crate::config::Config;
 pub struct BotCreds {
     pub bot_id: String,
     pub api_url: String,
+    /// The workspace the bot belongs to: the MCP server needs it to start.
+    pub workspace_id: String,
     pub token: String,
 }
 
@@ -30,6 +32,7 @@ impl std::fmt::Debug for BotCreds {
         f.debug_struct("BotCreds")
             .field("bot_id", &self.bot_id)
             .field("api_url", &self.api_url)
+            .field("workspace_id", &self.workspace_id)
             .field("token", &"<redacted>")
             .finish()
     }

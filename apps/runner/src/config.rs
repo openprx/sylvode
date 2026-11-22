@@ -168,6 +168,9 @@ impl Default for AiTaskCallbackConfig {
 pub struct AiTaskCallbackBotConfig {
     /// The bot's user id in Sylvode (a UUID), as the worker sends it in `ai_participant_id`.
     pub bot_id: String,
+    /// The workspace the bot belongs to (a UUID). A bot lives in exactly one workspace; the MCP
+    /// server the runner starts for the CLI needs it, so a runner bot's entry must carry it.
+    pub workspace_id: Option<String>,
     /// The bot's `opr_` token.
     pub token: String,
     /// The transport the token is registered with; defaults to `ai_task_callback.surface`.
@@ -205,6 +208,7 @@ impl std::fmt::Debug for AiTaskCallbackBotConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AiTaskCallbackBotConfig")
             .field("bot_id", &self.bot_id)
+            .field("workspace_id", &self.workspace_id)
             .field("token", &"<redacted>")
             .field("surface", &self.surface)
             .field("webhook_secret", &redacted(self.webhook_secret.as_deref()))
@@ -261,6 +265,8 @@ pub struct AiTaskCallbackTarget<'a> {
     pub api_url: &'a str,
     pub token: &'a str,
     pub surface: &'a str,
+    /// The bot's workspace, from its `[[ai_task_callback.bots]]` entry.
+    pub workspace_id: Option<&'a str>,
 }
 
 /// Whether and how the outcome of one worker AI task is reported.
@@ -633,9 +639,18 @@ impl Config {
                     ));
                 }
                 let surface = if let Some(entry) = cfg.bots.iter().find(|b| same_bot(&b.bot_id, &bot)) {
+                    let workspace = entry.workspace_id.as_deref().map(str::trim).unwrap_or_default();
+                    match uuid::Uuid::parse_str(workspace) {
+                        Ok(parsed) if !parsed.is_nil() => {}
+                        _ => {
+                            return Err(format!(
+                                "bot {bot}: a runner bot's [[ai_task_callback.bots]] entry needs workspace_id, the \
+                                 UUID of the workspace the bot belongs to: the MCP server the runner starts for the \
+                                 CLI cannot start without it"
+                            ));
+                        }
+                    }
                     entry.surface.as_deref().unwrap_or(cfg.surface.as_str())
-                } else if cfg.token.is_some() && cfg.bot_id.as_deref().is_none_or(|owner| same_bot(owner, &bot)) {
-                    cfg.surface.as_str()
                 } else {
                     return Err(format!(
                         "agent `{id}`: bot {bot} has no token in [ai_task_callback]; add a \
@@ -943,11 +958,12 @@ impl Config {
         let Some(api_url) = cfg.api_url.as_deref() else {
             return AiTaskCallback::Off;
         };
-        let target = |token: &'a str, surface: Option<&'a str>| {
+        let target = |token: &'a str, surface: Option<&'a str>, workspace_id: Option<&'a str>| {
             AiTaskCallback::Report(AiTaskCallbackTarget {
                 api_url,
                 token,
                 surface: surface.unwrap_or(cfg.surface.as_str()),
+                workspace_id,
             })
         };
         if let Some(bot) = cfg
@@ -955,11 +971,11 @@ impl Config {
             .iter()
             .find(|bot| same_bot(&bot.bot_id, task_bot) && usable_token(&bot.token))
         {
-            return target(&bot.token, bot.surface.as_deref());
+            return target(&bot.token, bot.surface.as_deref(), bot.workspace_id.as_deref());
         }
         let owner_matches = cfg.bot_id.as_deref().is_none_or(|owner| same_bot(owner, task_bot));
         match cfg.token.as_deref().filter(|token| usable_token(token)) {
-            Some(token) if owner_matches => target(token, None),
+            Some(token) if owner_matches => target(token, None, None),
             _ => AiTaskCallback::NoToken,
         }
     }
@@ -1744,6 +1760,22 @@ url = "http://127.0.0.1:9000/hook"
                 format!("bot {GOLDEN_BOT}: runner bots need a token registered for mcp_stdio")
             );
         }
+        // The bot's workspace is what the MCP server the runner starts needs: a missing, nil or
+        // malformed one is refused at load time, not when the first task starts.
+        let line = "workspace_id = \"11111111-1111-4111-8111-111111111111\"\n";
+        for replacement in [
+            "",
+            "workspace_id = \"00000000-0000-0000-0000-000000000000\"\n",
+            "workspace_id = \"x\"\n",
+        ] {
+            let error = Config::from_toml(&swap(line, replacement)).expect_err(replacement);
+            assert!(error.contains(GOLDEN_BOT) && error.contains("workspace_id"), "{error}");
+        }
+        let cfg = Config::from_toml(GOLDEN_BLOCK).expect("golden");
+        let super::AiTaskCallback::Report(target) = cfg.ai_task_callback_for(GOLDEN_BOT) else {
+            panic!("the golden bot has a token");
+        };
+        assert_eq!(target.workspace_id, Some("11111111-1111-4111-8111-111111111111"));
         // A bot of the route without any token.
         let other = "11111111-1111-4111-8111-111111111111";
         let error = Config::from_toml(&swap(
@@ -1887,7 +1919,7 @@ url = "http://127.0.0.1:9000/hook"
         let b = "00000000-0000-4000-8000-0000000000bb";
         let bot = |id: &str, secret: Option<&str>| {
             format!(
-                "[[ai_task_callback.bots]]\nbot_id = \"{id}\"\ntoken = \"opr_{}\"\nsurface = \"mcp_stdio\"\n{}\n",
+                "[[ai_task_callback.bots]]\nbot_id = \"{id}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_{}\"\nsurface = \"mcp_stdio\"\n{}\n",
                 "w3".repeat(14),
                 secret.map_or(String::new(), |s| format!("webhook_secret = \"{s}\""))
             )
@@ -2034,7 +2066,7 @@ url = "http://127.0.0.1:9000/hook"
     fn a_second_runner_agent_without_its_own_roots_is_refused() {
         let other = "00000000-0000-0000-0000-000000000002";
         let error = Config::from_toml(&format!(
-            "{GOLDEN_BLOCK}\n[[ai_task_callback.bots]]\nbot_id = \"{other}\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\n\
+            "{GOLDEN_BLOCK}\n[[ai_task_callback.bots]]\nbot_id = \"{other}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\n\
              [[agents]]\nid = \"{other}\"\nname = \"B\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{other}\"]\n",
             t = "z8".repeat(14)
         ))

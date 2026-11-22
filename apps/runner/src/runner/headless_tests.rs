@@ -33,7 +33,7 @@ fn config(extra: &str) -> Config {
     Config::from_toml(&format!(
         "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n\
          [ai_task_callback]\nenabled = true\napi_url = \"http://127.0.0.1:2\"\n\
-         [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\ntoken = \"opr_{}\"\nsurface = \"mcp_stdio\"\n\
+         [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_{}\"\nsurface = \"mcp_stdio\"\n\
          [runner]\nallowed_roots = [\"/\"]\n{extra}\n",
         "k9".repeat(14)
     ))
@@ -46,6 +46,7 @@ fn accepted(cli: &str, dir: &Path, key: &str, program: &Path) -> Accepted {
         bot: BotCreds {
             bot_id: BOT.to_string(),
             api_url: "http://127.0.0.1:2".to_string(),
+            workspace_id: "11111111-1111-4111-8111-111111111111".to_string(),
             token: format!("opr_{}", "k9".repeat(14)),
         },
         task_id: "11111111-1111-4111-8111-111111111111".to_string(),

@@ -166,7 +166,7 @@ impl Fixture {
         format!(
             "[server]\nlisten = \"127.0.0.1:0\"\n[security]\nwebhook_secrets = [\"{SECRET}\"]\n\
              [ai_task_callback]\nenabled = true\napi_url = \"{}\"\n\
-             [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n\
+             [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n\
              [runner]\nstate_dir = \"{}\"\nallowed_roots = [\"{}\"]\nreport_interval_secs = 600\ndelivery_check_timeout_secs = 3\n\
              [runner.tmux]\nenabled = true\nbinary = \"{}\"\nsocket_name = \"{}\"\npush_settle_ms = 100\nready_timeout_secs = 20\n\
              [runner.cli.claude]\nbinary = \"{}\"\n\

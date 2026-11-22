@@ -372,7 +372,9 @@ tool_mode = "search"
 A `runner` agent is refused at start-up (the other agents still start) unless
 `[ai_task_callback] enabled = true`, `allowed_roots` is not empty, and every bot of its route has a
 token registered for the `mcp_stdio` transport (`surface = "mcp_stdio"`): `bot <id>: runner bots
-need a token registered for mcp_stdio`.
+need a token registered for mcp_stdio`. The entry also carries `workspace_id`, the workspace the bot
+belongs to: the runner writes it into the per-bot MCP file, and the MCP server it starts for the
+CLI refuses to start without it.
 
 **Allowed roots.** Each entry is checked once at start-up: only a leading `~/` is expanded; the path
 must be absolute, exist and be a directory, and is canonicalised. `/`, the home directory (or a
@@ -478,6 +480,7 @@ retry_delay_ms = 1000               # before the first retry, doubled each time 
 
 [[ai_task_callback.bots]]           # one entry per further bot; mcp_stdio for a `runner` agent
 bot_id = "00000000-0000-0000-0000-000000000000"
+workspace_id = "00000000-0000-0000-0000-000000000000"   # the bot's workspace; a `runner` agent needs it
 token = "opr_..."
 surface = "mcp_stdio"
 ```

@@ -149,7 +149,7 @@ impl Fixture {
         Config::from_toml(&format!(
             "[server]\nlisten = \"127.0.0.1:0\"\n[security]\nallow_unsigned = true\n\
              [ai_task_callback]\nenabled = true\napi_url = \"http://{api}\"\n\
-             [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n\
+             [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"{TOKEN}\"\nsurface = \"mcp_stdio\"\n\
              [runner]\nallowed_roots = [\"{}\"]\ndelivery_check_timeout_secs = 1\n{runner_extra}\n\
              [runner.mcp]\nserver_binary = \"{}\"\n\
              [runner.cli.claude]\nbinary = \"{}\"\n\
@@ -199,6 +199,7 @@ fn bot() -> BotCreds {
     BotCreds {
         bot_id: BOT.to_string(),
         api_url: "http://127.0.0.1:1".to_string(),
+        workspace_id: "11111111-1111-4111-8111-111111111111".to_string(),
         token: TOKEN.to_string(),
     }
 }

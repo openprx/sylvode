@@ -122,6 +122,8 @@ pub struct Target {
     pub api_url: String,
     pub token: String,
     pub surface: String,
+    /// The bot's workspace; the config check guarantees a runner bot has one.
+    pub workspace_id: String,
 }
 
 impl std::fmt::Debug for Target {
@@ -131,6 +133,7 @@ impl std::fmt::Debug for Target {
             .field("api_url", &self.api_url)
             .field("token", &"<redacted>")
             .field("surface", &self.surface)
+            .field("workspace_id", &self.workspace_id)
             .finish()
     }
 }
@@ -144,11 +147,13 @@ pub fn targets(config: &Config) -> Vec<Target> {
                 continue;
             }
             if let AiTaskCallback::Report(t) = config.ai_task_callback_for(&id) {
+                let Some(workspace_id) = t.workspace_id else { continue };
                 out.push(Target {
                     bot_id: id,
                     api_url: t.api_url.to_string(),
                     token: t.token.to_string(),
                     surface: t.surface.to_string(),
+                    workspace_id: workspace_id.to_string(),
                 });
             }
         }
@@ -374,7 +379,7 @@ mod tests {
         Config::from_toml(&format!(
             "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n\
              [ai_task_callback]\nenabled = true\napi_url = \"http://127.0.0.1:2\"\n\
-             [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\ntoken = \"opr_hshshshshshshsh\"\nsurface = \"mcp_stdio\"\n\
+             [[ai_task_callback.bots]]\nbot_id = \"{BOT}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_hshshshshshshsh\"\nsurface = \"mcp_stdio\"\n\
              [runner]\nallowed_roots = [\"/x\"]\n{agents}"
         ))
         .expect("config")

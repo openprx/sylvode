@@ -42,6 +42,7 @@ fn bot(token: &str) -> BotFiles<'_> {
     BotFiles {
         bot_id: BOT,
         api_url: "https://sylvode.example.net",
+        workspace_id: "11111111-1111-4111-8111-111111111111",
         token,
         tool_mode: "search",
         allow_write_call: false,
@@ -94,6 +95,10 @@ fn bot_files_have_the_final_mode_hold_the_token_once_and_the_json_none() {
     let parsed: toml::Table = toml::from_str(&toml_text).expect("valid toml");
     let mcp = parsed["mcp"].as_table().expect("[mcp]");
     assert_eq!(mcp["bot_token"].as_str(), Some(t.as_str()));
+    assert_eq!(
+        mcp["workspace_id"].as_str(),
+        Some("11111111-1111-4111-8111-111111111111")
+    );
     assert_eq!(mcp["tool_mode"].as_str(), Some("search"));
     assert_eq!(mcp["allow_write_call"].as_bool(), Some(false));
     assert_eq!(mcp["api_url"].as_str(), Some("https://sylvode.example.net"));

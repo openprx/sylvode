@@ -76,6 +76,7 @@ args = ["{message}"]
 #
 # [[ai_task_callback.bots]]
 # bot_id = "00000000-0000-0000-0000-000000000000"
+# workspace_id = "00000000-0000-0000-0000-000000000000"  # the workspace the bot belongs to
 # token = "replace-with-the-bot-token"
 # surface = "mcp_stdio"
 #

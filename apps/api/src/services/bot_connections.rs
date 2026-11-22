@@ -1065,6 +1065,7 @@ pub async fn connect(
             Some(runner_config_block::build(&BlockInput {
                 bot_name: &bot_name,
                 bot_id,
+                workspace_id: project.workspace_id,
                 project_key: &key,
                 issued_at,
                 runner_url: &runner.runner_url,
@@ -1382,6 +1383,7 @@ pub async fn rotate(
     let config_block = runner_config_block::build(&BlockInput {
         bot_name: &bot.name,
         bot_id: locked.runner.bot_id,
+        workspace_id: project.workspace_id,
         project_key: &key,
         issued_at,
         runner_url: &locked.runner.runner_url,

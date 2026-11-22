@@ -697,7 +697,7 @@ export class Fake {
 						filename: 'sylvode-runner.toml',
 						bot_id: connectedId,
 						token_prefix: token.slice(0, 8),
-						text: `[[ai_task_callback.bots]]\nbot_id = "${connectedId}"\ntoken = "${token}"\nsurface = "mcp_stdio"\n`
+						text: `[[ai_task_callback.bots]]\nbot_id = "${connectedId}"\nworkspace_id = "00000000-0000-4000-8000-000000000001"\ntoken = "${token}"\nsurface = "mcp_stdio"\n`
 					};
 				}
 				this.connections.set(projectId, connectedId);

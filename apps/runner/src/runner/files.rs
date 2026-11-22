@@ -45,6 +45,8 @@ const fn private_mode() -> Mode {
 pub struct BotFiles<'a> {
     pub bot_id: &'a str,
     pub api_url: &'a str,
+    /// The workspace the bot belongs to; the MCP server refuses to start without it.
+    pub workspace_id: &'a str,
     pub token: &'a str,
     pub tool_mode: &'a str,
     pub allow_write_call: bool,
@@ -55,6 +57,7 @@ impl std::fmt::Debug for BotFiles<'_> {
         f.debug_struct("BotFiles")
             .field("bot_id", &self.bot_id)
             .field("api_url", &self.api_url)
+            .field("workspace_id", &self.workspace_id)
             .field("token", &"<redacted>")
             .field("tool_mode", &self.tool_mode)
             .field("allow_write_call", &self.allow_write_call)
@@ -238,10 +241,14 @@ impl StateDir {
         if !bot.token.starts_with("opr_") || bot.token.chars().any(|c| c.is_control() || c.is_whitespace()) {
             return Err("the bot token has an unexpected shape".to_string());
         }
+        if !uuid::Uuid::parse_str(bot.workspace_id).is_ok_and(|id| !id.is_nil()) {
+            return Err("the workspace id is not a UUID".to_string());
+        }
         let toml = format!(
             "# Written by sylvode-runner; rewritten when it differs. Holds the bot's token: keep mode 0600.\n\
-             [mcp]\napi_url = {}\nbot_token = {}\ntool_mode = {}\nallow_write_call = {}\n",
+             [mcp]\napi_url = {}\nworkspace_id = {}\nbot_token = {}\ntool_mode = {}\nallow_write_call = {}\n",
             super::launch::toml_string(bot.api_url),
+            super::launch::toml_string(bot.workspace_id),
             super::launch::toml_string(bot.token),
             super::launch::toml_string(bot.tool_mode),
             bot.allow_write_call

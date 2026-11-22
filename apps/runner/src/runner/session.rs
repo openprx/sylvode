@@ -960,6 +960,7 @@ impl Worker {
                 &BotFiles {
                     bot_id: &task.bot.bot_id,
                     api_url: &task.bot.api_url,
+                    workspace_id: &task.bot.workspace_id,
                     token: &task.bot.token,
                     tool_mode: &runner.mcp.tool_mode,
                     allow_write_call: allow_write,

@@ -47,8 +47,8 @@ fn config(state: &Path, runner_roots: &[&Path], agent_a: &[&Path], agent_b: &[&P
     Config::from_toml(&format!(
         "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n\
          [ai_task_callback]\nenabled = true\napi_url = \"http://127.0.0.1:2\"\n\
-         [[ai_task_callback.bots]]\nbot_id = \"{BOT_A}\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-for-bot-a-1\"\n\
-         [[ai_task_callback.bots]]\nbot_id = \"{BOT_B}\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-for-bot-b-1\"\n\
+         [[ai_task_callback.bots]]\nbot_id = \"{BOT_A}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-for-bot-a-1\"\n\
+         [[ai_task_callback.bots]]\nbot_id = \"{BOT_B}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-for-bot-b-1\"\n\
          [runner]\nstate_dir = \"{state}\"\nallowed_roots = [{runner_roots}]\n\
          [[agents]]\nid = \"{BOT_A}\"\nname = \"A\"\nagent_type = \"runner\"\n{a}[agents.route]\nbot_ids = [\"{BOT_A}\"]\n\
          [[agents]]\nid = \"{BOT_B}\"\nname = \"B\"\nagent_type = \"runner\"\n{b}[agents.route]\nbot_ids = [\"{BOT_B}\"]\n",
@@ -123,8 +123,8 @@ fn more_than_one_runner_agent_needs_a_set_of_roots_each() {
     let error = Config::from_toml(&format!(
         "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n\
          [ai_task_callback]\nenabled = true\napi_url = \"http://127.0.0.1:2\"\n\
-         [[ai_task_callback.bots]]\nbot_id = \"{BOT_A}\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-for-bot-a-1\"\n\
-         [[ai_task_callback.bots]]\nbot_id = \"{BOT_B}\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-for-bot-b-1\"\n\
+         [[ai_task_callback.bots]]\nbot_id = \"{BOT_A}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-for-bot-a-1\"\n\
+         [[ai_task_callback.bots]]\nbot_id = \"{BOT_B}\"\nworkspace_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\nwebhook_secret = \"secret-for-bot-b-1\"\n\
          [runner]\nstate_dir = \"{s}\"\nallowed_roots = [\"{a}\"]\n\
          [[agents]]\nid = \"{BOT_A}\"\nname = \"A\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{BOT_A}\"]\n\
          [[agents]]\nid = \"{BOT_B}\"\nname = \"B\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{BOT_B}\"]\n",

@@ -89,6 +89,7 @@ pub async fn recover_all(state: Arc<AppState>) {
         let bot = BotCreds {
             bot_id: target.bot_id.clone(),
             api_url: target.api_url.clone(),
+            workspace_id: target.workspace_id.clone(),
             token: target.token.clone(),
         };
         let timeout = Duration::from_secs(state.config.runner.delivery_check_timeout_secs);
