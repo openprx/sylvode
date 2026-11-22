@@ -47,8 +47,8 @@ pub const IMPORT_DECODE_WALL_MS_MAX: u64 = 5_000;
 /// The import-specific counting-allocator ceiling, in bytes (see [`IMPORT_DECODE_CPU_MS_MAX`]).
 pub const IMPORT_ISOLATED_MEMORY_BYTES_MAX: u64 = 512 * 1024 * 1024;
 
-/// [`DECODE_APPLY_CPU_MS_MAX`] in microseconds, for `child_runtime::arm_sigprof`'s `itimerval`
-/// (`tv_usec` is `libc::suseconds_t`, `i64` on this target). Derived, not a separate frozen value,
+/// [`DECODE_APPLY_CPU_MS_MAX`] in microseconds, for `child_runtime::arm_sigprof`'s process-CPU-clock timer
+/// (its `timespec` is split into seconds and nanoseconds from an `i64` of microseconds). Derived, not a separate frozen value,
 /// so a future edit to the millisecond ceiling cannot leave the microsecond timer arm stale.
 /// Linux-only, like its sole consumer `child_runtime`.
 #[cfg(target_os = "linux")]

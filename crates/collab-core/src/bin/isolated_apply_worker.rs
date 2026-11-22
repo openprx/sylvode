@@ -22,7 +22,7 @@
 //!    is about to open), not from whenever the full response happens to be ready. See
 //!    [`write_marker_or_exit`]'s doc comment for why this must happen here and not folded into the
 //!    final response write.
-//! 4. Arm the CPU-ceiling timer (`SIGPROF`/`ITIMER_PROF`) and the counting allocator. This opens
+//! 4. Arm the CPU-ceiling timer (`SIGPROF` from a `CLOCK_PROCESS_CPUTIME_ID` timer) and the counting allocator. This opens
 //!    the metered window.
 //! 5. `import_update` the untrusted update, compute the resulting `semantic_snapshot`, and run
 //!    `check_snapshot` against the frozen `contracts/limits-v1.md` structural ceilings -- decode +
@@ -231,9 +231,14 @@ fn replay_diff_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> w
 fn import_check_and_encode(base_snapshot: &[u8], request_bytes: &[u8]) -> wire::Outcome {
     child_runtime::arm_sigprof_for_import();
     alloc::arm_for_import();
+    #[cfg(debug_assertions)]
+    test_injection::note_window_open();
     let validated = import_replay(base_snapshot, request_bytes);
     child_runtime::disarm_sigprof();
     alloc::disarm();
+    // Test builds only: CPU burned after the window closed (see `run_metered`).
+    #[cfg(debug_assertions)]
+    test_injection::run_post_window_workload();
 
     let outcome =
         validated.and_then(|(engine, semantic, fingerprints)| import_result(&engine, semantic, &fingerprints));
@@ -530,6 +535,8 @@ fn write_decision_record(decision: wire::WindowDecision) {
 fn run_metered(engine: LoroCollabEngine, facts: Option<&BaseFacts>, update: &[u8]) -> Metered {
     child_runtime::arm_sigprof();
     alloc::arm();
+    #[cfg(debug_assertions)]
+    test_injection::note_window_open();
     // Telemetry only: two process-CPU clock reads bracket the workload. They do not allocate and
     // take no part in the verdict or in the `SIGPROF` ceiling.
     let cpu_before = process_cpu_micros();
@@ -537,6 +544,10 @@ fn run_metered(engine: LoroCollabEngine, facts: Option<&BaseFacts>, update: &[u8
     let cpu_after = process_cpu_micros();
     child_runtime::disarm_sigprof();
     alloc::disarm();
+    // Test builds only: CPU burned after the window closed, to prove the closed window is not
+    // metered. Nothing in a release build.
+    #[cfg(debug_assertions)]
+    test_injection::run_post_window_workload();
     let window_cpu_us = match (cpu_before, cpu_after) {
         (Some(before), Some(after)) => Some(after.saturating_sub(before)),
         _ => None,
@@ -556,7 +567,7 @@ struct Metered {
 }
 
 /// Process CPU time (user plus system, `CLOCK_PROCESS_CPUTIME_ID`) in microseconds -- the clock
-/// `ITIMER_PROF` and `decode_apply_cpu_ms_max` track. `None` only if the clock cannot be read.
+/// the CPU timer and `decode_apply_cpu_ms_max` track. `None` only if the clock cannot be read.
 #[cfg(target_os = "linux")]
 fn process_cpu_micros() -> Option<u64> {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -738,6 +749,9 @@ mod test_injection {
         /// Writes the decision record for this wire code, then sleeps this many milliseconds: a
         /// wall kill that comes after the record.
         DecisionThenSleep(u8, u64),
+        /// Burns `.0` microseconds of CPU time inside the window, and `.1` more after the window
+        /// has closed (see [`run_post_window_workload`]): the closed window must not be metered.
+        BurnThenPostWindowBurn(u64, u64),
     }
 
     /// Parses [`ENV_VAR`] into a [`Workload`], if set and well-formed. Any absence or parse
@@ -754,6 +768,13 @@ mod test_injection {
             "decision_then_burn" => {
                 let (code, micros) = value.split_once(':')?;
                 Some(Workload::DecisionThenBurn(code.parse().ok()?, micros.parse().ok()?))
+            }
+            "burn_then_post_window_burn" => {
+                let (inside, after) = value.split_once(':')?;
+                Some(Workload::BurnThenPostWindowBurn(
+                    inside.parse().ok()?,
+                    after.parse().ok()?,
+                ))
             }
             "decision_then_sleep" => {
                 let (code, millis) = value.split_once(':')?;
@@ -787,7 +808,7 @@ mod test_injection {
     }
 
     /// Reads `CLOCK_PROCESS_CPUTIME_ID` -- the same POSIX clock `contracts/limits-v1.md`'s
-    /// `decode_apply_cpu_ms_max` and `ITIMER_PROF` (`child_runtime::arm_sigprof`) both track (user
+    /// `decode_apply_cpu_ms_max` and the CPU timer (`child_runtime::arm_sigprof`) both track (user
     /// and system CPU time combined, not wall clock). `None` only if the kernel does not support
     /// this clock id, which does not happen on any Linux this workspace targets.
     fn cpu_time_now() -> Option<Duration> {
@@ -802,6 +823,40 @@ mod test_injection {
         let secs = u64::try_from(ts.tv_sec).ok()?;
         let nanos = u32::try_from(ts.tv_nsec).ok()?;
         Some(Duration::new(secs, nanos))
+    }
+
+    /// The process CPU time at which the metered window opened, in nanoseconds; 0 when none has.
+    static WINDOW_OPEN_CPU_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// Records the process CPU time at the moment the window opened (called right after the timer
+    /// is armed), so a burn inside the window is counted from there: the window then holds the
+    /// burn and only the loop's own granularity on top, whatever the synthetic workload spent
+    /// before it (an engine created for it, say). A test of a ceiling "1 ms under" needs that.
+    pub fn note_window_open() {
+        if let Some(now) = cpu_time_now() {
+            let nanos = u64::try_from(now.as_nanos()).unwrap_or(u64::MAX);
+            WINDOW_OPEN_CPU_NANOS.store(nanos.max(1), std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Burns until `target_micros` of CPU time have passed since the window opened (see
+    /// [`note_window_open`]); from now on when no window has been noted.
+    fn burn_cpu_micros_in_window(target_micros: u64) {
+        let opened = WINDOW_OPEN_CPU_NANOS.load(std::sync::atomic::Ordering::SeqCst);
+        if opened == 0 {
+            return burn_cpu_micros(target_micros);
+        }
+        let target = Duration::from_micros(target_micros);
+        let start = Duration::from_nanos(opened);
+        loop {
+            for spin in 0..1_000u64 {
+                std::hint::black_box(spin);
+            }
+            let Some(now) = cpu_time_now() else { return };
+            if now.saturating_sub(start) >= target {
+                return;
+            }
+        }
     }
 
     /// Spins until this process has burned at least `target_micros` of its own CPU time (or until
@@ -820,6 +875,15 @@ mod test_injection {
             if now.saturating_sub(start) >= target {
                 return;
             }
+        }
+    }
+
+    /// Called right after the metered window has closed: burns the post-window part of a
+    /// `burn_then_post_window_burn=<inside>:<after>` workload. The CPU timer is deleted by then,
+    /// so this burn must never kill the worker, however much budget the window already used.
+    pub fn run_post_window_workload() {
+        if let Some(Workload::BurnThenPostWindowBurn(_, after)) = workload_from_env() {
+            burn_cpu_micros(after);
         }
     }
 
@@ -849,7 +913,7 @@ mod test_injection {
     pub fn run(workload: &Workload, engine: LoroCollabEngine) -> LoroCollabEngine {
         match *workload {
             Workload::CpuBurnMicros(micros) => {
-                burn_cpu_micros(micros);
+                burn_cpu_micros_in_window(micros);
                 engine
             }
             Workload::WallSleepMillis(millis) => {
@@ -858,7 +922,11 @@ mod test_injection {
             }
             Workload::DecisionThenBurn(code, micros) => {
                 tell_host(code);
-                burn_cpu_micros(micros);
+                burn_cpu_micros_in_window(micros);
+                engine
+            }
+            Workload::BurnThenPostWindowBurn(inside, _) => {
+                burn_cpu_micros_in_window(inside);
                 engine
             }
             Workload::DecisionThenSleep(code, millis) => {

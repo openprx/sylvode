@@ -1128,6 +1128,28 @@ async fn grow_and_push(f: &Fixture) -> GrowthRun {
     }
 }
 
+/// What an outcome was, for an assertion message (the outcome itself has no `Debug`).
+#[cfg(target_os = "linux")]
+fn describe(outcome: &AcceptOutcome) -> String {
+    match outcome {
+        AcceptOutcome::Accepted(_) => "accepted".to_string(),
+        AcceptOutcome::Rejected(rejected) => format!("{rejected:?}"),
+    }
+}
+
+/// A write to a page whose text sits near its decode budget that was refused by the measure
+/// (`text_decode_cost`) or by the window's own ceiling (`decode_apply_cpu_ms`): the machine's timing
+/// moved the measured cost across the margin. Any other outcome is `None` and is judged by the caller.
+#[cfg(target_os = "linux")]
+fn disturbance_of(outcome: &AcceptOutcome, what: &str) -> Option<String> {
+    let AcceptOutcome::Rejected(rejected) = outcome else {
+        return None;
+    };
+    let kind = rejected.details.as_ref()?["limit_kind"].as_str()?;
+    (rejected.code == RejectedCode::LimitExceeded && matches!(kind, "text_decode_cost" | "decode_apply_cpu_ms"))
+        .then(|| format!("{what} was refused by timing ({kind}): {rejected:?}"))
+}
+
 /// The review's R9-1 on the real worker: the push that would take the text to about 1.2 times its
 /// decode budget is refused with `limit_exceeded{text_decode_cost}` before it is committed,
 /// `head_seq` does not move, and the page stays writable (an unrelated write and a small growth are
@@ -1151,18 +1173,21 @@ async fn an_update_that_would_leave_a_text_over_its_decode_budget_is_refused_and
             } => (outcome, head_before, marks),
             GrowthRun::Disturbed(why) => {
                 last = format!("attempt {attempt}: {why}");
+                eprintln!("text budget scenario retry: {last}");
                 scratch.drop_self().await;
                 continue;
             }
         };
         let AcceptOutcome::Rejected(rejected) = outcome else {
             last = format!("attempt {attempt}: the push was accepted");
+            eprintln!("text budget scenario retry: {last}");
             scratch.drop_self().await;
             continue;
         };
         let details = rejected.details.clone().expect("limit details");
         if details["limit_kind"] != "text_decode_cost" {
             last = format!("attempt {attempt}: the push was refused otherwise: {rejected:?}");
+            eprintln!("text budget scenario retry: {last}");
             scratch.drop_self().await;
             continue;
         }
@@ -1171,12 +1196,21 @@ async fn an_update_that_would_leave_a_text_over_its_decode_budget_is_refused_and
         assert_eq!(rejected.write_state, crate::flow::collab::frame::WriteState::NotApplied);
         assert_eq!(details["limit"], 50);
         assert_eq!(head_seq_of(&f.state, f.document_id).await, head_before);
-        // The page is writable: a title update and a small growth are accepted.
+        // The page is writable: a title update and a small growth are accepted. The text sits near
+        // its budget, so a refusal by the measure or by the window's ceiling is the timing moving
+        // under the run (retried on a fresh page); any other outcome fails the test at once.
         let bytes = a_title_update_at_head(&f, "still writable").await;
         let outcome = submit(&f, Uuid::new_v4(), bytes, RebasePolicy::ClientRebases).await;
+        if let Some(why) = disturbance_of(&outcome, "the unrelated write") {
+            last = format!("attempt {attempt}: {why}");
+            eprintln!("text budget scenario retry: {last}");
+            scratch.drop_self().await;
+            continue;
+        }
         assert!(
             matches!(outcome, AcceptOutcome::Accepted(_)),
-            "an unrelated write is accepted"
+            "an unrelated write is accepted: {}",
+            describe(&outcome)
         );
         let outcome = submit(
             &f,
@@ -1185,9 +1219,16 @@ async fn an_update_that_would_leave_a_text_over_its_decode_budget_is_refused_and
             RebasePolicy::ClientRebases,
         )
         .await;
+        if let Some(why) = disturbance_of(&outcome, "the growth of five marks") {
+            last = format!("attempt {attempt}: {why}");
+            eprintln!("text budget scenario retry: {last}");
+            scratch.drop_self().await;
+            continue;
+        }
         assert!(
             matches!(outcome, AcceptOutcome::Accepted(_)),
-            "five more marks fit the budget"
+            "five more marks fit the budget: {}",
+            describe(&outcome)
         );
         scratch.drop_self().await;
         return;

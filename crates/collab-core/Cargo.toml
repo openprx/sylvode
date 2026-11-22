@@ -15,7 +15,7 @@ uuid = { workspace = true }
 base64 = { workspace = true }
 sha2 = "0.10"
 # Isolated-apply host (`src/isolation`, `contracts/limits-v1.md`'s "Isolated decode/apply"):
-# `SIGPROF`/`setitimer`/`RLIMIT_AS`/`wait`-family syscalls and the response frame's CRC32
+# `SIGPROF`/`timer_create`/`RLIMIT_AS`/`wait`-family syscalls and the response frame's CRC32
 # checksum. Both already resolve in the workspace lockfile as transitive dependencies (see
 # `spikes/collab-shared/Cargo.toml`'s identical dependency for the same reasoning), so promoting
 # them to direct dependencies here adds no new supply-chain surface.

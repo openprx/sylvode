@@ -42,7 +42,7 @@ Explicit `--config` remains available when both files must be kept temporarily.
 | Flow collaborative writes (REST commands and live editing) and object diffs | Supported | Refused with `server_rejected`, `details.reason = "isolated_apply_unsupported_platform"` |
 
 Flow collaborative writes and object diffs decode untrusted CRDT updates only inside the
-isolated-apply boundary of ADR-0014, which relies on Linux-only primitives (`ITIMER_PROF`,
+isolated-apply boundary of ADR-0014, which relies on Linux-only primitives (a process-CPU-clock timer,
 `/proc/self/task`, signal-based exit classification). Builds for other targets compile and ship
 the same files, including `collab-isolated-apply-worker` (there a stub that exits with status 2),
 but never apply an update outside that boundary: every such write is refused permanently with

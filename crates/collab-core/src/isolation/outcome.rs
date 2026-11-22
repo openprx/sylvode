@@ -57,7 +57,7 @@ pub enum IsolatedApplyError {
     /// kinds it was, because a host short of resources is not a defect of the mechanism.
     HostFailure(HostFailure),
     /// This build targets a platform the isolation boundary does not exist on. `ADR-0014` declares
-    /// the enforcement platform matrix as Linux (`ITIMER_PROF`, `/proc/self/task`, `wait`-family
+    /// the enforcement platform matrix as Linux (a process-CPU-clock timer, `/proc/self/task`, `wait`-family
     /// signal classification), so on any other target nothing was decoded or applied: there is
     /// deliberately no in-process fallback, which would run untrusted updates outside the
     /// CPU/wall/memory ceilings. Deterministic and permanent for this process. `os` is
