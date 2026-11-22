@@ -12,7 +12,8 @@ export interface AiTaskEvent {
 }
 
 /**
- * One agent task of a work item (`AiTaskResponse` plus `events`, oldest first). The free-text
+ * One agent task of a work item (`AiTaskResponse` plus `events`: the task's newest events, oldest
+ * first, and `events_omitted`: whether older ones were left out). The free-text
  * fields (`plan`, `error_message`, event payloads) are written by an agent and are untrusted.
  */
 export interface AiTask {
@@ -36,6 +37,8 @@ export interface AiTask {
 	/** `queued`, `pushed` or `blocked` while a runner reports one; anything else is kept as sent. */
 	runner_phase: string | null;
 	events: AiTaskEvent[];
+	/** True when the task has older events than the ones in `events`. */
+	events_omitted: boolean;
 }
 
 type Raw = Record<string, unknown>;
@@ -110,6 +113,8 @@ export function narrowAiTask(value: unknown): AiTask | null {
 		runner_phase: optionalStr(value, 'runner_phase')
 	};
 	if (Object.values(optional).some((entry) => entry === undefined)) return null;
+	const eventsOmitted = value.events_omitted;
+	if (typeof eventsOmitted !== 'boolean') return null;
 	const rawEvents = value.events === undefined ? [] : value.events;
 	if (!Array.isArray(rawEvents)) return null;
 	const events: AiTaskEvent[] = [];
@@ -137,7 +142,8 @@ export function narrowAiTask(value: unknown): AiTask | null {
 		last_progress_at: optional.last_progress_at ?? null,
 		lease_expires_at: optional.lease_expires_at ?? null,
 		runner_phase: optional.runner_phase ?? null,
-		events
+		events,
+		events_omitted: eventsOmitted
 	};
 }
 
@@ -154,7 +160,7 @@ export function narrowAiTaskList(value: unknown): AiTask[] | null {
 }
 
 export const aiTasksApi = {
-	/** Tasks of one work item, newest first, up to 50 with up to 100 events each. */
+	/** Tasks of one work item, newest first, up to 50 with the newest 100 events of each. */
 	async listForIssue(issueId: string): Promise<ApiResult<AiTask[]>> {
 		const result = await apiClient.get<unknown>(
 			`/api/v1/issues/${encodeURIComponent(issueId)}/ai-tasks`

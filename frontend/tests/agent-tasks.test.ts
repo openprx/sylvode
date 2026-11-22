@@ -59,6 +59,7 @@ function task(overrides: Partial<AiTask> = {}): AiTask {
 		lease_expires_at: null,
 		runner_phase: null,
 		events: [],
+		events_omitted: false,
 		...overrides
 	};
 }
@@ -88,6 +89,7 @@ const rawTask = (extra: Record<string, unknown> = {}) => ({
 	lease_expires_at: '2026-11-20T10:30:00Z',
 	runner_phase: 'pushed',
 	events: [{ event_type: 'delivered', payload: { attempts: 1 }, created_at: '2026-11-20T10:00:00Z' }],
+	events_omitted: false,
 	...extra
 });
 
@@ -101,6 +103,17 @@ suite.check('a complete response narrows to typed tasks', () => {
 	assertEqual(tasks[0].runner_phase, 'pushed', 'phase');
 	assertEqual(tasks[0].events[0].event_type, 'delivered', 'event');
 	assertEqual(tasks[0].last_progress_at, null, 'null stays null');
+});
+
+suite.check('the omitted-events flag is carried and must be a boolean', () => {
+	const narrowed = narrowAiTaskList([rawTask({ events_omitted: true }), rawTask()]);
+	assert(narrowed !== null, 'narrowed');
+	assertEqual(narrowed[0].events_omitted, true, 'older events were left out');
+	assertEqual(narrowed[1].events_omitted, false, 'nothing left out');
+	assertEqual(narrowAiTaskList([rawTask({ events_omitted: 'yes' })]), null, 'flag type');
+	const raw: Record<string, unknown> = rawTask();
+	delete raw.events_omitted;
+	assertEqual(narrowAiTaskList([raw]), null, 'the flag is part of the response');
 });
 
 suite.check('absent optional fields become null and missing events an empty list', () => {
