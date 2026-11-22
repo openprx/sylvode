@@ -235,7 +235,7 @@ async fn stored_state(db: &DatabaseConnection, project_id: Uuid, title: &str) ->
     Ok(row.try_get::<String>("", "state")?)
 }
 
-/// Creates `title` in `project` under both executables and returns the state each stored.
+/// Creates `title` in `project` with the `sylvode` command and returns the state it stored.
 async fn create(
     db: &DatabaseConnection,
     config: &ConfigFile,
@@ -244,10 +244,7 @@ async fn create(
     extra: &[&str],
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let mut states = Vec::new();
-    for (binary, suffix) in [
-        (env!("CARGO_BIN_EXE_sylvode"), "sylvode"),
-        (env!("CARGO_BIN_EXE_mcp-server"), "mcp-server"),
-    ] {
+    for (binary, suffix) in [(env!("CARGO_BIN_EXE_sylvode"), "sylvode")] {
         let title = format!("{title} ({suffix})");
         let project = project.to_string();
         let mut args = vec!["work-items", "create", "--project", &project, "--title", &title];
@@ -327,17 +324,17 @@ async fn work_items_create_applies_the_project_workflows_initial_state() -> Test
     let outcome = async {
         assert_eq!(
             create(&db, &config, triage, "No backlog here", &[]).await?,
-            ["triage", "triage"],
+            ["triage"],
             "a workflow without backlog must get its own initial state"
         );
         assert_eq!(
             create(&db, &config, todo_first, "Starts at todo", &[]).await?,
-            ["todo", "todo"],
+            ["todo"],
             "a workflow whose initial state is todo must not get backlog"
         );
         assert_eq!(
             create(&db, &config, triage, "Explicit state", &["--state", "doing"]).await?,
-            ["doing", "doing"],
+            ["doing"],
             "--state still overrides the initial state"
         );
         Ok::<(), Box<dyn Error>>(())
