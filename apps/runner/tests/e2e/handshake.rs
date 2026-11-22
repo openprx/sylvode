@@ -254,18 +254,42 @@ async fn health_answers_exactly_the_documented_keys() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_body_over_the_limit_is_refused_before_the_signature_is_checked() {
     use crate::support::{post_with, sign};
+    use std::error::Error as _;
+    use std::fmt::Write as _;
     let api = MockSv::start().await;
     let (state, root) = (TempDir::new("hs-state"), root());
     let server =
         Server::start(RUNNER, &config(&api.url(), &state, &root.path().to_string_lossy()), &[]).expect("starts");
     let big = "x".repeat(3 * 1024 * 1024);
-    let (status, _) = post_with(
-        &server.url("/webhook"),
-        &big,
-        &[("x-webhook-signature", &sign(&big, SECRET))],
-    )
-    .await;
-    assert_eq!(status, 413);
+    // The signature is deliberately wrong: if the server checked it before the size, the answer
+    // would be 401, not 413. The server refuses the body while the client is still writing it and
+    // closes the connection, so depending on timing a client sees the 413 status or a connection
+    // that was closed during the body write (a broken pipe or a reset). Both are a refusal; a
+    // timeout or any other failure is not.
+    let result = reqwest::Client::new()
+        .post(server.url("/webhook"))
+        .header("content-type", "application/json")
+        .header("x-webhook-signature", "sha256=00")
+        .body(big)
+        .send()
+        .await;
+    match result {
+        Ok(response) => assert_eq!(response.status().as_u16(), 413),
+        Err(error) => {
+            let mut chain = format!("{error:?}");
+            let mut source = error.source();
+            while let Some(cause) = source {
+                let _ = write!(chain, " {cause:?}");
+                source = cause.source();
+            }
+            assert!(
+                error.is_request()
+                    && !error.is_timeout()
+                    && (chain.contains("BrokenPipe") || chain.contains("ConnectionReset")),
+                "neither 413 nor a connection closed during the body write: {chain}"
+            );
+        }
+    }
     // An ordinary body is still answered.
     let (status, _) = post_with(
         &server.url("/webhook"),
