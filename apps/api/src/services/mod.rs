@@ -39,6 +39,8 @@ mod connection_teardown_tests;
 mod managed_rows_tests;
 
 #[cfg(test)]
+mod multi_connection_migration_tests;
+#[cfg(test)]
 mod runner_protocol_migration_tests;
 
 #[cfg(test)]

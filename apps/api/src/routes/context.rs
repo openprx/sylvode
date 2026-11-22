@@ -1120,6 +1120,65 @@ pub mod tenant_fixture {
         bot_id
     }
 
+    /// The shared rows of a connected bot (token row, managed webhook, `bot_runners`) for a bot
+    /// user of `tenant`, written once per bot.
+    pub async fn seed_bot_runner(db: &impl ConnectionTrait, tenant: &Tenant, bot_id: Uuid) {
+        exec(
+            db,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix) \
+             VALUES ($1, $2, 'tenant bot', replace($1::text, '-', '') || replace($1::text, '-', ''), 'svb_test') \
+             ON CONFLICT (id) DO NOTHING",
+            vec![bot_id.into(), tenant.workspace_id.into()],
+        )
+        .await;
+        let hook = Uuid::new_v4();
+        exec(
+            db,
+            "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, created_by) \
+             SELECT $1, $2, 'runner', 'https://93.184.216.34:9090/webhook', 'secret', '{}', $3 \
+             WHERE NOT EXISTS (SELECT 1 FROM bot_runners WHERE bot_id = $4)",
+            vec![
+                hook.into(),
+                tenant.workspace_id.into(),
+                tenant.member_id.into(),
+                bot_id.into(),
+            ],
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO bot_runners (bot_id, workspace_id, webhook_id, runner_url) \
+             SELECT $1, $2, $3, 'https://93.184.216.34:9090' \
+             WHERE NOT EXISTS (SELECT 1 FROM bot_runners WHERE bot_id = $1)",
+            vec![bot_id.into(), tenant.workspace_id.into(), hook.into()],
+        )
+        .await;
+    }
+
+    /// A connection of `bot_id` to `project_id`, tmux and claude, in `working_directory`.
+    pub async fn seed_connection(
+        db: &impl ConnectionTrait,
+        tenant: &Tenant,
+        project_id: Uuid,
+        bot_id: Uuid,
+        enabled: bool,
+        working_directory: &str,
+    ) {
+        seed_bot_runner(db, tenant, bot_id).await;
+        exec(
+            db,
+            "INSERT INTO project_bot_connections (project_id, bot_id, enabled, working_directory) \
+             VALUES ($1, $2, $3, $4)",
+            vec![
+                project_id.into(),
+                bot_id.into(),
+                enabled.into(),
+                working_directory.to_string().into(),
+            ],
+        )
+        .await;
+    }
+
     /// A person who belongs to `tenant`'s workspace with `role` (`owner`, `admin` or `member`).
     pub async fn seed_member(db: &impl ConnectionTrait, tenant: &Tenant, role: &str) -> Uuid {
         let user_id = Uuid::new_v4();

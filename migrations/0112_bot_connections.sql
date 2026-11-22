@@ -65,16 +65,42 @@ CREATE TABLE IF NOT EXISTS bot_runners (
   )
 );
 
--- 5. Per project.
+-- 5. Per connection: one row per (project, bot), with the execution settings of that connection.
+-- At most one tmux connection per CLI type in a project, so a tmux session name (<KEY>-<cli>)
+-- always maps to exactly one bot. 0114 brings a database that holds the earlier shape forward.
 CREATE TABLE IF NOT EXISTS project_bot_connections (
-  project_id   UUID        PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-  bot_id       UUID        NOT NULL REFERENCES bot_runners(bot_id) ON DELETE CASCADE,
-  version      INTEGER     NOT NULL DEFAULT 1,
-  created_by   UUID        NULL REFERENCES users(id) ON DELETE SET NULL,
-  updated_by   UUID        NULL REFERENCES users(id) ON DELETE SET NULL,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+  project_id          UUID        NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  bot_id              UUID        NOT NULL REFERENCES bot_runners(bot_id) ON DELETE CASCADE,
+  enabled             BOOLEAN     NOT NULL DEFAULT FALSE,
+  channel             TEXT        NOT NULL DEFAULT 'tmux',
+  cli                 TEXT        NOT NULL DEFAULT 'claude',
+  working_directory   TEXT        NOT NULL,
+  on_complete_state   TEXT        NOT NULL DEFAULT 'auto',
+  on_fail_label_id    UUID        NULL REFERENCES labels(id) ON DELETE SET NULL,
+  approval_gate       TEXT        NOT NULL DEFAULT 'none',
+  version             INTEGER     NOT NULL DEFAULT 1,
+  created_by          UUID        NULL REFERENCES users(id) ON DELETE SET NULL,
+  updated_by          UUID        NULL REFERENCES users(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id, bot_id),
+  CONSTRAINT pbc_channel_check  CHECK (channel IN ('tmux', 'headless')),
+  CONSTRAINT pbc_cli_check      CHECK (cli IN ('claude', 'codex', 'opencode')),
+  CONSTRAINT pbc_dir_check      CHECK (
+        working_directory ~ '^/'
+    AND octet_length(working_directory) BETWEEN 2 AND 1024
+    AND working_directory !~ '[[:cntrl:]]'
+    AND working_directory !~ '(^|/)\.\.?(/|$)'
+    AND working_directory !~ '//'
+  ),
+  CONSTRAINT pbc_complete_state_check CHECK (
+    on_complete_state IN ('auto', 'none') OR on_complete_state ~ '^state:[a-z0-9_]{1,64}$'
+  ),
+  CONSTRAINT pbc_gate_check     CHECK (approval_gate IN ('none')),
+  CONSTRAINT pbc_tmux_cli_check CHECK (channel <> 'tmux' OR cli = 'claude')
 );
+CREATE UNIQUE INDEX IF NOT EXISTS pbc_one_tmux_per_cli
+  ON project_bot_connections (project_id, cli) WHERE channel = 'tmux';
 CREATE INDEX IF NOT EXISTS idx_project_bot_connections_bot ON project_bot_connections (bot_id);
 
 -- 6. A runner bot is a member of its workspace and never more: its token runs agents on untrusted
