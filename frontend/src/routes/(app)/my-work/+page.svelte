@@ -79,16 +79,6 @@
 		return map[priority] || priority;
 	}
 
-	function getStatusClass(status: string): string {
-		const map: Record<string, string> = {
-			backlog: 'bg-surface text-fg',
-			todo: 'bg-surface text-fg',
-			in_progress: 'bg-warning-soft text-warning',
-			done: 'bg-surface text-fg'
-		};
-		return map[status] || 'bg-surface text-fg';
-	}
-
 	function getPriorityClass(priority: string): string {
 		const map: Record<string, string> = {
 			low: 'bg-surface text-fg',

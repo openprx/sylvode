@@ -142,7 +142,8 @@
 					class="max-h-32 rounded object-contain"
 				/>
 			{:else}
-				<!-- svelte-ignore a11y_media_has_caption: uploaded video previews do not have caption tracks available. -->
+				<!-- uploaded video previews do not have caption tracks available -->
+				<!-- svelte-ignore a11y_media_has_caption -->
 				<video src={previewUrl} controls class="max-h-48 rounded object-contain"></video>
 			{/if}
 		</div>

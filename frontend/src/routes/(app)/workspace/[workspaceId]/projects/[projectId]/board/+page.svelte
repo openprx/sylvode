@@ -431,11 +431,11 @@
 
 	{#if loading}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-			{#each columns as column, idx (idx)}
+			{#each columns}
 				<div class="rounded-card border border-line bg-surface p-3">
 					<div class="mb-3 h-5 w-24 animate-pulse rounded bg-surface"></div>
 					<div class="space-y-3">
-						{#each Array(2) as _, index (`${column}-${index}`)}
+						{#each Array(2)}
 							<div class="h-24 animate-pulse rounded-control border border-line bg-raised"></div>
 						{/each}
 					</div>

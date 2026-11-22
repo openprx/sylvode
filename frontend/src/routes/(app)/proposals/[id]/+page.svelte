@@ -81,19 +81,6 @@
 		return $t('pageTitle.proposalDetailFallback');
 	});
 
-	const workspaceId = $derived.by(() => {
-		if (page.params.workspaceId) {
-			return page.params.workspaceId;
-		}
-		const fromQuery =
-			page.url.searchParams.get('workspaceId') || page.url.searchParams.get('workspace_id');
-		if (fromQuery) {
-			return fromQuery;
-		}
-		const fromPath = page.url.pathname.match(/^\/workspace\/([^/]+)/);
-		return fromPath?.[1] ?? '';
-	});
-
 	onMount(() => {
 		void loadAll();
 		void loadWorkspaceMembers();
@@ -118,7 +105,7 @@
 				);
 				return;
 			}
-		} catch (_) {
+		} catch {
 			/* fallback below */
 		}
 		workspaceMembers = [];

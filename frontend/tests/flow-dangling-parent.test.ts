@@ -179,7 +179,7 @@ async function scenarioB(): Promise<void> {
 }
 
 async function scenarioC(): Promise<void> {
-	const { server, entry, generation, error, close } = await open();
+	const { server, generation, error, close } = await open();
 	try {
 		for (let attempt = 1; attempt <= 2; attempt += 1) {
 			server.commitFromPeer(hostileUpdate(server));

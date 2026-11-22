@@ -83,7 +83,6 @@
 	let statusValue = $state<IssueStatus>('backlog');
 	let priorityValue = $state<IssuePriority>('medium');
 	let assigneeValue = $state('');
-	let sprintValue = $state('');
 	let updatingField = $state<'status' | 'priority' | 'assignee' | 'sprint' | null>(null);
 
 	let selectedLabelId = $state('');
@@ -98,12 +97,10 @@
 	let editingCommentId = $state<string | null>(null);
 	let editingCommentContent = $state('');
 	let commentBusyId = $state<string | null>(null);
-	let mentionedUsers = $state<string[]>([]);
 	let showMentionDropdown = $state(false);
 	let mentionFilter = $state('');
 	let mentionAnchorIndex = $state<number | null>(null);
 	let commentTextareaEl = $state<HTMLTextAreaElement | null>(null);
-	let editingMentionedUsers = $state<string[]>([]);
 	let showEditMentionDropdown = $state(false);
 	let editMentionFilter = $state('');
 	let editMentionAnchorIndex = $state<number | null>(null);
@@ -132,11 +129,6 @@
 			.filter((item) => !selected.has(item.id))
 			.map((item) => ({ label: item.name, value: item.id }));
 	});
-
-	const sprintOptions = $derived.by<SelectOption[]>(() => [
-		{ label: get(t)('issue.noSprint'), value: '' },
-		...sprints.map((sprint) => ({ label: sprint.name, value: sprint.id }))
-	]);
 
 	const currentSprintName = $derived.by(() => {
 		const sprintId = issue?.sprint_id;
@@ -221,7 +213,6 @@
 			statusValue = issueResponse.data.status;
 			priorityValue = issueResponse.data.priority;
 			assigneeValue = issueResponse.data.assignee_id ?? '';
-			sprintValue = issueResponse.data.sprint_id ?? '';
 			issueLabels = extractIssueLabels(issueResponse.data);
 		}
 
@@ -356,7 +347,6 @@
 			statusValue = response.data.status;
 			priorityValue = response.data.priority;
 			assigneeValue = response.data.assignee_id ?? '';
-			sprintValue = response.data.sprint_id ?? '';
 		}
 
 		return true;
@@ -447,25 +437,6 @@
 			assigneeValue = previous;
 		} else {
 			toast.success(get(t)('issue.assigneeUpdated'));
-		}
-		updatingField = null;
-	}
-
-	async function handleSprintChange() {
-		if (!issue || updatingField) {
-			return;
-		}
-		if ((issue.sprint_id ?? '') === sprintValue) {
-			return;
-		}
-
-		updatingField = 'sprint';
-		const previous = issue.sprint_id ?? '';
-		const success = await updateIssue({ sprint_id: sprintValue || undefined });
-		if (!success) {
-			sprintValue = previous;
-		} else {
-			toast.success(get(t)('issue.sprintUpdated'));
 		}
 		updatingField = null;
 	}
@@ -637,7 +608,6 @@
 		const textarea = event.target as HTMLTextAreaElement;
 		commentTextareaEl = textarea;
 		const mentionState = parseMentionAtCursor(textarea.value, textarea.selectionStart ?? 0);
-		mentionedUsers = extractMentionIds(textarea.value);
 		mentionAnchorIndex = mentionState.start;
 		mentionFilter = mentionState.filter;
 		showMentionDropdown = mentionState.start !== null;
@@ -647,7 +617,6 @@
 		const textarea = event.target as HTMLTextAreaElement;
 		editTextareaEl = textarea;
 		const mentionState = parseMentionAtCursor(textarea.value, textarea.selectionStart ?? 0);
-		editingMentionedUsers = extractMentionIds(textarea.value);
 		editMentionAnchorIndex = mentionState.start;
 		editMentionFilter = mentionState.filter;
 		showEditMentionDropdown = mentionState.start !== null;
@@ -682,7 +651,6 @@
 		await tick();
 		commentTextareaEl.focus();
 		commentTextareaEl.setSelectionRange(inserted.cursorPos, inserted.cursorPos);
-		mentionedUsers = extractMentionIds(inserted.nextText);
 		showMentionDropdown = false;
 		mentionFilter = '';
 		mentionAnchorIndex = null;
@@ -702,7 +670,6 @@
 		await tick();
 		editTextareaEl.focus();
 		editTextareaEl.setSelectionRange(inserted.cursorPos, inserted.cursorPos);
-		editingMentionedUsers = extractMentionIds(inserted.nextText);
 		showEditMentionDropdown = false;
 		editMentionFilter = '';
 		editMentionAnchorIndex = null;
@@ -829,7 +796,6 @@
 			agentTasksRefresh += 1;
 			newComment = '';
 			commentAttachments = [];
-			mentionedUsers = [];
 			showMentionDropdown = false;
 			mentionFilter = '';
 			mentionAnchorIndex = null;
@@ -843,13 +809,11 @@
 		}
 		editingCommentId = comment.id;
 		editingCommentContent = comment.content;
-		editingMentionedUsers = extractMentionIds(comment.content);
 	}
 
 	function cancelEditComment() {
 		editingCommentId = null;
 		editingCommentContent = '';
-		editingMentionedUsers = [];
 		showEditMentionDropdown = false;
 		editMentionFilter = '';
 		editMentionAnchorIndex = null;

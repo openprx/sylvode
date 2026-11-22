@@ -4,7 +4,6 @@
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
 	import { membersApi } from '#lib/api/members.js';
 	import { projectsApi, type Project } from '#lib/api/projects.js';
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
@@ -216,18 +215,6 @@
 			return selected?.name ?? get(t)('common.label');
 		}
 		return `${get(t)('common.label')} (${selectedLabelIds.length})`;
-	}
-
-	function getStateLabel(stateKey: string): string {
-		const stateDef = workflowStates.find((state) => state.key === stateKey);
-		if (stateDef?.display_name) return stateDef.display_name;
-		const fallback: Record<string, string> = {
-			backlog: get(t)('issue.backlog'),
-			todo: get(t)('issue.todo'),
-			in_progress: get(t)('issue.inProgress'),
-			done: get(t)('issue.done')
-		};
-		return fallback[stateKey] || stateKey;
 	}
 
 	function handleIssueCreated(issue: Issue) {
@@ -474,7 +461,7 @@
 	{#if loading}
 		<div class="rounded-card border border-line bg-raised p-4">
 			<div class="space-y-3">
-				{#each Array(5) as _, index (`skeleton-${index}`)}
+				{#each Array(5)}
 					<div class="h-12 animate-pulse rounded bg-surface"></div>
 				{/each}
 			</div>

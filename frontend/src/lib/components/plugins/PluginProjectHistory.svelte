@@ -6,7 +6,6 @@
 		pluginPackagesApi,
 		type InstalledPluginPackage,
 		type PluginBindingEvent,
-		type PluginCapability,
 		type PluginGrant,
 		type PluginInvocationEvent,
 		type PluginPlacement

@@ -625,7 +625,7 @@ const errorsShown = (page) =>
  * Drives one destructive confirmation: native confirm never called, an alertdialog with focus on Cancel and a
  * confirm label that names verb and object, Cancel keeps the object, Confirm removes it and shows no error.
  */
-async function driveConfirm(name, page, { open, verb, object, exists, root = 'main' }) {
+async function driveConfirm(name, page, { open, verb, object, exists }) {
 	const mark = page.__problems.length;
 	await check(`${name}: confirmation dialog`, async () => {
 		await page.evaluate(() => (window.__native = []));

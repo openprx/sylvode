@@ -106,7 +106,6 @@
 	let revision = $state(0);
 
 	const isUi = $derived(templateId === 'ui_view');
-	const template = $derived(creatorTemplates[templateId]);
 	const invalid = $derived(isUi ? invalidUiViewFields(uiDraft) : invalidDraftFields(orderDraft));
 	const details = ['detailLabel', 'detailTitle', 'detailText'] as const;
 	const actions = ['actionLabel', 'actionTitle', 'actionText'] as const;

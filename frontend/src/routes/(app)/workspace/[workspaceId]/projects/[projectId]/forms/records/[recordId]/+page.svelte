@@ -8,7 +8,6 @@
 		Activity,
 		ArrowLeft,
 		FileDown,
-		FileText,
 		Link,
 		MessageSquare,
 		Shield,
@@ -473,15 +472,6 @@
 
 	function childFormName(child: FormChildRecord): string {
 		return childForms[child.record.form_id]?.name ?? child.record.form_id;
-	}
-
-	function childDisplayFields(child: FormChildRecord): FormField[] {
-		const childForm = childForms[child.record.form_id];
-		return childForm
-			? parseFields(childForm.schema)
-					.filter((field) => field.visibility?.list !== false && field.type !== 'child_table')
-					.slice(0, 4)
-			: [];
 	}
 
 	function eventTitle(event: BusinessEvent): string {

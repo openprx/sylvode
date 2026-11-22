@@ -10,7 +10,7 @@
 			mode === 'dark' ||
 			(mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 		if (dark) document.documentElement.classList.add('dark');
-	} catch (error) {
+	} catch {
 		// Storage or matchMedia unavailable: leave the light default.
 	}
 })();

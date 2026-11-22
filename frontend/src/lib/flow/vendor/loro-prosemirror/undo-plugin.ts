@@ -35,7 +35,7 @@ export const LoroUndoPlugin = (props: LoroUndoPluginProps): Plugin => {
 					isUndoing: { current: false }
 				};
 			},
-			apply: (_tr, state, oldEditorState, _newEditorState) => {
+			apply: (_tr, state, oldEditorState) => {
 				const undoState = loroUndoPluginKey.getState(oldEditorState);
 				const loroState = loroSyncPluginKey.getState(oldEditorState);
 				if (!undoState || !loroState) {
@@ -64,7 +64,7 @@ export const LoroUndoPlugin = (props: LoroUndoPluginProps): Plugin => {
 		} as StateField<LoroUndoPluginState>,
 
 		view: (view: EditorView) => {
-			undoManager.setOnPush((isUndo, _counterRange) => {
+			undoManager.setOnPush((isUndo) => {
 				const loroState = loroSyncPluginKey.getState(view.state);
 				if (loroState?.doc == null) {
 					return {
@@ -105,7 +105,7 @@ export const LoroUndoPlugin = (props: LoroUndoPluginProps): Plugin => {
 					cursors
 				};
 			});
-			undoManager.setOnPop((_isUndo, meta, _counterRange) => {
+			undoManager.setOnPop((_isUndo, meta) => {
 				// After this call, the `onPush` will be called immediately.
 				// The immediate `onPush` will contain the inverse operations that undone the effect caused by the current `onPop`
 				const loroState = loroSyncPluginKey.getState(view.state);

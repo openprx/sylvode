@@ -2,7 +2,7 @@ import { editorObservation } from '../../editor-batch';
 import { attachStructureContext, hasPageStructure } from './page-structure';
 import type { Cursor, LoroEventBatch, LoroMap } from 'loro-crdt';
 import { Fragment, Slice } from 'prosemirror-model';
-import { type EditorState, Plugin, type StateField } from 'prosemirror-state';
+import { Plugin, type StateField } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 
 import { convertPmSelectionToCursors, cursorToAbsolutePosition } from './cursor/common';
@@ -103,7 +103,7 @@ export const LoroSyncPlugin = (props: LoroSyncPluginProps): Plugin => {
 		view: (view: EditorView) => {
 			const timeoutId = setTimeout(() => init(view), 0);
 			return {
-				update: (_view: EditorView, _prevState: EditorState) => {},
+				update: () => {},
 				destroy: () => {
 					clearTimeout(timeoutId);
 					loroSyncPluginKey.getState(view.state)?.docSubscription?.();
