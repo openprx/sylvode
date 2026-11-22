@@ -494,7 +494,7 @@ async fn each_resolver_allows_the_connected_project_only() {
 /// every task route through and the handlers answer 404 for both, so task ids are no oracle.
 #[tokio::test]
 async fn another_bots_task_and_a_missing_task_get_one_answer() {
-    use crate::routes::{ai_callback as cb, ai_task_protocol as proto};
+    use crate::routes::ai_task_protocol as proto;
     use axum::routing::{get, post};
     let scratch = scratch_or_skip!("runner_scope_task_oracle");
     let db = &scratch.db;
@@ -522,18 +522,6 @@ async fn another_bots_task_and_a_missing_task_get_one_answer() {
             "/api/v1/ai/tasks/{task_id}/fail",
             post(proto::fail_task_with_reply).route_layer(layer()),
         )
-        .route(
-            "/api/v1/ai/callbacks/task/{task_id}/complete",
-            post(cb::complete_task).route_layer(layer()),
-        )
-        .route(
-            "/api/v1/ai/callbacks/task/{task_id}/fail",
-            post(cb::fail_task).route_layer(layer()),
-        )
-        .route(
-            "/api/v1/ai/callbacks/task/{task_id}/progress",
-            post(cb::report_progress).route_layer(layer()),
-        )
         .with_state(state.clone());
     let calls = [
         ("GET", "/api/v1/ai/tasks/{id}?attempt=1", serde_json::json!({})),
@@ -556,21 +544,6 @@ async fn another_bots_task_and_a_missing_task_get_one_answer() {
             "POST",
             "/api/v1/ai/tasks/{id}/fail?attempt=1",
             serde_json::json!({"reason": "r", "retryable": false}),
-        ),
-        (
-            "POST",
-            "/api/v1/ai/callbacks/task/{id}/complete?attempt=1",
-            serde_json::json!({}),
-        ),
-        (
-            "POST",
-            "/api/v1/ai/callbacks/task/{id}/fail?attempt=1",
-            serde_json::json!({}),
-        ),
-        (
-            "POST",
-            "/api/v1/ai/callbacks/task/{id}/progress?attempt=1",
-            serde_json::json!({}),
         ),
     ];
     for (method, template, body) in calls {

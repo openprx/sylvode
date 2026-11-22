@@ -10,8 +10,49 @@ name.
 
 ## [Unreleased]
 
+### Added
+
+- **Runner `doctor`, `--check` and `config check`; degraded start-up; installer checks.**
+  `sylvode-runner doctor` prints the shared prerequisite report (exit 0, 2 or 1); a missing
+  prerequisite degrades the service (`/health` `prereq` and `degraded`) instead of refusing it;
+  `scripts/install.sh` runs doctor with the service's `PATH` before installing, takes
+  `--headless-only` and `--dry-run`, warns about missing linger, rewrites an unchanged unit never,
+  and runs doctor again in the service context.
+- **Runner tmux channel.** `sylvode-runner` keeps one tmux session per project key, queues tasks
+  first in first out, types each into an idle, empty prompt as a bracketed paste, follows turns
+  through CLI hooks (`sylvode-runner hook`), reminds and fails forgotten acknowledgements and
+  completions, and rebuilds its state from `GET /ai/tasks/active` after a restart. New
+  subcommands: `sessions [--prune]`, `trust KEY`, `release KEY`.
+
+### Removed
+
+- **Legacy task callbacks and `agent_type = "cli"`.** The API no longer serves
+  `POST /api/v1/ai/callbacks/task/{id}/complete`, `.../fail` or `.../progress`; a task ends through
+  the task protocol (`POST /api/v1/ai/tasks/{id}/complete` or `.../fail?attempt=N`). The runner
+  refuses `agent_type = "cli"` (use `agent_type = "runner"` with the headless channel), and the
+  keys that only it used: `[agents.cli]`, `[agents.ai_task_callback]`, `[features] cli_enabled`
+  and `callback_enabled`, and `[ai_task_callback] max_output_chars`. A forwarding agent
+  (`webhook`, `openclaw`, `openprx`, `custom`) completes the task through the protocol when the hand-over works (so it runs once) and fails
+  the task with `source: "runner"` when it does not. Tasks sent over the tunnel are answered
+  `failed`.
+
 ### Changed
 
+- **Runner hardening, third review.** Busy, choice and dialog detection reads only the CLI's own
+  chrome at the bottom of the screen; a screen hold is bounded (`screen_hold_secs`, default 600) and
+  then fails the waiting tasks as retryable; an acknowledged task is busy even if its
+  `UserPromptSubmit` hook was lost; a CLI is restarted for a changed directory only when its screen
+  is calm. Hook messages are checked against the launch's nonce before any work is spent, the
+  sender's ancestry is read without a `ps` per hop (`/proc` on Linux, one `ps -A` snapshot on
+  macOS), at most 32 connections are read at once, and an unreadable `session.json` admits nothing.
+  Hooks are ordered by a per-session counter, not the clock. The configuration file and the
+  canonical state directory are denied to the CLI, and no allowed root may contain the file. Extra
+  read rules count as confined only as `Read|Glob|Grep(/{dir}/...)`. A pushed task that cannot be
+  adopted after a restart fails as retryable. `--prune` never ends a working CLI. A successful
+  forward completes the task. The installer follows `[runner.tmux] enabled` (`--headless-only` is
+  removed), skips the macOS service-context check unless root, and `/health` returns only `status`
+  and `protocol`. The stand-in CLI of the tests never writes environment values, and every probe
+  starts with an allow-listed environment.
 - **MCP search mode is the default tool listing.** `tools/list` offers nine tools:
   `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the five task tools.
   Registry tools are found with `sylvode_search` and called through `sylvode_read` or

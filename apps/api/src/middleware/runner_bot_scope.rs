@@ -604,7 +604,7 @@ mod tests {
         let project = |class: Class| matches!(class, Class::Project(_));
         // No project: the task protocol and catalogues.
         for (method, pattern) in [
-            ("POST", "/api/v1/ai/callbacks/task/{task_id}/complete"),
+            ("POST", "/api/v1/ai/tasks/{task_id}/complete"),
             ("GET", "/api/v1/ai/tasks/active"),
             ("PUT", "/api/v1/ai/runner/report"),
             ("GET", "/api/v1/project-types"),

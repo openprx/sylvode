@@ -1,11 +1,7 @@
 use serde::Deserialize;
 
-use crate::executor_permissions::ExecutorPermissions;
-
-/// The executors a `cli` agent may run.
-pub const KNOWN_EXECUTORS: [&str; 3] = ["codex", "claude-code", "opencode"];
-
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub server: ServerConfig,
     pub security: SecurityConfig,
@@ -20,22 +16,28 @@ pub struct Config {
     /// Terminal callbacks for worker AI tasks (`[ai_task_callback]`).
     #[serde(default)]
     pub ai_task_callback: AiTaskCallbackConfig,
+    /// The `runner` agents' settings (`[runner]`).
+    #[serde(default)]
+    pub runner: crate::runner::config::RunnerConfig,
+    /// Where the file was read from (canonical): the file holds every token, so no project may
+    /// lie over it and the CLI may not read it. Not read from the file.
+    #[serde(skip)]
+    #[allow(clippy::struct_field_names)]
+    pub config_path: Option<std::path::PathBuf>,
     /// Safe mode, resolved once at start-up from `SYLVODE_RUNNER_SAFE_MODE`. Not read from the file.
     #[serde(skip)]
     pub safe_mode: bool,
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FeatureConfig {
     #[serde(default)]
     pub tunnel_enabled: bool,
-    #[serde(default)]
-    pub cli_enabled: bool,
-    #[serde(default)]
-    pub callback_enabled: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     #[serde(default = "default_cli_max_concurrency")]
     pub cli_max_concurrency: usize,
@@ -56,11 +58,13 @@ impl Default for RuntimeConfig {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     pub listen: String,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SecurityConfig {
     #[serde(default)]
     pub webhook_secrets: Vec<String>,
@@ -77,6 +81,7 @@ pub struct SecurityConfig {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     pub id: String,
     pub name: String,
@@ -87,20 +92,31 @@ pub struct AgentConfig {
     pub openprx: Option<OpenPRXConfig>,
     pub webhook: Option<WebhookAgentConfig>,
     pub custom: Option<CustomConfig>,
-    pub cli: Option<CliAgentConfig>,
-    pub message_template: Option<String>,
-    /// Per-agent overrides of `[ai_task_callback]` (`[agents.ai_task_callback]`).
+    /// The roots this `runner` agent's projects may lie under. Without it the agent uses
+    /// `[runner] allowed_roots`; with more than one `runner` agent every agent needs its own, and
+    /// they must not overlap: one agent's task can then never read another agent's tree.
     #[serde(default)]
-    pub ai_task_callback: Option<AgentAiTaskCallbackConfig>,
+    pub allowed_roots: Vec<String>,
+    pub message_template: Option<String>,
 }
 
-/// Reports the outcome of a worker AI task back to the Sylvode API.
+impl AgentConfig {
+    /// The bots a `runner` agent serves: `route.bot_ids`, else the agent id.
+    pub fn runner_bot_ids(&self) -> Vec<String> {
+        self.route
+            .as_ref()
+            .filter(|route| !route.bot_ids.is_empty())
+            .map_or_else(|| vec![self.id.clone()], |route| route.bot_ids.clone())
+    }
+}
+
+/// The bots' tokens for the Sylvode API (`[ai_task_callback]`).
 ///
-/// The Sylvode worker marks an AI task `processing` when it delivers it, and only
-/// `POST /api/v1/ai/callbacks/task/{task_id}/complete` or `.../fail` ends that state. With this
-/// enabled, an agent that ran such a task (a delivery carrying `task_id` and `ai_participant_id`)
-/// calls the matching endpoint once the run ends.
-#[derive(Deserialize, Clone, Debug)]
+/// The runner reads and reports tasks with them (`runner` agents), and a forwarding agent
+/// (`webhook`, `openclaw`, `openprx`, `custom`) that cannot forward a task ends it through
+/// `POST /api/v1/ai/tasks/{task_id}/fail` with the task's bot token.
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct AiTaskCallbackConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -129,9 +145,6 @@ pub struct AiTaskCallbackConfig {
     /// Delay before the first retry, doubled after each further failed attempt (up to 60000).
     #[serde(default = "default_ai_task_retry_delay_ms")]
     pub retry_delay_ms: u64,
-    /// At most this many trailing characters of the agent's output go into the callback.
-    #[serde(default = "default_ai_task_max_output_chars")]
-    pub max_output_chars: usize,
 }
 
 impl Default for AiTaskCallbackConfig {
@@ -145,13 +158,13 @@ impl Default for AiTaskCallbackConfig {
             surface: default_ai_task_surface(),
             max_attempts: default_ai_task_max_attempts(),
             retry_delay_ms: default_ai_task_retry_delay_ms(),
-            max_output_chars: default_ai_task_max_output_chars(),
         }
     }
 }
 
 /// The callback token of one bot (`[[ai_task_callback.bots]]`).
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct AiTaskCallbackBotConfig {
     /// The bot's user id in Sylvode (a UUID), as the worker sends it in `ai_participant_id`.
     pub bot_id: String,
@@ -159,16 +172,83 @@ pub struct AiTaskCallbackBotConfig {
     pub token: String,
     /// The transport the token is registered with; defaults to `ai_task_callback.surface`.
     pub surface: Option<String>,
+    /// The secret that signs this bot's deliveries. A delivery for the bot is verified with this
+    /// secret only (and a delivery for another bot never with it). Without it the bot's deliveries
+    /// are verified with `security.webhook_secrets`, which must then belong to this bot alone.
+    pub webhook_secret: Option<String>,
 }
 
-/// Per-agent overrides of [`AiTaskCallbackConfig`].
-#[derive(Deserialize, Clone, Debug, Default)]
-pub struct AgentAiTaskCallbackConfig {
-    /// Whether this agent reports AI task outcomes. Defaults to true for every agent type except
-    /// `webhook`, which forwards the delivery to another receiver that owns the task.
-    pub enabled: Option<bool>,
-    pub token: Option<String>,
-    pub surface: Option<String>,
+/// Shows that a token is set without showing it.
+const fn redacted(token: Option<&str>) -> &'static str {
+    match token {
+        Some(_) => "<redacted>",
+        None => "<none>",
+    }
+}
+
+impl std::fmt::Debug for AiTaskCallbackConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiTaskCallbackConfig")
+            .field("enabled", &self.enabled)
+            .field("api_url", &self.api_url)
+            .field("token", &redacted(self.token.as_deref()))
+            .field("bot_id", &self.bot_id)
+            .field("bots", &self.bots)
+            .field("surface", &self.surface)
+            .field("max_attempts", &self.max_attempts)
+            .field("retry_delay_ms", &self.retry_delay_ms)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for AiTaskCallbackBotConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiTaskCallbackBotConfig")
+            .field("bot_id", &self.bot_id)
+            .field("token", &"<redacted>")
+            .field("surface", &self.surface)
+            .field("webhook_secret", &redacted(self.webhook_secret.as_deref()))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for SecurityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecurityConfig")
+            .field(
+                "webhook_secrets",
+                &format_args!("<{} redacted>", self.webhook_secrets.len()),
+            )
+            .field("allow_unsigned", &self.allow_unsigned)
+            .field("allow_unsigned_non_loopback", &self.allow_unsigned_non_loopback)
+            .field("max_delivery_age_secs", &self.max_delivery_age_secs)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for WebhookAgentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookAgentConfig")
+            .field("url", &self.url)
+            .field("secret", &redacted(self.secret.as_deref()))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for TunnelConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TunnelConfig")
+            .field("enabled", &self.enabled)
+            .field("url", &self.url)
+            .field("agent_id", &self.agent_id)
+            .field("auth_token", &redacted(self.auth_token.as_deref()))
+            .field("reconnect_secs", &self.reconnect_secs)
+            .field("heartbeat_secs", &self.heartbeat_secs)
+            .field("hmac_secret", &redacted(self.hmac_secret.as_deref()))
+            .field("require_inbound_sig", &self.require_inbound_sig)
+            .field("allow_insecure_transport", &self.allow_insecure_transport)
+            .finish()
+    }
 }
 
 /// The transports a Sylvode bot token can be registered with (`EventSurface::BOT_CREDENTIAL_SURFACES`
@@ -207,6 +287,7 @@ impl AiTaskCallback<'_> {
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
+#[serde(deny_unknown_fields)]
 pub struct RouteConfig {
     #[serde(default)]
     pub bot_names: Vec<String>,
@@ -225,6 +306,7 @@ pub struct RouteConfig {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
     pub command: String,
     /// Fixed arguments placed between `command` and `--channel`.
@@ -234,13 +316,15 @@ pub struct OpenClawConfig {
     pub target: String,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct WebhookAgentConfig {
     pub url: String,
     pub secret: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct OpenPRXConfig {
     /// Signal daemon HTTP API base URL (e.g. `<http://127.0.0.1:8686>`)
     pub signal_api: Option<String>,
@@ -263,57 +347,14 @@ fn default_channel() -> String {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct CustomConfig {
     pub command: String,
     pub args: Option<Vec<String>>,
 }
 
-#[derive(Deserialize, Clone, Debug)]
-pub struct CliAgentConfig {
-    pub executor: String,
-    pub workdir: Option<String>,
-    #[serde(default = "default_timeout_secs")]
-    pub timeout_secs: u64,
-    #[serde(default = "default_max_output_chars")]
-    pub max_output_chars: usize,
-    pub prompt_template: Option<String>,
-    pub callback: Option<String>,
-    pub callback_url: Option<String>,
-    pub callback_token: Option<String>,
-    pub update_state_on_start: Option<String>,
-    pub update_state_on_success: Option<String>,
-    pub update_state_on_fail: Option<String>,
-    /// MCP instructions appended to the CLI prompt, enabling AI agents
-    /// to read full issue context and write results back via MCP tools.
-    pub mcp_instructions: Option<String>,
-    /// When true, the callback will not include a state update field,
-    /// because the AI agent updates issue state directly via MCP.
-    #[serde(default)]
-    pub skip_callback_state: bool,
-    /// Path to an MCP config file passed to claude-code via `--mcp-config`.
-    pub mcp_config_path: Option<String>,
-    /// Extra environment variables injected into the executor subprocess.
-    #[serde(default)]
-    pub env_vars: std::collections::HashMap<String, String>,
-    /// claude-code `--permission-mode`; default `dontAsk`. See [`crate::executor_permissions`].
-    pub permission_mode: Option<String>,
-    /// claude-code `--allowedTools`; default: every server of `mcp_config_path`.
-    pub allowed_tools: Option<Vec<String>>,
-    /// claude-code `--disallowedTools`.
-    pub disallowed_tools: Option<Vec<String>>,
-    /// claude-code `--strict-mcp-config` when `mcp_config_path` is set; default `true`.
-    pub strict_mcp_config: Option<bool>,
-    /// codex `--sandbox`; default `read-only`.
-    pub sandbox: Option<String>,
-    /// Acknowledges a setting that turns the executor's permission checks off. Required for
-    /// claude-code `permission_mode = "bypassPermissions"` and codex `sandbox =
-    /// "danger-full-access"`; for codex without `sandbox` it selects
-    /// `--dangerously-bypass-approvals-and-sandbox`.
-    #[serde(default)]
-    pub dangerously_bypass_permissions: bool,
-}
-
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct TunnelConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -335,14 +376,6 @@ pub struct TunnelConfig {
 
 const fn default_max_delivery_age_secs() -> u64 {
     300
-}
-
-const fn default_timeout_secs() -> u64 {
-    900
-}
-
-const fn default_max_output_chars() -> usize {
-    12000
 }
 
 const fn default_reconnect_secs() -> u64 {
@@ -375,10 +408,6 @@ const fn default_ai_task_max_attempts() -> u32 {
 
 const fn default_ai_task_retry_delay_ms() -> u64 {
     1000
-}
-
-const fn default_ai_task_max_output_chars() -> usize {
-    4000
 }
 
 /// Upper bound of `ai_task_callback.max_attempts`.
@@ -447,27 +476,9 @@ fn is_remote_plain_ws(url: &str) -> bool {
     )
 }
 
-/// Whether `agent` reports worker AI task outcomes when `[ai_task_callback]` is enabled.
-fn agent_reports_ai_tasks(agent: &AgentConfig) -> bool {
-    agent
-        .ai_task_callback
-        .as_ref()
-        .and_then(|o| o.enabled)
-        .unwrap_or(agent.agent_type != "webhook")
-}
-
-/// The token `agent` reports AI task outcomes with: its own, else the global one.
-fn agent_ai_task_token<'a>(cfg: &'a AiTaskCallbackConfig, agent: &'a AgentConfig) -> Option<&'a str> {
-    agent
-        .ai_task_callback
-        .as_ref()
-        .and_then(|o| o.token.as_deref())
-        .or(cfg.token.as_deref())
-}
-
 /// Whether `bot_id` (a configured id) names the task bot `task_bot` (the delivery's
 /// `ai_participant_id`): both are UUIDs and equal, whatever their case.
-fn same_bot(bot_id: &str, task_bot: &str) -> bool {
+pub fn same_bot(bot_id: &str, task_bot: &str) -> bool {
     match (
         uuid::Uuid::parse_str(bot_id.trim()),
         uuid::Uuid::parse_str(task_bot.trim()),
@@ -533,9 +544,19 @@ fn check_single_program(agent_id: &str, key: &str, command: &str) -> Result<(), 
 }
 
 impl Config {
+    /// The `runner` agent that serves `bot_id`, if any.
+    pub fn runner_agent_for_bot(&self, bot_id: &str) -> Option<&AgentConfig> {
+        self.agents
+            .iter()
+            .filter(|agent| agent.agent_type == "runner")
+            .find(|agent| agent.runner_bot_ids().iter().any(|id| same_bot(id, bot_id)))
+    }
+
     pub fn load(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|e| format!("failed to read config {path}: {e}"))?;
-        Self::from_toml(&content)
+        let mut config = Self::from_toml(&content)?;
+        config.config_path = std::fs::canonicalize(path).ok();
+        Ok(config)
     }
 
     /// Parses and validates a configuration.
@@ -543,7 +564,107 @@ impl Config {
         let config: Self = toml::from_str(content).map_err(|e| format!("failed to parse config: {e}"))?;
         config.validate_commands()?;
         config.validate()?;
+        config.validate_runner_agents()?;
         Ok(config)
+    }
+
+    /// Refuses a `runner` agent that cannot work, and an invalid `[runner]` block.
+    ///
+    /// A `runner` agent needs `[ai_task_callback] enabled = true`, `[runner] allowed_roots`, and for
+    /// every bot of its route a token registered for `mcp_stdio` (design C17), and takes no agent
+    /// type table: its permissions come from `[runner.cli.*]` and its directory from Sylvode.
+    fn validate_runner_agents(&self) -> Result<(), String> {
+        self.runner.validate()?;
+        let runners: Vec<&AgentConfig> = self.agents.iter().filter(|a| a.agent_type == "runner").collect();
+        if runners.is_empty() {
+            return Ok(());
+        }
+        for cli in ["claude", "codex"] {
+            let settings = crate::runner::headless::settings_for(&self.runner, cli);
+            crate::executor_permissions::ExecutorPermissions::from_config(&settings)
+                .map_err(|e| format!("runner.cli.{cli}: {e}"))?;
+        }
+        let cfg = &self.ai_task_callback;
+        // The bearer token goes to this URL: in clear text only to a loopback host.
+        if cfg.enabled
+            && let Some(api_url) = cfg.api_url.as_deref()
+            && let Ok(parsed) = url::Url::parse(api_url.trim())
+            && parsed.scheme() == "http"
+            && !is_loopback_url(&parsed)
+        {
+            return Err(
+                "ai_task_callback.api_url uses http:// to a host other than loopback, which would send bot \
+                 tokens in clear text; use https://"
+                    .to_string(),
+            );
+        }
+        for agent in &runners {
+            let id = &agent.id;
+            if agent.openclaw.is_some() || agent.openprx.is_some() || agent.webhook.is_some() || agent.custom.is_some()
+            {
+                return Err(format!(
+                    "agent `{id}`: a runner agent takes no [agents.custom] or other agent type \
+                     table; its permissions come from [runner.cli.*]"
+                ));
+            }
+            if !cfg.enabled {
+                return Err(format!(
+                    "agent `{id}`: a runner agent needs [ai_task_callback] enabled = true: it reads and \
+                     reports tasks with the bot's token"
+                ));
+            }
+            if self.runner.allowed_roots.is_empty() && agent.allowed_roots.is_empty() {
+                return Err(format!(
+                    "agent `{id}`: a runner agent needs allowed_roots (its own, or [runner] allowed_roots): \
+                     without a root every project is declined"
+                ));
+            }
+            if runners.len() > 1 && agent.allowed_roots.is_empty() {
+                return Err(format!(
+                    "agent `{id}`: with more than one runner agent each needs its own allowed_roots (disjoint \
+                     from the others'): one agent's tasks must not be able to read another's tree"
+                ));
+            }
+            for bot in agent.runner_bot_ids() {
+                if uuid::Uuid::parse_str(bot.trim()).is_err() {
+                    return Err(format!(
+                        "agent `{id}`: a runner agent serves bots by id; set route.bot_ids (or make the agent id \
+                         the bot's UUID)"
+                    ));
+                }
+                let surface = if let Some(entry) = cfg.bots.iter().find(|b| same_bot(&b.bot_id, &bot)) {
+                    entry.surface.as_deref().unwrap_or(cfg.surface.as_str())
+                } else if cfg.token.is_some() && cfg.bot_id.as_deref().is_none_or(|owner| same_bot(owner, &bot)) {
+                    cfg.surface.as_str()
+                } else {
+                    return Err(format!(
+                        "agent `{id}`: bot {bot} has no token in [ai_task_callback]; add a \
+                         [[ai_task_callback.bots]] entry with surface = \"mcp_stdio\""
+                    ));
+                };
+                if surface != "mcp_stdio" {
+                    return Err(format!("bot {bot}: runner bots need a token registered for mcp_stdio"));
+                }
+            }
+        }
+        // More than one bot on one runner: each bot's deliveries are signed with its own secret.
+        let runner_bots: Vec<String> = runners.iter().flat_map(|a| a.runner_bot_ids()).collect();
+        if runner_bots.len() > 1 {
+            for bot in &runner_bots {
+                let bound = cfg
+                    .bots
+                    .iter()
+                    .find(|entry| same_bot(&entry.bot_id, bot))
+                    .and_then(|entry| entry.webhook_secret.as_deref());
+                if !bound.is_some_and(|secret| !secret.trim().is_empty() && !is_placeholder(secret)) {
+                    return Err(format!(
+                        "bot {bot}: a runner that serves more than one bot needs a webhook_secret on every \
+                         [[ai_task_callback.bots]] entry, so one bot's secret cannot sign another bot's deliveries"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Refuses a `command` that is more than one program name; see [`check_single_program`].
@@ -570,11 +691,13 @@ impl Config {
         self.validate_tunnel()?;
         self.validate_ai_task_callback()?;
         for agent in &self.agents {
-            if let Some(cli) = &agent.cli
-                && KNOWN_EXECUTORS.contains(&cli.executor.as_str())
-            {
-                // An executor outside the whitelist keeps failing at dispatch, as before.
-                ExecutorPermissions::from_config(cli).map_err(|e| format!("agent `{}`: {e}", agent.id))?;
+            if agent.agent_type == "cli" {
+                return Err(format!(
+                    "agent `{}`: agent_type = \"cli\" was removed; use agent_type = \"runner\" with the \
+                     project's execution channel set to headless (the CLI's permissions come from \
+                     [runner.cli.*])",
+                    agent.id
+                ));
             }
             if let Some(route) = &agent.route {
                 for kind in &route.trigger_kinds {
@@ -593,6 +716,20 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// The secrets a delivery that claims to be for `bot` may be signed with: that bot's own
+    /// `webhook_secret` when it has one (and no other), else `security.webhook_secrets`. A secret
+    /// bound to one bot never verifies a delivery for another.
+    pub fn webhook_secrets_for(&self, bot: Option<&str>) -> Vec<String> {
+        let bound = bot.and_then(|bot| {
+            self.ai_task_callback
+                .bots
+                .iter()
+                .find(|entry| same_bot(&entry.bot_id, bot))
+                .and_then(|entry| entry.webhook_secret.clone())
+        });
+        bound.map_or_else(|| self.security.webhook_secrets.clone(), |secret| vec![secret])
     }
 
     /// Whether `[tunnel]` is in use: enabled by both switches. Safe mode is applied later and only
@@ -706,12 +843,7 @@ impl Config {
     /// without a token.
     fn validate_ai_task_callback(&self) -> Result<(), String> {
         let cfg = &self.ai_task_callback;
-        let surfaces = std::iter::once(("ai_task_callback.surface".to_string(), cfg.surface.as_str())).chain(
-            self.agents.iter().filter_map(|agent| {
-                let surface = agent.ai_task_callback.as_ref()?.surface.as_deref()?;
-                Some((format!("agent `{}`: ai_task_callback.surface", agent.id), surface))
-            }),
-        );
+        let surfaces = std::iter::once(("ai_task_callback.surface".to_string(), cfg.surface.as_str()));
         let bot_surfaces = cfg.bots.iter().filter_map(|bot| {
             Some((
                 format!("ai_task_callback.bots (bot {}): surface", bot.bot_id.trim()),
@@ -766,6 +898,14 @@ impl Config {
             ));
         }
         for bot in &cfg.bots {
+            if let Some(secret) = bot.webhook_secret.as_deref()
+                && (secret.trim().is_empty() || is_placeholder(secret))
+            {
+                return Err(format!(
+                    "ai_task_callback.bots (bot {}): webhook_secret is blank or still an example placeholder",
+                    bot.bot_id.trim()
+                ));
+            }
             if !usable_token(&bot.token) {
                 return Err(format!(
                     "ai_task_callback is enabled but [[ai_task_callback.bots]] entry for bot {} has no usable \
@@ -781,43 +921,28 @@ impl Config {
                     .to_string(),
             );
         }
-        // An agent may also report with the token of the task's bot from `bots`, so with any
-        // `bots` entry an agent without its own token is accepted; a task whose bot has no token
-        // is then answered `no_token` instead of being reported with the wrong one.
-        let has_bot_tokens = !cfg.bots.is_empty();
-        for agent in self.agents.iter().filter(|agent| agent_reports_ai_tasks(agent)) {
-            let own_token = agent.ai_task_callback.as_ref().and_then(|o| o.token.as_deref());
-            let token = agent_ai_task_token(cfg, agent).unwrap_or_default();
-            let covered = usable_token(token) || (own_token.is_none() && has_bot_tokens);
-            if !covered {
-                return Err(format!(
-                    "ai_task_callback is enabled but agent `{}` has no usable token: set \
-                     ai_task_callback.token, [agents.ai_task_callback].token or a [[ai_task_callback.bots]] \
-                     entry to the opr_ token of the bot that is the task's AI participant (a token works only \
-                     for the tasks of the bot that owns it), or set [agents.ai_task_callback].enabled = false",
-                    agent.id
-                ));
-            }
+        if cfg.bots.is_empty() && !cfg.token.as_deref().is_some_and(usable_token) {
+            return Err(
+                "ai_task_callback is enabled but has no usable token: set ai_task_callback.token or add a \
+                 [[ai_task_callback.bots]] entry with the opr_ token of the bot that is the task's AI \
+                 participant"
+                    .to_string(),
+            );
         }
         Ok(())
     }
 
-    /// How the outcome of a worker AI task for bot `task_bot` is reported: by `agent`, or, with
-    /// `None`, for a task no agent matches.
-    ///
-    /// The token is the first that applies: the agent's own `[agents.ai_task_callback].token`, the
-    /// `[[ai_task_callback.bots]]` entry of the task's bot, then the global `token` (only for its
-    /// `bot_id` when that is set). Without one the answer is [`AiTaskCallback::NoToken`].
-    pub fn ai_task_callback_for<'a>(&'a self, agent: Option<&'a AgentConfig>, task_bot: &str) -> AiTaskCallback<'a> {
+    /// The token and transport for bot `task_bot`: the `[[ai_task_callback.bots]]` entry of the
+    /// bot, else the global `token` (only for its `bot_id` when that is set). Without one the
+    /// answer is [`AiTaskCallback::NoToken`].
+    pub fn ai_task_callback_for<'a>(&'a self, task_bot: &str) -> AiTaskCallback<'a> {
         let cfg = &self.ai_task_callback;
-        if self.safe_mode || !cfg.enabled || agent.is_some_and(|agent| !agent_reports_ai_tasks(agent)) {
+        if self.safe_mode || !cfg.enabled {
             return AiTaskCallback::Off;
         }
         let Some(api_url) = cfg.api_url.as_deref() else {
             return AiTaskCallback::Off;
         };
-        let agent_override = agent.and_then(|agent| agent.ai_task_callback.as_ref());
-        let agent_surface = agent_override.and_then(|o| o.surface.as_deref());
         let target = |token: &'a str, surface: Option<&'a str>| {
             AiTaskCallback::Report(AiTaskCallbackTarget {
                 api_url,
@@ -825,12 +950,6 @@ impl Config {
                 surface: surface.unwrap_or(cfg.surface.as_str()),
             })
         };
-        if let Some(token) = agent_override
-            .and_then(|o| o.token.as_deref())
-            .filter(|t| usable_token(t))
-        {
-            return target(token, agent_surface);
-        }
         if let Some(bot) = cfg
             .bots
             .iter()
@@ -840,7 +959,7 @@ impl Config {
         }
         let owner_matches = cfg.bot_id.as_deref().is_none_or(|owner| same_bot(owner, task_bot));
         match cfg.token.as_deref().filter(|token| usable_token(token)) {
-            Some(token) if owner_matches => target(token, agent_surface),
+            Some(token) if owner_matches => target(token, None),
             _ => AiTaskCallback::NoToken,
         }
     }
@@ -883,38 +1002,7 @@ impl Config {
                     .to_string(),
             );
         }
-        for (agent, permissions) in self.cli_agent_permissions() {
-            if permissions.bypasses_permissions() {
-                warnings.push(format!(
-                    "agent `{}`: the executor runs with its permission checks turned off ({}); every task \
-                     it receives can run any command and edit any file the service user can. Use this \
-                     only inside a sandbox",
-                    agent.id,
-                    permissions.describe()
-                ));
-            }
-        }
         warnings
-    }
-
-    /// The validated executor permissions of every `cli` agent with a whitelisted executor, for
-    /// the start-up log.
-    pub fn cli_agent_permissions(&self) -> Vec<(&AgentConfig, ExecutorPermissions)> {
-        self.agents
-            .iter()
-            .filter_map(|agent| {
-                let permissions = ExecutorPermissions::from_config(agent.cli.as_ref()?).ok()?;
-                Some((agent, permissions))
-            })
-            .collect()
-    }
-
-    pub const fn cli_enabled(&self) -> bool {
-        !self.safe_mode && self.features.cli_enabled
-    }
-
-    pub const fn callback_enabled(&self) -> bool {
-        !self.safe_mode && self.features.callback_enabled
     }
 
     pub fn tunnel_enabled(&self) -> bool {
@@ -927,42 +1015,6 @@ mod tests {
     use super::Config;
 
     #[test]
-    fn parses_cli_agent_config() {
-        let toml = r#"
-[server]
-listen = "0.0.0.0:9090"
-
-[security]
-webhook_secrets = ["s"]
-allow_unsigned = false
-
-[[agents]]
-id = "vano-cli"
-name = "Vano CLI"
-agent_type = "cli"
-
-[agents.cli]
-executor = "codex"
-workdir = "/tmp"
-callback = "mcp"
-callback_url = "http://127.0.0.1:8090/mcp/rpc"
-"#;
-
-        let cfg: Config = toml::from_str(toml).expect("should parse config");
-        let agent = cfg.agents.first().expect("should have agent");
-        let cli = agent.cli.as_ref().expect("cli config should exist");
-
-        assert_eq!(agent.agent_type, "cli");
-        assert_eq!(cli.executor, "codex");
-        assert_eq!(cli.timeout_secs, 900);
-        assert_eq!(cli.max_output_chars, 12000);
-        assert_eq!(cli.callback.as_deref(), Some("mcp"));
-        assert!(!cfg.features.cli_enabled);
-        assert_eq!(cfg.runtime.http_timeout_secs, 15);
-        assert_eq!(cfg.runtime.cli_max_concurrency, 1);
-    }
-
-    #[test]
     fn safe_mode_turns_every_gated_path_off() {
         let toml = r#"
 [server]
@@ -973,19 +1025,15 @@ allow_unsigned = true
 
 [features]
 tunnel_enabled = true
-cli_enabled = true
-callback_enabled = true
 
 [tunnel]
 enabled = true
 "#;
         let mut cfg: Config = toml::from_str(toml).expect("should parse config");
         assert!(!cfg.safe_mode, "safe mode is never read from the file");
-        assert!(cfg.cli_enabled() && cfg.callback_enabled() && cfg.tunnel_enabled());
+        assert!(cfg.tunnel_enabled());
 
         cfg.safe_mode = true;
-        assert!(!cfg.cli_enabled());
-        assert!(!cfg.callback_enabled());
         assert!(!cfg.tunnel_enabled());
     }
 
@@ -1369,12 +1417,10 @@ url = "http://127.0.0.1:9000/hook"
         assert!(!cfg.security.allow_unsigned, "the example verifies signatures");
         assert_eq!(cfg.server.listen, "127.0.0.1:9090", "the example binds loopback only");
         assert!(
-            cfg.agents
-                .iter()
-                .all(|agent| agent.agent_type == "cli" || agent.agent_type == "webhook"),
-            "every example agent that runs a command is gated by cli_enabled"
+            cfg.agents.is_empty(),
+            "the example runs nothing until an agent is added"
         );
-        assert!(!cfg.features.cli_enabled);
+        assert!(!cfg.features.tunnel_enabled);
         assert!(!cfg.ai_task_callback.enabled, "AI task callbacks are off by default");
     }
 
@@ -1400,7 +1446,6 @@ url = "http://127.0.0.1:9000/hook"
             assert_eq!(callback.surface, "rest");
             assert_eq!(callback.max_attempts, 3);
             assert_eq!(callback.retry_delay_ms, 1000);
-            assert_eq!(callback.max_output_chars, 4000);
 
             let enabled = filled.replace(
                 "[ai_task_callback]\nenabled = false",
@@ -1457,13 +1502,13 @@ url = "http://127.0.0.1:9000/hook"
             .expect_err("an owner without a token");
         assert!(err.contains("bot_id is set but ai_task_callback.token is not"), "{err}");
 
-        // An explicit agent token that is a placeholder is still refused.
+        // A token per agent no longer exists: the bots' tokens are the only ones.
         let err = load_str(&base(
             &bot(BOT_B, "opr_b"),
-            "[agents.ai_task_callback]\ntoken = \"replace-with-the-bot-token\"\n",
+            "[agents.ai_task_callback]\ntoken = \"opr_agent\"\n",
         ))
-        .expect_err("placeholder agent token");
-        assert!(err.contains("no usable token"), "{err}");
+        .expect_err("no agent-level token");
+        assert!(err.contains("unknown field `ai_task_callback`"), "{err}");
 
         // Without bot_id the global token is used for every bot, and the log says it works only
         // for its owner.
@@ -1610,73 +1655,393 @@ url = "http://127.0.0.1:9000/hook"
         load_str(&tunnel_config(true, false, "require_inbound_sig = true")).expect("tunnel disabled");
     }
 
-    fn cli_agent_config(cli: &str) -> String {
-        format!(
-            "[server]\nlisten = \"127.0.0.1:9090\"\n[security]\nwebhook_secrets = [\"a-real-secret-value\"]\n\
-             [[agents]]\nid = \"fixer\"\nname = \"Fixer\"\nagent_type = \"cli\"\n[agents.cli]\n{cli}\n"
-        )
+    /// The configuration block Sylvode hands out when a bot is connected to a project, byte for
+    /// byte as the API's contract test fixture holds it.
+    const GOLDEN_BLOCK: &str = include_str!("../../api/tests/fixtures/runner-config-block.toml");
+
+    const GOLDEN_BOT: &str = "00000000-0000-0000-0000-000000000000";
+
+    #[test]
+    fn the_golden_configuration_block_loads_as_one_runner_agent() {
+        let cfg = Config::from_toml(GOLDEN_BLOCK).expect("the block Sylvode issues is accepted");
+        assert_eq!(cfg.agents.len(), 1);
+        let agent = cfg.agents.first().expect("agent");
+        assert_eq!(agent.agent_type, "runner");
+        assert_eq!(agent.id, GOLDEN_BOT);
+        assert_eq!(agent.name, "Build bot");
+        assert_eq!(
+            agent.route.as_ref().map(|r| r.bot_ids.clone()),
+            Some(vec![GOLDEN_BOT.to_string()])
+        );
+        assert_eq!(cfg.runner.allowed_roots, vec!["/home/dev/work/svwl".to_string()]);
+        assert!(cfg.ai_task_callback.enabled);
+        let bot = cfg.ai_task_callback.bots.first().expect("bot");
+        assert_eq!(
+            (bot.bot_id.as_str(), bot.surface.as_deref()),
+            (GOLDEN_BOT, Some("mcp_stdio"))
+        );
+        // Every other runner setting has its default.
+        assert_eq!(cfg.runner.delivery_check_timeout_secs, 5);
+        assert_eq!(cfg.runner.mcp.tool_mode, "search");
+        assert!(!cfg.runner.cli.codex.enabled && !cfg.runner.cli.opencode.enabled);
+        assert_eq!(cfg.runner.tmux.socket_name, "sylvode");
+        // The agent resolves a token for its bot, with the surface the block registered.
+        match cfg.ai_task_callback_for(GOLDEN_BOT) {
+            super::AiTaskCallback::Report(target) => {
+                assert_eq!(target.surface, "mcp_stdio");
+                assert_eq!(target.api_url, "https://sylvode.example.net");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
-    /// Executor permission settings are validated at start-up, naming the agent.
+    /// A key a newer Sylvode might add is refused naming it, in every section the block uses.
     #[test]
-    fn executor_permission_settings_are_validated_at_start_up() {
-        for (cli, expected) in [
-            (
-                "executor = \"claude-code\"\npermission_mode = \"yolo\"",
-                "not a claude-code permission mode",
+    fn an_unknown_key_in_the_block_is_refused_naming_it() {
+        for (anchor, extra, key) in [
+            ("[server]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[security]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[ai_task_callback]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[runner]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[[ai_task_callback.bots]]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[[agents]]\n", "mystery_key = 1\n", "mystery_key"),
+            ("[agents.route]\n", "mystery_key = 1\n", "mystery_key"),
+        ] {
+            let block = GOLDEN_BLOCK.replacen(anchor, &format!("{anchor}{extra}"), 1);
+            assert_ne!(block, GOLDEN_BLOCK, "{anchor}");
+            let error = Config::from_toml(&block).expect_err(anchor);
+            assert!(error.contains(key), "{anchor}: {error}");
+        }
+        let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.tmux]\nmystery_key = 1\n")).expect_err("tmux");
+        assert!(error.contains("mystery_key"), "{error}");
+        let error =
+            Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.cli.claude]\nenabled = true\n")).expect_err("claude");
+        assert!(error.contains("enabled"), "claude has no enabled key: {error}");
+        let error = Config::from_toml(
+            "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n[nonsense]\nx = 1\n",
+        )
+        .expect_err("top");
+        assert!(error.contains("nonsense"), "{error}");
+    }
+
+    #[test]
+    fn a_runner_agent_needs_the_callback_roots_and_an_mcp_stdio_token() {
+        let swap = |from: &str, to: &str| GOLDEN_BLOCK.replacen(from, to, 1);
+        let error =
+            Config::from_toml(&swap("enabled = true\napi_url", "enabled = false\napi_url")).expect_err("callback off");
+        assert!(
+            error.contains("ai_task_callback") && error.contains("enabled"),
+            "{error}"
+        );
+        let error = Config::from_toml(&swap("allowed_roots = [\"/home/dev/work/svwl\"]", "allowed_roots = []"))
+            .expect_err("no roots");
+        assert!(error.contains("allowed_roots"), "{error}");
+        for surface in ["rest", "mcp_http", "cli"] {
+            let error = Config::from_toml(&swap("surface = \"mcp_stdio\"", &format!("surface = \"{surface}\"")))
+                .expect_err(surface);
+            assert_eq!(
+                error,
+                format!("bot {GOLDEN_BOT}: runner bots need a token registered for mcp_stdio")
+            );
+        }
+        // A bot of the route without any token.
+        let other = "11111111-1111-4111-8111-111111111111";
+        let error = Config::from_toml(&swap(
+            &format!("bot_ids = [\"{GOLDEN_BOT}\"]"),
+            &format!("bot_ids = [\"{GOLDEN_BOT}\", \"{other}\"]"),
+        ))
+        .expect_err("second bot");
+        assert!(error.contains(other) && error.contains("no token"), "{error}");
+        // The route must name bots by UUID.
+        let error = Config::from_toml(
+            &swap(&format!("bot_ids = [\"{GOLDEN_BOT}\"]"), "bot_names = [\"Build bot\"]").replacen(
+                &format!("[[agents]]\nid = \"{GOLDEN_BOT}\""),
+                "[[agents]]\nid = \"build\"",
+                1,
             ),
+        )
+        .expect_err("by name");
+        assert!(error.contains("route.bot_ids"), "{error}");
+        // No agent type table next to a runner agent.
+        let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n[agents.custom]\ncommand = \"echo\"\n"))
+            .expect_err("custom table");
+        assert!(error.contains("[runner.cli.*]"), "{error}");
+    }
+
+    #[test]
+    fn runner_settings_are_validated() {
+        for (extra, key) in [
+            ("[runner.tmux]\nmin_version = \"3.1\"\n", "min_version"),
+            ("[runner.tmux]\nmin_version = \"three\"\n", "min_version"),
+            ("[runner.tmux]\nsocket_name = \"a b\"\n", "socket_name"),
+            ("[runner.tmux]\nwindow_width = 5\n", "window_width"),
+            ("[runner.mcp]\ntool_mode = \"both\"\n", "tool_mode"),
+            ("[runner.cli.codex]\napproval = \"on-request\"\n", "approval"),
+            ("[runner.cli.codex]\nsandbox = \"none\"\n", "sandbox"),
+            ("[runner.cli.claude]\nbinary = \"\"\n", "claude.binary"),
+        ] {
+            // These sections go after `[runner]` in the block; a table header may appear once, so
+            // the block's own `[runner]` stays and the sub-table is appended.
+            let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n{extra}")).expect_err(key);
+            assert!(error.contains(key), "{key}: {error}");
+        }
+        let ok = format!(
+            "{GOLDEN_BLOCK}\n[runner.tmux]\nmin_version = \"3.2\"\nsocket_name = \"\"\n[runner.mcp]\ntool_mode = \"full\"\n"
+        );
+        assert!(Config::from_toml(&ok).is_ok());
+    }
+
+    /// A deployment without a `runner` agent is unaffected by the `[runner]` block.
+    #[test]
+    fn without_a_runner_agent_the_runner_block_asks_for_nothing() {
+        let cfg = Config::from_toml("[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n")
+            .expect("loads");
+        assert!(cfg.runner.allowed_roots.is_empty());
+    }
+
+    /// Bot tokens never appear in a debug rendering of the configuration.
+    #[test]
+    fn debug_output_of_the_configuration_hides_every_bot_token() {
+        let cfg = Config::from_toml(GOLDEN_BLOCK).expect("loads");
+        let shown = format!("{cfg:?}");
+        assert!(!shown.contains("opr_"), "{shown}");
+        assert!(shown.contains("<redacted>"));
+        let with_global = Config::from_toml(
+            "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n\
+             [ai_task_callback]\nenabled = true\napi_url = \"http://127.0.0.1:2\"\ntoken = \"opr_zzzzzzzzzzzz\"\n\
+             [[agents]]\nid = \"a\"\nname = \"a\"\nagent_type = \"custom\"\n[agents.custom]\ncommand = \"echo\"\n",
+        )
+        .expect("loads");
+        let shown = format!("{with_global:?}");
+        assert!(!shown.contains("opr_zzz"), "{shown}");
+    }
+
+    #[test]
+    fn a_runner_agent_takes_no_agent_level_token_and_a_delivery_needs_its_own_bot() {
+        let error = Config::from_toml(&format!(
+            "{GOLDEN_BLOCK}\n[agents.ai_task_callback]\ntoken = \"opr_{}\"\nsurface = \"rest\"\n",
+            "q1".repeat(14)
+        ))
+        .expect_err("agent-level token");
+        assert!(error.contains("unknown field `ai_task_callback`"), "{error}");
+    }
+
+    #[test]
+    fn the_api_url_must_be_https_unless_the_host_is_loopback() {
+        let with = |url: &str| GOLDEN_BLOCK.replace("https://sylvode.example.net", url);
+        for ok in [
+            "https://sylvode.example.net",
+            "http://127.0.0.1:8083",
+            "http://localhost:8083",
+            "http://[::1]:8083",
+        ] {
+            assert!(Config::from_toml(&with(ok)).is_ok(), "{ok}");
+        }
+        for bad in [
+            "http://sylvode.example.net",
+            "http://10.1.2.3:8083",
+            "http://localhost.evil.net",
+            "http://192.0.2.7",
+        ] {
+            let error = Config::from_toml(&with(bad)).expect_err(bad);
+            assert!(
+                error.contains("http://") && error.contains("loopback"),
+                "{bad}: {error}"
+            );
+        }
+    }
+
+    /// No secret of any kind appears in a debug rendering of the configuration.
+    #[test]
+    fn debug_output_of_the_configuration_holds_no_secret_of_any_kind() {
+        let marker = |name: &str| format!("SECRET-{name}-{}", "z".repeat(12));
+        let toml = format!(
+            "[server]\nlisten = \"127.0.0.1:1\"\n\
+             [security]\nwebhook_secrets = [\"{w1}\", \"{w2}\"]\n\
+             [features]\ntunnel_enabled = true\n\
+             [tunnel]\nenabled = true\nurl = \"wss://127.0.0.1:9\"\nauth_token = \"{tunnel}\"\nhmac_secret = \"{hmac}\"\n\
+             [ai_task_callback]\nenabled = true\napi_url = \"https://api.test.net\"\ntoken = \"opr_{global}\"\nbot_id = \"{BOT}\"\n\
+             [[ai_task_callback.bots]]\nbot_id = \"11111111-1111-4111-8111-111111111111\"\ntoken = \"opr_{bot}\"\nwebhook_secret = \"{bot_secret}\"\n\
+             [[agents]]\nid = \"hook\"\nname = \"hook\"\nagent_type = \"webhook\"\n[agents.webhook]\nurl = \"https://h.test.net\"\nsecret = \"{hook}\"\n\
+             [[agents]]\nid = \"fwd\"\nname = \"fwd\"\nagent_type = \"custom\"\n[agents.custom]\ncommand = \"echo\"\n",
+            BOT = "00000000-0000-4000-8000-000000000009",
+            w1 = marker("w1"),
+            w2 = marker("w2"),
+            tunnel = marker("tunnel"),
+            hmac = marker("hmac"),
+            global = marker("global"),
+            bot = marker("bot"),
+            bot_secret = marker("botsecret"),
+            hook = marker("hook"),
+        );
+        let cfg = Config::from_toml(&toml).expect("loads");
+        let shown = format!("{cfg:?}");
+        assert!(!shown.contains("SECRET-"), "{shown}");
+        assert!(!shown.contains("zzzzzzzz"), "{shown}");
+    }
+
+    /// A delivery is verified only with the secret of the bot it names.
+    #[test]
+    fn a_webhook_secret_is_bound_to_its_bot() {
+        let a = "00000000-0000-4000-8000-0000000000aa";
+        let b = "00000000-0000-4000-8000-0000000000bb";
+        let bot = |id: &str, secret: Option<&str>| {
+            format!(
+                "[[ai_task_callback.bots]]\nbot_id = \"{id}\"\ntoken = \"opr_{}\"\nsurface = \"mcp_stdio\"\n{}\n",
+                "w3".repeat(14),
+                secret.map_or(String::new(), |s| format!("webhook_secret = \"{s}\""))
+            )
+        };
+        let agents = format!(
+            "[[agents]]\nid = \"{a}\"\nname = \"a\"\nagent_type = \"runner\"\nallowed_roots = [\"/x/a\"]\n[agents.route]\nbot_ids = [\"{a}\"]\n\
+             [[agents]]\nid = \"{b}\"\nname = \"b\"\nagent_type = \"runner\"\nallowed_roots = [\"/x/b\"]\n[agents.route]\nbot_ids = [\"{b}\"]\n"
+        );
+        let head = "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nwebhook_secrets = [\"shared-sig-1\"]\n\
+                    [ai_task_callback]\nenabled = true\napi_url = \"https://api.test.net\"\n\
+                    [runner]\nallowed_roots = [\"/x\"]\n";
+        let load = |bots: String| Config::from_toml(&format!("{head}{bots}{agents}"));
+        // Two bots without their own secrets are refused: one bot's secret could sign for the other.
+        let error = load(format!("{}{}", bot(a, None), bot(b, None))).expect_err("ambiguous");
+        assert!(error.contains("webhook_secret"), "{error}");
+        let cfg = load(format!(
+            "{}{}",
+            bot(a, Some("secret-for-a-1")),
+            bot(b, Some("secret-for-b-1"))
+        ))
+        .expect("loads");
+        assert_eq!(cfg.webhook_secrets_for(Some(a)), vec!["secret-for-a-1".to_string()]);
+        assert_eq!(
+            cfg.webhook_secrets_for(Some(&a.to_uppercase())),
+            vec!["secret-for-a-1".to_string()]
+        );
+        assert_eq!(cfg.webhook_secrets_for(Some(b)), vec!["secret-for-b-1".to_string()]);
+        // A delivery for another or no bot falls back to the shared list, which holds neither.
+        let shared = vec!["shared-sig-1".to_string()];
+        assert_eq!(
+            cfg.webhook_secrets_for(Some("00000000-0000-4000-8000-0000000000cc")),
+            shared
+        );
+        assert_eq!(cfg.webhook_secrets_for(None), shared);
+        // A placeholder or blank bot secret is refused.
+        assert!(load(format!("{}{}", bot(a, Some("")), bot(b, Some("secret-for-b-1")))).is_err());
+        assert!(
+            load(format!(
+                "{}{}",
+                bot(a, Some("replace-with-it")),
+                bot(b, Some("secret-for-b-1"))
+            ))
+            .is_err()
+        );
+    }
+
+    /// Every table refuses a key it does not know.
+    #[test]
+    fn every_table_refuses_an_unknown_key() {
+        for (table, extra) in [
+            ("[runner.cli.codex]", "enabled = false\nmystery = 1\n"),
+            ("[runner.cli.opencode]", "mystery = 1\n"),
+            ("[runner.mcp]", "mystery = 1\n"),
+            ("[runtime]", "mystery = 1\n"),
+            ("[features]", "mystery = 1\n"),
+            ("[tunnel]", "mystery = 1\n"),
+        ] {
+            let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n{table}\n{extra}")).expect_err(table);
+            assert!(error.contains("mystery"), "{table}: {error}");
+        }
+        let error = Config::from_toml(
+            "[server]\nlisten = \"127.0.0.1:1\"\n[security]\nallow_unsigned = true\n\
+             [[agents]]\nid = \"c\"\nname = \"c\"\nagent_type = \"custom\"\n[agents.custom]\ncommand = \"echo\"\nmystery = 1\n",
+        )
+        .expect_err("agents.custom");
+        assert!(error.contains("mystery"), "{error}");
+    }
+
+    /// `agent_type = "cli"` and the settings that only it used are gone: a configuration that
+    /// still has them is refused, naming what replaces them.
+    #[test]
+    fn the_retired_cli_agent_and_its_settings_are_refused() {
+        let base = |extra: &str| {
+            format!(
+                "[server]\nlisten = \"127.0.0.1:9090\"\n[security]\nwebhook_secrets = [\"a-real-secret-value\"]\n{extra}"
+            )
+        };
+        let err = load_str(&base(
+            "[[agents]]\nid = \"fixer\"\nname = \"Fixer\"\nagent_type = \"cli\"\n",
+        ))
+        .expect_err("a cli agent is refused");
+        assert!(
+            err.contains("agent `fixer`") && err.contains("agent_type = \"runner\"") && err.contains("headless"),
+            "{err}"
+        );
+        for (extra, key) in [
+            ("[features]\ncli_enabled = true\n", "cli_enabled"),
+            ("[features]\ncallback_enabled = true\n", "callback_enabled"),
+            ("[ai_task_callback]\nmax_output_chars = 10\n", "max_output_chars"),
             (
-                "executor = \"claude-code\"\npermission_mode = \"bypassPermissions\"",
-                "dangerously_bypass_permissions",
-            ),
-            (
-                "executor = \"codex\"\nsandbox = \"danger-full-access\"",
-                "dangerously_bypass_permissions",
-            ),
-            (
-                "executor = \"opencode\"\nallowed_tools = [\"Read\"]",
-                "not a setting of the opencode executor",
+                "[[agents]]\nid = \"a\"\nname = \"A\"\nagent_type = \"webhook\"\n[agents.cli]\nexecutor = \"codex\"\n",
+                "cli",
             ),
         ] {
-            let err = Config::from_toml(&cli_agent_config(cli)).expect_err(cli);
-            assert!(err.contains("agent `fixer`") && err.contains(expected), "{cli}: {err}");
+            let err = load_str(&base(extra)).expect_err(extra);
+            assert!(err.contains("unknown field") && err.contains(key), "{extra}: {err}");
         }
-        // An executor outside the whitelist still fails only when a task is dispatched.
-        Config::from_toml(&cli_agent_config("executor = \"not-whitelisted\"")).expect("accepted");
     }
 
-    /// Bypassing the executor's permission checks starts, with a warning naming the agent; the
-    /// default does not warn.
+    /// A runner agent may use only the permission mode design 6.6 specifies; any other value is a
+    /// configuration error naming the key, and the interim `mcp_config_path` key is gone.
     #[test]
-    fn bypassing_executor_permissions_is_warned_about() {
-        let bypass = Config::from_toml(&cli_agent_config(
-            "executor = \"claude-code\"\npermission_mode = \"bypassPermissions\"\n\
-                 dangerously_bypass_permissions = true",
+    fn runner_agents_take_only_the_dont_ask_mode_and_no_mcp_config_path() {
+        for mode in ["auto", "acceptEdits", "plan", "manual", "bypassPermissions", "yolo"] {
+            let error = Config::from_toml(&format!(
+                "{GOLDEN_BLOCK}\n[runner.cli.claude]\npermission_mode = \"{mode}\"\n"
+            ))
+            .expect_err(mode);
+            assert!(
+                error.contains("runner.cli.claude.permission_mode") && error.contains("dontAsk"),
+                "{mode}: {error}"
+            );
+        }
+        Config::from_toml(&format!(
+            "{GOLDEN_BLOCK}\n[runner.cli.claude]\npermission_mode = \"dontAsk\"\n"
         ))
-        .expect("explicit opt-in starts");
+        .expect("dontAsk is the one allowed mode");
+        let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.mcp]\nmcp_config_path = \"/x\"\n"))
+            .expect_err("the key is gone");
         assert!(
-            bypass
-                .startup_warnings()
-                .iter()
-                .any(|w| w.contains("agent `fixer`") && w.contains("bypassPermissions")),
-            "{:?}",
-            bypass.startup_warnings()
+            error.contains("unknown field") && error.contains("mcp_config_path"),
+            "{error}"
         );
-        let default = Config::from_toml(&cli_agent_config("executor = \"claude-code\"")).expect("starts");
+    }
+
+    #[test]
+    fn the_tmux_channel_is_off_by_default() {
+        let config = Config::from_toml(GOLDEN_BLOCK).expect("block");
+        assert!(!config.runner.tmux.enabled);
+    }
+
+    /// claude's configuration directory is the runner's: it cannot be handed over through
+    /// `env_passthrough`.
+    #[test]
+    fn the_claude_config_dir_cannot_be_passed_through() {
+        let error = Config::from_toml(&format!(
+            "{GOLDEN_BLOCK}\n[runner.cli.claude]\nenv_passthrough = [\"CLAUDE_CONFIG_DIR\"]\n"
+        ))
+        .expect_err("refused");
+        assert!(error.contains("env_passthrough"), "{error}");
+    }
+
+    #[test]
+    fn a_second_runner_agent_without_its_own_roots_is_refused() {
+        let other = "00000000-0000-0000-0000-000000000002";
+        let error = Config::from_toml(&format!(
+            "{GOLDEN_BLOCK}\n[[ai_task_callback.bots]]\nbot_id = \"{other}\"\ntoken = \"opr_{t}\"\nsurface = \"mcp_stdio\"\n\
+             [[agents]]\nid = \"{other}\"\nname = \"B\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{other}\"]\n",
+            t = "z8".repeat(14)
+        ))
+        .expect_err("refused");
         assert!(
-            !default
-                .startup_warnings()
-                .iter()
-                .any(|w| w.contains("permission checks")),
-            "{:?}",
-            default.startup_warnings()
-        );
-        let permissions = default.cli_agent_permissions();
-        assert_eq!(permissions.len(), 1);
-        assert!(
-            permissions
-                .first()
-                .is_some_and(|(_, p)| p.describe().contains("permission_mode = dontAsk"))
+            error.contains("allowed_roots") || error.contains("webhook_secret"),
+            "{error}"
         );
     }
 }

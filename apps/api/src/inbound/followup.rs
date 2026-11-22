@@ -1,7 +1,7 @@
 //! The state-based follow-up of alerts, run by the worker.
 //!
-//! One place sees every path that ends a task (the legacy callbacks, the worker's own declines and
-//! sweeps, the runner protocol's endpoints) because it reads the result instead of hooking each
+//! One place sees every path that ends a task (the worker's own declines and sweeps and the task
+//! protocol's endpoints) because it reads the result instead of hooking each
 //! path: an alert whose task is `completed` or `failed` and has not been announced yet gets one
 //! notification for the rule's recipients, and the alert records that it was announced in the same
 //! transaction. Running a tick twice, or from two workers, announces nothing twice. An attempt

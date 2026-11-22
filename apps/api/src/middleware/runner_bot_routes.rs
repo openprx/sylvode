@@ -12,9 +12,6 @@ const fn r(method: &'static str, pattern: &'static str, class: Class) -> RunnerR
 #[rustfmt::skip]
 pub static RUNNER_BOT_ROUTES: &[RunnerRoute] = &[
     // ---- NoProject ----
-    r("POST", "/api/v1/ai/callbacks/task/{task_id}/complete", Class::NoProject),
-    r("POST", "/api/v1/ai/callbacks/task/{task_id}/fail", Class::NoProject),
-    r("POST", "/api/v1/ai/callbacks/task/{task_id}/progress", Class::NoProject),
     r("GET", "/api/v1/ai/protocol", Class::NoProject),
     r("PUT", "/api/v1/ai/runner/report", Class::NoProject),
     r("GET", "/api/v1/ai/tasks/active", Class::NoProject),

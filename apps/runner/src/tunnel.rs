@@ -30,8 +30,6 @@ struct DispatchPayload {
     #[serde(default)]
     issue_id: Option<String>,
     #[serde(default)]
-    agent: Option<String>,
-    #[serde(default)]
     body: Option<Value>,
 }
 
@@ -335,7 +333,6 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                             DispatchPayload {
                                 run_id: None,
                                 issue_id: None,
-                                agent: None,
                                 body: Some(envelope.payload.clone()),
                             }
                         });
@@ -359,84 +356,21 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
                         ))
                         .await;
 
-                    let task_tx = tx.clone();
-                    let task_cfg = config.clone();
-                    let task_agent = agent_id.clone();
-                    let task_secret = hmac_secret.clone();
-                    let body = dispatch.body.unwrap_or_else(|| envelope.payload.clone());
-                    let route_agent = dispatch.agent.clone();
-                    let run_id_for_task = run_id.clone();
-                    let task_background = background.clone();
-                    background.spawn(async move {
-                        let Some(permit) = task_background.cli_permit().await else {
-                            let _ = task_tx
-                                .send(build_envelope(
-                                    "task.result",
-                                    &task_agent,
-                                    json!({
-                                        "run_id": run_id_for_task,
-                                        "issue_id": issue_id,
-                                        "status": "cancelled",
-                                        "summary": "cancelled by shutdown before it started"
-                                    }),
-                                    task_secret.as_deref(),
-                                ))
-                                .await;
-                            return;
-                        };
-
-                        let selected = route_agent.map_or_else(
-                            || task_cfg.agents.iter().find(|a| a.agent_type == "cli"),
-                            |target_id| {
-                                task_cfg
-                                    .agents
-                                    .iter()
-                                    .find(|a| a.id == target_id && a.agent_type == "cli")
-                            },
-                        );
-
-                        let Some(cli_agent) = selected else {
-                            let _ = task_tx
-                                .send(build_envelope(
-                                    "task.result",
-                                    &task_agent,
-                                    json!({
-                                        "run_id": run_id_for_task,
-                                        "issue_id": issue_id,
-                                        "status": "failed",
-                                        "summary": "no cli agent configured"
-                                    }),
-                                    task_secret.as_deref(),
-                                ))
-                                .await;
-                            drop(permit);
-                            return;
-                        };
-
-                        let report = dispatcher::execute_cli_task(
-                            task_cfg.as_ref(),
-                            cli_agent,
-                            &body,
-                            Some(run_id_for_task),
-                            task_background.cancelled(),
-                        )
+                    // `agent_type = "cli"` was removed, and with it the tasks the tunnel ran: the
+                    // control plane is told so instead of a task hanging.
+                    let _ = tx
+                        .send(build_envelope(
+                            "task.result",
+                            &agent_id,
+                            json!({
+                                "run_id": run_id,
+                                "issue_id": issue_id,
+                                "status": "failed",
+                                "summary": TUNNEL_RUNS_NO_TASKS
+                            }),
+                            hmac_secret.as_deref(),
+                        ))
                         .await;
-                        drop(permit);
-
-                        let _ = task_tx
-                            .send(build_envelope(
-                                "task.result",
-                                &task_agent,
-                                json!({
-                                    "run_id": report.run_id,
-                                    "issue_id": report.issue_id,
-                                    "status": report.status,
-                                    "summary": report.summary
-                                }),
-                                task_secret.as_deref(),
-                            ))
-                            .await;
-                    });
                 }
 
                 heartbeat_task.abort();
@@ -459,6 +393,10 @@ pub async fn run_tunnel_loop(config: Arc<Config>, background: Background) {
         retry_secs = (retry_secs.saturating_mul(2)).min(max_backoff_secs);
     }
 }
+
+/// The answer to a `task.dispatch`: the runner runs no task over the tunnel any more.
+const TUNNEL_RUNS_NO_TASKS: &str = "the runner no longer runs tasks over the tunnel: agent_type = cli was removed; \
+use agent_type = runner";
 
 #[cfg(test)]
 mod tests {

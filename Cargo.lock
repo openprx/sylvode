@@ -4052,6 +4052,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sylvode-prereq",
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",

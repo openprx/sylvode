@@ -249,13 +249,13 @@ exactly one of these ways, each writing the `retried` or `failed` task event and
 the matching `ai_task.*` business event with the reason, and `ai.task_failed`
 when the task is failed:
 
-- **The runner takes it** (`dispatched`) and reports the outcome through
-  `POST /api/v1/ai/callbacks/task/{id}/complete` or `.../fail`. Only the task's
-  own bot (its token) or a system administrator may call them.
-  A callback may name its attempt (`?attempt=N`, the delivery's `attempts`); it
-  is then accepted only while that attempt is `processing`, so a late callback
-  never ends a re-queued or later attempt. `fail` with `"retry": false` fails
-  the task at once instead of scheduling a retry.
+- **The runner takes it** (`dispatched`) and the task ends through the task protocol:
+  the agent (or the runner, for a task it cannot hand over) calls
+  `POST /api/v1/ai/tasks/{id}/complete` or `.../fail?attempt=N`. Only the task's own bot
+  (its token) or a system administrator may call them, and only while that very attempt is
+  active, so a late call never ends a re-queued or later attempt. `fail` with
+  `"retryable": false` fails the task at once instead of scheduling a retry. The older
+  `/api/v1/ai/callbacks/task/...` endpoints no longer exist.
 - **The runner declines it** in its answer: `no_agent`, `ignored`, `refused`
   (for example safe mode), or an HTTP 4xx other than 408, 409, 425 and 429. The
   worker fails the task at once, without using up the remaining attempts, with

@@ -58,6 +58,10 @@ impl Sandbox {
             ),
         );
         sandbox.stub(
+            "systemd-run",
+            &format!("echo \"systemd-run $*\" >> '{}'\nexit 0\n", log.display()),
+        );
+        sandbox.stub(
             "launchctl",
             &format!("echo \"launchctl $*\" >> '{}'\nexit 0\n", log.display()),
         );
@@ -81,7 +85,22 @@ impl Sandbox {
     /// An executable file called `name` in the config directory.
     fn add_binary(&self, name: &str) -> PathBuf {
         let path = self.config_dir().join(name);
-        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        // A stand-in that answers `doctor` the way the real one does for tmux: exit 2 with the row
+        // and its hint when the mode needs tmux and the sandbox has none (only the sandbox's own
+        // `bin` counts, never a tmux of the machine running the tests).
+        let body = "#!/bin/sh\n\
+            if [ \"$1\" = doctor ]; then\n\
+              mode=''; cfg=''; while [ $# -gt 0 ]; do [ \"$1\" = --mode ] && mode=\"$2\"; [ \"$1\" = --config ] && cfg=\"$2\"; shift; done\n\
+              if [ \"$mode\" = auto ] && grep -q 'enabled = true' \"$cfg\" 2>/dev/null; then mode=tmux; fi\n\
+              here=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n\
+              if [ \"$mode\" = tmux ] && [ ! -x \"$here/../bin/tmux\" ]; then\n\
+                echo 'tmux  fail  not found  hint: install tmux >= 3.2: brew install tmux | sudo apt install tmux'\n\
+                exit 2\n\
+              fi\n\
+              echo \"doctor ok ($mode)\"\n\
+            fi\n\
+            exit 0\n";
+        std::fs::write(&path, body).unwrap();
         make_executable(&path);
         path
     }
@@ -106,15 +125,47 @@ impl Sandbox {
     }
 
     fn run_in(&self, dir: &Path, script: &str, args: &[&str]) -> Output {
+        self.run_with_path(dir, script, args, "")
+    }
+
+    /// Like [`Sandbox::run_in`], with `extra` (a `PATH` entry) put before the system directories.
+    fn run_with_path(&self, dir: &Path, script: &str, args: &[&str], extra: &str) -> Output {
         Command::new("bash")
             .arg(self.root.join("pkg/scripts").join(script))
             .args(args)
             .current_dir(dir)
             .env_clear()
             .env("HOME", self.root.join("home"))
-            .env("PATH", format!("{}:/usr/bin:/bin", self.root.join("bin").display()))
+            .env("USER", "tester")
+            .env(
+                "PATH",
+                format!("{}{extra}:/usr/bin:/bin", self.root.join("bin").display()),
+            )
             .output()
             .expect("run script")
+    }
+
+    /// Makes a `tmux` available on the sandbox's `PATH`.
+    fn add_tmux(&self) {
+        self.stub("tmux", "exit 0\n");
+    }
+
+    /// A configuration with a `runner` agent (the tmux channel is off).
+    fn use_runner_config(&self) {
+        std::fs::write(
+            self.config_dir().join("config.toml"),
+            "[[agents]]\nid = \"x\"\nname = \"X\"\nagent_type = \"runner\"\n",
+        )
+        .unwrap();
+    }
+
+    /// A configuration with a `runner` agent and the tmux channel switched on.
+    fn use_tmux_config(&self) {
+        std::fs::write(
+            self.config_dir().join("config.toml"),
+            "[runner.tmux]\nenabled = true\n[[agents]]\nid = \"x\"\nname = \"X\"\nagent_type = \"runner\"\n",
+        )
+        .unwrap();
     }
 
     fn run(&self, script: &str, args: &[&str]) -> Output {
@@ -213,7 +264,19 @@ fn a_fresh_install_writes_a_correctly_quoted_unit() {
     assert!(unit.contains("journalctl --user -u sylvode-runner"), "{unit}");
     assert!(unit.contains("Description=Sylvode Runner Service"), "{unit}");
     assert!(!unit.contains("{{"), "unrendered placeholder: {unit}");
-    assert_eq!(sandbox.calls(), ["systemctl --user daemon-reload"]);
+    let calls = sandbox.calls();
+    assert_eq!(
+        calls.first().map(String::as_str),
+        Some("systemctl --user daemon-reload")
+    );
+    // Then doctor runs once more in the service context.
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.starts_with("systemd-run --user --pipe --wait --setenv=PATH=")
+                && c.contains(" doctor --mode auto ")),
+        "{calls:?}"
+    );
     assert!(stderr(&output).is_empty(), "{}", stderr(&output));
 }
 
@@ -276,9 +339,38 @@ fn a_fresh_macos_install_writes_the_agent() {
     assert!(plist.contains("<string>dev.sylvode.runner</string>"), "{plist}");
     assert!(plist.contains("sylvode-runner.log"), "{plist}");
     assert!(!plist.contains("{{"), "unrendered placeholder: {plist}");
+    let changes = sandbox.changes();
     assert_eq!(
-        sandbox.changes(),
-        [format!("launchctl load {}", sandbox.plist(LABEL).display())]
+        changes.first(),
+        Some(&format!("launchctl load {}", sandbox.plist(LABEL).display()))
+    );
+    // `launchctl asuser` works for root only: as the user the second check is skipped, said so,
+    // and never attempted.
+    assert!(
+        !changes.iter().any(|c| c.starts_with("launchctl asuser ")),
+        "{changes:?}"
+    );
+    assert!(
+        stderr(&output).contains("skipping the check in the service context"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+/// As root the second check runs through `launchctl asuser`.
+#[test]
+fn a_root_macos_install_checks_in_the_users_context() {
+    let sandbox = Sandbox::new(Platform::MacOs);
+    sandbox.stub("id", "echo 0\n");
+    sandbox.stub("stat", "echo 501\n");
+    let output = sandbox.install();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let changes = sandbox.changes();
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.starts_with("launchctl asuser ") && c.contains(" doctor --mode auto ")),
+        "{changes:?}"
     );
 }
 
@@ -412,4 +504,136 @@ fn the_renderer_inserts_values_literally_under_a_real_bash_3_2_when_available() 
         stderr(&output)
     );
     assert_rendered(&dir, &output, "bash 3.2 (podman)");
+}
+
+/// Row 10 of the verification matrix: `--dry-run` without tmux, with a runner agent in the config:
+/// non-zero, the tmux row and its hint are printed, nothing is installed.
+#[test]
+fn a_dry_run_without_tmux_prints_the_row_and_the_hint_and_installs_nothing() {
+    for platform in [Platform::Linux, Platform::MacOs] {
+        let sandbox = Sandbox::new(platform);
+        sandbox.use_tmux_config();
+        let output = sandbox.install_with(&["--dry-run"]);
+        assert!(!output.status.success());
+        let out = String::from_utf8_lossy(&output.stdout);
+        assert!(out.contains("tmux") && out.contains("brew install tmux"), "{out}");
+        assert!(stderr(&output).contains("nothing was installed"), "{}", stderr(&output));
+        assert!(!sandbox.unit(NAME).exists() && !sandbox.plist(LABEL).exists());
+        assert!(sandbox.calls().is_empty(), "{:?}", sandbox.calls());
+    }
+}
+
+/// A headless-only install (tmux channel off, the default) needs no flag and no tmux: the mode is
+/// `auto`, and the installer says nothing about tmux.
+#[test]
+fn a_headless_install_needs_neither_tmux_nor_a_flag() {
+    let sandbox = Sandbox::new(Platform::Linux);
+    sandbox.use_runner_config();
+    let output = sandbox.install_with(&["--dry-run"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("tmux"), "{}", stderr(&output));
+    assert!(!sandbox.unit(NAME).exists());
+    // The flag is gone.
+    let refused = sandbox.install_with(&["--dry-run", "--headless-only"]);
+    assert!(!refused.status.success());
+}
+
+/// A failed prerequisite stops a real install before the unit is written (the tmux channel is on,
+/// so tmux is required, and the sandbox has none).
+#[test]
+fn a_failed_prerequisite_stops_the_install_before_the_unit_is_written() {
+    let sandbox = Sandbox::new(Platform::Linux);
+    sandbox.use_tmux_config();
+    let output = sandbox.install();
+    assert!(!output.status.success());
+    assert!(!sandbox.unit(NAME).exists());
+    assert!(sandbox.calls().is_empty());
+}
+
+/// With tmux available the install goes through; the configuration is never rewritten.
+#[test]
+fn an_install_with_tmux_goes_through_and_leaves_the_config_alone() {
+    let sandbox = Sandbox::new(Platform::Linux);
+    sandbox.use_tmux_config();
+    sandbox.add_tmux();
+    let before = std::fs::read(sandbox.config_dir().join("config.toml")).unwrap();
+    let output = sandbox.install();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(sandbox.unit(NAME).exists());
+    assert_eq!(std::fs::read(sandbox.config_dir().join("config.toml")).unwrap(), before);
+    assert!(
+        sandbox.calls().iter().any(|c| c.contains(" doctor --mode auto ")),
+        "{:?}",
+        sandbox.calls()
+    );
+}
+
+/// The unit is put in place only when its content differs: a second identical install touches
+/// nothing and reloads nothing; a changed `PATH` rewrites it.
+#[test]
+fn an_unchanged_unit_is_not_rewritten_and_a_changed_one_is() {
+    let sandbox = Sandbox::new(Platform::Linux);
+    assert!(sandbox.install().status.success());
+    let unit = sandbox.unit(NAME);
+    let first = std::fs::read_to_string(&unit).unwrap();
+    // Age the file, so a rewrite would show in its modification time.
+    let old = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
+    std::fs::File::options()
+        .write(true)
+        .open(&unit)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    std::fs::write(sandbox.root.join("calls.log"), "").unwrap();
+    let again = sandbox.install();
+    assert!(again.status.success(), "{}", stderr(&again));
+    assert_eq!(std::fs::read_to_string(&unit).unwrap(), first);
+    assert_eq!(
+        std::fs::metadata(&unit).unwrap().modified().unwrap(),
+        old,
+        "the unit was rewritten"
+    );
+    assert!(
+        !sandbox.calls().iter().any(|c| c.contains("daemon-reload")),
+        "{:?}",
+        sandbox.calls()
+    );
+    // Another PATH is another unit.
+    let extra = sandbox.root.join("extra-bin");
+    std::fs::create_dir_all(&extra).unwrap();
+    let binary = sandbox.binary();
+    let config_dir = sandbox.config_dir();
+    let changed = sandbox.run_with_path(
+        &sandbox.root,
+        "install.sh",
+        &[
+            "--binary-path",
+            binary.to_str().unwrap(),
+            "--config-dir",
+            config_dir.to_str().unwrap(),
+        ],
+        &format!(":{}", extra.display()),
+    );
+    assert!(changed.status.success(), "{}", stderr(&changed));
+    assert!(std::fs::read_to_string(&unit).unwrap().contains("extra-bin"));
+    assert!(sandbox.calls().iter().any(|c| c.contains("daemon-reload")));
+}
+
+/// Without linger the user service and its tmux server stop at logout: a warning with the command.
+#[test]
+fn a_user_without_linger_gets_the_exact_command() {
+    let sandbox = Sandbox::new(Platform::Linux);
+    sandbox.stub("loginctl", "echo Linger=no\n");
+    let output = sandbox.install();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("loginctl enable-linger tester"),
+        "{}",
+        stderr(&output)
+    );
+    // With linger on there is no warning.
+    let sandbox = Sandbox::new(Platform::Linux);
+    sandbox.stub("loginctl", "echo Linger=yes\n");
+    let output = sandbox.install();
+    assert!(!stderr(&output).contains("linger"), "{}", stderr(&output));
 }
