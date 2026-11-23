@@ -1,62 +1,69 @@
+//! Project export: the document `sylvode.project_export` version 1, which is also what
+//! [`super::import`] reads, as JSON or as a CSV of the work items.
+
 use axum::{
     Extension,
     extract::{Path, Query, State},
     response::IntoResponse,
 };
-use platform::{app::AppState, auth::JwtClaims};
-use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use platform::{app::AppState, auth::JwtClaims, timestamp::Timestamp};
+use sea_orm::{DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use uuid::Uuid;
 
-use crate::{error::ApiError, response::ApiResponse};
+use crate::{
+    error::ApiError,
+    middleware::bot_auth::{BotAuthContext, require_workspace_access},
+    response::ApiResponse,
+    services::issue_view::identifier,
+};
+
+/// The `format` member of an export document.
+pub const EXPORT_FORMAT: &str = "sylvode.project_export";
+/// The `version` member of an export document.
+pub const EXPORT_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize)]
 pub struct ExportQuery {
     pub format: Option<String>, // 'json' or 'csv', default 'json'
 }
 
-#[derive(Debug, Serialize, FromQueryResult)]
-struct ProjectExportData {
-    pub id: Uuid,
-    pub key: String,
-    pub name: String,
-    pub description: String,
-    pub created_at: platform::timestamp::Timestamp,
-    pub updated_at: platform::timestamp::Timestamp,
+#[derive(Debug, Serialize)]
+struct ProjectInfo {
+    key: String,
+    name: String,
+    description: String,
 }
 
-#[derive(Debug, Serialize, FromQueryResult)]
-struct IssueExportData {
-    pub id: Uuid,
-    pub key: String,
-    pub title: String,
-    pub description: String,
-    pub status: String,
-    pub priority: Option<String>,
-    pub issue_type: String,
-    pub assignee_id: Option<Uuid>,
-    pub reporter_id: Option<Uuid>,
-    pub created_at: platform::timestamp::Timestamp,
-    pub updated_at: platform::timestamp::Timestamp,
+#[derive(Debug, Serialize)]
+struct IssueExport {
+    identifier: String,
+    title: String,
+    description: String,
+    state: String,
+    priority: String,
+    due_at: Option<String>,
+    created_at: String,
+    updated_at: String,
 }
 
-#[derive(Debug, Serialize, FromQueryResult)]
-struct CommentExportData {
-    pub id: Uuid,
-    pub work_item_id: Uuid,
-    pub content: String,
-    pub created_by: Uuid,
-    pub created_at: platform::timestamp::Timestamp,
-    pub updated_at: platform::timestamp::Timestamp,
+#[derive(Debug, Serialize)]
+struct CommentExport {
+    issue_identifier: String,
+    author_name: String,
+    body: String,
+    created_at: String,
 }
 
 #[derive(Debug, Serialize)]
 struct ProjectExport {
-    pub project: ProjectExportData,
-    pub issues: Vec<IssueExportData>,
-    pub comments: Vec<CommentExportData>,
-    pub exported_at: platform::timestamp::Timestamp,
+    format: &'static str,
+    version: u32,
+    exported_at: String,
+    project: ProjectInfo,
+    issues: Vec<IssueExport>,
+    comments: Vec<CommentExport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,151 +73,178 @@ struct ExportResponse {
     content: String,
 }
 
+#[derive(Debug, FromQueryResult)]
+struct ProjectRow {
+    workspace_id: Uuid,
+    key: String,
+    name: String,
+    description: String,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct IssueRow {
+    sequence_number: i32,
+    title: String,
+    description: String,
+    state: String,
+    priority: String,
+    due_at: Option<Timestamp>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct CommentRow {
+    sequence_number: i32,
+    author_name: Option<String>,
+    body: String,
+    created_at: Timestamp,
+}
+
+/// One CSV field: always quoted, a quote inside doubled.
+fn csv_field(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn csv_of(export: &ProjectExport) -> String {
+    let mut csv = String::from("Identifier,Title,State,Priority,Due,Description,Created At,Updated At\n");
+    for issue in &export.issues {
+        let fields = [
+            issue.identifier.as_str(),
+            issue.title.as_str(),
+            issue.state.as_str(),
+            issue.priority.as_str(),
+            issue.due_at.as_deref().unwrap_or(""),
+            issue.description.as_str(),
+            issue.created_at.as_str(),
+            issue.updated_at.as_str(),
+        ];
+        let line = fields
+            .iter()
+            .map(|field| csv_field(field))
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = writeln!(csv, "{line}");
+    }
+    csv
+}
+
 /// GET /api/v1/export/project/:id
 pub async fn export_project(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
     Path(project_id): Path<Uuid>,
     Query(query): Query<ExportQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
-
-    // Verify user has access to project
-    verify_project_access(&state, project_id, user_id).await?;
-
-    // Get project data
-    let project_row = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id, key, name, description, created_at, updated_at FROM projects WHERE id = $1",
-            vec![project_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Project not found".to_string()))?;
-
-    let project = ProjectExportData::from_query_result(&project_row, "")?;
-
-    // Get issues
-    let issue_rows = state
-        .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"SELECT id, key, title, description, status, priority, type as issue_type, 
-                      assignee_id, reporter_id, created_at, updated_at 
-               FROM work_items WHERE project_id = $1 ORDER BY created_at",
-            vec![project_id.into()],
-        ))
-        .await?;
-
-    let issues: Vec<IssueExportData> = issue_rows
-        .iter()
-        .map(|r| IssueExportData::from_query_result(r, ""))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Get comments for all issues in the project
-    let comment_rows = state
-        .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"SELECT c.id, c.work_item_id, c.content, c.created_by, c.created_at, c.updated_at
-               FROM comments c
-               INNER JOIN work_items wi ON c.work_item_id = wi.id
-               WHERE wi.project_id = $1
-               ORDER BY c.created_at",
-            vec![project_id.into()],
-        ))
-        .await?;
-
-    let comments: Vec<CommentExportData> = comment_rows
-        .iter()
-        .map(|r| CommentExportData::from_query_result(r, ""))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let export = ProjectExport {
-        project,
-        issues,
-        comments,
-        exported_at: platform::timestamp::Timestamp::now(),
-    };
+    let mut extensions = axum::http::Extensions::new();
+    extensions.insert(claims);
+    if let Some(Extension(bot_ctx)) = bot {
+        extensions.insert(bot_ctx);
+    }
 
     let format = query.format.as_deref().unwrap_or("json");
-
-    match format {
-        "json" => {
-            let json_data = serde_json::to_string_pretty(&export).map_err(|_| ApiError::Internal)?;
-            let filename = format!("project_{}_export.json", export.project.key);
-            Ok(ApiResponse::success(ExportResponse {
-                format: "json".to_string(),
-                filename,
-                content: json_data,
-            })
-            .into_response())
-        }
-        "csv" => {
-            // CSV export: create one CSV with all issues
-            let mut csv_output = String::new();
-            csv_output.push_str("Key,Title,Status,Priority,Type,Description,Created At,Updated At\n");
-
-            for issue in &export.issues {
-                let description = issue.description.replace('"', "\"\"");
-                let _ = writeln!(
-                    csv_output,
-                    "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"",
-                    issue.key,
-                    issue.title,
-                    issue.status,
-                    issue.priority.as_deref().unwrap_or(""),
-                    issue.issue_type,
-                    description,
-                    issue.created_at,
-                    issue.updated_at
-                );
-            }
-
-            let filename = format!("project_{}_export.csv", export.project.key);
-            Ok(ApiResponse::success(ExportResponse {
-                format: "csv".to_string(),
-                filename,
-                content: csv_output,
-            })
-            .into_response())
-        }
-        _ => Err(ApiError::BadRequest("Invalid format. Use 'json' or 'csv'".to_string())),
+    if !matches!(format, "json" | "csv") {
+        return Err(ApiError::BadRequest("Invalid format. Use 'json' or 'csv'".to_string()));
     }
+
+    let project = ProjectRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT workspace_id, key, name, description FROM projects WHERE id = $1",
+        vec![project_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("Project not found".to_string()))?;
+
+    require_workspace_access(&state, &extensions, project.workspace_id).await?;
+
+    let issues = IssueRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            SELECT sequence_number, title, description, state, priority, due_at, created_at, updated_at
+            FROM work_items
+            WHERE project_id = $1
+            ORDER BY sequence_number
+        ",
+        vec![project_id.into()],
+    ))
+    .all(&state.db)
+    .await?;
+
+    let comments = CommentRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            SELECT wi.sequence_number, u.name AS author_name, c.body, c.created_at
+            FROM comments c
+            INNER JOIN work_items wi ON c.work_item_id = wi.id
+            LEFT JOIN users u ON u.id = c.author_id
+            WHERE wi.project_id = $1
+            ORDER BY c.created_at, c.id
+        ",
+        vec![project_id.into()],
+    ))
+    .all(&state.db)
+    .await?;
+
+    let key = project.key.clone();
+    let export = ProjectExport {
+        format: EXPORT_FORMAT,
+        version: EXPORT_VERSION,
+        exported_at: Timestamp::now().to_rfc3339(),
+        project: ProjectInfo {
+            key: project.key,
+            name: project.name,
+            description: project.description,
+        },
+        issues: issues
+            .into_iter()
+            .map(|issue| IssueExport {
+                identifier: identifier(&key, issue.sequence_number),
+                title: issue.title,
+                description: issue.description,
+                state: issue.state,
+                priority: issue.priority,
+                due_at: issue.due_at.map(Timestamp::to_rfc3339),
+                created_at: issue.created_at.to_rfc3339(),
+                updated_at: issue.updated_at.to_rfc3339(),
+            })
+            .collect(),
+        comments: comments
+            .into_iter()
+            .map(|comment| CommentExport {
+                issue_identifier: identifier(&key, comment.sequence_number),
+                author_name: comment.author_name.unwrap_or_default(),
+                body: comment.body,
+                created_at: comment.created_at.to_rfc3339(),
+            })
+            .collect(),
+    };
+
+    let (content, extension) = if format == "csv" {
+        (csv_of(&export), "csv")
+    } else {
+        (
+            serde_json::to_string_pretty(&export).map_err(|_| ApiError::Internal)?,
+            "json",
+        )
+    };
+    Ok(ApiResponse::success(ExportResponse {
+        format: format.to_string(),
+        filename: format!("project_{key}_export.{extension}"),
+        content,
+    }))
 }
 
-async fn verify_project_access(state: &AppState, project_id: Uuid, actor_id: Uuid) -> Result<(), ApiError> {
-    let result = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"
-                SELECT 1
-                FROM projects p
-                WHERE p.id = $1
-                  AND (
-                    EXISTS (
-                        SELECT 1
-                        FROM workspace_members wm
-                        WHERE wm.workspace_id = p.workspace_id
-                          AND wm.user_id = $2
-                    )
-                    OR EXISTS (
-                        SELECT 1
-                        FROM workspace_bots wb
-                        WHERE wb.workspace_id = p.workspace_id
-                          AND wb.id = $2
-                    )
-                  )
-            ",
-            vec![project_id.into(), actor_id.into()],
-        ))
-        .await?;
+#[cfg(test)]
+mod tests {
+    use super::csv_field;
 
-    if result.is_none() {
-        return Err(ApiError::Forbidden("Access denied".to_string()));
+    #[test]
+    fn a_csv_field_is_quoted_with_quotes_doubled() {
+        assert_eq!(csv_field("plain"), "\"plain\"");
+        assert_eq!(csv_field("say \"hi\", then leave"), "\"say \"\"hi\"\", then leave\"");
+        assert_eq!(csv_field("two\nlines"), "\"two\nlines\"");
+        assert_eq!(csv_field(""), "\"\"");
     }
-
-    Ok(())
 }

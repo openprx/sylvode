@@ -228,25 +228,20 @@ A project uses the workflow chosen when it is edited, or the workspace default.
 
 The project **Overview** has **Export JSON** and **Import JSON**.
 
-- **Export JSON** downloads the project, its issues and their comments as one JSON file.
-- **Import JSON** uploads a JSON file into the current workspace and creates issues from it. Only
-  members with the **Admin** role can import; the **Owner** role is refused. The file must have
-  this shape, which differs from the export file:
+- **Export JSON** downloads the project's issues and their comments as one JSON file (format
+  `sylvode.project_export`, version 1). Each issue has its identifier, title, description, state,
+  priority and due date; each comment has the identifier of its issue, its author's name, its text
+  and its time. Assignees, labels and sprints are not part of the file.
+- **Import JSON** uploads such a file and adds its issues and comments to the **current** project;
+  the export file is the import file, no editing needed. Owners and admins can import; members
+  cannot. The issues get new identifiers in the project (the answer lists which old identifier became
+  which new one), no assignee, sprint or label, and you as their creator. Comments keep their
+  original times and text and are authored by you. Every issue's state must be a state of the
+  project's workflow and every priority one of `low`, `medium`, `high`, `urgent`; if anything in the
+  file is wrong, nothing is imported and the message lists every problem. Importing sends no
+  notifications and starts no agent work.
 
-```json
-{
-  "project_name": "Imported project",
-  "project_description": "Optional",
-  "issues": [
-    {"title": "First issue", "description": "Details", "status": "todo", "priority": "medium", "type": "task"}
-  ]
-}
-```
-
-Give `project_key` instead of `project_name` to add the issues to an existing project with that
-key. With `project_name`, a new project is created and its key is taken from the first five
-letters and digits of the name. The export file has no `project_name` or `project_key` at the top
-level and names the issue type `issue_type`, so it cannot be imported unchanged.
+Importing never creates a project: create the project first, then import into it.
 
 The same operations are available as `GET /api/v1/export/project/{id}` and
 `POST /api/v1/workspaces/{workspace_id}/import/project`; see the [API reference](../integrations/api.md).

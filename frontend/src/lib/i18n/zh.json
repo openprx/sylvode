@@ -200,7 +200,7 @@
 		"deleteSuccess": "项目删除成功",
 		"exportFailed": "导出失败",
 		"exportSuccess": "项目导出成功",
-		"importSuccess": "项目导入成功",
+		"importSuccess": "已向当前项目导入 {issues} 个 Issue 和 {comments} 条评论",
 		"importInvalidFile": "导入文件格式无效，请上传 JSON 文件",
 		"exportJson": "导出 JSON",
 		"importJson": "导入 JSON",

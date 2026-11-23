@@ -437,33 +437,53 @@ curl -s "https://sylvode.example.com/api/v1/search?q=login&type=issue" \
 | Method | Path | Who | Notes |
 |---|---|---|---|
 | GET | `/api/v1/export/project/{id}` | Workspace member or a bot of the workspace | `format=json` (default) or `csv`. |
-| POST | `/api/v1/workspaces/{workspace_id}/import/project` | Workspace member with the role `admin` | Creates a project or adds work items to one. |
+| POST | `/api/v1/workspaces/{workspace_id}/import/project` | Workspace owner or admin (or a bot with the `admin` permission) | Adds the work items and comments of an export document to an existing project. |
 
 The export answers in the envelope with `{"format", "filename", "content"}`; `content` is the
-exported text. JSON content holds `project`, `issues` (with `key`, `title`, `description`, `status`,
-`priority`, `issue_type`, `assignee_id`, `reporter_id`, timestamps), `comments` and `exported_at`.
-CSV content holds the work items only, with the columns `Key`, `Title`, `Status`, `Priority`,
-`Type`, `Description`, `Created At`, `Updated At`.
-
-The import body:
+exported text. For `json` it is this document, which is also what the import reads:
 
 ```json
 {
-  "project_key": null,
-  "project_name": "Imported project",
-  "project_description": "Work items from another tool",
+  "format": "sylvode.project_export",
+  "version": 1,
+  "exported_at": "2026-11-23T10:00:00Z",
+  "project": { "key": "QLB", "name": "QA loop", "description": "" },
   "issues": [
-    { "title": "Fix login", "description": "Steps to reproduce", "status": "todo",
-      "priority": "high", "type": "bug" }
+    { "identifier": "QLB-3", "title": "Fix login", "description": "Steps to reproduce",
+      "state": "todo", "priority": "medium", "due_at": null,
+      "created_at": "2026-11-20T09:00:00Z", "updated_at": "2026-11-21T09:00:00Z" }
+  ],
+  "comments": [
+    { "issue_identifier": "QLB-3", "author_name": "Alex", "body": "Seen on staging",
+      "created_at": "2026-11-21T09:30:00Z" }
   ]
 }
 ```
 
-With `project_key` the work items go into that existing project of the workspace (404 when it does
-not exist); without it `project_name` is required and a new project is created, its key made from
-the first five letters and digits of the name. Work items get new sequential keys. The answer is
-`{"project_id", "project_key", "issues_created", "issues_failed", "errors"}`. The role check
-accepts `admin` only; a workspace owner without the `admin` role is refused.
+Assignees, labels and sprints are not exported. For `csv` the content has the work items only, with
+the columns `Identifier`, `Title`, `State`, `Priority`, `Due`, `Description`, `Created At` and
+`Updated At`; every field is quoted and a quote inside a field is doubled.
+
+The import body is `{"project_key": "QLB", "document": <the export document>}` and nothing else (an
+unknown field is refused with HTTP 422).
+
+- The project must exist in the workspace (`404 project <key> not found`). A caller who is not an
+  owner or admin gets `403 only owners and admins can import`.
+- The document must have `format` `sylvode.project_export` and `version` 1 (`400 unsupported export
+  format; expected sylvode.project_export version 1`).
+- Everything is checked before anything is written: each issue needs a title, an identifier that
+  appears once, a `state` of the project's workflow, a `priority` of `low`, `medium`, `high` or
+  `urgent` (default `medium`) and, if present, an RFC 3339 `due_at`; each comment needs an
+  `issue_identifier` of an issue in the document, a text and an RFC 3339 `created_at`. When anything
+  fails the answer is `400 import refused: N problems` with the problems in `details.errors`, and
+  nothing is written.
+- Otherwise one transaction adds the issues (new sequence numbers, you as creator, no assignee, no
+  sprint, no labels) and the comments (you as author, original times). No webhook, notification,
+  activity or agent task is created for them.
+
+The answer is `{"project_id", "project_key", "issues_created", "comments_created", "identifiers"}`,
+where `identifiers` maps each identifier in the document to the one it got, such as
+`{"QLB-3": "DST-41"}`.
 
 ## Uploads
 

@@ -125,6 +125,20 @@ name.
   start without a per-bot secret; the old text said to put the second secret in `[security]`).
   The `runner` service of `docker-compose.yml` runs with `init: true` and `stop_grace_period: 45s`.
 
+- **Project export and import work again, with one file format.** Both queried columns that do not
+  exist (`work_items.key`, `status`, `type`, `reporter_id`, `comments.content`, `created_by`), so
+  every export and every import answered "database error". Export now writes the document
+  `sylvode.project_export` version 1 (issues with identifier, title, description, state, priority and
+  due date; comments with the issue identifier, author name, text and time), as JSON or as a CSV
+  whose columns are `Identifier,Title,State,Priority,Due,Description,Created At,Updated At` with
+  every field quoted. Import reads exactly that document, as `{project_key, document}`, into an
+  **existing** project; the old body with `project_name` and `issues[].status`/`type`, and the
+  creation of a project by import, are removed. Workspace owners can import now (only the `admin`
+  role could); members still cannot. Everything is validated before the first write (state in the
+  project's workflow, priority, dates, comment links) and the answer reports the new identifiers.
+  The project overview page imports into the current project and says how many issues and comments
+  it added.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

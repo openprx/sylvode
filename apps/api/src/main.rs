@@ -3251,6 +3251,9 @@ mod sprint_api_tests;
 mod label_api_tests;
 
 #[cfg(test)]
+mod export_import_api_tests;
+
+#[cfg(test)]
 mod legacy_auth_characterization_tests;
 
 #[cfg(test)]

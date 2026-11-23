@@ -200,7 +200,7 @@
 		"deleteSuccess": "Project deleted",
 		"exportFailed": "Export failed",
 		"exportSuccess": "Project exported successfully",
-		"importSuccess": "Project imported successfully",
+		"importSuccess": "Imported {issues} issues and {comments} comments into this project",
 		"importInvalidFile": "Invalid import file format, please upload JSON file",
 		"exportJson": "Export JSON",
 		"importJson": "Import JSON",

@@ -141,12 +141,24 @@
 		importing = true;
 		try {
 			const content = await file.text();
-			const payload = JSON.parse(content) as unknown;
-			const response = await importExportApi.importProject(workspaceId, payload);
+			const document = JSON.parse(content) as unknown;
+			const response = await importExportApi.importProject(
+				workspaceId,
+				project?.key ?? '',
+				document
+			);
 			if (response.code !== 0) {
 				toast.error(response.message);
 			} else {
-				toast.success(get(t)('project.importSuccess'));
+				toast.success(
+					get(t)('project.importSuccess', {
+						values: {
+							issues: response.data?.issues_created ?? 0,
+							comments: response.data?.comments_created ?? 0
+						}
+					})
+				);
+				await loadRecentIssues();
 			}
 		} catch {
 			toast.error(get(t)('project.importInvalidFile'));
