@@ -502,9 +502,9 @@ contains "MCP smoke covers generic CLI" "scripts/smoke-forms-mcp.sh" "tools call
 contains "MCP smoke covers forms.duplicate" "scripts/smoke-forms-mcp.sh" "forms.duplicate"
 contains "acceptance includes Phase 5 release readiness smoke" "scripts/acceptance-universal-forms.sh" "Phase 5 release readiness live API and MCP smoke"
 contains "Phase 5 release readiness smoke covers MCP readiness" "scripts/smoke-phase5-release-readiness.sh" "release.readiness.get"
-contains "project release readiness schema exists" "docs/schemas/openpr-project-release-readiness.schema.json" "openpr.project.release_readiness.v1"
-contains "project release readiness schema pins next action shape" "docs/schemas/openpr-project-release-readiness.schema.json" '"next_actions"'
-contains "project release readiness schema pins gate order" "docs/schemas/openpr-project-release-readiness.schema.json" '"no_pending_ai_tasks"'
+contains "project release readiness schema exists" "scripts/schemas/openpr-project-release-readiness.schema.json" "openpr.project.release_readiness.v1"
+contains "project release readiness schema pins next action shape" "scripts/schemas/openpr-project-release-readiness.schema.json" '"next_actions"'
+contains "project release readiness schema pins gate order" "scripts/schemas/openpr-project-release-readiness.schema.json" '"no_pending_ai_tasks"'
 contains "project release readiness API emits schema version" "apps/api/src/routes/release_readiness.rs" "RELEASE_READINESS_SCHEMA_VERSION"
 contains "project release readiness API emits schema path" "apps/api/src/routes/release_readiness.rs" "RELEASE_READINESS_SCHEMA_PATH"
 contains "Phase 5 release readiness API emits next actions" "apps/api/src/routes/release_readiness.rs" "next_actions_for_gates"
@@ -567,9 +567,9 @@ contains "release gate reads development status JSON" "scripts/gate-universal-fo
 contains "release gate checks final release flag" "scripts/gate-universal-forms-release.sh" "final_release_allowed"
 contains "release gate emits schema version" "scripts/gate-universal-forms-release.sh" "openpr.universal_forms.release_gate.v1"
 contains "release gate emits schema path" "scripts/gate-universal-forms-release.sh" "schema_path"
-contains "release gate JSON schema exists" "docs/schemas/openpr-universal-forms-release-gate.schema.json" "openpr.universal_forms.release_gate.v1"
-contains "release gate JSON schema defines reusable manual key enum" "docs/schemas/openpr-universal-forms-release-gate.schema.json" '"manual_key"'
-contains "release gate JSON schema constrains next manual signoff key" "docs/schemas/openpr-universal-forms-release-gate.schema.json" '#/$defs/manual_key'
+contains "release gate JSON schema exists" "scripts/schemas/openpr-universal-forms-release-gate.schema.json" "openpr.universal_forms.release_gate.v1"
+contains "release gate JSON schema defines reusable manual key enum" "scripts/schemas/openpr-universal-forms-release-gate.schema.json" '"manual_key"'
+contains "release gate JSON schema constrains next manual signoff key" "scripts/schemas/openpr-universal-forms-release-gate.schema.json" '#/$defs/manual_key'
 contains "release gate JSON verifier checks readiness parity" "scripts/verify-universal-forms-release-gate-json.sh" "stage matches readiness JSON"
 contains "release gate JSON verifier checks final release flag" "scripts/verify-universal-forms-release-gate-json.sh" "development final flag matches development status JSON"
 contains "release gate JSON verifier checks next manual key enum" "scripts/verify-universal-forms-release-gate-json.sh" "JSON next manual key is allowed by schema"
@@ -612,28 +612,28 @@ contains "delivery status command emits overall completion percent" "scripts/sta
 contains "delivery status command emits manual signoff queue" "scripts/status-universal-forms-delivery.sh" "manual_signoff_queue"
 contains "delivery status command emits review surfaces" "scripts/status-universal-forms-delivery.sh" "review_surfaces"
 contains "delivery status command emits signoff dashboard review surface" "scripts/status-universal-forms-delivery.sh" "signoff_dashboard"
-contains "delivery status JSON schema exists" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "openpr.universal_forms.delivery_status.v1"
+contains "delivery status JSON schema exists" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "openpr.universal_forms.delivery_status.v1"
 contains "delivery status command emits schema version" "scripts/status-universal-forms-delivery.sh" "openpr.universal_forms.delivery_status.v1"
 contains "delivery status command emits schema path" "scripts/status-universal-forms-delivery.sh" "schema_path"
-contains "delivery status JSON schema pins verified prerequisites" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "verified_prerequisites"
-contains "delivery status JSON schema pins completion summary" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_summary"
-contains "delivery status JSON schema pins completion breakdown" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_breakdown"
-contains "delivery status JSON schema defines completion breakdown row" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_breakdown_row"
-contains "delivery status JSON schema pins release blockers" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "release_blockers"
-contains "delivery status JSON schema defines release blocker row" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "release_blocker"
-contains "delivery status JSON schema pins next actions" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "next_actions"
-contains "delivery status JSON schema defines next action row" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "next_action"
-contains "delivery status JSON schema requires next reviewer check" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" '"reviewer_check"'
-contains "delivery status JSON schema requires next automated evidence" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" '"automated_evidence"'
-contains "delivery status JSON schema pins overall completion fields" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "overall_items_remaining"
-contains "delivery status JSON schema pins manual signoff queue" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_signoff_queue"
-contains "delivery status JSON schema pins review surfaces" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "review_surfaces"
-contains "delivery status JSON schema defines manual queue row" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_queue_row"
-contains "delivery status JSON schema pins delivery state enum" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "engineering_complete_pending_manual_signoff"
-contains "delivery status JSON schema pins progression prerequisite" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_signoff_progression_smoke"
-contains "delivery status JSON schema defines reusable manual key enum" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" '"manual_key"'
-contains "delivery status JSON schema constrains next manual signoff key" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" '#/$defs/manual_key'
-contains "delivery status JSON schema uses release gate release mode" "docs/schemas/openpr-universal-forms-delivery-status.schema.json" '"release"'
+contains "delivery status JSON schema pins verified prerequisites" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "verified_prerequisites"
+contains "delivery status JSON schema pins completion summary" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_summary"
+contains "delivery status JSON schema pins completion breakdown" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_breakdown"
+contains "delivery status JSON schema defines completion breakdown row" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_breakdown_row"
+contains "delivery status JSON schema pins release blockers" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "release_blockers"
+contains "delivery status JSON schema defines release blocker row" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "release_blocker"
+contains "delivery status JSON schema pins next actions" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "next_actions"
+contains "delivery status JSON schema defines next action row" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "next_action"
+contains "delivery status JSON schema requires next reviewer check" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '"reviewer_check"'
+contains "delivery status JSON schema requires next automated evidence" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '"automated_evidence"'
+contains "delivery status JSON schema pins overall completion fields" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "overall_items_remaining"
+contains "delivery status JSON schema pins manual signoff queue" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_signoff_queue"
+contains "delivery status JSON schema pins review surfaces" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "review_surfaces"
+contains "delivery status JSON schema defines manual queue row" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_queue_row"
+contains "delivery status JSON schema pins delivery state enum" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "engineering_complete_pending_manual_signoff"
+contains "delivery status JSON schema pins progression prerequisite" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_signoff_progression_smoke"
+contains "delivery status JSON schema defines reusable manual key enum" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '"manual_key"'
+contains "delivery status JSON schema constrains next manual signoff key" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '#/$defs/manual_key'
+contains "delivery status JSON schema uses release gate release mode" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '"release"'
 contains "delivery status JSON verifier checks readiness parity" "scripts/verify-universal-forms-delivery-status-json.sh" "stage matches readiness JSON"
 contains "delivery status JSON verifier checks manifest parity" "scripts/verify-universal-forms-delivery-status-json.sh" "manifest file count matches delivery manifest JSON"
 contains "delivery status JSON verifier checks release gate parity" "scripts/verify-universal-forms-delivery-status-json.sh" "release gate mode matches release gate JSON"
@@ -709,7 +709,7 @@ contains "acceptance evidence preserves existing output permissions" "scripts/ac
 contains "acceptance evidence atomically publishes output" "scripts/acceptance-universal-forms.sh" 'mv -f "$output_tmp" "$REPORT_TARGET_PATH"'
 contains "delivery-state audit requires runbook consistency" "scripts/audit-universal-forms-delivery-state.sh" "runbook/evidence manual signoff consistency passes"
 contains "delivery manifest records checksums" "scripts/prepare-universal-forms-delivery-manifest.sh" "sha256sum"
-contains "delivery manifest JSON schema exists" "docs/schemas/openpr-universal-forms-delivery-manifest.schema.json" "openpr.universal_forms.delivery_manifest.v1"
+contains "delivery manifest JSON schema exists" "scripts/schemas/openpr-universal-forms-delivery-manifest.schema.json" "openpr.universal_forms.delivery_manifest.v1"
 contains "delivery manifest JSON reporter emits schema version" "scripts/report-universal-forms-delivery-manifest-json.sh" "openpr.universal_forms.delivery_manifest.v1"
 contains "delivery manifest JSON reporter mirrors markdown rows" "scripts/report-universal-forms-delivery-manifest-json.sh" "files_json"
 contains "delivery manifest JSON verifier checks schema version" "scripts/verify-universal-forms-delivery-manifest-json.sh" "schema file pins delivery manifest JSON v1"
@@ -726,25 +726,25 @@ contains "delivery manifest JSON contract smoke checks typed counters" "scripts/
 contains "delivery manifest JSON contract smoke checks file count drift" "scripts/smoke-universal-forms-delivery-manifest-json-contract.sh" "file count drift"
 contains "delivery manifest JSON contract smoke checks checksum drift" "scripts/smoke-universal-forms-delivery-manifest-json-contract.sh" "file row checksum drift"
 contains "delivery manifest JSON contract smoke checks row order drift" "scripts/smoke-universal-forms-delivery-manifest-json-contract.sh" "file row order drift"
-contains "readiness JSON schema exists" "docs/schemas/openpr-universal-forms-readiness.schema.json" "openpr.universal_forms.readiness.v1"
-contains "readiness JSON schema requires schema path" "docs/schemas/openpr-universal-forms-readiness.schema.json" '"schema_path"'
-contains "readiness JSON schema defines next row recorder command" "docs/schemas/openpr-universal-forms-readiness.schema.json" '"recorder_command"'
-contains "readiness JSON schema requires signoff status JSON path" "docs/schemas/openpr-universal-forms-readiness.schema.json" '"signoff_status_json"'
-contains "readiness JSON schema enumerates manual signoff keys" "docs/schemas/openpr-universal-forms-readiness.schema.json" '"restaurant_template"'
-contains "readiness JSON schema defines reusable manual key enum" "docs/schemas/openpr-universal-forms-readiness.schema.json" '"manual_key"'
-contains "readiness JSON schema constrains next row key" "docs/schemas/openpr-universal-forms-readiness.schema.json" '#/$defs/manual_key'
-contains "readiness JSON schema pins manual row order" "docs/schemas/openpr-universal-forms-readiness.schema.json" '"prefixItems"'
-contains "manual signoff status JSON schema exists" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" "openpr.universal_forms.signoff_status.v1"
-contains "manual signoff status JSON schema requires final signoff flag" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '"final_signoff_allowed"'
-contains "manual signoff status JSON schema requires row recorder command" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '"recorder_command"'
-contains "manual signoff status JSON schema requires automated evidence" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '"automated_evidence"'
-contains "manual signoff status JSON schema requires reviewer check" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '"reviewer_check"'
-contains "manual signoff status JSON schema requires pending queue" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '"pending_queue"'
-contains "manual signoff status JSON schema defines pending queue row" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '"pending_queue_row"'
-contains "manual signoff status JSON schema enumerates manual signoff keys" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '"restaurant_template"'
-contains "manual signoff status JSON schema defines reusable manual key enum" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '"manual_key"'
-contains "manual signoff status JSON schema constrains next row key" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '#/$defs/manual_key'
-contains "manual signoff status JSON schema pins manual row order" "docs/schemas/openpr-universal-forms-signoff-status.schema.json" '"prefixItems"'
+contains "readiness JSON schema exists" "scripts/schemas/openpr-universal-forms-readiness.schema.json" "openpr.universal_forms.readiness.v1"
+contains "readiness JSON schema requires schema path" "scripts/schemas/openpr-universal-forms-readiness.schema.json" '"schema_path"'
+contains "readiness JSON schema defines next row recorder command" "scripts/schemas/openpr-universal-forms-readiness.schema.json" '"recorder_command"'
+contains "readiness JSON schema requires signoff status JSON path" "scripts/schemas/openpr-universal-forms-readiness.schema.json" '"signoff_status_json"'
+contains "readiness JSON schema enumerates manual signoff keys" "scripts/schemas/openpr-universal-forms-readiness.schema.json" '"restaurant_template"'
+contains "readiness JSON schema defines reusable manual key enum" "scripts/schemas/openpr-universal-forms-readiness.schema.json" '"manual_key"'
+contains "readiness JSON schema constrains next row key" "scripts/schemas/openpr-universal-forms-readiness.schema.json" '#/$defs/manual_key'
+contains "readiness JSON schema pins manual row order" "scripts/schemas/openpr-universal-forms-readiness.schema.json" '"prefixItems"'
+contains "manual signoff status JSON schema exists" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" "openpr.universal_forms.signoff_status.v1"
+contains "manual signoff status JSON schema requires final signoff flag" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '"final_signoff_allowed"'
+contains "manual signoff status JSON schema requires row recorder command" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '"recorder_command"'
+contains "manual signoff status JSON schema requires automated evidence" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '"automated_evidence"'
+contains "manual signoff status JSON schema requires reviewer check" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '"reviewer_check"'
+contains "manual signoff status JSON schema requires pending queue" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '"pending_queue"'
+contains "manual signoff status JSON schema defines pending queue row" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '"pending_queue_row"'
+contains "manual signoff status JSON schema enumerates manual signoff keys" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '"restaurant_template"'
+contains "manual signoff status JSON schema defines reusable manual key enum" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '"manual_key"'
+contains "manual signoff status JSON schema constrains next row key" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '#/$defs/manual_key'
+contains "manual signoff status JSON schema pins manual row order" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json" '"prefixItems"'
 contains "readiness JSON reporter emits schema version" "scripts/report-universal-forms-readiness-json.sh" "openpr.universal_forms.readiness.v1"
 contains "readiness JSON reporter emits schema path" "scripts/report-universal-forms-readiness-json.sh" "schema_path"
 contains "readiness JSON reporter emits next manual row" "scripts/report-universal-forms-readiness-json.sh" "next_row"
@@ -777,11 +777,11 @@ contains "readiness JSON contract smoke checks typed counters" "scripts/smoke-un
 contains "readiness JSON contract smoke checks row order drift" "scripts/smoke-universal-forms-readiness-json-contract.sh" "manual row order drift"
 contains "readiness JSON contract smoke checks unknown next row key" "scripts/smoke-universal-forms-readiness-json-contract.sh" "unknown next manual row key"
 contains "readiness JSON contract smoke checks release constants" "scripts/smoke-universal-forms-readiness-json-contract.sh" "release requirement constant drift"
-contains "development status JSON schema exists" "docs/schemas/openpr-universal-forms-development-status.schema.json" "openpr.universal_forms.development_status.v1"
-contains "development status JSON schema enumerates matrix keys" "docs/schemas/openpr-universal-forms-development-status.schema.json" "user_manual_acceptance"
-contains "development status JSON schema pins row order" "docs/schemas/openpr-universal-forms-development-status.schema.json" '"prefixItems"'
-contains "development status JSON schema requires non-empty phase" "docs/schemas/openpr-universal-forms-development-status.schema.json" '"phase": { "type": "string", "minLength": 1 }'
-contains "development status JSON schema requires non-empty completion rule" "docs/schemas/openpr-universal-forms-development-status.schema.json" '"completion_rule": { "type": "string", "minLength": 1 }'
+contains "development status JSON schema exists" "scripts/schemas/openpr-universal-forms-development-status.schema.json" "openpr.universal_forms.development_status.v1"
+contains "development status JSON schema enumerates matrix keys" "scripts/schemas/openpr-universal-forms-development-status.schema.json" "user_manual_acceptance"
+contains "development status JSON schema pins row order" "scripts/schemas/openpr-universal-forms-development-status.schema.json" '"prefixItems"'
+contains "development status JSON schema requires non-empty phase" "scripts/schemas/openpr-universal-forms-development-status.schema.json" '"phase": { "type": "string", "minLength": 1 }'
+contains "development status JSON schema requires non-empty completion rule" "scripts/schemas/openpr-universal-forms-development-status.schema.json" '"completion_rule": { "type": "string", "minLength": 1 }'
 contains "development status JSON reporter emits schema version" "scripts/report-universal-forms-development-status-json.sh" "openpr.universal_forms.development_status.v1"
 contains "development status JSON reporter reads tracker matrix" "scripts/report-universal-forms-development-status-json.sh" "开发阶段准入与交付判定矩阵"
 contains "development status JSON reporter emits final release flag" "scripts/report-universal-forms-development-status-json.sh" "final_release_allowed"
@@ -802,7 +802,7 @@ contains "development status JSON contract smoke checks row order drift" "script
 contains "development status JSON contract smoke checks phase drift" "scripts/smoke-universal-forms-development-status-json-contract.sh" "row phase drift"
 contains "development status JSON contract smoke checks completion drift" "scripts/smoke-universal-forms-development-status-json-contract.sh" "completion rule drift"
 contains "development status JSON contract smoke checks row drift" "scripts/smoke-universal-forms-development-status-json-contract.sh" "row count drift"
-contains "completion audit JSON schema exists" "docs/schemas/openpr-universal-forms-completion-audit.schema.json" "openpr.universal_forms.completion_audit.v1"
+contains "completion audit JSON schema exists" "scripts/schemas/openpr-universal-forms-completion-audit.schema.json" "openpr.universal_forms.completion_audit.v1"
 contains "completion audit JSON reporter emits schema version" "scripts/report-universal-forms-completion-audit-json.sh" "openpr.universal_forms.completion_audit.v1"
 contains "completion audit JSON reporter emits automated completion flag" "scripts/report-universal-forms-completion-audit-json.sh" "automated_delivery_complete"
 contains "completion audit JSON verifier checks evidence parity" "scripts/verify-universal-forms-completion-audit-json.sh" "automated check count matches evidence"
@@ -810,12 +810,12 @@ contains "completion audit JSON verifier checks signoff parity" "scripts/verify-
 contains "completion audit JSON verifier rejects nested extra fields" "scripts/verify-universal-forms-completion-audit-json.sh" "JSON finalization object has no extra keys beyond schema"
 contains "completion audit JSON contract smoke checks nested extra fields" "scripts/smoke-universal-forms-completion-audit-json-contract.sh" "extra finalization property"
 contains "completion audit JSON contract smoke checks conclusion drift" "scripts/smoke-universal-forms-completion-audit-json-contract.sh" "conclusion drift"
-contains "scenario catalog JSON schema exists" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json" "openpr.universal_forms.scenario_catalog.v1"
-contains "scenario catalog JSON schema enumerates templates" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json" "restaurant_ordering_default"
-contains "scenario catalog JSON schema pins operator entrypoints" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json" "operator_entrypoints"
-contains "scenario catalog JSON schema requires operator steps" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json" "operator_steps"
-contains "scenario catalog JSON schema requires connector kinds" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json" "connector_kinds"
-contains "scenario catalog JSON schema pins template order" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json" '"prefixItems"'
+contains "scenario catalog JSON schema exists" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json" "openpr.universal_forms.scenario_catalog.v1"
+contains "scenario catalog JSON schema enumerates templates" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json" "restaurant_ordering_default"
+contains "scenario catalog JSON schema pins operator entrypoints" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json" "operator_entrypoints"
+contains "scenario catalog JSON schema requires operator steps" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json" "operator_steps"
+contains "scenario catalog JSON schema requires connector kinds" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json" "connector_kinds"
+contains "scenario catalog JSON schema pins template order" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json" '"prefixItems"'
 contains "scenario catalog JSON reporter emits schema version" "scripts/report-universal-forms-scenario-catalog-json.sh" "openpr.universal_forms.scenario_catalog.v1"
 contains "scenario catalog JSON reporter reads built-in template table" "scripts/report-universal-forms-scenario-catalog-json.sh" "Built-In Templates"
 contains "scenario catalog JSON reporter emits operator entrypoints" "scripts/report-universal-forms-scenario-catalog-json.sh" "operator_entrypoints"
@@ -837,9 +837,9 @@ contains "scenario catalog JSON contract smoke checks nested extras" "scripts/sm
 contains "scenario catalog JSON contract smoke checks template order drift" "scripts/smoke-universal-forms-scenario-catalog-json-contract.sh" "template order drift"
 contains "scenario catalog JSON contract smoke checks restaurant plugin" "scripts/smoke-universal-forms-scenario-catalog-json-contract.sh" "missing restaurant_calc integration"
 contains "scenario catalog JSON contract smoke checks restaurant print connector" "scripts/smoke-universal-forms-scenario-catalog-json-contract.sh" "missing restaurant print connector kind"
-contains "implementation map JSON schema exists" "docs/schemas/openpr-universal-forms-implementation-map.schema.json" "openpr.universal_forms.implementation_map.v1"
-contains "implementation map JSON schema enumerates module keys" "docs/schemas/openpr-universal-forms-implementation-map.schema.json" "user_side_manual_acceptance"
-contains "implementation map JSON schema pins module order" "docs/schemas/openpr-universal-forms-implementation-map.schema.json" '"prefixItems"'
+contains "implementation map JSON schema exists" "scripts/schemas/openpr-universal-forms-implementation-map.schema.json" "openpr.universal_forms.implementation_map.v1"
+contains "implementation map JSON schema enumerates module keys" "scripts/schemas/openpr-universal-forms-implementation-map.schema.json" "user_side_manual_acceptance"
+contains "implementation map JSON schema pins module order" "scripts/schemas/openpr-universal-forms-implementation-map.schema.json" '"prefixItems"'
 contains "implementation map JSON reporter emits schema version" "scripts/report-universal-forms-implementation-map-json.sh" "openpr.universal_forms.implementation_map.v1"
 contains "implementation map JSON reporter reads module map" "scripts/report-universal-forms-implementation-map-json.sh" "Module Map"
 contains "implementation map JSON verifier checks Markdown parity" "scripts/verify-universal-forms-implementation-map-json.sh" "JSON delivery area mirrors Markdown"

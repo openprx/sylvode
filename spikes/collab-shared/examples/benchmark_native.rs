@@ -1,6 +1,6 @@
 //! Native (P1, in-process) cross-candidate benchmark for the Sylvode Flow v0.3 engine-selection
 //! decision, matching `testing/benchmark-spec.md` and the four *native*-side budgeted metrics
-//! from `docs/schemas/sylvode-flow-benchmark-result-v1.schema.json`'s `budgets` object:
+//! from `scripts/schemas/sylvode-flow-benchmark-result-v1.schema.json`'s `budgets` object:
 //!
 //! | metric                              | budget      |
 //! |--------------------------------------|------------:|
@@ -697,7 +697,7 @@ fn run_full_benchmark() {
     );
 
     let output = serde_json::json!({
-        "schema_note": "Field names/shapes are aligned to docs/schemas/sylvode-flow-benchmark-result-v1.schema.json \
+        "schema_note": "Field names/shapes are aligned to scripts/schemas/sylvode-flow-benchmark-result-v1.schema.json \
              wherever this round has data for them, but this document is NOT a valid instance of that schema: \
              the browser-side budgets/measurements/environment fields (browser_engine_bundle, cold_start_ms, \
              environment.browser/node_version/bun_version/bundle_build_tool/gzip_tool) are out of scope for this \

@@ -13,7 +13,7 @@ SIGNOFF_STATUS_PATH="$REPORT_DIR/openpr-universal-form-signoff-status-2026-05-31
 SIGNOFF_STATUS_JSON_PATH="$REPORT_DIR/openpr-universal-form-signoff-status-2026-05-31.json"
 DELIVERY_MANIFEST_PATH="$REPORT_DIR/openpr-universal-form-delivery-manifest-2026-05-31.md"
 UI_REVIEW_GALLERY_PATH="$REPORT_DIR/openpr-universal-form-ui-review-gallery-2026-05-31.html"
-SCHEMA_PATH="$ROOT_DIR/docs/schemas/openpr-universal-forms-readiness.schema.json"
+SCHEMA_PATH="$ROOT_DIR/scripts/schemas/openpr-universal-forms-readiness.schema.json"
 OUTPUT_PATH="${OPENPR_READINESS_JSON_REPORT:-$REPORT_DIR/openpr-universal-form-readiness-2026-05-31.json}"
 
 usage() {

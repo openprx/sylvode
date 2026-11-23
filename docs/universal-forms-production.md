@@ -123,7 +123,7 @@ Production automation should prefer
 `manual_signoff.next_row` value carries the next reviewer key, suggested
 evidence note, and recorder command template while final acceptance is still
 waiting on user-side signoff. The report also includes `schema_path`, which
-points to `docs/schemas/openpr-universal-forms-readiness.schema.json`, and
+points to `scripts/schemas/openpr-universal-forms-readiness.schema.json`, and
 `reports.signoff_status_json`, which points to the dedicated machine-readable
 signoff progress report. The verifier checks required fields, extra top-level keys and nested keys,
 grouped fields, the signoff status JSON cross-link, and the seven allowed manual
@@ -132,7 +132,7 @@ status enums, release requirement constants, and object shape drift.
 
 Automation that only needs reviewer signoff progress can consume
 `openpr-universal-form-signoff-status-2026-05-31.json`. Its schema path is
-`docs/schemas/openpr-universal-forms-signoff-status.schema.json`, and its
+`scripts/schemas/openpr-universal-forms-signoff-status.schema.json`, and its
 `manual_signoff` object records completed/pending row counts, blocked rows,
 `final_signoff_allowed`, and the next recorder command. Each manual row and
 `next_row` also include the automated evidence and reviewer check text from the
@@ -578,10 +578,10 @@ scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh
 ```
 
 Before the seven user-side manual rows are accepted, use `scripts/gate-universal-forms-release.sh --allow-pending` only as a pre-release handoff signal. A production release cut requires strict `scripts/gate-universal-forms-release.sh` to pass.
-The completion audit JSON schema is `docs/schemas/openpr-universal-forms-completion-audit.schema.json`; `scripts/verify-universal-forms-completion-audit-json.sh` and `scripts/smoke-universal-forms-completion-audit-json-contract.sh` keep the machine-readable completion gate aligned with automated evidence, tracker status, manual signoff counts, finalizer safety, finalization flags, and nested object shape.
+The completion audit JSON schema is `scripts/schemas/openpr-universal-forms-completion-audit.schema.json`; `scripts/verify-universal-forms-completion-audit-json.sh` and `scripts/smoke-universal-forms-completion-audit-json-contract.sh` keep the machine-readable completion gate aligned with automated evidence, tracker status, manual signoff counts, finalizer safety, finalization flags, and nested object shape.
 `scripts/smoke-universal-forms-release-gate.sh` verifies the release gate output before the handoff is treated as production-ready.
 `scripts/smoke-universal-forms-release-gate-output.sh` verifies that the human-readable release gate output mirrors the release gate JSON decision in both `--allow-pending` and strict modes.
-The release gate JSON schema is `docs/schemas/openpr-universal-forms-release-gate.schema.json`; `scripts/verify-universal-forms-release-gate-json.sh` and `scripts/smoke-universal-forms-release-gate-json-contract.sh` keep the machine-readable gate aligned with readiness, development, signoff, final flags, tracker status, nested required fields, and nested object shape.
+The release gate JSON schema is `scripts/schemas/openpr-universal-forms-release-gate.schema.json`; `scripts/verify-universal-forms-release-gate-json.sh` and `scripts/smoke-universal-forms-release-gate-json-contract.sh` keep the machine-readable gate aligned with readiness, development, signoff, final flags, tracker status, nested required fields, and nested object shape.
 The release gate mode enum is `blocked`, `pre_signoff`, and `release`; the compact delivery status JSON mirrors that same enum so production automation does not treat final release as a separate `ready` mode.
 The readiness JSON, signoff status JSON, release gate JSON, and delivery status JSON all constrain next manual keys to the same seven manual signoff keys, or an empty string after final signoff. The release and delivery status next manual keys are constrained to the same seven manual signoff keys, or an empty string after final signoff, so release automation and compact status consumers share the same reviewer routing boundary.
 The readiness and signoff status JSON schemas also pin the seven manual rows in reviewer order from `restaurant_template` through `overall`; release automation must treat that order as the prerequisite sequence for final signoff.
@@ -654,7 +654,7 @@ Final acceptance is complete only when the tracker marks `端到端验收` and
 The machine-readable delivery manifest JSON must stay aligned with the Markdown
 checksum manifest. It uses `openpr.universal_forms.delivery_manifest.v1`, points
 `schema_path` at
-`docs/schemas/openpr-universal-forms-delivery-manifest.schema.json`, and is
+`scripts/schemas/openpr-universal-forms-delivery-manifest.schema.json`, and is
 verified for pinned top-level and nested keys, Markdown row parity, file row
 order, and live file size/SHA before a release can consume it. Its contract
 smoke must also pass so malformed JSON copies with schema, counter, file-count,
@@ -664,7 +664,7 @@ automation consumes the delivery bundle.
 The machine-readable development status JSON must stay aligned with the tracker
 development matrix. It uses `openpr.universal_forms.development_status.v1`,
 points `schema_path` at
-`docs/schemas/openpr-universal-forms-development-status.schema.json`, and keeps
+`scripts/schemas/openpr-universal-forms-development-status.schema.json`, and keeps
 every engineering phase, requirement, completion rule, status, and
 `final_release_allowed` available to CI, MCP tools, webhook consumers, and
 deployment scripts without parsing Markdown. The schema pins the ten
@@ -674,7 +674,7 @@ development rows in tracker order, and the verifier rejects extra fields inside
 The machine-readable scenario catalog JSON must stay aligned with the built-in
 scenario template catalog. It uses `openpr.universal_forms.scenario_catalog.v1`,
 points `schema_path` at
-`docs/schemas/openpr-universal-forms-scenario-catalog.schema.json`, and exposes
+`scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json`, and exposes
 template keys, project types, generated forms, integrations, operator
 entrypoints, operator steps, primary MCP tools, connector kinds, plugin keys,
 and acceptance focus points for production automation without parsing Markdown.
@@ -689,7 +689,7 @@ template marketplace consumers use the same contract as the delivery catalog.
 The machine-readable implementation map JSON must stay aligned with
 `docs/universal-forms-implementation-map.md`. It uses
 `openpr.universal_forms.implementation_map.v1`, points `schema_path` at
-`docs/schemas/openpr-universal-forms-implementation-map.schema.json`, and
+`scripts/schemas/openpr-universal-forms-implementation-map.schema.json`, and
 exposes delivery areas, source paths, public surfaces, primary verification
 commands, status markers, and the manual-release boundary for production
 automation without parsing Markdown. The schema pins status marker and module

@@ -21,7 +21,7 @@
     },
     "schema_path": {
       "type": "string",
-      "pattern": "/docs/schemas/openpr-universal-forms-signoff-status\\.schema\\.json$"
+      "pattern": "/scripts/schemas/openpr-universal-forms-signoff-status\\.schema\\.json$"
     },
     "generated_at": {
       "type": "string"

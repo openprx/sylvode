@@ -11,7 +11,7 @@
 //! # This is calibration output, not gate evidence
 //!
 //! Every JSON object this binary prints is intentionally a different shape from
-//! `docs/schemas/sylvode-flow-convergence-result-v1.schema.json`'s `$defs/isolation_case` — that
+//! `scripts/schemas/sylvode-flow-convergence-result-v1.schema.json`'s `$defs/isolation_case` — that
 //! schema's `head_hash_before`/`frontier_hash_before`/etc. fields are meaningful only for a real
 //! Flow document apply, and this tool's fixtures are synthetic CPU/memory/wall probes, not
 //! document applies. Nothing printed here should be interpreted as

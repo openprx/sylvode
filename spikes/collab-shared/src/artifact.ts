@@ -7,7 +7,7 @@ export type Artifact = Readonly<{ path: string; sha256: string }>;
 
 /**
  * Writes `data` under `baseDir/relPath` and returns the
- * `docs/schemas/sylvode-flow-*-result-v1.schema.json` `artifact` shape
+ * `scripts/schemas/sylvode-flow-*-result-v1.schema.json` `artifact` shape
  * (`{path, sha256}`), where `path` is relative (schema requires
  * `pattern: "^(?!/)"`) and `sha256` is the real digest of the bytes on disk.
  */

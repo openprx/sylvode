@@ -33,7 +33,7 @@
     "schema_version": { "const": "openpr.universal_forms.delivery_status.v1" },
     "schema_path": {
       "type": "string",
-      "pattern": "/docs/schemas/openpr-universal-forms-delivery-status\\.schema\\.json$"
+      "pattern": "/scripts/schemas/openpr-universal-forms-delivery-status\\.schema\\.json$"
     },
     "generated_at": { "type": "string" },
     "repository": { "type": "string" },

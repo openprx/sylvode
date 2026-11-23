@@ -17,7 +17,7 @@ Inputs (paths under --contracts-root):
   contracts/ui-surface-v1.md
   contracts/surface-coverage-v1.md
 
-Output: a dict matching docs/schemas/sylvode-flow-surface-coverage-result-v1.schema.json
+Output: a dict matching scripts/schemas/sylvode-flow-surface-coverage-result-v1.schema.json
 (minus schema_version/release/source_head/generated_at, which the caller
 fills in).
 """

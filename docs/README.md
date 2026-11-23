@@ -8,16 +8,16 @@
 - `./scenario-templates.md` — Catalog of built-in scenario templates, generated forms, integrations, and usage paths.
 - `./universal-forms-acceptance.md` — Acceptance guide for the universal forms and restaurant reference workflow.
 - `./universal-forms-production.md` — Production runbook for operating Sylvode as a generic business platform.
-- `./schemas/openpr-universal-forms-readiness.schema.json` — JSON Schema for the machine-readable universal forms readiness report.
-- `./schemas/openpr-universal-forms-signoff-status.schema.json` — JSON Schema for the machine-readable manual signoff progress report.
-- `./schemas/openpr-universal-forms-completion-audit.schema.json` — JSON Schema for the machine-readable completion audit gate report.
-- `./schemas/openpr-universal-forms-development-status.schema.json` — JSON Schema for the machine-readable development matrix status report.
-- `./schemas/openpr-universal-forms-scenario-catalog.schema.json` — JSON Schema for the machine-readable scenario template catalog.
-- `./schemas/openpr-universal-forms-implementation-map.schema.json` — JSON Schema for the machine-readable implementation map.
-- `./schemas/openpr-universal-forms-delivery-status.schema.json` — JSON Schema for the compact one-command delivery status summary.
-- `./schemas/openpr-universal-forms-delivery-manifest.schema.json` — JSON Schema for the machine-readable delivery manifest mirror.
-- `./schemas/openpr-universal-forms-release-gate.schema.json` — JSON Schema for the machine-readable release gate decision.
-- `./schemas/openpr-project-release-readiness.schema.json` — JSON Schema for project release readiness API/MCP responses.
+- `../scripts/schemas/openpr-universal-forms-readiness.schema.json` — JSON Schema for the machine-readable universal forms readiness report.
+- `../scripts/schemas/openpr-universal-forms-signoff-status.schema.json` — JSON Schema for the machine-readable manual signoff progress report.
+- `../scripts/schemas/openpr-universal-forms-completion-audit.schema.json` — JSON Schema for the machine-readable completion audit gate report.
+- `../scripts/schemas/openpr-universal-forms-development-status.schema.json` — JSON Schema for the machine-readable development matrix status report.
+- `../scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json` — JSON Schema for the machine-readable scenario template catalog.
+- `../scripts/schemas/openpr-universal-forms-implementation-map.schema.json` — JSON Schema for the machine-readable implementation map.
+- `../scripts/schemas/openpr-universal-forms-delivery-status.schema.json` — JSON Schema for the compact one-command delivery status summary.
+- `../scripts/schemas/openpr-universal-forms-delivery-manifest.schema.json` — JSON Schema for the machine-readable delivery manifest mirror.
+- `../scripts/schemas/openpr-universal-forms-release-gate.schema.json` — JSON Schema for the machine-readable release gate decision.
+- `../scripts/schemas/openpr-project-release-readiness.schema.json` — JSON Schema for project release readiness API/MCP responses.
 - `../apps/mcp-server/AGENTS.md` — Coding agent guidelines: build, test, commit conventions.
 
 ## 2. MCP Skill Package

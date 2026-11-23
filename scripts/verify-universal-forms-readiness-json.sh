@@ -10,7 +10,7 @@ COMPLETION_AUDIT_PATH="$REPORT_DIR/openpr-universal-form-completion-audit-2026-0
 READINESS_SUMMARY_PATH="$REPORT_DIR/openpr-universal-form-readiness-summary-2026-05-31.md"
 SIGNOFF_STATUS_PATH="$REPORT_DIR/openpr-universal-form-signoff-status-2026-05-31.md"
 SIGNOFF_STATUS_JSON_PATH="$REPORT_DIR/openpr-universal-form-signoff-status-2026-05-31.json"
-SCHEMA_PATH="$ROOT_DIR/docs/schemas/openpr-universal-forms-readiness.schema.json"
+SCHEMA_PATH="$ROOT_DIR/scripts/schemas/openpr-universal-forms-readiness.schema.json"
 
 usage() {
   cat <<'EOF'

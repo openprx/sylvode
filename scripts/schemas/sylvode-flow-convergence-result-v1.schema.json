@@ -18,7 +18,7 @@
       "const": "sylvode.flow.convergence-result.v1"
     },
     "schema_path": {
-      "const": "docs/schemas/sylvode-flow-convergence-result-v1.schema.json"
+      "const": "scripts/schemas/sylvode-flow-convergence-result-v1.schema.json"
     },
     "release": {
       "const": "0.3.0"

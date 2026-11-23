@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
 JSON_PATH="${1:-$REPORT_DIR/openpr-universal-form-scenario-catalog-2026-05-31.json}"
 CATALOG_PATH="$ROOT_DIR/docs/scenario-templates.md"
-SCHEMA_PATH="$ROOT_DIR/docs/schemas/openpr-universal-forms-scenario-catalog.schema.json"
+SCHEMA_PATH="$ROOT_DIR/scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json"
 SMOKE_PATH="$ROOT_DIR/scripts/smoke-scenario-template-forms.sh"
 
 usage() {

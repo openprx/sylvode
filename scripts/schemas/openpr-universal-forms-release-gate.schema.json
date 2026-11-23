@@ -29,7 +29,7 @@
     },
     "schema_path": {
       "type": "string",
-      "pattern": "/docs/schemas/openpr-universal-forms-release-gate\\.schema\\.json$"
+      "pattern": "/scripts/schemas/openpr-universal-forms-release-gate\\.schema\\.json$"
     },
     "reports": {
       "type": "object",

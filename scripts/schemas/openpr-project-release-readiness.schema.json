@@ -21,7 +21,7 @@
       "const": "openpr.project.release_readiness.v1"
     },
     "schema_path": {
-      "const": "docs/schemas/openpr-project-release-readiness.schema.json"
+      "const": "scripts/schemas/openpr-project-release-readiness.schema.json"
     },
     "project_id": {
       "type": "string",

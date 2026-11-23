@@ -158,7 +158,7 @@ const jwtSecret = process.env.SMOKE_JWT_SECRET;
 const botToken = process.env.BOT_TOKEN;
 const mcpBin = process.env.MCP_BIN;
 const mcpConfig = process.env.MCP_CONFIG;
-const releaseSchemaPath = 'docs/schemas/openpr-project-release-readiness.schema.json';
+const releaseSchemaPath = 'scripts/schemas/openpr-project-release-readiness.schema.json';
 const releaseSchema = JSON.parse(fs.readFileSync(`${rootDir}/${releaseSchemaPath}`, 'utf8'));
 
 function b64url(value) {

@@ -8,7 +8,7 @@ DEVELOPMENT_STATUS_JSON_PATH="$REPORT_DIR/openpr-universal-form-development-stat
 SIGNOFF_STATUS_JSON_PATH="$REPORT_DIR/openpr-universal-form-signoff-status-2026-05-31.json"
 EVIDENCE_PATH="$REPORT_DIR/openpr-universal-form-acceptance-evidence-2026-05-31.md"
 RUNBOOK_PATH="$REPORT_DIR/openpr-universal-form-user-acceptance-runbook-2026-05-31.md"
-SCHEMA_PATH="$ROOT_DIR/docs/schemas/openpr-universal-forms-release-gate.schema.json"
+SCHEMA_PATH="$ROOT_DIR/scripts/schemas/openpr-universal-forms-release-gate.schema.json"
 JSON_PATH="${1:-}"
 GENERATED_TMP=""
 

@@ -6,7 +6,7 @@ REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &
 STATUS_JSON_PATH="${1:-$REPORT_DIR/openpr-universal-form-development-status-2026-05-31.json}"
 TRACKER_PATH="$REPORT_DIR/openpr-universal-form-development-execution-tracker-2026-05-31.md"
 READINESS_JSON_PATH="$REPORT_DIR/openpr-universal-form-readiness-2026-05-31.json"
-SCHEMA_PATH="$ROOT_DIR/docs/schemas/openpr-universal-forms-development-status.schema.json"
+SCHEMA_PATH="$ROOT_DIR/scripts/schemas/openpr-universal-forms-development-status.schema.json"
 
 usage() {
   cat <<'EOF'

@@ -7,7 +7,7 @@ EVIDENCE_PATH="$REPORT_DIR/openpr-universal-form-acceptance-evidence-2026-05-31.
 RUNBOOK_PATH="$REPORT_DIR/openpr-universal-form-user-acceptance-runbook-2026-05-31.md"
 MANUAL_EVIDENCE_MAP_PATH="$REPORT_DIR/openpr-universal-form-manual-evidence-map-2026-05-31.md"
 MARKDOWN_STATUS_PATH="$REPORT_DIR/openpr-universal-form-signoff-status-2026-05-31.md"
-SCHEMA_PATH="$ROOT_DIR/docs/schemas/openpr-universal-forms-signoff-status.schema.json"
+SCHEMA_PATH="$ROOT_DIR/scripts/schemas/openpr-universal-forms-signoff-status.schema.json"
 REVIEWER_PLACEHOLDER="<name>"
 OUTPUT_PATH="${OPENPR_SIGNOFF_STATUS_JSON_REPORT:-$REPORT_DIR/openpr-universal-form-signoff-status-2026-05-31.json}"
 

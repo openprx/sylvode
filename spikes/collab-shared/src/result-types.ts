@@ -3,7 +3,7 @@ import { writeJsonArtifact } from "./artifact";
 import type { CaseRunResult } from "./corpus-runner";
 
 /**
- * Hand-typed mirror of `docs/schemas/sylvode-flow-convergence-result-v1.schema.json`
+ * Hand-typed mirror of `scripts/schemas/sylvode-flow-convergence-result-v1.schema.json`
  * `$defs.case_category` -- the full 14-value enum, even though this package's
  * corpus runner currently only produces 4 of them. Kept as the schema's own
  * enum (not narrowed to our 4) so a `SchemaCaseResult` built here always

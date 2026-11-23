@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails when a tracked script, test, skill, source file or schema (scripts/, tests/,
-# frontend/tests/, skills/, apps/, crates/, docs/schemas/) names a machine-specific absolute path.
+# frontend/tests/, skills/, apps/, crates/) names a machine-specific absolute path.
 #
 # An open-source checkout can live anywhere, so a script must not default to, read from or write
 # to a path that only exists on one maintainer's machine (a workspace under /opt, a home
@@ -21,8 +21,8 @@ apps/runner/tests/install_scripts.rs\tconst ODD: &str = r#"/Users/me/odd dir & 1
 apps/runner/tests/install_scripts.rs\tv=\'/Users/me/odd dir & 100% $HOME \\ "q" <x>\'\tthe same test input, assigned in the shell driver of the rendering test'
 
 # path<TAB>reason: whole files exempt because they are frozen and their hash or content is pinned
-FILE_EXEMPTIONS=$'docs/schemas/sylvode-flow-legacy-pages-inventory-v1.schema.json\tfrozen v0.4 evidence schema; its description names where the frozen run read its inputs
-docs/schemas/sylvode-flow-surface-coverage-result-v1.schema.json\tfrozen v0.4-v1.0 evidence schema; its description names the contract checkout of the frozen runs'
+FILE_EXEMPTIONS=$'scripts/schemas/sylvode-flow-legacy-pages-inventory-v1.schema.json\tfrozen v0.4 evidence schema; its description names where the frozen run read its inputs
+scripts/schemas/sylvode-flow-surface-coverage-result-v1.schema.json\tfrozen v0.4-v1.0 evidence schema; its description names the contract checkout of the frozen runs'
 
 # scan ROOT LISTFILE -> prints "path:line:text" for every non-exempt hit
 scan() {
@@ -66,7 +66,7 @@ trap 'rm -rf "$WORK"' EXIT
 # This file is excluded: its pattern and exemption table necessarily spell out the paths it bans.
 # spikes/ is not scanned: it holds the frozen evaluation spikes and their measurement evidence,
 # which record the paths of the runs they document and are not used by any build or gate.
-(cd "$ROOT_DIR" && git ls-files scripts tests frontend/tests skills apps crates docs/schemas | grep -vxF scripts/test-no-machine-paths.sh) >"$WORK/files"
+(cd "$ROOT_DIR" && git ls-files scripts tests frontend/tests skills apps crates | grep -vxF scripts/test-no-machine-paths.sh) >"$WORK/files"
 file_count=$(wc -l <"$WORK/files")
 if [[ $file_count -eq 0 ]]; then
   echo "FAIL: no tracked scripts or tests were examined" >&2

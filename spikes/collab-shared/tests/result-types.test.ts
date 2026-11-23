@@ -8,7 +8,7 @@ import { materializeCaseResult, validateCaseResult } from "../src/result-types";
 import { sha256Hex } from "../src/hash";
 import { FakeScenarioAdapter } from "./support/fake-scenario-adapter";
 
-describe("materializeCaseResult / validateCaseResult (schema-shape alignment with docs/schemas/sylvode-flow-convergence-result-v1.schema.json $defs.case_result)", () => {
+describe("materializeCaseResult / validateCaseResult (schema-shape alignment with scripts/schemas/sylvode-flow-convergence-result-v1.schema.json $defs.case_result)", () => {
   test("a real passing case materializes to a schema-valid case_result with real on-disk artifacts", async () => {
     const runResult = await runSameTextRangeEditCase(() => new FakeScenarioAdapter(), "result-writer-seed-1");
     expect(runResult.status).toBe("passed");

@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::{error::ApiError, middleware::bot_auth::BotAuthContext, response::ApiResponse};
 
 const RELEASE_READINESS_SCHEMA_VERSION: &str = "openpr.project.release_readiness.v1";
-const RELEASE_READINESS_SCHEMA_PATH: &str = "docs/schemas/openpr-project-release-readiness.schema.json";
+const RELEASE_READINESS_SCHEMA_PATH: &str = "scripts/schemas/openpr-project-release-readiness.schema.json";
 
 #[derive(Debug, FromQueryResult)]
 struct ProjectWorkspaceRow {
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(RELEASE_READINESS_SCHEMA_VERSION, "openpr.project.release_readiness.v1");
         assert_eq!(
             RELEASE_READINESS_SCHEMA_PATH,
-            "docs/schemas/openpr-project-release-readiness.schema.json"
+            "scripts/schemas/openpr-project-release-readiness.schema.json"
         );
     }
 

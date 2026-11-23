@@ -16,7 +16,7 @@ SIGNOFF_STATUS_REPORT_PATH="$REPORT_DIR/openpr-universal-form-signoff-status-202
 NEXT_SIGNOFF_REVIEW_PATH="$REPORT_DIR/openpr-universal-form-next-signoff-review-2026-05-31.md"
 SIGNOFF_DASHBOARD_PATH="$REPORT_DIR/openpr-universal-form-signoff-dashboard-2026-05-31.html"
 UI_REVIEW_GALLERY_PATH="$REPORT_DIR/openpr-universal-form-ui-review-gallery-2026-05-31.html"
-SCHEMA_PATH="$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json"
+SCHEMA_PATH="$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json"
 OUTPUT_JSON=0
 
 usage() {

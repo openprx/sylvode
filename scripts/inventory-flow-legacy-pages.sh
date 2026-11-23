@@ -47,7 +47,7 @@ Collects a read-only inventory of the legacy `pages` table
 (id,workspace_id,title,body_md,created_by,created_at,updated_at) across
 exactly the three required environments and writes
 evidence/v0.4/legacy-pages-inventory.json (schema:
-docs/schemas/sylvode-flow-legacy-pages-inventory-v1.schema.json).
+scripts/schemas/sylvode-flow-legacy-pages-inventory-v1.schema.json).
 
 The set of environments must be exactly {development, test,
 target_deployment}; anything else is a usage error (exit 2). Each

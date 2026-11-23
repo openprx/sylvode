@@ -1,4 +1,4 @@
-//! `serde` types mirroring `docs/schemas/sylvode-flow-convergence-result-v1.schema.json` and
+//! `serde` types mirroring `scripts/schemas/sylvode-flow-convergence-result-v1.schema.json` and
 //! `...benchmark-result-v1.schema.json` field-for-field.
 //!
 //! This includes their `additionalProperties: false` closed shape — every field in the schema's
@@ -7,7 +7,7 @@
 //!
 //! **Scope note**: this module defines the *shape* so a future full corpus/benchmark orchestrator
 //! can serialize directly into schema-valid JSON without hand-building strings. It does not
-//! itself run the JSON Schema validator (`docs/schemas/*.json`) against sample output — see the
+//! itself run the JSON Schema validator (`scripts/schemas/*.json`) against sample output — see the
 //! delivery report for why that was out of scope this round, and the manual field-by-field
 //! comparison instead.
 
@@ -444,7 +444,7 @@ pub struct ConvergenceResult {
 
 impl ConvergenceResult {
     pub const SCHEMA_VERSION: &'static str = "sylvode.flow.convergence-result.v1";
-    pub const SCHEMA_PATH: &'static str = "docs/schemas/sylvode-flow-convergence-result-v1.schema.json";
+    pub const SCHEMA_PATH: &'static str = "scripts/schemas/sylvode-flow-convergence-result-v1.schema.json";
     pub const RELEASE: &'static str = "0.3.0";
 }
 
@@ -636,7 +636,7 @@ pub struct BenchmarkResult {
 
 impl BenchmarkResult {
     pub const SCHEMA_VERSION: &'static str = "sylvode.flow.benchmark-result.v1";
-    pub const SCHEMA_PATH: &'static str = "docs/schemas/sylvode-flow-benchmark-result-v1.schema.json";
+    pub const SCHEMA_PATH: &'static str = "scripts/schemas/sylvode-flow-benchmark-result-v1.schema.json";
     pub const RELEASE: &'static str = "0.3.0";
 }
 
@@ -683,7 +683,7 @@ mod tests {
 
     /// Serializes a sample `IsolationCase`/`IsolationResult` and asserts every field name and
     /// enum literal matches `$defs/isolation_case` / `$defs/isolation_result` in
-    /// `docs/schemas/sylvode-flow-convergence-result-v1.schema.json` byte-for-byte. This is the
+    /// `scripts/schemas/sylvode-flow-convergence-result-v1.schema.json` byte-for-byte. This is the
     /// regression guard called for in work package 3a: it fails loudly the moment this struct
     /// drifts from the schema again (e.g. if someone reintroduces `worker_wall_approximation`,
     /// which the new schema's `isolation_cpu_meter` enum does not contain).

@@ -169,14 +169,14 @@ for path in \
   "$ROOT_DIR/docs/universal-forms-implementation-map.md" \
   "$ROOT_DIR/docs/universal-forms-acceptance.md" \
   "$ROOT_DIR/docs/universal-forms-production.md" \
-  "$ROOT_DIR/docs/schemas/openpr-universal-forms-readiness.schema.json" \
-  "$ROOT_DIR/docs/schemas/openpr-universal-forms-completion-audit.schema.json" \
-  "$ROOT_DIR/docs/schemas/openpr-universal-forms-development-status.schema.json" \
-  "$ROOT_DIR/docs/schemas/openpr-universal-forms-scenario-catalog.schema.json" \
-  "$ROOT_DIR/docs/schemas/openpr-universal-forms-implementation-map.schema.json" \
-  "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" \
-  "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-manifest.schema.json" \
-  "$ROOT_DIR/docs/schemas/openpr-universal-forms-release-gate.schema.json" \
+  "$ROOT_DIR/scripts/schemas/openpr-universal-forms-readiness.schema.json" \
+  "$ROOT_DIR/scripts/schemas/openpr-universal-forms-completion-audit.schema.json" \
+  "$ROOT_DIR/scripts/schemas/openpr-universal-forms-development-status.schema.json" \
+  "$ROOT_DIR/scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json" \
+  "$ROOT_DIR/scripts/schemas/openpr-universal-forms-implementation-map.schema.json" \
+  "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" \
+  "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-manifest.schema.json" \
+  "$ROOT_DIR/scripts/schemas/openpr-universal-forms-release-gate.schema.json" \
   "$ROOT_DIR/config/sylvode-runner.example.toml" \
   "$ROOT_DIR/scripts/start.sh" \
   "$ROOT_DIR/scripts/bootstrap-restaurant-demo.sh" \
@@ -292,11 +292,11 @@ contains "report docs index documents signoff dashboard progression smoke" "$REP
 contains "report docs index documents signoff dashboard Start Here section" "$REPORT_INDEX_PATH" "Start Here section"
 contains "report docs index documents dynamic signoff dashboard render smoke" "$REPORT_INDEX_PATH" "reads the current signoff status JSON"
 contains "report docs index documents final signoff dashboard finalizer handoff" "$REPORT_INDEX_PATH" "dashboard shows finalizer"
-contains "report docs index machine contracts include development status schema" "$REPORT_INDEX_PATH" "docs/schemas/openpr-universal-forms-development-status.schema.json"
-contains "report docs index machine contracts include scenario catalog schema" "$REPORT_INDEX_PATH" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json"
-contains "report docs index machine contracts include implementation map schema" "$REPORT_INDEX_PATH" "docs/schemas/openpr-universal-forms-implementation-map.schema.json"
-contains "report docs index machine contracts include delivery status schema" "$REPORT_INDEX_PATH" "docs/schemas/openpr-universal-forms-delivery-status.schema.json"
-contains "report docs index machine contracts include completion audit schema" "$REPORT_INDEX_PATH" "docs/schemas/openpr-universal-forms-completion-audit.schema.json"
+contains "report docs index machine contracts include development status schema" "$REPORT_INDEX_PATH" "scripts/schemas/openpr-universal-forms-development-status.schema.json"
+contains "report docs index machine contracts include scenario catalog schema" "$REPORT_INDEX_PATH" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json"
+contains "report docs index machine contracts include implementation map schema" "$REPORT_INDEX_PATH" "scripts/schemas/openpr-universal-forms-implementation-map.schema.json"
+contains "report docs index machine contracts include delivery status schema" "$REPORT_INDEX_PATH" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json"
+contains "report docs index machine contracts include completion audit schema" "$REPORT_INDEX_PATH" "scripts/schemas/openpr-universal-forms-completion-audit.schema.json"
 contains "report docs index points to manual signoff status" "$REPORT_INDEX_PATH" "openpr-universal-form-signoff-status-2026-05-31.md"
 contains "report docs index describes JSON next reviewer key" "$REPORT_INDEX_PATH" "next reviewer"
 contains "report docs index describes JSON recorder command" "$REPORT_INDEX_PATH" "recorder command template"
@@ -472,7 +472,7 @@ contains "README documents manual signoff row order contract" "$ROOT_DIR/README.
 contains "README links completion audit JSON command" "$ROOT_DIR/README.md" "scripts/report-universal-forms-completion-audit-json.sh"
 contains "README links completion audit JSON verifier" "$ROOT_DIR/README.md" "scripts/verify-universal-forms-completion-audit-json.sh"
 contains "README links completion audit JSON contract smoke" "$ROOT_DIR/README.md" "scripts/smoke-universal-forms-completion-audit-json-contract.sh"
-contains "README links completion audit JSON schema" "$ROOT_DIR/README.md" "docs/schemas/openpr-universal-forms-completion-audit.schema.json"
+contains "README links completion audit JSON schema" "$ROOT_DIR/README.md" "scripts/schemas/openpr-universal-forms-completion-audit.schema.json"
 contains "README documents completion audit nested shape contract" "$ROOT_DIR/README.md" 'It also rejects extra fields inside `reports`, `gates`,'
 contains "README links readiness summary command" "$ROOT_DIR/README.md" "scripts/report-universal-forms-readiness-summary.sh"
 contains "README links readiness JSON command" "$ROOT_DIR/README.md" "scripts/report-universal-forms-readiness-json.sh"
@@ -497,14 +497,14 @@ contains "README documents JSON recorder command" "$ROOT_DIR/README.md" "recorde
 contains "README documents row-level recorder commands" "$ROOT_DIR/README.md" "each row's recorder command"
 contains "README documents signoff JSON evidence map fields" "$ROOT_DIR/README.md" "automated evidence and reviewer check"
 contains "README documents signoff pending queue" "$ROOT_DIR/README.md" "pending_queue"
-contains "README links readiness JSON schema" "$ROOT_DIR/README.md" "docs/schemas/openpr-universal-forms-readiness.schema.json"
-contains "README links signoff status JSON schema" "$ROOT_DIR/README.md" "docs/schemas/openpr-universal-forms-signoff-status.schema.json"
-contains "README links development status JSON schema" "$ROOT_DIR/README.md" "docs/schemas/openpr-universal-forms-development-status.schema.json"
+contains "README links readiness JSON schema" "$ROOT_DIR/README.md" "scripts/schemas/openpr-universal-forms-readiness.schema.json"
+contains "README links signoff status JSON schema" "$ROOT_DIR/README.md" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json"
+contains "README links development status JSON schema" "$ROOT_DIR/README.md" "scripts/schemas/openpr-universal-forms-development-status.schema.json"
 contains "README documents development status row order contract" "$ROOT_DIR/README.md" "pins the ten development rows in tracker order"
-contains "README links scenario catalog JSON schema" "$ROOT_DIR/README.md" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json"
-contains "README links implementation map JSON schema" "$ROOT_DIR/README.md" "docs/schemas/openpr-universal-forms-implementation-map.schema.json"
-contains "README links delivery status JSON schema" "$ROOT_DIR/README.md" "docs/schemas/openpr-universal-forms-delivery-status.schema.json"
-contains "README links delivery manifest JSON schema" "$ROOT_DIR/README.md" "docs/schemas/openpr-universal-forms-delivery-manifest.schema.json"
+contains "README links scenario catalog JSON schema" "$ROOT_DIR/README.md" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json"
+contains "README links implementation map JSON schema" "$ROOT_DIR/README.md" "scripts/schemas/openpr-universal-forms-implementation-map.schema.json"
+contains "README links delivery status JSON schema" "$ROOT_DIR/README.md" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json"
+contains "README links delivery manifest JSON schema" "$ROOT_DIR/README.md" "scripts/schemas/openpr-universal-forms-delivery-manifest.schema.json"
 contains "README links delivery manifest verifier command" "$ROOT_DIR/README.md" "scripts/verify-universal-forms-delivery-manifest.sh"
 contains "README links delivery bundle audit command" "$ROOT_DIR/README.md" "scripts/audit-universal-forms-delivery-bundle.sh"
 contains "README links release gate command" "$ROOT_DIR/README.md" "scripts/gate-universal-forms-release.sh --allow-pending"
@@ -512,7 +512,7 @@ contains "README links release gate JSON verifier" "$ROOT_DIR/README.md" "script
 contains "README links release gate JSON contract smoke" "$ROOT_DIR/README.md" "scripts/smoke-universal-forms-release-gate-json-contract.sh"
 contains "README links release gate smoke" "$ROOT_DIR/README.md" "scripts/smoke-universal-forms-release-gate.sh"
 contains "README links release gate output smoke" "$ROOT_DIR/README.md" "scripts/smoke-universal-forms-release-gate-output.sh"
-contains "README links release gate JSON schema" "$ROOT_DIR/README.md" "docs/schemas/openpr-universal-forms-release-gate.schema.json"
+contains "README links release gate JSON schema" "$ROOT_DIR/README.md" "scripts/schemas/openpr-universal-forms-release-gate.schema.json"
 contains "README documents finalizer boundary" "$ROOT_DIR/README.md" "scripts/finalize-universal-forms-acceptance.sh"
 contains "README blocks premature manual acceptance" "$ROOT_DIR/README.md" 'must keep `用户侧人工验收` as `待处理`'
 contains "README documents compose API port" "$ROOT_DIR/README.md" "http://localhost:8081"
@@ -546,15 +546,15 @@ contains "docs index links implementation map" "$ROOT_DIR/docs/README.md" "./uni
 contains "docs index links scenario catalog" "$ROOT_DIR/docs/README.md" "./scenario-templates.md"
 contains "docs index links acceptance guide" "$ROOT_DIR/docs/README.md" "./universal-forms-acceptance.md"
 contains "docs index links production runbook" "$ROOT_DIR/docs/README.md" "./universal-forms-production.md"
-contains "docs index links readiness JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-readiness.schema.json"
-contains "docs index links signoff status JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-signoff-status.schema.json"
-contains "docs index links completion audit JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-completion-audit.schema.json"
-contains "docs index links development status JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-development-status.schema.json"
-contains "docs index links scenario catalog JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-scenario-catalog.schema.json"
-contains "docs index links implementation map JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-implementation-map.schema.json"
-contains "docs index links delivery status JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-delivery-status.schema.json"
-contains "docs index links delivery manifest JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-delivery-manifest.schema.json"
-contains "docs index links release gate JSON schema" "$ROOT_DIR/docs/README.md" "./schemas/openpr-universal-forms-release-gate.schema.json"
+contains "docs index links readiness JSON schema" "$ROOT_DIR/docs/README.md" "../scripts/schemas/openpr-universal-forms-readiness.schema.json"
+contains "docs index links signoff status JSON schema" "$ROOT_DIR/docs/README.md" "../scripts/schemas/openpr-universal-forms-signoff-status.schema.json"
+contains "docs index links completion audit JSON schema" "$ROOT_DIR/docs/README.md" "../scripts/schemas/openpr-universal-forms-completion-audit.schema.json"
+contains "docs index links development status JSON schema" "$ROOT_DIR/docs/README.md" "../scripts/schemas/openpr-universal-forms-development-status.schema.json"
+contains "docs index links scenario catalog JSON schema" "$ROOT_DIR/docs/README.md" "../scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json"
+contains "docs index links implementation map JSON schema" "$ROOT_DIR/docs/README.md" "../scripts/schemas/openpr-universal-forms-implementation-map.schema.json"
+contains "docs index links delivery status JSON schema" "$ROOT_DIR/docs/README.md" "../scripts/schemas/openpr-universal-forms-delivery-status.schema.json"
+contains "docs index links delivery manifest JSON schema" "$ROOT_DIR/docs/README.md" "../scripts/schemas/openpr-universal-forms-delivery-manifest.schema.json"
+contains "docs index links release gate JSON schema" "$ROOT_DIR/docs/README.md" "../scripts/schemas/openpr-universal-forms-release-gate.schema.json"
 not_contains "docs index does not retain stale 64-tool count" "$ROOT_DIR/docs/README.md" "64-tool"
 not_contains "docs index does not retain stale 64 MCP server count" "$ROOT_DIR/docs/README.md" "64 tools"
 contains "root README links implementation map" "$ROOT_DIR/README.md" "docs/universal-forms-implementation-map.md"
@@ -629,11 +629,11 @@ contains "acceptance guide documents signoff JSON evidence map fields" "$ROOT_DI
 contains "acceptance guide documents signoff pending queue" "$ROOT_DIR/docs/universal-forms-acceptance.md" "pending_queue"
 contains "acceptance guide documents readiness JSON signoff status JSON link" "$ROOT_DIR/docs/universal-forms-acceptance.md" "reports.signoff_status_json"
 contains "acceptance guide documents JSON schema path" "$ROOT_DIR/docs/universal-forms-acceptance.md" "schema_path"
-contains "acceptance guide links readiness JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "docs/schemas/openpr-universal-forms-readiness.schema.json"
+contains "acceptance guide links readiness JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/schemas/openpr-universal-forms-readiness.schema.json"
 contains "acceptance guide documents readiness next key enum" "$ROOT_DIR/docs/universal-forms-acceptance.md" "readiness JSON, signoff status JSON, release gate JSON, and delivery status JSON all constrain next manual keys"
 contains "acceptance guide includes signoff status JSON reporter" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/report-universal-forms-signoff-status-json.sh"
 contains "acceptance guide includes signoff status JSON verifier" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/verify-universal-forms-signoff-status-json.sh"
-contains "acceptance guide links signoff status JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "docs/schemas/openpr-universal-forms-signoff-status.schema.json"
+contains "acceptance guide links signoff status JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json"
 contains "acceptance guide explains signoff status JSON" "$ROOT_DIR/docs/universal-forms-acceptance.md" "machine-readable mirror of the reviewer-facing signoff report"
 contains "acceptance guide documents signoff next key enum" "$ROOT_DIR/docs/universal-forms-acceptance.md" 'next_row.key` is constrained to the seven manual signoff keys'
 contains "acceptance guide documents JSON structural schema checks" "$ROOT_DIR/docs/universal-forms-acceptance.md" "top-level additional-property drift"
@@ -643,7 +643,7 @@ contains "acceptance guide explains readiness JSON verifier" "$ROOT_DIR/docs/uni
 contains "acceptance guide includes development status JSON reporter" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/report-universal-forms-development-status-json.sh"
 contains "acceptance guide includes development status JSON verifier" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/verify-universal-forms-development-status-json.sh"
 contains "acceptance guide explains development status JSON" "$ROOT_DIR/docs/universal-forms-acceptance.md" "machine-readable development matrix"
-contains "acceptance guide links development status JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "docs/schemas/openpr-universal-forms-development-status.schema.json"
+contains "acceptance guide links development status JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/schemas/openpr-universal-forms-development-status.schema.json"
 contains "acceptance guide explains development status requirement/rule mirror" "$ROOT_DIR/docs/universal-forms-acceptance.md" "engineering requirement and completion rule"
 contains "acceptance guide documents development status row order contract" "$ROOT_DIR/docs/universal-forms-acceptance.md" "Its schema pins the ten development rows"
 contains "acceptance guide includes scenario catalog JSON reporter" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/report-universal-forms-scenario-catalog-json.sh"
@@ -652,12 +652,12 @@ contains "acceptance guide explains scenario catalog JSON" "$ROOT_DIR/docs/unive
 contains "acceptance guide explains scenario catalog operator fields" "$ROOT_DIR/docs/universal-forms-acceptance.md" "operator entrypoints, operator steps, primary MCP tools, connector kinds"
 contains "acceptance guide documents runtime scenario usage guide" "$ROOT_DIR/docs/universal-forms-acceptance.md" "runtime API and MCP response"
 contains "acceptance guide documents runtime usage guide smoke" "$ROOT_DIR/docs/universal-forms-acceptance.md" "form_records.aggregate"
-contains "acceptance guide links scenario catalog JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json"
+contains "acceptance guide links scenario catalog JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json"
 contains "acceptance guide documents scenario catalog row order contract" "$ROOT_DIR/docs/universal-forms-acceptance.md" "pinned catalog order"
 contains "acceptance guide includes implementation map JSON reporter" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/report-universal-forms-implementation-map-json.sh"
 contains "acceptance guide includes implementation map JSON verifier" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/verify-universal-forms-implementation-map-json.sh"
 contains "acceptance guide explains implementation map JSON" "$ROOT_DIR/docs/universal-forms-acceptance.md" "machine-readable implementation map"
-contains "acceptance guide links implementation map JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "docs/schemas/openpr-universal-forms-implementation-map.schema.json"
+contains "acceptance guide links implementation map JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/schemas/openpr-universal-forms-implementation-map.schema.json"
 contains "acceptance guide documents implementation map order contract" "$ROOT_DIR/docs/universal-forms-acceptance.md" "pins status marker and module"
 contains "acceptance guide includes UI artifact collector" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/collect-universal-forms-ui-artifacts.sh"
 contains "acceptance guide explains UI artifact collector" "$ROOT_DIR/docs/universal-forms-acceptance.md" "The UI artifact collector reruns the frontend build and browser smoke checks with screenshot capture enabled"
@@ -675,14 +675,14 @@ contains "acceptance guide passes explicit runbook to finalizer" "$ROOT_DIR/docs
 contains "acceptance guide includes completion audit JSON reporter" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/report-universal-forms-completion-audit-json.sh"
 contains "acceptance guide includes completion audit JSON verifier" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/verify-universal-forms-completion-audit-json.sh"
 contains "acceptance guide includes completion audit JSON contract smoke" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/smoke-universal-forms-completion-audit-json-contract.sh"
-contains "acceptance guide links completion audit JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "docs/schemas/openpr-universal-forms-completion-audit.schema.json"
+contains "acceptance guide links completion audit JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/schemas/openpr-universal-forms-completion-audit.schema.json"
 contains "acceptance guide documents completion audit nested shape contract" "$ROOT_DIR/docs/universal-forms-acceptance.md" "completion-gate consumers do not need to accept undocumented nested shape drift"
 contains "acceptance guide includes release gate" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/gate-universal-forms-release.sh"
 contains "acceptance guide includes release gate JSON verifier" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/verify-universal-forms-release-gate-json.sh"
 contains "acceptance guide includes release gate JSON contract smoke" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/smoke-universal-forms-release-gate-json-contract.sh"
 contains "acceptance guide includes release gate smoke" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/smoke-universal-forms-release-gate.sh"
 contains "acceptance guide includes release gate output smoke" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/smoke-universal-forms-release-gate-output.sh"
-contains "acceptance guide links release gate JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "docs/schemas/openpr-universal-forms-release-gate.schema.json"
+contains "acceptance guide links release gate JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/schemas/openpr-universal-forms-release-gate.schema.json"
 contains "acceptance guide documents release gate nested required checks" "$ROOT_DIR/docs/universal-forms-acceptance.md" "rejects missing required keys or extra fields inside those objects"
 contains "acceptance guide documents release gate mode enum" "$ROOT_DIR/docs/universal-forms-acceptance.md" 'The release gate mode enum is `blocked`, `pre_signoff`, and `release`'
 contains "acceptance guide documents release/delivery next key enum" "$ROOT_DIR/docs/universal-forms-acceptance.md" "release and delivery status next manual keys are constrained to the same seven manual signoff keys"
@@ -706,7 +706,7 @@ contains "acceptance guide includes delivery status JSON verifier" "$ROOT_DIR/do
 contains "acceptance guide includes delivery status JSON contract smoke" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/smoke-universal-forms-delivery-status-json-contract.sh"
 contains "acceptance guide includes delivery status output smoke" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/smoke-universal-forms-delivery-status-output.sh"
 contains "acceptance guide includes signoff status output smoke" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/smoke-universal-forms-signoff-status-output.sh"
-contains "acceptance guide links delivery status JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "docs/schemas/openpr-universal-forms-delivery-status.schema.json"
+contains "acceptance guide links delivery status JSON schema" "$ROOT_DIR/docs/universal-forms-acceptance.md" "scripts/schemas/openpr-universal-forms-delivery-status.schema.json"
 contains "acceptance guide explains delivery status JSON is on-demand" "$ROOT_DIR/docs/universal-forms-acceptance.md" "generated on demand"
 contains "acceptance guide documents delivery status verified prerequisites" "$ROOT_DIR/docs/universal-forms-acceptance.md" "verified_prerequisites"
 contains "acceptance guide documents delivery status manual signoff queue" "$ROOT_DIR/docs/universal-forms-acceptance.md" "manual_signoff_queue"
@@ -748,14 +748,14 @@ contains "production runbook passes explicit runbook to finalizer" "$ROOT_DIR/do
 contains "production runbook includes completion audit JSON reporter" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/report-universal-forms-completion-audit-json.sh"
 contains "production runbook includes completion audit JSON verifier" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/verify-universal-forms-completion-audit-json.sh"
 contains "production runbook includes completion audit JSON contract smoke" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/smoke-universal-forms-completion-audit-json-contract.sh"
-contains "production runbook links completion audit JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "docs/schemas/openpr-universal-forms-completion-audit.schema.json"
+contains "production runbook links completion audit JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/schemas/openpr-universal-forms-completion-audit.schema.json"
 contains "production runbook documents completion audit nested shape contract" "$ROOT_DIR/docs/universal-forms-production.md" "nested object shape"
 contains "production runbook includes release gate" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/gate-universal-forms-release.sh"
 contains "production runbook includes release gate JSON verifier" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/verify-universal-forms-release-gate-json.sh"
 contains "production runbook includes release gate JSON contract smoke" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/smoke-universal-forms-release-gate-json-contract.sh"
 contains "production runbook includes release gate smoke" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/smoke-universal-forms-release-gate.sh"
 contains "production runbook includes release gate output smoke" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/smoke-universal-forms-release-gate-output.sh"
-contains "production runbook links release gate JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "docs/schemas/openpr-universal-forms-release-gate.schema.json"
+contains "production runbook links release gate JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/schemas/openpr-universal-forms-release-gate.schema.json"
 contains "production runbook documents release gate nested required fields" "$ROOT_DIR/docs/universal-forms-production.md" "nested required fields"
 contains "production runbook documents release gate mode enum" "$ROOT_DIR/docs/universal-forms-production.md" 'The release gate mode enum is `blocked`, `pre_signoff`, and `release`'
 contains "production runbook documents release/delivery next key enum" "$ROOT_DIR/docs/universal-forms-production.md" "release and delivery status next manual keys are constrained to the same seven manual signoff keys"
@@ -803,23 +803,23 @@ contains "production runbook documents signoff JSON evidence map fields" "$ROOT_
 contains "production runbook documents signoff pending queue" "$ROOT_DIR/docs/universal-forms-production.md" "pending_queue"
 contains "production runbook documents readiness JSON signoff status JSON link" "$ROOT_DIR/docs/universal-forms-production.md" "reports.signoff_status_json"
 contains "production runbook documents JSON schema path" "$ROOT_DIR/docs/universal-forms-production.md" "schema_path"
-contains "production runbook links readiness JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "docs/schemas/openpr-universal-forms-readiness.schema.json"
+contains "production runbook links readiness JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/schemas/openpr-universal-forms-readiness.schema.json"
 contains "production runbook documents readiness next key enum" "$ROOT_DIR/docs/universal-forms-production.md" "readiness JSON, signoff status JSON, release gate JSON, and delivery status JSON all constrain next manual keys"
 contains "production runbook includes signoff status JSON reporter" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/report-universal-forms-signoff-status-json.sh"
 contains "production runbook includes signoff status JSON verifier" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/verify-universal-forms-signoff-status-json.sh"
-contains "production runbook links signoff status JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "docs/schemas/openpr-universal-forms-signoff-status.schema.json"
+contains "production runbook links signoff status JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json"
 contains "production runbook explains signoff JSON final flag" "$ROOT_DIR/docs/universal-forms-production.md" "final_signoff_allowed"
 contains "production runbook documents signoff next key enum" "$ROOT_DIR/docs/universal-forms-production.md" 'next_row.key` is constrained to the seven manual signoff keys'
-contains "production runbook links development status JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "docs/schemas/openpr-universal-forms-development-status.schema.json"
+contains "production runbook links development status JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/schemas/openpr-universal-forms-development-status.schema.json"
 contains "production runbook explains development status requirement/rule mirror" "$ROOT_DIR/docs/universal-forms-production.md" "phase, requirement, completion rule"
 contains "production runbook documents development status row order contract" "$ROOT_DIR/docs/universal-forms-production.md" "pins the ten"
-contains "production runbook links scenario catalog JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "docs/schemas/openpr-universal-forms-scenario-catalog.schema.json"
+contains "production runbook links scenario catalog JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json"
 contains "production runbook documents scenario catalog row order contract" "$ROOT_DIR/docs/universal-forms-production.md" "pins the six built-in templates"
 contains "production runbook documents scenario catalog operator entrypoints" "$ROOT_DIR/docs/universal-forms-production.md" "pins the three operator entrypoints"
 contains "production runbook documents scenario catalog connector kinds" "$ROOT_DIR/docs/universal-forms-production.md" "connector kinds"
 contains "production runbook documents runtime scenario usage guide" "$ROOT_DIR/docs/universal-forms-production.md" "runtime"
 contains "production runbook documents scenario template MCP resource" "$ROOT_DIR/docs/universal-forms-production.md" "sylvode://scenario-templates"
-contains "production runbook links implementation map JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "docs/schemas/openpr-universal-forms-implementation-map.schema.json"
+contains "production runbook links implementation map JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/schemas/openpr-universal-forms-implementation-map.schema.json"
 contains "production runbook documents implementation map order contract" "$ROOT_DIR/docs/universal-forms-production.md" "pins status marker and module"
 contains "production runbook documents JSON structural schema checks" "$ROOT_DIR/docs/universal-forms-production.md" "extra top-level keys"
 contains "production runbook documents JSON typed schema checks" "$ROOT_DIR/docs/universal-forms-production.md" "typed counters and booleans"
@@ -828,7 +828,7 @@ contains "production runbook includes delivery manifest verifier" "$ROOT_DIR/doc
 contains "production runbook includes delivery manifest JSON generation" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/report-universal-forms-delivery-manifest-json.sh"
 contains "production runbook includes delivery manifest JSON verifier" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/verify-universal-forms-delivery-manifest-json.sh"
 contains "production runbook includes delivery manifest JSON contract smoke" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/smoke-universal-forms-delivery-manifest-json-contract.sh"
-contains "production runbook links delivery manifest JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "docs/schemas/openpr-universal-forms-delivery-manifest.schema.json"
+contains "production runbook links delivery manifest JSON schema" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/schemas/openpr-universal-forms-delivery-manifest.schema.json"
 contains "production runbook documents delivery manifest nested keys" "$ROOT_DIR/docs/universal-forms-production.md" "pinned top-level and nested keys"
 contains "production runbook documents delivery manifest row order" "$ROOT_DIR/docs/universal-forms-production.md" "row-order"
 contains "production runbook includes final delivery-bundle audit" "$ROOT_DIR/docs/universal-forms-production.md" "scripts/audit-universal-forms-delivery-bundle.sh"
@@ -1012,7 +1012,7 @@ contains "development status JSON contract smoke checks row order drift" "$ROOT_
 contains "development status JSON contract smoke checks phase drift" "$ROOT_DIR/scripts/smoke-universal-forms-development-status-json-contract.sh" "row phase drift"
 contains "development status JSON contract smoke checks completion drift" "$ROOT_DIR/scripts/smoke-universal-forms-development-status-json-contract.sh" "completion rule drift"
 contains "development status JSON contract smoke checks row drift" "$ROOT_DIR/scripts/smoke-universal-forms-development-status-json-contract.sh" "row count drift"
-contains "completion audit JSON schema pins v1" "$ROOT_DIR/docs/schemas/openpr-universal-forms-completion-audit.schema.json" "openpr.universal_forms.completion_audit.v1"
+contains "completion audit JSON schema pins v1" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-completion-audit.schema.json" "openpr.universal_forms.completion_audit.v1"
 contains "completion audit JSON reporter emits schema version" "$ROOT_DIR/scripts/report-universal-forms-completion-audit-json.sh" "openpr.universal_forms.completion_audit.v1"
 contains "completion audit JSON verifier checks evidence parity" "$ROOT_DIR/scripts/verify-universal-forms-completion-audit-json.sh" "automated check count matches evidence"
 contains "completion audit JSON verifier rejects nested extra fields" "$ROOT_DIR/scripts/verify-universal-forms-completion-audit-json.sh" "JSON finalization object has no extra keys beyond schema"
@@ -1112,8 +1112,8 @@ contains "finalizer validates signoff dashboard progression" "$ROOT_DIR/scripts/
 contains "finalizer refreshes signoff status report" "$ROOT_DIR/scripts/finalize-universal-forms-acceptance.sh" "openpr-universal-form-signoff-status-2026-05-31.md"
 contains "finalizer verifies official delivery bundle after refresh" "$ROOT_DIR/scripts/finalize-universal-forms-acceptance.sh" "post-finalization delivery bundle verified"
 contains "finalizer is idempotent for finalized trackers" "$ROOT_DIR/scripts/finalize-universal-forms-acceptance.sh" "universal forms acceptance already finalized in tracker"
-contains "readiness JSON schema defines reusable manual key enum" "$ROOT_DIR/docs/schemas/openpr-universal-forms-readiness.schema.json" '"manual_key"'
-contains "readiness JSON schema constrains next manual signoff key" "$ROOT_DIR/docs/schemas/openpr-universal-forms-readiness.schema.json" '#/$defs/manual_key'
+contains "readiness JSON schema defines reusable manual key enum" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-readiness.schema.json" '"manual_key"'
+contains "readiness JSON schema constrains next manual signoff key" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-readiness.schema.json" '#/$defs/manual_key'
 contains "readiness JSON verifier checks next row key enum" "$ROOT_DIR/scripts/verify-universal-forms-readiness-json.sh" "JSON next row key is allowed by schema"
 contains "readiness JSON verifier checks manual row order" "$ROOT_DIR/scripts/verify-universal-forms-readiness-json.sh" "JSON manual row keys match schema order"
 contains "readiness JSON verifier rejects nested extra fields" "$ROOT_DIR/scripts/verify-universal-forms-readiness-json.sh" "JSON manual row objects have no extra keys beyond schema"
@@ -1124,9 +1124,9 @@ contains "release gate uses strict mode by default" "$ROOT_DIR/scripts/gate-univ
 contains "release gate documents pre-signoff mode" "$ROOT_DIR/scripts/gate-universal-forms-release.sh" "--allow-pending"
 contains "release gate emits schema version" "$ROOT_DIR/scripts/gate-universal-forms-release.sh" "openpr.universal_forms.release_gate.v1"
 contains "release gate emits schema path" "$ROOT_DIR/scripts/gate-universal-forms-release.sh" "schema_path"
-contains "release gate JSON schema pins v1" "$ROOT_DIR/docs/schemas/openpr-universal-forms-release-gate.schema.json" "openpr.universal_forms.release_gate.v1"
-contains "release gate JSON schema defines reusable manual key enum" "$ROOT_DIR/docs/schemas/openpr-universal-forms-release-gate.schema.json" '"manual_key"'
-contains "release gate JSON schema constrains next manual signoff key" "$ROOT_DIR/docs/schemas/openpr-universal-forms-release-gate.schema.json" '#/$defs/manual_key'
+contains "release gate JSON schema pins v1" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-release-gate.schema.json" "openpr.universal_forms.release_gate.v1"
+contains "release gate JSON schema defines reusable manual key enum" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-release-gate.schema.json" '"manual_key"'
+contains "release gate JSON schema constrains next manual signoff key" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-release-gate.schema.json" '#/$defs/manual_key'
 contains "release gate JSON verifier checks schema pin" "$ROOT_DIR/scripts/verify-universal-forms-release-gate-json.sh" "schema file pins release gate JSON v1"
 contains "release gate JSON verifier checks next manual key enum" "$ROOT_DIR/scripts/verify-universal-forms-release-gate-json.sh" "JSON next manual key is allowed by schema"
 contains "release gate JSON verifier checks nested schema additional properties" "$ROOT_DIR/scripts/verify-universal-forms-release-gate-json.sh" "schema file disallows tracker status additional properties"
@@ -1169,26 +1169,26 @@ contains "delivery status command emits manual signoff queue" "$ROOT_DIR/scripts
 contains "delivery status command emits review surfaces" "$ROOT_DIR/scripts/status-universal-forms-delivery.sh" "review_surfaces"
 contains "delivery status command emits signoff dashboard review surface" "$ROOT_DIR/scripts/status-universal-forms-delivery.sh" "signoff_dashboard"
 contains "delivery status command emits schema version" "$ROOT_DIR/scripts/status-universal-forms-delivery.sh" "openpr.universal_forms.delivery_status.v1"
-contains "delivery status JSON schema pins v1" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "openpr.universal_forms.delivery_status.v1"
-contains "delivery status JSON schema pins verified prerequisites" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "verified_prerequisites"
-contains "delivery status JSON schema pins completion summary" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_summary"
-contains "delivery status JSON schema pins completion breakdown" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_breakdown"
-contains "delivery status JSON schema defines completion breakdown row" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_breakdown_row"
-contains "delivery status JSON schema pins release blockers" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "release_blockers"
-contains "delivery status JSON schema defines release blocker row" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "release_blocker"
-contains "delivery status JSON schema pins next actions" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "next_actions"
-contains "delivery status JSON schema defines next action row" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "next_action"
-contains "delivery status JSON schema requires next reviewer check" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" '"reviewer_check"'
-contains "delivery status JSON schema requires next automated evidence" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" '"automated_evidence"'
-contains "delivery status JSON schema pins overall completion fields" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "overall_items_remaining"
-contains "delivery status JSON schema pins manual signoff queue" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_signoff_queue"
-contains "delivery status JSON schema pins review surfaces" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "review_surfaces"
-contains "delivery status JSON schema defines manual queue row" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_queue_row"
-contains "delivery status JSON schema pins delivery state enum" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "engineering_complete_pending_manual_signoff"
-contains "delivery status JSON schema pins progression prerequisite" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_signoff_progression_smoke"
-contains "delivery status JSON schema defines reusable manual key enum" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" '"manual_key"'
-contains "delivery status JSON schema constrains next manual signoff key" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" '#/$defs/manual_key'
-contains "delivery status JSON schema uses release gate release mode" "$ROOT_DIR/docs/schemas/openpr-universal-forms-delivery-status.schema.json" '"release"'
+contains "delivery status JSON schema pins v1" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "openpr.universal_forms.delivery_status.v1"
+contains "delivery status JSON schema pins verified prerequisites" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "verified_prerequisites"
+contains "delivery status JSON schema pins completion summary" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_summary"
+contains "delivery status JSON schema pins completion breakdown" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_breakdown"
+contains "delivery status JSON schema defines completion breakdown row" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "completion_breakdown_row"
+contains "delivery status JSON schema pins release blockers" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "release_blockers"
+contains "delivery status JSON schema defines release blocker row" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "release_blocker"
+contains "delivery status JSON schema pins next actions" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "next_actions"
+contains "delivery status JSON schema defines next action row" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "next_action"
+contains "delivery status JSON schema requires next reviewer check" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '"reviewer_check"'
+contains "delivery status JSON schema requires next automated evidence" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '"automated_evidence"'
+contains "delivery status JSON schema pins overall completion fields" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "overall_items_remaining"
+contains "delivery status JSON schema pins manual signoff queue" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_signoff_queue"
+contains "delivery status JSON schema pins review surfaces" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "review_surfaces"
+contains "delivery status JSON schema defines manual queue row" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_queue_row"
+contains "delivery status JSON schema pins delivery state enum" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "engineering_complete_pending_manual_signoff"
+contains "delivery status JSON schema pins progression prerequisite" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" "manual_signoff_progression_smoke"
+contains "delivery status JSON schema defines reusable manual key enum" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '"manual_key"'
+contains "delivery status JSON schema constrains next manual signoff key" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '#/$defs/manual_key'
+contains "delivery status JSON schema uses release gate release mode" "$ROOT_DIR/scripts/schemas/openpr-universal-forms-delivery-status.schema.json" '"release"'
 contains "delivery status JSON verifier checks readiness parity" "$ROOT_DIR/scripts/verify-universal-forms-delivery-status-json.sh" "stage matches readiness JSON"
 contains "delivery status JSON verifier checks release gate parity" "$ROOT_DIR/scripts/verify-universal-forms-delivery-status-json.sh" "release gate mode matches release gate JSON"
 contains "delivery status JSON verifier checks prerequisite order" "$ROOT_DIR/scripts/verify-universal-forms-delivery-status-json.sh" "JSON verified prerequisites match schema order"

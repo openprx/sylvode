@@ -38,7 +38,7 @@ surface-coverage-v1}.md under --contracts-root, recomputes the full
 REST<->MCP<->CLI<->UI cross-reference, probes the shipped MCP/CLI binaries
 and API route registrations, and writes
 evidence/vX.Y/surface-coverage-result.json (schema:
-docs/schemas/sylvode-flow-surface-coverage-result-v1.schema.json).
+scripts/schemas/sylvode-flow-surface-coverage-result-v1.schema.json).
 
 Options:
   --release X.Y           Release view, e.g. "0.4". Required. Determines
