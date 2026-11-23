@@ -5,7 +5,6 @@
   "smoke_note": null,
   "preregistration_signature": {
     "status": "APPROVED_FOR_FORMAL_RUN",
-    "record_path": "evidence/v2/PREREGISTRATION-SIGNATURE.md",
     "reviewer": "OpenAI Codex (independent reviewer, did not write this runner)",
     "signed_at": "2026-08-29T13:41:56Z",
     "bound_hashes": {

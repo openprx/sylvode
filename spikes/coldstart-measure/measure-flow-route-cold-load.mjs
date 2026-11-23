@@ -1,5 +1,5 @@
-// `flow_route_cold_load_ms_p95` per ADR-0015 (current revision R7 -- APPROVED_FOR_FORMAL_RUN,
-// see evidence/v2/PREREGISTRATION-SIGNATURE.md) (/opt/working/sylvode-flow/decisions/
+// `flow_route_cold_load_ms_p95` per ADR-0015 (current revision R7 -- APPROVED_FOR_FORMAL_RUN)
+// (/opt/working/sylvode-flow/decisions/
 // ADR-0015-cold-start-measurement-split.md) section 3.4. ADR is still `Proposed`: this evidence
 // is protocol-conformant but MUST NOT be used to decide any hard gate until the ADR is Accepted.
 // Predregistration history: rejected at R4 and R5 (`NOT_SIGNED_HOLD`), signed at R7
@@ -592,7 +592,6 @@ async function main() {
         : null,
       preregistration_signature: {
         status: "APPROVED_FOR_FORMAL_RUN",
-        record_path: "evidence/v2/PREREGISTRATION-SIGNATURE.md",
         reviewer: "OpenAI Codex (independent reviewer, did not write this runner)",
         signed_at: "2026-08-29T13:41:56Z",
         bound_hashes: {
@@ -604,7 +603,7 @@ async function main() {
         note: "hash_verification_this_run is this actual run's machine-executed check result (verifyPreregistrationHashes(), lib/common.mjs), computed at process start before any browser/network work -- not merely a claim. Per the reviewer's hard constraint, the raw-socket independent-byte-count judgment criterion (measureRawHttpResponseBytes) was NOT changed for this run, regardless of outcome -- a failure there is reported as fail-closed invalid, not worked around.",
       },
       reviewer_constraint_note:
-        "Reviewer's binding constraint (see PREREGISTRATION-SIGNATURE.md): the raw-socket independent-byte-count check (Connection: close, no browser connection-reuse semantics) has operational fragility. If it destabilizes during this run, the affected sample(s) are fail-closed invalid -- this file contains NO fallback and NO alternate judgment path; switching to the reviewer's suggested alternative (browser-observed identity body length) would change the signed protocol and requires a new hash + re-signature, and is explicitly forbidden after formal results exist. See throughput_calibration_by_sample below for the actual outcome.",
+        "Reviewer's binding constraint: the raw-socket independent-byte-count check (Connection: close, no browser connection-reuse semantics) has operational fragility. If it destabilizes during this run, the affected sample(s) are fail-closed invalid -- this file contains NO fallback and NO alternate judgment path; switching to the reviewer's suggested alternative (browser-observed identity body length) would change the signed protocol and requires a new hash + re-signature, and is explicitly forbidden after formal results exist. See throughput_calibration_by_sample below for the actual outcome.",
       metric: "flow_route_cold_load_ms_p95",
       ready_postconditions_used: "1-5 (all), including mount+rAF",
       probe_scope_note: "This metric's read/write probe read-back is DOM-only. Per ADR-0015 (R6 correction, still in force at R7), independent CRDT-state (LoroDoc/Y.Doc) cross-checking is NOT required for this metric -- that verification is engine_runtime_ready's job (see that metric's own evidence, which reads back exclusively via the candidate's CRDT container API). Recorded here explicitly so this metric's numbers are never read as having verified engine/CRDT state: they verify DOM state (and, via the shared expected_semantic_hash, cross-candidate DOM consistency) only.",

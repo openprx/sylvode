@@ -382,8 +382,8 @@ export function hashRunnerFiles(coldstartMeasureDir, extraFiles = []) {
   return h.digest("hex");
 }
 
-// Coordinator directive 2026-08-29 (APPROVED_FOR_FORMAL_RUN): the predregistration signature at
-// `evidence/v2/PREREGISTRATION-SIGNATURE.md` binds three file hashes -- "任一字节变更即失效". This
+// Coordinator directive 2026-08-29 (APPROVED_FOR_FORMAL_RUN): the predregistration signature
+// binds three file hashes -- "任一字节变更即失效". This
 // function makes that check MACHINE-VERIFIED at the start of every formal run (not just something
 // a human confirmed once via a shell command before starting), matching this whole delivery's
 // "机器验证不是靠人看" pattern (see probe/check-module-graph.mjs for the same principle applied to

@@ -123,7 +123,7 @@
       "state_bearing": true,
       "materialization_state": "materialized",
       "classification_basis": [
-        "live production stack with a public URL (https://<public-domain>) and a real admin account; per CLAUDE.md's connector-retirement note, already carries real usage -- unambiguously state-bearing"
+        "live production stack with a public URL (https://<public-domain>) and a real admin account; already carries real usage -- unambiguously state-bearing"
       ],
       "schema_migrations_applied_count": 53,
       "schema_migrations_latest_applied": "0052_drop_connectors_and_agent_invocations.sql (one behind local dev's 0053)"

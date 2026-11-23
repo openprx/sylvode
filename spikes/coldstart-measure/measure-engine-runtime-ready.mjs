@@ -1,5 +1,4 @@
-// `engine_runtime_ready_ms_p95` per ADR-0015 (current revision R7 -- APPROVED_FOR_FORMAL_RUN, see
-// evidence/v2/PREREGISTRATION-SIGNATURE.md; this metric's adapter-API-only/vendor-exclusion design
+// `engine_runtime_ready_ms_p95` per ADR-0015 (current revision R7 -- APPROVED_FOR_FORMAL_RUN; this metric's adapter-API-only/vendor-exclusion design
 // dates to R4 and was independently CONFIRMED correct through the predregistration rounds, no
 // functional changes to this file since) -- (/opt/working/sylvode-flow/decisions/
 // ADR-0015-cold-start-measurement-split.md) section 3.3 + 3.2 item 4. ADR is still `Proposed`:
@@ -456,7 +455,6 @@ async function main() {
       : null,
     preregistration_signature: {
       status: "APPROVED_FOR_FORMAL_RUN",
-      record_path: "evidence/v2/PREREGISTRATION-SIGNATURE.md",
       reviewer: "OpenAI Codex (independent reviewer, did not write this runner)",
       signed_at: "2026-08-29T13:41:56Z",
       bound_hashes: {

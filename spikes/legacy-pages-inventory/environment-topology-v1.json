@@ -120,7 +120,7 @@
       },
       "state_bearing": true,
       "classification_basis": [
-        "live production stack with a public URL and a real admin account and (per CLAUDE.md's own connector-retirement note) is understood to already carry real usage -- unambiguously state-bearing by any definition.",
+        "live production stack with a public URL and a real admin account and is understood to already carry real usage -- unambiguously state-bearing by any definition.",
         "read-only confirmation collected this round: `docker compose ps` on <deployment-host> shows all 5 services (postgres, api, worker, mcp-server, frontend) 'Up 13 days'; `SELECT count(*) FROM schema_migrations` (the migration ledger table, NOT pages) = 53, consistent with migrations/0053_drop_event_outbox.sql being the latest file on disk at this repo's current HEAD."
       ]
     },
