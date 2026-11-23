@@ -47,7 +47,10 @@ export const FLOW_ERROR_CODES = [
  * 本地错误码 `network_error`"): no response at all, or a 5xx without an `error_code` (a proxy or
  * gateway error page). Kept apart from `FLOW_ERROR_CODES`, the server's fourteen-code set, so a
  * wire frame or envelope carrying one of these names is never mistaken for a server rejection. */
-export const FLOW_LOCAL_ERROR_CODES = ['network_error'] as const satisfies readonly FlowErrorCode[];
+export const FLOW_LOCAL_ERROR_CODES = [
+	'network_error',
+	'collab_handshake_failed'
+] as const satisfies readonly FlowErrorCode[];
 
 /** The stable codes whose only producer is the v0.8 import/export REST surface
  * (`error-mapping-v1.md`: "n/a；import/export REST only"). Both are permanent failures
@@ -421,6 +424,7 @@ function isRecoverable(code: FlowErrorCode): boolean {
 		case 'authorization_churn':
 		case 'server_draining':
 		case 'network_error':
+		case 'collab_handshake_failed':
 			return true;
 		default:
 			return false;

@@ -49,7 +49,11 @@ export type FlowErrorCode =
 	| 'unsupported_format'
 	/** Web-local (`error-mapping-v1.md` "Web 本地错误码"): no response, or a 5xx without an
 	 * `error_code`. Never produced by a server; `recoverable=true`, retried under the same key. */
-	| 'network_error';
+	| 'network_error'
+	/** Web-local: the WebSocket opened (or tried to) but the server never completed the
+	 * collaboration handshake (no server `hello`, or the socket closed first), repeatedly.
+	 * Never produced by a server; `recoverable=true` by a user-initiated retry. */
+	| 'collab_handshake_failed';
 
 export interface FlowDrainDetails {
 	readonly reason: 'drain' | 'contention';

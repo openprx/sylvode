@@ -30,6 +30,9 @@
 		count?: number;
 		/** What was searched for, for `noSearchResults`. */
 		query?: string;
+		/** Replaces the heading of the kind, already translated (a state the catalogue has no
+		 * wording for, such as a live connection that could not start). */
+		title?: string;
 		/** Replaces the body sentence of the kind (a feature that says more than the catalogue). */
 		message?: string;
 		/** The one way forward. The label defaults per kind where the wording has one. */
@@ -44,6 +47,7 @@
 		place = '',
 		count,
 		query = '',
+		title,
 		message,
 		action,
 		...rest
@@ -102,7 +106,7 @@
 		{:else}
 			<Lock size={24} class="glyph" aria-hidden="true" />
 		{/if}
-		<p class="title">{$t(copy.titleKey, { values })}</p>
+		<p class="title">{title ?? $t(copy.titleKey, { values })}</p>
 		{#if body}<p class="body">{body}</p>{/if}
 		{#if action && actionLabel}
 			<div class="action">

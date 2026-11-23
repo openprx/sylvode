@@ -35,6 +35,7 @@
 	} from '#lib/flow/legacy-editor.js';
 	import { flowApi } from '#lib/api/flow.js';
 	import FlowCanvas from '#lib/components/flow/FlowCanvas.svelte';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import FlowContextPanel from '#lib/components/flow/FlowContextPanel.svelte';
 	import FlowResizablePane from './FlowResizablePane.svelte';
 	import FlowPageToolbar from './FlowPageToolbar.svelte';
@@ -456,6 +457,13 @@
 		await openCurrent();
 	}
 
+	/** The retry of the "live editing could not start" state: a fresh open, hence a fresh
+	 * session with a fresh handshake count. Asked for by the user, never repeated on a timer. */
+	function retryOpen(): void {
+		openedObjectId = null;
+		void openCurrent();
+	}
+
 	function ensureRichEditor(): Promise<boolean> {
 		if (richEditorReady) return Promise.resolve(true);
 		if (richUpgradePromise) return richUpgradePromise;
@@ -770,7 +778,16 @@
 		</div>
 	{/if}
 {/snippet}
-{#if loadError}
+{#if loadError?.code === 'collab_handshake_failed'}
+	<div class="flex flex-1 items-center justify-center p-8" data-testid="flow-handshake-failed">
+		<StateBlock
+			kind="loadFailed"
+			title={$t('flow.route.handshakeFailedTitle')}
+			message={$t(flowErrorI18nKey(loadError))}
+			action={{ label: $t('flow.route.handshakeFailedRetry'), run: retryOpen, primary: true }}
+		/>
+	</div>
+{:else if loadError}
 	<div class="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center" role="alert">
 		<h1 class="text-lg font-semibold text-fg">
 			{loadError.code === 'not_found'

@@ -240,6 +240,8 @@ export class FakeCollabServer {
 	readonly updatesSeen: UpdateSeen[] = [];
 	readonly presenceSeen: Array<Record<string, unknown>> = [];
 	readonly hellos: Array<Record<string, unknown>> = [];
+	/** What the server does with a client `hello`: answer it, say nothing, or drop the socket. */
+	helloMode: 'answer' | 'silent' | 'close' = 'answer';
 	/** Accepted updates whose import produced only pending (causally incomplete) operations. */
 	pendingAccepted = 0;
 	/** Replays of an already committed `update_id`, answered with the original receipt. */
@@ -335,6 +337,11 @@ export class FakeCollabServer {
 		switch (frame.type) {
 			case 'hello':
 				this.hellos.push(frame);
+				if (this.helloMode === 'silent') return;
+				if (this.helloMode === 'close') {
+					socket.serverClose(1006, '');
+					return;
+				}
 				socket.deliver({
 					type: 'hello',
 					protocol_version: 1,

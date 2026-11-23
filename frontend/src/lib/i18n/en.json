@@ -2802,6 +2802,7 @@
 				"sending_paused": "Not saved: the server keeps failing to save right now. Your changes are kept on this device and sending resumes on its own after you edit or reconnect. Download a copy to be safe.",
 				"remote_update_unreadable": "This page could not be opened safely: the document engine failed on data from the server, even after rebuilding. Editing is stopped here and unsent changes are kept on this device. The rest of the app still works. Reload the page; if it keeps happening, contact a workspace administrator."
 			},
+			"collab_handshake_failed": "Live editing could not start. The server did not complete the connection handshake. Try again, or reload the page.",
 			"integrityRepairLink": "Open workspace operations",
 			"network_error": "Could not reach the server (network failure or gateway error). The result is unknown: the change may or may not have been applied. Retrying the same change is safe.",
 			"editor_transaction_aborted": "Editing is paused after an interrupted operation. Your earlier text, including unsaved changes, is preserved. Undo history was reset. Download a recovery copy before reloading this tab."
@@ -2889,6 +2890,8 @@
 			}
 		},
 		"route": {
+			"handshakeFailedTitle": "Live editing could not start",
+			"handshakeFailedRetry": "Try again",
 			"disabledTitle": "Flow is not enabled",
 			"disabledBody": "This workspace has not enabled Flow.",
 			"notFoundTitle": "Not found",

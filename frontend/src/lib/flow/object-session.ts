@@ -107,6 +107,10 @@ export interface SessionOptions {
 	readonly clock?: PresenceClock;
 	/** How long a sent `update` may go unanswered before the connection is treated as lost. */
 	readonly answerTimeoutMs?: number;
+	/** How long a socket may take to produce the server `hello` (`HANDSHAKE_TIMEOUT_MS`). */
+	readonly handshakeTimeoutMs?: number;
+	/** The shortest wait after a failed handshake (`HANDSHAKE_RETRY_FLOOR_MS`). */
+	readonly handshakeRetryFloorMs?: number;
 	/** Where `online`/`offline` come from. Defaults to `window` + `navigator.onLine`. */
 	readonly connectivity?: Connectivity | null;
 }
@@ -139,6 +143,17 @@ const DEFAULT_ANSWER_TIMEOUT_MS = 20_000;
 /** How long `connect()` waits for the first `snapshot` before giving up on this attempt. */
 const CONNECT_TIMEOUT_MS = 15_000;
 const BACKOFF_STEPS_MS = [250, 500, 1000, 2000, 5000];
+/** How long a socket may take to answer this client's `hello` with the server's `hello`, counted
+ * from the moment the socket is created. The server's own bound is 10 s; a healthy server answers
+ * in milliseconds, so the client gives up on a silent one well before that. */
+export const HANDSHAKE_TIMEOUT_MS = 4_000;
+/** Consecutive sockets that end without a server `hello` (silence past the bound, or a close with
+ * no frozen meaning) before the session stops retrying and reports `collab_handshake_failed`. */
+export const HANDSHAKE_FAILURE_LIMIT = 3;
+/** The shortest wait before the retry that follows a failed handshake, doubled per failure, so a
+ * server that drops every handshake is not retried in a tight loop (1 s, then 2 s). It is a floor
+ * under the ordinary jittered backoff, which alone can come out near zero. */
+export const HANDSHAKE_RETRY_FLOOR_MS = 1_000;
 
 function toBase64(bytes: Uint8Array): string {
 	let binary = '';
@@ -196,6 +211,12 @@ export class LoroObjectSession implements ObjectSessionContract {
 	private lastReconnectDelayMs: number | null = null;
 	private connectTimeout: ReturnType<typeof setTimeout> | null = null;
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Bounds the wait for the server `hello` on the current socket. */
+	private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Consecutive sockets that ended without a server `hello`; zero once one arrives. */
+	private handshakeFailures = 0;
+	private readonly handshakeTimeoutMs: number;
+	private readonly handshakeRetryFloorMs: number;
 	private disposed = false;
 	private manualClose = false;
 	private readonly stateStore = writable<SyncState>('local');
@@ -270,6 +291,8 @@ export class LoroObjectSession implements ObjectSessionContract {
 		this.clientId = randomUuid();
 		this.clock = options.clock ?? { now: () => Date.now() };
 		this.answerTimeoutMs = options.answerTimeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS;
+		this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
+		this.handshakeRetryFloorMs = options.handshakeRetryFloorMs ?? HANDSHAKE_RETRY_FLOOR_MS;
 		this.remotePresence = new RemotePresenceMap(this.clock);
 		this.presenceThrottle = new PresenceThrottle<PresencePayload>(
 			(payload) => this.sendPresence(payload),
@@ -398,7 +421,12 @@ export class LoroObjectSession implements ObjectSessionContract {
 			// server-contention banner for what is really "this browser got no answer", and would
 			// have made every "the UI honoured the server's reason" assertion pass vacuously.
 			this.connectTimeout = setTimeout(
-				() => reject(clientError('resync_required')),
+				// A connect that spent its time on sockets that never completed the handshake is
+				// that failure, not a missing snapshot.
+				() =>
+					reject(
+						clientError(this.handshakeFailures > 0 ? 'collab_handshake_failed' : 'resync_required')
+					),
 				CONNECT_TIMEOUT_MS
 			);
 		});
@@ -528,6 +556,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 		if (this.disposed || this.terminal || this.revoked || this.socket) return;
 		const socket = new WebSocket(url.href);
 		this.socket = socket;
+		this.startHandshakeTimer(socket);
 		this.authorizationNotifications = ticket.authorization_notifications === true;
 		this.snapshotReceived = false;
 		this.initialAuthorizationApplied = false;
@@ -562,6 +591,8 @@ export class LoroObjectSession implements ObjectSessionContract {
 			}
 
 			if (frame.type === 'hello' && !sentOpen) {
+				this.clearHandshakeTimer();
+				this.handshakeFailures = 0;
 				this.authorizationSessionId =
 					typeof frame.session_id === 'string' ? frame.session_id : null;
 				this.authoritySequence = 0;
@@ -586,6 +617,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 			// socket's late close must not touch the connection that replaced it (a real
 			// browser delivers `close` asynchronously, after the replacement may be open).
 			if (this.intentionallyClosed.has(socket) || !wasCurrent) return;
+			this.clearHandshakeTimer();
 			this.onConnectionLost();
 			if (this.manualClose || this.disposed || this.terminal) return;
 			if (event.code === SERVER_REJECTED_CLOSE_CODE) {
@@ -607,6 +639,12 @@ export class LoroObjectSession implements ObjectSessionContract {
 			const closed = flowErrorFromCloseCode(event.code, event.reason ?? '');
 			if (closed) {
 				this.applyFlowError(closed);
+				return;
+			}
+			// A close with no frozen meaning before the server `hello` is a failed handshake, which
+			// is counted and retried under a floor; after it, an ordinary lost connection.
+			if (!sentOpen) {
+				this.onHandshakeFailure();
 				return;
 			}
 			this.scheduleReconnect();
@@ -970,6 +1008,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 	private closeCurrentSocket(code?: number, reason?: string): void {
 		const socket = this.socket;
 		this.socket = null;
+		this.clearHandshakeTimer();
 		if (!socket) return;
 		this.intentionallyClosed.add(socket);
 		this.manualClose = true;
@@ -1199,6 +1238,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 			this.reconnectTimer = null;
 		}
 		this.reconnectAttempt = 0;
+		this.handshakeFailures = 0;
 		void this.openSocket();
 	}
 
@@ -1210,7 +1250,48 @@ export class LoroObjectSession implements ObjectSessionContract {
 			this.reconnectTimer = null;
 		}
 		this.closeCurrentSocket();
+		this.handshakeFailures = 0;
 		await this.openSocket();
+	}
+
+	private startHandshakeTimer(socket: WebSocket): void {
+		this.clearHandshakeTimer();
+		this.handshakeTimer = setTimeout(() => {
+			this.handshakeTimer = null;
+			if (this.socket !== socket || this.disposed || this.terminal || this.revoked) return;
+			// Close on purpose (the close handler then ignores this socket) and count it.
+			this.closeCurrentSocket(1000, 'handshake_timeout');
+			this.onHandshakeFailure();
+		}, this.handshakeTimeoutMs);
+	}
+
+	private clearHandshakeTimer(): void {
+		if (this.handshakeTimer) {
+			clearTimeout(this.handshakeTimer);
+			this.handshakeTimer = null;
+		}
+	}
+
+	/** A socket ended without the server `hello`. Retries under `HANDSHAKE_RETRY_FLOOR_MS`
+	 * (doubling) up to `HANDSHAKE_FAILURE_LIMIT` consecutive failures, then stops and reports
+	 * `collab_handshake_failed`: the connect (when one is pending) rejects with it, and a session
+	 * that was already live raises it as its flow error. A retry the user asks for (`reconnect`) or
+	 * the `online` event starts the count again. */
+	private onHandshakeFailure(): void {
+		if (this.disposed || this.terminal || this.revoked || this.manualClose) return;
+		this.handshakeFailures += 1;
+		if (this.handshakeFailures < HANDSHAKE_FAILURE_LIMIT) {
+			this.scheduleReconnect(this.handshakeRetryFloorMs * 2 ** (this.handshakeFailures - 1));
+			return;
+		}
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+		const error = clientError('collab_handshake_failed');
+		this.setState('error');
+		this.hooks.onFlowError(error);
+		this.firstSync?.reject(error);
 	}
 
 	/** `ui-surface-v1.md` step 6: full-jitter exponential backoff 250ms->5s, with
@@ -1252,6 +1333,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 			clearTimeout(this.connectTimeout);
 			this.connectTimeout = null;
 		}
+		this.clearHandshakeTimer();
 		for (const [updateId, waiter] of [...this.pending]) {
 			// Teardown, not a server drain: the caller navigated away or the route was destroyed.
 			this.settle(updateId);
