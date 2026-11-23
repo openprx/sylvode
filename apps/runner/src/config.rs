@@ -2172,7 +2172,7 @@ url = "http://127.0.0.1:9000/hook"
         .expect("loads");
         let settings = config.runner.cli_settings("codex").expect("codex settings");
         assert_eq!(settings.launch_command.len(), 3);
-        assert!(!settings.hooks);
+        assert!(!config.runner.cli.codex.hooks);
         assert_eq!(settings.process_names, ["codex", "node"]);
         assert!(config.runner.cli_settings("opencode").is_none());
         assert_eq!(config.runner.push_settle_ms("codex"), 900);

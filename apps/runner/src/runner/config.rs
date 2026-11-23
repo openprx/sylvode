@@ -181,8 +181,6 @@ impl Default for RunnerCodexConfig {
 pub struct CliSettings<'a> {
     pub launch_command: &'a [String],
     pub process_names: &'a [String],
-    /// Whether the runner adds its turn hook to a session it creates.
-    pub hooks: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -230,12 +228,10 @@ impl RunnerConfig {
             "claude" => Some(CliSettings {
                 launch_command: &self.cli.claude.launch_command,
                 process_names: &self.cli.claude.process_names,
-                hooks: self.cli.claude.hooks,
             }),
             "codex" => Some(CliSettings {
                 launch_command: &self.cli.codex.launch_command,
                 process_names: &self.cli.codex.process_names,
-                hooks: self.cli.codex.hooks,
             }),
             _ => None,
         }
