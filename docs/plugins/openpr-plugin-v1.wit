@@ -1,21 +1,24 @@
 package openpr:plugin@1.0.0;
 
-/// Sylvode plugin ABI v1. The package and world names (`openpr:plugin`, `openpr-plugin`) are kept
-/// for compatibility.
+/// Sylvode plugin ABI v1 (manifest `openpr.plugin.v1`; also the `wasm.abi` of `openpr.plugin.v3`
+/// packages). The package is `openpr:plugin` and the world is `openpr-plugin`.
 ///
-/// Current runtime support uses the equivalent core WebAssembly ABI:
+/// The runtime loads plugins as core WebAssembly modules, not components. A module implements this
+/// interface through these exports and is instantiated with no imports:
 ///
 /// - export `memory`
 /// - export `openpr_alloc(len: i32) -> i32`
 /// - export `openpr_invoke(ptr: i32, len: i32) -> i64`
 /// - optionally export `openpr_plugin_abi_version() -> i32`, returning `1`
 ///
-/// `openpr_invoke` receives UTF-8 JSON bytes and returns a packed pointer/length:
+/// The host calls `openpr_alloc` for the input length, writes UTF-8 JSON input at the returned
+/// pointer and calls `openpr_invoke`, which returns a packed pointer/length:
 ///
 /// - high 32 bits: output pointer
 /// - low 32 bits: output length
 ///
-/// The output must be UTF-8 JSON. Amount and decimal values must remain strings.
+/// The output must be UTF-8 JSON of at most 1 MiB. Amount and decimal values must remain strings.
+/// See docs/plugins/README.md for hook inputs and limits.
 interface plugin {
   record invocation-input {
     hook-kind: string,

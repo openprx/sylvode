@@ -1,45 +1,75 @@
-# Documentation Index
+# Sylvode documentation
 
-## 1. Product and Setup
+Start with the [project README](../README.md) for an overview and a quick start. The documents
+below are grouped by reader.
 
-- `../README.md` — Project overview, MCP configuration, tool reference, quick start.
-- `./universal-forms-and-plugins.md` — Universal forms, WASM plugins, scenario templates, business events and webhooks, and restaurant delivery reference.
-- `./universal-forms-implementation-map.md` — Source-module, public-surface, verification-command, and status-marker map for the universal business platform.
-- `./scenario-templates.md` — Catalog of built-in scenario templates, generated forms, integrations, and usage paths.
-- `./universal-forms-production.md` — Production runbook for operating Sylvode as a generic business platform.
-- `../scripts/schemas/openpr-universal-forms-readiness.schema.json` — JSON Schema for the machine-readable universal forms readiness report.
-- `../scripts/schemas/openpr-universal-forms-signoff-status.schema.json` — JSON Schema for the machine-readable manual signoff progress report.
-- `../scripts/schemas/openpr-universal-forms-completion-audit.schema.json` — JSON Schema for the machine-readable completion audit gate report.
-- `../scripts/schemas/openpr-universal-forms-development-status.schema.json` — JSON Schema for the machine-readable development matrix status report.
-- `../scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json` — JSON Schema for the machine-readable scenario template catalog.
-- `../scripts/schemas/openpr-universal-forms-implementation-map.schema.json` — JSON Schema for the machine-readable implementation map.
-- `../scripts/schemas/openpr-universal-forms-delivery-status.schema.json` — JSON Schema for the compact one-command delivery status summary.
-- `../scripts/schemas/openpr-universal-forms-delivery-manifest.schema.json` — JSON Schema for the machine-readable delivery manifest mirror.
-- `../scripts/schemas/openpr-universal-forms-release-gate.schema.json` — JSON Schema for the machine-readable release gate decision.
-- `../scripts/schemas/openpr-project-release-readiness.schema.json` — JSON Schema for project release readiness API/MCP responses.
-- `../apps/mcp-server/AGENTS.md` — Coding agent guidelines: build, test, commit conventions.
+## Operators
 
-## 2. MCP Skill Package
+- [install.md](install.md): requirements, the compose stack, release archives, building from
+  source, the first administrator account, demo data and upgrades.
+- [configuration.md](configuration.md): every configuration file key and every environment
+  variable the programs read.
+- [operations.md](operations.md): the processes and what each does, health checks, logging,
+  reverse proxies, storage, backup and restore, Flow runtime capabilities and retention.
+- [../apps/runner/README.md](../apps/runner/README.md): installing, configuring and operating
+  `sylvode-runner`.
+- [../apps/runner/SECURITY.md](../apps/runner/SECURITY.md): what the runner verifies and how it
+  runs agents.
+- [../frontend/README.md](../frontend/README.md): building and serving the web interface.
+- Annotated configuration examples: [../config/sylvode.example.toml](../config/sylvode.example.toml),
+  [../config/sylvode-runner.example.toml](../config/sylvode-runner.example.toml) and
+  [../apps/runner/config.example.toml](../apps/runner/config.example.toml).
+
+## Users
+
+- [guide/workspaces-and-projects.md](guide/workspaces-and-projects.md): navigation, workspaces
+  and members, projects, work items, boards, cycles, labels, workflows, notifications, search and
+  project export/import.
+- [guide/governance.md](guide/governance.md): proposals, voting, decisions, veto and escalation,
+  appeals, trust scores, impact reviews and audit logs.
+- [guide/forms.md](guide/forms.md): universal forms, fields, views, records, formulas,
+  permissions, import/export, attachments and signatures.
+- [guide/scenario-templates.md](guide/scenario-templates.md): the built-in project templates and
+  how to start a project from one.
+- [guide/flow.md](guide/flow.md): Flow pages, collections and records, live editing, sharing,
+  conversion to forms and packages.
+- [guide/agents.md](guide/agents.md): bots and tokens, how agent tasks arise and end, and
+  connecting a bot to a project.
+
+## Integrators
+
+- [integrations/api.md](integrations/api.md): REST conventions, authentication, errors and
+  endpoints by area.
+- [integrations/webhooks.md](integrations/webhooks.md): outbound events, webhook signatures and
+  deliveries.
+- [integrations/alerts.md](integrations/alerts.md): sending alerts to Sylvode and the rules that
+  turn them into work.
+- [integrations/oauth.md](integrations/oauth.md): the OAuth authorization server, scopes, tokens
+  and connected apps.
+- [integrations/cli.md](integrations/cli.md): the `sylvode` command-line client.
+- [../apps/mcp-server/README.md](../apps/mcp-server/README.md): the MCP server, its transports,
+  authentication and tools.
+
+### MCP skill package
 
 <!-- BEGIN GENERATED: tool-count (sylvode-skillgen; do not edit) -->
 The MCP server registers 153 tools in 19 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../skills/sylvode-mcp/reference/tools.md).
 <!-- END GENERATED: tool-count -->
 
-- `../skills/sylvode-mcp/SKILL.md` — The MCP skill: task procedure, finding and calling tools, conventions, recipes.
-- `../skills/sylvode-mcp/reference/tools.md` — Every tool, one line each (generated).
-- `../skills/sylvode-mcp/scripts/mcp-regression.py` — Tool registry and core-surface regression test across HTTP, stdio, and SSE.
-- `../skills/sylvode-mcp/scripts/validate-mcp.sh` — Quick smoke test.
+- [../skills/sylvode-mcp/SKILL.md](../skills/sylvode-mcp/SKILL.md): the skill agents load to work
+  with Sylvode over MCP.
+- [../skills/sylvode-mcp/reference/tools.md](../skills/sylvode-mcp/reference/tools.md): every
+  tool, one line each.
 
-## 3. Source Code
+## Plugin authors
 
-- `../apps/api/` — REST API server (Axum + SeaORM).
-- `../apps/mcp-server/` — MCP server (HTTP/stdio/SSE).
-- `../apps/worker/` — Background task worker.
-- `../frontend/` — SvelteKit frontend.
-- `../migrations/` — PostgreSQL schema migrations.
+- [plugins/README.md](plugins/README.md): WASM plugins and form plugin packages.
+- [plugins/openpr-plugin-v1.wit](plugins/openpr-plugin-v1.wit): the plugin interface.
+- [plugins/extension-example/](plugins/extension-example/): example form plugin packages, one `ui` and
+  one `wasm` package.
 
-## 4. Deployment
+## Project
 
-- `../docker-compose.yml` — Full stack: API, frontend, MCP, worker, webhook, PostgreSQL.
-- `../Dockerfile.prebuilt` — Production image using pre-built binaries.
-- `./runbooks/flow-runtime-capabilities.md` — Flow runtime capabilities: what is on by default, reader leases, and how to turn a capability off.
+- [../SECURITY.md](../SECURITY.md): reporting a vulnerability.
+- [../CHANGELOG.md](../CHANGELOG.md): release notes.
+- Licence: [MIT](../LICENSE-MIT) or [Apache-2.0](../LICENSE-APACHE).

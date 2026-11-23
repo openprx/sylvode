@@ -1,6 +1,6 @@
 # Security Policy
 
-Sylvode (formerly OpenPR) holds project data, business records, bot credentials and
+Sylvode holds project data, business records, bot credentials and
 plugin code for every workspace on an instance. We take reports about it seriously and
 handle them privately until a fix is available.
 
@@ -21,12 +21,9 @@ Please do not open a public issue, pull request or discussion for a security pro
 
 Report it privately through GitHub's private vulnerability reporting: open the repository's
 **Security** tab and choose **Report a vulnerability**
-(<https://github.com/openprx/sylvode/security/advisories/new>). Private reporting is enabled on
-the repository when this release is published. If you do not see the **Report a vulnerability**
-button, it is not enabled for you yet; use e-mail instead.
+(<https://github.com/openprx/sylvode/security/advisories/new>).
 
-By e-mail, write to `security@openprx.dev`, the OpenPRX organisation's published security
-contact. Do not put exploit details in any public channel while you wait for an answer.
+You can also write to `security@openprx.dev`, the OpenPRX organisation's security contact. Do not put exploit details in any public channel while you wait for an answer.
 
 A useful report contains:
 
@@ -79,9 +76,22 @@ These areas carry the highest impact, and reports about them are especially welc
   that resolve to loopback, private, link-local or other internal addresses are refused
   unless listed in `[outbound] allowed_hosts`, and redirects are not followed. A forged or
   unverifiable signature, a way past the outbound address filter (SSRF), or a secret
-  leaking into logs or stored delivery records is in scope. The inbound side, the Sylvode
-  runner, lives in [`apps/runner`](apps/runner) and its own
-  [security notes](apps/runner/SECURITY.md) describe what it verifies.
+  leaking into logs or stored delivery records is in scope.
+- **Runner.** `sylvode-runner` receives task deliveries and runs agents and commands on the host
+  where it is installed. Its [security notes](apps/runner/SECURITY.md) describe what it verifies
+  and how it runs agents; a way to make it run something its configuration does not allow is in
+  scope.
+- **OAuth authorization server.** When `[oauth]` is configured, Sylvode issues authorization
+  codes (`svc_`, single use), access tokens (`sva_`, bound to one resource) and refresh tokens
+  (`svr_`, rotated on every use) after a user approves a client on the consent page. Only a
+  SHA-256 hash of each token is stored. Obtaining a token without the user's consent, using a
+  token beyond its scopes, resource or grant, reusing a code or refresh token, or keeping access
+  after a grant is revoked is in scope.
+- **Alert intake.** When `[inbound]` is enabled, `POST /api/v1/inbound/events` accepts events
+  authenticated by a per-source `svi_` token, with an optional HMAC signature, rate limits and a
+  body size limit. Alert text comes from outside, so Sylvode places it only inside a fenced
+  block of the alert work item it creates. Submitting events without a valid source credential, getting past the signature, rate or size
+  checks, or making alert content act as instructions outside its fenced block is in scope.
 - **Collaboration sessions.** Live editing uses short-lived tickets bound to an origin in
   `[flow] collab_allowed_origins`. Joining, reading or writing a document without the
   corresponding Flow permission, or keeping access after it is revoked, is in scope.

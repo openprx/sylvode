@@ -1,16 +1,21 @@
-# Example configuration for the Sylvode runner, sylvode-runner (built from apps/runner in this
+# Example configuration of the Sylvode runner, sylvode-runner (built from apps/runner in this
 # repository), pointed at this deployment. docker-compose.yml mounts it at
-# /etc/sylvode-runner/config.toml in the optional `runner` service.
+# /etc/sylvode-runner/config.toml in the optional `runner` service (profile `connectors`).
+# Every key is described in apps/runner/README.md ("Configuration reference").
 #
-# The `events` a route may match are the ones a webhook subscription can actually request:
-# see WEBHOOK_EVENTS in apps/api/src/entities/webhook.rs.
+# As shipped it logs the bot tasks it receives with `echo` and ends nothing in Sylvode. Start-up
+# is refused until the placeholder secret below is replaced.
+#
+# The `events` a route may match are the ones a webhook subscription can request: see
+# WEBHOOK_EVENTS in apps/api/src/entities/webhook.rs.
 
 [server]
 listen = "0.0.0.0:9090"
 
 [security]
-# Must equal the `secret` of the webhook subscription created in Sylvode. Both the API's own
-# deliveries and the worker's AI-task dispatch sign the exact request body with it.
+# Must equal the `secret` of the webhook created in Sylvode for the bot user whose tasks this
+# runner handles. Both the API's webhook deliveries and the worker's AI task deliveries sign the
+# exact request body with it.
 webhook_secrets = ["replace_with_webhook_secret"]
 allow_unsigned = false
 
@@ -22,23 +27,25 @@ cli_max_concurrency = 1
 http_timeout_secs = 15
 tunnel_reconnect_backoff_max_secs = 60
 
-# The bots' tokens for the Sylvode API: a `runner` agent reads and reports its tasks with them, and a
-# forwarding agent that cannot hand a delivery over fails the task with the token of the task's bot
-# (POST /api/v1/ai/tasks/{task_id}/fail). A token works only for the tasks of the bot that owns it:
-# set `bot_id` to that bot and add a [[ai_task_callback.bots]] entry (bot_id, token, surface) for
-# every other bot this receiver serves. Off by default. See apps/runner/README.md.
+# The bots' tokens for the Sylvode API: a `runner` agent reads and ends its tasks with them; for
+# the forwarding agents (webhook, openclaw, openprx, custom) the runner completes a task once the
+# hand-over worked and fails it when it did not, with the token of the task's bot. A token works
+# only for the tasks of the bot that owns it: set `bot_id` to that bot and add a
+# [[ai_task_callback.bots]] entry (bot_id, token, surface) for every other bot this runner serves.
+# Off by default: the worker then ends each task by its processing timeout.
 [ai_task_callback]
 enabled = false
 # The API as the runner container reaches it (the `api` service in docker-compose.yml).
 api_url = "http://api:8080"
-# Bearer token of the bot that is the tasks' AI participant.
+# The opr_ token of the bot that is the tasks' AI participant.
 token = "replace-with-the-bot-token-of-the-ai-participant"
 surface = "rest"
 max_attempts = 3
 retry_delay_ms = 1000
 
-# Bot work: Sylvode marks a delivery with `bot_context.is_bot_task = true` when the webhook's
-# bot user is the assignee or is mentioned.
+# Webhook deliveries that carry `bot_context` (`is_bot_task = true`): activity by someone else on
+# an issue assigned to the webhook's bot user, such as a state change or an edit. Assignments and
+# mentions arrive as worker AI tasks instead (next agent).
 [[agents]]
 id = "bot-log"
 name = "Bot Task Log"
@@ -52,8 +59,9 @@ events = ["issue.assigned", "issue.state_changed", "comment.created"]
 command = "echo"
 args = ["{message}"]
 
-# AI tasks the worker dispatches carry `task_id` and `ai_participant_id` instead of an
-# `event`, so this route matches on the bot rather than on an event name.
+# Worker AI tasks carry `task_id`, `ai_participant_id` and a `trigger_kind` instead of an
+# `event`, so this route matches on the trigger kind: an assignment, a mention, a vote request or
+# a task started by hand.
 [[agents]]
 id = "ai-task-log"
 name = "AI Task Log"
@@ -61,15 +69,17 @@ agent_type = "custom"
 message_template = "ai_task {project_id} {issue_id} {reason}"
 
 [agents.route]
-bot_agent_types = ["claude-code"]
+trigger_kinds = ["assigned", "mention", "proposal_vote", "manual"]
 
 [agents.custom]
 command = "echo"
 args = ["{message}"]
 
-# A `runner` agent executes the tasks of a bot that is connected to a project in Sylvode; the
+# A `runner` agent runs a CLI agent for the tasks of a bot connected to a project in Sylvode; the
 # connection issues this block. It needs [ai_task_callback] enabled with a token for the bot
-# registered for mcp_stdio, and at least one allowed root.
+# registered for mcp_stdio and an https:// api_url (or a loopback host), and the project working
+# directories must lie below allowed_roots. The runner container image holds no tmux and no CLI:
+# run `runner` agents on a host.
 #
 # [runner]
 # allowed_roots = ["~/work"]

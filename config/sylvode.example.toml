@@ -6,11 +6,11 @@
 #     cp config/sylvode.example.toml config/sylvode.toml
 #     $EDITOR config/sylvode.toml
 #
-# Sylvode reads NO application configuration from environment variables. This file is the source
-# of runtime configuration for the
-# API, the worker and the MCP server; each binary reads the sections it needs and ignores the
-# rest. A missing file is a startup error — the services never invent defaults for a database URL
-# or a signing key.
+# This file configures the API, the worker, the MCP server and the sylvode command line; each
+# binary reads the sections it needs and ignores the rest. The few environment variables the API
+# reads (plugin package switches, the location of collab-isolated-apply-worker) are listed in
+# docs/configuration.md, which describes every key below. A missing file is a startup error: the
+# services never invent defaults for a database URL or a signing key.
 #
 # Every replace_with_* value below is rejected by validation on purpose, as are empty strings and
 # unexpanded ${...} templates. Validation reports all unusable values at once, so one round of
@@ -27,9 +27,9 @@
 # ---------------------------------------------------------------------------------------------
 # [server] — identity and listen address of the HTTP binaries.
 #
-# Optional as a whole. One file serves three binaries that listen on different ports, so leaving
-# these out lets each binary keep its own built-in default (api and worker: 0.0.0.0:8081). Set
-# them only when you run a single binary from this file, or when you override the port.
+# Optional as a whole. Read by the api; the worker opens no listener and uses app_name only in its
+# log lines and bind_addr only for the allow_insecure_cookies check below. Leaving these out keeps
+# the built-in defaults (api: 0.0.0.0:8081, name: the binary's own name).
 # ---------------------------------------------------------------------------------------------
 [server]
 # Service name used in logs and in the health payload. Default: the binary's own name.
@@ -88,8 +88,8 @@ jwt_secret = "replace_with_a_64_character_hex_secret"
 access_ttl_seconds = 1296000   # default: 1296000 (15 days)
 refresh_ttl_seconds = 1728000  # default: 1728000 (20 days)
 
-# Author attributed to records created by an unauthenticated import path. Optional; when set it
-# must be a real, non-nil UUID of an existing user.
+# Optional. When set it must be a real, non-nil UUID. The value is validated and loaded, but no
+# part of Sylvode reads it.
 # default_author_id = "00000000-0000-0000-0000-000000000000"  # the nil UUID is rejected
 
 # Drops the `Secure` attribute from the access/refresh/clear auth cookies. Default: false (cookies
@@ -101,7 +101,7 @@ refresh_ttl_seconds = 1728000  # default: 1728000 (20 days)
 
 
 # ---------------------------------------------------------------------------------------------
-# [logging] — replaces RUST_LOG.
+# [logging] — log filter, format and stream. The api, worker and mcp-server do not read RUST_LOG.
 # ---------------------------------------------------------------------------------------------
 [logging]
 # tracing-subscriber filter directives. Validated at startup, so a typo fails fast instead of
@@ -118,9 +118,9 @@ format = "json"
 # two streams identically, so nothing is lost by preferring it.
 #
 # The MCP server's stdio transport frames JSON-RPC on stdout, where one log line breaks the
-# session. It therefore always logs to stderr and reports this setting as overridden if it says
-# "stdout" — one file configures three binaries, and the choice the api makes here must not be
-# able to break the MCP server.
+# session. The mcp-server and the sylvode command line therefore always log to stderr, whatever
+# this setting says; one file configures several binaries, and the choice the api makes here must
+# not be able to break the MCP server.
 output = "stderr"
 
 
@@ -154,13 +154,12 @@ operation_log_retention_days = 30
 
 
 # ---------------------------------------------------------------------------------------------
-# [ai_tasks] — the worker's handling of AI tasks it has delivered to a bot's webhook.
+# [ai_tasks] — how long work handed to a bot may run. Read by the api and the worker.
 # ---------------------------------------------------------------------------------------------
 [ai_tasks]
 # A delivered task that is neither completed nor failed by the receiver within this many seconds
 # is taken back by the worker: re-queued while attempts remain, failed otherwise. Keep it well
-# above the runner's longest agent run plus its queue wait (sylvode-runner `timeout_secs`,
-# 900 by default, times the tasks that can wait for a `cli_max_concurrency` slot).
+# above the longest time a bot needs to finish one task, including any wait before it starts.
 # Default: 3600. Accepted range: 60..=604800.
 processing_timeout_secs = 3600
 # Each acknowledge, progress report or runner heartbeat moves an active task's deadline to this
@@ -244,6 +243,10 @@ allow_private = false
 # worker's setup is cut by a wall timeout of 5 seconds whatever this value is, so the accepted
 # range is 500 to 4000. Default: 2500.
 # setup_cpu_budget_ms = 2500
+#
+# Largest file, in bytes, a Page body asset may have. Default: 52428800 (50 MiB), which is also
+# the largest accepted value. Must be at least 1.
+# body_asset_max_bytes = 52428800
 
 
 # ---------------------------------------------------------------------------------------------
@@ -312,7 +315,7 @@ transport = "stdio"
 # Whether the bot may use write tools. Default: true. false disables every write tool except the
 # task lifecycle tools (sylvode_task_get, _ack, _progress, _complete, _fail), which a runner bot
 # needs: sylvode_write answers that writes are disabled, and in full mode, on every transport
-# and in the command line (`mcp-server tools call`, `projects create`, ...) a tool the catalogue
+# and in the command line (`sylvode tools call`, `sylvode projects create`, ...) a tool the catalogue
 # marks as writing is refused before any request. Reads are not affected.
 # allow_write_call = true
 
@@ -357,7 +360,8 @@ transport = "stdio"
 # event_backfill_max_age_hours = 72           # [1, 168]
 # max_streams_per_process = 2000              # [10, 20000]
 
-# Origins allowed to embed Sylvode views in a frame (cross-origin embedding). Default: none.
+# Accepted and validated (each entry an origin, scheme://host[:port]), but no part of Sylvode
+# reads it. Default: none.
 # embed_frame_ancestors = []
 
 

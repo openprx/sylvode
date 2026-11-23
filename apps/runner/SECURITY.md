@@ -15,51 +15,75 @@ Include the affected version, a description of the problem, steps to reproduce a
 expect. We will acknowledge the report, keep you informed while we investigate, and credit you in
 the advisory unless you prefer otherwise.
 
-## Scope notes
+## Inbound requests
 
-- Inbound webhooks are authenticated by an HMAC-SHA256 signature in `X-Sylvode-Signature`
-  or `X-Webhook-Signature`. Requests whose signature headers disagree are refused. `allow_unsigned = true` disables verification and is meant for
-  development only.
-- `allow_unsigned = true` is refused on an address other than loopback unless
-  `allow_unsigned_non_loopback = true` acknowledges it. Blank secrets and the example placeholders
-  refuse start-up. Signed requests are also checked for replay (`id`) and freshness (`timestamp`).
-- Several agent types run local commands, and they are gated differently:
-  - `cli` runs `codex`, `claude` or `opencode` with permission checks bypassed. It runs only with
-    `features.cli_enabled = true`, never in safe mode (`SYLVODE_RUNNER_SAFE_MODE=1`), at most
-    `runtime.cli_max_concurrency` at a time, and its whole process group is stopped on timeout or
-    shutdown.
-  - `openclaw`, `openprx` (with `command`) and `custom` run their configured command for every
-    matching bot task. Neither `cli_enabled` nor safe mode stops them; the program and its fixed
-    arguments come only from the configuration, and payload text is always passed as a single
-    argument (for `custom`, it may not start an option). Configure only the agents you need.
+- Deliveries are authenticated by an HMAC-SHA256 signature in `X-Sylvode-Signature` or
+  `X-Webhook-Signature`. Requests whose signature headers disagree are refused, even if one of
+  them is valid. A delivery for a bot that has its own `webhook_secret` is verified with that
+  secret only.
+- `allow_unsigned = true` disables verification and is meant for local development only. It is
+  refused on an address other than loopback unless `allow_unsigned_non_loopback = true`
+  acknowledges it. Blank secrets and example placeholders refuse start-up.
+- Signed requests are checked for replay (`id`, or `task_id` and `attempts`) and freshness
+  (`timestamp`). The replay memory is held in the process and cleared on restart; worker AI tasks
+  carry no timestamp. See "Replayed requests" in the [README](README.md).
+- `GET /health` is unauthenticated and returns only the overall status and the protocol state.
+
+## Agents that run commands
+
+- `openclaw`, `openprx` (with `command`) and `custom` agents run their configured command for
+  every matching bot task. Safe mode (`SYLVODE_RUNNER_SAFE_MODE=1`) does not stop them. The
+  program and its fixed arguments come only from the configuration; text from Sylvode is always
+  passed as a single argument, and for `custom` it may not start an option. Configure only the
+  agents you need.
+- `runner` agents run a CLI agent ([below](#runner-agents)). Their headless runs are limited to
+  `runtime.cli_max_concurrency` at a time; safe mode makes every `runner` agent refuse its tasks.
+- Every command and headless run is started as its own process group, and the whole group is
+  stopped on time-out or shutdown.
 - Commands run without a shell, with stdin closed, and inherit the service's environment; do not
   give the service environment variables you would not give the agents.
 - Run the service as a dedicated unprivileged user (see the systemd example in the README).
 - Never commit a `config.toml` containing secrets; `.gitignore` excludes it.
 
-## The `runner` agent type
+## `runner` agents
 
 - One runner OS user is one trust domain: file modes do not protect one bot's token from a CLI
-  running as the same user. Separate trust domains need separate OS users or hosts.
+  running as the same user. Separate trust domains (workspaces, or bots whose assigners you do
+  not trust equally) need separate OS users or hosts.
+- Anyone who can assign an issue to the bot, mention it or request its vote can make the CLI act,
+  and anyone who can edit an issue or comment can put text in front of it.
 - By default every task runs with all permission checks of the CLI off (`launch_command` and
   `headless_args` carry `--permission-mode bypassPermissions`), as the runner's OS user, with that
   user's environment and login. The runner adds no tool list, deny rule or settings-source limit,
   and project files (`.claude/settings.json`, `.mcp.json`, hooks, skills, `CLAUDE.md`) take effect:
   a work item that carries a prompt injection can make the CLI read or change any file that user
   can reach, run any command, read every bot token in the state directory, push code and use the
-  operator's credentials. Put the flags you want in `launch_command` and `headless_args`; the
+  operator's credentials. Put the flags you want in `launch_command` and `headless_args` (a
+  permission mode that asks, a tool list, `--strict-mcp-config`, `--setting-sources`); the
   start-up posture line, `doctor` and the connection's status in Sylvode warn while checks are off.
-  `allowed_roots` is not a sandbox.
+- opencode's permissions are not controlled by the runner; the start-up log warns when it is
+  enabled.
+- `allowed_roots` keep a project from naming a directory outside them, and the state directory
+  and the configuration file must lie outside every root; they are not a sandbox. A directory
+  replaced by a symbolic link between the check and the use, by a process of the same OS user, is
+  out of scope.
 - A tmux session the operator created runs with whatever configuration it has; the runner does not
-  inspect or limit it. It types only when the CLI is idle with an empty prompt and no client typed
-  recently, only into the one pane that runs the CLI (checked by pane id and process id at every
-  push), and never restarts, respawns or ends a session.
-- The runner starts no CLI with a stripped environment: a CLI it starts, headless or in a session
-  it creates, gets the runner's own environment minus `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and
-  `TMUX`. The runner's own tmux calls get an allow-listed environment.
-- `GET /health` is unauthenticated and returns only the overall status and the protocol state.
+  inspect or limit it. The runner types only when the CLI is idle with an empty prompt and no
+  client typed recently, only into the one pane that runs the CLI (checked by pane id and process
+  id at every push), and never restarts, respawns or ends a session.
+- Everything on one tmux server runs as one OS user, and tmux sets `TMUX` in each pane: a CLI that
+  may run shell commands can drive every other session on the same server.
+- A CLI the runner starts, headless or in a session it creates, gets the runner's own environment
+  minus `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and `TMUX`. The runner's own tmux calls get an
+  allow-listed environment.
+- Bot tokens are kept in files of mode 0600 in the state directory (mode 0700), are never logged,
+  never part of an error or of a command line, and are never sent after a redirect. The Sylvode API
+  URL must be `https://` unless its host is loopback.
 - A hook message carries no secret. It is admitted only from the runner's own user, from a pane a
-  session worker recorded (the tmux server's socket path and the pane id), and from below the
-  recorded pane process where the platform can name the sender (Linux: `/proc`; macOS: one `ps -A`
+  session recorded (the tmux server's socket path and the pane id), and from below the recorded
+  pane process where the platform can name the sender (Linux: `/proc`; macOS: one `ps -A`
   snapshot per admitted message). The sender's identity is best-effort on macOS. Any process of the
   same user inside that pane can send hook messages for it.
+- The token of a bot made by a project connection acts only in the projects where that bot has an
+  enabled connection, and only on the routes a runner needs; see
+  [Bots and agent work](../../docs/guide/agents.md).
