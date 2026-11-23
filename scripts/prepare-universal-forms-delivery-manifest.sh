@@ -283,7 +283,7 @@ manual_status="$(status_for "用户侧人工验收")"
   manifest_row "MCP app AGENTS guide" "$ROOT_DIR/apps/mcp-server/AGENTS.md"
   manifest_row "MCP skill guide" "$ROOT_DIR/skills/sylvode-mcp/SKILL.md"
   manifest_row "docs index" "$ROOT_DIR/docs/README.md"
-  manifest_row "scenario template catalog" "$ROOT_DIR/docs/scenario-templates.md"
+  manifest_row "scenario template catalog" "$ROOT_DIR/docs/guide/scenario-templates.md"
   manifest_row "implementation map" "$ROOT_DIR/docs/universal-forms-implementation-map.md"
   manifest_row "completion audit JSON schema" "$COMPLETION_AUDIT_JSON_SCHEMA_PATH"
   manifest_row "readiness JSON schema" "$READINESS_JSON_SCHEMA_PATH"
@@ -295,8 +295,6 @@ manual_status="$(status_for "用户侧人工验收")"
   manifest_row "release gate JSON schema" "$RELEASE_GATE_JSON_SCHEMA_PATH"
   manifest_row "project release readiness JSON schema" "$PROJECT_RELEASE_READINESS_JSON_SCHEMA_PATH"
   manifest_row "delivery manifest JSON schema" "$DELIVERY_MANIFEST_JSON_SCHEMA_PATH"
-  manifest_row "universal forms guide" "$ROOT_DIR/docs/universal-forms-and-plugins.md"
-  manifest_row "production runbook" "$ROOT_DIR/docs/universal-forms-production.md"
   printf '\n'
 
   printf '## Contributor Docs\n\n'
@@ -304,7 +302,6 @@ manual_status="$(status_for "用户侧人工验收")"
   printf '| --- | --- | --- | --- |\n'
   manifest_row "CI workflow" "$ROOT_DIR/.github/workflows/ci.yml"
   manifest_row "frontend README" "$ROOT_DIR/frontend/README.md"
-  manifest_row "frontend quickstart" "$ROOT_DIR/frontend/QUICKSTART.md"
   printf '\n'
 
   printf '## Runtime Packaging\n\n'

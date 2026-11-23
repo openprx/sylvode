@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPORT_DIR="${SYLVODE_UF_REPORT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.flow-gate/universal-forms}/docs"
-CATALOG_PATH="$ROOT_DIR/docs/scenario-templates.md"
+CATALOG_PATH="$ROOT_DIR/docs/guide/scenario-templates.md"
 SCHEMA_PATH="$ROOT_DIR/scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json"
 OUTPUT_PATH="${OPENPR_SCENARIO_CATALOG_JSON_REPORT:-$REPORT_DIR/openpr-universal-form-scenario-catalog-2026-05-31.json}"
 
@@ -12,7 +12,7 @@ usage() {
 Usage: scripts/report-universal-forms-scenario-catalog-json.sh [--output PATH]
 
 Generates a machine-readable JSON view of the built-in scenario template
-catalog. The report mirrors docs/scenario-templates.md and is read-only.
+catalog. The report mirrors docs/guide/scenario-templates.md and is read-only.
 
 Environment:
   OPENPR_SCENARIO_CATALOG_JSON_REPORT  Optional output path.

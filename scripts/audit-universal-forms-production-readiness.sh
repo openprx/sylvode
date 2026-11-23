@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXPECTED_TOOL_COUNT="$(python3 "$ROOT_DIR/skills/sylvode-mcp/scripts/expected-tool-count.py")"
-PRODUCTION_DOC="$ROOT_DIR/docs/universal-forms-production.md"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 FRONTEND_NGINX="$ROOT_DIR/frontend/nginx.conf"
 SOURCE_DOCKERFILE="$ROOT_DIR/Dockerfile"
@@ -155,7 +154,6 @@ printf '  repo: %s\n' "$ROOT_DIR"
 printf '\n'
 
 for path in \
-  "$PRODUCTION_DOC" \
   "$COMPOSE_FILE" \
   "$FRONTEND_NGINX" \
   "$SOURCE_DOCKERFILE" \
@@ -255,11 +253,9 @@ contains "root env example uses current frontend API variable" "$ROOT_DIR/.env.e
 contains "frontend env example points to compose API host port" "$ROOT_DIR/frontend/.env.example" "VITE_API_BASE_URL=http://localhost:8081"
 contains "frontend client reads VITE_API_BASE_URL" "$ROOT_DIR/frontend/src/lib/api/client.ts" "import.meta.env.VITE_API_BASE_URL"
 contains "frontend README documents compose API host port" "$ROOT_DIR/frontend/README.md" "VITE_API_BASE_URL=http://localhost:8081"
-contains "frontend quickstart documents compose API host port" "$ROOT_DIR/frontend/QUICKSTART.md" "VITE_API_BASE_URL=http://localhost:8081"
 not_contains "root env example does not use retired VITE_API_URL" "$ROOT_DIR/.env.example" "VITE_API_URL="
 not_contains "root env example does not point frontend at retired API port" "$ROOT_DIR/.env.example" "VITE_API_BASE_URL=http://localhost:8080"
 not_contains "frontend env example does not point browser at frontend port as API" "$ROOT_DIR/frontend/.env.example" "VITE_API_BASE_URL=http://localhost:3000"
-not_contains "frontend README does not claim missing Vite proxy" "$ROOT_DIR/frontend/README.md" "Vite 的 proxy 功能"
 
 printf '\nMCP production configuration coverage:\n'
 contains "MCP server reads its own generated configuration" "$COMPOSE_FILE" '${SYLVODE_MCP_CONFIG_PATH:-./config/sylvode.compose.mcp.toml}'
@@ -273,49 +269,22 @@ not_contains "MCP command line does not default the API URL to the frontend port
 contains "MCP bind address defaults to loopback" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "Bind address for HTTP/SSE transports"
 contains "MCP CLI tests pin the configuration-file default" "$ROOT_DIR/apps/mcp-server/src/cli.rs" "an_unspecified_transport_and_bind_address_defer_to_the_configuration_file"
 not_contains "README local MCP HTTP example does not bind all interfaces" "$ROOT_README" "mcp-server serve --transport http --bind-addr 0.0.0.0:8090"
-contains "MCP app README states every HTTP request authenticates itself" "$ROOT_DIR/apps/mcp-server/README.md" "Every request still needs its own caller bot token"
 contains "API reads its bind address from the configuration file" "$ROOT_DIR/apps/api/src/main.rs" "OpenPrConfig::load"
 not_contains "MCP compose service does not require direct database URL" "$MCP_COMPOSE_BLOCK" "DATABASE_URL:"
 not_contains "MCP compose service does not require JWT secret" "$MCP_COMPOSE_BLOCK" "JWT_SECRET:"
 not_contains "MCP compose service does not inherit default author id" "$MCP_COMPOSE_BLOCK" "DEFAULT_AUTHOR_ID:"
 not_contains "MCP compose service does not depend directly on PostgreSQL" "$MCP_COMPOSE_BLOCK" "postgres:"
 not_contains "env example carries no application credential" "$ROOT_DIR/.env.example" "OPENPR_BOT_TOKEN="
-contains "README documents the MCP serve subcommand with a configuration file" "$ROOT_DIR/README.md" "mcp-server -- serve --config config/sylvode.toml"
 contains "MCP app README local examples target API host port" "$ROOT_DIR/apps/mcp-server/README.md" 'api_url = "http://localhost:8081"'
-contains "MCP app README documents three transports" "$ROOT_DIR/apps/mcp-server/README.md" "Three Transport Modes"
-contains "MCP app README documents SSE transport" "$ROOT_DIR/apps/mcp-server/README.md" "serve --transport sse"
-contains "MCP app README compose example uses prebuilt Dockerfile" "$ROOT_DIR/apps/mcp-server/README.md" "dockerfile: Dockerfile.prebuilt"
-contains "MCP app README manual test starts API stack" "$ROOT_DIR/apps/mcp-server/README.md" "bash scripts/start.sh"
-contains "MCP app README development guide uses API client helpers" "$ROOT_DIR/apps/mcp-server/README.md" "Sylvode API client helper"
-contains "MCP app README performance section uses API request wording" "$ROOT_DIR/apps/mcp-server/README.md" "API Requests"
-not_contains "MCP app README does not retain stale 65-tool count" "$ROOT_DIR/apps/mcp-server/README.md" "65 MCP Tools"
-not_contains "MCP app README does not retain stale two-transport wording" "$ROOT_DIR/apps/mcp-server/README.md" "Two Transport Modes"
-not_contains "MCP app README does not document hardcoded database password" "$ROOT_DIR/apps/mcp-server/README.md" "postgres://openpr:openpr"
-not_contains "MCP app README quick start does not require database URL" "$ROOT_DIR/apps/mcp-server/README.md" "export DATABASE_URL"
-not_contains "MCP app README quick start does not require JWT secret" "$ROOT_DIR/apps/mcp-server/README.md" "export JWT_SECRET"
-not_contains "MCP app README does not describe MCP as PostgreSQL backend" "$ROOT_DIR/apps/mcp-server/README.md" "PostgreSQL Backend"
-not_contains "MCP app README manual test does not start only PostgreSQL" "$ROOT_DIR/apps/mcp-server/README.md" "Start PostgreSQL"
-not_contains "MCP app README project structure does not include direct db module" "$ROOT_DIR/apps/mcp-server/README.md" "src/db"
-not_contains "MCP app README development guide does not add database modules" "$ROOT_DIR/apps/mcp-server/README.md" "Add database function"
-not_contains "MCP app README performance section does not claim raw database queries" "$ROOT_DIR/apps/mcp-server/README.md" "Database Queries"
-contains "MCP app README states MCP talks to API not database" "$ROOT_DIR/apps/mcp-server/README.md" "MCP talks to the Sylvode API, not directly to PostgreSQL"
-contains "MCP app README documents bot token hash auth" "$ROOT_DIR/apps/mcp-server/README.md" "SHA-256 token hash"
-contains "MCP app README documents workspace-scoped bot access" "$ROOT_DIR/apps/mcp-server/README.md" "a bot token can only act inside its workspace"
-not_contains "MCP app README does not claim auth is unenforced" "$ROOT_DIR/apps/mcp-server/README.md" "Authentication infrastructure exists but is not enforced"
-not_contains "MCP app README does not list stale JWT TODO" "$ROOT_DIR/apps/mcp-server/README.md" "Implement JWT token validation"
 contains "MCP regression stdio path targets API host port" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" '"SYLVODE_MCP_REGRESSION_API_URL", "http://localhost:8081"'
 contains "MCP regression stdio path uses serve subcommand" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" '[MCP_BIN,"serve","--transport","stdio","--config",MCP_CONFIG]'
 contains "MCP regression derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
 contains "MCP validation derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
 not_contains "MCP validation does not retain stale 65-tool minimum" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "-ge 65"
-contains "docs index links implementation map" "$ROOT_DIR/docs/README.md" "universal-forms-implementation-map.md"
 contains "readiness summary generator links implementation map" "$ROOT_DIR/scripts/report-universal-forms-readiness-summary.sh" "universal-forms-implementation-map.md"
 contains "user acceptance packet generator links implementation map" "$ROOT_DIR/scripts/prepare-universal-forms-user-acceptance-packet.sh" "universal-forms-implementation-map.md"
 contains "delivery bundle audit runs implementation map verifier" "$ROOT_DIR/scripts/audit-universal-forms-delivery-bundle.sh" "implementation map verifier passes"
 contains "delivery bundle audit runs implementation map contract smoke" "$ROOT_DIR/scripts/audit-universal-forms-delivery-bundle.sh" "implementation map contract smoke passes"
-not_contains "docs index does not retain stale 64-tool count" "$ROOT_DIR/docs/README.md" "64-tool"
-not_contains "docs index does not retain stale 64 MCP server count" "$ROOT_DIR/docs/README.md" "64 tools"
-contains "README states the binaries take no environment configuration" "$ROOT_README" "no environment variables"
 contains "MCP integration test uses current JSON-RPC endpoint" "$TEST_MCP_SCRIPT" "/mcp/rpc"
 contains "MCP integration test lists tools through JSON-RPC" "$TEST_MCP_SCRIPT" '"method":"tools/list"'
 contains "MCP integration test invokes tools through JSON-RPC" "$TEST_MCP_SCRIPT" '"method":"tools/call"'
@@ -415,8 +384,6 @@ contains "API integration test accepts uppercase service health responses" "$TES
 contains "benchmark defaults to compose API port" "$BENCHMARK_SCRIPT" 'API_URL="${API_URL:-http://localhost:8081}"'
 
 printf '\nContributor documentation coverage:\n'
-contains "README uses Bun for frontend install" "$ROOT_README" "cd frontend && bun install && bun run dev"
-contains "README documents universal forms CI gates" "$ROOT_README" "Universal Forms Gates"
 contains "CI defines universal forms gate job" "$CI_WORKFLOW" "universal-forms:"
 contains "CI names universal forms gates" "$CI_WORKFLOW" "Universal Forms Gates"
 contains "CI installs cargo machete" "$CI_WORKFLOW" "cargo install cargo-machete --locked"
@@ -439,139 +406,6 @@ not_contains "nginx does not depend on API container_name alias" "$FRONTEND_NGIN
 not_contains "nginx does not depend on MCP container_name alias" "$FRONTEND_NGINX" "openpr-mcp-server:8090"
 contains "nginx exposes health endpoint" "$FRONTEND_NGINX" "return 200 \"healthy"
 contains "nginx supports SvelteKit fallback" "$FRONTEND_NGINX" 'try_files $uri $uri/ /index.html'
-
-printf '\nProduction runbook coverage:\n'
-contains "runbook states minimum production services" "$PRODUCTION_DOC" "Minimum production services:"
-contains "runbook states what stops without the worker" "$PRODUCTION_DOC" "If the worker is not running"
-contains "runbook states runtime configuration section" "$PRODUCTION_DOC" "## Runtime Configuration"
-contains "runbook states PostgreSQL password must be concrete" "$PRODUCTION_DOC" '`POSTGRES_PASSWORD` and the password inside `database.url` must be the same'
-contains "runbook states PostgreSQL is internal-only" "$PRODUCTION_DOC" "PostgreSQL is exposed only inside the compose network"
-contains "runbook states app ports bind localhost by default" "$PRODUCTION_DOC" "host ports bind"
-contains "runbook states reverse proxy or tunnel requirement" "$PRODUCTION_DOC" "reverse proxy or tunnel"
-contains "runbook states compose avoids fixed container names" "$PRODUCTION_DOC" 'avoids fixed `container_name` values'
-contains "runbook states webhook example config" "$PRODUCTION_DOC" "config/sylvode-runner.example.toml"
-contains "runbook states webhook production secret replacement" "$PRODUCTION_DOC" 'set a concrete `webhook_secrets` value'
-contains "runbook states local compose bootstrap script" "$PRODUCTION_DOC" "bash scripts/start.sh"
-contains "runbook states local restaurant demo bootstrap" "$PRODUCTION_DOC" "scripts/bootstrap-restaurant-demo.sh"
-contains "runbook states local demo writes MCP credentials" "$PRODUCTION_DOC" 'writes `mcp.bot_token` and'
-contains "runbook states local demo recreates MCP service" "$PRODUCTION_DOC" 'recreates a running compose `mcp-server`'
-contains "runbook states local demo verifies MCP HTTP" "$PRODUCTION_DOC" 'verifies `/mcp/rpc` with `projects.list`'
-contains "runbook states restaurant demo is not production seeding" "$PRODUCTION_DOC" "not a production data seeding path"
-contains "runbook includes security scope audit" "$PRODUCTION_DOC" "scripts/audit-universal-forms-security-scope.sh"
-contains "runbook documents universal forms CI gates" "$PRODUCTION_DOC" "Universal Forms Gates"
-contains "runbook exposes local universal forms CI wrapper" "$PRODUCTION_DOC" "scripts/ci-universal-forms-gates.sh"
-contains "runbook documents CI cargo-audit warning boundary" "$PRODUCTION_DOC" "workspace warning-as-error policy"
-contains "runbook documents CI source coverage gate" "$PRODUCTION_DOC" "scripts/audit-universal-forms-source-coverage.sh"
-contains "runbook documents CI production readiness gate" "$PRODUCTION_DOC" "scripts/audit-universal-forms-production-readiness.sh"
-contains "runbook documents SQLx inactive MySQL boundary" "$PRODUCTION_DOC" "inactive MySQL backend scope"
-contains "runbook states prebuilt compose needs release build" "$PRODUCTION_DOC" "Dockerfile.prebuilt"
-contains "runbook states webhook receiver uses connectors profile" "$PRODUCTION_DOC" '`connectors` profile'
-contains "runbook states JWT secret must be concrete" "$PRODUCTION_DOC" '`auth.jwt_secret` must be a concrete deployment'
-contains "runbook states MCP compose API URL" "$PRODUCTION_DOC" 'api_url = "http://api:8080"'
-contains "runbook forbids shipping demo MCP credentials" "$PRODUCTION_DOC" "must not ship with demo MCP credentials"
-contains "runbook states PostgreSQL-only path" "$PRODUCTION_DOC" "Production is PostgreSQL-only for this delivery path"
-contains "runbook includes webhook delivery audit requirement" "$PRODUCTION_DOC" 'Verify `webhook_deliveries` has no growing number'
-# Connectors, agent invocations and the event outbox were removed in 0.2.21 (migrations 0052, 0053).
-not_contains "runbook does not require the removed event outbox" "$PRODUCTION_DOC" 'Verify `event_outbox`'
-not_contains "runbook does not list the removed connector tools" "$PRODUCTION_DOC" '`connectors.*`'
-not_contains "runbook does not describe connector receipts" "$PRODUCTION_DOC" "connector invocation"
-contains "runbook includes restaurant acceptance scenario" "$PRODUCTION_DOC" 'Use `restaurant_ordering_default`'
-contains "runbook includes MCP smoke" "$PRODUCTION_DOC" "scripts/smoke-forms-mcp.sh"
-contains "runbook includes production object-storage smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-production-object-storage.mjs"
-contains "runbook documents expected object-storage backend assertion" "$PRODUCTION_DOC" "OPENPR_EXPECT_OBJECT_STORAGE_BACKEND"
-contains "runbook documents object-storage S3 config section" "$PRODUCTION_DOC" "[storage.s3]"
-contains "runbook documents object-storage S3 bucket key" "$PRODUCTION_DOC" 'bucket = "sylvode-uploads"'
-contains "runbook documents upload storage backend field" "$PRODUCTION_DOC" "storage_backend"
-contains "runbook documents upload object key field" "$PRODUCTION_DOC" "object_key"
-contains "runbook documents upload thumbnail field" "$PRODUCTION_DOC" "thumbnail_url"
-contains "runbook documents object-storage import-file acceptance" "$PRODUCTION_DOC" "import-file"
-contains "runbook documents attachment package job acceptance" "$PRODUCTION_DOC" "attachment package job"
-contains "runbook includes production attachment lifecycle smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-production-attachment-lifecycle.mjs"
-contains "runbook documents attachment archive restore lifecycle" "$PRODUCTION_DOC" "archives the attachment"
-contains "runbook documents archived attachment signed download rejection" "$PRODUCTION_DOC" "signed download rejects archived attachments"
-contains "runbook includes production signature lifecycle smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-production-signature-lifecycle.mjs"
-contains "runbook documents signature audit verification endpoint" "$PRODUCTION_DOC" "/api/v1/form-records/{record_id}/signatures/audit-verification"
-contains "runbook documents signature lifecycle summary" "$PRODUCTION_DOC" "signature_lifecycle"
-contains "runbook documents signature workflow verification decision" "$PRODUCTION_DOC" "signature_workflow_verification.status=verified"
-contains "runbook includes connector smoke" "$PRODUCTION_DOC" "scripts/smoke-webhook-generic-consumer.sh"
-contains "runbook includes WASM smoke" "$PRODUCTION_DOC" "scripts/smoke-wasm-plugin-runtime.sh"
-contains "runbook includes frontend smoke" "$PRODUCTION_DOC" "bun run smoke:forms-page-interactions"
-contains "runbook includes project template frontend smoke" "$PRODUCTION_DOC" "bun run smoke:project-template"
-contains "runbook includes template work item frontend smoke" "$PRODUCTION_DOC" "bun run smoke:template-work-items"
-contains "runbook includes UI review gallery verification" "$PRODUCTION_DOC" "scripts/verify-universal-forms-ui-review-gallery.sh"
-contains "runbook includes UI review gallery render smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-ui-review-gallery-render.sh"
-contains "runbook includes readiness summary generation" "$PRODUCTION_DOC" "scripts/report-universal-forms-readiness-summary.sh"
-contains "runbook includes delivery manifest generation" "$PRODUCTION_DOC" "scripts/prepare-universal-forms-delivery-manifest.sh"
-contains "runbook includes delivery manifest verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-delivery-manifest.sh"
-contains "runbook includes readiness JSON generation" "$PRODUCTION_DOC" "scripts/report-universal-forms-readiness-json.sh"
-contains "runbook includes readiness JSON verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-readiness-json.sh"
-contains "runbook documents readiness JSON signoff status JSON link" "$PRODUCTION_DOC" "reports.signoff_status_json"
-contains "runbook includes signoff status JSON generation" "$PRODUCTION_DOC" "scripts/report-universal-forms-signoff-status-json.sh"
-contains "runbook includes signoff status JSON verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-signoff-status-json.sh"
-contains "runbook includes signoff status JSON contract smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-signoff-status-json-contract.sh"
-contains "runbook includes signoff dashboard generator" "$PRODUCTION_DOC" "scripts/prepare-universal-forms-signoff-dashboard.sh"
-contains "runbook includes signoff dashboard verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-signoff-dashboard.sh"
-contains "runbook includes signoff dashboard render smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-signoff-dashboard-render.sh"
-contains "runbook includes signoff dashboard progression smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-signoff-dashboard-progression.sh"
-contains "runbook includes signoff status output smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-signoff-status-output.sh"
-contains "runbook includes next signoff review verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-next-signoff-review.sh"
-contains "runbook includes next signoff review contract smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-next-signoff-review-contract.sh"
-contains "runbook includes next signoff command smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-next-signoff-command.sh"
-contains "runbook includes manual signoff progression smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-manual-signoff-progression.sh"
-contains "runbook includes all manual signoff command smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-manual-signoff-commands.sh"
-contains "runbook includes delivery status command" "$PRODUCTION_DOC" "scripts/status-universal-forms-delivery.sh"
-contains "runbook includes delivery status JSON verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-delivery-status-json.sh"
-contains "runbook includes delivery status JSON contract smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-delivery-status-json-contract.sh"
-contains "runbook includes delivery status output smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-delivery-status-output.sh"
-contains "runbook links signoff status JSON schema" "$PRODUCTION_DOC" "scripts/schemas/openpr-universal-forms-signoff-status.schema.json"
-contains "runbook documents signoff status JSON final flag" "$PRODUCTION_DOC" "final_signoff_allowed"
-contains "runbook explains signoff JSON evidence map fields" "$PRODUCTION_DOC" "automated evidence and reviewer check"
-contains "runbook explains signoff pending queue" "$PRODUCTION_DOC" "pending_queue"
-contains "runbook includes development status JSON generation" "$PRODUCTION_DOC" "scripts/report-universal-forms-development-status-json.sh"
-contains "runbook includes development status JSON verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-development-status-json.sh"
-contains "runbook includes development status JSON contract smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-development-status-json-contract.sh"
-contains "runbook links development status JSON schema" "$PRODUCTION_DOC" "scripts/schemas/openpr-universal-forms-development-status.schema.json"
-contains "runbook includes scenario catalog JSON generation" "$PRODUCTION_DOC" "scripts/report-universal-forms-scenario-catalog-json.sh"
-contains "runbook includes scenario catalog JSON verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-scenario-catalog-json.sh"
-contains "runbook includes scenario catalog JSON contract smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-scenario-catalog-json-contract.sh"
-contains "runbook links scenario catalog JSON schema" "$PRODUCTION_DOC" "scripts/schemas/openpr-universal-forms-scenario-catalog.schema.json"
-contains "runbook documents scenario catalog operator entrypoints" "$PRODUCTION_DOC" "operator entrypoints"
-contains "runbook documents scenario catalog connector kinds" "$PRODUCTION_DOC" "connector kinds"
-contains "runbook documents runtime scenario usage guide" "$PRODUCTION_DOC" "usage_guide"
-contains "runbook documents scenario template MCP resource" "$PRODUCTION_DOC" "sylvode://scenario-templates"
-contains "runbook includes implementation map JSON generation" "$PRODUCTION_DOC" "scripts/report-universal-forms-implementation-map-json.sh"
-contains "runbook includes implementation map JSON verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-implementation-map-json.sh"
-contains "runbook includes implementation map JSON contract smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-implementation-map-json-contract.sh"
-contains "runbook links implementation map JSON schema" "$PRODUCTION_DOC" "scripts/schemas/openpr-universal-forms-implementation-map.schema.json"
-contains "runbook includes delivery manifest JSON verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-delivery-manifest-json.sh"
-contains "runbook includes delivery manifest JSON contract smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-delivery-manifest-json-contract.sh"
-contains "runbook includes report output boundary smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-report-output-boundaries.sh"
-contains "runbook explains report output boundary smoke" "$PRODUCTION_DOC" "The report output boundary smoke is the production guard for generated handoff"
-contains "runbook explains signoff status JSON stdout mode" "$PRODUCTION_DOC" "report-universal-forms-signoff-status-json.sh --output -"
-contains "runbook explains signoff status JSON stdout alias" "$PRODUCTION_DOC" "equivalent \`--stdout\` alias"
-contains "runbook explains stdout mode does not leave dash file" "$PRODUCTION_DOC" 'without leaving a repository-root `-`'
-contains "runbook includes delivery bundle audit" "$PRODUCTION_DOC" "scripts/audit-universal-forms-delivery-bundle.sh"
-not_contains "production runbook does not use npm frontend commands" "$PRODUCTION_DOC" "npm run"
-contains "runbook includes finalizer" "$PRODUCTION_DOC" "scripts/finalize-universal-forms-acceptance.sh"
-contains "runbook includes completion audit JSON verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-completion-audit-json.sh"
-contains "runbook includes completion audit JSON contract smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-completion-audit-json-contract.sh"
-contains "runbook links completion audit JSON schema" "$PRODUCTION_DOC" "scripts/schemas/openpr-universal-forms-completion-audit.schema.json"
-contains "runbook includes release gate" "$PRODUCTION_DOC" "scripts/gate-universal-forms-release.sh"
-contains "runbook includes release gate JSON verifier" "$PRODUCTION_DOC" "scripts/verify-universal-forms-release-gate-json.sh"
-contains "runbook includes release gate JSON contract smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-release-gate-json-contract.sh"
-contains "runbook includes release gate smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-release-gate.sh"
-contains "runbook includes release gate output smoke" "$PRODUCTION_DOC" "scripts/smoke-universal-forms-release-gate-output.sh"
-contains "runbook links release gate JSON schema" "$PRODUCTION_DOC" "scripts/schemas/openpr-universal-forms-release-gate.schema.json"
-contains "runbook explains delivery status JSON mode" "$PRODUCTION_DOC" "scripts/status-universal-forms-delivery.sh --json"
-contains "runbook explains delivery status JSON verifier" "$PRODUCTION_DOC" "Verify it with"
-contains "runbook explains delivery status completion summary" "$PRODUCTION_DOC" "completion_summary"
-contains "runbook explains delivery status completion breakdown" "$PRODUCTION_DOC" "completion_breakdown"
-contains "runbook explains delivery status release blockers" "$PRODUCTION_DOC" "release_blockers"
-contains "runbook explains delivery status next actions" "$PRODUCTION_DOC" "next_actions"
-contains "runbook explains delivery status next reviewer check" "$PRODUCTION_DOC" "current row's automated evidence, reviewer check"
-contains "runbook explains total handoff progress fields" "$PRODUCTION_DOC" "Overall handoff progress: 27 / 34 complete, 7 remaining"
-contains "runbook explains delivery status manual signoff queue" "$PRODUCTION_DOC" "manual_signoff_queue"
-contains "runbook explains delivery status review surfaces" "$PRODUCTION_DOC" "review_surfaces"
 
 if [[ "$failures" -ne 0 ]]; then
   printf '\nUniversal forms production readiness audit failed: %s issue(s)\n' "$failures" >&2

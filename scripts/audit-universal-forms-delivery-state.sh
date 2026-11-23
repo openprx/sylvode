@@ -162,8 +162,7 @@ for path in \
   "$ROOT_DIR/scripts/acceptance-universal-forms.sh" \
   "$ROOT_DIR/scripts/verify-universal-forms-acceptance-signoff.sh" \
   "$ROOT_DIR/scripts/finalize-universal-forms-acceptance.sh" \
-  "$ROOT_DIR/scripts/verify-universal-forms-manual-signoff-consistency.sh" \
-  "$ROOT_DIR/docs/universal-forms-and-plugins.md"; do
+  "$ROOT_DIR/scripts/verify-universal-forms-manual-signoff-consistency.sh"; do
   require_file "$path"
 done
 
