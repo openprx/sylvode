@@ -310,13 +310,7 @@
 	}
 
 	function formatIssueCode(data: Issue): string {
-		if (data.key?.trim()) {
-			return data.key;
-		}
-		if (/^\d+$/.test(data.id)) {
-			return `#${data.id}`;
-		}
-		return `#${data.id.slice(0, 8)}`;
+		return data.identifier;
 	}
 
 	async function updateIssue(data: {
@@ -324,8 +318,9 @@
 		description?: string;
 		status?: IssueStatus;
 		priority?: IssuePriority;
-		assignee_id?: string;
-		sprint_id?: string;
+		assignee_id?: string | null;
+		sprint_id?: string | null;
+		due_at?: string | null;
 	}): Promise<boolean> {
 		if (!issue) {
 			return false;
@@ -432,7 +427,7 @@
 
 		updatingField = 'assignee';
 		const previous = issue.assignee_id ?? '';
-		const success = await updateIssue({ assignee_id: assigneeValue || undefined });
+		const success = await updateIssue({ assignee_id: assigneeValue || null });
 		if (!success) {
 			assigneeValue = previous;
 		} else {

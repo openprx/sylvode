@@ -362,7 +362,7 @@
 						>
 							<div class="space-y-1.5">
 								<div class="flex items-center gap-2">
-									<span class="font-mono text-sm text-fg-muted">{issue.key}</span>
+									<span class="font-mono text-sm text-fg-muted">{issue.identifier}</span>
 
 									<span class="text-sm font-medium text-fg">{issue.title}</span>
 

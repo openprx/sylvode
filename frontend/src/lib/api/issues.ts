@@ -25,7 +25,8 @@ export interface Issue {
 	}>;
 	created_at: string;
 	updated_at: string;
-	key?: string;
+	/** The short identifier, `KEY-n`, such as `WEB-12`. */
+	identifier: string;
 	type?: string;
 }
 
@@ -38,13 +39,15 @@ export interface CreateIssueInput {
 	sprint_id?: string;
 }
 
+/** A field that is left out is unchanged; `null` clears `assignee_id`, `sprint_id` and `due_at`. */
 export interface UpdateIssueInput {
 	title?: string;
 	description?: string;
 	status?: IssueStatus;
 	priority?: IssuePriority;
-	assignee_id?: string;
-	sprint_id?: string;
+	assignee_id?: string | null;
+	sprint_id?: string | null;
+	due_at?: string | null;
 }
 
 export interface Comment {
@@ -77,6 +80,8 @@ export interface ListIssuesParams {
 	state?: IssueStatus;
 	priority?: IssuePriority;
 	assignee_id?: string;
+	/** A sprint id, or `none` for the items that are in no sprint. */
+	sprint_id?: string;
 	label_ids?: string;
 	search?: string;
 	sort_by?: 'updated_at' | 'created_at' | 'priority' | 'title';
@@ -135,6 +140,7 @@ export const issuesApi = {
 		if (params?.state) query.set('state', params.state);
 		if (params?.priority) query.set('priority', params.priority);
 		if (params?.assignee_id) query.set('assignee_id', params.assignee_id);
+		if (params?.sprint_id) query.set('sprint_id', params.sprint_id);
 		if (params?.label_ids) query.set('label_ids', params.label_ids);
 		if (params?.search) query.set('search', params.search);
 		if (params?.sort_by) query.set('sort_by', params.sort_by);
@@ -203,7 +209,8 @@ export const issuesApi = {
 			state: data.status,
 			priority: data.priority,
 			assignee_id: data.assignee_id,
-			sprint_id: data.sprint_id
+			sprint_id: data.sprint_id,
+			due_at: data.due_at
 		});
 		if (result.code !== 0 || !result.data) {
 			return {

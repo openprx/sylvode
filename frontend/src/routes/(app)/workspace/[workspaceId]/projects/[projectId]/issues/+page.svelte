@@ -169,13 +169,7 @@
 	}
 
 	function formatIssueCode(issue: Issue): string {
-		if (issue.key?.trim()) {
-			return issue.key;
-		}
-		if (/^\d+$/.test(issue.id)) {
-			return `#${issue.id}`;
-		}
-		return `#${issue.id.slice(0, 8)}`;
+		return issue.identifier;
 	}
 
 	function formatDate(dateText: string): string {

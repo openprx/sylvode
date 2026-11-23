@@ -43,6 +43,14 @@ name.
   field or parameter they do not know instead of ignoring it. `GET /projects/{id}/issues` accepts
   `sprint_id=<uuid>|none`, which it used to ignore.
 
+- **MCP and web client follow the item contract.** `work_items.update` clears `sprint_id` (as it
+  already cleared `assignee_id` and `due_at`) when it is sent `null`, an empty string or `"null"`,
+  and its schema says so; `work_items.list` takes `sprint_id` (a sprint id or `none`).
+  `work_items.get_by_identifier` asks the API only: the client-side search by project and position
+  that answered when the API lookup failed is removed, so an API error is returned as the tool
+  error. The web app shows the identifier from the API, and unassigning an issue on its page sends
+  `assignee_id: null`, which used to do nothing.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

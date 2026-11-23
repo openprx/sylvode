@@ -166,8 +166,10 @@ Custom Form projects show only **Forms**, **Apps** and **Settings**.
 sprint), sorting and paging. **Create Issue** opens the full form; on the board, **Quick create
 issue...** adds one with just a title and **Detailed create** opens the full form.
 
-An issue has a title, a Markdown description, a state, a priority (**Urgent**, **High**, **Medium**,
-**Low**), an assignee, labels, a sprint, attachments and comments. The issue page also shows its
+Every issue has an identifier made of the project key and a running number, such as `WEB-12`; the
+lists, the board and the issue page show it. An issue has a title, a Markdown description, a state,
+a priority (**Urgent**, **High**, **Medium**, **Low**), an assignee, labels, a sprint, attachments
+and comments. The issue page also shows its
 activity. Assigning someone or mentioning them in a comment sends them a notification.
 
 Assigning an issue to a bot, or mentioning a bot, can start agent work; see [Agents](agents.md).

@@ -221,6 +221,8 @@ pub struct ListWorkItemsQuery<'a> {
     pub state: Option<&'a str>,
     pub assignee_id: Option<&'a str>,
     pub priority: Option<&'a str>,
+    /// A sprint id, or `none` for the items in no sprint.
+    pub sprint_id: Option<&'a str>,
     pub search: Option<&'a str>,
     pub label_ids: Option<&'a str>,
     pub sort_by: Option<&'a str>,
@@ -1229,6 +1231,9 @@ impl OpenPrClient {
         }
         if let Some(priority) = query.priority {
             params.push(format!("priority={}", urlencoding::encode(priority)));
+        }
+        if let Some(sprint_id) = query.sprint_id {
+            params.push(format!("sprint_id={}", urlencoding::encode(sprint_id)));
         }
         if let Some(search) = query.search {
             params.push(format!("search={}", urlencoding::encode(search)));

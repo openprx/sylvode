@@ -168,7 +168,7 @@
 				issue.title.toLowerCase().includes(query) ||
 				issue.description?.toLowerCase().includes(query) ||
 				issue.id.toLowerCase().includes(query) ||
-				issue.key?.toLowerCase().includes(query);
+				issue.identifier.toLowerCase().includes(query);
 
 			const priorityMatched = priorityFilter === 'all' || issue.priority === priorityFilter;
 			const assigneeMatched = assigneeFilter === 'all' || issue.assignee_id === assigneeFilter;
@@ -191,13 +191,7 @@
 	}
 
 	function getIssueCode(issue: Issue): string {
-		if (issue.key?.trim()) {
-			return issue.key;
-		}
-		if (/^\d+$/.test(issue.id)) {
-			return `#${issue.id}`;
-		}
-		return `#${issue.id.slice(0, 8)}`;
+		return issue.identifier;
 	}
 
 	function getPriorityBarClass(priority: IssuePriority): string {

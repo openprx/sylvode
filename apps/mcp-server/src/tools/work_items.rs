@@ -56,6 +56,10 @@ pub fn list_work_items_tool() -> ToolDefinition {
                     "enum": WORK_ITEM_PRIORITIES,
                     "description": "Filter by priority (optional)"
                 },
+                "sprint_id": {
+                    "type": "string",
+                    "description": "Filter by sprint UUID, or \"none\" for the work items that are in no sprint (optional)"
+                },
                 "search": {
                     "type": "string",
                     "description": "Filter by title/description text (optional)"
@@ -87,6 +91,7 @@ struct ListWorkItemsInput {
     state: Option<String>,
     assignee_id: Option<String>,
     priority: Option<String>,
+    sprint_id: Option<String>,
     search: Option<String>,
     label_ids: Option<String>,
     sort_by: Option<String>,
@@ -110,6 +115,7 @@ pub async fn list_work_items(client: &OpenPrClient, args: serde_json::Value) -> 
         state: input.state.as_deref(),
         assignee_id: input.assignee_id.as_deref(),
         priority: input.priority.as_deref(),
+        sprint_id: input.sprint_id.as_deref(),
         search: input.search.as_deref(),
         label_ids: input.label_ids.as_deref(),
         sort_by: input.sort_by.as_deref(),
@@ -251,61 +257,7 @@ pub async fn get_work_item_by_identifier(client: &OpenPrClient, args: serde_json
         Err(e) => return CallToolResult::error(format!("Invalid input: {e}")),
     };
 
-    let identifier = input.identifier.trim();
-    let (project_identifier, sequence_id) = match parse_identifier(identifier) {
-        Ok(v) => v,
-        Err(e) => return CallToolResult::error(e),
-    };
-
-    // Prefer backend-native identifier lookup when available.
-    if let Ok(item) = client.get_work_item_by_identifier(identifier).await {
-        let json = serde_json::to_string_pretty(&item).unwrap_or_default();
-        return CallToolResult::success(json);
-    }
-
-    let projects = match client.list_projects().await {
-        Ok(p) => p,
-        Err(e) => return CallToolResult::error(e),
-    };
-
-    let Some(project_id) = find_project_id_by_identifier(&projects, project_identifier) else {
-        return CallToolResult::error(format!("Project with identifier '{project_identifier}' not found"));
-    };
-
-    // Prefer project-scoped lookup to reduce false positives and payload size.
-    let project_search_path = format!("/api/v1/projects/{project_id}/issues?search={identifier}&per_page=100");
-    let project_search: Value = match client.get(&project_search_path).await {
-        Ok(v) => v,
-        Err(e) => return CallToolResult::error(e),
-    };
-
-    let mut work_item_id =
-        find_work_item_id_by_identifier(&project_search, identifier, project_identifier, sequence_id, true);
-
-    if work_item_id.is_none() {
-        // Fallback to global search for deployments where identifier search is indexed globally.
-        if let Ok(global_search) = client.search(identifier, Some("issue"), None).await {
-            work_item_id =
-                find_work_item_id_by_identifier(&global_search, identifier, project_identifier, sequence_id, false);
-        }
-    }
-
-    if work_item_id.is_none() {
-        // API list/search payloads may not include sequence/identifier fields.
-        // In that case, derive the N-th issue in stable creation order as a fallback.
-        match find_work_item_id_by_sequence_position(client, &project_id, sequence_id).await {
-            Ok(id) => work_item_id = id,
-            Err(e) => return CallToolResult::error(e),
-        }
-    }
-
-    let Some(work_item_id) = work_item_id else {
-        return CallToolResult::error(format!(
-            "Work item '{identifier}' not found in project '{project_identifier}'"
-        ));
-    };
-
-    match client.get_work_item(&work_item_id).await {
+    match client.get_work_item_by_identifier(input.identifier.trim()).await {
         Ok(item) => {
             let json = serde_json::to_string_pretty(&item).unwrap_or_default();
             CallToolResult::success(json)
@@ -314,187 +266,8 @@ pub async fn get_work_item_by_identifier(client: &OpenPrClient, args: serde_json
     }
 }
 
-async fn find_work_item_id_by_sequence_position(
-    client: &OpenPrClient,
-    project_id: &str,
-    sequence_id: u64,
-) -> Result<Option<String>, String> {
-    if sequence_id == 0 {
-        return Ok(None);
-    }
-
-    let per_page = 100u64;
-    let mut page = 1u64;
-    let mut current_sequence = 0u64;
-
-    loop {
-        let path = format!(
-            "/api/v1/projects/{project_id}/issues?page={page}&per_page={per_page}&sort_by=created_at&sort_order=asc"
-        );
-        let payload: Value = client.get(&path).await?;
-        let data = extract_data(&payload);
-
-        let items = if let Some(arr) = data.get("items").and_then(Value::as_array) {
-            arr
-        } else if let Some(arr) = data.as_array() {
-            arr
-        } else {
-            return Ok(None);
-        };
-
-        if items.is_empty() {
-            return Ok(None);
-        }
-
-        for item in items {
-            current_sequence += 1;
-            if current_sequence == sequence_id {
-                return Ok(item.get("id").and_then(Value::as_str).map(ToString::to_string));
-            }
-        }
-
-        let per_page_usize = usize::try_from(per_page).unwrap_or(usize::MAX);
-        let reached_last_page = data
-            .get("total_pages")
-            .and_then(value_to_u64)
-            .map_or(items.len() < per_page_usize, |total_pages| page >= total_pages);
-
-        if reached_last_page {
-            return Ok(None);
-        }
-
-        page += 1;
-    }
-}
-
-fn parse_identifier(identifier: &str) -> Result<(&str, u64), String> {
-    let (project_identifier, sequence_text) = identifier
-        .rsplit_once('-')
-        .ok_or_else(|| "identifier must be in format PROJECT-123".to_string())?;
-
-    if project_identifier.trim().is_empty() {
-        return Err("identifier project prefix cannot be empty".to_string());
-    }
-
-    let sequence_id = sequence_text
-        .parse::<u64>()
-        .map_err(|_| "identifier sequence part must be a positive integer".to_string())?;
-
-    Ok((project_identifier, sequence_id))
-}
-
 fn extract_data(value: &Value) -> &Value {
     value.get("data").unwrap_or(value)
-}
-
-fn find_project_id_by_identifier(projects_payload: &Value, project_identifier: &str) -> Option<String> {
-    let project_identifier_upper = project_identifier.to_ascii_uppercase();
-    let projects_data = extract_data(projects_payload);
-
-    let projects = match projects_data.get("items").and_then(Value::as_array) {
-        Some(items) => items,
-        None => projects_data.as_array()?,
-    };
-
-    projects
-        .iter()
-        .find(|project| {
-            project
-                .get("key")
-                .and_then(Value::as_str)
-                .or_else(|| project.get("identifier").and_then(Value::as_str))
-                .is_some_and(|key| key.eq_ignore_ascii_case(&project_identifier_upper))
-        })
-        .and_then(|project| project.get("id").and_then(Value::as_str))
-        .map(ToString::to_string)
-}
-
-fn find_work_item_id_by_identifier(
-    payload: &Value,
-    identifier: &str,
-    project_identifier: &str,
-    sequence_id: u64,
-    project_scoped: bool,
-) -> Option<String> {
-    let mut candidates: Vec<&Value> = Vec::new();
-    let data = extract_data(payload);
-
-    if let Some(items) = data.get("items").and_then(Value::as_array) {
-        candidates.extend(items);
-    }
-    if let Some(results) = data.get("results").and_then(Value::as_array) {
-        for result in results {
-            if result
-                .get("type")
-                .and_then(Value::as_str)
-                .is_some_and(|t| t.eq_ignore_ascii_case("issue"))
-            {
-                candidates.push(result);
-            }
-        }
-    }
-    if let Some(arr) = data.as_array() {
-        candidates.extend(arr);
-    }
-    if candidates.is_empty() && data.is_object() {
-        candidates.push(data);
-    }
-
-    candidates
-        .into_iter()
-        .find(|item| item_matches_identifier(item, identifier, project_identifier, sequence_id, project_scoped))
-        .and_then(|item| item.get("id").and_then(Value::as_str))
-        .map(ToString::to_string)
-}
-
-fn item_matches_identifier(
-    item: &Value,
-    identifier: &str,
-    project_identifier: &str,
-    sequence_id: u64,
-    project_scoped: bool,
-) -> bool {
-    let identifier_upper = identifier.to_ascii_uppercase();
-    let project_identifier_upper = project_identifier.to_ascii_uppercase();
-
-    let identifier_fields = [
-        "key",
-        "identifier",
-        "human_identifier",
-        "display_id",
-        "work_item_identifier",
-    ];
-    if identifier_fields.iter().any(|field| {
-        item.get(*field)
-            .and_then(Value::as_str)
-            .is_some_and(|v| v.eq_ignore_ascii_case(&identifier_upper))
-    }) {
-        return true;
-    }
-
-    let sequence_match = ["sequence_id", "sequence_number", "number", "seq", "index"]
-        .iter()
-        .any(|field| {
-            item.get(*field)
-                .and_then(value_to_u64)
-                .is_some_and(|n| n == sequence_id)
-        });
-
-    if !sequence_match {
-        return false;
-    }
-
-    if project_scoped {
-        return true;
-    }
-
-    ["project_identifier", "project_key", "project_code"]
-        .iter()
-        .any(|field| {
-            item.get(*field)
-                .and_then(Value::as_str)
-                .is_some_and(|v| v.eq_ignore_ascii_case(&project_identifier_upper))
-        })
 }
 
 fn value_to_u64(value: &Value) -> Option<u64> {
@@ -683,17 +456,17 @@ pub fn update_work_item_tool() -> ToolDefinition {
                 },
                 "sprint_id": {
                     "type": "string",
-                    "description": "New sprint UUID (optional)",
+                    "description": "New sprint UUID (optional). Send null or an empty string to take the work item out of its sprint (back to the backlog)",
                     "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                 },
                 "assignee_id": {
                     "type": "string",
-                    "description": "New assignee UUID (optional). The API cannot clear an assignee: sending null or an empty string leaves the current assignee unchanged",
+                    "description": "New assignee UUID (optional). Send null or an empty string to unassign",
                     "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                 },
                 "due_at": {
                     "type": "string",
-                    "description": "New due date in RFC3339 format (optional). The API cannot clear a due date: sending null or an empty string leaves the current value unchanged"
+                    "description": "New due date in RFC3339 format (optional). Send null or an empty string to remove the due date"
                 }
             },
             "required": ["work_item_id"]
@@ -712,6 +485,16 @@ struct UpdateWorkItemInput {
     sprint_id: Option<String>,
     assignee_id: Option<String>,
     due_at: Option<String>,
+}
+
+/// The body value of a field that can be cleared: absent from the arguments leaves it out; `null`,
+/// an empty string and `"null"` clear it; anything else is the new value.
+fn clearable(args: Option<&serde_json::Map<String, Value>>, field: &str, value: Option<&str>) -> Option<Value> {
+    args.and_then(|args| args.get(field))?;
+    Some(match value {
+        Some("" | "null") | None => Value::Null,
+        Some(value) => json!(value),
+    })
 }
 
 pub async fn update_work_item(client: &OpenPrClient, args: serde_json::Value) -> CallToolResult {
@@ -738,27 +521,13 @@ pub async fn update_work_item(client: &OpenPrClient, args: serde_json::Value) ->
     if let Some(priority) = input.priority {
         body.insert("priority".to_string(), json!(priority));
     }
-    if let Some(sprint_id) = input.sprint_id {
-        body.insert("sprint_id".to_string(), json!(sprint_id));
-    }
-    if args_obj.as_ref().and_then(|o| o.get("assignee_id")).is_some() {
-        match input.assignee_id.as_deref() {
-            Some("" | "null") | None => {
-                body.insert("assignee_id".to_string(), serde_json::Value::Null);
-            }
-            Some(aid) => {
-                body.insert("assignee_id".to_string(), json!(aid));
-            }
-        }
-    }
-    if args_obj.as_ref().and_then(|o| o.get("due_at")).is_some() {
-        match input.due_at.as_deref() {
-            Some("" | "null") | None => {
-                body.insert("due_at".to_string(), serde_json::Value::Null);
-            }
-            Some(d) => {
-                body.insert("due_at".to_string(), json!(d));
-            }
+    for (field, value) in [
+        ("sprint_id", input.sprint_id.as_deref()),
+        ("assignee_id", input.assignee_id.as_deref()),
+        ("due_at", input.due_at.as_deref()),
+    ] {
+        if let Some(value) = clearable(args_obj.as_ref(), field, value) {
+            body.insert(field.to_string(), value);
         }
     }
 
@@ -1023,5 +792,76 @@ pub async fn add_labels_to_work_item(client: &OpenPrClient, args: serde_json::Va
     match client.add_labels_to_issue(&input.work_item_id, &input.label_ids).await {
         Ok(_) => CallToolResult::success("Labels added to work item"),
         Err(e) => CallToolResult::error(e),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::{get_work_item_by_identifier, list_work_items, update_work_item};
+    use crate::client::test_api;
+    use crate::tools::test_support::{Api, Policy, UUID};
+    use axum::{Json, Router, http::StatusCode, routing::get};
+    use serde_json::{Value, json};
+
+    async fn last_put_body(args: Value) -> Value {
+        let api = Api::spawn(Policy::Permissive).await.expect("stand-in api");
+        let client = api.client().expect("client");
+        let result = update_work_item(&client, args).await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        api.seen()
+            .into_iter()
+            .rev()
+            .find(|seen| seen.method == "PUT")
+            .expect("an update was sent")
+            .body
+    }
+
+    #[tokio::test]
+    async fn update_maps_empty_sprint_id_to_null() {
+        for cleared in [json!(""), json!("null"), Value::Null] {
+            let body = last_put_body(json!({ "work_item_id": UUID, "sprint_id": cleared })).await;
+            assert_eq!(body, json!({ "sprint_id": null }), "for {cleared}");
+        }
+        let body = last_put_body(json!({ "work_item_id": UUID, "sprint_id": UUID })).await;
+        assert_eq!(body, json!({ "sprint_id": UUID }));
+        // Absent stays absent: a title-only update names no other field.
+        let body = last_put_body(json!({ "work_item_id": UUID, "title": "t" })).await;
+        assert_eq!(body, json!({ "title": "t" }));
+    }
+
+    #[tokio::test]
+    async fn update_clears_assignee_and_due_date_the_same_way() {
+        let body = last_put_body(json!({ "work_item_id": UUID, "assignee_id": "", "due_at": null })).await;
+        assert_eq!(body, json!({ "assignee_id": null, "due_at": null }));
+    }
+
+    #[tokio::test]
+    async fn list_passes_the_sprint_filter() {
+        let api = Api::spawn(Policy::Permissive).await.expect("stand-in api");
+        let client = api.client().expect("client");
+        let result = list_work_items(&client, json!({ "project_id": UUID, "sprint_id": "none" })).await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let seen = api.seen();
+        let request = seen.iter().find(|seen| seen.method == "GET").expect("a list was sent");
+        assert!(request.query.contains("sprint_id=none"), "{}", request.query);
+    }
+
+    #[tokio::test]
+    async fn get_by_identifier_reports_the_api_error() {
+        let router = Router::new().route(
+            "/api/v1/issues/by-identifier/{identifier}",
+            get(|| async {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "code": 404, "message": "work item 'PRX-9' not found" })),
+                )
+            }),
+        );
+        let url = test_api::spawn(router).await.expect("api");
+        let client = test_api::client(url).expect("client");
+        let result = get_work_item_by_identifier(&client, json!({ "identifier": "PRX-9" })).await;
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        assert!(format!("{result:?}").contains("PRX-9"), "{result:?}");
     }
 }

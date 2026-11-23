@@ -7,6 +7,7 @@ export type MyIssuePriority = 'low' | 'medium' | 'high' | 'urgent';
 
 export interface MyIssue {
 	id: string;
+	identifier: string;
 	project_id: string;
 	workspace_id: string;
 	project_name: string;
@@ -34,6 +35,7 @@ export interface MyActivity {
 function mapIssue(raw: Record<string, unknown>): MyIssue {
 	return {
 		id: String(raw.id ?? ''),
+		identifier: String(raw.identifier ?? ''),
 		project_id: String(raw.project_id ?? ''),
 		workspace_id: String(raw.workspace_id ?? ''),
 		project_name: String(raw.project_name ?? ''),
