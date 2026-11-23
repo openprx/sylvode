@@ -372,6 +372,15 @@ change or delete it. A sprint has `name`, `description`, `start_date` and `end_d
 - Names are unique within a project ignoring case (`409`).
 - Members can create sprints and edit their name, description and dates. Creating an active sprint,
   changing a sprint's status and deleting a sprint need an owner or admin (`403`).
+- Completing or cancelling a sprint moves its unfinished work items in the same transaction: to the
+  backlog, or to a planned sprint of the same project named by `rollover_sprint_id` in the update
+  (`400` when it is not another planned sprint of the project, and `400` when it is sent without
+  `completed` or `cancelled`). A work item is finished when its state is terminal or its category is
+  `done` or `completed`; finished items stay in the sprint. The answer has
+  `rollover: {moved_count, target_sprint_id}` (`null` target means the backlog). Each moved item
+  gets a `sprint_changed` activity.
+- Deleting a sprint moves all its work items to the backlog the same way (with the activity), then
+  deletes it.
 - A body with a field the route does not know is refused with HTTP 422.
 
 ### Routes open to users and bots

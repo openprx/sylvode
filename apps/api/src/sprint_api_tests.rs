@@ -391,3 +391,321 @@ async fn get_sprint_is_404_for_non_member() {
     assert_eq!(got.code(), Some(404), "{}", got.body);
     api.finish().await;
 }
+
+impl Api {
+    /// An item of the sprint in the given workflow state.
+    pub(super) async fn sprint_item(&self, title: &str, sprint: Uuid, state: &str) -> Uuid {
+        self.create_item(title, json!({"sprint_id": sprint, "state": state}))
+            .await
+    }
+
+    /// The sprint of each item (`None` for the backlog).
+    pub(super) async fn sprint_of(&self, item: Uuid) -> Option<Uuid> {
+        let answer = self.get(&format!("/api/v1/issues/{item}"), self.alice).await;
+        answer.data()["sprint_id"]
+            .as_str()
+            .map(|id| Uuid::parse_str(id).expect("uuid"))
+    }
+
+    pub(super) async fn complete(&self, sprint: Uuid, extra: Value) -> Answer {
+        let mut body = json!({"status": "completed"});
+        if let (Some(target), Some(source)) = (body.as_object_mut(), extra.as_object()) {
+            for (key, value) in source {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+        self.put(&format!("/api/v1/sprints/{sprint}"), self.alice, body).await
+    }
+}
+
+#[tokio::test]
+async fn completing_moves_unfinished_items_to_backlog() {
+    let Some(api) = Api::new("sprint_complete_backlog").await else {
+        return;
+    };
+    let sprint = api.new_sprint("S1", json!({"status": "active"})).await;
+    let finished = api.sprint_item("done one", sprint, "done").await;
+    let open = api.sprint_item("open one", sprint, "todo").await;
+    let started = api.sprint_item("started one", sprint, "in_progress").await;
+
+    let answer = api.complete(sprint, json!({})).await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(answer.data()["rollover"]["moved_count"], json!(2), "{}", answer.body);
+    assert!(
+        answer.data()["rollover"]["target_sprint_id"].is_null(),
+        "{}",
+        answer.body
+    );
+    assert_eq!(api.sprint_of(finished).await, Some(sprint), "the finished item stays");
+    assert_eq!(api.sprint_of(open).await, None);
+    assert_eq!(api.sprint_of(started).await, None);
+    for item in [open, started] {
+        let moves = api.activity_details(item, "sprint_changed").await;
+        assert_eq!(moves.len(), 1, "{moves:?}");
+        assert_eq!(moves[0]["from"], json!(sprint));
+        assert!(moves[0]["to"].is_null(), "{moves:?}");
+    }
+    assert!(api.activity_details(finished, "sprint_changed").await.is_empty());
+    // A later read of the sprint has no rollover field.
+    let read = api.get(&format!("/api/v1/sprints/{sprint}"), api.alice).await;
+    assert!(read.data().get("rollover").is_none(), "{}", read.body);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn completing_moves_unfinished_items_to_a_planned_sprint() {
+    let Some(api) = Api::new("sprint_complete_rollover").await else {
+        return;
+    };
+    let sprint = api.new_sprint("S1", json!({"status": "active"})).await;
+    let next = api.new_sprint("S2", json!({})).await;
+    let finished = api.sprint_item("done one", sprint, "done").await;
+    let open = api.sprint_item("open one", sprint, "todo").await;
+
+    let answer = api.complete(sprint, json!({"rollover_sprint_id": next})).await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(answer.data()["rollover"]["moved_count"], json!(1), "{}", answer.body);
+    assert_eq!(answer.data()["rollover"]["target_sprint_id"], json!(next));
+    assert_eq!(api.sprint_of(open).await, Some(next));
+    assert_eq!(api.sprint_of(finished).await, Some(sprint));
+    let moves = api.activity_details(open, "sprint_changed").await;
+    assert_eq!(moves[0]["to"], json!(next), "{moves:?}");
+    // An explicit null is the backlog.
+    let item = api.sprint_item("another", next, "todo").await;
+    api.set_status(next, api.alice, "active").await;
+    let answer = api.complete(next, json!({"rollover_sprint_id": null})).await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(answer.data()["rollover"]["moved_count"], json!(2), "{}", answer.body);
+    assert_eq!(api.sprint_of(item).await, None);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn rollover_to_an_active_or_foreign_sprint_is_400() {
+    let Some(api) = Api::new("sprint_rollover_refused").await else {
+        return;
+    };
+    let sprint = api.new_sprint("S1", json!({"status": "active"})).await;
+    let item = api.sprint_item("stays", sprint, "todo").await;
+    let completed = api.new_sprint("old", json!({})).await;
+    api.set_status(completed, api.alice, "cancelled").await;
+    // A sprint of another project.
+    let other_project = Uuid::new_v4();
+    super::item_api_tests::exec(
+        &api.db,
+        "INSERT INTO projects (id, workspace_id, key, name, created_by, type_key) \
+         VALUES ($1, $2, 'OTH', 'other', $3, 'code_project')",
+        vec![other_project.into(), api.ws.into(), api.alice.into()],
+    )
+    .await;
+    let foreign = Uuid::new_v4();
+    super::item_api_tests::exec(
+        &api.db,
+        "INSERT INTO sprints (id, project_id, name) VALUES ($1, $2, 'foreign')",
+        vec![foreign.into(), other_project.into()],
+    )
+    .await;
+    for (label, target) in [
+        ("itself (active)", sprint),
+        ("a cancelled sprint", completed),
+        ("a foreign sprint", foreign),
+        ("an unknown sprint", Uuid::new_v4()),
+    ] {
+        let answer = api.complete(sprint, json!({"rollover_sprint_id": target})).await;
+        assert_eq!(answer.code(), Some(400), "{label}: {}", answer.body);
+        assert_eq!(
+            answer.body["message"],
+            json!("rollover sprint must be another planned sprint of the same project")
+        );
+    }
+    // Nothing happened: still active, the item still in it.
+    assert_eq!(api.sprint_status(sprint).await, "active");
+    assert_eq!(api.sprint_of(item).await, Some(sprint));
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn rollover_without_completion_is_400() {
+    let Some(api) = Api::new("sprint_rollover_alone").await else {
+        return;
+    };
+    let sprint = api.new_sprint("S1", json!({})).await;
+    let next = api.new_sprint("S2", json!({})).await;
+    let uri = format!("/api/v1/sprints/{sprint}");
+    for body in [
+        json!({"rollover_sprint_id": next}),
+        json!({"name": "renamed", "rollover_sprint_id": next}),
+        json!({"status": "active", "rollover_sprint_id": next}),
+    ] {
+        let answer = api.put(&uri, api.alice, body.clone()).await;
+        assert_eq!(answer.code(), Some(400), "{body}: {}", answer.body);
+        assert_eq!(
+            answer.body["message"],
+            json!("rollover_sprint_id is only valid when completing or cancelling a sprint")
+        );
+    }
+    assert_eq!(api.sprint_status(sprint).await, "planned");
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn cancelling_moves_unfinished_items() {
+    let Some(api) = Api::new("sprint_cancel_moves").await else {
+        return;
+    };
+    let planned = api.new_sprint("planned one", json!({})).await;
+    let next = api.new_sprint("next", json!({})).await;
+    let open = api.sprint_item("open", planned, "todo").await;
+    let finished = api.sprint_item("finished", planned, "done").await;
+    let answer = api
+        .put(
+            &format!("/api/v1/sprints/{planned}"),
+            api.alice,
+            json!({"status": "cancelled", "rollover_sprint_id": next}),
+        )
+        .await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(answer.data()["rollover"]["moved_count"], json!(1), "{}", answer.body);
+    assert_eq!(api.sprint_of(open).await, Some(next));
+    assert_eq!(api.sprint_of(finished).await, Some(planned));
+    // An active sprint cancelled without a target sends its unfinished items to the backlog.
+    api.set_status(next, api.alice, "active").await;
+    let answer = api.set_status(next, api.alice, "cancelled").await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(answer.data()["rollover"]["moved_count"], json!(1), "{}", answer.body);
+    assert_eq!(api.sprint_of(open).await, None);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn finished_means_terminal_or_done_or_completed_category() {
+    let Some(api) = Api::new("sprint_finished_rule").await else {
+        return;
+    };
+    // A project workflow with a `completed`-category state, a terminal state in the `active`
+    // category and two states that are not finished.
+    let workflow = Uuid::new_v4();
+    super::item_api_tests::exec(
+        &api.db,
+        "INSERT INTO workflows (id, workspace_id, name) VALUES ($1, $2, 'custom')",
+        vec![workflow.into(), api.ws.into()],
+    )
+    .await;
+    for (position, (key, category, initial, terminal)) in [
+        ("open", "active", true, false),
+        ("doing", "active", false, false),
+        ("shipped", "completed", false, false),
+        ("dropped", "active", false, true),
+        ("accepted", "done", false, false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        super::item_api_tests::exec(
+            &api.db,
+            "INSERT INTO workflow_states (workflow_id, key, display_name, category, position, is_initial, is_terminal) \
+             VALUES ($1, $2, $2, $3, $4, $5, $6)",
+            vec![
+                workflow.into(),
+                key.into(),
+                category.into(),
+                i32::try_from(position + 1).expect("small").into(),
+                initial.into(),
+                terminal.into(),
+            ],
+        )
+        .await;
+    }
+    super::item_api_tests::exec(
+        &api.db,
+        "UPDATE projects SET workflow_id = $1 WHERE id = $2",
+        vec![workflow.into(), api.project.into()],
+    )
+    .await;
+    let sprint = api.new_sprint("S1", json!({"status": "active"})).await;
+    let mut stays = Vec::new();
+    for state in ["shipped", "dropped", "accepted"] {
+        stays.push(api.sprint_item(state, sprint, state).await);
+    }
+    let moves = [
+        api.sprint_item("open", sprint, "open").await,
+        api.sprint_item("doing", sprint, "doing").await,
+    ];
+    let answer = api.complete(sprint, json!({})).await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(answer.data()["rollover"]["moved_count"], json!(2), "{}", answer.body);
+    for item in stays {
+        assert_eq!(api.sprint_of(item).await, Some(sprint));
+    }
+    for item in moves {
+        assert_eq!(api.sprint_of(item).await, None);
+    }
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn deleting_a_sprint_moves_items_with_activity() {
+    let Some(api) = Api::new("sprint_delete_moves").await else {
+        return;
+    };
+    let sprint = api.new_sprint("doomed", json!({})).await;
+    let first = api.sprint_item("first", sprint, "todo").await;
+    let finished = api.sprint_item("finished", sprint, "done").await;
+    let deleted = api
+        .call(Method::DELETE, &format!("/api/v1/sprints/{sprint}"), api.alice, None)
+        .await;
+    assert_eq!(deleted.code(), Some(0), "{}", deleted.body);
+    // Every item, finished or not, leaves a sprint that no longer exists.
+    for item in [first, finished] {
+        assert_eq!(api.sprint_of(item).await, None);
+        let moves = api.activity_details(item, "sprint_changed").await;
+        assert_eq!(moves.len(), 1, "{moves:?}");
+        assert_eq!(moves[0]["from"], json!(sprint));
+        assert!(moves[0]["to"].is_null());
+    }
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn completion_emits_sprint_completed_with_rollover_then_issue_updated_per_item() {
+    let Some(api) = Api::new("sprint_complete_events").await else {
+        return;
+    };
+    api.add_webhook_for(r#"["sprint.completed","issue.updated"]"#).await;
+    let sprint = api.new_sprint("S1", json!({"status": "active"})).await;
+    let next = api.new_sprint("S2", json!({})).await;
+    let first = api.sprint_item("first", sprint, "todo").await;
+    let second = api.sprint_item("second", sprint, "in_progress").await;
+    api.sprint_item("done", sprint, "done").await;
+
+    let answer = api.complete(sprint, json!({"rollover_sprint_id": next})).await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+
+    let completed = api.payloads("sprint.completed", 1).await;
+    assert_eq!(
+        completed[0]["data"]["rollover"],
+        json!({"moved_count": 2, "target_sprint_id": next}),
+        "{}",
+        completed[0]
+    );
+    assert_eq!(completed[0]["data"]["sprint"]["status"], json!("completed"));
+    let updated = api.payloads("issue.updated", 2).await;
+    let mut moved: Vec<(String, Value)> = updated
+        .iter()
+        .map(|payload| {
+            (
+                payload["data"]["issue"]["id"].as_str().expect("id").to_string(),
+                payload["data"]["changes"]["sprint_id"].clone(),
+            )
+        })
+        .collect();
+    moved.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut expected = vec![
+        (first.to_string(), json!({"old": sprint, "new": next})),
+        (second.to_string(), json!({"old": sprint, "new": next})),
+    ];
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(moved, expected);
+    // Starting the next sprint sends no completion and no item event.
+    api.finish().await;
+}

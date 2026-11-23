@@ -25,6 +25,18 @@ pub struct EffectiveWorkflow {
     pub states: Vec<WorkflowStateDef>,
 }
 
+/// The state keys that mean a work item is finished: a terminal state, or one in the `done` or
+/// `completed` category (the system default workflow says `done`, the workflow editor `completed`).
+#[must_use]
+pub fn finished_state_keys(workflow: &EffectiveWorkflow) -> Vec<String> {
+    workflow
+        .states
+        .iter()
+        .filter(|state| state.is_terminal || matches!(state.category.as_str(), "done" | "completed"))
+        .map(|state| state.key.clone())
+        .collect()
+}
+
 #[derive(Debug, FromQueryResult)]
 struct WorkflowRow {
     workflow_id: Uuid,

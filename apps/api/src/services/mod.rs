@@ -15,6 +15,7 @@ pub mod object_storage;
 pub mod permission_service;
 pub mod proposals;
 pub mod runner_config_block;
+pub mod sprint_moves;
 pub mod teardown;
 pub mod trust_score_service;
 pub mod veto_service;

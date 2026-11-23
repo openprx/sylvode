@@ -19,6 +19,10 @@ use crate::{
     error::ApiError,
     request::nullable,
     response::{ApiResponse, PaginatedData},
+    services::{
+        sprint_moves::{MoveScope, emit_moves, lock_all_items, lock_unfinished_items, move_items},
+        workflow_service::{finished_state_keys, resolve_effective_workflow_for_project},
+    },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
 };
 
@@ -33,6 +37,17 @@ pub struct SprintResponse {
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
+    /// Only on the answer that completed or cancelled the sprint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rollover: Option<RolloverSummary>,
+}
+
+/// What completing or cancelling a sprint did with its unfinished work items.
+#[derive(Debug, Serialize)]
+pub struct RolloverSummary {
+    pub moved_count: i64,
+    /// The planned sprint the items went to; `null` is the backlog.
+    pub target_sprint_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +79,10 @@ pub struct UpdateSprintRequest {
     pub end_date: Option<Option<String>>,
     #[serde(default, deserialize_with = "nullable")]
     pub status: Option<Option<String>>,
+    /// With `completed` or `cancelled`: the planned sprint that takes the unfinished items instead
+    /// of the backlog. `null` means the backlog.
+    #[serde(default, deserialize_with = "nullable")]
+    pub rollover_sprint_id: Option<Option<Uuid>>,
 }
 
 /// The value of a field that cannot be cleared: `null` is a request error, not "no change".
@@ -165,6 +184,7 @@ impl From<SprintRow> for SprintResponse {
             status: row.status,
             created_at: row.created_at.to_rfc3339(),
             updated_at: row.updated_at.to_rfc3339(),
+            rollover: None,
         }
     }
 }
@@ -322,6 +342,7 @@ pub async fn create_sprint(
         status: sprint_status,
         created_at: now.to_rfc3339(),
         updated_at: now.to_rfc3339(),
+        rollover: None,
     }))
 }
 
@@ -412,6 +433,7 @@ pub async fn update_sprint(
         start_date: requested_start,
         end_date: requested_end,
         status: requested_status,
+        rollover_sprint_id: requested_rollover,
     } = req;
     let requested_name = not_null(requested_name, "name")?;
     let requested_description = not_null(requested_description, "description")?;
@@ -424,6 +446,7 @@ pub async fn update_sprint(
         && requested_start.is_none()
         && requested_end.is_none()
         && requested_status.is_none()
+        && requested_rollover.is_none()
     {
         return Err(ApiError::BadRequest("no fields to update".to_string()));
     }
@@ -466,6 +489,17 @@ pub async fn update_sprint(
 
     let (_, role, _) = require_workspace_access(&state, &extensions, current.workspace_id).await?;
 
+    // A rollover target only makes sense together with the status change that ends the sprint.
+    let ends_sprint = |status: &Option<String>| matches!(status.as_deref(), Some("completed" | "cancelled"));
+    let rollover_target = requested_rollover.flatten();
+    if rollover_target.is_some()
+        && !(ends_sprint(&requested_status) && requested_status.as_deref() != Some(&current.status))
+    {
+        return Err(ApiError::BadRequest(
+            "rollover_sprint_id is only valid when completing or cancelling a sprint".to_string(),
+        ));
+    }
+
     // A status equal to the current one is a no-op: no permission check, no event.
     let status_change = requested_status.filter(|status| *status != current.status);
     if let Some(to) = &status_change {
@@ -484,6 +518,36 @@ pub async fn update_sprint(
             ensure_no_other_active_sprint(&tx, current.project_id, Some(sprint_id)).await?;
         }
     }
+
+    // Ending the sprint: the unfinished items go to the backlog or to the chosen planned sprint,
+    // in this same transaction, so a failure leaves the sprint and its items as they were.
+    let scope = MoveScope {
+        workspace_id: current.workspace_id,
+        project_id: current.project_id,
+        actor_id: user_id,
+    };
+    let moved = if status_change
+        .as_deref()
+        .is_some_and(|to| matches!(to, "completed" | "cancelled"))
+    {
+        if let Some(target) = rollover_target {
+            tx.query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM sprints WHERE id = $1 AND project_id = $2 AND status = 'planned' AND id <> $3 FOR UPDATE",
+                vec![target.into(), current.project_id.into(), sprint_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                ApiError::BadRequest("rollover sprint must be another planned sprint of the same project".to_string())
+            })?;
+        }
+        let workflow = resolve_effective_workflow_for_project(&state, current.project_id).await?;
+        let items = lock_unfinished_items(&tx, sprint_id, &finished_state_keys(&workflow)).await?;
+        move_items(&tx, scope, &items, rollover_target, Timestamp::now()).await?;
+        Some((items, rollover_target))
+    } else {
+        None
+    };
 
     check_date_order(
         requested_start.unwrap_or(current.start_date),
@@ -526,6 +590,11 @@ pub async fn update_sprint(
     let updated = load_sprint(&tx, sprint_id).await?.ok_or(ApiError::Internal)?;
     tx.commit().await.map_err(rule_violation)?;
 
+    let rollover = moved.as_ref().map(|(items, target)| RolloverSummary {
+        moved_count: i64::try_from(items.len()).unwrap_or(i64::MAX),
+        target_sprint_id: *target,
+    });
+
     if let Some(new_status) = status_change {
         let event = match new_status.as_str() {
             "active" => Some(WebhookEvent::SprintStarted),
@@ -545,7 +614,11 @@ pub async fn update_sprint(
                     label_id: None,
                     sprint_id: Some(sprint_id),
                     changes: Some(serde_json::json!({
-                        "status": {"old": current.status, "new": new_status}
+                        "status": {"old": current.status, "new": new_status},
+                        "rollover": rollover.as_ref().map(|summary| serde_json::json!({
+                            "moved_count": summary.moved_count,
+                            "target_sprint_id": summary.target_sprint_id,
+                        })),
                     })),
                     mentions: Vec::new(),
                     extra_data: None,
@@ -553,8 +626,13 @@ pub async fn update_sprint(
             );
         }
     }
+    if let Some((items, target)) = &moved {
+        emit_moves(&state, scope, items, *target);
+    }
 
-    Ok(ApiResponse::success(SprintResponse::from(updated)))
+    let mut response = SprintResponse::from(updated);
+    response.rollover = rollover;
+    Ok(ApiResponse::success(response))
 }
 
 /// DELETE /api/v1/sprints/:id - Delete sprint
@@ -564,18 +642,19 @@ pub async fn delete_sprint(
     bot: Option<Extension<BotAuthContext>>,
     Path(sprint_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let _user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
     let extensions = build_auth_extensions(claims, bot);
 
     #[derive(Debug, FromQueryResult)]
     struct SprintWorkspace {
         workspace_id: Uuid,
+        project_id: Uuid,
     }
 
     let sprint = SprintWorkspace::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT p.workspace_id
+            SELECT p.workspace_id, s.project_id
             FROM sprints s
             INNER JOIN projects p ON s.project_id = p.id
             WHERE s.id = $1
@@ -593,14 +672,24 @@ pub async fn delete_sprint(
         ));
     }
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "DELETE FROM sprints WHERE id = $1",
-            vec![sprint_id.into()],
-        ))
-        .await?;
+    // The items go to the backlog with a record of it, instead of silently losing their sprint.
+    let scope = MoveScope {
+        workspace_id: sprint.workspace_id,
+        project_id: sprint.project_id,
+        actor_id: user_id,
+    };
+    let tx = state.db.begin().await?;
+    let items = lock_all_items(&tx, sprint_id).await?;
+    move_items(&tx, scope, &items, None, Timestamp::now()).await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "DELETE FROM sprints WHERE id = $1",
+        vec![sprint_id.into()],
+    ))
+    .await?;
+    tx.commit().await?;
+
+    emit_moves(&state, scope, &items, None);
 
     Ok(ApiResponse::ok())
 }

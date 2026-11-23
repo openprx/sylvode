@@ -69,7 +69,7 @@ A webhook can subscribe to these events:
 | `label.added` | A label is added to a work item. | `issue` (`id`, `key`, `title`), `label` (`id`, `name`, `color`) |
 | `label.removed` | A label is removed from a work item. | `issue`, `label` |
 | `sprint.started` | A sprint starts. | `sprint` (`id`, `name`, `description`, `status`, `start_date`, `end_date`, timestamps) |
-| `sprint.completed` | A sprint is completed. | `sprint` |
+| `sprint.completed` | A sprint is completed. | `sprint`, `rollover` (`moved_count`, `target_sprint_id`: what happened to the unfinished work items) |
 | `ai.task_completed` | A bot task completes. | `task_id`, `task_type`, `status`, `reference_type`, `reference_id`, `result` |
 | `ai.task_failed` | A bot task fails for good. | `task_id`, `task_type`, `status`, `reference_type`, `reference_id`, `error_message` |
 
@@ -79,6 +79,10 @@ An `issue` object has `id`, `key`, `title`, `description`, `state`, `priority`, 
 `id`, `key` and `title`, in `comment.deleted` too, where the `comment` is the one that was deleted,
 with its author and its original timestamps. In these payloads `key` is the work item's identifier: the project key and the
 work item's number, for example `WEB-12`.
+
+The work items that completing, cancelling or deleting a sprint moves out of it each send an
+`issue.updated` with `changes.sprint_id` (`old`, `new`), after `sprint.completed`. Cancelling a sprint
+sends no sprint event of its own.
 
 An alert rule that opens a work item also sends `issue.created` for it (see [Alerts](alerts.md)).
 

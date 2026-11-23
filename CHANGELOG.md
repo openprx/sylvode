@@ -79,6 +79,14 @@ name.
   cleared with `null`. Migration `0117_sprint_rules.sql` repairs existing data (a second active
   sprint is set back to planned, case-twin names get a numeric suffix, an end before the start is
   raised to the start, unknown statuses become planned) and adds the constraints.
+- **Completing, cancelling or deleting a sprint moves its work items.** Unfinished work items (not
+  in a terminal state and not in a `done` or `completed` category) go to the backlog, or to a planned
+  sprint of the project named by the new `rollover_sprint_id` of `PUT /sprints/{id}`, in the same
+  transaction as the status change; the answer reports `rollover.moved_count` and
+  `rollover.target_sprint_id`, each moved item gets a `sprint_changed` activity and an
+  `issue.updated` webhook, and `sprint.completed` carries `data.rollover`. Deleting a sprint now
+  moves all its items to the backlog with the same records instead of silently dropping their
+  sprint.
 - **Added: `GET /sprints/{id}`.** It reads one sprint, with the same access as the sprint list.
 - **Cycles page sends `description`.** The page sent `goal`, which the API never stored; the field
   is now `description`, so a sprint's description is saved from the page.

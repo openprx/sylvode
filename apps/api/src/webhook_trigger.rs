@@ -561,19 +561,31 @@ async fn build_event_data(
             .await?
             .ok_or_else(|| sea_orm::DbErr::Custom("sprint not found".to_string()))?;
 
+            let mut data = json!({
+                "sprint": {
+                    "id": sprint.id.to_string(),
+                    "name": sprint.name,
+                    "description": sprint.description,
+                    "status": sprint.status,
+                    "start_date": sprint.start_date.map(|v| v.to_string()),
+                    "end_date": sprint.end_date.map(|v| v.to_string()),
+                    "created_at": sprint.created_at.to_rfc3339(),
+                    "updated_at": sprint.updated_at.to_rfc3339(),
+                }
+            });
+            // What completing the sprint did with its unfinished items.
+            if let Some(rollover) = ctx
+                .changes
+                .as_ref()
+                .and_then(|changes| changes.get("rollover"))
+                .filter(|rollover| !rollover.is_null())
+                && let Some(object) = data.as_object_mut()
+            {
+                object.insert("rollover".to_string(), rollover.clone());
+            }
+
             Ok(BuiltEventData {
-                data: json!({
-                    "sprint": {
-                        "id": sprint.id.to_string(),
-                        "name": sprint.name,
-                        "description": sprint.description,
-                        "status": sprint.status,
-                        "start_date": sprint.start_date.map(|v| v.to_string()),
-                        "end_date": sprint.end_date.map(|v| v.to_string()),
-                        "created_at": sprint.created_at.to_rfc3339(),
-                        "updated_at": sprint.updated_at.to_rfc3339(),
-                    }
-                }),
+                data,
                 assignee_ids: Vec::new(),
             })
         }
