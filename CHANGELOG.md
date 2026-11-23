@@ -23,8 +23,7 @@ name.
   and the two universal forms documents were folded into these, and the API endpoint list is now
   `docs/integrations/api.md`. The root, MCP server, runner and frontend READMEs and both security
   policies were rewritten, and the comments of `config/sylvode.example.toml` were revised.
-- **Runner example configurations.** `apps/runner/config.example.toml` no longer carries the
-  `[tunnel]` table, which has no counterpart on the Sylvode server, and its comments follow the
+- **Runner example configurations.** The comments of `apps/runner/config.example.toml` follow the
   runner README. In `config/sylvode-runner.example.toml` one route selects tasks with
   `trigger_kinds` instead of `bot_agent_types = ["claude-code"]`.
 - **Scenario template catalogue source.** The scenario catalogue JSON reporter and verifier read the

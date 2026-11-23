@@ -21,7 +21,7 @@ allow_unsigned = false
 max_delivery_age_secs = 300
 
 [features]
-# The tunnel client has no counterpart on the Sylvode server; keep it off.
+# One of the two switches of the tunnel client; see [tunnel] below.
 tunnel_enabled = false
 
 [runtime]
@@ -30,6 +30,27 @@ cli_max_concurrency = 1
 # Outbound HTTP of the forwarding agents; commands get max(this, 60) seconds.
 http_timeout_secs = 15
 tunnel_reconnect_backoff_max_secs = 60
+
+# The tunnel client keeps a WebSocket connection to a control plane. It runs only when both
+# [features] tunnel_enabled and `enabled` below are true. The values below are placeholders.
+[tunnel]
+enabled = false
+# supports ws:// and wss://, production should use wss://
+url = "wss://sylvode.example.com/api/v1/agent-tunnel"
+# required: the id the control plane registered for this agent; there is no default
+agent_id = "vano-qa"
+# sent as Authorization: Bearer <token>
+auth_token = "opr_xxx"
+# auto reconnect interval after disconnect/failure
+reconnect_secs = 3
+# heartbeat send interval
+heartbeat_secs = 20
+# optional: sign outgoing envelopes and verify incoming envelopes; set it to a long random
+# secret shared with the control plane (an example placeholder refuses start-up)
+# hmac_secret = "replace-with-the-secret-shared-with-the-control-plane"
+# if true, inbound tunnel messages without sig are rejected; requires hmac_secret
+# (start-up is refused without it)
+require_inbound_sig = false
 
 # The bots' tokens for the Sylvode API. A `runner` agent reads and ends its tasks with them. For
 # the forwarding agents (webhook, openclaw, openprx, custom) the runner completes a task once the
@@ -120,6 +141,3 @@ retry_delay_ms = 1000
 # agent_type = "runner"
 # [agents.route]
 # bot_ids = ["00000000-0000-0000-0000-000000000000"]
-
-# The tunnel client (both [features] tunnel_enabled and [tunnel] enabled) has no endpoint on the
-# Sylvode server to connect to, so it is not configured here; see "Tunnel client" in the README.
