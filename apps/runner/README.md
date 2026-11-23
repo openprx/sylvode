@@ -489,7 +489,7 @@ the agent and listing the valid values:
 
 | Source | Values |
 |---|---|
-| Webhook delivery (`bot_context.trigger_reason`, by event) | `created` (`issue.created`), `status_changed` (`issue.state_changed`), `mentioned` (`comment.created`, also for a comment on an issue assigned to the bot that does not mention it), `completed` (`ai.task_completed`), `failed` (`ai.task_failed`), `assigned` (every other event) |
+| Webhook delivery (`bot_context.trigger_reason`, by event) | `created` (`issue.created`), `status_changed` (`issue.state_changed`), `mentioned` (`comment.created`, also for a comment on an issue assigned to the bot that does not mention it), `assigned` (every other event) |
 | Worker AI task (`trigger_kind`) | `assigned` (assignment), `mention` (comment mention or review request), `proposal_vote` (vote request), `manual` (anything else) |
 
 ### The issue a worker AI task is about

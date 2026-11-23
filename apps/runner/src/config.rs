@@ -525,15 +525,13 @@ pub const AGENT_TYPES: [&str; 5] = ["runner", "openclaw", "openprx", "webhook", 
 /// Every trigger kind a Sylvode deployment sends, the closed set `route.trigger_kinds` may name.
 ///
 /// A direct webhook delivery carries `bot_context.trigger_reason`: `created`, `assigned`,
-/// `status_changed`, `mentioned`, `completed` or `failed`. A worker-dispatched AI task carries a
+/// `status_changed` or `mentioned`. A worker-dispatched AI task carries a
 /// top-level `trigger_kind`: `assigned`, `mention`, `proposal_vote` or `manual`.
-pub const TRIGGER_KINDS: [&str; 9] = [
+pub const TRIGGER_KINDS: [&str; 7] = [
     "assigned",
     "created",
     "status_changed",
     "mentioned",
-    "completed",
-    "failed",
     "mention",
     "proposal_vote",
     "manual",
@@ -1070,7 +1068,7 @@ enabled = true
     #[test]
     fn accepts_every_trigger_kind_sylvode_sends() {
         let cfg = load_str(&route_config(
-            r#"["assigned", "created", "status_changed", "mentioned", "completed", "failed", "mention", "proposal_vote", " Manual "]"#,
+            r#"["assigned", "created", "status_changed", "mentioned", "mention", "proposal_vote", " Manual "]"#,
         ))
         .expect("all wire values are accepted");
         assert_eq!(cfg.agents.len(), 1);
@@ -1078,6 +1076,14 @@ enabled = true
 
     /// `assignment` was never sent by any Sylvode version, so a route naming it could never match.
     /// Start-up is refused with the valid values instead of silently never dispatching.
+    #[test]
+    fn refuses_the_removed_completed_and_failed_trigger_kinds() {
+        for kind in ["completed", "failed"] {
+            let err = load_str(&route_config(&format!(r#"["{kind}"]"#))).expect_err(kind);
+            assert!(err.contains(&format!("`{kind}`")), "{err}");
+        }
+    }
+
     #[test]
     fn refuses_a_trigger_kind_sylvode_never_sends() {
         let err = load_str(&route_config(r#"["mentioned", "assignment"]"#)).expect_err("assignment is refused");
