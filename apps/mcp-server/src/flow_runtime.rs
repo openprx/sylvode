@@ -56,7 +56,7 @@ impl FlowRuntime {
         let api_url = api_url
             .map(str::to_owned)
             .or_else(|| configured.and_then(|value| value.api_url.clone()))
-            .unwrap_or_else(|| "http://127.0.0.1:3000".into());
+            .unwrap_or_else(|| platform::config::DEFAULT_MCP_API_URL.into());
         let parsed =
             reqwest::Url::parse(&api_url).map_err(|_| "Flow API URL must be a concrete HTTP(S) URL".to_string())?;
         if !matches!(parsed.scheme(), "http" | "https")
@@ -109,5 +109,32 @@ impl FlowRuntime {
             transport_label: transport_label(self.transport),
         })
         .map(OpenPrClient::flow_only)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::FlowRuntime;
+    use platform::config::{DEFAULT_MCP_API_URL, Secret};
+
+    /// Without a file and without `--api-url` the Flow-only profile talks to the address the stack
+    /// publishes, the same default the rest of the MCP configuration has.
+    #[test]
+    fn the_default_api_url_is_the_published_address() {
+        let token = Secret::new("a-global-user-token");
+        let runtime = FlowRuntime::load(None, None, Some(&token), None, None, None).expect("loads");
+        assert_eq!(runtime.api_url, DEFAULT_MCP_API_URL);
+        assert_eq!(DEFAULT_MCP_API_URL, "http://localhost:8081");
+        let explicit = FlowRuntime::load(
+            None,
+            Some("https://sylvode.example.net"),
+            Some(&token),
+            None,
+            None,
+            None,
+        )
+        .expect("loads");
+        assert_eq!(explicit.api_url, "https://sylvode.example.net");
     }
 }

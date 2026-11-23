@@ -207,6 +207,6 @@ sylvode --api-url https://sylvode.example.com --access-token-file /srv/sylvode/u
 ```
 
 The configuration file is optional for `flow call`; without `--config` and `--api-url` it uses
-`http://127.0.0.1:3000`. The tools, scoping rules and the matching MCP server mode
+`http://localhost:8081`, the address the Compose stack publishes. The tools, scoping rules and the matching MCP server mode
 (`mcp-server serve --flow-only`) are described in
 [apps/mcp-server/README.md, Flow-only profile](../../apps/mcp-server/README.md#flow-only-profile).

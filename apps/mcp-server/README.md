@@ -317,7 +317,7 @@ mcp-server --api-url https://sylvode.example.com serve --flow-only --transport h
 |---|---|
 | Credential on `stdio` and `sylvode flow call` | Exactly one of `--access-token-file` (preferred) or `--access-token`; at most 8192 ASCII bytes. An `opr_` token is refused, and `[mcp] bot_token` and `--bot-token` are never used as a user credential. The profile does not obtain, refresh or impersonate a credential; expiry is reported by the API |
 | Credential on `http` and `sse` | Each request's own `Authorization: Bearer` token. Configuring `--access-token` for a networked transport is refused |
-| Configuration file | Optional. Without `--config`, the API URL is `--api-url` or `http://127.0.0.1:3000` and the listener is `--bind-addr` or `127.0.0.1:8090`; with one, `[mcp] api_url`, `transport`, `bind_addr` and `allow_write_call` apply |
+| Configuration file | Optional. Without `--config`, the API URL is `--api-url` or `http://localhost:8081` and the listener is `--bind-addr` or `127.0.0.1:8090`; with one, `[mcp] api_url`, `transport`, `bind_addr` and `allow_write_call` apply |
 | `--tools` | Refused; the profile lists its own tools |
 | `sylvode flow tools` | Prints the static tool schemas; needs no token and sends no request |
 
