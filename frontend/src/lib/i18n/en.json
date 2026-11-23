@@ -570,8 +570,6 @@
 		"edit": "Edit Sprint",
 		"name": "Name",
 		"namePlaceholder": "e.g. Sprint 1",
-		"goal": "Goal",
-		"goalPlaceholder": "Optional sprint goal description",
 		"startDate": "Start date",
 		"endDate": "End date",
 		"enterName": "Please enter sprint name",
@@ -598,7 +596,26 @@
 		"startSprint": "Start sprint",
 		"completedList": "Completed Sprints",
 		"noCompleted": "No completed sprint",
-		"completedLabel": "Completed: {done}/{total}"
+		"completedLabel": "Completed: {done}/{total}",
+		"description": "Description",
+		"descriptionPlaceholder": "Optional sprint description",
+		"noDates": "No dates",
+		"cancelSprint": "Cancel sprint",
+		"cancelled": "Sprint cancelled",
+		"status": {
+			"planned": "Planned",
+			"active": "Active",
+			"completed": "Completed",
+			"cancelled": "Cancelled"
+		},
+		"rolloverCompleteTitle": "Complete sprint \"{name}\"?",
+		"rolloverCancelTitle": "Cancel sprint \"{name}\"?",
+		"rolloverBody": "Issues that are not finished leave the sprint. Finished issues stay in it.",
+		"rolloverTarget": "Move unfinished issues to",
+		"rolloverBacklog": "Backlog",
+		"rolloverKeep": "Keep the sprint",
+		"rolloverMoved": "{count} unfinished issues moved to {target}",
+		"rolloverNone": "No unfinished issues to move"
 	},
 	"members": {
 		"title": "Member Management",

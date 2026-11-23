@@ -87,6 +87,13 @@ name.
   `issue.updated` webhook, and `sprint.completed` carries `data.rollover`. Deleting a sprint now
   moves all its items to the backlog with the same records instead of silently dropping their
   sprint.
+- **Cycles page and MCP follow the sprint rules.** Start, Complete, Cancel and Delete are shown to
+  owners and admins only; Complete and Cancel (new) open a dialog that offers the backlog or a
+  planned sprint for the unfinished issues and reports how many were moved; a failed start shows the
+  server's message naming the active sprint; cancelled sprints are listed with the completed ones
+  under a Cancelled badge; sprints without dates are shown as such; the form field is `description`
+  and the status labels are translated. The MCP `sprints.create` offers only `planned` and `active`,
+  and `sprints.update` takes `description` and `rollover_sprint_id`.
 - **Added: `GET /sprints/{id}`.** It reads one sprint, with the same access as the sprint list.
 - **Cycles page sends `description`.** The page sent `goal`, which the API never stored; the field
   is now `description`, so a sprint's description is saved from the page.

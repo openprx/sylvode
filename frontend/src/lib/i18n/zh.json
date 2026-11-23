@@ -570,8 +570,6 @@
 		"edit": "编辑 Sprint",
 		"name": "名称",
 		"namePlaceholder": "例如：Sprint 1",
-		"goal": "目标",
-		"goalPlaceholder": "可选，描述本 Sprint 的目标",
 		"startDate": "开始日期",
 		"endDate": "结束日期",
 		"enterName": "请输入 Sprint 名称",
@@ -598,7 +596,26 @@
 		"startSprint": "开始 Sprint",
 		"completedList": "已完成的 Sprint",
 		"noCompleted": "暂无已完成 Sprint",
-		"completedLabel": "完成：{done}/{total}"
+		"completedLabel": "完成：{done}/{total}",
+		"description": "描述",
+		"descriptionPlaceholder": "可选，描述本 Sprint",
+		"noDates": "未设置日期",
+		"cancelSprint": "取消 Sprint",
+		"cancelled": "Sprint 已取消",
+		"status": {
+			"planned": "计划中",
+			"active": "进行中",
+			"completed": "已完成",
+			"cancelled": "已取消"
+		},
+		"rolloverCompleteTitle": "完成 Sprint「{name}」？",
+		"rolloverCancelTitle": "取消 Sprint「{name}」？",
+		"rolloverBody": "未完成的 Issue 会移出该 Sprint，已完成的 Issue 留在其中。",
+		"rolloverTarget": "将未完成的 Issue 移到",
+		"rolloverBacklog": "待办池",
+		"rolloverKeep": "保持不变",
+		"rolloverMoved": "已将 {count} 个未完成的 Issue 移到{target}",
+		"rolloverNone": "没有需要移动的未完成 Issue"
 	},
 	"members": {
 		"title": "成员管理",

@@ -979,10 +979,9 @@ async function sectionConfirmations(api) {
 	}
 }
 
-/** Sprints have no read-by-id route: look the sprint up in the project's list. */
-async function sprintExists(api, project, id) {
-	const list = items((await api.call('GET', `/api/v1/projects/${project}/sprints`)).data);
-	return list.some((sprint) => sprint.id === id);
+/** Whether the sprint can still be read by id. */
+async function sprintExists(api, _project, id) {
+	return (await api.call('GET', `/api/v1/sprints/${id}`)).code === 0;
 }
 
 /** Two forms (orders, lines) linked parent-child through the relation field `order_ref`, and one order. */

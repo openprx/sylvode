@@ -34,8 +34,8 @@ pub fn create_sprint_tool() -> ToolDefinition {
                 },
                 "status": {
                     "type": "string",
-                    "enum": ["planned", "active", "completed", "cancelled"],
-                    "description": "Initial sprint status (optional, defaults to planned)"
+                    "enum": ["planned", "active"],
+                    "description": "Initial sprint status (optional, defaults to planned). A new sprint cannot start as completed or cancelled; creating an active sprint needs an owner or admin and is refused with 409 while the project already has an active sprint"
                 }
             },
             "required": ["project_id", "name"]
@@ -119,7 +119,7 @@ pub fn update_sprint_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "sprints.update".to_string(),
-        description: "Update sprint fields".to_string(),
+        description: "Update sprint fields. Status moves planned -> active -> completed, and planned or active -> cancelled; completed and cancelled are final. A project has one active sprint (starting a second is refused with 409 naming it), and changing the status needs an owner or admin. Completing or cancelling moves the unfinished work items to the backlog, or to a planned sprint given as rollover_sprint_id; the answer reports rollover.moved_count".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -132,10 +132,19 @@ pub fn update_sprint_tool() -> ToolDefinition {
                     "type": "string",
                     "description": "Sprint name (optional)"
                 },
+                "description": {
+                    "type": "string",
+                    "description": "Sprint description (optional)"
+                },
                 "status": {
                     "type": "string",
                     "enum": ["planned", "active", "completed", "cancelled"],
                     "description": "Sprint status (optional)"
+                },
+                "rollover_sprint_id": {
+                    "type": "string",
+                    "description": "UUID of a planned sprint of the same project that takes the unfinished work items (optional; only with status completed or cancelled, otherwise they go to the backlog)",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                 },
                 "start_date": {
                     "type": "string",
@@ -155,7 +164,9 @@ pub fn update_sprint_tool() -> ToolDefinition {
 struct UpdateSprintInput {
     sprint_id: String,
     name: Option<String>,
+    description: Option<String>,
     status: Option<String>,
+    rollover_sprint_id: Option<String>,
     start_date: Option<String>,
     end_date: Option<String>,
 }
@@ -170,8 +181,14 @@ pub async fn update_sprint(client: &OpenPrClient, args: serde_json::Value) -> Ca
     if let Some(name) = input.name {
         body.insert("name".to_string(), json!(name));
     }
+    if let Some(description) = input.description {
+        body.insert("description".to_string(), json!(description));
+    }
     if let Some(status) = input.status {
         body.insert("status".to_string(), json!(status));
+    }
+    if let Some(target) = input.rollover_sprint_id {
+        body.insert("rollover_sprint_id".to_string(), json!(target));
     }
     if let Some(start) = input.start_date {
         body.insert("start_date".to_string(), json!(start));
@@ -225,5 +242,45 @@ pub async fn handle_delete_sprint(client: &OpenPrClient, args: serde_json::Value
     match client.delete_sprint(&input.sprint_id).await {
         Ok(_) => CallToolResult::success("Sprint deleted"),
         Err(e) => CallToolResult::error(e),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::update_sprint;
+    use crate::tools::test_support::{Api, Policy, UUID};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn update_sends_description_and_rollover() {
+        let api = Api::spawn(Policy::Permissive).await.expect("stand-in api");
+        let client = api.client().expect("client");
+        let result = update_sprint(
+            &client,
+            json!({ "sprint_id": UUID, "status": "completed", "rollover_sprint_id": UUID, "description": "d" }),
+        )
+        .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let body = api
+            .seen()
+            .into_iter()
+            .rev()
+            .find(|seen| seen.method == "PUT")
+            .expect("an update was sent")
+            .body;
+        assert_eq!(
+            body,
+            json!({ "status": "completed", "rollover_sprint_id": UUID, "description": "d" })
+        );
+    }
+
+    #[test]
+    fn create_offers_only_the_statuses_a_new_sprint_can_have() {
+        let tool = super::create_sprint_tool();
+        assert_eq!(
+            tool.input_schema["properties"]["status"]["enum"],
+            json!(["planned", "active"])
+        );
     }
 }

@@ -1,17 +1,26 @@
 import { apiClient, type ApiResult, type PaginatedData } from './client';
 
-export type SprintStatus = 'planned' | 'active' | 'completed';
+export type SprintStatus = 'planned' | 'active' | 'completed' | 'cancelled';
+
+/** What completing or cancelling a sprint did with its unfinished issues. */
+export interface SprintRollover {
+	moved_count: number;
+	/** The planned sprint the issues went to; `null` is the backlog. */
+	target_sprint_id: string | null;
+}
 
 export interface Sprint {
 	id: string;
 	project_id: string;
 	name: string;
 	description?: string;
-	start_date: string;
-	end_date: string;
+	start_date: string | null;
+	end_date: string | null;
 	status: SprintStatus;
 	created_at: string;
 	updated_at: string;
+	/** Only on the answer that completed or cancelled the sprint. */
+	rollover?: SprintRollover;
 }
 
 export interface CreateSprintData {
@@ -19,7 +28,7 @@ export interface CreateSprintData {
 	description?: string;
 	start_date: string;
 	end_date: string;
-	status?: SprintStatus;
+	status?: 'planned' | 'active';
 }
 
 export interface UpdateSprintData {
@@ -28,6 +37,8 @@ export interface UpdateSprintData {
 	start_date?: string;
 	end_date?: string;
 	status?: SprintStatus;
+	/** With `completed` or `cancelled`: the planned sprint that takes the unfinished issues. */
+	rollover_sprint_id?: string | null;
 }
 
 export const sprintsApi = {

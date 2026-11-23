@@ -6,6 +6,11 @@
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
 	import { issuesApi, type Issue } from '#lib/api/issues.js';
+	import { workspacesApi } from '#lib/api/workspaces.js';
+	import { authStore } from '#lib/stores/auth.js';
+	import { canManageSprints, pastSprints, rolloverTargets } from '#lib/sprints/rules.js';
+	import type { WorkspaceRole } from '#lib/workspace/home.js';
+	import { WorkspaceRoleTracker } from '#lib/workspace/role.js';
 	import {
 		sprintsApi,
 		type CreateSprintData,
@@ -30,6 +35,27 @@
 	let projectIssues = $state<Issue[]>([]);
 	let errorMessage = $state('');
 	let projectMissing = $state(false);
+
+	// Starting, completing, cancelling and deleting a sprint are for owners and admins: the buttons
+	// are not shown to anyone else (the server refuses the calls too).
+	let role = $state<WorkspaceRole | null>(null);
+	const tracker = new WorkspaceRoleTracker(
+		(id) => workspacesApi.getMembers(id),
+		(next) => {
+			role = next;
+		}
+	);
+	const userId = $derived($authStore.user?.id ?? null);
+	$effect(() => {
+		void tracker.select(workspaceId, userId);
+	});
+	const canManage = $derived(canManageSprints(role));
+
+	// Completing or cancelling asks where the unfinished issues go.
+	let endDialog = $state<{ sprint: Sprint; status: 'completed' | 'cancelled' } | null>(null);
+	let showEndDialog = $state(false);
+	let rolloverChoice = $state('');
+	const endTargets = $derived(endDialog ? rolloverTargets(sprints, endDialog.sprint.id) : []);
 
 	let showCreateModal = $state(false);
 	let showEditModal = $state(false);
@@ -56,21 +82,18 @@
 		await loadData();
 	});
 
+	function startTime(sprint: Sprint): number {
+		return sprint.start_date ? new Date(sprint.start_date).getTime() : Number.POSITIVE_INFINITY;
+	}
+
 	const activeSprints = $derived.by(() =>
-		sprints
-			.filter((item) => item.status === 'active')
-			.sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime())
+		sprints.filter((item) => item.status === 'active').sort((a, b) => startTime(a) - startTime(b))
 	);
 	const plannedSprints = $derived.by(() =>
-		sprints
-			.filter((item) => item.status === 'planned')
-			.sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime())
+		sprints.filter((item) => item.status === 'planned').sort((a, b) => startTime(a) - startTime(b))
 	);
-	const completedSprints = $derived.by(() =>
-		sprints
-			.filter((item) => item.status === 'completed')
-			.sort((a, b) => new Date(b.end_date).getTime() - new Date(a.end_date).getTime())
-	);
+	// Cancelled sprints are listed with the completed ones, under a Cancelled badge.
+	const completedSprints = $derived(pastSprints(sprints));
 
 	const sprintProgress = $derived.by(() => {
 		const stats: Record<string, { done: number; total: number; percent: number }> = {};
@@ -129,7 +152,15 @@
 		});
 	}
 
-	function toDateInputValue(dateText: string): string {
+	function formatRange(sprint: Sprint): string {
+		if (!sprint.start_date || !sprint.end_date) {
+			return get(t)('cycles.noDates');
+		}
+		return `${formatDate(sprint.start_date)} ~ ${formatDate(sprint.end_date)}`;
+	}
+
+	function toDateInputValue(dateText: string | null): string {
+		if (!dateText) return '';
 		const date = new Date(dateText);
 		const year = date.getFullYear();
 		const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -137,20 +168,12 @@
 		return `${year}-${month}-${day}`;
 	}
 
-	function getStatusLabel(status: SprintStatus): string {
-		const map: Record<SprintStatus, string> = {
-			planned: 'Planned',
-			active: 'Active',
-			completed: 'Completed'
-		};
-		return map[status];
-	}
-
 	function getStatusClass(status: SprintStatus): string {
 		const map: Record<SprintStatus, string> = {
 			planned: 'bg-surface text-fg',
 			active: 'bg-success-soft text-success',
-			completed: 'bg-surface text-fg'
+			completed: 'bg-surface text-fg',
+			cancelled: 'bg-danger-soft text-danger'
 		};
 		return map[status];
 	}
@@ -263,13 +286,49 @@
 		await loadData();
 	}
 
-	async function updateSprintStatus(sprint: Sprint, status: SprintStatus) {
-		const response = await sprintsApi.update(sprint.id, { status });
+	// Starting a second sprint is a 409 whose message names the sprint that is already active;
+	// the server's message is shown as it is.
+	async function startSprint(sprint: Sprint) {
+		const response = await sprintsApi.update(sprint.id, { status: 'active' });
 		if (response.code !== 0) {
 			toast.error(response.message);
 			return;
 		}
-		toast.success(status === 'active' ? get(t)('cycles.started') : get(t)('cycles.completed'));
+		toast.success(get(t)('cycles.started'));
+		await loadData();
+	}
+
+	function openEndDialog(sprint: Sprint, status: 'completed' | 'cancelled') {
+		endDialog = { sprint, status };
+		rolloverChoice = '';
+		showEndDialog = true;
+	}
+
+	async function submitEnd() {
+		if (saving || !endDialog) return;
+		const { sprint, status } = endDialog;
+		saving = true;
+		const response = await sprintsApi.update(sprint.id, {
+			status,
+			rollover_sprint_id: rolloverChoice || null
+		});
+		saving = false;
+		if (response.code !== 0) {
+			toast.error(response.message);
+			return;
+		}
+		showEndDialog = false;
+		endDialog = null;
+		const moved = response.data?.rollover?.moved_count ?? 0;
+		const targetName =
+			endTargets.find((target) => target.id === response.data?.rollover?.target_sprint_id)?.name ??
+			get(t)('cycles.rolloverBacklog');
+		const done = status === 'completed' ? get(t)('cycles.completed') : get(t)('cycles.cancelled');
+		toast.success(
+			moved > 0
+				? `${done}. ${get(t)('cycles.rolloverMoved', { values: { count: moved, target: targetName } })}`
+				: `${done}. ${get(t)('cycles.rolloverNone')}`
+		);
 		await loadData();
 	}
 
@@ -362,7 +421,7 @@
 										{sprint.name}
 									</h3>
 									<p class="text-sm text-fg-muted">
-										{formatDate(sprint.start_date)} ~ {formatDate(sprint.end_date)}
+										{formatRange(sprint)}
 									</p>
 								</div>
 								<span
@@ -370,13 +429,13 @@
 										sprint.status
 									)}"
 								>
-									{getStatusLabel(sprint.status)}
+									{$t(`cycles.status.${sprint.status}`)}
 								</span>
 							</div>
 
 							{#if sprint.description}
 								<p class="mb-3 text-sm text-fg">
-									{$t('cycles.goal')}: {sprint.description}
+									{$t('cycles.description')}: {sprint.description}
 								</p>
 							{/if}
 
@@ -426,12 +485,20 @@
 								>
 									{$t('cycles.viewDetail')}
 								</button>
-								<button
-									onclick={() => updateSprintStatus(sprint, 'completed')}
-									class="rounded-control rf-filled bg-primary px-3 py-1.5 text-sm text-on-primary"
-								>
-									{$t('cycles.completeSprint')}
-								</button>
+								{#if canManage}
+									<button
+										onclick={() => openEndDialog(sprint, 'cancelled')}
+										class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft"
+									>
+										{$t('cycles.cancelSprint')}
+									</button>
+									<button
+										onclick={() => openEndDialog(sprint, 'completed')}
+										class="rounded-control rf-filled bg-primary px-3 py-1.5 text-sm text-on-primary"
+									>
+										{$t('cycles.completeSprint')}
+									</button>
+								{/if}
 							</div>
 						</div>
 					{/each}
@@ -457,7 +524,7 @@
 										{sprint.name}
 									</h3>
 									<p class="text-sm text-fg-muted">
-										{formatDate(sprint.start_date)} ~ {formatDate(sprint.end_date)}
+										{formatRange(sprint)}
 									</p>
 								</div>
 								<span
@@ -465,13 +532,13 @@
 										sprint.status
 									)}"
 								>
-									{getStatusLabel(sprint.status)}
+									{$t(`cycles.status.${sprint.status}`)}
 								</span>
 							</div>
 
 							{#if sprint.description}
 								<p class="mb-3 text-sm text-fg">
-									{$t('cycles.goal')}: {sprint.description}
+									{$t('cycles.description')}: {sprint.description}
 								</p>
 							{/if}
 							<div class="rounded-control border border-line bg-surface p-3">
@@ -511,18 +578,26 @@
 								>
 									{$t('common.edit')}
 								</button>
-								<button
-									onclick={() => removeSprint(sprint)}
-									class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft"
-								>
-									{$t('common.delete')}
-								</button>
-								<button
-									onclick={() => updateSprintStatus(sprint, 'active')}
-									class="rounded-control rf-filled bg-primary px-3 py-1.5 text-sm text-on-primary"
-								>
-									{$t('cycles.startSprint')}
-								</button>
+								{#if canManage}
+									<button
+										onclick={() => removeSprint(sprint)}
+										class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft"
+									>
+										{$t('common.delete')}
+									</button>
+									<button
+										onclick={() => openEndDialog(sprint, 'cancelled')}
+										class="rounded-control border px-3 py-1.5 text-sm text-danger hover:bg-danger-soft"
+									>
+										{$t('cycles.cancelSprint')}
+									</button>
+									<button
+										onclick={() => startSprint(sprint)}
+										class="rounded-control rf-filled bg-primary px-3 py-1.5 text-sm text-on-primary"
+									>
+										{$t('cycles.startSprint')}
+									</button>
+								{/if}
 							</div>
 						</div>
 					{/each}
@@ -548,7 +623,7 @@
 									<div>
 										<p class="font-medium text-fg">{sprint.name}</p>
 										<p class="text-sm text-fg-muted">
-											{formatDate(sprint.start_date)} ~ {formatDate(sprint.end_date)}
+											{formatRange(sprint)}
 										</p>
 									</div>
 									<span
@@ -556,7 +631,7 @@
 											sprint.status
 										)}"
 									>
-										{getStatusLabel(sprint.status)}
+										{$t(`cycles.status.${sprint.status}`)}
 									</span>
 								</div>
 								<ProgressBar
@@ -644,14 +719,14 @@
 			/>
 		</div>
 		<div>
-			<label for="create-goal" class="mb-1 block text-sm font-medium text-fg"
-				>{$t('cycles.goal')}</label
+			<label for="create-description" class="mb-1 block text-sm font-medium text-fg"
+				>{$t('cycles.description')}</label
 			>
 			<textarea
-				id="create-goal"
+				id="create-description"
 				bind:value={createForm.description}
 				rows="3"
-				placeholder={$t('cycles.goalPlaceholder')}
+				placeholder={$t('cycles.descriptionPlaceholder')}
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 			></textarea>
 		</div>
@@ -723,11 +798,11 @@
 			/>
 		</div>
 		<div>
-			<label for="edit-goal" class="mb-1 block text-sm font-medium text-fg"
-				>{$t('cycles.goal')}</label
+			<label for="edit-description" class="mb-1 block text-sm font-medium text-fg"
+				>{$t('cycles.description')}</label
 			>
 			<textarea
-				id="edit-goal"
+				id="edit-description"
 				bind:value={editForm.description}
 				rows="3"
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
@@ -756,6 +831,60 @@
 					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				/>
 			</div>
+		</div>
+	</div>
+</Modal>
+
+{#snippet endFooter()}
+	<button
+		onclick={() => (showEndDialog = false)}
+		class="rounded-control border border-fg px-4 py-2 text-sm text-fg hover:bg-surface"
+	>
+		{$t('cycles.rolloverKeep')}
+	</button>
+	<button
+		onclick={submitEnd}
+		disabled={saving}
+		data-testid="cycles-end-confirm"
+		class="rounded-control rf-filled bg-primary px-4 py-2 text-sm text-on-primary disabled:bg-surface disabled:text-fg-muted disabled:cursor-not-allowed"
+	>
+		{endDialog?.status === 'cancelled' ? $t('cycles.cancelSprint') : $t('cycles.completeSprint')}
+	</button>
+{/snippet}
+
+<Modal
+	bind:open={showEndDialog}
+	title={endDialog
+		? $t(
+				endDialog.status === 'cancelled'
+					? 'cycles.rolloverCancelTitle'
+					: 'cycles.rolloverCompleteTitle',
+				{ values: { name: endDialog.sprint.name } }
+			)
+		: ''}
+	maxWidthClass="max-w-lg"
+	onclose={() => {
+		endDialog = null;
+	}}
+	footer={endFooter}
+>
+	<div class="space-y-4">
+		<p class="text-sm text-fg-muted">{$t('cycles.rolloverBody')}</p>
+		<div>
+			<label for="end-rollover" class="mb-1 block text-sm font-medium text-fg"
+				>{$t('cycles.rolloverTarget')}</label
+			>
+			<select
+				id="end-rollover"
+				bind:value={rolloverChoice}
+				data-testid="cycles-end-target"
+				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+			>
+				<option value="">{$t('cycles.rolloverBacklog')}</option>
+				{#each endTargets as target (target.id)}
+					<option value={target.id}>{target.name}</option>
+				{/each}
+			</select>
 		</div>
 	</div>
 </Modal>

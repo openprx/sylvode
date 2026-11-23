@@ -68,6 +68,7 @@
 		"test:flow-error-reasons": "bun tests/flow-error-reasons.test.ts",
 		"test:workspace-home": "bun tests/workspace-home.test.ts",
 		"test:workspace-role": "bun tests/workspace-role.test.ts",
+		"test:sprint-rules": "bun tests/sprint-rules.test.ts",
 		"test:shell-routing": "bun tests/shell-routing.test.ts",
 		"test:shell-state": "bun tests/shell-state.test.ts",
 		"test:shell-keyboard": "bun tests/shell-keyboard.test.ts",
