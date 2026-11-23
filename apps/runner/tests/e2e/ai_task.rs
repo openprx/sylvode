@@ -247,7 +247,7 @@ async fn a_bot_ids_only_route_does_not_catch_another_bot() {
     assert!(api.next(Duration::from_millis(500)).await.is_none(), "one call only");
 }
 
-/// `agent_type = "cli"` is refused at start-up, naming what replaces it.
+/// `agent_type = "cli"` is an unknown agent type: refused at start-up with the valid ones listed.
 #[test]
 fn a_cli_agent_is_refused_at_start_up() {
     let config = format!(
@@ -265,7 +265,8 @@ fn a_cli_agent_is_refused_at_start_up() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        text.contains("agent_type = \"runner\"") && text.contains("headless"),
+        text.contains("unknown agent_type `cli`")
+            && text.contains("valid values: runner, openclaw, openprx, webhook, custom"),
         "{text}"
     );
     assert_ne!(refused.code, Some(0));
