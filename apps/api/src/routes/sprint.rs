@@ -128,8 +128,9 @@ fn check_date_order(start: Option<Date>, end: Option<Date>) -> Result<(), ApiErr
     if let (Some(start), Some(end)) = (start, end)
         && end < start
     {
-        return Err(ApiError::BadRequest(
-            "end_date must not be before start_date".to_string(),
+        return Err(ApiError::bad_request_coded(
+            "sprint_end_before_start",
+            "end_date must not be before start_date",
         ));
     }
     Ok(())
@@ -140,9 +141,13 @@ fn check_date_order(start: Option<Date>, end: Option<Date>) -> Result<(), ApiErr
 fn rule_violation(err: sea_orm::DbErr) -> ApiError {
     let text = err.to_string();
     if text.contains("sprints_one_active_per_project") {
-        ApiError::Conflict("project already has an active sprint".to_string())
+        ApiError::conflict_coded("sprint_active_exists", "project already has an active sprint", None)
     } else if text.contains("sprints_project_lower_name_key") {
-        ApiError::Conflict("sprint with this name already exists in project".to_string())
+        ApiError::conflict_coded(
+            "sprint_name_taken",
+            "sprint with this name already exists in project",
+            None,
+        )
     } else {
         ApiError::from(err)
     }
@@ -218,10 +223,14 @@ async fn ensure_no_other_active_sprint(
     .one(db)
     .await?;
     match active {
-        Some(active) => Err(ApiError::Conflict(format!(
-            "project already has an active sprint: {} ({})",
-            active.name, active.id
-        ))),
+        Some(active) => Err(ApiError::conflict_coded(
+            "sprint_active_exists",
+            format!("project already has an active sprint: {}", active.name),
+            Some(serde_json::json!({
+                "active_sprint_id": active.id,
+                "active_sprint_name": active.name,
+            })),
+        )),
         None => Ok(()),
     }
 }
@@ -241,8 +250,10 @@ async fn ensure_name_free(
         ))
         .await?;
     if existing.is_some() {
-        return Err(ApiError::Conflict(
-            "sprint with this name already exists in project".to_string(),
+        return Err(ApiError::conflict_coded(
+            "sprint_name_taken",
+            "sprint with this name already exists in project",
+            None,
         ));
     }
     Ok(())
@@ -509,10 +520,12 @@ pub async fn update_sprint(
             ));
         }
         if !transition_allowed(&current.status, to) {
-            return Err(ApiError::BadRequest(format!(
-                "sprint status cannot change from {} to {to}",
-                current.status
-            )));
+            return Err(ApiError::Coded {
+                status: 400,
+                code: "sprint_invalid_transition",
+                message: format!("sprint status cannot change from {} to {to}", current.status),
+                details: Some(serde_json::json!({ "from": current.status, "to": to })),
+            });
         }
         if to == "active" {
             ensure_no_other_active_sprint(&tx, current.project_id, Some(sprint_id)).await?;

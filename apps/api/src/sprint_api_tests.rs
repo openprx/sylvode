@@ -58,6 +58,7 @@ async fn create_refuses_end_before_start() {
         .await;
     assert_eq!(refused.code(), Some(400), "{}", refused.body);
     assert_eq!(refused.body["message"], json!("end_date must not be before start_date"));
+    assert_eq!(refused.body["error_code"], json!("sprint_end_before_start"));
     // The same day is fine.
     api.new_sprint("one day", json!({"start_date": "2030-02-01", "end_date": "2030-02-01"}))
         .await;
@@ -172,6 +173,8 @@ async fn refused_transitions_answer_400() {
             answer.body["message"],
             json!(format!("sprint status cannot change from {from} to {to}"))
         );
+        assert_eq!(answer.body["error_code"], json!("sprint_invalid_transition"));
+        assert_eq!(answer.body["details"], json!({"from": from, "to": to}));
         assert_eq!(api.sprint_status(sprint).await, from, "{from} -> {to} changed it");
     }
     let unknown = api.set_status(planned, api.alice, "bogus").await;
@@ -240,20 +243,27 @@ async fn second_active_sprint_is_409_naming_the_active_one() {
         .await;
     assert_eq!(created.code(), Some(409), "{}", created.body);
     let message = created.body["message"].as_str().expect("message");
+    assert_eq!(message, "project already has an active sprint: Sprint One");
     assert!(
-        message.contains("Sprint One") && message.contains(&first.to_string()),
-        "{message}"
+        !message.contains(&first.to_string()),
+        "the message carries no id: {message}"
+    );
+    assert_eq!(created.body["error_code"], json!("sprint_active_exists"));
+    assert_eq!(
+        created.body["details"],
+        json!({"active_sprint_id": first.to_string(), "active_sprint_name": "Sprint One"})
     );
     // Start a planned one while another is active.
     let second = api.new_sprint("Sprint Two", json!({})).await;
     let started = api.set_status(second, api.alice, "active").await;
     assert_eq!(started.code(), Some(409), "{}", started.body);
-    assert!(
-        started.body["message"]
-            .as_str()
-            .expect("message")
-            .contains("Sprint One")
+    assert_eq!(
+        started.body["message"],
+        json!("project already has an active sprint: Sprint One")
     );
+    assert_eq!(started.body["error_code"], json!("sprint_active_exists"));
+    assert_eq!(started.body["details"]["active_sprint_name"], json!("Sprint One"));
+    assert_eq!(started.body["details"]["active_sprint_id"], json!(first.to_string()));
     assert_eq!(api.sprint_status(second).await, "planned");
     // Once the first is finished, the second can start.
     api.set_status(first, api.alice, "completed").await;
@@ -344,6 +354,7 @@ async fn names_are_unique_ignoring_case() {
         .post(&api.sprints_uri(), api.alice, json!({"name": "bug bash"}))
         .await;
     assert_eq!(twin.code(), Some(409), "{}", twin.body);
+    assert_eq!(twin.body["error_code"], json!("sprint_name_taken"));
     let other = api.new_sprint("Other", json!({})).await;
     let renamed = api
         .put(

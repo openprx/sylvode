@@ -658,6 +658,17 @@ pub enum ApiError {
     NotFound(String),
     #[error("{0}")]
     Conflict(String),
+    /// A 400/409-style refusal that keeps the legacy status buckets but names itself: a stable
+    /// `error_code` and optional structured `details` let a client show its own text instead of
+    /// matching the message. For refusals of one resource's rules (the sprint lifecycle), not for
+    /// the Flow surfaces, which use [`Self::Typed`].
+    #[error("{message}")]
+    Coded {
+        status: i32,
+        code: &'static str,
+        message: String,
+        details: Option<Value>,
+    },
     /// Optimistic editing conflict outside the Flow CRDT protocol. No current private metadata.
     #[error("resource changed; review changes before retrying")]
     VersionConflict(&'static str),
@@ -711,6 +722,26 @@ impl ApiError {
     #[must_use]
     pub fn is_known_transient_database_failure(&self) -> bool {
         matches!(self, Self::Database(err) if sqlstate(err).is_some_and(|code| is_known_transient_sqlstate(&code)))
+    }
+
+    /// A `400` refusal carrying a stable `error_code` (see [`Self::Coded`]).
+    pub fn bad_request_coded(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Coded {
+            status: 400,
+            code,
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    /// A `409` refusal carrying a stable `error_code` and optional `details` (see [`Self::Coded`]).
+    pub fn conflict_coded(code: &'static str, message: impl Into<String>, details: Option<Value>) -> Self {
+        Self::Coded {
+            status: 409,
+            code,
+            message: message.into(),
+            details,
+        }
     }
 
     /// Constructs a [`Self::Typed`] error with no structured `details`.
@@ -830,7 +861,11 @@ impl ApiError {
             Self::NotFound(message) => Self::not_found(message),
             Self::BadRequest(message) => Self::invalid_update(message),
             Self::Internal => Self::internal(),
-            other @ (Self::Conflict(_) | Self::VersionConflict(_) | Self::Database(_) | Self::Typed { .. }) => other,
+            other @ (Self::Conflict(_)
+            | Self::Coded { .. }
+            | Self::VersionConflict(_)
+            | Self::Database(_)
+            | Self::Typed { .. }) => other,
         }
     }
 
@@ -1034,9 +1069,12 @@ impl ApiError {
             Self::Unauthorized(_) => ApiErrorKind::Unauthenticated,
             Self::Forbidden(_) => ApiErrorKind::Forbidden,
             Self::NotFound(_) => ApiErrorKind::NotFound,
-            Self::BadRequest(_) | Self::Conflict(_) | Self::VersionConflict(_) | Self::Internal | Self::Database(_) => {
-                ApiErrorKind::Unclassified
-            }
+            Self::BadRequest(_)
+            | Self::Conflict(_)
+            | Self::Coded { .. }
+            | Self::VersionConflict(_)
+            | Self::Internal
+            | Self::Database(_) => ApiErrorKind::Unclassified,
         }
     }
 }
@@ -1114,6 +1152,26 @@ impl IntoResponse for ApiError {
                 response
             }
             Self::Conflict(msg) => Self::legacy_response(409, &msg, "conflict"),
+            Self::Coded {
+                status,
+                code,
+                message,
+                details,
+            } => {
+                let body = ApiResponse::<Value> {
+                    code: status,
+                    message,
+                    data: None,
+                    error_code: Some(code),
+                    details,
+                };
+                let mut response = (StatusCode::OK, Json(body)).into_response();
+                response.extensions_mut().insert(OperationResponseMeta {
+                    business_code: status,
+                    error_summary: Some(if status == 409 { "conflict" } else { "bad request" }),
+                });
+                response
+            }
             Self::Internal => Self::legacy_response(500, "internal server error", "internal server error"),
             Self::Database(err) => {
                 tracing::error!(error = %err, "database error");

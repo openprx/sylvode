@@ -195,6 +195,12 @@ name.
 
 ### Fixed
 
+- **Sprint refusals carry a code.** The `400` and `409` answers of the sprint API for an invalid
+  status change, an end date before the start, a duplicate name and a second active sprint now carry
+  `error_code` (`sprint_invalid_transition`, `sprint_end_before_start`, `sprint_name_taken`,
+  `sprint_active_exists`) and structured `details`; the active-sprint answer names the sprint in
+  `details.active_sprint_id` and `details.active_sprint_name`, and its message no longer contains the
+  id. The Cycles page shows a translated text for each of them.
 - **Webhook deliveries connect to the checked address.** The API and the worker resolved a webhook
   host name for the outbound check and then again for the connection, so a name could answer a
   public address to the check and an internal one to the connection. Event-dispatcher and legacy

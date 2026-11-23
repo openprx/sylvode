@@ -362,14 +362,17 @@ change or delete it. A sprint has `name`, `description`, `start_date` and `end_d
 - A new sprint is `planned` (the default) or `active`; any other status is `400`.
 - `status` moves `planned` to `active`, `active` to `completed`, and `planned` or `active` to
   `cancelled`. Completed and cancelled sprints are final, and `active` back to `planned` is
-  refused. Any other change answers `400 sprint status cannot change from <from> to <to>`. Sending
-  the current status is accepted and does nothing.
-- A project has at most one active sprint. Starting or creating a second one answers `409` with the
-  name and id of the active one.
-- `end_date` must not be before `start_date`, also when only one of them is edited (`400`).
+  refused. Any other change answers `400 sprint status cannot change from <from> to <to>` with
+  `error_code: "sprint_invalid_transition"` and `details: {from, to}`. Sending the current status is
+  accepted and does nothing.
+- A project has at most one active sprint. Starting or creating a second one answers `409
+  project already has an active sprint: <name>` with `error_code: "sprint_active_exists"` and
+  `details: {active_sprint_id, active_sprint_name}` (the message carries the name only).
+- `end_date` must not be before `start_date`, also when only one of them is edited (`400`,
+  `error_code: "sprint_end_before_start"`).
   `start_date` and `end_date` accept `null`, which clears them; `null` on `name`, `description` or
   `status` is `400`.
-- Names are unique within a project ignoring case (`409`).
+- Names are unique within a project ignoring case (`409`, `error_code: "sprint_name_taken"`).
 - Members can create sprints and edit their name, description and dates. Creating an active sprint,
   changing a sprint's status and deleting a sprint need an owner or admin (`403`).
 - Completing or cancelling a sprint moves its unfinished work items in the same transaction: to the
