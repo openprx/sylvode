@@ -265,6 +265,6 @@ root. `scripts/start.sh` creates `.env` from `.env.example` when it is missing.
 starts `postgres`, `api`, `worker`, `mcp-server` and `frontend` one by one, for Compose providers
 that lose a dependency when they build and start in one step.
 
-`.env.example` also carries `VITE_API_BASE_URL`. The Compose file does not pass it to the web UI
-build, which serves the API from its own origin; the variable matters only when you build or run
-the web UI yourself (see [frontend/README.md](../frontend/README.md)).
+The web UI served by Compose reaches the API from its own origin. To build or run the web UI
+yourself against another API address, set `VITE_API_BASE_URL` in `frontend/.env` (see
+[frontend/README.md](../frontend/README.md)); the root `.env` does not read it.

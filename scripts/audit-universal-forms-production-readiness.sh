@@ -250,12 +250,11 @@ not_contains "compose does not default JWT secret to change-me" "$COMPOSE_FILE" 
 not_contains "env example does not enable weak JWT secret" "$ROOT_DIR/.env.example" "JWT_SECRET=change-me-in-production"
 
 printf '\nFrontend API configuration coverage:\n'
-contains "root env example uses current frontend API variable" "$ROOT_DIR/.env.example" "VITE_API_BASE_URL=http://localhost:8081"
 contains "frontend env example points to compose API host port" "$ROOT_DIR/frontend/.env.example" "VITE_API_BASE_URL=http://localhost:8081"
 contains "frontend client reads VITE_API_BASE_URL" "$ROOT_DIR/frontend/src/lib/api/client.ts" "import.meta.env.VITE_API_BASE_URL"
 contains "frontend README documents compose API host port" "$ROOT_DIR/frontend/README.md" "VITE_API_BASE_URL=http://localhost:8081"
 not_contains "root env example does not use retired VITE_API_URL" "$ROOT_DIR/.env.example" "VITE_API_URL="
-not_contains "root env example does not point frontend at retired API port" "$ROOT_DIR/.env.example" "VITE_API_BASE_URL=http://localhost:8080"
+not_contains "root env example has no frontend API variable (the compose build does not read it)" "$ROOT_DIR/.env.example" "VITE_API_BASE_URL"
 not_contains "frontend env example does not point browser at frontend port as API" "$ROOT_DIR/frontend/.env.example" "VITE_API_BASE_URL=http://localhost:3000"
 
 printf '\nMCP production configuration coverage:\n'
