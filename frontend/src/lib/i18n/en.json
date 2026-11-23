@@ -631,6 +631,13 @@
 			"nameTaken": "Another sprint in this project already has this name."
 		}
 	},
+	"errorPage": {
+		"title": "Page not found",
+		"object": "page",
+		"notFoundBody": "The address may be mistyped, or the page was moved.",
+		"failedBody": "Something went wrong while opening this page.",
+		"home": "Go to home"
+	},
 	"members": {
 		"title": "Member Management",
 		"subtitle": "Add users, update roles and maintain workspace permissions",

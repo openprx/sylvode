@@ -250,7 +250,7 @@ jobs:
                        webhook-events flow-navigator-equivalence flow-cross-parent-move flow-ui-state flow-bridge flow-dangling-parent \
                        flow-package-import flow-v0.4 flow-static-build flow-outbox flow-offline-recovery flow-apply-busy \
                        shell-routing shell-state shell-keyboard surface-host project-nav shell-redirects surface-embed \
-                       component-adapters toast-routing workbench-tabs forms-page forms-csv-export plugin-creator-review-focus oauth workspace-role sprint-rules due-date \
+                       component-adapters toast-routing workbench-tabs forms-page forms-csv-export plugin-creator-review-focus oauth workspace-role sprint-rules workflow-state due-date \
                        agent-tasks connection-managed connection-section connection-list; do
             echo "::group::test:$suite"
             bun run "test:$suite"

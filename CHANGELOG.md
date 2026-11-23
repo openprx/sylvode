@@ -209,6 +209,8 @@ name.
 - **Chinese texts.** The remaining "Issue" wording in the Chinese texts is "工作项", and the built-in
   workflow states (Backlog, Todo, In Progress, Done) are shown with translated names on the issue,
   board and list pages; custom state names are shown as stored.
+- **Not found page.** An unknown address shows a "page not found" page with a link back to the home
+  page, inside the application for signed-in users and on its own for signed-out users.
 - **Webhook deliveries connect to the checked address.** The API and the worker resolved a webhook
   host name for the outbound check and then again for the connection, so a name could answer a
   public address to the check and an internal one to the connection. Event-dispatcher and legacy

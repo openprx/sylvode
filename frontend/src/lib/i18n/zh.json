@@ -631,6 +631,13 @@
 			"nameTaken": "项目内已有同名迭代。"
 		}
 	},
+	"errorPage": {
+		"title": "找不到页面",
+		"object": "页面",
+		"notFoundBody": "地址可能输入有误，或页面已被移动。",
+		"failedBody": "打开此页面时出了问题。",
+		"home": "返回首页"
+	},
 	"members": {
 		"title": "成员管理",
 		"subtitle": "添加内部用户、修改角色并维护工作区权限",
